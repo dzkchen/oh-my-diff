@@ -22,6 +22,9 @@ SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
          "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bins"]
+CHECK = ["check", "--locked", "-p", "codex-cli", "-p", "codex-exec", "-p", "codex-omd", "-p", "codex-omd-runner",
+         "-p", "codex-omd-extension", "-p", "codex-tui", "-p", "codex-core", "-p", "codex-core-plugins", "-p", "codex-git-utils",
+         "--tests"]
 SUMMARY = re.compile(r"^test result|^\s+Summary \[|^\s+(FAIL|TIMEOUT) \[|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"
@@ -105,6 +108,8 @@ def cargo_env(work):
         "CARGO_PROFILE_RELEASE_DEBUG": os.environ.get("CARGO_PROFILE_RELEASE_DEBUG", "0"),
         "RUST_MIN_STACK": "16777216",
     })
+    if os.environ.get("OMD_SCCACHE"):
+        env["RUSTC_WRAPPER"] = "sccache"
     target = run("rustc", "-vV").decode().split("host: ", 1)[1].splitlines()[0]
     env.setdefault("RUSTY_V8_ARCHIVE", str(V8 / f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz"))
     env.setdefault("RUSTY_V8_SRC_BINDING_PATH", str(V8 / f"src_binding_ptrcomp_sandbox_release_{target}.rs"))
@@ -118,7 +123,8 @@ def test_runner(work, cargo_args, env, output):
     release = "--release" in cargo_args or "-r" in cargo_args
     profile = "release" if release else "debug"
     flags = ["--locked"] * ("--locked" in cargo_args) + ["--release"] * release
-    status = subprocess.run(["cargo", "build", *flags, "-p", "codex-omd-runner"], cwd=work / "codex/codex-rs", env=env,
+    scope = [arg for index, arg in enumerate(cargo_args) if arg == "-p" or cargo_args[index - 1] == "-p"]
+    status = subprocess.run(["cargo", "build", *flags, *scope, "--bin", "omd-runner"], cwd=work / "codex/codex-rs", env=env,
                             stdout=output, stderr=subprocess.STDOUT).returncode
     link = work / "target" / profile / "deps/omd-runner"
     if status == 0 and not link.exists():
@@ -185,6 +191,11 @@ def v8(args):
 
 def cargo(args):
     raise SystemExit(cargo_run(work_dir(args.name), args.log, args.cargo_args))
+
+
+def check(args):
+    work = work_dir(args.name)
+    raise SystemExit(cargo_run(work, work / "logs/check.log", CHECK))
 
 
 def tracked(tree, *paths):
@@ -320,6 +331,9 @@ def main():
     command.add_argument("log", help="log file path")
     command.add_argument("cargo_args", nargs=argparse.REMAINDER)
     command.set_defaults(handler=cargo)
+    command = commands.add_parser("check", help="cargo check --tests of the crates a pull request compiles")
+    command.add_argument("name")
+    command.set_defaults(handler=check)
     command = commands.add_parser("v8", help="download and verify the V8 prebuilt that codex-cli builds link")
     command.add_argument("name")
     command.set_defaults(handler=v8)

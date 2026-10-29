@@ -501,13 +501,13 @@ pub(crate) fn lock(path: &Path) -> Result<File> {
 }
 
 fn state_value(bytes: &[u8], version: u32) -> Result<Value> {
-    let state: Value = serde_json::from_slice(bytes)?;
+    let mut state: Value = serde_json::from_slice(bytes)?;
     if state["schema"] != super::MOD_STATE_STORAGE_SCHEMA_VERSION || state["version"] != version {
         return Err(failure(
             "state_migration_required: previous state preserved",
         ));
     }
-    Ok(state["value"].clone())
+    Ok(state["value"].take())
 }
 
 fn directory_state(directory: &Path, name: &str, version: u32) -> Result<Value> {

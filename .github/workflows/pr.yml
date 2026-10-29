@@ -37,6 +37,7 @@ jobs:
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550
         with:
           install_args: node python@3.14.6 actionlint@1.7.12
+          cache_save: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
         with:
           package_json_file: mods/package.json
@@ -59,14 +60,22 @@ jobs:
     timeout-minutes: 120
     env:
       CARGO_INCREMENTAL: '0'
-      CARGO_BUILD_JOBS: '2'
+      CARGO_BUILD_JOBS: '3'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      OMD_WORK_ROOT: /Users/runner/omd
+      OMD_SCCACHE: '1'
+      OMD_SCCACHE_TOOL: aqua:mozilla/sccache@0.19.0
+      SCCACHE_DIR: /Users/runner/omd/sccache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550
         with:
-          install_args: node python@3.14.6
+          install_args: node python@3.14.6 ${{ env.OMD_SCCACHE_TOOL }}
+          cache_save: false
+      - name: Put sccache on PATH
+        run: dirname "$(mise exec "$OMD_SCCACHE_TOOL" -- which sccache)" >> "$GITHUB_PATH"
       - name: Install pinned Rust toolchain
         run: |
           OMD_RUST_TOOLCHAIN=$(python3 -c 'import json; print(json.load(open("upstream.lock.json"))["rust_toolchain"])')
@@ -80,24 +89,40 @@ jobs:
             ~/.cargo/git/db
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-${{ hashFiles('runtime/patches/manifest.json') }}
           restore-keys: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ env.OMD_WORK_ROOT }}/omd-cache/v8
+          key: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-${{ hashFiles('runtime/patches/manifest.json') }}
+          restore-keys: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: sccache-lint-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-${{ github.run_id }}
+          restore-keys: |
+            sccache-lint-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-
+            sccache-lint-${{ runner.os }}-
       - name: Replay patch and check drift
         run: |
-          python3 .github/scripts/build.py setup pr
-          python3 .github/scripts/build.py sync pr
+          python3 .github/scripts/build.py setup nightly
+          python3 .github/scripts/build.py sync nightly
           git add --intent-to-add -- runtime upstream.lock.json
           git diff --exit-code -- runtime upstream.lock.json
       - name: Rustfmt
-        run: python3 .github/scripts/build.py cargo pr /private/tmp/omd-bpr/logs/fmt.log fmt -p codex-omd -p codex-omd-runner -p codex-omd-extension -p codex-tui -p codex-core-plugins -p codex-git-utils -p codex-core -- --check
+        run: python3 .github/scripts/build.py cargo nightly "$OMD_WORK_ROOT/omd-bnightly/logs/fmt.log" fmt -p codex-omd -p codex-omd-runner -p codex-omd-extension -p codex-tui -p codex-core-plugins -p codex-git-utils -p codex-core -- --check
       - name: Compile native code and tests
         run: |
-          python3 .github/scripts/build.py v8 pr
-          python3 .github/scripts/build.py cargo pr /private/tmp/omd-bpr/logs/check.log check --locked -p codex-cli -p codex-exec -p codex-omd -p codex-omd-runner -p codex-omd-extension -p codex-tui -p codex-core -p codex-core-plugins -p codex-git-utils --tests
+          python3 .github/scripts/build.py v8 nightly
+          python3 .github/scripts/build.py check nightly
+      - name: sccache statistics
+        if: always()
+        continue-on-error: true
+        run: sccache --show-stats && sccache --stop-server
       - name: Preserve native logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: pr-native-logs
-          path: /private/tmp/omd-bpr/logs/
+          path: ${{ env.OMD_WORK_ROOT }}/omd-bnightly/logs/
           retention-days: 7
 
   gate:

@@ -1,13 +1,20 @@
 #!/bin/sh
+usable() {
+  [ -n "$1" ] && command -v "$1" >/dev/null 2>&1 \
+    && "$1" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' 2>/dev/null
+}
 preferred=$OMD_PYTHON
 OMD_PYTHON=
-for candidate in "$preferred" python3.14 python3.13 python3.12 python3 /opt/homebrew/bin/python3 "$(command -v mise >/dev/null 2>&1 && mise which python3 2>/dev/null)"; do
-  if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1 \
-    && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' 2>/dev/null; then
+for candidate in "$preferred" python3.14 python3.13 python3.12 python3 /opt/homebrew/bin/python3; do
+  if usable "$candidate"; then
     OMD_PYTHON=$candidate
     break
   fi
 done
+if [ -z "$OMD_PYTHON" ] && command -v mise >/dev/null 2>&1; then
+  candidate=$(mise which python3 2>/dev/null)
+  usable "$candidate" && OMD_PYTHON=$candidate
+fi
 if [ -z "$OMD_PYTHON" ]; then
   echo "omd installer: Python 3.12 or newer is required (macOS ships 3.9); install one, for example with 'brew install python@3.12' or mise, and retry" >&2
   exit 1
@@ -15,8 +22,12 @@ fi
 exec "$OMD_PYTHON" -I - "$@" <<'PY'
 import argparse
 import codecs
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
+import functools
 import hashlib
+import http.client
+import itertools
 import json
 import os
 from pathlib import Path
@@ -27,6 +38,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -52,6 +64,8 @@ UPSTREAM_MINOR = "0.164"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
+NETWORK_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException)
+DOWNLOAD_ATTEMPTS = 3
 DOWNLOAD_WAIT = "Waiting for the background update check or download to finish…"
 BROKER_DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
 WEBSITE = "https://www.ohmydiff.me"
@@ -108,11 +122,8 @@ def banner(manifest):
 
 
 def digest(path):
-    value = hashlib.sha256()
     with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            value.update(chunk)
-    return value.hexdigest()
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def run(arguments, *, cwd=None, env=None):
@@ -254,20 +265,46 @@ def opened(url, timeout):
     return response
 
 
-def download(url, expected, destination, progress=None):
+def unreachable(error):
+    return f"Network error while contacting GitHub ({getattr(error, 'reason', None) or error}); check your connection and try again."
+
+
+def retryable(error):
+    return error.code in (429, 500, 502, 503, 504) if isinstance(error, urllib.error.HTTPError) else True
+
+
+def download(url, expected, destination, progress=None, stopped=threading.Event()):
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         fail("release asset needs a pinned lowercase SHA-256")
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        if stopped.is_set():
+            fail("download cancelled")
+        try:
+            return fetch_archive(url, expected, destination, progress)
+        except NETWORK_ERRORS as error:
+            destination.unlink(missing_ok=True)
+            if attempt == DOWNLOAD_ATTEMPTS or not retryable(error):
+                fail(unreachable(error))
+            if stopped.wait(attempt):
+                fail("download cancelled")
+
+
+def fetch_archive(url, expected, destination, progress):
     copied = 0
+    checksum = hashlib.sha256()
     with opened(url, 60) as response, destination.open("xb") as output:
         total = int(response.headers.get("Content-Length") or 0)
         while chunk := response.read(1024 * 1024):
             copied += len(chunk)
             if copied > 150_000_000:
                 fail("release asset exceeds the 150 MB download limit")
+            checksum.update(chunk)
             output.write(chunk)
             if progress:
                 progress(copied, total)
-    if digest(destination) != expected:
+    if total and copied < total:
+        raise http.client.IncompleteRead(b"", total - copied)
+    if checksum.hexdigest() != expected:
         fail("release asset SHA-256 mismatch; no profile was activated")
     return copied
 
@@ -296,18 +333,23 @@ def fetch_json(url, limit):
 
 
 def extract(archive_path, destination):
+    count = total = 0
     with tarfile.open(archive_path, "r:xz") as archive:
-        members = archive.getmembers()
-        if not members or len(members) > 1000:
-            fail("release archive has an invalid file count")
-        if sum(item.size for item in members) > MAX_UNPACKED_BYTES:
-            fail("release archive exceeds unpacked byte limit")
-        if any(not item.isfile() or not item.name.startswith("payload/")
-               or any(part in ("", ".", "..") for part in item.name.split("/")) for item in members):
-            fail("release archive contains an unsafe member")
-        if any(item.size > MAX_MEMBER_BYTES for item in members):
-            fail("release archive member exceeds byte limit")
-        archive.extractall(destination, filter="data")
+        for item in archive:
+            count += 1
+            total += item.size
+            if count > 1000:
+                fail("release archive has an invalid file count")
+            if total > MAX_UNPACKED_BYTES:
+                fail("release archive exceeds unpacked byte limit")
+            if (not item.isfile() or not item.name.startswith("payload/")
+                    or any(part in ("", ".", "..") for part in item.name.split("/"))):
+                fail("release archive contains an unsafe member")
+            if item.size > MAX_MEMBER_BYTES:
+                fail("release archive member exceeds byte limit")
+            archive.extract(item, destination, filter="data")
+    if not count:
+        fail("release archive has an invalid file count")
     return destination / "payload"
 
 
@@ -390,23 +432,36 @@ def install(args, root, current):
     manifest = None
     if not url:
         pending(f"Finding the {channel} release")
-        candidates = [item for item in releases(release_source(args.releases_url or RELEASES_URL), channel=channel) if on_channel(channel, item)]
-        if not candidates:
+        newest = next((item for item in releases(release_source(args.releases_url or RELEASES_URL), channel=channel)
+                       if on_channel(channel, item)), None)
+        if not newest:
             fail(f"No Oh My Diff {channel} release is published yet; nothing was installed.")
-        manifest = release_manifest(candidates[0])
+        manifest = release_manifest(newest)
         if manifest["target"] != TARGET:
             fail(f"release is built for {manifest['target']}")
         url, expected = manifest["url"], manifest["sha256"]
     banner(manifest)
-    profile = profile_choice(args)
-    if manifest:
-        step(f"Release {manifest['version']}", "signature verified")
-    upstream = upstream_binary(args, current, minor_of(manifest) if manifest else UPSTREAM_MINOR)
-    step(f"Codex {upstream['version'].removeprefix('codex-cli ')}", tilde(upstream["path"]))
-    refuse_sessions(root, args.session)
-    with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
+    stopped, shown = threading.Event(), threading.Event()
+
+    def progress(copied, total):
+        if stopped.is_set():
+            fail("download cancelled")
+        if shown.is_set():
+            download_progress(copied, total)
+    with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary, ThreadPoolExecutor(1) as pool:
         archive = Path(temporary) / "package.tar.xz"
-        size = download(url, expected, archive, download_progress)
+        downloading = pool.submit(download, url, expected, archive, progress, stopped)
+        try:
+            profile = profile_choice(args)
+            if manifest:
+                step(f"Release {manifest['version']}", "signature verified")
+            upstream = upstream_binary(args, current, minor_of(manifest) if manifest else UPSTREAM_MINOR)
+            step(f"Codex {upstream['version'].removeprefix('codex-cli ')}", tilde(upstream["path"]))
+            refuse_sessions(root, args.session)
+            shown.set()
+            size = downloading.result()
+        finally:
+            stopped.set()
         step(f"Downloaded {megabytes(size)} MB", "checksum matches")
         pending(f"Installing {PROFILE_LABELS[profile]}")
         result = transaction(args, root, current, archive, url, expected, profile, upstream, manifest)
@@ -424,8 +479,6 @@ def installed(result):
     step("Linked commands", f"{tilde(result['bin_dir'])} ({', '.join(LINKS)})")
     for moved in result["moved_aside"]:
         step("Moved aside", moved, "!")
-    for failure in result["prune_failures"]:
-        step("Old install kept", failure, "!")
     broker = result.get("authority_broker")
     unpinned = bool(broker and broker.startswith("failed"))
     if broker:
@@ -481,7 +534,9 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
     previous = receipt(current) if current else {}
     releases_url = release_source(args.releases_url or previous.get("releases_url") or RELEASES_URL)
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
+        pending("Unpacking")
         payload = extract(archive, Path(temporary) / "unpacked")
+        step("Unpacked package")
         generation = root / "releases" / uuid.uuid4().hex
         store = root / "stores" / profile
         journaled(root, generation, args.session, None if store.exists() else profile)
@@ -498,7 +553,9 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
         if current:
             command += ["--previous", current / "prefix"]
         try:
+            pending("Installing files")
             run(command, cwd=payload, env=environment(Path(upstream["path"]), args.bin_dir))
+            step("Installed files", "checked against the release")
             installed = json.loads((generation / "prefix/install.json").read_text())
             record = {"schema": 1, "generation": generation.name, "profile": profile, "version": installed["version"],
                       "asset_url": url, "asset_sha256": expected, "bin_dir": str(args.bin_dir),
@@ -507,6 +564,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                       "previous": current.name if current else None}
             (generation / "receipt.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
             status(generation, Path(upstream["path"]), args.bin_dir)
+            step("Verified install")
         except BaseException:
             discard(generation, Path(upstream["path"]), args.bin_dir)
             abandon(root, current, Path(upstream["path"]), args.bin_dir)
@@ -526,30 +584,33 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
             abandon(root, current, Path(upstream["path"]), args.bin_dir)
             raise
         (root / "update/journal.json").unlink(missing_ok=True)
-        kept = {generation, current} - {None}
-        pruned, failures = [], []
-        for old in sorted((root / "releases").iterdir()):
-            if old.name.startswith("failed-"):
-                shutil.rmtree(old, ignore_errors=True)
-                pruned.append(old.name)
-                continue
-            if old in kept or not (old / "receipt.json").is_file():
-                continue
-            try:
-                remove_generation(old, Path(upstream["path"]), args.bin_dir, "--keep-broker")
-                pruned.append(old.name)
-            except (OSError, ValueError) as error:
-                failures.append(f"{old.name}: {error}")
-        collect(root)
+        (update_dir(root) / "next").unlink(missing_ok=True)
         pinned = repin(generation, current, Path(upstream["path"]), args.bin_dir)
         settled(root, record["version"], held=None)
         return {"installed": profile, "profile_label": PROFILE_LABELS[profile], "version": record["version"],
                 "active": str(generation), "previous": str(current) if current else None,
                 "upstream": upstream["path"], "bin_dir": str(args.bin_dir),
                 "moved_aside": [f"{path} -> {path}.before-omd" for path in displaced],
-                "pruned": pruned, "prune_failures": failures,
                 **({"authority_broker": pinned} if pinned else {}),
                 **({"codex_on_path": shadowing} if (shadowing := shadowing_codex(args.bin_dir)) else {})}
+
+
+def prune(root, current, args):
+    kept = {current, pointer(root, "previous")}
+    stale = [old for old in sorted((root / "releases").iterdir())
+             if old not in kept and (old.name.startswith("failed-") or (old / "receipt.json").is_file())]
+    if not stale:
+        return
+    upstream = Path(upstream_binary(args, current)["path"])
+    for old in stale:
+        if old.name.startswith("failed-"):
+            shutil.rmtree(old, ignore_errors=True)
+            continue
+        try:
+            remove_generation(old, upstream, args.bin_dir, "--keep-broker")
+        except (OSError, ValueError):
+            pass
+    collect(root)
 
 
 def collect(root):
@@ -779,7 +840,8 @@ def releases(url, channel="stable", pin=""):
     if pin and not version_key(pin):
         fail("pinned version is malformed")
     parsed = urllib.parse.urlsplit(url)
-    if re.fullmatch(r"/repos/[^/]+/[^/]+/releases/?", parsed.path):
+    matching = re.fullmatch(r"/repos/[^/]+/[^/]+/releases/?", parsed.path)
+    if matching:
         base = urllib.parse.urlunsplit(parsed._replace(path=parsed.path.rstrip("/"), query="", fragment=""))
         versions = [pin] if pin else []
         if not pin:
@@ -791,29 +853,34 @@ def releases(url, channel="stable", pin=""):
                 version = tag.removeprefix("refs/tags/v") if isinstance(tag, str) and tag.startswith("refs/tags/v") else None
                 if version_key(version) and on_channel(channel, {"version": version, "prerelease": "-" in version}):
                     versions.append(version)
-        listed = []
-        for version in sorted(set(versions), key=version_key, reverse=True)[:5]:
-            try:
-                listed.append(fetch_json(base + "/tags/v" + urllib.parse.quote(version, safe=""), 2_000_000))
-            except urllib.error.HTTPError as error:
-                if error.code != 404:
-                    raise
-                error.close()
+        listed = tag_documents(base, sorted(set(versions), key=version_key, reverse=True)[:5])
     else:
         listed = fetch_json(url, 2_000_000)
         if not isinstance(listed, list):
             fail("release list is malformed")
-    found = []
-    for item in listed:
-        tag = item.get("tag_name") if isinstance(item, dict) else None
-        version = tag[1:] if isinstance(tag, str) and tag.startswith("v") else None
-        if not version_key(version) or item.get("draft"):
-            continue
-        assets = {asset.get("name"): asset for asset in item.get("assets") or [] if isinstance(asset, dict)}
-        if RELEASE_MANIFEST in assets:
-            found.append({"version": version, "prerelease": bool(item.get("prerelease")), "notes": text(item.get("body"), 1500),
-                          "page": text(item.get("html_url"), 300), "assets": assets})
-    return sorted(found, key=lambda item: version_key(item["version"]), reverse=True)
+    found = (entry for item in listed if (entry := release_entry(item)))
+    yield from found if matching else sorted(found, key=lambda item: version_key(item["version"]), reverse=True)
+
+
+def tag_documents(base, versions):
+    for version in versions:
+        try:
+            yield fetch_json(base + "/tags/v" + urllib.parse.quote(version, safe=""), 2_000_000)
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+            error.close()
+
+
+def release_entry(item):
+    tag = item.get("tag_name") if isinstance(item, dict) else None
+    version = tag[1:] if isinstance(tag, str) and tag.startswith("v") else None
+    if not version_key(version) or item.get("draft"):
+        return None
+    assets = {asset.get("name"): asset for asset in item.get("assets") or [] if isinstance(asset, dict)}
+    if RELEASE_MANIFEST in assets:
+        return {"version": version, "prerelease": bool(item.get("prerelease")), "notes": text(item.get("body"), 1500),
+                "page": text(item.get("html_url"), 300), "assets": assets}
 
 
 def on_channel(channel, item):
@@ -831,6 +898,7 @@ def channel_newer(channel, version, installed):
     return candidate > current
 
 
+@functools.cache
 def signed(body, signature):
     if not RELEASE_KEY:
         return False
@@ -941,12 +1009,14 @@ def probe(args, root, current):
     try:
         pin = str(settings.get("pin") or "").strip()
         listed = releases(release_source(details.get("releases_url") or RELEASES_URL), channel=settings["channel"], pin=pin)
-        if pin and not any(item["version"] == pin for item in listed):
-            result["error"] = f"pinned version {pin} is not published"
-        candidates = ([item for item in listed if item["version"] == pin != record["version"]] if pin else
-                      [item for item in listed if on_channel(settings["channel"], item)
-                       and channel_newer(settings["channel"], item["version"], record["version"])])
-        for item in candidates[:5]:
+        if pin:
+            listed = list(listed)
+            if not any(item["version"] == pin for item in listed):
+                result["error"] = f"pinned version {pin} is not published"
+        candidates = (item for item in listed if item["version"] == pin != record["version"]) if pin else (
+            item for item in listed if on_channel(settings["channel"], item)
+            and channel_newer(settings["channel"], item["version"], record["version"]))
+        for item in itertools.islice(candidates, 5):
             try:
                 manifest = release_manifest(item)
             except ValueError as error:
@@ -1127,7 +1197,6 @@ def tick(args, root, current):
     if not lock:
         return
     with lock:
-        sessions(root, None)
         _, record, store = installation(root, current)
         settings = policy(store)
         result = probe(args, root, current) if settings["checks"] == "on" else None
@@ -1136,6 +1205,10 @@ def tick(args, root, current):
             stamp(root / "update/next", time.time() + CADENCES.get(settings["cadence"], CADENCES["daily"]))
             return recorded_check(root, record["version"], result, policy(store)) if result else None
         saved = committed(root, current, checked)
+        try:
+            committed(root, current, lambda: prune(root, current, args))
+        except (OSError, ValueError):
+            pass
         available = (saved or {}).get("available")
         if (settings["auto"] != "on" or not available or available["user_mods"]
                 or available["version"] in ((saved.get("failed") or {}).get("version"), (saved.get("held") or {}).get("version"))):
@@ -1191,6 +1264,7 @@ def launch(args, root, current):
     if sessions(root, args.session):
         pend(root, available, automatic=automatic)
         print(f"Oh My Diff {ready} is ready and installs when OMD starts while no other session is open.", file=sys.stderr)
+        (update_dir(root) / "announced").touch()
         return
     say(f"Updating Oh My Diff {record['version']} to {ready}…")
     try:
@@ -1292,6 +1366,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except NETWORK_ERRORS as error:
+        say(f"  {paint('✗', '31')} {unreachable(error)}")
+        raise SystemExit(1) from error
     except (OSError, ValueError, RuntimeError, tarfile.TarError) as error:
         say(f"  {paint('✗', '31')} {error}")
         raise SystemExit(1) from error

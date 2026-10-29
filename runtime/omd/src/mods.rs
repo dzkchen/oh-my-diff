@@ -2755,7 +2755,7 @@ struct Loaded {
     selection: ModSelection,
     source: Arc<str>,
     assets: Arc<BTreeMap<String, Value>>,
-    request_metadata: Arc<OnceLock<(Value, String)>>,
+    request_metadata: Arc<OnceLock<(Value, String, [u8; 32])>>,
     /// The store's code cache; `None` runs without one.
     code_cache: Option<Arc<code_cache::CacheRoot>>,
     adapter: Option<Value>,
@@ -3429,10 +3429,12 @@ fn invoke(
                         .iter()
                         .any(|prefix| call.operation.starts_with(prefix))
                     || matches!(call.operation.as_str(), "environment.read" | "environment.set");
-                let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if masked {Value::Null} else {call.arguments.clone()}});
-                let _ = access.with(|runtime| {
-                    Ok(runtime.event_except("host_operation", before, id, active, scope))
-                });
+                if access.with(|runtime| Ok(runtime.has_event("host_operation"))).unwrap_or(false) {
+                    let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if masked {Value::Null} else {call.arguments.clone()}});
+                    let _ = access.with(|runtime| {
+                        Ok(runtime.event_except("host_operation", before, id, active, scope))
+                    });
+                }
                 let intercepted = (!private && event != "intercept")
                     .then(|| access.with(|runtime| Ok(runtime.intercepts("host_operation"))))
                     .and_then(|intercepts| intercepts.ok().flatten());
@@ -3460,17 +3462,19 @@ fn invoke(
                 } else {
                     chain::dispatch(&mut *access, &mut *host, id, generation, call.clone(), active, scope)
                 };
-                let after = match &result {
-                    Ok(value) => {
-                        json!({"phase":"after","caller":id,"operation":call.operation,"result":if masked {Value::Null} else {value.clone()}})
-                    }
-                    Err(error) => {
-                        json!({"phase":"after","caller":id,"operation":call.operation,"error":if masked {"private_operation_failed".to_owned()} else {error.to_string()}})
-                    }
-                };
-                let _ = access.with(|runtime| {
-                    Ok(runtime.event_except("host_operation", after, id, active, scope))
-                });
+                if access.with(|runtime| Ok(runtime.has_event("host_operation"))).unwrap_or(false) {
+                    let after = match &result {
+                        Ok(value) => {
+                            json!({"phase":"after","caller":id,"operation":call.operation,"result":if masked {Value::Null} else {value.clone()}})
+                        }
+                        Err(error) => {
+                            json!({"phase":"after","caller":id,"operation":call.operation,"error":if masked {"private_operation_failed".to_owned()} else {error.to_string()}})
+                        }
+                    };
+                    let _ = access.with(|runtime| {
+                        Ok(runtime.event_except("host_operation", after, id, active, scope))
+                    });
+                }
                 result
             },
             progress,

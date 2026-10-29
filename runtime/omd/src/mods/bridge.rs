@@ -175,6 +175,35 @@ struct Request<'a> {
     metadata: &'a Value,
     #[serde(flatten)]
     invocation: Value,
+    #[serde(skip)]
+    kept: [u8; 32],
+}
+
+impl process::Kept for Request<'_> {
+    fn kept_digest(&self) -> Result<[u8; 32]> {
+        Ok(self.kept)
+    }
+
+    fn kept_line(&self) -> Result<Vec<u8>> {
+        let mut line: std::collections::BTreeMap<&str, &Value> = self
+            .metadata
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(field, _)| !process::KEPT_FIELDS.contains(&field.as_str()))
+            .map(|(field, value)| (field.as_str(), value))
+            .collect();
+        line.extend(
+            self.invocation
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(field, value)| (field.as_str(), value)),
+        );
+        let kept = json!(process::KEPT_FIELDS);
+        line.insert("kept", &kept);
+        process::request_line(&line)
+    }
 }
 
 impl std::ops::Index<&str> for Request<'_> {
@@ -185,7 +214,7 @@ impl std::ops::Index<&str> for Request<'_> {
     }
 }
 
-fn metadata(loaded: &Loaded) -> (Value, String) {
+fn metadata(loaded: &Loaded) -> Result<(Value, String, [u8; 32])> {
     let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join(&loaded.package.entrypoint),
         "api": MOD_API_VERSION,
         "assets": loaded.assets.as_ref(),
@@ -214,7 +243,8 @@ fn metadata(loaded: &Loaded) -> (Value, String) {
         }
     }
     let identity = format!("{:x}", identity.finalize());
-    (request, identity)
+    let kept = process::kept_digest(&request)?;
+    Ok((request, identity, kept))
 }
 
 /// A component instance keeps one runner, and with it its module state, for as long as it stays mounted.
@@ -243,9 +273,16 @@ pub(super) fn run(
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut forwarded = 0;
     let mut waited = Duration::ZERO;
-    let (metadata, identity) = loaded.request_metadata.get_or_init(|| metadata(loaded));
+    let (metadata, identity, kept) = match loaded.request_metadata.get() {
+        Some(cached) => cached,
+        None => {
+            let computed = metadata(loaded)?;
+            loaded.request_metadata.get_or_init(|| computed)
+        }
+    };
     let mut request = Request {
         metadata,
+        kept: *kept,
         invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
     };
     request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));

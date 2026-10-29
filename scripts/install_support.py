@@ -6,6 +6,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
+import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,8 +16,19 @@ PLUGIN_SCHEMA = 1
 PLUGIN_PRODUCT = "oh-my-diff-bundled-plugin-v1"
 
 
+DIGESTS = {}
+
+
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    with path.open("rb") as source:
+        status = os.fstat(source.fileno())
+        key = (str(path), status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
+        if key in DIGESTS:
+            return DIGESTS[key]
+        value = hashlib.file_digest(source, "sha256").hexdigest()
+    if time.time_ns() - max(status.st_mtime_ns, status.st_ctime_ns) > 2_000_000_000:
+        DIGESTS[key] = value
+    return value
 
 
 def run(arguments, cwd=None, env=None, capture=True):
