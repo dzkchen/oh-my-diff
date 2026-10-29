@@ -51,6 +51,7 @@ jobs:
         with:
           path: ${{ env.OMD_WORK_ROOT }}/omd-cache/v8
           key: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-${{ hashFiles('runtime/patches/manifest.json') }}
+          restore-keys: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-
       - name: Validate
         run: python3 .github/scripts/ci.py validate --job "$GITHUB_JOB" ${OMD_RELEASE_VERSION:+--release}
       - name: Pack host binaries

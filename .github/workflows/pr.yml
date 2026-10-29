@@ -60,6 +60,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_BUILD_JOBS: '2'
+      OMD_V8_DIR: /Users/runner/omd/omd-cache/v8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -80,6 +81,11 @@ jobs:
             ~/.cargo/git/db
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-${{ hashFiles('runtime/patches/manifest.json') }}
           restore-keys: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ env.OMD_V8_DIR }}
+          key: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-${{ hashFiles('runtime/patches/manifest.json') }}
+          restore-keys: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-
       - name: Replay patch and check drift
         run: |
           python3 .github/scripts/build.py setup pr
