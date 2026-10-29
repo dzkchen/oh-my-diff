@@ -1917,7 +1917,12 @@ impl ThreadLifecycleContributor<Config> for Mods {
                     .map(|account| (account.owner.clone(), account.provider.clone()))
             });
             let cross_provider = parent_account.as_ref().filter(|(owner, provider)| {
-                *provider != input.config.model_provider_id || crate::provider_worker(owner)
+                crate::cross_provider_child(
+                    owner,
+                    provider,
+                    &input.config.model_provider_id,
+                    &input.config.configured_model_provider_id,
+                )
             });
             let enrolled = match cross_provider {
                 Some((parent_owner, _)) => host.enroll_cross_provider(

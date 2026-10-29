@@ -67,12 +67,12 @@
       "extension_type": "mod",
       "files": {
         "index.ts": "70c71f131ef5e91fac792bda800a351c30e5420037025d811b2c8d3c8e4936a3",
-        "mod.json": "53de3f61978a6c7db4c7bf9c11c23c3a338da194c96087ef1e9e428692e46019",
-        "setup.mjs": "cbb6408b52aa233cb14c003baa81cb406327bcf452c60ce6a4b5b97ead63b091",
+        "mod.json": "32df1185d9957dcc50f607559d9a2a4891cdb564d28341997fed5ace9d8e1eda",
+        "setup.mjs": "bfa49531cce434ae774f0c28d005a9d4cbc901bf2f3faf76d28707d8c97667e7",
         "transport.mjs": "5eff14cc508a8b9f2ca1868ab837d22707acfb0b7d01a0e1d7b2f25890fbaabe"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "68c03889359e913c10feb3ea7f3e9d6f08e1363029ede995fbd135648d5042f0",
+      "package_sha256": "f605f71057e2fa90717ed71252bfbbd38f77270c4f62302e16922f9d72bf931a",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.0"
     },

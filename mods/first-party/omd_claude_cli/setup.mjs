@@ -199,8 +199,8 @@ async function setup(name, action, login) {
   const merge = host => {
     host.schema = 1;
     host.max_request_bytes = Math.max(host.max_request_bytes ?? 0, 16 * 1024 * 1024);
-    host.worker_limits = { requests: 60, exposure_microusd: 0, ...host.worker_limits,
-      seconds: Math.max(host.worker_limits?.seconds ?? 0, 86400) };
+    const raise = (name, value, ceiling) => Math.max(host.worker_limits?.[name] ?? 0, Math.min(value, host.limits?.[name] ?? ceiling));
+    host.worker_limits = { exposure_microusd: 0, ...host.worker_limits, requests: raise('requests', 300, 400), seconds: raise('seconds', 86400, 86400) };
     host.secret_refs = { ...host.secret_refs, claude_local_token: tokenPath };
     host.routes = [...taken(host.routes), ...accounts.map(route)];
     host.services = [...(host.services ?? []).filter(grant => grant.id !== 'claude_cli'), ...accounts.length ? [{

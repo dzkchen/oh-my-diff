@@ -19678,7 +19678,7 @@ index cce71e46c17084a76d7d7ad7945145f3d4d1a256..6a964509737b8796050c236bebe14fa0
        "additionalProperties": false,
        "properties": {
 diff --git a/codex-rs/core/src/agent/child_config.rs b/codex-rs/core/src/agent/child_config.rs
-index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..8c7055298b844175874ef877ad062765e232d588 100644
+index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..0264c5fbc435701f32a8e9058d7cc65dd8467ea6 100644
 --- a/codex-rs/core/src/agent/child_config.rs
 +++ b/codex-rs/core/src/agent/child_config.rs
 @@ -20,6 +20,26 @@ use codex_protocol::protocol::MultiAgentVersion;
@@ -19761,7 +19761,7 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..8c7055298b844175874ef877ad062765
  /// Builds the base config snapshot for a newly spawned sub-agent.
  ///
  /// The returned config starts from the parent's effective config and then refreshes the
-@@ -222,11 +274,28 @@ async fn apply_requested_spawn_agent_model_overrides(
+@@ -222,11 +274,32 @@ async fn apply_requested_spawn_agent_model_overrides(
              .models_manager
              .list_models(RefreshStrategy::Offline, config.http_client_factory())
              .await;
@@ -19773,29 +19773,33 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..8c7055298b844175874ef877ad062765
 +        let selected_model =
 +            find_spawn_agent_model(&available_models, requested_model, turn.multi_agent_version)?;
 +        let selected_model_name = selected_model.model.clone();
-+        if let Some(id) = &selected_model.model_provider
-+            && *id != config.model_provider_id
-+        {
-+            let mut provider = crate::session::switchable_model_provider(config, id)
++        let id = selected_model
++            .model_provider
++            .clone()
++            .unwrap_or_else(|| config.configured_model_provider_id.clone());
++        if id != config.model_provider_id {
++            let mut provider = crate::session::switchable_model_provider(config, &id)
 +                .ok_or_else(|| {
 +                    format!(
 +                        "spawn_agent model `{selected_model_name}` needs provider `{id}`, which is not available"
 +                    )
 +                })?;
 +            provider.supports_websockets &= config.model_provider.supports_websockets;
-+            config.model_provider_id = id.clone();
++            if id != config.configured_model_provider_id {
++                config
++                    .web_search_mode
++                    .set(codex_protocol::config_types::WebSearchMode::Disabled)
++                    .map_err(|err| {
++                        format!("spawn_agent model `{selected_model_name}` cannot run without the required web search: {err}")
++                    })?;
++            }
++            config.model_provider_id = id;
 +            config.model_provider = provider;
-+            config
-+                .web_search_mode
-+                .set(codex_protocol::config_types::WebSearchMode::Disabled)
-+                .map_err(|err| {
-+                    format!("spawn_agent model `{selected_model_name}` cannot run without the required web search: {err}")
-+                })?;
 +        }
          let selected_model_info = session
              .services
              .models_manager
-@@ -323,25 +392,27 @@ async fn apply_spawn_agent_role(
+@@ -323,25 +396,27 @@ async fn apply_spawn_agent_role(
      )
  }
 
@@ -19834,7 +19838,7 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..8c7055298b844175874ef877ad062765
                  .join(", ");
              format!(
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 22cd725605272a5e4e3b475c8ad2fb2835df0203..2a3732ae00e57d8d6cbb9972c943284ac822dd98 100644
+index 22cd725605272a5e4e3b475c8ad2fb2835df0203..e8411c5db85ef3c4ea9bcb0259533b0764a77ce2 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -445,6 +445,13 @@ impl LocalAgentControl {
@@ -19860,7 +19864,7 @@ index 22cd725605272a5e4e3b475c8ad2fb2835df0203..2a3732ae00e57d8d6cbb9972c943284a
              config
                  .permissions
                  .set_permission_profile_from_session_snapshot(runtime_permission_profile)
-@@ -469,16 +476,20 @@ impl LocalAgentControl {
+@@ -469,15 +476,21 @@ impl LocalAgentControl {
              config.model = Some(model);
          }
          if config.model_provider_id != stored_model_provider {
@@ -19880,17 +19884,18 @@ index 22cd725605272a5e4e3b475c8ad2fb2835df0203..2a3732ae00e57d8d6cbb9972c943284a
 +                            "Model provider `{stored_model_provider}` not found"
 +                        ))
 +                    })?;
++            if stored_model_provider != config.configured_model_provider_id {
++                config
++                    .web_search_mode
++                    .set(codex_protocol::config_types::WebSearchMode::Disabled)
++                    .map_err(|err| {
++                        CodexErr::InvalidRequest(format!("web_search_mode is invalid: {err}"))
++                    })?;
++            }
              config.model_provider_id = stored_model_provider;
-+            config
-+                .web_search_mode
-+                .set(codex_protocol::config_types::WebSearchMode::Disabled)
-+                .map_err(|err| {
-+                    CodexErr::InvalidRequest(format!("web_search_mode is invalid: {err}"))
-+                })?;
          }
          let parent_thread_id = owner_thread_id
-             .or_else(|| initial_history.get_resumed_parent_thread_id())
-@@ -1113,7 +1124,9 @@ impl LocalAgentControl {
+@@ -1113,7 +1126,9 @@ impl LocalAgentControl {
              (MultiAgentVersion::Disabled | MultiAgentVersion::V1, _)
              | (MultiAgentVersion::V2, _) => (None, None),
          };
@@ -19901,7 +19906,7 @@ index 22cd725605272a5e4e3b475c8ad2fb2835df0203..2a3732ae00e57d8d6cbb9972c943284a
          // `record_conversation_items` only queues persistence writes asynchronously.
          // Flush before snapshotting store history for a fork.
          parent_thread.ensure_rollout_materialized().await;
-@@ -1174,6 +1187,14 @@ impl LocalAgentControl {
+@@ -1174,6 +1189,14 @@ impl LocalAgentControl {
              forked_rollout_items = items;
          }
          let retain_forked_item = |envelope: &mut ResponseItemEnvelope, replaced: &mut bool| {
@@ -21466,10 +21471,20 @@ index 3d97b6864ac824fb3a559914bd0322f5b44f014c..a010f3166a9ef071c5692dafcc6546c6
          return Err(CodexErr::TurnAborted);
      }
 diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
-index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a359504c6c125 100644
+index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee330f1b0b5f522c4cd5f8f30cb173c214610120 100644
 --- a/codex-rs/core/src/config/mod.rs
 +++ b/codex-rs/core/src/config/mod.rs
-@@ -1217,6 +1217,7 @@ pub struct CodeModeConfig {
+@@ -671,6 +671,9 @@ pub struct Config {
+     /// Info needed to make an API request to the model.
+     pub model_provider: ModelProviderInfo,
+
++    /// Provider this configuration selected, kept when a session switches to a runtime provider.
++    pub configured_model_provider_id: String,
++
+     /// Deprecated: `friendly` and `pragmatic` no longer select a style.
+     pub personality: Option<Personality>,
+
+@@ -1217,6 +1220,7 @@ pub struct CodeModeConfig {
      pub direct_only_tool_namespaces: Vec<String>,
      /// Keep code mode fail-closed when the standalone host is unavailable.
      pub disable_in_process_fallback: bool,
@@ -21477,7 +21492,7 @@ index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a3595
  }
 
  impl Default for CodeModeConfig {
-@@ -1228,6 +1229,7 @@ impl Default for CodeModeConfig {
+@@ -1228,6 +1232,7 @@ impl Default for CodeModeConfig {
              excluded_tool_namespaces: Vec::new(),
              direct_only_tool_namespaces: Vec::new(),
              disable_in_process_fallback: false,
@@ -21485,7 +21500,7 @@ index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a3595
          }
      }
  }
-@@ -2832,6 +2834,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
+@@ -2832,6 +2837,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
          disable_in_process_fallback: host
              .and_then(|config| config.disable_in_process_fallback)
              .unwrap_or_default(),
@@ -21495,7 +21510,7 @@ index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a3595
      }
  }
 
-@@ -3971,6 +3976,7 @@ impl Config {
+@@ -3971,12 +3979,22 @@ impl Config {
 
          let model_providers =
              merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
@@ -21503,6 +21518,30 @@ index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a3595
                  .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
 
          let model_provider_id = config_layer_stack.required_model_provider().map(str::to_string)
+             .or(model_provider)
+-            .or(cfg.model_provider)
++            .or(cfg.model_provider.clone())
+             .unwrap_or_else(|| "openai".to_string());
++        // A resumed or forked thread may start on a runtime provider; the configured one stays the session's own.
++        let configured_model_provider_id =
++            if codex_model_provider_info::runtime_provider(&model_provider_id).is_some() {
++                config_layer_stack.required_model_provider().map(str::to_string)
++                    .or(cfg.model_provider.clone())
++                    .unwrap_or_else(|| "openai".to_string())
++            } else {
++                model_provider_id.clone()
++            };
+         let model_provider = model_providers
+             .get(&model_provider_id)
+             .ok_or_else(|| {
+@@ -4464,6 +4482,7 @@ impl Config {
+                 .model_post_turn_compact_threshold_percent
+                 .unwrap_or_default(),
+             async_compaction_threshold_percent,
++            configured_model_provider_id,
+             model_provider_id,
+             model_provider,
+             cwd: resolved_cwd,
 diff --git a/codex-rs/core/src/context/world_state/model_catalog.rs b/codex-rs/core/src/context/world_state/model_catalog.rs
 index 700a05f9673e2055d3c8abec98678a6f758b46f1..349bfc1300c00f09159a685f0e718afdfbd8fcfd 100644
 --- a/codex-rs/core/src/context/world_state/model_catalog.rs
@@ -51104,10 +51143,10 @@ index 0000000000000000000000000000000000000000..f6f77a995f3a06e516b465f0efc01d11
 +}
 diff --git a/codex-rs/core/tests/suite/provider_switch.rs b/codex-rs/core/tests/suite/provider_switch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a569fef8b
+index 0000000000000000000000000000000000000000..6a37810a8f7fdd9993acff87e48fbbdde86b2cac
 --- /dev/null
 +++ b/codex-rs/core/tests/suite/provider_switch.rs
-@@ -0,0 +1,390 @@
+@@ -0,0 +1,483 @@
 +use anyhow::Result;
 +use codex_core::TurnInputRequest;
 +use codex_features::Feature;
@@ -51138,7 +51177,16 @@ index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a
 +use std::time::Duration;
 +use wiremock::MockServer;
 +
-+fn runtime_provider(id: &str, slug: &str, server: &MockServer) {
++struct RuntimeProvider(String);
++
++impl Drop for RuntimeProvider {
++    fn drop(&mut self) {
++        codex_models_manager::runtime_models::set(&self.0, Vec::new());
++        codex_model_provider_info::set_runtime_provider(&self.0, None);
++    }
++}
++
++fn runtime_provider(id: &str, slug: &str, server: &MockServer) -> RuntimeProvider {
 +    codex_model_provider_info::set_runtime_provider(
 +        id,
 +        Some(ModelProviderInfo {
@@ -51152,6 +51200,7 @@ index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a
 +    let mut model = codex_models_manager::model_info::model_info_from_slug(slug);
 +    model.used_fallback_model_metadata = false;
 +    codex_models_manager::runtime_models::set(id, vec![model]);
++    RuntimeProvider(id.to_string())
 +}
 +
 +fn reply(id: &str, text: &str) -> String {
@@ -51208,7 +51257,7 @@ index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a
 +    let startup_log =
 +        mount_sse_sequence(&startup, vec![reply("a1", "FIRST"), reply("a3", "THIRD")]).await;
 +    let other_log = mount_sse_sequence(&other, vec![reply("b2", "SECOND")]).await;
-+    runtime_provider("switch_carry", "switch-carry-model", &other);
++    let _provider = runtime_provider("switch_carry", "switch-carry-model", &other);
 +    let test = test_codex().build(&startup).await?;
 +    let startup_provider = test.config.model_provider_id.clone();
 +    let startup_model = test.session_configured.model.clone();
@@ -51267,7 +51316,7 @@ index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a
 +    mount_sse_sequence(&startup, vec![reply("a1", "FIRST")]).await;
 +    let other_log =
 +        mount_sse_sequence(&other, vec![reply("b2", "SECOND"), reply("b3", "SUMMARY")]).await;
-+    runtime_provider("switch_compact", "switch-compact-model", &other);
++    let _provider = runtime_provider("switch_compact", "switch-compact-model", &other);
 +    let test = test_codex().build(&startup).await?;
 +
 +    turn(&test, "turn one").await?;
@@ -51307,7 +51356,7 @@ index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a
 +        ],
 +    )
 +    .await;
-+    runtime_provider("switch_mid", "switch-mid-model", &other);
++    let _provider = runtime_provider("switch_mid", "switch-mid-model", &other);
 +    let test = test_codex().build(&startup).await?;
 +
 +    test.codex
@@ -51356,7 +51405,7 @@ index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a
 +    )
 +    .await;
 +    let other_log = mount_sse_sequence(&other, vec![reply("b1", "SECOND")]).await;
-+    runtime_provider("switch_summary", "switch-summary-model", &other);
++    let _provider = runtime_provider("switch_summary", "switch-summary-model", &other);
 +    let test = test_codex()
 +        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
 +        .build(&startup)
@@ -51408,7 +51457,7 @@ index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a
 +    .await;
 +    let other_log =
 +        mount_sse_sequence(&other, vec![reply("b1", "SECOND"), reply("b2", "THIRD")]).await;
-+    runtime_provider("carry_failure", "carry-failure-model", &other);
++    let _provider = runtime_provider("carry_failure", "carry-failure-model", &other);
 +    let test = test_codex()
 +        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
 +        .build(&startup)
@@ -51455,7 +51504,7 @@ index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a
 +    )
 +    .await;
 +    let other_log = mount_sse_sequence(&other, vec![reply("b1", "CHILD_DONE")]).await;
-+    runtime_provider("spawn_other", "spawn-other-model", &other);
++    let _provider = runtime_provider("spawn_other", "spawn-other-model", &other);
 +    let test = test_codex()
 +        .with_config(|config| {
 +            for feature in [Feature::Collab, Feature::MultiAgentV2] {
@@ -51495,6 +51544,89 @@ index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a
 +            .requests()
 +            .iter()
 +            .all(|request| request.body_json()["model"] != "spawn-other-model")
++    );
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn spawned_base_model_agent_returns_to_the_configured_provider() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let startup = start_mock_server().await;
++    let other = start_mock_server().await;
++    let _provider = runtime_provider("spawn_home", "spawn-home-model", &other);
++    let test = test_codex()
++        .with_config(|config| {
++            for feature in [Feature::Collab, Feature::MultiAgentV2] {
++                config
++                    .features
++                    .enable(feature)
++                    .expect("test config should allow feature update");
++            }
++        })
++        .build(&startup)
++        .await?;
++    let startup_model = test.session_configured.model.clone();
++    let spawn = sse(vec![
++        ev_function_call_with_namespace(
++            "spawn-1",
++            "collaboration",
++            "spawn_agent",
++            &json!({"task_name": "researcher", "message": "CHILD_TASK", "fork_turns": "all",
++                "model": startup_model})
++            .to_string(),
++        ),
++        ev_completed("b1"),
++    ]);
++    let other_log = mount_sse_sequence(&other, vec![spawn, reply("b2", "SPAWNED")]).await;
++    let startup_log = mount_sse_sequence(&startup, vec![reply("a1", "CHILD_DONE")]).await;
++
++    switch(&test, "spawn_home", "spawn-home-model").await?;
++    turn(&test, "spawn a researcher").await?;
++    for _ in 0..200 {
++        if !startup_log.requests().is_empty() {
++            break;
++        }
++        tokio::time::sleep(Duration::from_millis(25)).await;
++    }
++
++    let child = startup_log.requests();
++    assert_eq!(child.len(), 1);
++    assert_eq!(child[0].body_json()["model"], startup_model.as_str());
++    assert!(
++        child[0].body_json()["tools"]
++            .to_string()
++            .contains("\"type\":\"web_search\"")
++    );
++    assert!(mentions(&child[0].input(), "CHILD_TASK"));
++    assert!(
++        other_log
++            .requests()
++            .iter()
++            .all(|request| request.body_json()["model"] == "spawn-home-model")
++    );
++    Ok(())
++}
++
++#[tokio::test]
++async fn a_thread_started_on_a_runtime_provider_keeps_the_configured_provider() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = start_mock_server().await;
++    let _provider = runtime_provider("resume_runtime", "resume-runtime-model", &server);
++    let home = tempfile::TempDir::new()?;
++    let config = codex_core::config::ConfigBuilder::default()
++        .codex_home(home.path().to_path_buf())
++        .harness_overrides(codex_core::config::ConfigOverrides {
++            model_provider: Some("resume_runtime".to_string()),
++            ..Default::default()
++        })
++        .build()
++        .await?;
++    assert_eq!(
++        (
++            config.model_provider_id.as_str(),
++            config.configured_model_provider_id.as_str()
++        ),
++        ("resume_runtime", "openai")
 +    );
 +    Ok(())
 +}
@@ -60138,10 +60270,10 @@ index 0000000000000000000000000000000000000000..096710ab25143400080f58310d11d2d4
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5153c66ec51238e4ee759b58554322e5cbe6f436
+index 0000000000000000000000000000000000000000..d6b5c4798fc002c9f3a5016d19cf506001c6c028
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,797 @@
+@@ -0,0 +1,806 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -60417,6 +60549,15 @@ index 0000000000000000000000000000000000000000..5153c66ec51238e4ee759b58554322e5
 +
 +fn provider_worker(owner: &str) -> bool {
 +    owner.starts_with("agent:") && owner.contains('@')
++}
++
++fn cross_provider_child(
++    parent_owner: &str,
++    parent_provider: &str,
++    provider: &str,
++    configured_provider: &str,
++) -> bool {
++    provider_worker(parent_owner) || parent_provider != provider && provider != configured_provider
 +}
 +
 +fn lead_candidate(route: &Route, provider: &str) -> bool {
@@ -63492,10 +63633,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab9b0fca4feadc1bdbf2f52a90b389dba23c11d9
+index 0000000000000000000000000000000000000000..1d993691f87e6a53a42c5f26b3685d4859743730
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2604 @@
+@@ -0,0 +1,2609 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -65415,7 +65556,12 @@ index 0000000000000000000000000000000000000000..ab9b0fca4feadc1bdbf2f52a90b389db
 +                    .map(|account| (account.owner.clone(), account.provider.clone()))
 +            });
 +            let cross_provider = parent_account.as_ref().filter(|(owner, provider)| {
-+                *provider != input.config.model_provider_id || crate::provider_worker(owner)
++                crate::cross_provider_child(
++                    owner,
++                    provider,
++                    &input.config.model_provider_id,
++                    &input.config.configured_model_provider_id,
++                )
 +            });
 +            let enrolled = match cross_provider {
 +                Some((parent_owner, _)) => host.enroll_cross_provider(
@@ -73408,10 +73554,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ddafa7c5fe5a9f7ff13173d0c5f2038ecc824a13
+index 0000000000000000000000000000000000000000..e4902396fbf55b61ac0b36912d694d7277566b16
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4426 @@
+@@ -0,0 +1,4445 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -77043,6 +77189,25 @@ index 0000000000000000000000000000000000000000..ddafa7c5fe5a9f7ff13173d0c5f2038e
 +        .await,
 +        ("refused", Some("no_peer_message_handler".to_owned()))
 +    );
++}
++
++#[test]
++fn a_child_back_on_the_configured_provider_is_an_ordinary_child() {
++    assert!(crate::cross_provider_child(
++        "lead", "openai", "claude", "openai"
++    ));
++    assert!(!crate::cross_provider_child(
++        "lead", "claude", "openai", "openai"
++    ));
++    assert!(!crate::cross_provider_child(
++        "lead", "openai", "openai", "openai"
++    ));
++    assert!(crate::cross_provider_child(
++        "agent:a@b",
++        "claude",
++        "openai",
++        "openai"
++    ));
 +}
 +
 +#[test]
@@ -105351,10 +105516,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c9819532c07
+index 0000000000000000000000000000000000000000..095a7d1babe3f4eb81691a30d021563ecde5a0fa
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6230 @@
+@@ -0,0 +1,6255 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -107597,8 +107762,33 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +        .flatten()
 +        .filter_map(|(name, definition)| Some((name.clone(), definition.get("default")?.clone())))
 +        .collect();
-+    effective.extend(settings.clone());
++    effective.extend(declared_settings(schema, settings));
 +    effective
++}
++
++/// A closed schema drops stored keys a newer package no longer declares.
++fn declared_settings(
++    schema: Option<&Value>,
++    settings: &BTreeMap<String, Value>,
++) -> BTreeMap<String, Value> {
++    let properties = schema
++        .filter(|schema| schema.get("additionalProperties") == Some(&json!(false)))
++        .and_then(|schema| schema["properties"].as_object());
++    settings
++        .iter()
++        .filter(|(name, _)| properties.is_none_or(|properties| properties.contains_key(*name)))
++        .map(|(name, value)| (name.clone(), value.clone()))
++        .collect()
++}
++
++fn validate_stored_settings(
++    package: &ModPackage,
++    settings: &BTreeMap<String, Value>,
++) -> Result<()> {
++    validate_settings(
++        package,
++        &declared_settings(package.settings_schema.as_ref(), settings),
++    )
 +}
 +
 +pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
@@ -109455,7 +109645,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +                    return Err(failure(format!("capability_denied: {}", package.id)));
 +                }
 +                check_secret_environment(&package, &selection.secret_environment)?;
-+                validate_settings(&package, &selection.settings)?;
++                validate_stored_settings(&package, &selection.settings)?;
 +                Ok((package, source))
 +            })();
 +            let (package, source) = match loaded {
@@ -115626,10 +115816,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc96554c3944ab
+index 0000000000000000000000000000000000000000..f3324fd8a2fe46587e3d3b6abd10051ef42ee177
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2916 @@
+@@ -0,0 +1,2927 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -116218,7 +116408,14 @@ index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc9655
 +                    .settings
 +                    .get(&resolved.package.id)
 +                    .cloned()
-+                    .or_else(|| previous.map(|locked| selected_settings(&config, locked)))
++                    .or_else(|| {
++                        previous.map(|locked| {
++                            declared_settings(
++                                resolved.package.settings_schema.as_ref(),
++                                &selected_settings(&config, locked),
++                            )
++                        })
++                    })
 +                    .unwrap_or_default();
 +                validate_settings(&resolved.package, &settings)?;
 +                resolved.locked.settings = settings;
@@ -116633,7 +116830,7 @@ index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc9655
 +        {
 +            return Err(failure("capability_denied"));
 +        }
-+        super::validate_settings(&manifest, &selection.settings)?;
++        super::validate_stored_settings(&manifest, &selection.settings)?;
 +        selection.enabled = true;
 +        store::refuse_second_copy(&config, &path, &scope, &manifest.id)?;
 +        config.revision = config
@@ -116760,11 +116957,15 @@ index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc9655
 +            .ok_or_else(|| failure("package_not_installed"))?;
 +        let current_path = current.path.clone();
 +        previous.path = previous.cache_path.clone();
-+        previous.settings = selected_settings(&self.configuration()?, &current);
++        let package = store::package(&previous.path)?.0;
++        previous.settings = declared_settings(
++            package.settings_schema.as_ref(),
++            &selected_settings(&self.configuration()?, &current),
++        );
 +        previous.enabled = current.enabled
 +            && same_approval(&previous, &current)
 +            && previous.state_version == current.state_version;
-+        validate_settings(&store::package(&previous.path)?.0, &previous.settings)?;
++        validate_settings(&package, &previous.settings)?;
 +        let history = lock.history.entry(id.to_owned()).or_default();
 +        history.pop();
 +        history.push(current);
@@ -118548,7 +118749,7 @@ index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc9655
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..26caadf187b89788e3c7eb64bcb7f9018615f6d4
+index 0000000000000000000000000000000000000000..60edfb78f8074f8f90276c484cc2f7b9e176ba4e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
 @@ -0,0 +1,323 @@
@@ -118593,7 +118794,7 @@ index 0000000000000000000000000000000000000000..26caadf187b89788e3c7eb64bcb7f901
 +        if hash != selection.sha256 {
 +            return Err(failure("source_changed: inspect and trust the new digest"));
 +        }
-+        let mut settings = selection.settings.clone();
++        let mut settings = declared_settings(package.settings_schema.as_ref(), &selection.settings);
 +        change(&mut settings);
 +        validate_settings(&package, &settings)?;
 +        if settings == selection.settings {
@@ -121312,10 +121513,10 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18023b5864
+index 0000000000000000000000000000000000000000..f41113104ee7299b41bf3d775061963fb6721999
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1575 @@
+@@ -0,0 +1,1577 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -122362,7 +122563,9 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +                        Some("capability_denied".to_owned())
 +                    } else {
 +                        super::check_secret_environment(&manifest, &selection.secret_environment)
-+                            .and_then(|()| super::validate_settings(&manifest, &selection.settings))
++                            .and_then(|()| {
++                                super::validate_stored_settings(&manifest, &selection.settings)
++                            })
 +                            .err()
 +                            .map(|error| error.to_string())
 +                    };
@@ -122546,7 +122749,7 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +                .find(|m| m.path == path)
 +                .map(|m| (m.settings.clone(), m.required))
 +                .unwrap_or_default();
-+            super::validate_settings(&package, &settings)?;
++            super::validate_stored_settings(&package, &settings)?;
 +            config.mods.retain(|m| m.path != path);
 +            trusted.insert(path.clone());
 +            config.mods.push(ModSelection {
@@ -122614,7 +122817,7 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +                    return Err(failure("broker_import_selection_changed"));
 +                }
 +                super::check_secret_environment(&manifest, &selection.secret_environment)?;
-+                super::validate_settings(&manifest, &selection.settings)?;
++                super::validate_stored_settings(&manifest, &selection.settings)?;
 +                Ok::<_, std::io::Error>(())
 +            })();
 +            match eligible {
@@ -136769,10 +136972,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf1c9083e0
+index 0000000000000000000000000000000000000000..6a8188f113d57881c05e2a3e50c3747c54938ce9
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4795 @@
+@@ -0,0 +1,4842 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -140111,6 +140314,53 @@ index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf
 +    let revision = store.configuration().unwrap().revision;
 +    codex_omd::write_settings(&store, "fixture", &json!({"count":2})).unwrap();
 +    assert_eq!(store.configuration().unwrap().revision, revision);
++}
++
++#[test]
++fn settings_a_newer_package_no_longer_declares_are_dropped() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
++    let path = package(
++        &root,
++        "fixture",
++        "export default api => api.command('read', () => JSON.stringify(api.settings))",
++        &["commands"],
++    );
++    let manifest = path.join("mod.json");
++    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
++    let schema = |old: bool| {
++        let mut properties = json!({"mode":{"type":"string","default":"a"}});
++        if old {
++            properties["old"] = json!({"type":"boolean","default":false});
++        }
++        json!({"type":"object","properties":properties,"additionalProperties":false})
++    };
++    value["settings_schema"] = schema(true);
++    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
++    trust(&store, &path, &["commands"]);
++    codex_omd::write_settings(&store, "fixture", &json!({"old":true,"mode":"b"})).unwrap();
++    value["settings_schema"] = schema(false);
++    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
++    trust(&store, &path, &["commands"]);
++
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    assert_eq!(
++        runtime
++            .invoke("fixture", generation, "command", "read", Value::Null)
++            .unwrap(),
++        json!(r#"{"mode":"b"}"#)
++    );
++    assert!(codex_omd::write_settings(&store, "fixture", &json!({"other":1})).is_err());
++    assert_eq!(
++        codex_omd::write_settings(&store, "fixture", &json!({"mode":"a"})).unwrap(),
++        json!({"settings":{"mode":"a"}})
++    );
++    assert_eq!(
++        store.configuration().unwrap().mods[0].settings,
++        std::collections::BTreeMap::from([("mode".to_string(), json!("a"))])
++    );
 +}
 +
 +#[test]

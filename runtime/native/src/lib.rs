@@ -275,6 +275,15 @@ fn provider_worker(owner: &str) -> bool {
     owner.starts_with("agent:") && owner.contains('@')
 }
 
+fn cross_provider_child(
+    parent_owner: &str,
+    parent_provider: &str,
+    provider: &str,
+    configured_provider: &str,
+) -> bool {
+    provider_worker(parent_owner) || parent_provider != provider && provider != configured_provider
+}
+
 fn lead_candidate(route: &Route, provider: &str) -> bool {
     route.roles.contains(&config::RouteRole::Lead)
         && (route.provider == provider || route.credential.is_some())

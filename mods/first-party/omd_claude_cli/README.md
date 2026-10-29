@@ -55,6 +55,7 @@ To run subagents on Claude while another model leads, turn on `omd_subagent_rout
 - Earlier reasoning isn't sent back to Claude. Images are forwarded.
 - A task an OpenAI lead seals for a subagent (GPT-6.1 calling its spawn tool directly) can't be read by Claude; a Claude
   subagent then works from the conversation it inherits and its agent name.
+- Setup raises the per-subagent limit in `host.json` `worker_limits` to at least 300 requests and a day, within the session's `limits`, keeping higher values you set.
 - After a switch to Claude, an OpenAI compaction summary is first rewritten as plain text by OpenAI (one OpenAI request; if it fails, Claude continues without that summary and a warning shows); OpenAI's encrypted reasoning isn't sent.
 - A prompt over the model's context window is refused (`context_length_exceeded`).
 

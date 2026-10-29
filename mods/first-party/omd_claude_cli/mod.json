@@ -48,12 +48,6 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "ask_claude": {
-        "title": "Ask Claude tool (removed)",
-        "description": "Has no effect; turn on omd_subagent_router to run subagents on Claude",
-        "type": "boolean",
-        "default": false
-      },
       "extra_usage": {
         "title": "Use extra usage",
         "description": "Keep working on paid extra usage when your plan limit is reached, if your account allows it; off stops at the first extra-usage response",

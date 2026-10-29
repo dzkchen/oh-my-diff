@@ -47,10 +47,12 @@ The agent's tool row shows the model it runs on, and `/status` lists each subage
 - If no model matches, or the model's provider has no usable route, the subagent runs on the lead's model and a
   warning shows above the prompt and in the transcript.
 - A subagent on another provider is admitted like any helper agent on that provider's route: it counts against
-  `worker_limits` in `host.json` (by default 60 requests and 30 minutes per subagent), and if it can't be admitted its
-  requests are refused.
+  `worker_limits` in `host.json` (by default 60 requests and 30 minutes per subagent; `omd_claude_cli` setup raises
+  them to 300 requests and a day), and if it can't be admitted its requests are refused.
 - A directive whose model isn't available is not kept: a warning names it when you submit the prompt.
 - It changes only which model subagents use. The subagent's tools, permissions and approvals stay those of the lead.
 - Earlier reasoning and compaction summaries from the lead aren't sent to a subagent on another provider.
 - GPT-6.1 leads seal the task they give a subagent; another provider can't read it, so that subagent works from the
   conversation it inherits and its agent name (such as `/root/readme_research`).
+- A Claude lead's subagent on a GPT model runs on the provider the session started on, with its own sign-in. A Claude
+  subagent's own GPT subagent needs an OpenAI lead route in `host.json`; without one it is refused.

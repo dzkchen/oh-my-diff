@@ -3632,6 +3632,25 @@ async fn peer_messages_pass_receive_interceptors_as_untrusted_data() {
 }
 
 #[test]
+fn a_child_back_on_the_configured_provider_is_an_ordinary_child() {
+    assert!(crate::cross_provider_child(
+        "lead", "openai", "claude", "openai"
+    ));
+    assert!(!crate::cross_provider_child(
+        "lead", "claude", "openai", "openai"
+    ));
+    assert!(!crate::cross_provider_child(
+        "lead", "openai", "openai", "openai"
+    ));
+    assert!(crate::cross_provider_child(
+        "agent:a@b",
+        "claude",
+        "openai",
+        "openai"
+    ));
+}
+
+#[test]
 fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
     let Some(fixture) = fixture(&[]) else {
         return;

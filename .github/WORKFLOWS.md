@@ -37,7 +37,8 @@ month for GitHub Actions updates. There are no dependency license or scheduled v
   checkout. It then runs native tests, Clippy on patched paths, Rustfmt, native ownership, lock drift and mod type
   checks. One upstream test, `filtered_host_additional_permissions`, is excluded as a known baseline failure. The
   `codex-core` integration suite is advisory for a release and required for a nightly; two upstream tests that fail
-  after the rest of the suite in one process run in their own. Jobs work under `/Users/runner/omd`, not `/tmp`,
+  after the rest of the suite in one process, and the provider-switch tests that register process-wide providers,
+  run in their own. Jobs work under `/Users/runner/omd`, not `/tmp`,
   which a sandboxed command may write.
 - `build` builds and signs the release host binaries in parallel with `test`.
 - `package` takes those binaries, runs mod tests, Python tests, mod-host scenarios and client acceptance, then packs

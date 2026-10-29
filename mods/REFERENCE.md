@@ -4606,7 +4606,9 @@ Anything else (`task.*`, `contract.*`, other `routes.*`, `evidence.*`, `workspac
 #### Settings defaults
 
 Callbacks receive explicit settings over each `settings_schema` property's `default`; give every property a
-default.
+default. With `additionalProperties: false`, a stored setting the package no longer declares is ignored and dropped
+at the next settings write or update, so a release can remove a setting; a write naming an undeclared setting is
+still refused (`unknown_setting`).
 
 A property may also carry a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
 instead of the raw name, and `choices: "routes"` on a string property without `enum`: `packages.list` then fills its
