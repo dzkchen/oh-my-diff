@@ -2,7 +2,7 @@
 
 The patch that turns Codex into OMD.
 
-OMD is one patch on Codex `rust-v0.164.0` (pinned in `upstream.lock.json`): [`patches/omd-0.164.0.patch`](patches).
+OMD is one patch on Codex `rust-v0.165.0` (pinned in `upstream.lock.json`): [`patches/omd-0.165.0.patch`](patches).
 [`runtime/omd`](omd) and [`runtime/native`](native) are copies of the `codex-rs/omd` and `codex-rs/ext/omd` crates it
 adds, written back by `build.py sync`. `runtime/native/src/request_observer.rs` copies the patched
 `codex-rs/codex-api/src/request_observer.rs`.

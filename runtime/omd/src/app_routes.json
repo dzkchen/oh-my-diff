@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.164.0",
-  "commit": "6aaac694803004a63c6f393d153c96d22521a6b9"
+  "tag": "rust-v0.165.0",
+  "commit": "360319d8dee62d87e2d59fc0c21805d79519cfed"
  },
  "requests": {
   "account/bedrock/checkGovCloudRequirements": {
@@ -825,6 +825,7 @@
    ],
    "scope": "visible",
    "fields": [
+    "attachToSource",
     "beforeTurnId",
     "cwd",
     "deferGoalContinuation",
@@ -921,6 +922,7 @@
    "fields": [
     "ancestorThreadId",
     "archived",
+    "attachedToThreadId",
     "cursor",
     "cwd",
     "excludedThreadIds",
@@ -949,6 +951,16 @@
    "fields": [
     "cursor",
     "limit"
+   ]
+  },
+  "thread/memory/read": {
+   "class": "sessions",
+   "contexts": [
+    "user"
+   ],
+   "scope": "visible",
+   "fields": [
+    "threadId"
    ]
   },
   "thread/memoryMode/set": {
@@ -1155,6 +1167,7 @@
     "prompt",
     "responsesapiClientMetadata",
     "threadId",
+    "threadSource",
     "turnTrigger"
    ]
   },
@@ -1525,6 +1538,7 @@
   "auto_review.experimental_policy_template",
   "auto_review.extra_policy",
   "auto_review.policy",
+  "auto_review.timeout_ms",
   "browser_use",
   "browser_use.allow_history_access",
   "browser_use.default_origin_policy",
@@ -1551,11 +1565,13 @@
   "features.guardian_enhanced_node_repl_transcripts",
   "features.guardian_ext",
   "features.guardian_node_repl_transcript_images",
+  "features.guardian_recorded_items",
   "features.guardian_reuse_parent_compaction",
   "features.guardian_root_handoff_context",
   "features.guardian_trust_orchestrator_connectors",
   "features.guardianv2",
   "features.guardianv2_decisions_comparison",
+  "features.guardianv3",
   "features.login_shell_package_path",
   "features.mcp_oauth_refresh_coordination",
   "features.network_proxy",
@@ -1764,6 +1780,7 @@
   "features.plugin_hooks",
   "features.plugins",
   "features.powershell_shell_version",
+  "features.prediction_preserve_parent_tools",
   "features.prevent_idle_sleep",
   "features.psp",
   "features.realtime_conversation",
@@ -1808,6 +1825,7 @@
   "features.tool_suggest",
   "features.transcript_v2",
   "features.tui_app_server",
+  "features.tui_multi_backend",
   "features.ultrafast_mode",
   "features.unavailable_dummy_tools",
   "features.unbounded_connection_retries",

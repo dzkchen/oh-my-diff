@@ -57,12 +57,10 @@ impl WorkspaceAuthority {
         approved: &BTreeSet<String>,
         limit: usize,
     ) -> Result<Option<String>, String> {
-        match codex_omd::hash_tracked(&self.repository, approved, limit, |path| {
+        codex_omd::hash_tracked(&self.repository, approved, limit, |path| {
             self.readable(&self.repository.join(path))
-        }) {
-            Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => Ok(None),
-            result => result.map_err(|error| error.to_string()),
-        }
+        })
+        .map_err(|error| error.to_string())
     }
 
     pub async fn for_call(lead: &crate::Lead, call: &crate::ToolCall<'_>) -> Result<Self, String> {

@@ -719,7 +719,11 @@ pub(super) fn idle(core: &Core) -> Result<(), String> {
 
 pub(super) fn reloaded(core: &Core) {
     match core.expansion.current() {
-        Some(lead) => refresh_turn(&lead.host, &lead.session, &core.runtime),
+        Some(lead) => {
+            let refreshed = refresh_turn(&lead.host, &lead.session, &core.runtime);
+            core.views
+                .diagnostic(&core.host, "session_refresh", refreshed);
+        }
         None => {
             if let Ok(mut runtime) = core.runtime.lock() {
                 runtime.turn_boundary();

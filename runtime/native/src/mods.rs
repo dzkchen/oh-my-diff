@@ -577,13 +577,17 @@ fn observes_workspace(runtime: &ModHost) -> bool {
     runtime.has_event("workspace_change") || runtime.uses_operation("turns.activity")
 }
 
-fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) {
-    let _ = host.refresh_session(session);
+fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) -> Option<String> {
+    let refreshed = host
+        .refresh_session(session)
+        .err()
+        .map(|error| format!("OMD session refresh failed: {error}"));
     if let Ok(mut runtime) = runtime.lock() {
         runtime.turn_boundary();
         refresh_contract(&runtime, session);
         codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
     }
+    refreshed
 }
 
 fn refresh_contract(runtime: &ModHost, session: &Session) {
@@ -1712,8 +1716,12 @@ impl TurnLifecycleContributor for Mods {
             let runtime = self.runtime.clone();
             let session = lead.session.clone();
             let host = lead.host.clone();
-            let _ =
-                tokio::task::spawn_blocking(move || refresh_turn(&host, &session, &runtime)).await;
+            let refreshed =
+                tokio::task::spawn_blocking(move || refresh_turn(&host, &session, &runtime))
+                    .await
+                    .unwrap_or_else(|error| Some(error.to_string()));
+            self.views
+                .diagnostic(&self.host, "session_refresh", refreshed);
             self.publish_workspace_changes(&lead).await;
             let evidence = evidence::begin(&self.core, &lead).await;
             if let Ok(mut turns) = self.turns.lock() {

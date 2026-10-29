@@ -25,7 +25,7 @@ function session(env, current = thread, turns = 1, model = undefined) {
       if (operation === 'store.delete') { value = { deleted: key in store }; delete store[key]; }
       if (operation === 'continuation.next') value = { result: { tree: [{ type: 'native' }] }, trace: [] };
       if (operation === 'app.request' && args.method === 'thread/read') value = { thread: { id: args.params.threadId, model: model ?? null } };
-      if (operation === 'session.info') value = { thread_id: current, root: '/repo', cwd: '/repo', codex_version: '0.164.0', model: 'gpt-6-astra', provider: 'openai', route: null, turns_started: turns };
+      if (operation === 'session.info') value = { thread_id: current, root: '/repo', cwd: '/repo', codex_version: '0.165.0', model: 'gpt-6-astra', provider: 'openai', route: null, turns_started: turns };
       return value;
     });
     if (output.error) throw new Error(output.error);
