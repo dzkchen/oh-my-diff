@@ -1,5 +1,5 @@
 import type { FileStat, Json, ModAPI } from '../../api.d.ts';
-import { ORDER, OBSERVED_REPOSITORY_KEY, adapterFor, doc, failure, number, object, pathFromUri, rewrite, renameEdit, serializedBytes, state, string, textWorkspaceEdit, uri, fail, ok } from './protocol.ts';
+import { ORDER, OBSERVED_REPOSITORY_KEY, HELD_REASON, adapterFor, doc, failure, number, object, pathFromUri, rewrite, renameEdit, serializedBytes, state, string, markSynced, textWorkspaceEdit, uri, fail, ok } from './protocol.ts';
 import type { Answer, Item, Result, State } from './protocol.ts';
 import { createClient } from './client.ts';
 import { createSemantic } from './semantic.ts';
@@ -8,6 +8,9 @@ const IDLE_STOP_MS = 15 * 60_000;
 const DIAGNOSTIC_WAITS = 8;
 const FEEDBACK_BYTES = 4000;
 const VIEW = /^\s*(?:cat|nl|head|tail|bat|less|sed\s+-n)(?:\s|$)/;
+const DELETION = /^\*\*\* Delete File: .*$/gm;
+// Must equal the host's error text (runtime/omd/src/workspace.rs), which is matched verbatim below.
+const INDEX_BOUNDS = 'workspace index exceeds bounds';
 const MENTION = /[\w@+.\/-]{1,240}\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
 const READ_ONLY_TOOLS = new Set(['update_plan', 'view_image', 'tool_search', 'request_user_input', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource', 'list_agents', 'get_context_remaining']);
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
@@ -33,7 +36,7 @@ export default function activate(api: ModAPI) {
   const { budget, stopServer, readFiles, save, announce, exchange, settle, handle, request, initialize, synchronize, observedRepository } = client;
   const { applyTextEdit, semanticEdit, semantic } = createSemantic(api, client);
   api.on('workspace_change', event => {
-    const observed = event.status === 'observed' ? observedRepository(event.repository, true) : { ok: true as const, value: true };
+    const observed = observedRepository(event.repository, true);
     for (const adapter of ORDER) {
       const s = state(api.state.get(), adapter);
       if (!observed.ok || !observed.value) {
@@ -42,11 +45,26 @@ export default function activate(api: ModAPI) {
         continue;
       }
       if (event.status === 'unavailable') {
-        if (s.running || Object.keys(s.documents).length) { failure(s, event.reason ?? 'workspace_index_unavailable', true); save(s); }
+        const open = Object.keys(s.documents);
+        if (!open.length) continue;
+        const restarted = initialize(s, event.repository);
+        if (!restarted.ok) { failure(s, restarted.error); save(s); continue; }
+        const resynced = synchronize(s, open);
+        if (!resynced.ok) failure(s, resynced.error, true);
+        else {
+          const reason = event.reason ?? 'workspace_index_unavailable';
+          s.status = 'synced';
+          // omd_lsp_view shows the `degraded:` prefix as a warning; keep both in step.
+          s.reason = `${reason === INDEX_BOUNDS ? 'degraded' : 'resynced'}: ${reason}`;
+        }
+        save(s);
         continue;
       }
       const paths = event.changes.map(change => change.path).filter(path => adapterFor(path) === adapter);
-      if (!paths.length) continue;
+      if (!paths.length) {
+        if (HELD_REASON.test(s.reason)) { s.reason = ''; save(s); }
+        continue;
+      }
       const previous = Object.keys(s.documents);
       const started = initialize(s, event.repository);
       if (!started.ok) { failure(s, started.error); save(s); continue; }
@@ -92,8 +110,7 @@ export default function activate(api: ModAPI) {
       expected[path] = file.sha256;
       writes[path] = updated;
     }
-    s.status = 'synced';
-    s.reason = '';
+    markSynced(s);
     save(s);
     return { status: 'ready' as const, expected, writes };
   });
@@ -114,11 +131,12 @@ export default function activate(api: ModAPI) {
     if (READ_ONLY_TOOLS.has(event.tool)) return report;
     const texts = strings(event.arguments);
     const viewing = event.success && event.tool !== 'apply_patch' && texts.some(text => VIEW.test(text));
-    const mentioned = event.tool === 'apply_patch' || viewing ? texts.join('\n').match(MENTION) ?? [] : [];
+    const writing = event.success && event.tool === 'apply_patch';
+    const mentioned = event.tool === 'apply_patch' || viewing ? texts.join('\n').replace(DELETION, '').match(MENTION) ?? [] : [];
     let observed: string | undefined;
     const work = ORDER.flatMap(adapter => {
       const s = state(api.state.get(), adapter);
-      const lazy = viewing && !s.running && mentioned.some(path => adapterFor(path) === adapter);
+      const lazy = (viewing || writing) && !s.running && mentioned.some(path => adapterFor(path) === adapter);
       if (lazy && !s.repository) {
         const read = observed === undefined ? budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const }, a => api.host.tryCall('store.get', a)) : null;
         if (read) observed = read.ok ? string(object(read.value?.value ?? null)?.repository ?? null) ?? '' : '';
@@ -152,7 +170,7 @@ export default function activate(api: ModAPI) {
       const s = state(api.state.get(), adapter);
       const changed = candidates.filter(path => files[path]?.kind === 'file' ? files[path]?.sha256 !== s.documents[path]?.sha256 : Boolean(s.documents[path]));
       if (!changed.length) continue;
-      const edited = changed.filter(path => s.documents[path] && files[path]);
+      const edited = changed.filter(path => files[path] && (s.documents[path] || (writing && named.includes(path))));
       const opened = viewing ? changed.filter(path => !s.documents[path] && files[path] && named.includes(path)) : [];
       const pending = exchange(s, [], 0);
       const settled = pending.ok ? settle(s, handle(s, pending.value)) : pending;
@@ -183,8 +201,7 @@ export default function activate(api: ModAPI) {
         incomplete(s, reason || 'diagnostics_pending');
         continue;
       }
-      s.status = 'synced';
-      s.reason = '';
+      markSynced(s);
       save(s);
     }
     return report;
@@ -202,7 +219,7 @@ export default function activate(api: ModAPI) {
         const pending = exchange(s, [], 150);
         const settled = pending.ok ? settle(s, handle(s, pending.value)) : pending;
         if (!settled.ok) failure(s, settled.error, true);
-        else if (synced.value || started.value) { s.status = 'synced'; s.reason = 'external_change_resynchronized'; }
+        else if (synced.value || started.value) markSynced(s, 'external_change_resynchronized');
       }
       save(s);
     }

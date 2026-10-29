@@ -15,9 +15,9 @@ follows.
 ### Codex plugins and hooks
 
 Codex 0.165.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
-that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_tool_use`,
-`permission_request`, `post_tool_use`, `pre_compact`, `post_compact`, `session_start`, `session_end`,
-`user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
+that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_model_request`,
+`post_model_request`, `pre_tool_use`, `permission_request`, `post_tool_use`, `pre_compact`, `post_compact`,
+`session_start`, `session_end`, `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
 
 A hook can't hold state, stream, draw on screen, route a model or run an agent. When two `pre_tool_use` hooks rewrite
 the same call, the last one to finish wins.
@@ -89,7 +89,7 @@ Any other `OMD_MODE` value is rejected.
 
 ### Host call transport budget
 
-Host call arguments and results share a 128 KiB transport budget per callback.
+Host call arguments and results share a 1 MiB transport budget per callback.
 
 - A result that would exceed the remaining budget becomes a `host_result_limit` error the mod can catch; the
   operation has still run.

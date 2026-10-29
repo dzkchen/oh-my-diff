@@ -22,6 +22,9 @@ pub(super) async fn chain(
     };
     let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
     let (flag, thread) = (cancelled.clone(), lead.thread.to_string());
+    let call_id = (surface == "tool")
+        .then(|| origin["call_id"].as_str().map(str::to_owned))
+        .flatten();
     let handle = tokio::task::spawn_blocking(move || {
         let _thread = codex_omd::StateThread::enter(Some(thread));
         let active = || !flag.load(Ordering::Acquire);
@@ -81,7 +84,7 @@ pub(super) async fn chain(
         } else {
             generation
         };
-        let value = operations::dispatch(
+        let dispatched = operations::dispatch(
             &core,
             &lead,
             Caller {
@@ -95,8 +98,11 @@ pub(super) async fn chain(
             None,
             call.request,
             &cancelled,
-        )
-        .await;
+        );
+        let value = match &call_id {
+            Some(id) => expansion::CHAIN_CALL.scope(id.clone(), dispatched).await,
+            None => dispatched.await,
+        };
         let _ = call.reply.send(value.map_err(std::io::Error::other));
     }
     let result = handle.await.map_err(|error| error.to_string())?;

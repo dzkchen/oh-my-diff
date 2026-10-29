@@ -22,9 +22,10 @@ and workflow changes. Pull requests compare the merge commit with its first pare
 documentation-only changes avoid Rust builds. Native tests are compiled here; their execution and full validation
 remain in nightly and release workflows.
 
-PR, nightly and release jobs use the same Cargo download-cache keys. PR runs only restore: a patch edit falls back
-to the newest cache for the same platform and upstream pin. Only nightly and release runs save, since a cache saved
-by a PR is visible to that PR alone.
+PR, nightly and release jobs use the same Cargo download-cache and V8 prebuilt-cache keys. PR runs only restore: a
+patch edit falls back to the newest cache for the same platform and upstream pin. Only nightly and release runs save,
+since a cache saved by a PR is visible to that PR alone. PR checks set `OMD_V8_DIR` to the path validation saves, and
+`build.py v8` reuses a cached V8 file only when it matches the pinned checksum, retrying a failed download.
 
 `main` requires **PR gate** with an up-to-date branch. Dependabot (`dependabot.yml`) opens one grouped pull request a
 month for GitHub Actions updates. There are no dependency license or scheduled vulnerability checks yet.
@@ -36,9 +37,9 @@ month for GitHub Actions updates. There are no dependency license or scheduled v
 - `test` sets up the pinned Codex tree, applies and re-syncs the patch, and fails if the result differs from the
   checkout. It then runs native tests, Clippy on patched paths, Rustfmt, native ownership, lock drift and mod type
   checks. One upstream test, `filtered_host_additional_permissions`, is excluded as a known baseline failure. The
-  `codex-core` integration suite is advisory for a release and required for a nightly; two upstream tests that fail
-  after the rest of the suite in one process run in their own. Jobs work under `/Users/runner/omd`, not `/tmp`,
-  which a sandboxed command may write.
+  `codex-core` integration suite is advisory for a release and required for a nightly. Tests run in parallel under
+  `cargo nextest` with upstream's `.config/nextest.toml` and the overrides in `.github/nextest.toml`, one process
+  per test with one retry; doc tests run under `cargo test`. Jobs work under `/Users/runner/omd`, not `/tmp`, which a sandboxed command may write.
 - `build` builds and signs the release host binaries in parallel with `test`.
 - `package` takes those binaries, runs mod tests, Python tests, mod-host scenarios and client acceptance, then packs
   one archive for both profiles and tests install, reinstall, uninstall and recovery.

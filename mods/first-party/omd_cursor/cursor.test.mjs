@@ -62,6 +62,7 @@ test('Cursor reads its usage log through a sandboxed tail and settles nothing ou
   const tail = modEvent('command', 'usage', { data: '/data/omd-cursor' }, () => ({ exit_code: 0, stdout: '' }), 'cursor');
   assert.deepEqual(tail.calls.map(call => [call.operation, call.arguments.program, call.arguments.argv, call.arguments.sandbox]),
     [['exec.run', '/usr/bin/tail', ['-c', '32768', '/data/omd-cursor/usage.jsonl'], undefined]]);
+  assert.equal(tail.calls[0].arguments.timeout_ms, 5_000);
   const other = modEvent('turn_end', null, { data: '/data/omd-cursor' }, () => ({ thread_id: 't', provider: 'openai' }));
   assert.deepEqual(other.calls.map(call => call.operation), ['session.info']);
 });
@@ -74,7 +75,7 @@ test('/cursor setup runs the installed setup script in the background, says the 
     'packages.list': { packages: [{ id: 'omd_cursor', path: '/store/sources/omd_cursor' }] },
     'process.which': { found: [{ name: 'node', path: '/bin/node', sha256: 'a' }] },
     'process.stop': { stopped: false }, 'process.start': { session: 'cursor_setup', running: true } })[call.operation]);
-  assert.deepEqual(started.calls.at(-1).arguments, { session: 'cursor_setup', name: 'node', path: '/bin/node', sha256: 'a',
+  assert.deepEqual(started.calls.find(call => call.operation === 'process.start').arguments, { session: 'cursor_setup', name: 'node', path: '/bin/node', sha256: 'a',
     arguments: ['/store/sources/omd_cursor/setup.mjs', 'default'], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
   const link = 'https://cursor.com/loginDeepControl?fixture';
   const event = (kind, data, state) => {
@@ -110,6 +111,27 @@ test('/cursor setup runs the installed setup script in the background, says the 
   assert.ok(!declined.calls.some(call => call.operation === 'providers.register'));
 });
 
+test('a Cursor setup that never finishes is stopped at its deadline and its pending state cleared', () => {
+  const started = modEvent('channel', { channel: 'omd_cursor/setup', data: {} }, null, call => ({
+    'packages.list': { packages: [{ id: 'omd_cursor', path: '/store/sources/omd_cursor' }] },
+    'process.which': { found: [{ name: 'node', path: '/bin/node', sha256: 'a' }] },
+    'process.stop': { stopped: false }, 'process.start': { session: 'cursor_setup', running: true }, 'events.schedule': {} })[call.operation]);
+  assert.deepEqual(started.calls.at(-1), { operation: 'events.schedule', arguments: { key: 'setup', delay_ms: 30 * 60_000 } });
+  assert.ok(started.state.setup);
+  const expired = modEvent('timer', { key: 'setup' }, started.state, () => ({ stopped: true }));
+  assert.equal(expired.state.setup, null);
+  assert.deepEqual(expired.calls.filter(call => call.operation === 'process.stop').map(call => call.arguments), [{ session: 'cursor_setup' }]);
+  assert.match(notices(expired.calls).join('\n'), /timed out after 30 minutes.*run \/cursor setup again/);
+  assert.deepEqual(modEvent('timer', { key: 'setup' }, expired.state, () => assert.fail('idle timer called the host')).calls, []);
+  const cancelled = call => call.operation === 'events.cancel' ? { cancelled: true } : {};
+  const exited = modEvent('process_event', { session: 'cursor_setup', kind: 'exit', bytes: 0 }, started.state, call => call.operation === 'process.exchange' ? { messages: [], running: false } : cancelled(call));
+  assert.equal(exited.state.setup, null);
+  assert.deepEqual(exited.calls.filter(call => call.operation === 'events.cancel').map(call => call.arguments), [{ key: 'setup' }]);
+  const restarted = modEvent('start', null, started.state, call => call.operation === 'sidecars.status' ? { running: true } : cancelled(call));
+  assert.equal(restarted.state.setup, null);
+  assert.deepEqual(restarted.calls.filter(call => call.operation === 'events.cancel').map(call => call.arguments), [{ key: 'setup' }]);
+});
+
 test('stored Cursor models reach /model at start and the sidecar restarts only for Cursor turns', () => {
   const models = [{ slug: 'cursor-auto', display: 'Cursor Auto', context_window: 200000, efforts: [] }];
   const answer = provider => call => ({ 'sidecars.status': { running: false }, 'credentials.list': [], 'session.info': { thread_id: 't', provider } })[call.operation] ?? {};
@@ -129,7 +151,7 @@ const registry = new URL('agents.json', import.meta.url);
 const record = row => appendFileSync(log, JSON.stringify(row) + '\\n');
 const known = () => existsSync(registry) ? JSON.parse(readFileSync(registry, 'utf8')) : [];
 const usage = { inputTokens: 10, outputTokens: 3, cacheReadTokens: 4, cacheWriteTokens: 2, reasoningTokens: 1 };
-const charges = new URL('charged.json', import.meta.url);
+const charges = id => new URL('charged-' + id + '.json', import.meta.url);
 export class JsonlLocalAgentStore { constructor(root) { this.root = root; } }
 class FakeAgent {
   constructor(agentId) { this.agentId = agentId; }
@@ -144,7 +166,7 @@ class FakeAgent {
       emit({ type: 'thinking-delta', text: 'Thinking.' });
       if (message.text.includes('LIMIT')) return { id: 'run', status: 'error', error: { message: 'usage limit exceeded', code: 'resource_exhausted' } };
       if (message.text.endsWith('HANG')) { await stopped; return { id: 'run', status: 'cancelled' }; }
-      if (message.text.includes('CHARGE')) writeFileSync(charges, '2.5');
+      if (message.text.includes('CHARGE')) writeFileSync(charges(this.agentId), '2.5');
       let answer = 'Answer.';
       if (message.text.includes('TOOL')) answer = 'tool:' + JSON.stringify(await call('exec_command', { cmd: 'pwd' }));
       if (message.text.includes('PARALLEL')) answer = 'both:' + (await Promise.all([call('exec_command', { cmd: 'a' }), call('exec_command', { cmd: 'b' })])).join(',');
@@ -163,7 +185,7 @@ class FakeAgent {
     })();
     return { id: 'run-' + this.agentId, requestId: 'req-1', wait: () => work, cancel: async () => { record({ op: 'cancel', agentId: this.agentId }); stop(); } };
   }
-  async getUsage() { return { usage, cost: { rawCostCents: 1.25, chargedCents: existsSync(charges) ? Number(readFileSync(charges, 'utf8')) : 0 }, runs: [] }; }
+  async getUsage() { return { usage, cost: { rawCostCents: 1.25, chargedCents: existsSync(charges(this.agentId)) ? Number(readFileSync(charges(this.agentId), 'utf8')) : 0 }, runs: [] }; }
 }
 const clean = options => ({ ...options, local: { ...options.local, store: options.local.store instanceof JsonlLocalAgentStore } });
 export const Agent = {

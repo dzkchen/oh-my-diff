@@ -144,7 +144,9 @@ export default function activate(api: ModAPI) {
 ```
 
 The code reads settings from `api.settings`. A setting property may have only `type` (`boolean`, `number`,
-`string`, `array`, `object` or `null`), `enum` and `default`; `integer`, `minimum` and similar keys are refused.
+`string`, `array`, `object` or `null`), `enum`, `default`, `title` and `description`; `integer`, `minimum` and
+similar keys are refused.
+A user may also set them in `settings/<mod id>.json` (or `.yaml`) in the mod store; `api.settingsFile` has its path and status ([reference](../mods/REFERENCE.md#settings-file-settings_file_v1)).
 
 Where to look things up:
 
@@ -164,7 +166,7 @@ Where to look things up:
 Rules that trip agents up:
 
 - Import only types from `@oh-my-diff/mod-api` and files declared in `mod.json` `assets` by relative path
-  (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 128 KiB per file, 256 KiB of entrypoint plus assets.
+  (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 512 KiB per file, 1 MiB of entrypoint plus assets.
 - Don't write `process.` outside a string, or `window.` or `document.` anywhere. Node and browser globals aren't
   there. The host scans the source when it loads the mod (`pnpm test`, `pnpm run`, activation in `codex`) and refuses
   it with `undeclared_environment_use: process`; `omd mods update` and install don't scan.
@@ -255,7 +257,7 @@ omd-mod-author report /tmp/notes-store # declared versus used permissions
 omd-mod-author explain 'capability_denied: exec'
 ```
 
-Inside `codex`, a mod that fails shows in the Mod errors panel and in `/omd`. An activation error
+Inside `codex`, a mod that fails shows in the Mod errors card above the prompt and in `/omd`. An activation error
 `conflict: NAME` means `activate` registered the same command, handler, timer or component name twice.
 
 ## 7. Install, update and remove
@@ -338,7 +340,7 @@ with `notes` in place of `my_mod`. Publishing is public: ask the user first.
 ## What is supported
 
 - **Installed and on:** the default OMD+ mods in [the collection](collection.md).
-- **Installed, off until turned on:** the opt-in OMD+ mods and the three plugins.
+- **Installed, off until turned on:** the opt-in OMD+ mods and the four plugins.
 - **Frozen or experimental:** API `1.0.0` is stable. Entries that
   [`contract.json`](../mods/conformance/contract.json) marks frozen keep their shape; experimental ones may change,
   including raster and `terminal.blit` frames, `omd/*` external-client methods and the `experimental_fields` of

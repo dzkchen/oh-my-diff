@@ -93,14 +93,24 @@ def anchors(path):
             for line in re.sub(r"```.*?```", "", path.read_text(), flags=re.S).splitlines() if line.startswith("#")}
 
 
-def unsynced_reference():
+def reference_drift():
     def normalized(line):
         return re.sub(r"^#+ ", "# ", re.sub(r"\]\([^)]*\)", "]", line))
 
-    combined = {normalized(line) for line in REFERENCE.read_text().splitlines()}
-    pages = sorted(page for page in (REFERENCE.parent / "reference").glob("*.md") if page.name != "README.md")
-    return [f"{page.name}: {line}" for page in pages for line in page.read_text().splitlines()[1:]
-            if line.strip() and normalized(line) not in combined]
+    index = (REFERENCE.parent / "reference/README.md").read_text()
+    pages = [REFERENCE.parent / "reference" / name for name in re.findall(r"^\| \[[^\]]+\]\(([\w-]+\.md)\)", index, re.M)]
+    if unlisted := sorted({page.name for page in (REFERENCE.parent / "reference").glob("*.md")} - {page.name for page in pages} - {"README.md"}):
+        return f"mods/reference/README.md does not list {', '.join(unlisted)}"
+    expected = [(page.name, normalized(line)) for page in pages for line in page.read_text().splitlines() if line.strip()]
+    lines = [normalized(line) for line in REFERENCE.read_text().splitlines() if line.strip()]
+    titles = {normalized(page.read_text().split("\n", 1)[0]) for page in pages}
+    actual = lines[next((index for index, line in enumerate(lines) if line in titles), len(lines)):]
+    for (name, line), found in zip(expected, actual):
+        if line != found:
+            return f"mods/REFERENCE.md has {found!r} where mods/reference/{name} has {line!r}"
+    if len(actual) != len(expected):
+        return f"mods/REFERENCE.md has {len(actual)} lines after the topic pages begin, the pages in reference/README.md order have {len(expected)}"
+    return None
 
 
 def check(version=None):
@@ -137,7 +147,8 @@ def check(version=None):
         if not entries or entries[0].get("version") != version:
             problems.append(f"the newest changelog entry is not {version}")
     problems += [f"broken link {item}" for item in broken_links()]
-    problems += [f"mods/REFERENCE.md lacks mods/reference/{item}" for item in unsynced_reference()]
+    if drift := reference_drift():
+        problems.append(drift)
     if problems:
         raise SystemExit("\n".join(problems))
     print(f"release metadata consistent{f' for {version}' if version else ''}")

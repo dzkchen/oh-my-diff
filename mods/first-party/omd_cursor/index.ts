@@ -4,8 +4,11 @@ const service = 'cursor';
 const provider = 'omd_cursor';
 const session = 'cursor_setup';
 const settleKey = 'settle';
+const setupKey = 'setup';
+const setupWindow = 30 * 60_000;
 // The shared log only grows; its newest rows fit one host result with room for the settle calls.
 const LOG_TAIL_BYTES = 32_768;
+const LOG_TAIL_TIMEOUT_MS = 5_000;
 const SETTLE_POLLS = 6;
 const OUTPUT_BYTES = 12_288;
 export const ACCOUNT = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -87,7 +90,7 @@ export default function activate(api: ModAPI): void {
     return published;
   };
   const tail = (path: string) => {
-    const run = api.host.tryCall('exec.run', { program: '/usr/bin/tail', argv: ['-c', String(LOG_TAIL_BYTES), path] });
+    const run = api.host.tryCall('exec.run', { program: '/usr/bin/tail', argv: ['-c', String(LOG_TAIL_BYTES), path], timeout_ms: LOG_TAIL_TIMEOUT_MS });
     return run.ok && run.value.exit_code === 0 ? run.value.stdout : null;
   };
   // Cursor prices a run minutes after it ends; poll through six minutes and drain ready charges in bounded batches.
@@ -131,6 +134,7 @@ export default function activate(api: ModAPI): void {
       return void api.state.set({ ...saved(), setup: { ...run, out, shown: run.shown || !!link } });
     }
     api.host.tryCall('process.stop', { session });
+    api.host.tryCall('events.cancel', { key: setupKey });
     api.state.set({ ...saved(), setup: null });
     const result = /^OMD_CURSOR_RESULT (.+)$/m.exec(out)?.[1];
     if (!result) {
@@ -164,9 +168,13 @@ export default function activate(api: ModAPI): void {
       arguments: [`${mod}/setup.mjs`, name], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
     if (!started.ok) return void say(`Cursor setup did not start: ${started.error}`, true);
     api.state.set({ ...saved(), mod, setup: { out: '', shown: false, account: name } });
+    api.host.tryCall('events.schedule', { key: setupKey, delay_ms: setupWindow });
   });
   api.on('start', () => {
-    if (plain(saved().setup)) api.state.set({ ...saved(), setup: null });
+    if (plain(saved().setup)) {
+      api.host.tryCall('events.cancel', { key: setupKey });
+      api.state.set({ ...saved(), setup: null });
+    }
     ensure();
   });
   api.on('resume', () => { ensure(); });
@@ -178,6 +186,11 @@ export default function activate(api: ModAPI): void {
   });
   api.on('timer', ({ key }) => {
     if (key === settleKey) settle(true);
+    if (key === setupKey && plain(saved().setup)) {
+      api.host.tryCall('process.stop', { session });
+      api.state.set({ ...saved(), setup: null });
+      say(`Cursor setup timed out after ${setupWindow / 60_000} minutes without finishing; check your network and that pnpm and omd-mod work, then run /cursor setup again`, true);
+    }
   });
   api.command('cursor', (args): Json => {
     const [action = 'doctor', name, extra] = String(args ?? '').trim().split(/\s+/).filter(Boolean);

@@ -1,3 +1,4 @@
+use crate::fsio::write_json;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -10,7 +11,6 @@ use std::io::BufReader;
 use std::io::Read;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -326,26 +326,6 @@ pub struct Broker {
     state: Mutex<()>,
 }
 
-pub(crate) fn write_private(path: &Path, value: &Value) -> io::Result<()> {
-    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let serial = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let temporary = path.with_extension(format!("{}.{serial}.tmp", std::process::id()));
-    let _ = fs::remove_file(&temporary);
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temporary)?;
-    let written = file
-        .write_all(&serde_json::to_vec(value)?)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| fs::rename(&temporary, path));
-    if written.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    written
-}
-
 fn read_json(path: &Path, default: Value) -> io::Result<Value> {
     match fs::read(path) {
         Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
@@ -493,7 +473,7 @@ impl Broker {
                 .lock()
                 .map_err(|_| failure("authority_state_poisoned"))?;
             match read_json(&record, Value::Null)? {
-                Value::Null => write_private(&record, &json!(uid))?,
+                Value::Null => write_json(&record, &json!(uid))?,
                 owner if owner != json!(uid) => return Err(failure(refused)),
                 _ => {}
             }
@@ -656,7 +636,7 @@ impl Broker {
                     .ok_or_else(|| failure("authority_request_invalid"))?;
                 let generation = current["generation"].as_u64().unwrap_or_default() + 1;
                 let next = json!({"generation": generation, "grants": grants});
-                write_private(&path, &next)?;
+                write_json(&path, &next)?;
                 next
             }
             "policy.get" => read_json(&self.root.join("policy.json"), json!({}))?
@@ -677,8 +657,8 @@ impl Broker {
                     (read_json(&path, json!({}))?, read_json(&kept, json!({}))?);
                 previous[key] = policy[key].clone();
                 policy[key] = arguments["value"].clone();
-                write_private(&kept, &previous)?;
-                write_private(&path, &policy)?;
+                write_json(&kept, &previous)?;
+                write_json(&path, &policy)?;
                 Value::Null
             }
             "policy.rollback" => {
@@ -695,8 +675,8 @@ impl Broker {
                 let restored = previous[key].take();
                 previous[key] = policy[key].take();
                 policy[key] = restored;
-                write_private(&kept, &previous)?;
-                write_private(&path, &policy)?;
+                write_json(&kept, &previous)?;
+                write_json(&path, &policy)?;
                 Value::Null
             }
             "peer.seal" | "peer.verify" => {
@@ -705,7 +685,7 @@ impl Broker {
                 let mut stored = read_json(&path, json!({}))?;
                 if !stored["key"].is_string() {
                     stored = json!({"key": format!("{}{}", nonce()?, nonce()?)});
-                    write_private(&path, &stored)?;
+                    write_json(&path, &stored)?;
                 }
                 let tag = hmac(
                     stored["key"].as_str().unwrap_or_default().as_bytes(),
@@ -738,14 +718,14 @@ impl Broker {
                             .ok_or_else(|| failure("authority_request_invalid"))?,
                         "head": digest_text(&arguments, "head")?,
                         "last": digest_text(&arguments, "last")?});
-                    write_private(&path, &anchor)?;
+                    write_json(&path, &anchor)?;
                 } else if op == "anchor.append" {
                     let entry = digest_text(&arguments, "sha256")?;
                     anchor = json!({"stream": stream,
                         "count": anchor["count"].as_u64().unwrap_or_default() + 1,
                         "head": chain(anchor["head"].as_str().unwrap_or_default(), &entry),
                         "last": entry});
-                    write_private(&path, &anchor)?;
+                    write_json(&path, &anchor)?;
                 }
                 anchor
             }

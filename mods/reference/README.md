@@ -33,10 +33,26 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
 - `routes.write` (`route_write_v1`), added after 1.0.0.
+- `api.settingsFile` and the settings file (`settings_file_v1`).
+- Focus regions, `key_contexts`, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus`
+  (`terminal_focus_v1`).
+- Layout leaf `title` (`terminal_layout_title_v1`).
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
+- `tools.original` (`tool_original_v1`), added after 1.0.0.
+- The `omd-mod-author cost` report, added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
+
+### Migration notes
+
+- Host calls per callback rise from 128 to 512 (`budget.hostCalls` starts at 512). The raise is additive: a mod that
+  counted calls or stayed under 128 keeps working. The other limits raised with it (the callback transport budget,
+  `process.exchange` and tool interceptor output, `api.state`, package files, view JSON, evidence pages and
+  registrations per mod) only admit more than before, with two visible changes: `evidence.read` without `max_bytes`
+  returns pages of up to 64 KiB instead of 16 KiB, and a `tool` replacement the model cannot take (over 64 KiB and
+  longer than the original, which for a retried call is the latest attempt's output) is dropped with a diagnostic
+  after the chain instead of being refused inside it. Either way the original output stands.
 
 ## Contents
 

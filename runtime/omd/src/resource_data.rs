@@ -4,11 +4,10 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
-use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-pub const PAGE_BYTES: usize = 16_384;
+pub const PAGE_BYTES: usize = 65_536;
 pub const SNAPSHOT_BYTES: usize = 262_144;
 
 pub fn hash(bytes: &[u8]) -> String {
@@ -263,35 +262,7 @@ impl ResourceStore<'_> {
                 return Err(io::Error::other("resource_store_quota"));
             }
         }
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                if let Err(error) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
-                    drop(file);
-                    let _ = fs::remove_file(&path);
-                    return Err(error);
-                }
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let snapshot = crate::Snapshot::capture(
-                    &directory,
-                    &BTreeSet::from([name.clone()]),
-                    SNAPSHOT_BYTES,
-                )?;
-                if snapshot
-                    .files
-                    .get(&name)
-                    .is_none_or(|file| file.bytes != bytes)
-                {
-                    return Err(io::Error::other("resource_integrity_failed"));
-                }
-            }
-            Err(error) => return Err(error),
-        }
+        crate::fsio::write_if_changed(&path, &bytes)?;
         Ok(ResourceRef {
             reference: sha256.clone(),
             sha256,

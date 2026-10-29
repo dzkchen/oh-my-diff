@@ -99,20 +99,24 @@ test('a large directory index is read in pages and stays inside the UI state lim
   assert.equal(opened.ui.catalog.length, 120, opened.ui.catalogError);
   assert.equal(opened.ui.catalog.at(-1).id, 'omd_package_119');
   assert.ok(operations(opened).filter(operation => operation === 'packages.index').length > 1);
+  const heavy = packages.map(item => ({ ...item, support: 's'.repeat(1_000) }));
+  const crowded = invoke('', { 'packages.index': ({ cursor = '0', limit }) => ({ packages: heavy.slice(Number(cursor), Number(cursor) + limit), cursor: String(Number(cursor) + limit) }) });
+  assert.ok(crowded.ui.catalog.length >= 50 && crowded.ui.catalog.length < 120, `${crowded.ui.catalog.length}`);
+  assert.ok(Buffer.byteLength(JSON.stringify(crowded.ui)) <= 65_536);
 });
 
 test('a required mod stays on and the directory offers installed mods only as updates', () => {
   const packages = [logo, mod('omd_update', { required: true }), mod('omd_preview')];
   const index = () => ({ packages: [
     { id: 'omd_update', description: 'Updates', latest: '1.0.0', installed: '1.0.0', versions: [{ version: '1.0.0', blocked: null }] },
-    { id: 'omd_preview', description: 'Previews', latest: '1.2.0', installed: '1.0.0', versions: [{ version: '1.2.0', blocked: null }] },
+    { id: 'omd_preview', description: 'Previews', latest: '1.10.0', installed: '1.9.0', versions: [{ version: '1.10.0', blocked: null }] },
     { id: 'omd_logo', description: 'Logo', latest: '1.0.0', installed: '1.1.0', versions: [{ version: '1.0.0', blocked: null }] },
     { id: 'omd_frecency', description: 'Ranks files', latest: '1.0.0', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });
   const opened = invoke('', { packages, 'packages.index': index });
   const items = opened.panels[0].items;
   assert.equal(items.find(item => item.id === 'user:omd_update').kind, 'action');
   assert.deepEqual(items.filter(item => /^(get|update):/.test(item.id)).map(item => [item.id, item.tab, item.label]),
-    [['update:user:omd_preview', 'directory', 'Preview 1.0.0 → 1.2.0'], ['get:omd_frecency', 'installed', 'Frecency 1.0.0']]);
+    [['update:user:omd_preview', 'directory', 'Preview 1.9.0 → 1.10.0'], ['get:omd_frecency', 'installed', 'Frecency 1.0.0']]);
   const typed = invoke('disable omd_update', { packages });
   assert.deepEqual(operations(typed), ['packages.list']);
 });

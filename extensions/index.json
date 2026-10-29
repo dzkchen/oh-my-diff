@@ -123,6 +123,22 @@
       "support_status": "experimental"
     },
     {
+      "id": "omd_monitor",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Event-driven monitors: subscribe once to a background command, file change or GitHub run or deployment and get one bounded correlated message instead of polling",
+      "source": "mods/first-party/omd_monitor",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; autonomous_turns_v1, unrestricted_process_v1, workspace_watch_key_v1, turn_activity_v1; GitHub monitors need an installed, logged-in gh",
+      "tested_versions": [
+        "Codex 0.165.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
       "id": "omd_continue",
       "version": "1.0.0",
       "extension_type": "mod",
@@ -253,9 +269,9 @@
     },
     {
       "id": "omd_frecency",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "extension_type": "mod",
-      "capability": "Opt-in @ mention and file-tree find ranking by typo-tolerant fuzzy match, per-project frecency learned from submitted prompts and Git status",
+      "capability": "Opt-in @ mention and file-tree find ranking by typo-tolerant fuzzy match, per-project frecency learned from submitted prompts, Git status and recent commits",
       "source": "mods/first-party/omd_frecency",
       "license": "MIT",
       "maintainer": "Oh My Diff",
@@ -352,6 +368,29 @@
         {
           "extension_type": "skill",
           "path": "skills/omd-artifact-reading"
+        }
+      ]
+    },
+    {
+      "id": "omd-output-budget",
+      "version": "1.0.0",
+      "extension_type": "plugin",
+      "capability": "Keeps large shell and tool results out of the context: bounded excerpts that keep exit status and failure lines, full outputs kept by content hash, paged reads, ranked search and documentation fetch",
+      "source": "plugins/bundled/oh-my-diff/plugins/omd-output-budget",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.165.0 and OMD 1.2.0; mod API 1.0.0; tool_original_v1, continuation_middleware_v1, store_thread_v1; the optional mod component needs explicit trust and grants",
+      "tested_versions": [
+        "Codex 0.165.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0",
+        "plugin 1.0.0"
+      ],
+      "support_status": "experimental",
+      "components": [
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-output-budget"
         }
       ]
     },
@@ -515,6 +554,22 @@
       "tested_versions": [
         "Codex 0.165.0",
         "OMD 1.1.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_workspace",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in tabbed dock beside the chat: numbered tabs for Git changes, a shell and registered panels, with focus, resize and screen-mode keys",
+      "source": "mods/first-party/omd_workspace",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; store_v1, exec_v1, terminal_surface_v1, terminal_lists_v1, terminal_tabs_v1, terminal_pty_v1, terminal_focus_v1, terminal_layout_title_v1, settings_file_v1, service_dispatch_v1, lifecycle_events_v1",
+      "tested_versions": [
+        "Codex 0.165.0",
+        "OMD 1.2.0 pre-release (offline checks)",
         "mod API 1.0.0"
       ],
       "support_status": "reviewed_candidate"

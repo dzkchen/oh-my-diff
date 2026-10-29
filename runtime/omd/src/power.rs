@@ -139,7 +139,7 @@ impl Setting {
             return Err(failure("authority_power_busy"));
         }
         if *holders == 0 && !self.record.exists() {
-            broker::write_private(&self.record, &json!({"previous": self.disabled()?}))?;
+            crate::fsio::write_json(&self.record, &json!({"previous": self.disabled()?}))?;
             if let Err(error) = self.set(true) {
                 let _ = fs::remove_file(&self.record);
                 return Err(error);

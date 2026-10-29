@@ -7,7 +7,7 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 
 | Command | Result |
 | --- | --- |
-| `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
+| `omd-mod-author create DIR [ID]` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
 | `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
@@ -15,10 +15,11 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
 | `pnpm run package` | Produces a checked package directory, JavaScript debug build, source map, and digest report |
+| `omd-mod-author cost DIR [COMMAND [ARGS_JSON]] [--runs N]` | Activation, first render, callback time, runner count and runner footprint of one package (see [Cost report](#cost-report)) |
 | `pnpm watch STORE` | Re-inspects reviewed local source, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
 | `omd-mod-author report STORE` | Declared-versus-used capabilities, services, operations, and environment |
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
-| `omd-mod-author diagnostics STORE OUTPUT` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
+| `omd-mod-author diagnostics STORE [OUTPUT]` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
 | `omd-mod-author explain DENIAL` | Cause, safe remedy, and the authority boundary for a denial |
 
 ### Author toolchain
@@ -125,10 +126,10 @@ Negative tests:
 ### Scenario steps
 
 - Time and events: `invoke(mod, event, name, payload)`, `emit(event, payload)`, `advance(ms)`,
-  `waitUntil(check, until, {everyMs, maxMs})`, `reload()`.
+  `waitUntil(check, until, {everyMs, maxMs})`, `reload()`, `state(mod, {value})` (reads, or first writes, `api.state`).
 - Views and input: `mount(mod)`, `key(mod, name)`, `activate(mod, component)`, `input(mod, component, value)`,
   `select(mod, component, value)`, `pointer(mod, component, {column, row, action})` (with `{client}` for an attached
-  client's event).
+  client's event), `component(mod, module, {instance, props, columns, rows, events})` (steps an `api.component` module).
 - Clients: `attach(name, {renderer})`, `detach(id)`.
 - Interceptors: `intercept(surface, payload, {core: [coreValue(v) | coreError(e)]})`.
 
@@ -218,7 +219,7 @@ A `.tsx` file in any subdirectory is an asset source too (skipping `node_modules
 - A relative import of `./row.tsx` becomes `./row.ts` in the output.
 - List the compiled name in `mod.json` `assets` (`"row.ts"`). The host accepts only `.ts`, `.mjs` and `.json` assets,
   and `package` ships only the compiled files, never the `.tsx`.
-- The 128 KiB package file limit applies to each compiled file.
+- The 512 KiB package file limit applies to each compiled file.
 - A hand-written `.ts` beside a `.tsx` fails with `jsx_entrypoint_conflict`.
 
 ### Elements and children
@@ -274,3 +275,25 @@ capabilities, service imports/exports, and admitted environment access with what
   `terminal.pty` source passes a `unix_sockets` or `network` option outside comments and strings.
 
 Diagnostics explain how to narrow or explicitly approve authority, but tooling cannot grant permissions by itself.
+
+## Cost report
+
+`omd-mod-author cost DIR` installs the package alone in a scratch store and measures it in the real host, `--runs`
+times (1-100, default 10), each run starting as a launch does: no warm runners and no inspection shared from an earlier host.
+Name one of the package's commands, with an optional JSON payload, to time its callbacks too.
+
+| Field | Meaning |
+| --- | --- |
+| `activation_ms` | Opening a host with the package: runner start, inspection, registration checks |
+| `first_render_ms` | The first `terminal` render after activation; absent without a `terminal` handler |
+| `fresh_callback_ms`, `reused_callback_ms` | The named command's first and second run after activation |
+| `runners` | Runners the package keeps after the last run, idle spares excluded |
+| `runner_peak_footprint_bytes` | Sum of those runners' peak physical memory |
+
+Each timing reports `first`, `p50` and `p95` in milliseconds. `first` includes the cold code cache (`<store>/cache/code`, safe to delete) and, for a newly
+written engine, the operating system's first-launch check, so compare `p50` between versions of a package. The numbers
+are host-side and exclude the terminal's draw. The scratch store has no Git checkout or session thread, so a command
+that writes `checkout` or `thread` state fails there, and a package that requires another fails activation.
+
+A runner loads ICU data on its first `Intl` or `localeCompare` use, about 5 ms; compare ASCII ids and versions with
+plain string and digit comparisons on hot paths.

@@ -4,7 +4,7 @@ For the mods that ship with OMD+, see [Included mods](collection.md).
 
 ## Install a mod
 
-In `codex`: `/mods`, then Browse or Add from source. From a shell:
+In `codex`: `/mods`, then pick one under Available in All, or Add from source in Directory. From a shell:
 
 ```sh
 omd install some_mod                                        # curated directory

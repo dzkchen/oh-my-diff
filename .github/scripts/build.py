@@ -2,6 +2,7 @@
 import argparse
 import functools
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +22,7 @@ SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
          "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bins"]
-SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
+SUMMARY = re.compile(r"^test result|^\s+Summary \[|^\s+(FAIL|TIMEOUT) \[|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"
 GENERATORS = ("plugin_lock", "mods_lock")
@@ -110,7 +113,7 @@ def cargo_env(work):
 
 def test_runner(work, cargo_args, env, output):
     """Mod hosts start the runner beside their executable; test binaries run from the target's deps directory."""
-    if not cargo_args or cargo_args[0] != "test":
+    if not cargo_args or cargo_args[0] not in ("test", "nextest"):
         return 0
     release = "--release" in cargo_args or "-r" in cargo_args
     profile = "release" if release else "debug"
@@ -157,13 +160,25 @@ def v8(args):
     def checksums(path):
         return dict(reversed(line.split()) for line in path.read_text().splitlines() if line.strip())
 
+    def download(name):
+        for delay in (5, 15, 45, None):
+            try:
+                with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response:
+                    return response.read()
+            except (OSError, http.client.HTTPException) as error:
+                if delay is None or (isinstance(error, urllib.error.HTTPError) and error.code < 500):
+                    raise
+                print(f"V8 download of {name} failed ({error}); retrying in {delay} s", file=sys.stderr)
+                time.sleep(delay)
+
     expected = checksums(checkout / f"third_party/v8/rusty_v8_{version.replace('.', '_')}_release_manifests.sha256")
     for name in (manifest, *names):
-        with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response:
-            data = response.read()
-        if expected.get(name) != sha(data):
-            raise SystemExit(f"V8 prebuilt checksum mismatch: {name}")
-        (V8 / name).write_bytes(data)
+        cached = V8 / name
+        if not (cached.is_file() and expected.get(name) == sha(cached.read_bytes())):
+            data = download(name)
+            if expected.get(name) != sha(data):
+                raise SystemExit(f"V8 prebuilt checksum mismatch: {name}")
+            cached.write_bytes(data)
         if name == manifest:
             expected = checksums(V8 / manifest)
 

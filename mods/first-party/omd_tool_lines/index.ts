@@ -8,9 +8,11 @@ const bytes = (text: string) => utf8.encode(text).length;
 const WIDE = /[ᄀ-ᅟ\u17A4⺀-꓏ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3ffff}]|\p{Extended_Pictographic}|\p{Emoji_Presentation}/u;
 const ZERO = /[\u1160-\u11ff\uD7B0-\uD7FF\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]/u;
 const EMOJI = /^(?:[\p{Extended_Pictographic}\p{Regional_Indicator}]|[#*0-9]\uFE0F?\u20E3)[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]*$/u;
-const segments = new Intl.Segmenter();
+// ICU objects are built on first use: every callback evaluates the module in a fresh context.
+let segments: Intl.Segmenter | undefined;
+const segmenter = () => segments ??= new Intl.Segmenter();
 // The native renderer treats variation-selector-1 quotes as two cells.
-const widthOf = (text: string) => [...segments.segment(text)].reduce((sum, { segment }) => sum + (EMOJI.test(segment) ? 2
+const widthOf = (text: string) => [...segmenter().segment(text)].reduce((sum, { segment }) => sum + (EMOJI.test(segment) ? 2
   : [...segment.replace(/([‘’“”])\uFE01/gu, '$1$1')].reduce((width, char) => width + (char !== '\u115F' && ZERO.test(char) ? 0 : char === '\u17D8' ? 3 : WIDE.test(char) ? 2 : 1), 0)), 0);
 
 const fit = (text: string, cells: number, chars = cells, limit = 240) => {
@@ -22,7 +24,7 @@ const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   let width = 1;
   let size = 3;
   let count = 1;
-  for (const { segment: char } of segments.segment(flat)) {
+  for (const { segment: char } of segmenter().segment(flat)) {
     if (width + widthOf(char) > cells || count + [...char].length > chars || size + bytes(char) > limit) break;
     kept.push(char);
     width += widthOf(char);

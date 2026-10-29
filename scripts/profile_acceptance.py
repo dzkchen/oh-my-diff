@@ -191,7 +191,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         if managed_policy:
             observations["full_managed"] = managed_recovery(base, "full", full_store, env, command, "broker")
         bundle = Path(full["plugin_bundle"]["marketplace"])
-        assert full["plugin_bundle"]["plugins"] == ["omd-anchored-edit", "omd-artifact-reading", "omd-code-execution"]
+        assert full["plugin_bundle"]["plugins"] == ["omd-anchored-edit", "omd-artifact-reading", "omd-code-execution", "omd-output-budget"]
         assert not (base / "full-prefix/browser").exists()
         for name in ("codex-code-mode-host", "omd-runner"):
             installed = base / "full-prefix/artifacts" / name

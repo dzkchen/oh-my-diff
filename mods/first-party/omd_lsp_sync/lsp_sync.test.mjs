@@ -382,16 +382,112 @@ test('LSP semantic reads are scoped and actions are discovery only', () => {
   assert.ok(!host.sent.some(message => message.method === 'workspace/applyEdit'));
 });
 
-test('LSP semantic request rejects an untracked target and a foreign store', () => {
+test('LSP semantic request opens a permitted unopened target and rejects a stale or foreign one', () => {
   const host = createHost({ files: { 'old.py': 'value = 1\n', 'user.py': 'from old import value\n' }, server: actionServer });
   const foreign = createHost({ repository: '/other', server: actionServer });
   const opened = drive(host, 'workspace_change', change(host, ['user.py']));
+  const opens = () => host.sent.filter(message => message.method === 'textDocument/didOpen').map(message => message.params.textDocument.uri.split('/').at(-1));
+  assert.deepEqual(opens(), ['user.py']);
   const location = drive(host, 'tool', { path: 'user.py', line: 0, character: 5 }, opened.state, 'definition');
-  assert.equal(location.value.reason, 'server_location_unobserved_or_stale');
+  assert.equal(location.value.status, 'ready', JSON.stringify(location.value));
+  assert.deepEqual(location.value.locations.map(item => [item.path, item.sha256]), [['old.py', digest('value = 1\n')]]);
+  assert.deepEqual(opens(), ['user.py', 'old.py']);
+  assert.deepEqual(Object.keys(location.state.servers.python.documents).sort(), ['old.py', 'user.py']);
+  assert.equal(location.state.servers.python.status, 'synced');
+  host.files['old.py'] = 'value = 2\n';
+  const stale = drive(host, 'tool', { path: 'user.py', line: 0, character: 5 }, location.state, 'definition');
+  assert.equal(stale.value.reason, 'server_location_unobserved_or_stale');
+  assert.equal(stale.state.servers.python.status, 'stale');
   foreign.store[observed.key] = { revision: 1, value: { repository: '/other' } };
   const bound = drive(foreign, 'tool', { path: 'user.py', line: 0, character: 5 }, opened.state, 'definition');
   assert.equal(bound.value.reason, 'repository_binding_mismatch');
   assert.ok(!foreign.operations.includes('process.start') && !foreign.operations.includes('workspace.read'));
+});
+
+test('LSP the first apply_patch in a language starts the server and reports its errors in the same output', () => {
+  const host = createHost({ files: { 'a.py': 'ERR boom\nok = 1\n' }, server: diagnosticServer });
+  host.observe();
+  const first = drive(host, 'tool_output', output({ input: '*** Update File: a.py' }));
+  assert.match(first.value.append, /a\.py: 1 new, 0 resolved\n  \+ 1:1 boom/);
+  assert.deepEqual([first.state.servers.python.running, first.state.servers.python.status], [true, 'synced']);
+  host.files['a.py'] = 'ok = 1\n';
+  const fixed = drive(host, 'tool_output', output({ input: '*** Update File: a.py' }), first.state);
+  assert.match(fixed.value.append, /a\.py: 0 new, 1 resolved\n  - 1:1 boom/);
+  const idle = createHost({ files: { 'a.py': 'ERR boom\n' }, server: diagnosticServer });
+  idle.observe();
+  assert.equal(drive(idle, 'tool_output', { ...output({ input: '*** Update File: a.py' }), success: false }).value, null);
+  assert.ok(!idle.operations.includes('process.start'));
+});
+
+test('LSP an unavailable workspace index resynchronizes open documents and records a degraded reason', () => {
+  const reason = 'workspace index exceeds bounds';
+  const host = createHost({ files: { 'a.py': 'value = 1\n', 'b.py': 'other = 1\n' }, server: diagnosticServer });
+  const opened = drive(host, 'workspace_change', change(host, ['a.py', 'b.py']));
+  const unavailable = { repository: host.repository, source: 'rescan', call_id: null, status: 'unavailable', reason, changes: [] };
+  const changes = () => host.sent.filter(message => message.method === 'textDocument/didChange').map(message => [message.params.textDocument.uri.split('/').at(-1), message.params.textDocument.version]);
+  host.files['a.py'] = 'value = 2\n';
+  const degraded = drive(host, 'workspace_change', unavailable, opened.state).state.servers.python;
+  assert.deepEqual(changes(), [['a.py', 2]]);
+  assert.deepEqual([degraded.running, degraded.status, degraded.reason], [true, 'synced', `degraded: ${reason}`]);
+  assert.deepEqual(Object.fromEntries(Object.entries(degraded.documents).map(([name, entry]) => [name, entry.version])), { 'a.py': 2, 'b.py': 1 });
+  host.failSync = true;
+  host.files['a.py'] = 'value = 3\n';
+  const failed = drive(host, 'workspace_change', unavailable, opened.state).state.servers.python;
+  assert.deepEqual([failed.running, failed.status, failed.reason], [false, 'stale', 'synthetic_sync_failure']);
+  const empty = drive(createHost({ server: diagnosticServer }), 'workspace_change', unavailable, null).state;
+  assert.equal(empty?.servers?.python?.status ?? 'idle', 'idle');
+});
+
+test('LSP an unavailable event for other causes resyncs neutrally, keeps its reason until the next observed change and honors the repository binding', () => {
+  const host = createHost({ files: { 'a.py': 'value = 1\n', 'b.py': 'other = 1\n' }, server: diagnosticServer });
+  const opened = drive(host, 'workspace_change', change(host, ['a.py', 'b.py']));
+  const unavailable = reason => ({ repository: host.repository, source: 'rescan', call_id: null, status: 'unavailable', reason, changes: [] });
+  host.files['a.py'] = 'value = 2\n';
+  const resynced = drive(host, 'workspace_change', unavailable('workspace_change_batch_limit'), opened.state);
+  assert.equal(resynced.state.servers.python.reason, 'resynced: workspace_change_batch_limit');
+  host.files['a.py'] = 'value = 3\n';
+  const fed = drive(host, 'tool_output', output({ input: '*** Update File: a.py' }), resynced.state);
+  assert.equal(fed.state.servers.python.reason, 'resynced: workspace_change_batch_limit');
+  host.files['b.py'] = 'other = 2\n';
+  const turn = drive(host, 'turn_start', null, fed.state);
+  assert.equal(turn.state.servers.python.reason, 'resynced: workspace_change_batch_limit');
+  host.files['a.py'] = 'value = 4\n';
+  const cleared = drive(host, 'workspace_change', change(host, ['a.py']), turn.state);
+  assert.deepEqual([cleared.state.servers.python.status, cleared.state.servers.python.reason], ['synced', '']);
+  const foreign = createHost({ repository: '/other', server: diagnosticServer });
+  foreign.store[observed.key] = { revision: 1, value: { repository: '/other' } };
+  const bound = drive(foreign, 'workspace_change', unavailable('workspace_change_batch_limit'), opened.state).state.servers.python;
+  assert.equal(bound.reason, 'repository_binding_mismatch');
+  assert.ok(!foreign.operations.includes('process.start') && !foreign.operations.includes('workspace.read'));
+});
+
+test('LSP definition keeps its source document open while many targets open near the document cap', () => {
+  const many = () => {
+    const inner = actionServer();
+    return message => message.method === 'textDocument/definition'
+      ? [reply(message.id, Array.from({ length: 20 }, (_, index) => ({ uri: sibling(message.params.textDocument.uri, `t${index}.py`), range: span(0, 0, 1) })))]
+      : inner(message);
+  };
+  const files = Object.fromEntries(['src.py', ...Array.from({ length: 90 }, (_, index) => `f${index}.py`), ...Array.from({ length: 20 }, (_, index) => `t${index}.py`)].map(name => [name, `${name.split('.')[0]} = 1\n`]));
+  const host = createHost({ files, server: many });
+  let opened = null;
+  for (let start = 0; start < 90; start += 30) opened = drive(host, 'workspace_change', change(host, [...start ? [] : ['src.py'], ...Array.from({ length: 30 }, (_, index) => `f${start + index}.py`)]), opened?.state ?? null);
+  assert.equal(Object.keys(opened.state.servers.python.documents).length, 91);
+  const found = drive(host, 'tool', { path: 'src.py', line: 0, character: 0 }, opened.state, 'definition');
+  assert.equal(found.value.status, 'ready', JSON.stringify(found.value));
+  assert.equal(found.value.locations.length, 20);
+  const documents = Object.keys(found.state.servers.python.documents);
+  assert.ok(documents.includes('src.py') && documents.length <= 96);
+});
+
+test('LSP an apply_patch that only deletes files starts no server', () => {
+  const host = createHost({ files: { 'a.py': 'ok = 1\n' }, server: diagnosticServer });
+  host.observe();
+  const deleted = drive(host, 'tool_output', output({ input: '*** Begin Patch\n*** Delete File: gone.py\n*** End Patch' }));
+  assert.equal(deleted.value, null);
+  assert.ok(!host.operations.includes('process.start'));
+  const mixed = drive(host, 'tool_output', output({ input: '*** Begin Patch\n*** Delete File: gone.py\n*** Update File: a.py\n*** End Patch' }));
+  assert.equal(mixed.state.servers.python.running, true);
 });
 
 test('LSP server requests are answered and rename changes resolve to exact writes', () => {
