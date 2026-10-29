@@ -2,7 +2,7 @@
 
 This is every [mod API reference page](reference/README.md) in one file, for agents and search.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.164.0`.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.165.0`.
 `omd-mod status` reports the OMD release as `host.omd`, the version `compatibility.releases` matches. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
 ## Generated declarations
@@ -92,7 +92,7 @@ follows.
 
 #### Codex plugins and hooks
 
-Codex 0.164.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
+Codex 0.165.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
 that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_model_request`,
 `post_model_request`, `pre_tool_use`, `permission_request`, `post_tool_use`, `pre_compact`, `post_compact`,
 `session_start`, `session_end`, `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.

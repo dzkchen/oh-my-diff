@@ -13,13 +13,14 @@ release.
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.165.0 | next release | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.164.0 | 1.2.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.163.0 | 1.0.0 to 1.1.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 
-Upstream lag on 2026-10-28: one release. Codex 0.165.0 (2026-10-27) is the latest stable Codex release; OMD supports
-0.164.0. A newer Codex is supported once an OMD release lists it here. Update and roll back OMD with `omd update` and `omd update rollback`
+Upstream lag on 2026-10-28: none. Codex 0.165.0 is the latest stable Codex release. A newer Codex is supported once an
+OMD release lists it here. Update and roll back OMD with `omd update` and `omd update rollback`
 ([install](../../docs/install.md#update)).
 
 ## What the host checks
@@ -92,7 +93,7 @@ The host never rewrites a mod's code or settings.
 
 ## Tested and not tested
 
-Tested: Apple Silicon macOS with Codex 0.164.0, the OMD+ and OMD Core collections, and the bundled plugins.
+Tested: Apple Silicon macOS with Codex 0.165.0, the OMD+ and OMD Core collections, and the bundled plugins.
 
 Not tested:
 

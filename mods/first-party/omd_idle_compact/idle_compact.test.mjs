@@ -13,7 +13,7 @@ function run(event, payload, state, { settings = {}, now = NOW, answer = () => (
   const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, event, payload,
     virtual_time_ms: now, hook_budget_ms: 2000 }, call => {
     calls.push(call);
-    if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.164.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };
+    if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.165.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };
     if (call.operation === 'events.schedule') return call.arguments;
     if (call.operation === 'events.cancel') return { cancelled: true };
     const value = answer(call);

@@ -14,7 +14,7 @@ follows.
 
 ### Codex plugins and hooks
 
-Codex 0.164.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
+Codex 0.165.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
 that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_model_request`,
 `post_model_request`, `pre_tool_use`, `permission_request`, `post_tool_use`, `pre_compact`, `post_compact`,
 `session_start`, `session_end`, `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
