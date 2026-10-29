@@ -58,8 +58,8 @@ pub const RESERVED_EXEC_PREFIXES: &[&str] = &[
 pub const EXEC_DEFAULT_TIMEOUT_MS: u64 = 10_000;
 pub const EXEC_MAX_TIMEOUT_MS: u64 = 120_000;
 pub const EXEC_OUTPUT_BYTES: usize = 1024 * 1024;
-pub const EXEC_INLINE_STDOUT_BYTES: usize = crate::mods::HOST_RECEIPT_BYTES / 2;
-pub const EXEC_INLINE_STDERR_BYTES: usize = crate::mods::HOST_RECEIPT_BYTES / 8;
+pub const EXEC_INLINE_STDOUT_BYTES: usize = 65_536;
+pub const EXEC_INLINE_STDERR_BYTES: usize = 16_384;
 pub const EXEC_ARTIFACT_BYTES: usize = 16 * 1024 * 1024;
 pub const EXEC_ARTIFACT_PAGE_BYTES: usize = 16 * 1024;
 const EXEC_ARTIFACT_STORE_BYTES: u64 = 64 * 1024 * 1024;
@@ -478,10 +478,7 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     })
 }
 
-/// Like [`resolve_program`], a bare name never resolves inside the repository, whose files the
-/// sandboxed agent can write; an absolute program there runs only when `os_access` lists that path.
-/// Checks use the canonical target, but a link outside the repository runs as the link (directory
-/// canonical) so a multicall shim, such as a version manager's `node`, dispatches by its name.
+/// The agent can write the repository, so programs there need an `os_access` path; outside links run as the link so multicall shims dispatch.
 pub fn unrestricted_program(
     access: &crate::ModOsAccess,
     name: &str,
@@ -708,26 +705,7 @@ impl Host<'_> {
                     }
                 }
             }
-            let temporary = directory.join(format!(".{digest}.{}.tmp", crate::peers::now_ms()));
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-                .open(&temporary)
-                .map_err(|error| error.to_string())?;
-            let written = file.write_all(bytes).and_then(|()| file.sync_all());
-            drop(file);
-            if let Err(error) = written {
-                let _ = fs::remove_file(&temporary);
-                return Err(error.to_string());
-            }
-            if let Err(error) = fs::rename(&temporary, &path) {
-                let _ = fs::remove_file(&temporary);
-                return Err(error.to_string());
-            }
-            fs::File::open(&directory)
-                .and_then(|file| file.sync_all())
+            crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Durable)
                 .map_err(|error| error.to_string())?;
         }
         Ok(json!({"reference": digest, "sha256": digest}))
@@ -1618,26 +1596,26 @@ impl Host<'_> {
         let mut total = 0;
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(crate::fsio::STAGING_PREFIX)
+            {
+                continue;
+            }
+            match entry.metadata() {
+                Ok(metadata) => total += metadata.len(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            }
             count += 1;
-            total += entry.metadata()?.len();
         }
         if count >= BACKUP_LIMIT || total + bytes.len() as u64 > BACKUP_BYTES {
             return Err(std::io::Error::other("backup_quota"));
         }
         let path = directory.join(format!("{digest}.json"));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(&bytes)?;
-                file.sync_all()?;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(error) => return Err(error),
-        }
+        crate::fsio::write_if_changed(&path, &bytes)?;
+        // An identical backup is left as it was, so keep that one private too.
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
         Ok(json!({"reference": digest, "sha256": digest}))
     }

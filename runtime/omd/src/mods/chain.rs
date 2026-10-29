@@ -197,8 +197,7 @@ pub(super) fn validate(interceptors: &[ModInterceptor], capabilities: &[String])
     Ok(())
 }
 
-/// Outermost first: explicit `before`/`after`, then consumers outside their dependencies, then ID.
-/// A cycle fails only the mods that declared its edges, never one that is merely their target.
+/// Outermost first: `before`/`after`, then consumers outside dependencies, then ID; a cycle fails only the mods declaring its edges.
 pub(super) fn order(
     loaded: &BTreeMap<String, Loaded>,
 ) -> std::result::Result<Vec<String>, Vec<String>> {
@@ -611,11 +610,22 @@ fn validate_result(
             deny || object.is_some_and(|object| {
                 result["output"]
                     .as_str()
-                    .is_some_and(|output| output.len() <= RESULT_BYTES)
+                    .is_some_and(|output| output.len() <= crate::TOOL_OUTPUT_BYTES)
                     && result["success"].is_boolean()
                     && object.keys().all(|key| {
-                        ["output", "success", "truncated", "call_id"].contains(&key.as_str())
+                        [
+                            "output",
+                            "success",
+                            "truncated",
+                            "bytes",
+                            "call_id",
+                            "value",
+                        ]
+                        .contains(&key.as_str())
                     })
+                    && result["bytes"].as_u64().is_some() == result.get("bytes").is_some()
+                    && serde_json::to_vec(&result["value"])
+                        .is_ok_and(|value| value.len() <= RESULT_BYTES)
             })
         }
         "host_operation" => {
@@ -1649,6 +1659,19 @@ impl ModHost {
         }
     }
 
+    pub fn policy_owners(&self) -> Vec<String> {
+        self.loaded
+            .iter()
+            .filter(|(_, loaded)| {
+                self.policies.contains(&loaded.selection.path)
+                    || loaded.registrations.interceptors.iter().any(|interceptor| {
+                        interceptor.required && granted(loaded, &interceptor.pattern, "model_send")
+                    })
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
     pub fn send_policy(&self) -> Option<SendPolicy> {
         let required = self.intercepts("model_send");
         if required.is_none() && self.policies.is_empty() {
@@ -1735,6 +1758,21 @@ impl ModHost {
                     .map(|interceptor| interceptor.required)
             })
             .max()
+    }
+
+    pub fn intercepts_with(&self, surface: &str, feature: &str) -> bool {
+        self.loaded.values().any(|loaded| {
+            loaded
+                .package
+                .compatibility
+                .required_features
+                .iter()
+                .any(|required| required == feature)
+                && loaded.registrations.interceptors.iter().any(|interceptor| {
+                    (loaded.error.is_none() || interceptor.required)
+                        && granted(loaded, &interceptor.pattern, surface)
+                })
+        })
     }
 
     /// Runs a hostless surface's chain on the held runtime, so no link waits for the lock; `None` when nothing intercepts it.

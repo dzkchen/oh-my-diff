@@ -56,6 +56,53 @@ class ProfileModeTests(unittest.TestCase):
                           "activation": {"selection": selection}}
                 self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
 
+    def test_a_route_launch_refreshes_a_catalog_that_lacks_routes_added_in_a_session(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            (base / "host.json").write_text(json.dumps({"routes": [{"model": "work", "provider": "omd_profiles", "data": {}},
+                                                                   {"model": "home", "provider": "omd_profiles", "data": {}},
+                                                                   {"model": "legacy", "provider": "omd_profiles"}]}))
+            route, catalog = base / "route.json", base / "models.json"
+            route.write_text(json.dumps({"default": "work", "models": [{"slug": "work", "family": "work"}]}))
+            catalog.write_text(json.dumps({"models": [{"slug": "work"}]}))
+            record = {"profile": "full", "store": str(base), "activation": {"selection": "omd"}, "manager": {"installed_path": "m"},
+                      "providers": {"omd_profiles": {"route": str(route), "catalog": str(catalog)}}}
+
+            def setup(_prefix, _record, _name, _identifier, options):
+                self.assertEqual(options, {})
+                route.write_text(json.dumps({"default": "work", "models": [{"slug": "work"}, {"slug": "home"}]}))
+                catalog.write_text(json.dumps({"models": [{"slug": "work"}, {"slug": "home"}]}))
+
+            arguments = argparse.Namespace(setup=False, model="home", codex=[])
+            with patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"), \
+                    patch.object(profiles, "invoke", return_value={"selections": [{"id": "omd_profiles", "effective": True}]}), \
+                    patch.object(profiles, "route_setup", side_effect=setup) as refreshed, \
+                    patch.object(profiles.os, "execv") as launched:
+                profiles.route(base, base, "profiles", arguments)
+                profiles.route(base, base, "profiles", arguments)
+            self.assertEqual(refreshed.call_count, 1)
+            self.assertIn('model="home"', launched.call_args.args[1])
+
+    def test_omd_launcher_routes_uninstall_to_the_installer_that_owns_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            for name in ("tool", "control", "installer"):
+                (base / name).write_text(f"echo {name} \"$@\" \"$OMD_MOD_STORE\"\n")
+                (base / name).chmod(0o755)
+            record = {"store": "/omd/store"}
+            managed = {**record, "update": {"python": "python3", "installer": str(base / "installer"), "root": "/omd/root"}}
+            for current, argv, expected in (
+                    (managed, ["uninstall", "--keep-broker"], "installer uninstall --root /omd/root --keep-broker"),
+                    (managed, ["update"], "installer update --root /omd/root"),
+                    (record, ["uninstall", "--keep-broker"], "control uninstall --keep-broker"),
+                    (record, ["update"], "tool update /omd/store"),
+                    (record, ["help", "--all"], "tool --help")):
+                with self.subTest(managed="update" in current, argv=argv):
+                    launcher = base / "omd"
+                    launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
+                    run = subprocess.run(["sh", launcher, *argv], capture_output=True, text=True, check=True)
+                    self.assertEqual(run.stdout.strip(), expected)
+
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
         for unmanaged in (False, True):
             with self.subTest(unmanaged=unmanaged), tempfile.TemporaryDirectory() as temporary:
@@ -74,6 +121,92 @@ class ProfileModeTests(unittest.TestCase):
                         self.assertTrue(profiles.uninstall(prefix, bin_dir)["uninstalled"])
                         self.assertFalse(prefix.exists())
                         self.assertEqual(list(bin_dir.iterdir()), [])
+
+    def test_identical_files_across_generations_and_catalog_are_one_inode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.ts"
+            source.write_text("export default 1\n")
+            prefixes = [root / "releases" / name / "prefix" for name in ("a", "b")]
+            for prefix in prefixes:
+                profiles.place(source, prefix / "management/install.sh", root / "objects")
+                profiles.place(source, prefix / "sources/mod/index.ts", root / "objects")
+            shelf = profiles.shelve(prefixes[1] / "sources/mod", root / "catalog/mod/sha")
+            files = [prefix / name for prefix in prefixes for name in ("management/install.sh", "sources/mod/index.ts")]
+            files += [shelf / "index.ts", root / "objects" / profiles.support.digest(source)]
+            self.assertEqual({path.stat().st_ino for path in files}, {files[-1].stat().st_ino})
+            self.assertEqual(files[0].stat().st_nlink, len(files))
+            self.assertEqual([path.name for path in (root / "objects").iterdir()], [profiles.support.digest(source)])
+
+    def test_an_object_edited_in_place_is_replaced_not_reused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.ts"
+            source.write_text("export default 1\n")
+            edited = profiles.place(source, root / "releases/a/prefix/sources/mod/index.ts", root / "objects")
+            (root / "objects" / edited).write_text("tampered\n")
+            fresh = root / "releases/b/prefix/sources/mod/index.ts"
+            self.assertEqual(profiles.place(source, fresh, root / "objects"), edited)
+            self.assertEqual(fresh.read_text(), "export default 1\n")
+            self.assertTrue(os.path.samestat(fresh.stat(), (root / "objects" / edited).stat()))
+
+    def test_identical_independent_copies_are_merged_and_every_generation_stays_valid(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "releases/new").mkdir(parents=True)
+            prefix, bin_dir, record = installed_fixture(root / "releases/new")
+            copies = []
+            for name in ("old", "new"):
+                for relative in (f"releases/{name}/prefix/management/install.sh", f"releases/{name}/prefix/sources/example/index.ts",
+                                 f"catalog/mod/{name}/index.ts"):
+                    path = root / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("same")
+                    copies.append(path)
+            store = root / "stores/full/sources/mod/index.ts"
+            store.parent.mkdir(parents=True)
+            store.write_text("same")
+            different = root / "catalog/mod/other.ts"
+            different.write_text("different")
+            unreadable = root / "catalog/mod/unreadable.ts"
+            unreadable.write_text("same")
+            unreadable.chmod(0)
+            profiles.deduplicate(root)
+            unreadable.chmod(0o644)
+            self.assertEqual({path.stat().st_ino for path in copies}, {copies[0].stat().st_ino})
+            self.assertEqual(copies[0].stat().st_nlink, len(copies) + 1)
+            self.assertEqual(store.stat().st_nlink, 1)
+            self.assertNotEqual(different.stat().st_ino, copies[0].stat().st_ino)
+            self.assertEqual(different.read_text(), "different")
+            digest = profiles.support.digest(copies[0])
+            record["management"]["files"] = {"install.sh": digest}
+            self.assertEqual(profiles.support.digest(prefix / "management/install.sh"), digest)
+            with contextlib.ExitStack() as stack:
+                for item in uninstalling(record):
+                    stack.enter_context(item)
+                self.assertTrue(profiles.uninstall(prefix, bin_dir)["uninstalled"])
+            self.assertFalse(prefix.exists())
+            self.assertEqual(copies[1].read_text(), "same")
+
+    def test_launcher_reaps_dead_markers_and_execs_codex_as_the_marked_process(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            codex = base / "fake-codex"
+            codex.write_text(f'#!/bin/sh\necho $$ > {base}/pid\nls {base}/root/sessions > {base}/seen\nexit 7\n')
+            codex.chmod(0o755)
+            record = {"binary": {"installed_path": str(codex)}, "store": str(base / "store"), "profile": "platform",
+                      "activation": {"selection": "platform"},
+                      "update": {"root": str(base / "root"), "installer": str(base / "install.sh"), "python": "python3"}}
+            launcher = base / "launcher"
+            launcher.write_text(profiles.selected_text(record))
+            sessions = base / "root/sessions"
+            sessions.mkdir(parents=True)
+            dead = subprocess.Popen(["true"])
+            dead.wait()
+            (sessions / str(dead.pid)).touch()
+            result = subprocess.run(["sh", launcher])
+            self.assertEqual(result.returncode, 7)
+            self.assertEqual((base / "seen").read_text().split(), (base / "pid").read_text().split())
 
     def test_uninstall_removes_plugins_added_from_this_installation(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -206,6 +339,23 @@ enabled = true
                 self.assertEqual(commands, ["selection-status"])
             self.assertEqual(sorted(path.name for path in (store / "sources").iterdir()), ["example"])
 
+    def test_a_directory_package_on_beside_its_bundled_copy_is_turned_off(self):
+        store = Path("/store")
+        selections = [
+            {"id": "omd_advisor", "path": "/store/package-cache/omd_advisor/old", "scope": "user", "selected": True, "packaged": True},
+            {"id": "omd_advisor", "path": "/store/sources/omd_advisor", "scope": "user", "selected": True, "packaged": False},
+            {"id": "omd_usage", "path": "/store/package-cache/omd_usage/old", "scope": "user", "selected": True, "packaged": True},
+            {"id": "omd_usage", "path": "/store/sources/omd_usage", "scope": "user", "selected": False, "packaged": False}]
+        commands = []
+
+        def invoke(_manager, command, _store, *arguments):
+            commands.append((command, *arguments))
+            return {"selections": selections} if command == "selection-status" else {}
+
+        with patch.object(profiles, "invoke", side_effect=invoke):
+            profiles.keep_bundled_copies("manager", store)
+        self.assertEqual(commands, [("selection-status",), ("package-disable", "omd_advisor")])
+
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
                               "sha256": "a" * 64, "capabilities": ["exec"],
@@ -277,6 +427,44 @@ enabled = true
                 result = profiles.select_mod(base / "prefix", base / "bin", "omd_lsp_view", True)
                 self.assertTrue(result["packages"][0]["enabled_in_store"])
                 self.assertIsNone(result["packages"][0]["error"])
+
+    def test_omd_mini_reopens_the_thread_its_switch_request_names(self):
+        with tempfile.TemporaryDirectory(prefix="omd-mini-", dir="/private/tmp") as temporary:
+            base = Path(temporary)
+            log, exported = base / "runs.log", base / "export.json"
+            (base / "codex").write_text(
+                "#!/bin/sh\n"
+                f"echo \"$*|$OH_MY_DIFF_PRESENTATION|$OH_MY_DIFF_LAUNCH|$OMD_TUI_MOD_UI|$OMD_TUI_HEADER|$OMD_TUI_COMPOSER\" >> {log}\n"
+                "launch=${OH_MY_DIFF_LAUNCH%.*} run=${OH_MY_DIFF_LAUNCH##*.}\n"
+                "if [ \"$OH_MY_DIFF_PRESENTATION\" = mini ]; then\n"
+                f"  echo \"{{\\\"entries\\\":{{\\\"switch_$launch\\\":{{\\\"value\\\":{{\\\"run\\\":$run,\\\"target\\\":\\\"full\\\",\\\"thread\\\":\\\"019a0000-0000-7000-8000-000000000001\\\"}}}}}}}}\" > {exported}\n"
+                f"else echo '{{\"entries\":{{}}}}' > {exported}; exit 3; fi\n")
+            (base / "omd").write_text(f"#!/bin/sh\ncat {exported}\n")
+            for name in ("codex", "omd"):
+                (base / name).chmod(0o755)
+            record = {"activation": {"selection": "full"}, "manager": {"installed_path": "/manager"}, "store": "/store",
+                      "tools": {"omd": {"installed_path": str(base / "omd")}}}
+            selections = {"selections": [{"id": "omd_mini", "effective": True, "error": None}]}
+            with patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"), \
+                    patch.object(profiles, "invoke", return_value=selections), \
+                    patch.object(profiles.sys.stdin, "isatty", return_value=True), \
+                    patch.object(profiles.sys.stdout, "isatty", return_value=True), \
+                    patch.object(profiles.signal, "signal"):
+                code = profiles.mini(Path("/prefix"), base, ["--model", "m", "-s=danger-full-access", "-C", "/repo", "-c", "a=1",
+                                                             "-i", "x.png", "--yolo", "--no-alt-screen", "fix it"])
+                selections["selections"][0]["effective"] = False
+                with self.assertRaisesRegex(ValueError, "needs its mod enabled"):
+                    profiles.mini(Path("/prefix"), base, [])
+            runs = [line.split("|") for line in log.read_text().splitlines()]
+            self.assertEqual(code, 3)
+            self.assertEqual([(argv, mode, *tui) for argv, mode, _, *tui in runs], [
+                ("--no-alt-screen -c tui.show_tooltips=false --model m -s=danger-full-access -C /repo -c a=1 -i x.png --yolo --no-alt-screen fix it", "mini", "omd_mini", "off", "plain"),
+                ("--model m -s=danger-full-access -C /repo -c a=1 --yolo resume 019a0000-0000-7000-8000-000000000001", "full", "", "", "")])
+            self.assertEqual([launch.split(".")[1] for _, _, launch, *_ in runs], ["0", "1"])
+            self.assertEqual(profiles.session_options(["resume", "--last", "-mx", "--model=y", "-c", "a=1", "-c", "b=2", "--", "-s", "p", "-m"]),
+                             ["-mx", "--model=y", "-c", "a=1", "-c", "b=2"])
+            self.assertEqual(profiles.session_options(["prompt", "-m"]), [])
+            self.assertEqual(len({launch.split(".")[0] for _, _, launch, *_ in runs}), 1)
 
 
 if __name__ == "__main__":

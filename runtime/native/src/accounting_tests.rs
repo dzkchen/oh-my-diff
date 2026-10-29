@@ -180,7 +180,7 @@ fn final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed() {
         source,
         &["middleware", "request_policy"],
     );
-    assert!(ResponseObserver::policed(&accounts));
+    assert!(ResponseObserver::policed(&accounts).is_some());
     let long = format!("{} SECRET-4", "é".repeat(140_000));
     let body = |user: &str| {
         json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true,"instructions":"base",
@@ -254,6 +254,52 @@ fn final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed() {
 }
 
 #[test]
+fn final_request_policies_redact_unary_image_and_memory_bodies() {
+    let (root, accounts, _task, _request, _body) = setup();
+    let source = r"export default api => {
+        api.intercept('model_send', {required: true}, async (e, next) => {
+            const inner = await next(e);
+            if (e.opaque.some(o => o.kind === 'file_id')) return {deny: 'unscanned file'};
+            const edits = e.segments.filter(s => s.editable).flatMap(s =>
+                [...s.text.matchAll(/SECRET-\d+/g)].map(m => ({segment: s.id, start: m.index, end: m.index + m[0].length, text: '[secret]'})));
+            return {edits: [...inner.edits, ...edits]};
+        });
+    }";
+    install_package(
+        &accounts,
+        root.path(),
+        source,
+        &["middleware", "request_policy"],
+    );
+    let mut image = json!({"model":"image-model","prompt":"draw SECRET-1"});
+    ResponseObserver::police_unary(&accounts, None, &mut image).unwrap();
+    assert_eq!(image["prompt"], "draw [secret]");
+    let mut memory = serde_json::to_value(codex_api::MemorySummarizeInput {
+        model: "memory-model".into(),
+        raw_memories: vec![codex_api::RawMemory {
+            id: "m1".into(),
+            metadata: codex_api::RawMemoryMetadata {
+                source_path: "/x".into(),
+            },
+            items: vec![json!({"type":"message","role":"user",
+                "content":[{"type":"input_text","text":"key SECRET-2"}]})],
+        }],
+        reasoning: None,
+    })
+    .unwrap();
+    ResponseObserver::police_unary(&accounts, Some("child"), &mut memory).unwrap();
+    assert_eq!(
+        memory["traces"][0]["items"][0]["content"][0]["text"],
+        "key [secret]"
+    );
+    let mut edit = json!({"model":"image-model","prompt":"edit","images":[{"file_id":"f1"}]});
+    let refused = ResponseObserver::police_unary(&accounts, None, &mut edit)
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("unscanned file"), "{refused}");
+}
+
+#[test]
 fn declared_request_policies_refuse_until_disabled_and_are_inert_without_policies() {
     let (root, accounts, _task, _request, _body) = setup();
     let source = "export default api => { throw new Error('policy failed to start'); }";
@@ -273,11 +319,14 @@ fn declared_request_policies_refuse_until_disabled_and_are_inert_without_policie
         );
         assert!(refused.contains("policy failed to start"), "{refused}");
     }
-    assert!(ResponseObserver::policed(&accounts));
+    assert_eq!(
+        ResponseObserver::policed(&accounts).as_deref(),
+        Some("request_router")
+    );
 
     store.enable(&package, false).unwrap();
     runtime.lock().unwrap().reload().unwrap();
-    assert!(!ResponseObserver::policed(&accounts));
+    assert_eq!(ResponseObserver::policed(&accounts), None);
     let internal = prepared(&accounts, "title-thread", &body).unwrap();
     assert_eq!(internal, body);
     assert!(prepared(&accounts, "child", &body).is_ok());
@@ -1256,4 +1305,56 @@ fn an_added_plan_route_authorizes_only_the_repositories_it_was_approved_in() {
     };
     assert!(allowed(&repository) && allowed(&other));
     assert!(!allowed(&store.join("unlisted")));
+}
+
+#[test]
+fn unrated_native_requests_report_subscription_only_on_the_chatgpt_backend() {
+    let (root, accounts, task, mut request, body) = setup();
+    let notified = Arc::new(Mutex::new(Vec::new()));
+    let sink = notified.clone();
+    accounts.install_mod_notifier(Arc::new(move |event, payload| {
+        sink.lock().unwrap().push((event, payload));
+    }));
+    let mut lead = account(&task, root.path(), "lead");
+    lead.provider = "openai".into();
+    lead.rates = None;
+    lead.route = None;
+    lead.url = String::new();
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("child".into(), lead);
+    let mut basis = |url: &str, account: bool| {
+        request.url = url.into();
+        if account {
+            request
+                .headers
+                .insert("chatgpt-account-id", "fixture".parse().unwrap());
+        } else {
+            request.headers.remove("chatgpt-account-id");
+        }
+        let mut attempt = accounts
+            .before_send(&mut request, Some(&body))
+            .unwrap()
+            .unwrap();
+        let mut completed = json!({"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}});
+        attempt.observe(&mut completed, true).unwrap();
+        drop(attempt);
+        let (_, payload) = notified.lock().unwrap().pop().unwrap();
+        payload["cost"].clone()
+    };
+    assert_eq!(
+        basis(SUBSCRIPTION_RESPONSES_URL, true),
+        json!({"microusd": 0, "basis": "included_subscription"})
+    );
+    assert_eq!(
+        basis(SUBSCRIPTION_RESPONSES_URL, false)["basis"],
+        "unpriced"
+    );
+    assert_eq!(
+        basis("https://api.openai.com/v1/responses", true)["basis"],
+        "unpriced"
+    );
+    assert!(task.attempts().unwrap().is_empty());
 }

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import argparse
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -26,10 +29,18 @@ DEFAULT_ACTIVE = ("omd_auto_continue", "omd_idle_compact", "omd_inspector", "omd
                   "omd_plan_panel", "omd_plan_removal", "omd_statusline", "omd_tool_lines", "omd_update")
 PACKAGES = tuple(sorted(support.mods_lock()["packages"]))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
+EXPERIMENTAL_PACKAGES = ("omd_awake", "omd_monitor")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
 ROUTES = {"profiles": "omd_profiles"}
+CODEX_VALUE_OPTIONS = {"-c", "--config", "--enable", "--disable", "-m", "--model", "--local-provider", "-p", "--profile",
+                       "-s", "--sandbox", "-a", "--ask-for-approval", "-C", "--cd", "--add-dir", "--remote",
+                       "--remote-auth-token-env", "--listen", "--ws-auth", "--ws-token-file", "--ws-token-sha256",
+                       "--ws-shared-secret-file", "--ws-issuer", "--ws-audience", "--ws-max-clock-skew-seconds",
+                       "--ws-allowed-origin"}
+CODEX_FLAGS = {"--oss", "--approve-for-me", "--not-so-yolo", "--dangerously-bypass-approvals-and-sandbox", "--yolo",
+               "--dangerously-bypass-hook-trust", "--search", "--no-daemon", "--strict-config"}
 MANAGEMENT_FILES = ("scripts/profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/mods_lock.py", "runtime/mods.lock.json",
                     "upstream.lock.json", "docs/install.md", "install.sh")
@@ -40,7 +51,63 @@ def invoke(*arguments):
 
 
 def profile_packages(profile):
-    return PACKAGES if profile == "full" else PLATFORM_PACKAGES
+    if profile == "full":
+        return tuple(identifier for identifier in PACKAGES if identifier not in EXPERIMENTAL_PACKAGES)
+    return PLATFORM_PACKAGES
+
+
+def link(source, target):
+    try:
+        os.link(source, target)
+    except OSError as error:
+        if error.errno == errno.EEXIST:
+            raise
+        shutil.copy2(source, target)
+
+
+def relink(source, target, objects):
+    temporary = objects / f".{target.name}.{os.urandom(4).hex()}"
+    try:
+        os.link(source, temporary)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def share(objects, path):
+    try:
+        name = support.digest(path)
+        stored = objects / name
+        objects.mkdir(exist_ok=True)
+        try:
+            os.link(path, stored)
+        except FileExistsError:
+            if not os.path.samestat(path.stat(), stored.stat()) and path.stat().st_mode == stored.stat().st_mode:
+                if support.digest(stored) == name:
+                    relink(stored, path, objects)
+                else:
+                    relink(path, stored, objects)
+        return name
+    except OSError:
+        return None
+
+
+def place(source, target, objects):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    return objects and share(objects, target) or support.digest(target)
+
+
+def deduplicate(root):
+    objects = root / "objects"
+    for directory in (root / "catalog", *root.glob("releases/*/prefix/management"), *root.glob("releases/*/prefix/sources")):
+        for path in directory.rglob("*"):
+            try:
+                single = path.is_file() and not path.is_symlink() and path.stat().st_nlink == 1
+            except OSError:
+                continue
+            if single:
+                share(objects, path)
 
 
 def sync_sources(manager, store, origin, packages):
@@ -76,6 +143,15 @@ def sync_sources(manager, store, origin, packages):
     if changed:
         invoke(manager, "reload", store)
     return changed
+
+
+def keep_bundled_copies(manager, store):
+    """Turn off a Directory package that is on beside the bundled copy of the same mod; the host rejects both."""
+    selected = [item for item in invoke(manager, "selection-status", store)["selections"] if item["selected"]]
+    for item in selected:
+        if item["packaged"] and any(other["path"] == str(store / "sources" / item["id"]) and other["scope"] == item["scope"]
+                                    for other in selected):
+            invoke(manager, "package-disable", store, item["id"])
 
 
 def reconcile(prefix, bin_dir):
@@ -141,6 +217,41 @@ def write(prefix, record):
     support.atomic_text(prefix / "install.json", json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 
+def omd_text(record, tool, control):
+    update = record.get("update")
+    routed = (f"case \"$1\" in update|uninstall) command=$1; shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
+              f"{shlex.quote(update['installer'])} \"$command\" --root {shlex.quote(update['root'])} \"$@\";; esac\n" if update
+              else f"if [ \"$1\" = uninstall ]; then shift; exec {shlex.quote(str(control))} uninstall \"$@\"; fi\n")
+    mini = f"if [ \"$1\" = mini ]; then shift; exec {shlex.quote(str(control))} mini -- \"$@\"; fi\n"
+    return (f"#!/bin/sh\n{omd_help(record, tool)}{mini}{routed}export OMD_MOD_STORE={shlex.quote(record['store'])}\n"
+            f"exec {shlex.quote(tool)} \"$@\"\n")
+
+
+def omd_help(record, tool):
+    # `omd help --all` keeps the host binary's complete flag reference.
+    rows = [("Mods", [("omd mods list", "Installed mods and whether each is on"),
+                      ("omd mods catalog [QUERY]", "Search the mod directory"),
+                      ("omd install MOD", "Install a mod: a name, npm:PACKAGE, git+URL or ./folder"),
+                      ("omd mods enable MOD", "Turn on a mod you installed (disable turns it off)"),
+                      ("omd mods remove MOD", "Uninstall a mod")])]
+    if record.get("profile") == "full":
+        rows.append(("Sessions", [("omd mini", "Start Codex in the minimal scrollback interface (omd_mini mod)")]))
+    rows.append(("Oh My Diff", [*([("omd update", "Install the newest release"),
+                                   ("omd update status", "Check the install and update settings"),
+                                   ("omd update rollback", "Undo the last update")] if record.get("update") else []),
+                                ("omd uninstall", "Remove OMD; your Codex settings and sessions stay"),
+                                ("omd help --all", "Every command and flag")]))
+    lines = ["", "${b}Oh My Diff${r}  Codex CLI, extended with mods", "",
+             "Run ${b}codex${r} as usual, and type ${b}/mods${r} inside it to turn mods on or off."]
+    for title, commands in rows:
+        lines += ["", f"${{b}}{title}${{r}}", *(f"  {name:<26}${{d}}{text}${{r}}" for name, text in commands)]
+    lines += ["", "${d}Docs: https://github.com/dzkchen/oh-my-diff${r}", ""]
+    return (f"if [ \"$1\" = help ] && [ \"$2\" = --all ]; then exec {shlex.quote(tool)} --help; fi\n"
+            "case \"$1\" in ''|help|-h|--help)\n"
+            "  b= d= r=; if [ -t 1 ]; then b=$(printf '\\033[1m') d=$(printf '\\033[2m') r=$(printf '\\033[0m'); fi\n"
+            "  cat <<EOF\n" + "\n".join(lines) + "\nEOF\n  exit 0;;\nesac\n")
+
+
 def selected_text(record):
     binary = record["binary"]["installed_path"]
     store = record["store"]
@@ -151,13 +262,16 @@ def selected_text(record):
         root, installer = shlex.quote(update["root"]), f"OMD_PYTHON={shlex.quote(update['python'])} sh {shlex.quote(update['installer'])}"
         request = shlex.quote(str(Path(store) / "data/user/omd_update/store.json"))
         # The marker precedes the journal check and an update journals before reading markers, so each sees the other.
-        lines += [f"mkdir -p {root}/sessions && : > {root}/sessions/$$",
+        marker = f"{root}/sessions/$$"
+        lines += [f"mkdir -p {root}/sessions",
+                  f'for m in {root}/sessions/*; do [ -e "$m" ] && ! kill -0 "${{m##*/}}" 2>/dev/null && rm -f "$m"; done',
+                  f": > {marker}",
                   f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/ready.json ] || [ -e {root}/update/journal.json ] || [ {request} -nt {root}/update/seen ]; }}; then',
                   f"  {installer} launch --root {root} --session $$",
                   f'  OH_MY_DIFF_UPDATED=1 exec {root}/current/bin/codex "$@"',
                   "fi",
                   "unset OH_MY_DIFF_UPDATED",
-                  f"[ {root}/update/next -nt {root}/sessions/$$ ] || ({installer} tick --root {root} </dev/null >/dev/null 2>&1 &)",
+                  f"[ {root}/update/next -nt {marker} ] || ({installer} tick --root {root} </dev/null >/dev/null 2>&1 &)",
                   f"OH_MY_DIFF_UPDATE=; [ -f {root}/update/state.json ] && read -r OH_MY_DIFF_UPDATE < {root}/update/state.json; export OH_MY_DIFF_UPDATE"]
     lines.append("unset OMD_INSTALL_PROFILE OMD_MOD_STORE")
     lines.append(f"export OMD_INSTALL_PROFILE={'platform_only' if record['profile'] == 'platform' else 'full'}")
@@ -341,6 +455,20 @@ def select_mod(prefix, bin_dir, identifier, enabled):
         raise ValueError(f"managed mod selection failed and was restored: {error}") from error
 
 
+def route_setup(prefix, record, name, identifier, options):
+    setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
+    node = record["author"]["node"] or shutil.which("node")
+    if not node:
+        raise ValueError(f"{name} setup needs Node.js on PATH")
+    stripping = subprocess.run([node, "-p", "process.features.typescript"], stdout=subprocess.PIPE, text=True)
+    if stripping.stdout.strip() not in {"strip", "transform"}:
+        raise ValueError(f"{name} setup needs Node.js 22.18 or later: {node}")
+    result = subprocess.run([node, str(setup), "setup", str(prefix / "install.json"), json.dumps(options)], stdout=subprocess.PIPE, text=True)
+    if result.returncode:
+        raise ValueError(f"{name} setup failed")
+    return json.loads(result.stdout)
+
+
 def route(prefix, bin_dir, name, args):
     record = load(prefix)
     check(record, bin_dir)
@@ -348,16 +476,9 @@ def route(prefix, bin_dir, name, args):
     if record["profile"] != "full":
         raise ValueError(f"the {name} route is available only in OMD+")
     if args.setup:
-        setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
-        extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "text_only", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
-                            "remove": args.remove, "allowance": args.allowance})
-        node = record["author"]["node"] or shutil.which("node")
-        if not node:
-            raise ValueError(f"{name} setup needs Node.js on PATH")
-        result = subprocess.run([node, str(setup), "setup", str(prefix / "install.json"), extra], stdout=subprocess.PIPE, text=True)
-        if result.returncode:
-            raise ValueError(f"{name} setup failed")
-        details = json.loads(result.stdout)
+        details = route_setup(prefix, record, name, identifier, {
+            "add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "text_only", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
+            "remove": args.remove, "allowance": args.allowance})
         record.setdefault("providers", {})[identifier] = details.pop("provider")
         launcher = bin_dir / "codex"
         support.atomic_text(launcher, selected_text(record), 0o755)
@@ -373,6 +494,11 @@ def route(prefix, bin_dir, name, args):
     selections = invoke(record["manager"]["installed_path"], "selection-status", record["store"])["selections"]
     if not any(item.get("id") == identifier and item.get("effective") and not item.get("error") for item in selections):
         raise ValueError(f"the {name} route needs its mod enabled: omd-package mod enable {identifier}")
+    host = Path(record["store"]) / "host.json"
+    written = {route["model"] for route in (json.loads(host.read_text()).get("routes", []) if host.is_file() else [])
+               if route.get("provider") == identifier and isinstance(route.get("data"), dict)}
+    if written and written != {item["slug"] for item in json.loads(Path(provider["catalog"]).read_text())["models"]}:
+        route_setup(prefix, record, name, identifier, {})
     models = json.loads(Path(provider["route"]).read_text())
     wanted = args.model or models["default"]
     model = next((item["slug"] for item in models["models"] if wanted in (item["slug"], item.get("family"))), None)
@@ -381,6 +507,52 @@ def route(prefix, bin_dir, name, args):
     launcher = bin_dir / "codex"
     os.execv(launcher, [str(launcher), "-c", f"model_provider={json.dumps(identifier)}", "-c", f"model={json.dumps(model)}",
                         "-c", f"model_catalog_json={json.dumps(provider['catalog'])}", *args.codex])
+
+
+def session_options(codex):
+    kept, index = [], 0
+    while index < len(codex) and codex[index] != "--":
+        argument = codex[index]
+        name = argument.split("=", 1)[0]
+        if name in CODEX_FLAGS or (name in CODEX_VALUE_OPTIONS and "=" in argument) \
+                or (argument[:2] in CODEX_VALUE_OPTIONS and len(argument) > 2 and argument[1] != "-"):
+            kept.append(argument)
+        elif name in CODEX_VALUE_OPTIONS and index + 1 < len(codex):
+            kept += codex[index:index + 2]
+            index += 1
+        index += 1
+    return kept
+
+
+def mini(prefix, bin_dir, codex):
+    record = load(prefix)
+    check(record, bin_dir)
+    if record["activation"]["selection"] == "direct":
+        raise ValueError("activate OMD Core or OMD+ before using omd mini")
+    selections = invoke(record["manager"]["installed_path"], "selection-status", record["store"])["selections"]
+    if not any(item.get("id") == "omd_mini" and item.get("effective") and not item.get("error") for item in selections):
+        raise ValueError("omd mini needs its mod enabled: omd-package mod enable omd_mini")
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise ValueError("omd mini needs a terminal; use `codex exec` for piped or scripted runs")
+    launch, run, mode, options = os.urandom(8).hex(), 0, "mini", session_options(codex)
+    for name in (signal.SIGINT, signal.SIGQUIT):
+        signal.signal(name, signal.SIG_IGN)
+    while True:
+        env = {**os.environ, "OH_MY_DIFF_PRESENTATION": mode, "OH_MY_DIFF_LAUNCH": f"{launch}.{run}",
+               **({"OMD_TUI_MOD_UI": "omd_mini", "OMD_TUI_HEADER": "off", "OMD_TUI_COMPOSER": "plain"} if mode == "mini" else {})}
+        code = subprocess.run([bin_dir / "codex", *(["--no-alt-screen", "-c", "tui.show_tooltips=false"] if mode == "mini" else []), *codex], env=env,
+                              preexec_fn=lambda: [signal.signal(name, signal.SIG_DFL) for name in (signal.SIGINT, signal.SIGQUIT)]).returncode
+        exported = subprocess.run([record["tools"]["omd"]["installed_path"], "store", "export", "--mod", "omd_mini",
+                                   "--store", record["store"], "--scope", "user"], capture_output=True, text=True)
+        try:
+            entry = json.loads(exported.stdout)["entries"].get(f"switch_{launch}") if exported.returncode == 0 else None
+        except (ValueError, KeyError, AttributeError):
+            entry = None
+        request = entry.get("value") if isinstance(entry, dict) else None
+        if not (isinstance(request, dict) and request.get("run") == run and request.get("target") in ("mini", "full")
+                and isinstance(request.get("thread"), str) and re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", request["thread"])):
+            return code
+        mode, codex, run = request["target"], [*options, "resume", request["thread"]], run + 1
 
 
 def verify(manager, source, expected):
@@ -393,7 +565,7 @@ def shelve(source, destination):
         staged = destination.with_name(f".{destination.name}.new")
         shutil.rmtree(staged, ignore_errors=True)
         staged.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, staged)
+        shutil.copytree(source, staged, copy_function=link)
         staged.rename(destination)
     return destination
 
@@ -448,6 +620,7 @@ def install(args):
     bin_dir.mkdir(parents=True, exist_ok=True)
     prefix.mkdir(parents=True)
     managed = prefix.name == "prefix" and prefix.parent.parent.name == "releases"
+    objects = prefix.parents[2] / "objects" if managed else None
     made_store = False
     made_launchers = []
     try:
@@ -472,10 +645,7 @@ def install(args):
         management_root = prefix / "management"
         management_files = {}
         for name in MANAGEMENT_FILES:
-            target = management_root / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / name, target)
-            management_files[name] = support.digest(target)
+            management_files[name] = place(ROOT / name, management_root / name, objects)
         installed_manager = artifacts / "omd-mod"
         if authority_broker.deployed():
             authority_broker.main(["pin", "--add", f"--manifest={signed_manifest(prefix)}", *(f"--pin={path}" for path in (
@@ -509,7 +679,7 @@ def install(args):
         sources.mkdir(exist_ok=True)
         trusted, enabled = [], []
         curated = {entry["id"]: entry for entry in json.loads((ROOT / "extensions/index.json").read_text())["packages"]
-                   if entry["extension_type"] == "mod" and entry["support_status"] in ("reviewed_candidate", "supported")}
+                   if entry["extension_type"] == "mod" and entry["support_status"] in ("experimental", "reviewed_candidate", "supported")}
         catalog = {identifier: [{"version": entry["version"], "integrity": entry["published"]["sha256"],
                                  "source": {"kind": "repository", "repository": entry["published"]["repository"],
                                             "revision": entry["published"]["revision"], "subdirectory": entry["source"]},
@@ -518,8 +688,7 @@ def install(args):
         for identifier in PACKAGES:
             package = packages[identifier]
             for name in package["files"]:
-                (prefix / "sources" / identifier / name).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(ROOT / package["source"] / name, prefix / "sources" / identifier / name)
+                place(ROOT / package["source"] / name, prefix / "sources" / identifier / name, objects)
             if identifier in curated:
                 shelf = (shelve(prefix / "sources" / identifier, prefix.parents[2] / "catalog" / identifier / package["package_sha256"])
                          if managed else prefix / "sources" / identifier)
@@ -538,7 +707,7 @@ def install(args):
                                 "capabilities": package["capabilities"]})
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:
                     enabled.append(target)
-        (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": catalog}, indent=2) + "\n")
+        support.atomic_text(store / "package-index.json", json.dumps({"schema": 1, "packages": catalog}, indent=2) + "\n")
         granted = {Path(item["path"]).resolve(): item.get("capabilities")
                    for item in invoke(installed_manager, "selection-status", store)["selections"]}
         # Revoking keeps the selection with no capabilities; a mod the user disabled keeps its grant and stays off.
@@ -552,6 +721,7 @@ def install(args):
         for target in enabled:
             invoke(installed_manager, "enable", store, target)
         sync_sources(installed_manager, store, prefix / "sources", installed)
+        keep_bundled_copies(installed_manager, store)
         if revoked:
             invoke(installed_manager, "trust-all", store, json.dumps([
                 {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],
@@ -622,12 +792,8 @@ def install(args):
         record["management"]["launcher_sha256"] = support.digest(control_launcher)
         for name, details in tools.items():
             tool_launcher = bin_dir / name
-            launcher_text = f"#!/bin/sh\nexec {shlex.quote(details['installed_path'])} \"$@\"\n"
-            if name == "omd":
-                update = record.get("update")
-                routed = (f"case \"$1\" in update|uninstall) command=$1; shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
-                          f"{shlex.quote(update['installer'])} \"$command\" --root {shlex.quote(update['root'])} \"$@\";; esac\n") if update else ""
-                launcher_text = (f"#!/bin/sh\n{routed}export OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
+            launcher_text = (omd_text(record, details["installed_path"], control_launcher) if name == "omd"
+                             else f"#!/bin/sh\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
             support.atomic_text(tool_launcher, launcher_text, 0o755)
             made_launchers.append(tool_launcher)
             details["launcher_sha256"] = support.digest(tool_launcher)
@@ -636,14 +802,16 @@ def install(args):
         failed = [(package["id"], package["error"]) for package in result["packages"] if package["error"]]
         if failed:
             raise ValueError(f"first-party mod failed to load during installation: {failed}")
+        if managed:
+            deduplicate(prefix.parents[2])
         return result
     except BaseException:
         for launcher in made_launchers:
             if launcher.is_file() and not launcher.is_symlink():
                 launcher.unlink()
-        shutil.rmtree(prefix)
+        shutil.rmtree(prefix, ignore_errors=True)
         if made_store:
-            shutil.rmtree(store)
+            shutil.rmtree(store, ignore_errors=True)
         if attached is not None:
             (store / "mods.json").write_bytes(attached)
         raise
@@ -844,6 +1012,8 @@ def main():
         route_parser.add_argument("--cache-control", action="store_true")
         route_parser.add_argument("--text-only", action="store_true")
         route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
+    mini_parser = commands.add_parser("mini", help="launch the scrollback-first mini interface (omd mini)")
+    mini_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
     contract_parser = commands.add_parser("contract", help="list, show or select the workflow contract for this repository")
     contract_parser.add_argument("action", choices=("list", "status", "plan", "select", "clear"))
     contract_parser.add_argument("contract", nargs="?", help="ID@VERSION for plan and select")
@@ -877,6 +1047,8 @@ def main():
         result = select_mod(prefix, bin_dir, args.identifier, args.action == "enable")
     elif args.command in ROUTES:
         result = route(prefix, bin_dir, args.command, args)
+    elif args.command == "mini":
+        raise SystemExit(mini(prefix, bin_dir, args.codex[1:] if args.codex[:1] == ["--"] else args.codex))
     elif args.command == "contract":
         result = contract(prefix, args.action, args.contract)
     elif args.command == "plugins":

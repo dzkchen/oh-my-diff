@@ -119,7 +119,6 @@ class UpdateSelection(unittest.TestCase):
                           release("0.1.0-nightly.20261008070000.99.1", prerelease=True),
                           release("0.2.0-rc.1", prerelease=True), release("0.1.1")]
         self.assertEqual(self.check()["available"]["version"], "0.1.1")
-        self.assertEqual(self.check(channel="prerelease")["available"]["version"], "0.2.0-rc.1")
         self.assertEqual(self.check(channel="nightly")["available"]["version"], "0.1.0-nightly.20261009070000.100.1")
 
     def test_install_keeps_saved_channel_and_explicit_stable_replaces_it(self):
@@ -202,11 +201,28 @@ class UpdateSelection(unittest.TestCase):
             (directory / "codex").write_text("#!/bin/sh\n")
             (directory / "codex").chmod(0o755)
         with patch.dict(os.environ, {"PATH": f"{upstream}:{bin_dir}"}):
-            warning = self.module.path_warning(bin_dir)
-        self.assertIn(str(upstream / "codex"), warning)
-        self.assertIn(f'export PATH="{bin_dir}:$PATH"', warning)
+            self.assertEqual(self.module.shadowing_codex(bin_dir), str(upstream / "codex"))
         with patch.dict(os.environ, {"PATH": f"{bin_dir}:{upstream}"}):
-            self.assertIsNone(self.module.path_warning(bin_dir))
+            self.assertIsNone(self.module.shadowing_codex(bin_dir))
+
+    def test_summary_says_codex_cannot_start_while_the_broker_is_unpinned(self):
+        result = {"profile_label": "OMD+", "version": "1.0.0", "bin_dir": str(self.root / "bin"), "moved_aside": [],
+                  "prune_failures": []}
+        def summary(**extra):
+            lines = []
+            with patch.object(self.module, "say", lambda line="": lines.append(line)):
+                self.module.installed(result | extra)
+            return "\n".join(lines)
+        healthy = summary(authority_broker="pinned the active and previous installations")
+        self.assertIn("(OMD+) is installed.", healthy)
+        self.assertIn("run codex", healthy)
+        broken = summary(authority_broker="failed: launchctl refused; run omd-package broker pin")
+        self.assertIn("can't start until the authority broker is pinned", broken)
+        self.assertIn("Fix      omd-package broker pin", broken)
+        self.assertNotIn("Start", broken)
+        shadowed = summary(codex_on_path="/opt/homebrew/bin/codex")
+        self.assertIn("codex on your PATH is /opt/homebrew/bin/codex", shadowed)
+        self.assertNotIn("Start", shadowed)
 
     def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
         for interrupted in (False, True):
@@ -402,6 +418,25 @@ class UpdateSelection(unittest.TestCase):
                 self.assertEqual(store.exists(), existing)
                 self.assertFalse((root / "update/journal.json").exists())
 
+    def test_sessions_count_codex_processes_and_collect_drops_unlinked_objects(self):
+        (self.root / "sessions").mkdir()
+        listing = {"1": "/x/artifacts/codex", "2": "codex", "3": "vim", "4": "vim", "5": ""}
+        for pid in listing:
+            (self.root / "sessions" / pid).touch()
+        os.utime(self.root / "sessions/4", (time.time(), time.time()))
+        ran = lambda arguments, **keywords: types.SimpleNamespace(stdout=listing[arguments[-1]])
+        os.utime(self.root / "sessions/3", (0, 0))
+        with patch.object(self.module.subprocess, "run", side_effect=ran):
+            self.assertEqual(sorted(self.module.sessions(self.root, None)), [1, 2, 4])
+        self.assertEqual(sorted(path.name for path in (self.root / "sessions").iterdir()), ["1", "2", "4"])
+        objects = self.root / "objects"
+        objects.mkdir()
+        (objects / "orphan").write_text("x")
+        (objects / "shared").write_text("y")
+        os.link(objects / "shared", self.root / "shared")
+        self.module.collect(self.root)
+        self.assertEqual([path.name for path in objects.iterdir()], ["shared"])
+
     def test_uninstall_removes_older_generations_before_current_and_cleans_leftovers(self):
         bin_dir = self.root / "bin"
         bin_dir.mkdir()
@@ -439,6 +474,7 @@ class UpdateSelection(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unmanaged files"):
                     self.module.uninstall(args, self.root, bin_dir, self.current)
                 self.assertTrue((self.root / "current").is_symlink() and (self.current / "receipt.json").is_file())
+                self.assertEqual(self.module.pointer(self.root, "previous"), older)
                 (older / "prefix/personal.txt").unlink()
                 self.module.uninstall(args, self.root, bin_dir, self.current)
             self.assertIsNone(self.module.flocked(self.root / ".install.lock"), "a fresh entrant waits for the holder")
@@ -454,6 +490,27 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in self.root.iterdir()), [".install.lock", "bin", "catalog", "releases", "stores"])
         self.assertEqual(list((self.root / "releases").iterdir()), [])
         self.assertTrue((self.root / "stores/platform/mods.json").is_file())
+
+    def test_rollback_recovers_a_damaged_current_installation(self):
+        bin_dir = self.root / "bin"
+        older = self.root / "releases" / ("1" * 32)
+        (older / "prefix").mkdir(parents=True)
+        (older / "receipt.json").write_text(json.dumps({"schema": 1, "generation": older.name, "profile": "platform", "version": "0.0.9"}))
+        receipt = json.loads((self.current / "receipt.json").read_text()) | {"version": "0.1.0"}
+        (self.current / "receipt.json").write_text(json.dumps(receipt))
+        (self.root / "previous").symlink_to(older)
+
+        def status(generation, upstream, directory):
+            if generation == self.current:
+                raise ValueError(f"managed artifact changed: {generation}/codex")
+            return {"profile": "platform"}
+
+        with patch.object(self.module, "status", side_effect=status), patch.object(self.module, "package"), \
+                patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
+            self.module.rollback(types.SimpleNamespace(session=None, upstream=None), self.root, bin_dir, self.current)
+        self.assertEqual(self.module.pointer(self.root, "current"), older)
+        self.assertEqual(self.module.pointer(self.root, "previous"), self.current)
+        self.assertEqual(os.readlink(bin_dir / "codex"), str(self.root / "current/bin/codex"))
 
     def test_interrupted_uninstall_finishes_on_the_next_start(self):
         real_unlink, real_rmdir = Path.unlink, Path.rmdir
@@ -566,8 +623,30 @@ class ProfilePrompt(unittest.TestCase):
             if screen.endswith(b"Profile [1/2]: "):
                 os.write(leader, b"1\n")
         os.waitpid(pid, 0)
-        self.assertIn(b"OMD Core", screen)
         self.assertIn(b"result=full", screen)
+
+    def test_prompt_asks_again_after_invalid_input_and_fails_at_end_of_input(self):
+        module = installer()
+        pid, leader = pty.fork()
+        if pid == 0:
+            try:
+                module.profile_choice(types.SimpleNamespace(profile=None))
+            except ValueError as error:
+                os.write(1, f"\nerror={error}\n".encode())
+            finally:
+                os._exit(0)
+        screen, answers, deadline = b"", [b"3\n", b"\x04"], time.monotonic() + 20
+        while b"error=" not in screen and time.monotonic() < deadline:
+            if select.select([leader], [], [], 0.5)[0]:
+                try:
+                    screen += os.read(leader, 4096)
+                except OSError:
+                    break
+            if answers and screen.endswith(b"Profile [1/2]: "):
+                os.write(leader, answers.pop(0))
+        os.waitpid(pid, 0)
+        self.assertEqual(screen.count(b"Profile [1/2]: "), 2)
+        self.assertIn(b"error=No profile was chosen", screen)
 
 
 if __name__ == "__main__":

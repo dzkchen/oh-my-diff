@@ -449,11 +449,17 @@ pub(in crate::mods) fn watch(
         debounce_ms: Option<u64>,
         #[serde(default)]
         include_ignored: bool,
+        #[serde(default)]
+        key: Option<String>,
     }
     fn recursive() -> bool {
         true
     }
+    let shape = format!("{}:{arguments}", lead.thread);
     let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+    if input.key.as_deref().is_some_and(invalid_watch_key) {
+        return Err("watch_arguments_invalid".into());
+    }
     let watches = {
         let mut watches = core
             .expansion
@@ -502,17 +508,22 @@ pub(in crate::mods) fn watch(
                 );
             }
         });
-    let id = watches
+    let (id, _) = watches
         .watch(
             caller.id,
             caller.source,
             &input.paths,
             input.recursive,
             input.debounce_ms,
+            input.key.as_deref().map(|key| (key, shape.as_str())),
             sink,
         )
         .map_err(|error| error.to_string())?;
     Ok(json!({"watch_id": id}))
+}
+
+fn invalid_watch_key(key: &str) -> bool {
+    key.is_empty() || key.len() > 64
 }
 
 pub(in crate::mods) fn unwatch(
@@ -520,21 +531,24 @@ pub(in crate::mods) fn unwatch(
     caller: &str,
     arguments: &Value,
 ) -> Result<Value, String> {
-    let id = arguments["watch_id"]
-        .as_str()
-        .filter(|_| {
-            arguments
-                .as_object()
-                .is_some_and(|object| object.len() == 1)
-        })
-        .ok_or("watch_arguments_invalid")?;
+    let single = arguments
+        .as_object()
+        .is_some_and(|object| object.len() == 1);
+    let (id, key) = (arguments["watch_id"].as_str(), arguments["key"].as_str());
+    if !single || id.is_none() && key.is_none_or(invalid_watch_key) {
+        return Err("watch_arguments_invalid".into());
+    }
     let stopped = core
         .expansion
         .watches
         .lock()
         .map_err(|_| "watch_state_poisoned")?
         .as_ref()
-        .is_some_and(|watches| watches.unwatch(caller, id));
+        .is_some_and(|watches| match (id, key) {
+            (Some(id), _) => watches.unwatch(caller, id),
+            (None, Some(key)) => watches.unwatch_key(caller, key),
+            (None, None) => false,
+        });
     Ok(json!({"stopped": stopped}))
 }
 

@@ -1,0 +1,102 @@
+import type { Json, ModAPI, TerminalPatch } from '../../api.d.ts';
+
+type Mode = 'mini' | 'full';
+type Usage = { seq: number; model?: string; context?: number; window?: number | null };
+type Saved = {
+  mode: Mode | null; launch: string | null; resumed: boolean; busy: boolean; model: string | null;
+  threads: Record<string, Usage>; seq: number; limit: { used: number; minutes: number | null } | null;
+};
+
+const LAUNCH = /^([0-9a-f]{16})\.(\d{1,4})$/;
+const THREAD = /^[\w-]{1,64}$/;
+
+export default function activate(api: ModAPI) {
+  const saved = (): Saved => ({ mode: null, launch: null, resumed: false, busy: false, model: null, threads: {}, seq: 0, limit: null, ...api.state.get() as unknown as Saved | null });
+  const save = (patch: Partial<Saved>) => api.state.set({ ...saved(), ...patch } as unknown as Json);
+  const fit = (text: string, max: number) => [...text].length > max ? `${[...text].slice(0, max - 1).join('')}…` : text;
+  const sessionModel = () => {
+    const session = api.host.tryCall('session.info', null);
+    if (!session.ok) return null;
+    const read = api.host.tryCall('app.request', { method: 'thread/read', params: { threadId: session.value.thread_id } });
+    const model = read.ok ? (read.value as { thread?: { model?: unknown } } | null)?.thread?.model : null;
+    return typeof model === 'string' ? model : session.value.model;
+  };
+  const requestKey = (launch: string | null) => {
+    const match = launch ? LAUNCH.exec(launch) : null;
+    return match ? { key: `switch_${match[1]}`, run: Number(match[2]) } : null;
+  };
+
+  const detect = (resumed: boolean) => {
+    const read = api.host.tryCall('environment.read', { names: ['OH_MY_DIFF_PRESENTATION', 'OH_MY_DIFF_LAUNCH'] });
+    const vars = Object.fromEntries(Object.entries(read.ok ? read.value.values : {}).map(([name, item]) => [name, item.value]));
+    const mode = vars.OH_MY_DIFF_PRESENTATION === 'mini' || vars.OH_MY_DIFF_PRESENTATION === 'full' ? vars.OH_MY_DIFF_PRESENTATION : null;
+    const id = vars.OH_MY_DIFF_LAUNCH ?? '';
+    const launch = mode && LAUNCH.test(id) ? id : null;
+    save({ mode, launch, resumed, busy: false, model: mode === 'mini' ? sessionModel() : null });
+    // The launcher acts on a request after the run that wrote it exits, so a request left from an earlier run is spent.
+    const request = requestKey(launch);
+    const old = request ? api.host.tryCall('store.get', { key: request.key, scope: 'user' }) : null;
+    if (request && old?.ok && old.value && (old.value.value as { run?: number } | null)?.run !== request.run) api.host.tryCall('store.delete', { key: request.key, expected_revision: old.value.revision, scope: 'user' });
+  };
+  api.on('start', () => detect(false));
+  api.on('resume', () => detect(true));
+
+  api.on('turn_start', () => {
+    const state = saved();
+    if (state.mode) save({ busy: true, model: state.model ?? (state.mode === 'mini' ? sessionModel() : null) });
+  });
+  api.on('turn_end', () => { if (saved().mode) save({ busy: false }); });
+
+  api.on('app_notification', ({ method, params, thread_id }) => {
+    const state = saved();
+    if (state.mode !== 'mini') return;
+    const update = params as {
+      threadId?: string;
+      threadSettings?: { model?: string };
+      tokenUsage?: { last?: { totalTokens?: number }; modelContextWindow?: number | null };
+      rateLimits?: { limitId?: string | null; primary?: { usedPercent?: number; windowDurationMins?: number | null } | null };
+    };
+    if (method === 'account/rateLimits/updated') {
+      const primary = (update.rateLimits?.limitId ?? 'codex') === 'codex' ? update.rateLimits?.primary : null;
+      if (typeof primary?.usedPercent === 'number') save({ limit: { used: primary.usedPercent, minutes: primary.windowDurationMins ?? null } });
+      return;
+    }
+    const thread = thread_id ?? update.threadId;
+    const model = update.threadSettings?.model;
+    if (!thread || !(update.tokenUsage || typeof model === 'string')) return;
+    const threads = { ...state.threads };
+    const usage = threads[thread] = { ...threads[thread], seq: state.seq + 1 };
+    if (typeof model === 'string') usage.model = model;
+    if (update.tokenUsage) Object.assign(usage, { context: update.tokenUsage.last?.totalTokens, window: update.tokenUsage.modelContextWindow ?? null });
+    for (const old of Object.keys(threads).sort((a, b) => threads[b].seq - threads[a].seq).slice(8)) delete threads[old];
+    save({ threads, seq: state.seq + 1 });
+  });
+
+  api.on('terminal', ({ ledger }): TerminalPatch | null => {
+    const state = saved();
+    if (state.mode !== 'mini') return null;
+    const usage = ledger ? state.threads[ledger.thread_id] : undefined;
+    const percent = usage?.context && usage.window ? Math.round(usage.context / usage.window * 100) : null;
+    const paid = (ledger?.cost as { settled_task_charge_microusd?: number } | null)?.settled_task_charge_microusd;
+    const spend = typeof paid === 'number' && paid > 0 ? `$${(paid / 1e6).toFixed(2)}`
+      : state.limit ? `${!state.limit.minutes ? 'limit' : state.limit.minutes >= 1440 ? `${Math.round(state.limit.minutes / 1440)}d` : `${Math.round(state.limit.minutes / 60)}h`} ${state.limit.used}%` : null;
+    return { status: [usage?.model ?? state.model, percent === null ? null : `ctx ${percent}%`, spend].filter((part): part is string => !!part).map(part => fit(part, 40)) };
+  });
+
+  api.command('switch', () => {
+    const state = saved();
+    const target: Mode = state.mode === 'mini' ? 'full' : 'mini';
+    if (state.busy) return { display: 'A turn is running; switch once it finishes or after interrupting it with Esc.' };
+    const { thread_id: thread, turns_started } = api.session();
+    if (!THREAD.test(thread ?? '') || !(turns_started || state.resumed)) return { display: 'This session has no thread to resume yet; send a message first.' };
+    const request = requestKey(state.launch);
+    if (!request) return { display: `This session was not started by \`omd mini\`. Quit, then run \`${target === 'mini' ? 'omd mini' : 'codex'} resume ${thread}\`.` };
+    const old = api.host.call('store.get', { key: request.key, scope: 'user' });
+    if ((old?.value as { run?: number } | null)?.run === request.run) {
+      api.host.call('store.delete', { key: request.key, expected_revision: old!.revision, scope: 'user' });
+      return { display: 'Switch cancelled; quitting now ends `omd mini`.' };
+    }
+    api.host.call('store.put', { key: request.key, value: { run: request.run, target, thread }, expected_revision: old?.revision ?? null, scope: 'user' });
+    return { display: `Quit (/quit or Ctrl+C twice) and \`omd mini\` reopens this session in the ${target} interface. /omd_mini:switch again cancels.` };
+  }, { description: 'Switch this session between the mini and the full interface at the next quit' });
+}

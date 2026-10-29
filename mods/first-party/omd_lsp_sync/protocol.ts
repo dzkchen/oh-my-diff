@@ -211,6 +211,12 @@ export function failure(s: State, reason: string, stale = false): void {
   s.reason = [...reason].slice(0, 256).join('');
 }
 
+export const HELD_REASON = /^(?:degraded|resynced): /;
+export function markSynced(s: State, reason = ''): void {
+  s.status = 'synced';
+  if (!HELD_REASON.test(s.reason)) s.reason = reason;
+}
+
 export const OBSERVED_REPOSITORY_KEY = 'lsp.observed_repository';
 export const serializedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 export const size = (value: unknown) => serializedBytes(value) + 96;

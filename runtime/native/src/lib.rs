@@ -42,6 +42,8 @@ use codex_extension_api::ToolStartInput;
 use codex_extension_api::TurnContextContributionInput;
 use codex_omd::Task;
 use codex_omd::VersionMarker;
+use codex_omd::fsio::Durability;
+use codex_omd::fsio::write_bytes;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::SessionSource;
@@ -88,6 +90,7 @@ pub(crate) struct Session {
     contract: std::sync::Mutex<contract::SessionContract>,
     contract_state: PathBuf,
     processes: Arc<managed_process::ManagedProcesses>,
+    power: Arc<codex_omd::power::Leases>,
     data: mods::DataScope,
     access: mods::AccessState,
 }
@@ -159,6 +162,7 @@ pub fn install(
     if !codex_omd::effective_mode()?.mod_host_enabled() {
         return Ok(());
     }
+    codex_omd::route_writes::set_host_check(HostConfig::check);
     let root = PathBuf::from(
         std::env::var_os(codex_omd::MOD_STORE_ENV).ok_or("OMD_MODE=omd requires OMD_MOD_STORE")?,
     );
@@ -209,45 +213,12 @@ pub fn install(
 
 fn inactive(root: &std::path::Path, error: String) -> Result<(), String> {
     let status = serde_json::json!({"activation_error": error, "mods": [], "rejected": []});
-    persist_view(root, "mod-status.json", status.to_string().as_bytes())
-}
-
-fn persist(
-    directory: &std::path::Path,
-    name: &str,
-    bytes: &[u8],
-    durable: bool,
-) -> Result<(), String> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let path = directory.join(name);
-    let temporary = directory.join(format!(
-        ".{name}.{}.{}.tmp",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos()
-    ));
-    let mut file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(&temporary)
-        .map_err(|error| error.to_string())?;
-    let result = file
-        .write_all(bytes)
-        .and_then(|()| if durable { file.sync_all() } else { Ok(()) })
-        .and_then(|()| std::fs::rename(&temporary, &path));
-    if let Err(error) = result {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(error.to_string());
-    }
-    Ok(())
-}
-
-fn persist_view(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Result<(), String> {
-    persist(directory, name, bytes, false)
+    write_bytes(
+        &root.join("mod-status.json"),
+        status.to_string().as_bytes(),
+        Durability::Volatile,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn host_config_stamp(root: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
@@ -372,7 +343,8 @@ impl Host {
 
     fn persist_json(&self, name: &str, value: &impl Serialize) -> Result<(), String> {
         let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-        persist_view(&self.root, name, &bytes)
+        write_bytes(&self.root.join(name), &bytes, Durability::Volatile)
+            .map_err(|error| error.to_string())
     }
 
     /// Accounts a lead's later requests under the provider its settings now select.
@@ -489,6 +461,7 @@ impl Host {
                 self.repository_identity
             )),
             processes: Arc::new(managed_process::ManagedProcesses::default()),
+            power: Arc::default(),
             data: mods::DataScope::default(),
             access: mods::AccessState::default(),
             evidence,
@@ -597,26 +570,19 @@ impl Session {
     }
 
     fn evidence(&self, name: &str, value: &Value) -> Result<Value, String> {
-        use std::io::Write;
         let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
         let path = self.evidence.join(name);
-        let mut file = match std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&path)
-        {
-            Ok(file) => file,
-            Err(error)
-                if error.kind() == std::io::ErrorKind::AlreadyExists
-                    && std::fs::read(&path).is_ok_and(|existing| existing == bytes) =>
-            {
-                return Ok(json!({"path": path, "sha256": execution::hash(&bytes)}));
+        match codex_omd::fsio::create_new(&path, &bytes) {
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let existing = std::fs::read(&path).map_err(|e| e.to_string())?;
+                if serde_json::from_slice::<Value>(&existing).is_err() {
+                    write_bytes(&path, &bytes, Durability::Durable).map_err(|e| e.to_string())?;
+                } else if existing != bytes {
+                    return Err(error.to_string());
+                }
             }
-            Err(error) => return Err(error.to_string()),
-        };
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|e| e.to_string())?;
+            result => result.map_err(|e| e.to_string())?,
+        }
         Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
     }
 
@@ -631,28 +597,27 @@ impl Session {
         let result = if bytes.len() > contract::STATE_BYTES {
             Err("contract_state_byte_limit".into())
         } else {
-            persist(
-                self.contract_state
-                    .parent()
-                    .ok_or("contract_state_parent_missing")?,
-                self.contract_state
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .ok_or("contract_state_name_invalid")?,
-                &bytes,
-                true,
-            )
-            .and_then(|()| {
-                codex_omd::broker::anchor(&self.contract_state, &codex_omd::broker::sha256(&bytes))
+            write_bytes(&self.contract_state, &bytes, Durability::Durable)
+                .map_err(|error| error.to_string())
+                .and_then(|()| {
+                    codex_omd::broker::anchor(
+                        &self.contract_state,
+                        &codex_omd::broker::sha256(&bytes),
+                    )
                     .map_err(|error| error.to_string())
-            })
+                })
         };
         if let Err(error) = &result {
             contract.invalidate(error.clone());
         }
         drop(contract);
         result?;
-        persist(&self.evidence, "contract.json", &bytes, false)
+        write_bytes(
+            &self.evidence.join("contract.json"),
+            &bytes,
+            Durability::Volatile,
+        )
+        .map_err(|error| error.to_string())
     }
 
     fn persist_cost_capture(&self) -> Result<(), String> {
@@ -661,7 +626,12 @@ impl Session {
             .cost_capture()
             .map_err(|error| error.to_string())?;
         let bytes = serde_json::to_vec_pretty(&capture).map_err(|error| error.to_string())?;
-        persist(&self.evidence, "task-cost.json", &bytes, true)
+        write_bytes(
+            &self.evidence.join("task-cost.json"),
+            &bytes,
+            Durability::Durable,
+        )
+        .map_err(|error| error.to_string())
     }
 }
 

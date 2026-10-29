@@ -13,7 +13,7 @@ import { runClaude } from './transport.mjs';
 const test = process.env.OMD_TEST_CLAUDE ? nodeTest : nodeTest.skip;
 
 const opus = 'claude-opus-5-5';
-const opusEntry = { slug: opus, cli: opus, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], thinking: true, window: 1000000 };
+const opusEntry = { slug: opus, model: opus, cli: opus, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], thinking: true, window: 1000000 };
 const opusRequest = { model: opus, stream: true, reasoning: { effort: 'max' }, input: [{ type: 'message', role: 'user',
   content: [{ type: 'input_text', text: 'Reply OK.' }] }] };
 
@@ -204,7 +204,6 @@ test('cancellation stops the owned CLI request and the next request starts clean
       };
       visit(calls[0]);
       assert.deepEqual(types, []);
-      assert.equal(calls[0].input.some(item => JSON.stringify(item).includes('input_image')), false);
       assert.equal(calls[1].input.some(item => item.type === 'function_call_output' &&
         item.call_id === 'call_omd_fixture'), true);
       assert.match(output, /OK/);

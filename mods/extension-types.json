@@ -141,6 +141,18 @@
       "why_mod": "Pins Codex's own update_plan steps above the composer from app notifications; adds no model tool."
     },
     {
+      "path": "mods/first-party/omd_awake",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Removes Codex's prevent_idle_sleep feature with the generic builtins control and holds host power leases from turn, timer and agent-inventory events behind /awake."
+    },
+    {
+      "path": "mods/first-party/omd_monitor",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Live subscriptions across app notifications, workspace watches, timers and a managed adapter process, delivered by steering the running turn or queueing one turn; a hook or skill cannot hold them."
+    },
+    {
       "path": "mods/first-party/omd_continue",
       "extension_type": "mod",
       "role": "bundled",
@@ -321,6 +333,12 @@
       "why_mod": "Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol."
     },
     {
+      "path": "mods/examples/raster_wave",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Animates a half-block raster from timer callbacks with packed or JSON terminal.blit cells to show coalesced frames and measure frames shown per second."
+    },
+    {
       "path": "mods/examples/approval_desk",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -438,7 +456,7 @@
       "path": "mods/first-party/omd_preview",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches, the inline preview dialog, inline Mermaid drawings of assistant messages and draft image thumbnails above the composer; installed inactive in OMD+."
+      "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches, the inline preview dialog and inline Mermaid drawings of assistant messages; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_mods",
@@ -462,7 +480,7 @@
       "path": "mods/first-party/omd_usage",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the usage and workers row above the composer, the usage dialog and the summary the theme draws; installed inactive in OMD+."
+      "why_mod": "Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the usage dialog, budget notices and the summary the theme draws; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_lsp_view",
@@ -477,10 +495,52 @@
       "why_mod": "Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage; installed inactive in OMD+."
     },
     {
+      "path": "mods/first-party/omd_source_knowledge",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Refreshes source-bound repository facts against the current workspace and stores revision-checked evidence and approved lessons for later tasks; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_programmable_context",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns the Python-facing context, child-agent and refinement API plus a versioned session harness in the model-bound request view; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_cursor",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns the Cursor SDK transport, custom-tool relay of OMD tools, usage settlement log, in-session setup and /cursor diagnostics over a host-approved provider service; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_mini",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns the mini presentation of omd mini sessions: one status line and the switch request read by the launcher; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_tool_absorb",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns which identical read calls of a response merge through the exclusive tool_batch replacement, the merged tool that runs them once through tools.invoke, and code-mode read reuse as a tool interceptor over structured values shared through its repository store; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_tool_fix",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns schema-aware argument repair as a tool interceptor and JSON syntax repair as a response_stream interceptor, with evidence records and loop limits; host admission revalidates every rewrite; installed inactive in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_profiles",
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_workspace",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Lays the screen out as a tabbed dock beside the chat through generic layouts, leaf titles, focus regions and key contexts; adds no model tool."
     }
   ],
   "synthetic_fixtures": [

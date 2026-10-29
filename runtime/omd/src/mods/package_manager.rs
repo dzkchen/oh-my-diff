@@ -498,6 +498,7 @@ impl ModStore {
                 ModConfiguration {
                     schema: 1,
                     revision: 0,
+                    node: None,
                     mods: Vec::new(),
                 },
             )
@@ -1002,6 +1003,7 @@ impl ModStore {
         }
         super::validate_settings(&manifest, &selection.settings)?;
         selection.enabled = true;
+        store::refuse_second_copy(&config, &path, &scope, &manifest.id)?;
         config.revision = config
             .revision
             .checked_add(1)
@@ -1035,12 +1037,15 @@ impl ModStore {
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
         let mut config = self.configuration()?;
+        // Earlier cached versions of this package go too; another copy of the same mod, such as a bundled source, stays.
+        let cached = package.cache_path.parent().unwrap_or(&package.cache_path);
         config.mods.retain(|selection| {
             !(selection.scope == package.scope
                 && (selection.path == package.path
                     || selection.path == package.cache_path
-                    || store::package(&selection.path)
-                        .is_ok_and(|(manifest, _, _)| manifest.id == id)))
+                    || selection.path.starts_with(cached)
+                        && store::package(&selection.path)
+                            .is_ok_and(|(manifest, _, _)| manifest.id == id)))
         });
         config.revision = config
             .revision
@@ -1749,15 +1754,8 @@ impl ModStore {
                 if actual.trim() != revision {
                     return Err(failure("repository_revision_mismatch"));
                 }
-                let staging = self.root.join(format!(
-                    ".repository-{}.{}.tmp",
-                    &revision[..12],
-                    std::process::id()
-                ));
-                if staging.exists() {
-                    return Err(failure("stale_repository_staging_directory"));
-                }
-                std::fs::create_dir(&staging)?;
+                let staging =
+                    staging_dir(&self.root, &format!(".repository-{}.", &revision[..12]))?;
                 let result = (|| {
                     let prefix = if subdirectory.is_empty() {
                         String::new()
@@ -1963,15 +1961,10 @@ impl ModStore {
                 "npm_integrity_changed: the registry now serves different content",
             ));
         }
-        let staging = self.root.join(format!(
-            ".npm-{}.{}.tmp",
-            &digest(expected.as_bytes())[..12],
-            std::process::id()
-        ));
-        if staging.exists() {
-            return Err(failure("stale_npm_staging_directory"));
-        }
-        std::fs::create_dir(&staging)?;
+        let staging = staging_dir(
+            &self.root,
+            &format!(".npm-{}.", &digest(expected.as_bytes())[..12]),
+        )?;
         let result = (|| {
             let archive = npm_fetch(
                 tarball,
@@ -2066,8 +2059,9 @@ impl ModStore {
             }
             return Ok(destination);
         }
-        let staging = base.join(format!(".{integrity}.{}.tmp", std::process::id()));
-        std::fs::create_dir(&staging)?;
+        sweep_staging(&self.root);
+        sweep_staging(&base);
+        let staging = staging_dir(&base, &format!(".{integrity}."))?;
         let result = (|| {
             copy_file(source, &staging, "mod.json", 8192)?;
             copy_file(
@@ -2110,14 +2104,14 @@ impl ModStore {
             }
             return Err(failure("lifecycle_script_not_trusted"));
         }
-        let inspected = store::package(&package.path);
+        let inspected = store::package_lifecycle(&package.path, event);
         if event == "uninstall" {
             match &inspected {
-                Ok((_, _, integrity)) if integrity == &package.integrity => {}
+                Ok((_, integrity, _)) if integrity == &package.integrity => {}
                 _ => return Ok(()),
             }
         }
-        let (manifest, _, integrity) = inspected?;
+        let (manifest, integrity, source) = inspected?;
         if integrity != package.integrity {
             return Err(failure("package_integrity_failure"));
         }
@@ -2125,19 +2119,16 @@ impl ModStore {
             .lifecycle
             .get(event)
             .ok_or_else(|| failure("lifecycle_script_missing"))?;
-        let source = String::from_utf8(store::package_read(
-            &package.path,
-            script,
-            store::PACKAGE_FILE_LIMIT,
-        )?)
-        .map_err(failure)?;
+        let source = String::from_utf8(source.ok_or_else(|| failure("lifecycle_script_missing"))?)
+            .map_err(failure)?;
         self.verified_runner()?;
         let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
                 "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
-            "hook_budget_ms":1000,"receipts":[],"field_policies":{},"virtual_time_ms":null});
+            "hook_budget_ms":1000,"max_host_calls":MAX_HOST_CALLS,"receipts":[],"field_policies":{},"virtual_time_ms":null});
         process::evaluate(
             &request,
+            None,
             std::time::Duration::from_secs(1),
             &|| true,
             &mut |_| Err(failure("host_operation_unavailable")),
@@ -2154,6 +2145,39 @@ fn lifecycle_refused(id: &str) -> std::io::Error {
     failure(format!(
         "managed_lifecycle_requires_approval: {id} runs install scripts; install it interactively"
     ))
+}
+
+/// A uniquely named `.{prefix}*.tmp` directory in `parent`, kept until the caller renames it or `sweep_staging` does.
+fn staging_dir(parent: &Path, prefix: &str) -> std::io::Result<PathBuf> {
+    Ok(tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(".tmp")
+        .tempdir_in(parent)?
+        .keep())
+}
+
+/// Older than any install still writing its staging directory.
+const STALE_STAGING: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Removes `staging_dir` leftovers of crashed installs.
+fn sweep_staging(directory: &Path) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now() - STALE_STAGING;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.')
+            && name.ends_with(".tmp")
+            && entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified < cutoff)
+        {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 fn copy_file(source: &Path, destination: &Path, relative: &str, limit: u64) -> Result<()> {

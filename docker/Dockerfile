@@ -1,5 +1,6 @@
 # Linux build and test environment. The mod host runs mods only on macOS, so runner, sandbox and broker tests fail
 # here by design.
+# Build it from a clone: a linked worktree's `.git` file points outside the image, so Git-backed checks fail.
 FROM debian:trixie-slim
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

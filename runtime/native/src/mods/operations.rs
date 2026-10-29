@@ -601,7 +601,15 @@ async fn run(
                 .0
                 .routes_for(caller.id)
                 .into_iter()
-                .map(|route| route_info(host, route))
+                .map(|route| {
+                    let mut info = route_info(host, route);
+                    if route.provider == caller.id
+                        && let Some(data) = &route.data
+                    {
+                        info["data"] = data.clone();
+                    }
+                    info
+                })
                 .collect::<Vec<_>>()
         )),
         "ledger.settle" => {
@@ -628,6 +636,15 @@ async fn run(
                 .get(&lead.thread.to_string())
                 .cloned();
             let config = super::agents::parent_config(lead).await?;
+            let snapshot = host
+                .manager
+                .upgrade()
+                .ok_or("native_thread_manager_stopped")?
+                .get_thread(lead.thread)
+                .await
+                .map_err(|e| e.to_string())?
+                .config_snapshot()
+                .await;
             let turns = core
                 .expansion
                 .turns
@@ -638,10 +655,11 @@ async fn run(
                 .unwrap_or(0);
             Ok(
                 json!({"thread_id": lead.thread.to_string(), "root": host.repository,
-                "cwd": config.cwd, "codex_version": env!("CARGO_PKG_VERSION"),
-                "model": account.as_ref().map_or(config.model.clone(), |account| Some(account.model.clone())),
+                "cwd": snapshot.cwd(), "codex_version": env!("CARGO_PKG_VERSION"),
+                "omd_version": codex_omd::OMD_HOST_RELEASE, "model": snapshot.model,
                 "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
-                "route": account.and_then(|account| account.route), "turns_started": turns}),
+                "route": account.and_then(|account| account.route), "turns_started": turns,
+                "process_id": crate::accounting::process_id()}),
             )
         }
         "task.status" => {
@@ -653,6 +671,22 @@ async fn run(
         "peers.list" | "peers.send" => {
             let endpoints = super::peering::current_endpoints(core).await;
             core.peering.call(lead, &caller, request, endpoints)
+        }
+        "power.hold" | "power.release" => {
+            if operation == "power.hold" && caller.origin != Origin::Event {
+                return Err("host_operation_event_only: power.hold".into());
+            }
+            let power = lead.session.power.clone();
+            let (id, source) = (caller.id.to_owned(), caller.source.to_owned());
+            tokio::task::spawn_blocking(move || {
+                if request.operation == "power.hold" {
+                    power.hold(&id, &source, &request.arguments)
+                } else {
+                    power.release(&id, &request.arguments)
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?
         }
         "turns.abort" => {
             #[derive(serde::Deserialize)]

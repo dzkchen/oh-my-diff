@@ -224,8 +224,7 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     Ok(listed)
 }
 
-/// Read on every call because `host.json` and plan grants change outside the listing cache. Without a repository,
-/// plan routes are offered regardless of their grant.
+/// Read per call since `host.json` and plan grants change outside the listing cache; without a repository plan routes are always offered.
 fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>) -> Value {
     let here = repository.map(|repository| {
         Value::from(crate::resource_data::hash(
@@ -393,11 +392,21 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                 "settings_schema": manifest["settings_schema"],
                 "settings": crate::effective_settings(
                     manifest.get("settings_schema"),
-                    configured
+                    &configured
                         .iter()
                         .find(|item| selection["path"].as_str() == item.path.to_str())
                         .map(|item| &item.settings)
-                        .unwrap_or(&empty_settings),
+                        .unwrap_or(&empty_settings)
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .chain(
+                            selection["file_settings"]
+                                .as_object()
+                                .into_iter()
+                                .flatten()
+                                .map(|(key, value)| (key.clone(), value.clone())),
+                        )
+                        .collect(),
                 ),
                 "conflicts": selection["reason"]
                     .as_str()

@@ -49,7 +49,7 @@ for (const language of ['python', 'javascript']) {
       { ok: true, output: '9\n', bridge_failed: false });
     const noisy = await cell(python ? 'import sys, os\nprint("e", file=sys.stderr)\nos.system("echo y")\nprint("CODE_KERNEL_RESULT:{}")' : 'console.error("e"); process.stdout.write("y\\n"); process.stderr.write("z\\n"); console.log("CODE_KERNEL_RESULT:{}")');
     assert.equal(noisy.ok, true);
-    assert.deepEqual(noisy.output.split('\n').sort(), python ? ['', 'CODE_KERNEL_RESULT:{}', 'e', 'y'] : ['', 'CODE_KERNEL_RESULT:{}', 'e', 'y', 'z']);
+    assert.equal(noisy.output, python ? 'e\ny\nCODE_KERNEL_RESULT:{}\n' : 'e\ny\nz\nCODE_KERNEL_RESULT:{}\n');
     const started = await cell(python ? `import threading, contextvars
 release = threading.Event()
 def late_call():
@@ -133,12 +133,107 @@ for (const language of ['python', 'javascript']) {
       : 'const { spawn } = await import("node:child_process");\nspawn("sh", ["-c", "sleep 0.3; echo late; echo err >&2"], { stdio: "inherit" }).unref();');
     await new Promise(resolve => setTimeout(resolve, 800));
     assert.deepEqual(await cell(python ? 'print("next")' : 'console.log("next")'), { ok: true, output: 'next\n', bridge_failed: false });
+    assert.deepEqual(await cell(python
+      ? 'import os\nprint("a")\nos.system("echo b")\nprint("c")'
+      : 'console.log("a");\n(await import("node:child_process")).execSync("echo b", { stdio: "inherit" });\nconsole.log("c");'),
+    { ok: true, output: 'a\nb\nc\n', bridge_failed: false });
     const flooded = await cell(python
-      ? `import os, stat\nregular = stat.S_ISREG(os.fstat(1).st_mode)\nos.system("${flood}")`
-      : `(await import("node:child_process")).execSync("${flood}", { stdio: "inherit" });`);
+      ? `import os, stat\nregular = stat.S_ISREG(os.fstat(1).st_mode)\nos.system("${flood}")\nraise RuntimeError("boom")`
+      : `try { (await import("node:child_process")).execSync("${flood}", { stdio: "inherit" }); } catch {}\nthrow new Error("boom");`);
     assert.equal(flooded.ok, false);
+    assert.match(flooded.error, /boom/);
     assert.match(flooded.error, /output limit exceeded/);
     assert.ok(Buffer.byteLength(flooded.output) <= 65536);
     assert.deepEqual(await cell(python ? 'print(regular)' : 'console.log("after")'), { ok: true, output: python ? 'False\n' : 'after\n', bridge_failed: false });
+  });
+}
+
+test('javascript kernel survives a background child writing while the result frame is sent', { timeout: 30_000 }, async t => {
+  const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = once(child, 'exit');
+  const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  t.after(async () => {
+    child.kill();
+    await exited;
+  });
+  const cell = async code => {
+    child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code }) + '\n');
+    const { value } = await Promise.race([lines.next(), exited.then(() => assert.fail('kernel exited'))]);
+    assert.ok(value.startsWith('CODE_KERNEL_RESULT:'), value.slice(0, 200));
+    return JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length));
+  };
+  const spawnNoise = delay => `const { spawn } = await import("node:child_process");\nglobalThis.noise = [1, 2, 3].map(() => spawn("sh", ["-c", "sleep ${delay}; exec yes noise"], { stdio: "inherit" }));\nconsole.log("x".repeat(60000));`;
+  const stopNoise = 'noise.forEach(child => child.kill());\nawait new Promise(resolve => setTimeout(resolve, 300));';
+  for (let round = 0; round < 10; round++) {
+    const overlapped = await cell(spawnNoise(0) + '\nawait new Promise(resolve => setTimeout(resolve, 300));');
+    assert.equal(overlapped.ok, false);
+    assert.match(overlapped.error, /output limit exceeded/);
+    await cell(stopNoise);
+  }
+  assert.deepEqual(await cell(spawnNoise(0.05)), { ok: true, output: 'x'.repeat(60000) + '\n', bridge_failed: false });
+  await new Promise(resolve => setTimeout(resolve, 200));
+  await cell(stopNoise);
+  assert.deepEqual(await cell('console.log("next")'), { ok: true, output: 'next\n', bridge_failed: false });
+});
+
+test('javascript kernel waits out a full stdout pipe instead of dropping output or exiting', { timeout: 30_000 }, async t => {
+  const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = once(child, 'exit');
+  const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  t.after(async () => {
+    child.kill('SIGCONT');
+    child.kill();
+    await exited;
+  });
+  child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code: 'await new Promise(resolve => setTimeout(resolve, 300));\nconsole.log("x".repeat(65499));' }) + '\n');
+  await new Promise(resolve => setTimeout(resolve, 100));
+  child.kill('SIGSTOP');
+  await new Promise(resolve => setTimeout(resolve, 700));
+  child.kill('SIGCONT');
+  const { value } = await Promise.race([lines.next(), exited.then(() => assert.fail('kernel exited'))]);
+  assert.deepEqual(JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length)), { ok: true, output: 'x'.repeat(65499) + '\n', bridge_failed: false });
+});
+
+for (const language of ['python', 'javascript']) {
+  test(`${language} kernel survives stray errors and exit requests`, { timeout: 30_000 }, async t => {
+    const python = language === 'python';
+    const script = new URL(`../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
+    const child = spawn(python ? 'python3' : process.env.OMD_TEST_BUN ?? process.execPath, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const exited = once(child, 'exit');
+    const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    t.after(async () => {
+      child.kill();
+      await exited;
+    });
+    const cell = async code => {
+      child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code }) + '\n');
+      const { value, done } = await Promise.race([lines.next(), exited.then(() => assert.fail('kernel exited'))]);
+      assert.equal(done, false, 'kernel exited');
+      assert.ok(value.startsWith('CODE_KERNEL_RESULT:'), value.slice(0, 200));
+      return JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length));
+    };
+    const alive = async () => assert.deepEqual(await cell(python ? 'print("alive")' : 'console.log("alive")'), { ok: true, output: 'alive\n', bridge_failed: false });
+    if (python) {
+      for (const [code, name] of [['exit()', 'SystemExit'], ['import sys\nsys.exit(3)', 'SystemExit: 3'], ['raise KeyboardInterrupt', 'KeyboardInterrupt']]) {
+        const result = await cell(code);
+        assert.equal(result.ok, false);
+        assert.match(result.error, new RegExp(name));
+        await alive();
+      }
+      return;
+    }
+    await cell('globalThis.timer = setInterval(() => console.log("x".repeat(40000)), 10);');
+    const flooded = await cell('await new Promise(resolve => setTimeout(resolve, 300));');
+    assert.equal(flooded.ok, false);
+    assert.match(flooded.error, /output limit exceeded/);
+    await cell('clearInterval(timer);');
+    await alive();
+    await cell('setTimeout(() => Promise.reject(new Error("stray")), 20);\nsetTimeout(() => { throw new Error("thrown"); }, 20);');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    await alive();
+    const reported = await cell('setTimeout(() => Promise.reject(new Error("stray")), 20);\nawait new Promise(resolve => setTimeout(resolve, 200));');
+    assert.equal(reported.ok, false);
+    assert.match(reported.error, /stray/);
+    await alive();
   });
 }

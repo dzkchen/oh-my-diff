@@ -3,6 +3,7 @@ import { request as httpsRequest } from 'node:https';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { profilesOf } from './profiles.ts';
 
 const BODY_LIMIT = 64 * 1024 * 1024;
 const DROPPED = ['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive', 'upgrade',
@@ -421,8 +422,7 @@ function unseal(token, text) {
   return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString();
 }
 
-async function serve(routePath) {
-  const route = JSON.parse(await readFile(routePath, 'utf8'));
+async function serve(hostPath, port) {
   const token = process.env.OMD_PROFILES_LOCAL_TOKEN ?? '';
   const ready = process.env.OMD_READY_TOKEN ?? '';
   if (token.length < 32 || !ready) throw new Error('native_provider_tokens_required');
@@ -445,9 +445,8 @@ async function serve(routePath) {
     try {
       if (request.headers.authorization !== `Bearer ${token}`) throw Object.assign(new Error('profile_caller_unauthorized'), { status: 401 });
       const body = JSON.parse(await bodyOf(request));
-      const table = JSON.parse(await readFile(routePath, 'utf8')).profiles ?? route.profiles;
-      const profile = table[body.model];
-      if (!profile) throw Object.assign(new Error(`profile_not_configured:${body.model}`), { status: 400 });
+      const profile = profilesOf(JSON.parse(await readFile(hostPath, 'utf8')).routes ?? []).find(item => item.name === body.model);
+      if (!profile) throw Object.assign(new Error(`profile_not_configured:${body.model}: pick another profile with /profile or /model`), { status: 400 });
       const tokens = estimate(body.input);
       if (profile.window && tokens > profile.window) throw Object.assign(new Error(`context_length_exceeded: this thread (~${tokens} tokens) exceeds the ${profile.name} window of ${profile.window}; compact or switch back`), { status: 400 });
       const marked = request.headers['x-omd-cache-breakpoint'];
@@ -468,11 +467,11 @@ async function serve(routePath) {
   const stop = () => { stopping = true; server.close(); if (!active.size) process.exit(0); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
-  await claim(server, route.port, token, ready);
+  await claim(server, Number(port), token, ready);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [action, routePath] = process.argv.slice(2);
+  const [action, hostPath, port] = process.argv.slice(2);
   if (action !== 'serve') throw new Error('unsupported_profiles_router_action');
-  await serve(routePath);
+  await serve(hostPath, port);
 }

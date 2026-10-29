@@ -126,8 +126,8 @@ own source to a sandboxed `exec.run` process without relying on a workspace copy
 | --- | --- |
 | Assets declared per package | at most 16 |
 | `mod.json` | at most 8 KiB |
-| Each other package file | at most 128 KiB (`file_limit` names the file) |
-| Entrypoint and declared text together | at most 256 KiB per callback (`package_text_input_limit`) |
+| Each other package file | at most 512 KiB (`file_limit` names the file) |
+| Entrypoint and declared text together | at most 1 MiB per callback (`package_text_input_limit`) |
 
 A package over the per-callback text limit is refused by inspection, install and `omd-mod-author check`.
 
@@ -185,6 +185,8 @@ lifecycle callback.
   boundary for slash commands.
 - If more than 64 unannounced changes accumulate, subscribers receive one `source: "rescan"`, `unavailable`
   notification instead.
+- A batch of more than 128 changed paths or 16,000 bytes of path names, or one with a path outside the read scope,
+  arrives as `unavailable` with `reason` `workspace_change_batch_limit` or `workspace_change_scope_unavailable`.
 - The host scans only while a mod subscribes, is bounded to 20,000 files and 128 MiB, and reports `unavailable`
   instead of partial coverage.
 
@@ -195,7 +197,10 @@ candidate_sha256}`. It freezes the current tracked and approved-untracked files,
 workspace (`agents` is also required). `expected` rejects a changed candidate.
 
 - References are bound to the caller, package source, generation and thread.
-- Each mod generation and thread holds at most 8 snapshots and 64 MiB, the host at most 32 and 256 MiB; a full host
+- A capture holds at most 128 MiB of file contents and paths (`snapshot_bytes` in the host config can lower it); a
+  larger workspace fails with `snapshot size limit`. Turn evidence then carries `workspace_sha256: null`, as it does
+  when a captured path is unreadable.
+- Each mod generation and thread holds at most 8 snapshots and 128 MiB, the host at most 32 and 256 MiB; a full host
   evicts the oldest snapshot of the largest holder.
 - Identical captures are deduplicated, and the registry clears on owner cleanup or session stop.
 - Snapshots do not authorize reading denied paths.
@@ -226,8 +231,8 @@ result.
 
 ### `store.*` operations
 
-`store.get/put/delete/list/export/reset` operate on a per-mod namespace with `repository` (default) or `user`
-scope.
+`store.get/put/delete/list/export/reset` operate on a per-mod namespace with `repository` (default), `user` or `thread`
+scope (see [Thread-scoped store and `resume`](credentials-and-threads.md#thread-scoped-store-and-resume)).
 
 - `put` and `delete` require the current `expected_revision` (`null` to create); a stale revision fails.
 - `reset` needs the current generation.
@@ -249,7 +254,7 @@ the complete namespace or resets it without running any mod code.
 ### `evidence.write` and `evidence.read`
 
 `evidence.write {media_type, content, label?}` stores content-addressed evidence and returns a `ResourceRef`;
-`evidence.read` reads it back in bounded pages.
+`evidence.read {reference, cursor?, max_bytes?}` reads it back in pages of at most 64 KiB (`max_bytes` 1 to 65,536, by default the maximum).
 
 ### `api.state` compare-and-swap
 
@@ -261,11 +266,15 @@ attempt's start, so `Date.now()` in arguments replays).
 If a retry asks for a different host call, it runs again fresh when every recorded call was read-only; otherwise it
 fails with the transient `state_conflict`, because an operation that already ran is never repeated.
 
+Each commit of `api.state` (and of thread and checkout state) is ordered by a write barrier rather than a full fsync: state
+survives a crash or quit in order, but the last commits can be lost on a power failure. `store.*` data and evidence are
+fully synced.
+
 ### `state_scope` (`state_scopes_v1`)
 
 The location of `api.state` follows the manifest's `state_scope` (`state_scopes_v1`).
 
-- `"store"` (the default) keeps one state of at most 192 KiB in the mod store, shared by every OMD process that
+- `"store"` (the default) keeps one state of at most 512 KiB in the mod store, shared by every OMD process that
   uses that store.
 - `"thread"` keeps one state per session thread and selection scope, so a project copy cannot inherit a same-ID
   user copy's state. It forks with the thread and is removed when the thread is deleted. Routing and compaction
@@ -280,11 +289,16 @@ Mods never run with the home directory or filesystem root as the session directo
 notice in `/omd`. `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
 given thread and the checkout of their working directory. A `thread` mod run from `omd-mod command` without `THREAD`
 fails with `state_thread_unavailable`; in the TUI, a slash command typed before the session's thread exists runs once
-it does. A callback result, including its state, stays within 256 KiB.
+it does. A callback result, including its state, stays within 1 MiB.
 
 ### `state_version` migration of thread and checkout state
 
 The `omd-mod migrate` and `rollback` commands act on `"store"` state only.
+
+`omd-mod migrate STORE MOD_ID_OR_PACKAGE` and `omd-mod rollback STORE MOD_ID_OR_PACKAGE BACKUP` take a mod id or a
+package folder. A bare name (no `/`) is a mod id resolved among the store's selected mods (watched folder or
+installed); `.`, `..` and anything with a `/` are package folders. An id that matches copies in more than one scope fails with
+`mod_ambiguous` (pass the folder), and a mod without saved store state fails with `migration_requires_saved_state`.
 
 - Thread and checkout state stored at another `state_version` migrates before the mod's next callback in that
   thread or checkout: the host runs the mod's `migrate` handler (it needs `store`) on it and keeps the previous
@@ -387,16 +401,16 @@ Write observation is the `workspace_change` event described under [Workspace: li
 and changes](#workspace-list-stat-preconditions-backups-and-changes), with each changed path's before and after
 hashes. Only a selected mod that subscribes to it triggers the index scan.
 
-- The scan excludes `.git`, `.omd`, `.docs`, package and Python caches, `target`, `node_modules`, `.venv`, `venv`,
-  `build`, and `dist`.
+- The scan follows the repository's `.gitignore`, `.ignore` and `.git/info/exclude` rules and always skips `.git`
+  and `.omd`.
 - More than 128 changed paths or 16 KB of path names reports `unavailable`, and so does a change outside the
   thread's effective read scope, without exposing its path or hash.
 
 The independent example also shows a direct transaction for a mod tool.
 
-### The experimental `process` capability
+### Managed processes
 
-The experimental `process` capability grants `process.which`, `process.start`, `process.exchange`,
+The `exec` capability grants `process.which`, `process.start`, `process.exchange`,
 `process.status`, and `process.stop`. The host resolves an installed executable and its hash, verifies that
 identity at launch, and runs it in a read-only repository sandbox with restricted network access and a private
 scratch directory.

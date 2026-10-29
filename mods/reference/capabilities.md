@@ -13,7 +13,7 @@ Capabilities name authority classes. A call or registration outside the package'
 
 | Capability | Grants |
 | --- | --- |
-| `exec` | `exec.run`, `environment.read`, `environment.set`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
+| `exec` | `exec.run`, `exec.output_page`, `environment.read`, `environment.set`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
 | `pty` | `terminal.pty` (a writable pane also needs `fs.write`) |
 | `history` | the `history` replacement |
 | `outputs` | `tool_output` observers |
@@ -26,22 +26,22 @@ Capabilities name authority classes. A call or registration outside the package'
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot`, `model.fork` and `agents.spawn {parent_history}` (with `sessions`) |
-| `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
+| `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, `contract.select`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 
 ### Capabilities: terminal, threads and registrations
 
 | Capability | Grants |
 | --- | --- |
-| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
-| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` and `tools.list` |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`, `terminal.image_sample`; the `component_change` interceptor |
+| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `app.routes`, `session.info` and `tools.list` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
-| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
+| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `routes.add`, `routes.write`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
-| `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
+| `interception` | `tool` interceptors, `tools.invoke`, `tools.check`, `tools.original` (`tool_original_v1`) and the `tool_batch` replacement |
 | `input` | `input` and `mention` interceptors |
 | `middleware` | `host_operation`, `model_request` and `response_stream` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
@@ -62,8 +62,9 @@ access](#structured-access-structured_access_v1) describe how they are bound and
 | `fs.external` | `root` on `workspace.read`, `workspace.list`, `workspace.stat` and `workspace.transaction` for the manifest's `fs_access` roots |
 | `mcp` | `mcp.connect`, `mcp.disconnect` for the manifest's `mcp_servers` |
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
-| `request_policy` | a declared final-request policy that refuses every model request unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
+| `request_policy` | a declared final-request policy that refuses every model request except web search unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
+| `power` | `power.hold` and `power.release`; lid-closed holds need the deployed broker (`power_hold_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
 | `history_write` | `app.request thread/rewrite` on the current thread and threads the mod started (`history_rewrite_v1`) |
 | `history_persist` | `history_persist` interceptors, which see and may replace every stored history text (`history_persist_v1`) |
@@ -77,7 +78,7 @@ mod that answered the call without running it.
 
 ## Unrestricted processes and delegated approvals
 
-`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous`, `history_write`
+`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `power`, `autonomous`, `history_write`
 and `history_persist` are authority grants. The manifest declares their scope, which the trust digest binds, so
 changed content or a wider scope needs a new trust.
 
@@ -104,7 +105,7 @@ needs `exec`.
 
 ### Ending and showing the grants
 
-`omd-mod trust ... --expires SECONDS` ends the three grants at a time, project scope keeps them to one repository,
+`omd-mod trust ... --expires SECONDS` ends the authority grants at a time, project scope keeps them to one repository,
 and `omd-mod revoke STORE MOD_ID_OR_PACKAGE` disables the mod and drops its grant at once: capabilities and secret
 environment are cleared, and enabling it again needs a new trust or install.
 

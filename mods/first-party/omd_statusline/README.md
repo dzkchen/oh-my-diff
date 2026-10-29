@@ -18,15 +18,16 @@ Run `/statusline` to open the editor in the panel where `/config` lives. Its sub
 
 Save keeps the draft and `Esc` discards it. Reset to defaults restores the defaults (`tones`, `github`, `refresh_s` and `scripts` keep their values).
 
-You can also edit settings in `/mods`, or from a shell:
+You can also edit settings in `/mods`, or from a shell (this replaces the mod's saved settings):
 
 ```sh
-omd-mod settings STORE omd_statusline '{"preset": "detailed"}'
+STORE=~/.local/share/oh-my-diff/stores/full
+omd-mod settings "$STORE" "$STORE/sources/omd_statusline" '{"preset": "detailed"}'
 ```
 
 Presets:
 
-- `compact`: `model context limits cost git omd`
+- `compact`: `model context limits cost cache git omd`
 - `detailed`: `model effort provider context tokens cache cost limits`, then `git changes pr ci session tools agents plan omd` on a second line
 
 A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLOR`.
@@ -52,7 +53,7 @@ A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLO
 - `model`, `effort`, `provider`: the model (`requested→served` if they differ), reasoning effort, provider.
 - `context`: usage with a bar. `~` and muted after a compaction, rewind or model switch; compactions as `⟳N`.
 - `tokens`, `cache`: token use and cache state.
-- `cost`: session cost. `~` / `est.` for estimates, `included` for subscriptions, `+?` while unsettled. Never an invoice.
+- `cost`: session cost. `~` / `est.` for estimates, `included` for subscriptions, `+?` while some cost is unsettled or unknown. Never an invoice. `omd_usage` (`Alt+a`) breaks it down by request.
 - `limits`: account rate-limit windows with reset countdowns.
 - `git`, `changes`: branch and diff summary.
 - `pr`, `ci`: GitHub pull request and checks.

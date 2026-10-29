@@ -35,8 +35,7 @@ pub fn route_name(model: &str, mod_id: &str) -> String {
     format!("plan-{slug}-{mod_id}")
 }
 
-/// Lets `plan.mod_id` run workers on its plan route for `plan.model` and adds `repository` to the route's grant,
-/// which lists every repository where the user approved that mod.
+/// Lets `plan.mod_id` run workers on its plan route, adding `repository` to the grant's list of approved repositories.
 pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<String> {
     let name = route_name(&plan.model, &plan.mod_id);
     if name.starts_with("plan--") {
@@ -86,7 +85,7 @@ pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<Stri
         None if routes.len() >= ROUTES => return Err(io::Error::other("host_routes_full")),
         None => {}
     }
-    crate::broker::write_private(&grant_path, &grant)?;
+    crate::fsio::write_json(&grant_path, &grant)?;
     let sha256 = crate::resource_data::hash(&bytes);
     routes.push(json!({"name": name, "provider": "openai", "model": plan.model,
         "reasoning_effort": plan.reasoning_effort, "responses_url": SUBSCRIPTION_RESPONSES_URL,
@@ -95,7 +94,7 @@ pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<Stri
             "output_microusd_per_million": 0, "reservation_microusd": 0,
             "max_output_tokens": plan.context_window.min(128_000), "input_token_ceiling": plan.context_window,
             "included_subscription": true}}));
-    crate::broker::write_private(&host_path, &host)?;
+    crate::fsio::write_json(&host_path, &host)?;
     Ok(name)
 }
 

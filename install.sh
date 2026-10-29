@@ -14,6 +14,7 @@ if [ -z "$OMD_PYTHON" ]; then
 fi
 exec "$OMD_PYTHON" -I - "$@" <<'PY'
 import argparse
+import codecs
 import fcntl
 import hashlib
 import json
@@ -47,7 +48,7 @@ RELEASE_URL = ""
 RELEASE_SHA256 = ""
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
-UPSTREAM_MINOR = "0.163"
+UPSTREAM_MINOR = "0.164"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
@@ -58,7 +59,9 @@ DOCS = "https://github.com/dzkchen/oh-my-diff/blob/main/docs/install.md"
 MARK = ("╭─╮ ╭╮╭╮ ┌─╮", "│ │ │╰╯│ │ │", "╰─╯ ╵  ╵ └─╯")
 MARK_ASCII = (".-. |\\/| |-.", "| | |  | | |", "'-' |  | |-'")
 LIVE = sys.stderr.isatty() and os.environ.get("TERM") != "dumb"
-COLOR = LIVE and "NO_COLOR" not in os.environ
+COLOR = LIVE and not os.environ.get("NO_COLOR")
+UNICODE = codecs.lookup(sys.stderr.encoding or "ascii").name == "utf-8"
+ASCII = str.maketrans({"✓": "+", "✗": "x", "…": "...", "█": "#", "░": "-", "·": "-"})
 
 
 def fail(message):
@@ -70,7 +73,7 @@ def paint(text, code):
 
 
 def say(line=""):
-    print(("\r\033[K" if LIVE else "") + line, file=sys.stderr, flush=True)
+    print(("\r\033[K" if LIVE else "") + (line if UNICODE else line.translate(ASCII)), file=sys.stderr, flush=True)
 
 
 def step(label, detail="", mark="✓"):
@@ -79,7 +82,8 @@ def step(label, detail="", mark="✓"):
 
 def pending(label, detail=""):
     if LIVE:
-        sys.stderr.write(f"\r\033[K  {paint('…', '2')} {label:<22}{paint(detail, '2')}")
+        line = f"\r\033[K  {paint('…', '2')} {label:<22}{paint(detail, '2')}"
+        sys.stderr.write(line if UNICODE else line.translate(ASCII))
         sys.stderr.flush()
 
 
@@ -98,7 +102,7 @@ def banner(manifest):
     side = (paint(f"oh my diff{version}", "1") + paint(" · beta", "2"),
             paint(f"Codex {minor} with TypeScript mods", "2"), paint("Apple Silicon macOS", "2"))
     say()
-    for mark, text in zip(MARK if LIVE else MARK_ASCII, side):
+    for mark, text in zip(MARK if UNICODE else MARK_ASCII, side):
         say(f"  {paint('+', '36')} {paint(mark, '1')}   {text}")
     say()
 
@@ -218,7 +222,10 @@ def profile_choice(args):
         with open("/dev/tty", "w") as output, open("/dev/tty") as terminal:
             output.write(f"  {paint('Pick a profile', '1')}\n\n"
                          f"    {paint('1', '36')}  {paint('OMD+', '1')}       Core plus the first-party mod collection and bundled plugins.\n"
-                         "                  Default mods start on; turn on the rest in /mods.\n\n"
+                         "                  Default mods start on; turn on the rest in /mods.\n"
+                         "                  Among them: a prompt unanswered for two minutes is declined,\n"
+                         "                  a large idle chat is compacted (losing detail and cancelling\n"
+                         "                  a pending approval), and /plan is removed.\n\n"
                          f"    {paint('2', '36')}  {paint('OMD Core', '1')}   Patched Codex, mod manager, typed author tools,\n"
                          "                  and the logo, /mods and update mods.\n\n")
             while True:
@@ -334,12 +341,11 @@ def set_links(root, bin_dir):
     return displaced
 
 
-def path_warning(bin_dir):
+def shadowing_codex(bin_dir):
     located = shutil.which("codex")
     if located and Path(located).parent.resolve() == bin_dir:
         return None
-    return (f"codex on PATH is {located or 'missing'}, not the OMD launcher in {bin_dir}; "
-            f"add this line to the end of {shell_profile()} and open a new shell: {path_line(bin_dir)}")
+    return located or "missing"
 
 
 def shell_profile():
@@ -415,20 +421,25 @@ def install(args, root, current):
 
 def installed(result):
     step(f"Installed {result['profile_label']}")
-    step("Linked commands", f"{tilde(result['bin_dir'])} (codex, omd, omd-package, …)")
+    step("Linked commands", f"{tilde(result['bin_dir'])} ({', '.join(LINKS)})")
     for moved in result["moved_aside"]:
         step("Moved aside", moved, "!")
     for failure in result["prune_failures"]:
         step("Old install kept", failure, "!")
-    if broker := result.get("authority_broker"):
-        step("Authority broker", broker, "!" if broker.startswith("failed") else "✓")
+    broker = result.get("authority_broker")
+    unpinned = bool(broker and broker.startswith("failed"))
+    if broker:
+        step("Authority broker", broker, "!" if unpinned else "✓")
     say()
-    headline = f"Oh My Diff {result['version']} ({result['profile_label']}) is installed."
+    headline = f"Oh My Diff {result['version']} ({result['profile_label']}) is installed"
+    headline += ", but codex can't start until the authority broker is pinned." if unpinned else "."
     say(f"  {paint('+', '36')} {paint(headline, '1')}")
     say()
     rows = [("Mods", "/mods and /omd inside codex"), ("Update", "omd update"), ("Website", WEBSITE), ("Docs", DOCS)]
-    if result.get("path_warning"):
-        say(f"  {paint('!', '33')} codex on your PATH is {shutil.which('codex') or 'missing'}, not OMD's.")
+    if unpinned:
+        rows.insert(0, ("Fix", "omd-package broker pin, then open a new terminal and run codex"))
+    elif shadowing := result.get("codex_on_path"):
+        say(f"  {paint('!', '33')} codex on your PATH is {shadowing}, not OMD's.")
         say(f"    Add this line to the end of {shell_profile()}, then open a new terminal and run codex:")
         say()
         say(f"      {path_line(result['bin_dir'])}")
@@ -529,6 +540,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                 pruned.append(old.name)
             except (OSError, ValueError) as error:
                 failures.append(f"{old.name}: {error}")
+        collect(root)
         pinned = repin(generation, current, Path(upstream["path"]), args.bin_dir)
         settled(root, record["version"], held=None)
         return {"installed": profile, "profile_label": PROFILE_LABELS[profile], "version": record["version"],
@@ -537,7 +549,16 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                 "moved_aside": [f"{path} -> {path}.before-omd" for path in displaced],
                 "pruned": pruned, "prune_failures": failures,
                 **({"authority_broker": pinned} if pinned else {}),
-                **({"path_warning": warning} if (warning := path_warning(args.bin_dir)) else {})}
+                **({"codex_on_path": shadowing} if (shadowing := shadowing_codex(args.bin_dir)) else {})}
+
+
+def collect(root):
+    for path in (root / "objects").glob("*"):
+        try:
+            if path.stat().st_nlink == 1:
+                path.unlink()
+        except OSError:
+            pass
 
 
 def restore_store(generation, upstream, bin_dir):
@@ -622,7 +643,7 @@ def rollback(args, root, bin_dir, current):
     if not current or not previous:
         fail("No previous installation is available for rollback.")
     upstream = Path(upstream_binary(args, current)["path"])
-    status(current, upstream, bin_dir)
+    status(previous, upstream, bin_dir)
     check_links(root, bin_dir)
     journaled(root, None, args.session)
     atomic_symlink(root / "previous", current)
@@ -664,7 +685,9 @@ def uninstall(args, root, bin_dir, current):
             remove_generation(generation, upstream, bin_dir, "--keep-broker")
         except (OSError, ValueError) as error:
             failures.append(f"{generation.name}: {error}")
-    (root / "previous").unlink(missing_ok=True)
+    kept = (root / "previous").resolve()
+    if not failures or not kept.is_dir() or removing(kept):
+        (root / "previous").unlink(missing_ok=True)
     if failures:
         fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
     write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir)})
@@ -681,7 +704,7 @@ def uninstall(args, root, bin_dir, current):
 
 def uninstalled(root):
     (root / "current").unlink(missing_ok=True)
-    for leftover in [*(root / "releases").iterdir(), root / "update", root / "sessions"]:
+    for leftover in [*(root / "releases").iterdir(), root / "update", root / "sessions", root / "objects"]:
         shutil.rmtree(leftover, ignore_errors=True)
     return {"uninstalled": True, "preserved_stores": str(root / "stores")}
 
@@ -980,7 +1003,7 @@ def flocked(path, waiting=None):
         if not waiting:
             lock.close()
             return None
-        print(waiting, file=sys.stderr)
+        say(waiting)
         fcntl.flock(lock, fcntl.LOCK_EX)
     return lock
 
@@ -1141,14 +1164,14 @@ def launch(args, root, current):
     _, record, store = installation(root, current)
     saved = state(root)
     available = saved.get("available") or {}
-    pending = read_json(root / "update/ready.json", {})
-    ready = pending.get("version")
+    staged = read_json(root / "update/ready.json", {})
+    ready = staged.get("version")
     request = mod_request(record, store)
     requested = None
     if request and request["id"] != saved.get("request_done"):
         save(root, request_done=request["id"])
         requested = request.get("version")
-    automatic = pending.get("automatic", True) and requested != available.get("version")
+    automatic = staged.get("automatic", True) and requested != available.get("version")
     settings = policy(store)
     allowed = eligible(settings, available, record["version"])
     if allowed:
@@ -1169,7 +1192,7 @@ def launch(args, root, current):
         pend(root, available, automatic=automatic)
         print(f"Oh My Diff {ready} is ready and installs when OMD starts while no other session is open.", file=sys.stderr)
         return
-    print(f"Updating Oh My Diff {record['version']} to {ready}…", file=sys.stderr)
+    say(f"Updating Oh My Diff {record['version']} to {ready}…")
     try:
         apply(args, root, current, available)
     except SessionsOpen:
@@ -1223,9 +1246,9 @@ def main():
         parser.error("only update takes an action")
     args.root = args.root.expanduser().resolve()
     root = args.root
-    pending = read_json(root / "update/journal.json", {}) if root.is_dir() else {}
-    active = None if "uninstall" in pending or not root.is_dir() else pointer(root, "current")
-    recorded = pending.get("bin_dir") if "uninstall" in pending else receipt(active).get("bin_dir") if active else None
+    journal = read_json(root / "update/journal.json", {}) if root.is_dir() else {}
+    active = None if "uninstall" in journal or not root.is_dir() else pointer(root, "current")
+    recorded = journal.get("bin_dir") if "uninstall" in journal else receipt(active).get("bin_dir") if active else None
     args.bin_dir = Path(args.bin_dir or recorded or Path.home() / ".local/bin").expanduser().resolve()
     if root == Path(root.anchor) or args.bin_dir == Path(args.bin_dir.anchor):
         fail("installation paths must not be filesystem roots")

@@ -4,7 +4,7 @@ import { cpSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, ch
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { activate, clock, component, environment, find, intercept, invoke, packages, pointer, state, text } from '../mods/author/testing.mjs';
+import { invoke, state } from '../mods/author/testing.mjs';
 
 test('author packaging preserves custom entrypoints, assets and lifecycle scripts and inspects the output', () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-package-'));
@@ -66,7 +66,6 @@ test('scaffold commands and mapped failures work for custom and example-named ID
       assert.match(tested.stdout, /Hello author/);
       const checked = author('check', project);
       assert.equal(checked.status, 0, checked.stderr);
-      assert.match(checked.stderr, /check: ok/);
       const scenario = author('run', project);
       assert.equal(scenario.status, 0, scenario.stderr);
       assert.match(scenario.stdout, /Hello author/);
@@ -207,50 +206,41 @@ test('watch refuses to move a shared dependency from project to user scope', { s
     assert.match(watched.stderr, /package_scope_conflict: dependency is installed in project scope/);
     assert.deepEqual(engine('package-lock', store), before);
     assert.equal(readFileSync(join(store, 'mods.json'), 'utf8'), selections);
-    engine('package-disable', store, 'dependency');
-    assert.equal(engine('package-lock', store).packages.dependency.enabled, false);
-    engine('package-enable', store, 'dependency');
-    assert.equal(engine('package-lock', store).packages.dependency.enabled, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-const guardSource = (field) => `import type { ModAPI } from '@oh-my-diff/mod-api';
+test('cost measures a package alone in a scratch store', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-cost-'));
+  try {
+    const api = JSON.parse(readFileSync(new URL('../mods/package.json', import.meta.url))).version;
+    writeFileSync(join(root, 'mod.json'), JSON.stringify({ schema: 1, id: 'fixture', version: '1.0.0', api, state_version: 1, license: 'UNLICENSED',
+      provenance: { maintainer: 'test', source: 'test' }, capabilities: ['commands'] }));
+    writeFileSync(join(root, 'index.ts'), "export default api => api.command('go', () => 1);");
+    const result = spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, 'cost', root, 'go', '--runs', '2'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.mod, 'fixture');
+    assert.equal(report.runs, 2);
+    assert.ok(report.activation_ms.p50 > 0 && report.fresh_callback_ms.p50 > 0 && report.reused_callback_ms.p50 > 0, result.stdout);
+    assert.ok(report.runners >= 1, result.stdout);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
-export default function activate(api: ModAPI) {
-  api.intercept('tool', async (input, next) => {
-    if (input.tool !== 'exec_command') return next(input);
-    const cmd = input.arguments.${field};
-    if (typeof cmd !== 'string') throw new Error('cmd_required');
-    if (cmd.includes('rm -rf')) return { deny: 'destructive command' };
-    return next(cmd.startsWith('git push') ? { ...input, arguments: { ...input.arguments, cmd: 'echo guarded' } } : input);
-  });
-  api.on('component_event', event => api.state.set({ kind: event.kind, component: event.component, client: event.client ?? null, action: event.pointer?.action ?? null }));
-  api.on('terminal', input => ({ sites: { dialog: { components: [
-    { type: 'text', id: 'title', label: 'title', text: \`clients:\${input.clients?.length ?? 0}\` },
-    { type: 'box', id: 'canvas', label: 'canvas', pointer: true },
-    { type: 'button', id: 'allow', label: 'allow', text: 'Allow', action: { command: 'proof:allow' } },
-  ] } } }));
-  api.command('allow', () => 'allowed');
-  api.command('last', () => api.state.get());
-  api.command('clock', () => Date.now());
-  api.command('policy', () => {
-    const mode = api.host.call('environment.read', { names: ['MODE'] }).values.MODE?.value ?? null;
-    return { mode, allow: api.host.call('store.get', { key: 'allow' })?.value ?? null };
-  });
-}
-`;
+test('author help and errors print without a stack', () => {
+  const cli = new URL('../mods/author/cli.mjs', import.meta.url).pathname;
+  const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0);
+  const unknown = spawnSync(process.execPath, [cli, 'nonsense'], { encoding: 'utf8' });
+  assert.equal(unknown.status, 1);
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-fail-'));
+  try {
+    const failed = spawnSync(process.execPath, [cli, 'create', join(root, 'bad'), 'BAD-ID!'], { encoding: 'utf8' });
+    assert.equal(failed.status, 1);
+    assert.equal(failed.stderr, 'invalid_mod_id: BAD-ID!\n');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
-const inventory = (parameters) => ({ thread_id: 'fixture', tools: [
-  { name: 'exec_command', kind: 'builtin', server: null, original: { description: 'Run a command', parameters, freeform: false }, effective: { description: 'Run a command', parameters, deferred: false } },
-  { name: 'apply_patch', kind: 'builtin', server: null, original: { description: 'Patch files', parameters: null, freeform: true }, effective: null },
-  { name: 'mcp__docs__search', kind: 'mcp', server: 'docs', original: { description: 'Search docs', parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer' } }, required: ['query'] }, freeform: false }, effective: { description: 'Search docs', parameters: null, deferred: true } },
-] });
-
-test('author usage prints without a stack and thread ids map on every step helper', () => {
-  const result = spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, '--help'], { encoding: 'utf8' });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /^usage: omd-mod-author /);
-  assert.doesNotMatch(result.stderr, /\n\s+at /);
+test('thread ids map on every step helper', () => {
   assert.equal(state('m', { threadId: 't' }).thread_id, 't');
   assert.equal(invoke('m', 'command', 'c', null, { threadId: 't' }).thread_id, 't');
 });

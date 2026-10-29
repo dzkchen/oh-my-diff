@@ -44,7 +44,7 @@ def packages(names):
 
 
 def drift(*paths):
-    return ["git", "diff", "--exit-code", "--stat", "--", *paths]
+    return ["sh", "-c", 'git add --intent-to-add -- "$@" && git diff --exit-code --stat -- "$@"', "drift", *paths]
 
 
 def own_paths_only(status, text):
@@ -182,17 +182,17 @@ def cargo_tests(suite):
         targets.discard(("--test", "all"))
     failed = False
     for index, flags in enumerate(sorted(targets)):
-        args = ["test", "--locked", "--no-fail-fast", *packages(names), *flags, "--message-format=json-render-diagnostics", "--", "--test-threads=1"]
+        if flags == ("--doc",):
+            args = ["test", "--locked", "--no-fail-fast", *packages(names), *flags, "--message-format=json-render-diagnostics", "--"]
+        else:
+            args = ["nextest", "run", "--locked", "--no-fail-fast", "--no-tests=pass", "--tool-config-file",
+                    f"omd:{build.ROOT / '.github/nextest.toml'}", *packages(names), *flags,
+                    "--cargo-message-format=json-render-diagnostics", "--"]
         if suite.startswith("core"):
             args += ["--skip", "shell_startup_credentials_are_brokered::filtered_host_additional_permissions"]
         log = WORK / "logs" / f"{suite}-{index}.cargo.log"
-        status = build.cargo_run(work, log, args)
-        flaky = sorted(set(re.findall(r"^test (\S+) \.\.\. FAILED$", log.read_text(errors="replace"), re.M)))
-        if status and 0 < len(flaky) <= 5:
-            print(f"rerunning {', '.join(flaky)}")
-            status = build.cargo_run(work, log.with_suffix(".retry.log"), [*args, "--exact", *flaky])
-        failed |= status != 0
-        for line in log.read_text().splitlines():
+        failed |= build.cargo_run(work, log, args) != 0
+        for line in log.read_text(errors="replace").splitlines():
             try:
                 item = json.loads(line)
             except ValueError:

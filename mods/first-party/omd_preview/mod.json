@@ -1,21 +1,20 @@
 {
   "schema": 1,
   "id": "omd_preview",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Previews responses and files as HTML or inline, draws Mermaid diagrams in responses and shows draft image thumbnails above the composer",
+  "description": "Previews responses and files as HTML or inline, and draws Mermaid diagrams in responses",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_preview"},
-  "capabilities": ["commands", "terminal", "store", "sessions", "exec", "fs.read", "fs.write", "events", "lifecycle", "composer", "inventory"],
+  "capabilities": ["commands", "terminal", "store", "sessions", "exec", "fs.read", "fs.write", "events", "lifecycle", "inventory"],
   "assets": ["render.mjs", "text.ts", "mermaid.ts"],
   "subscriptions": {"channels": ["omd_preview/*"]},
-  "compatibility": {"required_features": ["app_v1", "composer_v2", "render_hooks_v1", "session_ports_v1", "events_v1", "state_scopes_v1", "exec_v1", "package_text_assets_v1", "package_imports_v1", "store_v1", "terminal_media_v1", "terminal_raster_v1", "terminal_render_sites_v1", "timers_v1"]},
+  "compatibility": {"required_features": ["app_v1", "render_hooks_v1", "session_ports_v1", "events_v1", "state_scopes_v1", "exec_v1", "package_text_assets_v1", "package_imports_v1", "store_v1", "terminal_render_sites_v1", "timers_v1", "workspace_watch_key_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {
-      "thumbnails": {"type": "boolean", "default": true, "title": "Image thumbnails", "description": "Show your draft's images in a row above the prompt, each with a Preview button"},
       "diagrams": {"type": "string", "enum": ["unicode", "ascii", "off"], "default": "unicode", "title": "Diagram drawing", "description": "How Mermaid diagrams are drawn: unicode box-drawing, plain ascii, or off to leave the source"}
     },
     "additionalProperties": false

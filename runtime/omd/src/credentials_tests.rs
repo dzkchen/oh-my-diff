@@ -155,6 +155,19 @@ fn secrets_are_origin_bound_and_readable_only_by_their_owner() {
             .secret(&secret.id, "https://example.com", Some("vault"))
             .is_err()
     );
+    let default_port = profiles
+        .create_secret("plain", "https://example.com:443", "vault")
+        .unwrap();
+    profiles
+        .store_secret(&default_port.id, "swordfish")
+        .unwrap();
+    assert_eq!(
+        profiles
+            .secret(&default_port.id, "https://example.com", Some("vault"))
+            .unwrap()
+            .token,
+        "swordfish"
+    );
 }
 
 #[test]

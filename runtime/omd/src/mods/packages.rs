@@ -1,6 +1,74 @@
 use super::*;
 
+pub const SETTINGS_FILE_EXTENSIONS: [&str; 3] = ["json", "yaml", "yml"];
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SettingsFile {
+    pub path: String,
+    pub status: &'static str,
+    pub error: Option<String>,
+}
+
 impl ModStore {
+    pub fn settings_file(
+        &self,
+        package: &ModPackage,
+        selection: &ModSelection,
+    ) -> (SettingsFile, BTreeMap<String, Value>) {
+        let path = |extension: &str| {
+            self.root
+                .join("settings")
+                .join(format!("{}.{extension}", package.id))
+        };
+        let present: Vec<PathBuf> = SETTINGS_FILE_EXTENSIONS
+            .iter()
+            .map(|extension| path(extension))
+            .filter(|path| std::fs::symlink_metadata(path).is_ok())
+            .collect();
+        let chosen = present.first().cloned().unwrap_or_else(|| path("json"));
+        let mut file = SettingsFile {
+            path: chosen.to_string_lossy().into_owned(),
+            status: "missing",
+            error: None,
+        };
+        if present.is_empty() {
+            return (file, BTreeMap::new());
+        }
+        if selection.scope == MANAGED_SCOPE {
+            file.status = "ignored";
+            return (file, BTreeMap::new());
+        }
+        let values = (|| {
+            if present.len() > 1 {
+                return Err(failure("more_than_one_settings_file"));
+            }
+            let bytes = store::read(&chosen, 65_536)?;
+            let parsed: Value = match chosen.extension().and_then(|name| name.to_str()) {
+                Some("json") => serde_json::from_slice(&bytes).map_err(failure)?,
+                _ => serde_yaml::from_slice(&bytes).map_err(failure)?,
+            };
+            let Value::Object(object) = parsed else {
+                return Err(failure("settings_file_must_be_object"));
+            };
+            let values: BTreeMap<String, Value> = object.into_iter().collect();
+            let mut merged = selection.settings.clone();
+            merged.extend(values.clone());
+            validate_settings(package, &merged)?;
+            Ok(values)
+        })();
+        match values {
+            Ok(values) => {
+                file.status = "loaded";
+                (file, values)
+            }
+            Err(error) => {
+                file.status = "invalid";
+                file.error = Some(error.to_string());
+                (file, BTreeMap::new())
+            }
+        }
+    }
+
     pub fn settings(&self, path: &Path, settings: BTreeMap<String, Value>) -> Result<()> {
         self.update_settings(path, |current| *current = settings)
             .map(drop)
@@ -98,16 +166,12 @@ impl ModStore {
         )
     }
 
-    pub fn migrate(&self, path: &Path) -> Result<Value> {
+    pub fn migrate(&self, target: &Path) -> Result<Value> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
         let config = self.configuration()?;
-        let selection = config
-            .mods
-            .iter()
-            .find(|m| m.path == path)
-            .ok_or_else(|| failure("package_not_trusted"))?;
-        let (package, source, hash, assets) = store::package_with_assets(path)?;
+        let selection = selected(&config, target)?;
+        let (package, source, hash, assets) = store::package_with_assets(&selection.path)?;
         if hash != selection.sha256
             || selection.capabilities != package.capabilities
             || !package.capabilities.iter().any(|c| c == "store")
@@ -115,10 +179,15 @@ impl ModStore {
             return Err(failure("migration_requires_trusted_store_capability"));
         }
         let name = ModStore::state_name(&package.id, &selection.scope);
-        let previous: Value = serde_json::from_slice(&store::read(
-            &self.root.join(&name),
-            store::STATE_LIMIT as u64,
-        )?)?;
+        let previous: Value = serde_json::from_slice(
+            &store::read(&self.root.join(&name), store::STATE_LIMIT as u64).map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    failure("migration_requires_saved_state")
+                } else {
+                    error
+                }
+            })?,
+        )?;
         let from = previous["version"]
             .as_u64()
             .ok_or_else(|| failure("invalid_state_version"))?;
@@ -150,16 +219,12 @@ impl ModStore {
         )
     }
 
-    pub fn rollback(&self, path: &Path, backup: &Path) -> Result<Value> {
+    pub fn rollback(&self, target: &Path, backup: &Path) -> Result<Value> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
         let config = self.configuration()?;
-        let selection = config
-            .mods
-            .iter()
-            .find(|selection| selection.path == path)
-            .ok_or_else(|| failure("package_not_trusted"))?;
-        let (package, _, hash) = store::package(path)?;
+        let selection = selected(&config, target)?;
+        let (package, _, hash) = store::package(&selection.path)?;
         if selection.enabled
             || hash != selection.sha256
             || selection.capabilities != package.capabilities
@@ -218,6 +283,24 @@ impl ModStore {
     }
 }
 
+/// The selection for a package folder or, given a bare name, the one selected copy with that mod id.
+fn selected<'a>(config: &'a ModConfiguration, target: &Path) -> Result<&'a ModSelection> {
+    let id = (target.components().count() == 1 && target.is_relative())
+        .then(|| target.to_str())
+        .flatten();
+    let mut matches = config.mods.iter().filter(|selection| match id {
+        Some(id) => store::package(&selection.path).is_ok_and(|(package, _, _)| package.id == id),
+        None => selection.path == target,
+    });
+    match (matches.next(), matches.next()) {
+        (Some(selection), None) => Ok(selection),
+        (Some(_), Some(_)) => Err(failure(
+            "mod_ambiguous: more than one selected copy has this id; pass its package folder",
+        )),
+        _ => Err(failure("package_not_trusted")),
+    }
+}
+
 /// Whether a state read failed on thread or checkout state stored at another version that the mod can migrate; store-scope state migrates only through `ModStore::migrate`.
 pub(super) fn migratable(
     loaded: &Loaded,
@@ -265,9 +348,11 @@ pub(super) fn detached(
         source: source.into(),
         assets: Arc::new(store::asset_map(assets)),
         request_metadata: Arc::new(OnceLock::new()),
+        code_cache: None,
         selection,
         adapter: None,
         state,
+        registered_state: std::sync::Arc::default(),
         ui: None,
         ui_state: Value::Null,
         ui_revision: 0,
@@ -278,6 +363,11 @@ pub(super) fn detached(
         unused_grants: Vec::new(),
         unused_environment: Vec::new(),
         withheld: Vec::new(),
+        settings_file: SettingsFile {
+            path: String::new(),
+            status: "missing",
+            error: None,
+        },
         error: None,
         telemetry: ModTelemetry::default(),
     }

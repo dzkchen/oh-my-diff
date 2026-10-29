@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "api": "1.0.0",
   "state_version": 1,
-  "license": "Apache-2.0",
+  "license": "MIT",
   "description": "Lists approval requests and their decisions in a filterable desk that terminal users and attached external clients share.",
   "capabilities": [
     "terminal",

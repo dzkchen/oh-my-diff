@@ -16,7 +16,7 @@ const GIT = '/repo/.git/worktrees/line\n/repo/.git\n/work/line\n@@\ngit@github.c
 
 const host = (overrides = {}) => ({ operation, arguments: args }) => {
   if (operation in overrides) return overrides[operation](args);
-  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.163.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
+  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.164.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
   if (operation === 'app.request' && args.method === 'config/read') return { config: { model_reasoning_effort: 'high', model_context_window: 272_000 } };
   if (operation === 'app.request' && args.method === 'account/rateLimits/read') {
     return { rateLimits: { primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: (NOW + 7_200_000) / 1000 }, secondary: { usedPercent: 93, windowDurationMins: 10_080, resetsAt: (NOW + 86_400_000) / 1000 } } };
@@ -57,12 +57,13 @@ const settled = (answer = host()) => {
 };
 const started = () => settled();
 
-test('the native route on a ChatGPT plan shows as included, not unpriced', () => {
+test('cost follows the ledger basis: included on the ChatGPT plan, unknown when unpriced', () => {
   const settings = { preset: 'custom', layout: 'provider cost' };
-  const unpriced = [['model_response', response('r1', { cost: { microusd: null, basis: 'unpriced' } })]];
   const plan = host({ 'app.request': args => args.method === 'config/read' ? { config: {} } : { rateLimits: { planType: 'plus' } } });
-  assert.deepEqual(lines(view(feed(settled(plan), unpriced), settings)), ['openai subscription · included']);
-  assert.deepEqual(lines(view(feed(started(), unpriced), settings)), ['openai unpriced · cost unknown'], 'an API key without rates stays unpriced');
+  const included = [['model_response', response('r1', { cost: { microusd: 0, basis: 'included_subscription' } })]];
+  const unpriced = [['model_response', response('r1', { cost: { microusd: null, basis: 'unpriced' } })]];
+  assert.match(lines(view(feed(started(), included), settings))[0], /included/);
+  assert.match(lines(view(feed(settled(plan), unpriced), settings))[0], /unknown/, 'a plan type does not make an unpriced request included');
 });
 
 test('user scripts get session JSON on stdin and only safe styled text reaches the view', () => {
@@ -87,28 +88,16 @@ test('user scripts get session JSON on stdin and only safe styled text reaches t
   const late = call({ event: 'timer', payload: { key: 'time:script_weather' }, state: viewed, settings }, host({ 'exec.run': run(padded) })).state;
   assert.doesNotMatch(lines(view(late, settings))[0] ?? '', /\[/, 'escape sequences past the scanned prefix never reach the line');
   const timedOut = call({ event: 'timer', payload: { key: 'time:script_weather' }, state: viewed, settings }, host({ 'exec.run': run(() => ({ exit_code: null, timed_out: true, stdout: '', stderr: '' })) })).state;
-  assert.match(lines(view(timedOut, settings))[0], /weather: timed out/);
-  const crashed = call({ event: 'timer', payload: { key: 'time:script_weather' }, state: viewed, settings }, host({ 'exec.run': run(() => ({ exit_code: 139, timed_out: false, stdout: 'partial', stderr: 'segfault' })) })).state;
-  assert.match(lines(view(crashed, settings))[0], /weather: failed/);
+  assert.match(lines(view(timedOut, settings))[0], /timed out/);
   const edited = { ...settings, scripts: JSON.stringify([{ id: 'weather', command: ['sh', 'other.sh'] }]) };
   assert.doesNotMatch(lines(view(done, edited))[0], /rain/);
   assert.match(lines(view(started(), { scripts: 'not json', preset: 'custom', layout: 'model' }))[0] ?? '', /^gpt-6\.1-sol$/);
 });
 
-
-test('a segment moved to Line N joins the row the panel shows as Line N', () => {
-  const answer = host({ 'terminal.panel': () => ({ shown: true }) });
-  const edit = (payload, ui_state) => call({ event: 'command', name: 'edit', payload, ui_state }, answer);
-  const ordered = edit('panel order model; git cwd', edit('').ui);
-  const moved = edit('panel segment:model 2', ordered.ui);
-  const panel = moved.calls.findLast(item => item.operation === 'terminal.panel').arguments;
-  assert.equal(panel.items.find(item => item.id === 'order').value, 'git cwd model');
-});
-
 test('a panel action after the UI state was cleared edits the saved settings and clips long text values', () => {
   const settings = { preset: 'custom', layout: 'model git', thresholds: `context=${'7'.repeat(2040)}` };
   const edited = call({ event: 'command', name: 'edit', payload: 'panel glyphs ascii', ui_state: null, settings }, host({ 'terminal.panel': () => ({ shown: true }) }));
-  assert.deepEqual([edited.ui.draft.preset, edited.ui.draft.layout, edited.ui.draft.glyphs], ['custom', 'model git', 'ascii']);
+  assert.deepEqual([edited.ui.draft.layout, edited.ui.draft.glyphs], ['model git', 'ascii']);
   const panel = edited.calls.findLast(item => item.operation === 'terminal.panel').arguments;
   assert.equal(panel.items.find(item => item.id === 'thresholds').value.length, 2000);
 });

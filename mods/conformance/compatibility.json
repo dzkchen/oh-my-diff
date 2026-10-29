@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "as_of": "2026-10-19",
+  "as_of": "2026-10-28",
   "host": {
-    "codex": "0.163.0",
-    "omd": "1.0.0",
+    "codex": "0.164.0",
+    "omd": "1.2.0",
     "stability": "stable",
     "current_api": "1.0.0",
     "package_schemas": [
@@ -83,6 +83,9 @@
       "binary_evidence_v1",
       "package_controls_v1",
       "package_index_paging_v1",
+      "tool_batch_success_v1",
+      "code_mode_values_v1",
+      "workspace_watch_key_v1",
       "terminal_surface_v1",
       "credentials_v1",
       "completion_v1",
@@ -107,6 +110,10 @@
       "terminal_editor_v1",
       "pty_programs_v1",
       "route_reload_v1",
+      "route_write_v1",
+      "power_hold_v1",
+      "tool_original_v1",
+      "builtins_features_v1",
       "terminal_tabs_v1",
       "terminal_inline_sites_v1",
       "render_hooks_v1",
@@ -114,6 +121,7 @@
       "ui_composition_v1",
       "ui_controls_v1",
       "terminal_panel_v1",
+      "terminal_panel_navigation_v1",
       "reactive_state_v1",
       "session_ports_v1",
       "structured_access_v1",
@@ -133,7 +141,11 @@
       "model_cache_v1",
       "composer_key_v1",
       "completion_tokens_v1",
-      "mention_read_v1"
+      "mention_read_v1",
+      "settings_file_v1",
+      "terminal_focus_v1",
+      "terminal_layout_title_v1",
+      "terminal_raster_packed_v1"
     ]
   },
   "apis": [

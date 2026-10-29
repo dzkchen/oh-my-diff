@@ -29,13 +29,8 @@ fn write_once(path: &std::path::Path, text: &str) -> Result<(), String> {
     }
     let parent = path.parent().ok_or("agent_role_path_invalid")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let temporary = parent.join(format!(
-        ".{}.{}.tmp",
-        std::process::id(),
-        execution::hash(text.as_bytes())
-    ));
-    std::fs::write(&temporary, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&temporary, path).map_err(|e| e.to_string())
+    codex_omd::fsio::write_bytes(path, text.as_bytes(), codex_omd::fsio::Durability::Durable)
+        .map_err(|e| e.to_string())
 }
 
 impl Core {

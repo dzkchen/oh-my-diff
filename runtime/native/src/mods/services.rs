@@ -8,6 +8,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
+const SERVICE_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Grant {
@@ -100,6 +102,7 @@ pub(super) struct Services {
 struct Service {
     mod_id: String,
     generation: u64,
+    started_at_ms: u64,
     route: Option<Route>,
     job: Option<tokio::task::JoinHandle<Result<Value, String>>>,
     task: Arc<Task>,
@@ -386,7 +389,9 @@ impl Services {
                 .get(&selection.id)
                 .filter(|r| r.mod_id == mod_id && r.generation == generation)
                 .ok_or("unknown_or_foreign_sidecar")?;
-            return Ok(json!({"id":selection.id,"running":!record.finished()}));
+            return Ok(
+                json!({"id":selection.id,"running":!record.finished(),"started_at_ms":record.started_at_ms}),
+            );
         }
         if records.contains_key(&selection.id) {
             return Err("service_already_registered".into());
@@ -599,6 +604,7 @@ impl Services {
                 .map_err(|e| e.to_string())?;
         }
         config.permissions.shell_environment_policy.r#set.clear();
+        config.permissions.file_system_helper_sandbox = false;
         config.permissions.shell_environment_policy.r#set.insert(
             "OMD_SERVICE_ROOT".into(),
             snapshot.path().to_string_lossy().into_owned(),
@@ -802,7 +808,7 @@ impl Services {
             return Err("service_argument_limit".into());
         }
         let task = lead.session.task.clone();
-        let output_bytes = host.config.snapshot_bytes;
+        let output_bytes = SERVICE_OUTPUT_BYTES;
         let timeout = lead
             .session
             .task
@@ -833,6 +839,7 @@ impl Services {
             Service {
                 mod_id: mod_id.into(),
                 generation,
+                started_at_ms: codex_omd::peers::now_ms(),
                 // A provider becomes routable only after its readiness handshake succeeds.
                 route: None,
                 job: Some(job),

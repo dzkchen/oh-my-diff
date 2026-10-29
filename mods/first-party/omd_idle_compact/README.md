@@ -24,10 +24,11 @@ omd-package mod disable omd_idle_compact
 | `cache_ttl_minutes` | `auto` | Estimated idle interval in minutes: `auto`, `5`, `10`, `30`, `60`, `120` or `720` (12 hours). This does not configure the provider's cache. |
 | `min_tokens` | `100000` | Smaller contexts are never compacted. |
 
-From this checkout, using your mod store path for `STORE`:
+Change settings in `/mods`, or from a shell (this replaces the mod's saved settings):
 
 ```sh
-omd-mod settings STORE mods/first-party/omd_idle_compact '{"cache_ttl_minutes": "10", "min_tokens": 50000}'
+STORE=~/.local/share/oh-my-diff/stores/full
+omd-mod settings "$STORE" "$STORE/sources/omd_idle_compact" '{"cache_ttl_minutes": "10", "min_tokens": 50000}'
 ```
 
 ## Cache lifetime

@@ -3,7 +3,7 @@ export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
   | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'sessions_tools' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
-  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous' | 'history_write'
+  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'power' | 'autonomous' | 'history_write'
   | 'history_persist' | 'fs.external' | 'http' | 'mcp' | 'policy';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
@@ -13,7 +13,12 @@ export type ServiceContract = { name: `${string}.${string}`; version: `${number}
 export type ResourceRef = { reference: string; sha256: string };
 export type HostEvidence = { path: string; sha256: string };
 
-export type RouteInfo = { name: string; model: string; provider: string; reasoning: string; roles: ('lead' | 'worker')[]; billing: 'included_subscription' | 'explicit_paid_api_grant' | 'provider_billed'; tools: string[]; available: boolean; credential: string | null };
+export type RouteInfo = { name: string; model: string; provider: string; reasoning: string; roles: ('lead' | 'worker')[]; billing: 'included_subscription' | 'explicit_paid_api_grant' | 'provider_billed'; tools: string[]; available: boolean; credential: string | null; data?: Json };
+/** A lead route as `host.json` stores it; `data` (at most 2 KiB) is kept for the route's provider mod. */
+export type HostRoute = { name: string; roles: ['lead']; provider: string; model: string; reasoning_effort: string; responses_url: string; rates: HostRouteRates; mods?: string[]; tools?: string[]; data?: Json };
+export type HostRouteRates = { input_microusd_per_million: number; cached_microusd_per_million: number; cache_write_microusd_per_million?: number; output_microusd_per_million: number; reservation_microusd: number; max_output_tokens: number; input_token_ceiling: number; included_subscription: boolean; external_subscription?: boolean; provider_billed?: boolean };
+/** A provider service grant; fields left out keep the caller's existing grant with the same `id`. */
+export type ServiceGrantUpdate = { id: string; credentials?: string[]; route?: HostRoute };
 export type ModelScope = { thread_id: string; agent_id: string | null; kind: 'main' | 'subagent' };
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 /** One classified prompt item; `group` is its message (or `instructions`), which it never leaves. */
@@ -45,8 +50,8 @@ export type FinalRequestPage = {
   segments: FinalRequestSegment[]; opaque: { id: string; kind: string }[]; opaque_total: number;
 };
 export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
-/** `turns_started` counts turns this process started in the thread. */
-export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string | null; provider: string; route: string | null; turns_started: number };
+/** `turns_started` counts turns this process started in the thread; `process_id` identifies the OMD process. */
+export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; omd_version?: string; model: string; provider: string; route: string | null; turns_started: number; process_id: string };
 export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
 export type UsageSummary = {
   request_id: string | null; route: string | null; provider: string | null; credential: string | null; requested_model: string | null; served_model: string | null;
@@ -128,19 +133,22 @@ export type Digit = '0'|'1'|'2'|'3'|'4'|'5'|'6'|'7'|'8'|'9';
 export type NamedKey = 'Up'|'Down'|'Left'|'Right'|'Home'|'End'|'PageUp'|'PageDown'|'Delete'|'Insert'|'Tab'|'Enter'|'Esc'|'Backspace'|'Space';
 export type KeyModifiers = 'Ctrl+' | 'Alt+' | 'Ctrl+Alt+' | 'Ctrl+Shift+' | 'Alt+Shift+' | 'Ctrl+Alt+Shift+';
 export type KeyName = FunctionKey | `${KeyModifiers}${Letter | Digit | NamedKey}` | `Shift+${NamedKey}`;
-export type KeyAction = string | { insert: string } | { submit: string } | { command: string; args?: string } | { focus: string } | { copy: string; label: string };
+export type RegionTarget = 'left' | 'right' | 'up' | 'down' | 'next' | 'previous' | 'chat' | number | `${string}/${string}`;
+export type KeyAction = string | { insert: string } | { submit: string } | { command: string; args?: string } | { focus: string } | { copy: string; label: string }
+  | { region: RegionTarget } | { help: true };
+export type KeyContext = { when?: { focus?: string | string[]; composer?: 'empty' | 'draft' }; keys: Record<string, KeyAction | { action: KeyAction; label: string }> };
 export type ThemeColor = number | `#${string}`;
 export type Panel = { title: string; lines: string[] };
 export type TerminalTone = 'normal' | 'accent' | 'success' | 'attention' | 'failure' | 'muted';
 export type TerminalCommandAction = { command: string; args?: string };
 export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string } | { insert: string };
 export type TerminalSelectOption = { value: string; label: string };
-export type TerminalPanelItem = { id: string; tab?: string; label: string; description?: string } & (
+export type TerminalPanelItem = { id: string; tab?: string; label: string; description?: string; group?: string; keywords?: string; detail?: string } & (
   | { kind: 'toggle'; value?: boolean }
   | { kind: 'choice'; value?: string; options: TerminalSelectOption[] }
   | { kind: 'text'; value?: string }
   | { kind: 'action' });
-export type TerminalPanel = { title: string; subtitle?: string; tabs?: { id: string; title: string }[]; items: TerminalPanelItem[]; search?: boolean; action: TerminalCommandAction };
+export type TerminalPanel = { title: string; subtitle?: string; tabs?: { id: string; title: string }[]; items: TerminalPanelItem[]; search?: boolean; query?: string; selected?: string; close_args?: string; action: TerminalCommandAction };
 export type TerminalInputEvent = { key: KeyName | string | null; text: string | null } | { paste: string; truncated?: boolean };
 export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor; link?: string };
 export type TerminalStyle = { tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
@@ -156,7 +164,7 @@ export type TerminalBoxStyle = {
   border?: 'none' | 'plain' | 'rounded' | 'double' | 'thick'; padding?: TerminalSpacing; margin?: TerminalSpacing; gap?: number;
   background?: TerminalPaint; foreground?: TerminalPaint; direction?: 'column' | 'row'; hover?: TerminalBoxAccent; focus?: TerminalBoxAccent;
 };
-/** Dialogs, overlays, layout sites and the sidebar take no `hover`/`focus` accents. */
+/** Dialogs, overlays and the sidebar take no `hover`/`focus` accents; a layout site leaf takes `focus` while its region has focus. */
 export type TerminalFrameStyle = Omit<TerminalBoxStyle, 'hover' | 'focus'>;
 /** `flex` (1–12) weights a child's share of a row; in a row `max_width` caps its width, elsewhere both bounds hide it outside them. */
 export type TerminalBoxProps = { style?: TerminalBoxStyle; flex?: number; min_width?: number; max_width?: number; pointer?: boolean };
@@ -171,24 +179,25 @@ export type TerminalComponent =
   | ({ type: 'list'; id: string; label: string; rows: TerminalListRow[]; selected?: string; height?: number; action: TerminalCommandAction } & TerminalControl)
   | { type: 'markdown'; id: string; label: string; text: string }
   | { type: 'code'; id: string; label: string; text: string; language?: string }
-  | ({ type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; keys?: boolean; children?: TerminalComponent[] } & TerminalBoxProps)
+  | ({ type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; keys?: boolean | 'all'; children?: TerminalComponent[] } & TerminalBoxProps)
   | { type: 'dialog'; id: string; label: string; title: string; children?: TerminalComponent[]; style?: TerminalFrameStyle }
-  | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction; keys?: boolean }
+  | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction; keys?: boolean | 'all' }
   | { type: 'diff'; id: string; label: string; unified: string; selected?: TerminalRange; height?: number; action?: TerminalCommandAction }
   | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number; pointer?: boolean }
-  /** A keyed canvas of `width`×`height` cells drawn by `terminal.blit`; `alt` shows until the first frame. */
+  /** A keyed canvas of `width`×`height` cells (up to 512×256) drawn by `terminal.blit`; `alt` shows until the first frame. */
   | { type: 'raster'; id: string; label: string; alt: string; width?: number; height?: number; pointer?: boolean }
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
-  /** Experimental: a region drawn by the mod's `api.component(module, ...)`; `keys` takes focus on click or Tab, `pointer` sends pointer events. */
-  | { type: 'module'; id: string; label: string; module: string; props?: Json; height?: number; keys?: boolean; pointer?: boolean }
+  /** A region drawn by the mod's `api.component(module, ...)`; `keys` takes focus on click or Tab, `pointer` sends pointer events. */
+  | { type: 'module'; id: string; label: string; module: string; props?: Json; height?: number; keys?: boolean | 'all'; pointer?: boolean }
   | { type: 'slot' }
   /** The native drawing of the component a `render` hook draws; at most once per tree. */
   | { type: 'native'; style?: TerminalStyle };
 export type TerminalRange = { start: number; end: number };
 export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'below_composer' | 'dialog' | 'welcome' | `${string}/${string}`;
 export type LayoutNode =
-  | { content: 'transcript' | 'composer' }
-  | { content: `site:${TerminalSiteName}`; style?: TerminalFrameStyle }
+  | { content: 'transcript'; title?: string }
+  | { content: 'composer' }
+  | { content: `site:${TerminalSiteName}`; style?: TerminalFrameStyle & { focus?: TerminalBoxAccent }; title?: string }
   | { split: 'horizontal' | 'vertical'; ratio?: number[]; gap?: number; children: LayoutNode[] }
   | { tabs: { title: string; node: LayoutNode }[]; active?: number };
 export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number };
@@ -217,11 +226,11 @@ export type ClientEntry = {
   viewport: { width: number; height: number; unit: string } | null; focused: boolean; attached_ms: number;
 };
 export type TerminalCell = string | [glyph: string, fg: ThemeColor | null, bg: ThemeColor | null];
-export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
+export type TerminalIdentity = { codex_version: string; omd_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
 export interface TerminalView {
   welcome?: TerminalWelcome; session_title_suffix?: string; greeting?: string;
   title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; sidebar_style?: TerminalFrameStyle; panels?: Panel[]; header?: Panel; footer?: Panel;
-  sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>; status?: string[]; keybindings?: Partial<Record<KeyName, KeyAction>>; theme?: TerminalTheme;
+  sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>; status?: string[]; keybindings?: Partial<Record<KeyName, KeyAction>>; key_contexts?: KeyContext[]; theme?: TerminalTheme;
   placeholder?: string;
   layout?: LayoutNode; surface_styles?: { composer?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
   inline_sites?: 'hidden';
@@ -269,7 +278,7 @@ export type ComponentPointer = { kind: 'pointer'; column: number; row: number; h
   action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
 /** The region a component module draws: its width in cells, its height in rows (the node's `height`, 0 when it has none), the props of its `module` node, and `post`, which hands the mod's `component_post` hooks at most one value per frame. */
 export type ComponentContext<P extends Json = Json> = { readonly columns: number; readonly rows: number; readonly props: P; post(data: Json): void };
-/** Experimental: handlers run synchronously on the frame clock in the mod's own runner, keep `S` between frames and get no host authority; returning `undefined` keeps the state. */
+/** Handlers run synchronously on the frame clock in the mod's own runner, keep `S` between frames and get no host authority; returning `undefined` keeps the state. */
 export type ComponentModule<S = unknown, P extends Json = Json> = {
   init?(props: P, ui: ComponentContext<P>): S;
   view(state: S, ui: ComponentContext<P>): TerminalComponent | TerminalComponent[];
@@ -377,6 +386,8 @@ export interface HostOperations {
   'sessions.snapshot': { arguments: { call_ids?: string[] }; result: { evidence: ResourceRef; provenance: { sha256: string; bytes: number; items: number; revision: number } } };
   'routes.list': { arguments: null; result: RouteInfo[] };
   'routes.add': { arguments: { mod: string }; result: { route: string } | Declined };
+  /** Requires route_write_v1: replaces the caller's lead routes and service grants in `host.json` after the user confirms. */
+  'routes.write': { arguments: { routes: HostRoute[]; services?: ServiceGrantUpdate[] }; result: { routes: string[]; services: string[]; unchanged?: true } | Declined };
   'task.status': { arguments: null; result: { ledger: Ledger; limits: Json; worker_limits: Json } };
   'task.complete': { arguments: { candidate_sha256: string; acceptance_sha256?: string }; result: { status: 'completed'; receipts: Receipt[] } | { status: 'refused'; missing: ContractRequirement[] } | { status: 'refused'; reason: 'unresolved_blocking_findings'; outstanding_findings: string[] } };
   'receipts.submit': { arguments: { kind: string; candidate_sha256: string; acceptance_sha256?: string; outcome: 'pass' | 'fail'; evidence: ResourceRef; agent?: string; execution?: boolean; findings?: ReceiptFinding[]; resolves?: string[] }; result: Receipt };
@@ -392,13 +403,16 @@ export interface HostOperations {
   'agents.inventory': { arguments: null; result: { agents: AgentRecord[] } };
   'peers.list': { arguments: { package?: string } | null; result: { session: string; peers: { session: string; package: string; repository: string; same_project: boolean }[] } };
   'peers.send': { arguments: { to: string; package?: string; data: Json; correlation?: string; ttl_ms?: number }; result: PeerReceipt };
+  /** Requires power_hold_v1 and the `power` grant: keeps the Mac awake until released, expired, the mod changes or OMD exits. */
+  'power.hold': { arguments: { reason: string; lid_closed?: boolean; max_duration_ms: number; lease?: string }; result: { lease: string; lid_closed: boolean } };
+  'power.release': { arguments: { lease: string }; result: { released: boolean } };
   'turns.queue': { arguments: { prompt: string; key: string; priority?: 'high' | 'normal' | 'low'; deadline_ms?: number }; result: { key: string; status: 'queued' | 'duplicate'; paused?: boolean } };
   'turns.queued': { arguments: null; result: { paused: boolean; started: number; spent_microusd: number; entries: TurnQueueEntry[] } };
   'turns.dequeue': { arguments: { key: string }; result: { removed: boolean } };
   'process.which': { arguments: { names: string[]; sandbox?: 'none' }; result: { found: { name: string; path: string; sha256: string }[] } };
   /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. `pixels` needs `raster` and the `raster_pixels_v1` feature. */
   'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson' | 'raw'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean; stdin?: 'null' }; result: { session: string; running: true } };
-  /** One call returns messages until the next would push their encoded size past 48 KiB (at most 64, at least one); the rest stays queued. Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
+  /** One call returns messages until the next would push their encoded size past 256 KiB (at most 64, at least one); the rest stays queued. Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -408,14 +422,15 @@ export interface HostOperations {
   'providers.unregister': { arguments: { id: string }; result: Json };
   'sidecars.invoke': { arguments: { id: string; input: Json }; result: { provider: string; program_sha256: string; source_hashes: Record<string, string>; result: Json; untrusted: true } };
   'sidecars.start': { arguments: { id: string; secrets?: string[] }; result: Json };
-  'sidecars.status': { arguments: { id: string }; result: Json };
+  'sidecars.status': { arguments: { id: string }; result: { id: string; running: boolean; started_at_ms: number } };
   'sidecars.stop': { arguments: { id: string }; result: Json };
   'app.request': { arguments: { method: string; params: Json }; result: Json | Declined };
   /** Requires app_respond_v1: answers a pending server request this mod subscribes to; approvals and elicitations only decline or cancel, permissions grant nothing. */
   'app.respond': { arguments: { request_id: Json; result: Json }; result: { resolved: true } };
   'app.routes': { arguments: null; result: AppRoute[] };
-  'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean }; result: { watch_id: string } };
-  'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };
+  /** A `key` (1-64 bytes, needs `workspace_watch_key_v1`) keeps or replaces the mod's watch with that key in this OMD process. */
+  'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean; key?: string }; result: { watch_id: string } };
+  'workspace.unwatch': { arguments: { watch_id: string } | { key: string }; result: { stopped: boolean } };
   /** New channels fail with channel_sequence_limit at 256 counters per publisher or 4096 process-wide. */
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
   /** Require timers_16ms_v1 for delays below 1000 ms. */
@@ -426,6 +441,8 @@ export interface HostOperations {
   'tools.list': { arguments: null; result: ToolInventory };
   'tools.invoke': { arguments: ToolCall; result: { call_id: string; output: string; success: boolean; truncated: boolean } };
   'tools.check': { arguments: ToolCall; result: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; authority: 'host' | 'mod' } };
+  /** Requires tool_original_v1: stores the complete original output of a call in a `tool` interceptor chain as the mod's evidence; call it after `await next(e)` (`tool_original_unavailable` otherwise). */
+  'tools.original': { arguments: { call_id: string }; result: { reference: ResourceRef; sha256: string; bytes: number } };
   'credentials.list': { arguments: null; result: CredentialProfile[] };
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
@@ -472,8 +489,8 @@ export interface HostOperations {
   'terminal.panel': { arguments: TerminalPanel; result: { shown: true } };
   'terminal.notice': { arguments: { text: string; kind?: 'info' | 'warning' | 'error'; placement?: 'toast' | 'status'; ttl_ms?: number; id?: string; clear?: false } | { id: string; placement?: 'toast' | 'status'; clear: true } | { text: string; kind?: 'info' | 'warning' | 'error'; placement: 'transcript'; audience?: 'user' | 'model'; tool_call_id?: string };
     result: { shown: true; model?: boolean } | { cleared: boolean } };
-  /** The `pixels` form needs the `raster_pixels_v1` feature. */
-  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] } | { key: string; image: { media_type: 'image/png' | 'image/jpeg'; base64: string } } | { key: string; pixels: { source: string; format: 'rgb' | 'rgba'; width: number; height: number; sequence: number } };
+  /** The `pixels` form needs the `raster_pixels_v1` feature and `packed` the `terminal_raster_packed_v1` feature: base64 of little-endian u32 `[codePoint, fg, bg]` per cell, colors `0x00RRGGBB`, `0x01000000` (theme default) or `0x02000000 | index`. */
+  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] } | { key: string; rect: { x: number; y: number; width: number; height: number }; packed: string } | { key: string; image: { media_type: 'image/png' | 'image/jpeg'; base64: string } } | { key: string; pixels: { source: string; format: 'rgb' | 'rgba'; width: number; height: number; sequence: number } };
     result: { frame: number; queued: number; frame_ms: number } | { status: 'backpressure'; retry_after_ms: number } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   /** `route` names a configured worker route the mod may use, or `lead` for the thread's lead route when it lists the mod in `mods`. */
@@ -518,7 +535,7 @@ export interface Events {
   tool_output: { input: { call_id: string; tool: string; arguments: Json; success: boolean; text: string; tail: string | null; bytes: number }; output: null | { append: string } };
   completion: { input: { kind: 'mention'; query: string; candidates: { path: string; score: number }[] } | { kind: 'argument'; command: string; query: string; line: string }; output: null | { items: { path: string }[] } | { items: { insert: string }[] } };
   history: { input: { thread_id: string; agent_id: string | null; model: string | null; items: HistoryItem[] }; output: null | HistoryEdit };
-  tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json }[] } };
+  tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json; success_per_call?: boolean }[] } };
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
   /** Independent per-channel sequence; restarts at 1 after publisher reclamation (15 minutes idle and no queued events). */
@@ -527,7 +544,7 @@ export interface Events {
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
     pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
-  /** Experimental: the latest value a component module posted this frame. */
+  /** The latest value a component module posted this frame. */
   component_post: { input: { component: string; module: string; client?: string; data: Json }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null; dropped?: number }; output: void };
   focus: { input: { focused: boolean; dropped?: number }; output: void };
@@ -555,7 +572,7 @@ export type AdmissionPackage = { id: string; version: string; sha256: string; so
 export type ToolSpecEntry = { name: string; description: string; parameters: Json | null; deferred: boolean };
 export type InterceptMatcher = string | number | boolean | null | RegExp | readonly InterceptMatcher[] | { readonly [key: string]: InterceptMatcher };
 export interface InterceptSurfaces {
-  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string }; answer: { output: string; success: boolean } | { deny: string } };
+  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; bytes?: number; call_id?: string; value?: Json }; answer: { output: string; success: boolean; value?: Json } | { deny: string } };
   tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: ToolSpecEntry[] }; result: { tools: ToolSpecEntry[] }; answer: never };
   host_operation: { input: { operation: keyof HostOperations; namespace: string; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
   command_list: { input: { commands: CommandRow[] }; result: { commands: CommandRow[] }; answer: never };
@@ -600,12 +617,13 @@ export type InterceptResult<S extends keyof InterceptSurfaces> = InterceptSurfac
 export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readonly<InterceptSurfaces[S]['input']>, next: Next<S>) => InterceptResult<S> | Promise<InterceptResult<S>>;
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
-export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; features?: { remove?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 /** Callback completion rejects cancelled or stale authority before committing state. The `crypto` global exists only when mod.json declares `"environment": ["crypto"]`. See REFERENCE.md. */
 export interface ModAPI {
   readonly version: '1.0.0';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
+  readonly settingsFile: Readonly<{ path: string; status: 'missing' | 'loaded' | 'invalid' | 'ignored'; error: string | null }>;
   readonly host: {
     call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'];
     tryCall<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): { ok: true; value: HostOperations[K]['result'] } | { ok: false; error: string };
@@ -623,7 +641,7 @@ export interface ModAPI {
   hook(name: ClassicHook, handler: (envelope: ClassicEnvelope) => Json | void | Promise<Json | void>): void;
   hook(name: ClassicHook, options: { match?: InterceptMatcher; required?: boolean }, handler: (envelope: ClassicEnvelope) => Json | void | Promise<Json | void>): void;
   readonly match: { glob(pattern: string): InterceptMatcher; not(matcher: InterceptMatcher): InterceptMatcher };
-  /** Experimental, terminal capability: registers a component module that `module` view nodes mount; at most 16 per mod. */
+  /** Terminal capability: registers a component module that `module` view nodes mount; at most 16 per mod. */
   component<S, P extends Json = Json>(id: string, module: ComponentModule<S, P>): void;
   contract(document: ContractDocument): void;
   builtins(controls: BuiltinControls): void;

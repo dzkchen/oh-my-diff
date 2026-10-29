@@ -1,4 +1,6 @@
 use super::Result;
+use super::code_cache::CacheRoot;
+use super::code_cache::CodeCache;
 use super::failure;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -55,6 +57,7 @@ fn sandboxed(program: &Path) -> Result<Command> {
 type Spares = (Vec<Child>, Option<Instant>);
 
 static SPARES: Mutex<Spares> = Mutex::new((Vec::new(), None));
+const RESULT_LINE_BYTES: usize = 1_048_576;
 const BUSY_RUNNERS: usize = 3;
 const IDLE_AFTER: Duration = Duration::from_secs(5);
 
@@ -68,8 +71,7 @@ fn stop(mut child: Child) -> bool {
 
 const MEMORY_LIMIT: u64 = 512 << 20;
 const MEMORY_POLL: Duration = Duration::from_millis(50);
-/// Live runner processes: `(exceeded, reaped)`. The watchdog signals only under this lock and never a reaped
-/// pid, and every reap marks or untracks its pid under it, so a reused pid is never killed.
+/// Live runner pids `(exceeded, reaped)`; signals and reaps both happen under this lock, so a reused pid is never killed.
 static TRACKED: Mutex<BTreeMap<u32, (bool, bool)>> = Mutex::new(BTreeMap::new());
 
 fn untrack(pid: u32) -> bool {
@@ -118,8 +120,7 @@ fn footprint(_pid: u32) -> Option<u64> {
     None
 }
 
-/// Whether a live runner's peak physical footprint has passed `MEMORY_LIMIT`; checked on every reply because a
-/// callback can allocate and answer between two watchdog polls.
+/// Checked on every reply because a callback can allocate and answer between two watchdog polls.
 fn overran(child: &Child) -> bool {
     footprint(child.id()).is_some_and(|bytes| bytes > MEMORY_LIMIT)
 }
@@ -213,7 +214,7 @@ fn runner() -> Result<Child> {
     warm.map_or_else(spawn, Ok)
 }
 
-pub(super) const INPUT_LIMIT: usize = 1_048_576;
+pub(super) const INPUT_LIMIT: usize = 4_194_304;
 
 fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(request)?;
@@ -224,9 +225,7 @@ fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Request fields fixed by a package identity. A reused runner keeps the last ones it was sent, and a request whose
-/// fields match goes without them: a request larger than the pipe buffer blocks the host until the runner drains it,
-/// which costs a wake-up of milliseconds on an idle machine.
+/// Package-identity fields a reused runner keeps, so matching requests omit them and stay under the pipe buffer.
 const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
 
 fn kept_digest<R>(request: &R) -> Result<[u8; 32]>
@@ -259,7 +258,10 @@ fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHand
         let mut stdout = BufReader::new(stdout);
         loop {
             let mut line = Vec::new();
-            match (&mut stdout).take(262_145).read_until(b'\n', &mut line) {
+            match (&mut stdout)
+                .take(RESULT_LINE_BYTES as u64 + 1)
+                .read_until(b'\n', &mut line)
+            {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
                     if sender.send(line).is_err() {
@@ -272,15 +274,26 @@ fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHand
     (lines, reader)
 }
 
+/// How long a fresh runner may take to report ready; its callback budget starts then.
+const RUNNER_START: Duration = Duration::from_secs(10);
+
+#[allow(clippy::too_many_arguments)]
 fn converse(
     stdin: &mut ChildStdin,
     lines: &mpsc::Receiver<Vec<u8>>,
     bytes: &[u8],
+    cache: Option<&CodeCache>,
+    fresh: bool,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
 ) -> (Result<Option<Value>>, Instant) {
-    let mut deadline = Instant::now() + budget + Duration::from_millis(250);
+    let budgeted = || Instant::now() + budget + Duration::from_millis(250);
+    let mut deadline = if fresh {
+        Instant::now() + RUNNER_START
+    } else {
+        budgeted()
+    };
     if let Err(error) = stdin.write_all(bytes) {
         return (Err(error), deadline);
     }
@@ -294,11 +307,21 @@ fn converse(
             Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
             Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(None),
         };
-        if line.len() > 262_144 {
+        if line.len() > RESULT_LINE_BYTES {
             break Err(failure("output_limit"));
         }
         let frame = match serde_json::from_slice::<Value>(&line) {
             Ok(frame) if frame.get("call").is_some() => frame,
+            Ok(frame) if frame == serde_json::json!({"ready": true}) => {
+                deadline = budgeted();
+                continue;
+            }
+            Ok(frame) if frame.get("code_cache").is_some() => {
+                if let Some(cache) = cache {
+                    cache.keep(&frame["code_cache"]);
+                }
+                continue;
+            }
             Ok(frame) => break Ok(Some(frame)),
             Err(_) => break Ok(None),
         };
@@ -358,6 +381,35 @@ impl Warm {
             (errors, false) => error.unwrap_or_else(|| process_failure(&errors)),
         }
     }
+}
+
+/// Stops every pooled and spare runner, so the next callback starts as at launch.
+pub(super) fn stop_runners() {
+    for runner in retire_warm(|_| true) {
+        runner.stop();
+    }
+    let spares = std::mem::take(&mut SPARES.lock().unwrap_or_else(PoisonError::into_inner).0);
+    for child in spares {
+        stop(child);
+    }
+}
+
+/// Live runners other than idle spares, and the sum of their peak physical footprints.
+pub(super) fn runner_usage() -> (usize, u64) {
+    let spares: Vec<u32> = SPARES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .0
+        .iter()
+        .map(Child::id)
+        .collect();
+    let tracked = TRACKED.lock().unwrap_or_else(PoisonError::into_inner);
+    let live: Vec<u32> = tracked
+        .iter()
+        .filter(|(pid, (_, reaped))| !*reaped && !spares.contains(pid))
+        .map(|(pid, _)| *pid)
+        .collect();
+    (live.len(), live.into_iter().filter_map(footprint).sum())
 }
 
 pub(super) fn invalidate_warm(key: &str) {
@@ -510,6 +562,7 @@ fn warm_runner(key: &str, serve: bool) -> Result<Warm> {
 pub(super) fn evaluate_warm<R>(
     key: &str,
     request: &R,
+    cache_root: Option<&CacheRoot>,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
@@ -548,6 +601,8 @@ where
             return Err(memory_failure());
         }
     }
+    let mut cache = None;
+    let fresh = reused.is_none();
     let (mut warm, bytes) = match reused {
         Some(warm) if kept.is_some() && warm.kept == kept => (warm, kept_line(request)?),
         Some(warm) => {
@@ -580,11 +635,21 @@ where
             };
             warm.pinned = pinned;
             warm.base = bytes.len().saturating_sub(serve.len());
-            (warm, bytes)
+            cache = cache_root.and_then(|root| CodeCache::open(root, request));
+            (warm, offer(cache.as_ref(), bytes))
         }
     };
     warm.kept = kept;
-    let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
+    let (output, _) = converse(
+        &mut warm.stdin,
+        &warm.lines,
+        &bytes,
+        cache.as_ref(),
+        fresh,
+        budget,
+        active,
+        host,
+    );
     let error = match output {
         Ok(Some(_)) if overran(&warm.child) => {
             warm.stop();
@@ -679,6 +744,17 @@ fn pool(mut runner: Warm) {
     }
 }
 
+/// Puts the cached modules a fresh runner may use on their own line before its request.
+fn offer(cache: Option<&CodeCache>, request: Vec<u8>) -> Vec<u8> {
+    match cache.and_then(|cache| cache.line(INPUT_LIMIT)) {
+        Some(mut line) => {
+            line.extend(request);
+            line
+        }
+        None => request,
+    }
+}
+
 fn process_failure(errors: &[u8]) -> std::io::Error {
     let errors = String::from_utf8_lossy(errors);
     if errors.contains("heap out of memory") || errors.contains("Reached heap limit") {
@@ -691,13 +767,18 @@ fn process_failure(errors: &[u8]) -> std::io::Error {
     }
 }
 
-pub(super) fn evaluate(
-    request: &impl serde::Serialize,
+pub(super) fn evaluate<R>(
+    request: &R,
+    cache: Option<&CacheRoot>,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
-) -> Result<Value> {
-    let bytes = request_line(request)?;
+) -> Result<Value>
+where
+    R: serde::Serialize + for<'a> std::ops::Index<&'a str, Output = Value>,
+{
+    let cache = cache.and_then(|root| CodeCache::open(root, request));
+    let bytes = offer(cache.as_ref(), request_line(request)?);
     let mut child = runner()?;
     let stderr = child
         .stderr
@@ -714,7 +795,16 @@ pub(super) fn evaluate(
         .take()
         .ok_or_else(|| failure("missing_stdout"))?;
     let (lines, reader) = lines(stdout);
-    let (output, deadline) = converse(&mut stdin, &lines, &bytes, budget, active, host);
+    let (output, deadline) = converse(
+        &mut stdin,
+        &lines,
+        &bytes,
+        cache.as_ref(),
+        true,
+        budget,
+        active,
+        host,
+    );
     let overran = overran(&child);
     drop(stdin);
     if output.is_ok() {

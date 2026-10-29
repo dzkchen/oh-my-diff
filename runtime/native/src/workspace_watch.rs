@@ -17,6 +17,7 @@ pub(crate) type ChangeSink = Arc<dyn Fn(&str, Vec<String>) + Send + Sync>;
 
 struct Watch {
     source: String,
+    key: Option<(String, String)>,
     _registration: WatchRegistration,
     task: tokio::task::JoinHandle<()>,
 }
@@ -42,6 +43,15 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
         return None;
     }
     relative.to_str().map(str::to_owned)
+}
+
+fn keyed(watches: &BTreeMap<(String, String), Watch>, owner: &str, key: &str) -> Option<String> {
+    watches
+        .iter()
+        .find(|((mod_id, _), watch)| {
+            mod_id == owner && watch.key.as_ref().is_some_and(|(kept, _)| kept == key)
+        })
+        .map(|((_, id), _)| id.clone())
 }
 
 impl WorkspaceWatches {
@@ -89,6 +99,7 @@ impl WorkspaceWatches {
         Ok(resolved)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn watch(
         &self,
         owner: &str,
@@ -96,8 +107,9 @@ impl WorkspaceWatches {
         paths: &[String],
         recursive: bool,
         debounce_ms: Option<u64>,
+        key: Option<(&str, &str)>,
         sink: ChangeSink,
-    ) -> io::Result<String> {
+    ) -> io::Result<(String, Option<String>)> {
         if paths.is_empty() || paths.len() > self.limits.paths_per_watch {
             return Err(io::Error::other("watch_paths_invalid"));
         }
@@ -113,8 +125,20 @@ impl WorkspaceWatches {
             .watches
             .lock()
             .map_err(|_| io::Error::other("watch_state_poisoned"))?;
-        if watches.keys().filter(|(mod_id, _)| mod_id == owner).count()
-            >= self.limits.watches_per_mod
+        let replaced = key.and_then(|(key, _)| keyed(&watches, owner, key));
+        if let (Some(previous), Some((_, shape))) = (&replaced, key)
+            && watches
+                .get(&(owner.to_owned(), previous.clone()))
+                .is_some_and(|watch| {
+                    watch.source == source
+                        && watch.key.as_ref().is_some_and(|(_, kept)| kept == shape)
+                })
+        {
+            return Ok((previous.clone(), None));
+        }
+        if replaced.is_none()
+            && watches.keys().filter(|(mod_id, _)| mod_id == owner).count()
+                >= self.limits.watches_per_mod
         {
             return Err(io::Error::other("watch_limit"));
         }
@@ -152,15 +176,26 @@ impl WorkspaceWatches {
                 }
             }
         });
+        if let Some(previous) = &replaced {
+            watches.remove(&(owner.to_owned(), previous.clone()));
+        }
         watches.insert(
             (owner.to_owned(), id.clone()),
             Watch {
                 source: source.to_owned(),
+                key: key.map(|(key, shape)| (key.to_owned(), shape.to_owned())),
                 _registration: registration,
                 task,
             },
         );
-        Ok(id)
+        Ok((id, replaced))
+    }
+
+    pub(crate) fn unwatch_key(&self, owner: &str, key: &str) -> bool {
+        self.watches.lock().is_ok_and(|mut watches| {
+            keyed(&watches, owner, key)
+                .is_some_and(|id| watches.remove(&(owner.to_owned(), id)).is_some())
+        })
     }
 
     pub(crate) fn unwatch(&self, owner: &str, id: &str) -> bool {

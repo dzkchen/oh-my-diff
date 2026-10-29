@@ -16,7 +16,7 @@ omd-package mod enable omd_privacy
 | --- | --- |
 | `/privacy` or `/privacy status` | Show active rules, scopes, path mode, exemptions, redaction counts and refusals |
 | `/privacy allow ID` | Stop redacting the value behind placeholder `ID` (the part after the second colon) |
-| `/privacy allow VALUE` | Stop redacting that value. Only its fingerprint is saved to `exempt`. |
+| `/privacy allow VALUE` | Stop redacting that value, exactly as typed after `allow` (inner spaces and tabs count). Only its fingerprint is saved to `exempt`. |
 
 ## Settings
 
@@ -36,8 +36,9 @@ omd-package mod enable omd_privacy
 - Placeholders are never turned back. A tool the model passes one to gets the placeholder text.
 - It finds only what its rules match. It can miss secrets with no known prefix, split or encoded values and unquoted word-only passwords. It can also redact harmless text, such as `1.2.3.4` with `ipv4` on.
 - Images, audio and files aren't scanned unless `unscanned` is `deny`. Provider-side tools, other mods' network calls and processes you already allowed are out of reach.
-- The path check reads command text only. It misses paths built at run time.
-- If the mod fails or times out, requests are refused (also realtime calls, image generation, web search and memory summarization). Turn the mod off in `/mods` to send again.
+- The path check reads command text only. It misses paths built at run time. Globs and brace lists that could name a
+  sensitive path ask, except the catch-all `*` and `.*` (so `ls -la .*` stays quiet; `cat .*` isn't caught).
+- Web search isn't scanned: it sends your recent messages and its queries as they are. Realtime calls are refused while it's on (`request_policy_unsupported_transport`). If the mod fails or times out, every other request is refused, but web search still goes out unscanned. Turn the mod off in `/mods` to send again.
 - Saved state holds a salt and short fingerprints, never values. A fingerprint doesn't hide a guessable value, such as an IP address.
 
 Credit: behavior based on [secret-redactor](https://github.com/ray-amjad/awesome-claude-code-function-hooks/tree/12b5fea27a4bd1b88cd9c9b6abc1efc0756c6625/plugins/secret-redactor) by ray-amjad (MIT) and [Honmoon](https://github.com/pleaseai/honmoon/tree/e722aca593fa8bd2262f8f6451d27e47cc1cd054/packages/claude-plugin) by pleaseai (Apache-2.0); reimplemented, no code copied.

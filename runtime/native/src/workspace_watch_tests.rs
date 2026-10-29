@@ -33,8 +33,8 @@ fn channel_sink() -> (ChangeSink, mpsc::Receiver<(String, Vec<String>)>) {
 async fn external_changes_are_reported_relative_to_the_root() {
     let (dir, watches) = fixture();
     let (sink, rx) = channel_sink();
-    let id = watches
-        .watch("m", "sha", &["src".to_owned()], true, Some(50), sink)
+    let (id, _) = watches
+        .watch("m", "sha", &["src".to_owned()], true, Some(50), None, sink)
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     let file = dir.path().join("src/a.txt");
@@ -66,7 +66,7 @@ async fn paths_outside_git_and_protected_areas_are_refused() {
         let (sink, _rx) = channel_sink();
         assert!(
             watches
-                .watch("m", "sha", &[path.to_owned()], false, None, sink)
+                .watch("m", "sha", &[path.to_owned()], false, None, None, sink)
                 .is_err(),
             "{path}"
         );
@@ -74,11 +74,15 @@ async fn paths_outside_git_and_protected_areas_are_refused() {
     let (sink, _rx) = channel_sink();
     assert!(
         watches
-            .watch("m", "sha", &["src".to_owned()], false, Some(10), sink)
+            .watch("m", "sha", &["src".to_owned()], false, Some(10), None, sink)
             .is_err()
     );
     let (sink, _rx) = channel_sink();
-    assert!(watches.watch("m", "sha", &[], false, None, sink).is_err());
+    assert!(
+        watches
+            .watch("m", "sha", &[], false, None, None, sink)
+            .is_err()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -87,18 +91,26 @@ async fn watches_are_limited_per_mod_and_released_with_their_source() {
     for _ in 0..codex_omd::mod_limits::ModLimits::default().watches_per_mod {
         let (sink, _rx) = channel_sink();
         watches
-            .watch("m", "sha", &["src".to_owned()], false, None, sink)
+            .watch("m", "sha", &["src".to_owned()], false, None, None, sink)
             .unwrap();
     }
     let (sink, _rx) = channel_sink();
     assert!(
         watches
-            .watch("m", "sha", &["src".to_owned()], false, None, sink.clone())
+            .watch(
+                "m",
+                "sha",
+                &["src".to_owned()],
+                false,
+                None,
+                None,
+                sink.clone()
+            )
             .is_err()
     );
     assert!(
         watches
-            .watch("other", "sha", &["src".to_owned()], false, None, sink)
+            .watch("other", "sha", &["src".to_owned()], false, None, None, sink)
             .is_ok()
     );
     watches.retain_sources(&BTreeMap::from([("other".to_owned(), "sha".to_owned())]));
@@ -106,4 +118,26 @@ async fn watches_are_limited_per_mod_and_released_with_their_source() {
         (watches.unwatch_all("m"), watches.unwatch_all("other")),
         (0, 1)
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_keyed_watch_is_kept_when_unchanged_and_replaced_within_the_limit_otherwise() {
+    let (_dir, watches) = fixture();
+    let watch = |key: Option<(&str, &str)>| {
+        let (sink, _rx) = channel_sink();
+        watches.watch("m", "sha", &["src".to_owned()], false, None, key, sink)
+    };
+    let (first, replaced) = watch(Some(("k", "a"))).unwrap();
+    assert_eq!(replaced, None);
+    assert_eq!(watch(Some(("k", "a"))).unwrap(), (first.clone(), None));
+    for _ in 1..codex_omd::mod_limits::ModLimits::default().watches_per_mod {
+        watch(None).unwrap();
+    }
+    let (second, replaced) = watch(Some(("k", "b"))).unwrap();
+    assert_eq!(replaced.as_deref(), Some(first.as_str()));
+    assert!(watch(Some(("other", "a"))).is_err());
+    assert!(!watches.unwatch("m", &first));
+    assert!(!watches.unwatch_key("other", "k"));
+    assert!(watches.unwatch_key("m", "k"));
+    assert!(!watches.unwatch("m", &second));
 }

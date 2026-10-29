@@ -74,7 +74,7 @@ impl ModHostCall {
             "terminal.pty" => Ok("pty"),
             "model.complete" | "model.fork" => Ok("agents"),
             "tools.define" | "tools.undefine" => Ok("tools"),
-            "tools.invoke" | "tools.check" => Ok("interception"),
+            "tools.invoke" | "tools.check" | "tools.original" => Ok("interception"),
             "composer.read" | "composer.write" | "composer.suggest" => Ok("composer"),
             "prompts.consent" | "prompts.submit" | "prompts.status" | "prompts.revoke" => {
                 Ok("composer")
@@ -83,13 +83,14 @@ impl ModHostCall {
             "config.describe" => Ok("config"),
             "config.set" => Ok("config.write"),
             "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
-            | "packages.reload" | "routes.add" => Ok("packages"),
+            | "packages.reload" | "routes.add" | "routes.write" => Ok("packages"),
             "settings.write" if self.arguments["id"].is_string() => Ok("packages"),
             "settings.write" => Ok("commands"),
             "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
             "mcp.connect" | "mcp.disconnect" => Ok("mcp"),
             "environment.read" | "environment.set" => Ok("exec"),
             "peers.list" | "peers.send" => Ok("peers"),
+            "power.hold" | "power.release" => Ok("power"),
             "turns.queue" | "turns.queued" | "turns.dequeue" => Ok("autonomous"),
             _ if operation.starts_with("agents.") && MOD_HOST_OPERATIONS.contains(&operation) => {
                 Ok("agents")
@@ -192,7 +193,8 @@ fn metadata(loaded: &Loaded) -> (Value, String) {
         "entrypoint_sha256": digest(loaded.source.as_bytes()),
         "package": {"id": loaded.package.id, "version": loaded.package.version},
         "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
-        "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
+        "settings_file": loaded.settings_file,
+        "hook_budget_ms": loaded.package.hook_budget_ms,"max_host_calls": MAX_HOST_CALLS,"environment":loaded.package.environment});
     request["field_policies"] = ModHost::field_policies();
     request["surface"] = json!({
         "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
@@ -320,8 +322,21 @@ pub(super) fn run(
         Ok(receipt)
     };
     let evaluated = match &warm {
-        Some(key) => process::evaluate_warm(key, &request, budget, active, &mut answer),
-        None => process::evaluate(&request, budget, active, &mut answer),
+        Some(key) => process::evaluate_warm(
+            key,
+            &request,
+            loaded.code_cache.as_deref(),
+            budget,
+            active,
+            &mut answer,
+        ),
+        None => process::evaluate(
+            &request,
+            loaded.code_cache.as_deref(),
+            budget,
+            active,
+            &mut answer,
+        ),
     }?;
     let mut reply: Reply = serde_json::from_value(evaluated).inspect_err(|_| {
         if let Some(key) = &warm {

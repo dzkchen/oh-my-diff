@@ -1,20 +1,20 @@
-import type { CommandResult, ComposerDraft, Json, ModAPI, RenderEvent, ResourceRef, TerminalClient, TerminalComponent, TerminalRenderSite } from '../../api.d.ts';
-import { clamp, size, clean, cells } from './text.ts';
+import type { CommandResult, Json, ModAPI, RenderEvent, TerminalComponent } from '../../api.d.ts';
+import { clamp, fitView, size, clean } from './text.ts';
 import { SOURCE_BYTES, DRAWN_BYTES, diagram, fences, chunks, presentation, kindOf } from './mermaid.ts';
 
 const DIR = '.omd/preview';
 const TEXT_BYTES = 4_000;
 const DIFF_BYTES = 48_000;
+// Bounds one inline view's payload: lines, and bytes once JSON-escaped (quotes and backslashes can double a diff).
+const VIEW_LINES = 2_000;
+const VIEW_ENCODED_BYTES = 60_000;
 const MAX_WATCHES = 8;
 const RETRY_MS = 2_000;
-const MAX_IMAGES = 16;
-const TILE_ROWS = [2, 8];
-const TILE_MIN = 7;
-const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview diagrams [N] | /preview image [N] | /preview server [PORT] | /preview unwatch | /preview close';
+const RETRY_MAX_MS = 60_000;
+const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview diagrams [N] | /preview server [PORT] | /preview unwatch | /preview close';
 
-type Inline = { title: string; kind: string; text: string; source?: string; image?: ResourceRef };
-type Picture = { id: string; label: string; owner: string; image: ResourceRef | null; aspect: number };
-type State = { inline: Inline | null; revision: number; images: Picture[]; attachments?: number };
+type Inline = { title: string; kind: string; text: string; source?: string };
+type State = { inline: Inline | null; revision: number; retry?: number };
 type Watches = { watch: string[]; hashes: Record<string, string> };
 type Turn = { items?: { type?: string; text?: string }[] };
 type Rendered = { path: string } | { error: string };
@@ -25,46 +25,9 @@ const inlineKind = (path: string) => {
   if (['md', 'markdown', 'mdx'].includes(extension)) return 'markdown';
   return ['diff', 'patch'].includes(extension) ? 'diff' : extension;
 };
-const pictures = (draft: ComposerDraft): Picture[] => draft.attachments.filter(item => item.kind === 'image').slice(0, MAX_IMAGES)
-  .map(item => ({ id: item.id, label: clamp(clean(item.label).replace(/\n/g, ' '), 64).text || 'image', owner: item.owner, image: item.resource,
-    aspect: item.width && item.height ? item.width / item.height : 1 }));
-
-// Every draft image in one row: the tallest tile height at which all tiles fit, else the minimum height and as many as fit with a +N note; the row is wide enough that each tile's floored flex share holds its width.
-const strip = (images: Picture[], client: TerminalClient | null | undefined): TerminalComponent[] => {
-  const room = Math.max(TILE_MIN, (client?.columns ?? 80) - 4), ratio = client?.cell_px ? client.cell_px.height / client.cell_px.width : 2;
-  const tallest = Math.max(TILE_ROWS[0], Math.min(TILE_ROWS[1], Math.floor((client?.rows ?? 24) / 4)));
-  const absent = (picture: Picture) => `${picture.label}: no preview\nonly PNG and JPEG up to 8 MiB`;
-  const more = (count: number) => count < images.length ? `${count ? `+${images.length - count} more: ` : ''}/preview image ${count + 1} to ${images.length}` : '';
-  const cap = (count: number) => room - (more(count) ? cells(more(count)) + 1 : 0);
-  const width = (picture: Picture, rows: number, count: number) => picture.image ? Math.min(cap(count), Math.max(TILE_MIN, Math.ceil(rows * ratio * picture.aspect)))
-    : Math.max(...absent(picture).split('\n').map(cells));
-  const flex = (wide: number, widest: number) => Math.max(1, Math.round(12 * wide / widest));
-  const total = (rows: number, count: number) => {
-    const shown = images.slice(0, count), boxes = shown.filter(picture => picture.image).map(picture => width(picture, rows, count));
-    if (boxes.length && cap(count) < TILE_MIN) return Infinity;
-    const widest = Math.max(1, ...boxes), weight = boxes.reduce((sum, wide) => sum + flex(wide, widest), 0);
-    const share = Math.max(0, ...boxes.map(wide => Math.ceil(wide * weight / flex(wide, widest))));
-    return share + shown.filter(picture => !picture.image).reduce((sum, picture) => sum + width(picture, rows, count), 0) + count - 1 + (more(count) ? cells(more(count)) + 1 : 0);
-  };
-  let rows = tallest, count = images.length;
-  while (rows > TILE_ROWS[0] && total(rows, count) > room) rows -= 1;
-  while (count > 0 && total(rows, count) > room) count -= 1;
-  const wide = (picture: Picture) => width(picture, rows, count);
-  const widest = Math.max(1, ...images.slice(0, count).filter(picture => picture.image).map(wide));
-  const tiles = images.slice(0, count).map((picture, index): TerminalComponent => picture.image ? {
-    type: 'box', id: `omd_preview_tile_${index}`, label: `${picture.label} tile`, max_width: wide(picture), flex: flex(wide(picture), widest), children: [
-      { type: 'image', id: `omd_preview_thumb_${index}`, label: `${picture.label} thumbnail`, image: picture.image, alt: picture.label, height: rows, pointer: true },
-      { type: 'button', id: `omd_preview_open_${index}`, label: `Preview ${picture.label}`, text: `#${index + 1}`, action: { command: 'omd_preview:preview', args: `image ${index + 1}` } },
-    ] } : { type: 'text', id: `omd_preview_thumb_${index}`, label: picture.label, text: absent(picture), tone: 'muted' });
-  const note: TerminalComponent[] = more(count) ? [{ type: 'text', id: 'omd_preview_more', label: 'More images', text: more(count), tone: 'muted' }] : [];
-  return [{ type: 'box', id: 'omd_preview_strip', label: 'Draft image strip', style: { direction: 'row' }, children: [
-    { type: 'box', id: 'omd_preview_tiles', label: 'Draft image tiles', max_width: Math.min(room, total(rows, count)), style: { direction: 'row', gap: 1 }, children: [...tiles, ...note] }] }];
-};
-
 export default function activate(api: ModAPI) {
-  const thumbnails = api.settings.thumbnails !== false;
   const diagrams = ['ascii', 'off'].includes(String(api.settings.diagrams)) ? String(api.settings.diagrams) : 'unicode';
-  const load = (): State => ({ inline: null, revision: 0, images: [], ...(api.state.get() as Partial<State> | null) });
+  const load = (): State => ({ inline: null, revision: 0, ...(api.state.get() as Partial<State> | null) });
   const save = (patch: Partial<State>) => api.state.set({ ...load(), ...patch } as unknown as Json);
   const watches = (stored: { value: Json; revision: number } | null) =>
     ({ revision: stored?.revision ?? null, watch: [], hashes: {}, ...(stored?.value as unknown as Partial<Watches> | null) });
@@ -92,9 +55,9 @@ export default function activate(api: ModAPI) {
 
   const show = (title: string, kind: string, text: string, more = false): CommandResult => {
     const limit = kind === 'diff' ? DIFF_BYTES : TEXT_BYTES;
-    const shown = clamp(clean(text), limit);
+    const shown = fitView(clean(text), limit, VIEW_LINES, VIEW_ENCODED_BYTES);
     save({ inline: { title: clamp(clean(title), 120).text, kind, text: shown.text }, revision: load().revision + 1 });
-    return shown.cut || more ? { display: `Showing the first ${limit / 1000} KB inline; /preview without --inline opens all of it in the browser` } : null;
+    return shown.cut || more ? { display: `Showing only the start inline (at most ${limit / 1000} KB and ${VIEW_LINES} lines); /preview without --inline opens all of it in the browser` } : null;
   };
 
   const responses = (limit: number): string[] => {
@@ -108,13 +71,10 @@ export default function activate(api: ModAPI) {
     return ((listed.value as { data?: Turn[] }).data ?? []).flatMap(turn => (turn.items ?? []).filter(item => item.type === 'agentMessage').slice(-1).map(item => item.text ?? ''));
   };
 
-  const viewImage = (picture: Picture) => picture.image
-    ? save({ inline: { title: picture.label, kind: 'image', text: picture.id, image: picture.image }, revision: load().revision + 1 })
-    : null;
-
-  const preview = (words: string[]): CommandResult => {
+  const preview = (raw: string): CommandResult => {
+    const words = raw.split(/\s+/).filter(Boolean);
     const inline = words.includes('--inline');
-    const target = words.filter(word => !word.startsWith('--')).join(' ');
+    const target = raw.replace(/(?:^|\s+)--\S+/g, '').trim();
     if (words.some(word => word.startsWith('--') && word !== '--inline' && word !== '--watch')) return { display: USAGE };
     if (target.startsWith('./')) return previewFile(target.slice(2), inline, words.includes('--watch'));
     if (target === 'close') {
@@ -135,16 +95,6 @@ export default function activate(api: ModAPI) {
       if (!port) return { display: ports.length ? `Listening: ${ports.map(item => item.port).join(', ')}; use /preview server PORT` : 'No server started by this session is listening' };
       const opened = api.host.tryCall('terminal.open', { url: `http://localhost:${port.port}` });
       return { display: opened.ok && 'opened' in opened.value ? `Opened http://localhost:${port.port}` : `Not opened${opened.ok ? '' : `: ${opened.error}`}` };
-    }
-    if (words[0] === 'image') {
-      const draft = api.host.tryCall('composer.read', null);
-      if (!draft.ok) return { display: `The draft is unavailable here: ${draft.error}` };
-      const images = pictures(draft.value), picture = images[Number(words[1] ?? 1) - 1];
-      save({ images });
-      if (!picture) return { display: images.length ? `The draft has ${images.length} image${images.length === 1 ? '' : 's'}; use /preview image 1-${images.length}` : 'The draft has no images' };
-      if (!picture.image) return { display: `${picture.label} has no preview: only PNG and JPEG images up to 8 MiB do` };
-      viewImage(picture);
-      return null;
     }
     if (words[0] === 'diagrams') {
       const found = responses(10).flatMap((text, index) => fences(clean(text)).flatMap(part => 'source' in part ? [{ response: index + 1, source: part.source }] : []));
@@ -169,6 +119,7 @@ export default function activate(api: ModAPI) {
   };
 
   const previewFile = (path: string, inline: boolean, watched: boolean): CommandResult => {
+    if (inline && watched) return { display: '/preview: --watch re-renders the browser page; drop --inline to watch it' };
     const file = api.host.call('workspace.stat', { paths: [path], hash: watched }).files[path];
     if (file?.kind !== 'file') return { display: `No file ${path} in the workspace` };
     if (inline) {
@@ -177,7 +128,8 @@ export default function activate(api: ModAPI) {
       const read = api.host.tryCall('exec.run', { program: 'head', argv: ['-c', String(bytes), '--', path], timeout_ms: 5_000 });
       if (!read.ok || read.value.exit_code !== 0) return refuse(read.ok ? read.value.stderr.trim() || 'read failed' : read.error.split(':')[0]);
       const text = more ? read.value.stdout.replace(/\uFFFD$/, '') : read.value.stdout;
-      return text.includes('\uFFFD') ? refuse('not UTF-8 text') : show(path, kind, text, more);
+      if (text.includes('\uFFFD')) return refuse('not UTF-8 text');
+      return text && !clean(text).trim() ? refuse('no printable text') : show(path, kind, text, more);
     }
     const stored = watches(api.host.call('store.get', { key: 'watch' }));
     const watch = watched ? [...new Set([...stored.watch, path])] : stored.watch;
@@ -190,71 +142,67 @@ export default function activate(api: ModAPI) {
     return result;
   };
 
-  // Watches are per process and thread, so this thread's watch id lives in thread scope; `rewatch` replaces it with one over the current list.
-  const poll = (rewatch = false, retry = false) => {
+  const poll = (rewatch = false, force = true) => {
+    const retry = () => {
+      const delay = force ? RETRY_MS : Math.min((load().retry ?? RETRY_MS) * 2, RETRY_MAX_MS);
+      save({ retry: delay });
+      api.host.tryCall('events.schedule', { key: 'poll', delay_ms: delay });
+    };
     const stored = api.host.tryCall('store.get', { key: 'watch' });
-    const { revision, watch, hashes } = watches(stored.ok ? stored.value : null);
-    if (!watch.length && retry) api.host.tryCall('events.schedule', { key: 'poll', delay_ms: RETRY_MS });
+    if (!stored.ok) return retry();
+    const { revision, watch, hashes } = watches(stored.value);
     const stat = watch.length ? api.host.tryCall('workspace.stat', { paths: watch, hash: true }) : null;
-    if (stat?.ok) {
-      const next = { ...hashes };
-      for (const path of watch) {
-        const hash = stat.value.files[path]?.sha256;
-        if (!hash || hash === hashes[path]) continue;
-        render(outputFor(path), path, path, undefined, true);
-        next[path] = hash;
-      }
-      if (watch.some(path => next[path] !== hashes[path])) keep(revision, { watch, hashes: next });
+    if (stat && !stat.ok) return retry();
+    const files = stat?.ok ? stat.value.files : {};
+    const next = { ...hashes };
+    for (const path of watch) {
+      const hash = files[path]?.sha256;
+      if (!hash || hash === hashes[path]) continue;
+      render(outputFor(path), path, path, undefined, true);
+      next[path] = hash;
     }
-    if (!rewatch) return;
-    const own = api.host.tryCall('store.get', { key: 'watch_id', scope: 'thread' });
-    const previous = own.ok ? own.value : null;
-    if (previous) api.host.tryCall('workspace.unwatch', { watch_id: String(previous.value) });
-    const present = stat?.ok ? watch.filter(path => stat.value.files[path]) : [];
-    const started = present.length ? api.host.tryCall('workspace.watch', { paths: present, include_ignored: true }) : null;
-    if (started?.ok) api.host.tryCall('store.put', { key: 'watch_id', value: started.value.watch_id, expected_revision: previous?.revision ?? null, scope: 'thread' });
-    else if (previous) api.host.tryCall('store.delete', { key: 'watch_id', expected_revision: previous.revision, scope: 'thread' });
-  };
-
-  const refresh = (attachments?: number) => {
-    const draft = api.host.tryCall('composer.read', null), images = draft.ok ? pictures(draft.value) : [], state = load();
-    if (attachments === state.attachments && JSON.stringify(images) === JSON.stringify(state.images)) return;
-    const stale = state.inline?.kind === 'image' && !images.some(picture => picture.id === state.inline!.text);
-    save({ images, attachments, ...(stale ? { inline: null } : {}) });
+    const rendered = watch.some(path => next[path] !== hashes[path]);
+    if (rendered) keep(revision, { watch, hashes: next });
+    const present = watch.filter(path => files[path]);
+    let placed = present.length === watch.length;
+    if (rewatch) {
+      // A missing file is awaited through its parent directory; one in the repository root can't be (the host refuses that watch) and keeps polling.
+      const dir = (path: string) => path.split('/').slice(0, -1).join('/');
+      const parents = [...new Set(watch.filter(path => !files[path]).map(dir))].filter(Boolean);
+      const found = parents.length ? api.host.tryCall('workspace.stat', { paths: parents }) : null;
+      const covered = parents.filter(path => found?.ok && found.value.files[path]?.kind === 'dir');
+      const paths = [...present, ...covered];
+      const watched = paths.length
+        ? api.host.tryCall('workspace.watch', { paths, recursive: false, include_ignored: true, key: 'files' })
+        : api.host.tryCall('workspace.unwatch', { key: 'files' });
+      placed = watched.ok && watch.every(path => files[path] || covered.includes(dir(path)));
+    }
+    if (!placed) retry();
+    else if (load().retry !== undefined && load().retry !== RETRY_MS) save({ retry: RETRY_MS });
   };
 
   api.command('preview', value => {
     try {
-      return preview(String(value ?? '').trim().split(/\s+/).filter(Boolean));
+      return preview(String(value ?? '').trim());
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       return { display: `/preview: ${error.message}` };
     }
-  }, { description: 'Render a response or file as HTML (--inline shows it here), inspect Mermaid diagrams or preview draft images' });
+  }, { description: 'Render a response or file as HTML (--inline shows it here), or inspect Mermaid diagrams' });
 
-  api.on('channel', event => { if (event.channel === 'omd_preview/watch') poll(true, true); });
-  api.on('timer', () => poll(true));
+  api.on('channel', event => { if (event.channel === 'omd_preview/watch') poll(true); });
+  api.on('timer', () => poll(true, false));
   api.on('workspace_change', event => {
     const stored = api.host.tryCall('store.get', { key: 'watch' });
     const { watch } = watches(stored.ok ? stored.value : null);
-    if (event.changes.some(change => watch.includes(change.path))) poll();
+    if (event.changes.some(change => watch.includes(change.path))) poll(false, false);
   });
   for (const event of ['start', 'resume'] as const) api.on(event, () => {
     if (event === 'resume' && load().inline) save({ inline: null });
     poll(true);
-    if (thumbnails) refresh();
   });
-  if (thumbnails) {
-    api.on('composer', event => { if (event.kind === 'change' && event.attachments_revision !== load().attachments) refresh(event.attachments_revision); });
-  }
   api.on('component_event', event => {
-    if (event.component.startsWith('omd_preview_') && event.kind === 'close') {
-      save({ inline: null });
-      return;
-    }
-    const index = thumbnails ? /^omd_preview_thumb_(\d+)$/.exec(event.component)?.[1] : undefined;
-    const picture = index === undefined ? undefined : load().images[Number(index)];
-    if (picture && event.kind === 'pointer' && event.pointer?.action === 'down' && event.pointer.button === 'left') viewImage(picture);
+    if (event.component.startsWith('omd_preview_') && event.kind === 'close') save({ inline: null });
   });
   if (diagrams !== 'off') {
     api.intercept('render', { match: { component: 'assistant_message', lifecycle: 'final', props: { text: [api.match.glob('*\x60\x60\x60mermaid*'), api.match.glob('*~~~mermaid*')] } } }, event => {
@@ -279,9 +227,6 @@ export default function activate(api: ModAPI) {
 
   const dialog = (inline: Inline, revision: number, columns: number): TerminalComponent[] => {
     const close: TerminalComponent = { type: 'button', id: 'omd_preview_close', label: 'Close preview', text: 'Close', action: { command: 'omd_preview:preview', args: 'close' } };
-    if (inline.kind === 'image' && inline.image) return [
-      { type: 'image', id: `omd_preview_image_${revision}`, label: `${inline.title} preview`, image: inline.image, alt: inline.title, height: 16 },
-      { type: 'text', id: 'omd_preview_image_note', label: 'Image note', text: `${inline.title} stays in the draft; Esc or Close returns to it`, tone: 'muted' }, close];
     if (inline.kind === 'diagram') return [
       { type: 'pane', id: `omd_preview_pane_${revision}`, label: 'Diagram and source, scroll with arrows or the mouse wheel', children: [
         ...chunks((inline.text || drawing(inline.source ?? '', columns)).split('\n')).map((text, index): TerminalComponent => ({ type: 'text', id: `omd_preview_drawn_${index}`, label: 'Drawn diagram', text })),
@@ -295,11 +240,8 @@ export default function activate(api: ModAPI) {
   };
 
   api.on('terminal', event => {
-    const { inline, revision, images } = load();
-    const sites: Partial<Record<'dialog' | 'above_composer', TerminalRenderSite>> = {};
-    if (inline) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_preview_dialog', label: 'Preview', title: inline.title, children: dialog(inline, revision, Math.min((event?.client?.columns ?? 80) - 4, 76) - 3) }] };
-    if (thumbnails && images.length) sites.above_composer = { mode: 'wrap', components: [{ type: 'slot' }, {
-      type: 'box', id: 'omd_preview_images', label: 'Draft images', title: `Draft image${images.length === 1 ? '' : 's'} (${images.length})`, children: strip(images, event?.client) }] };
-    return Object.keys(sites).length ? { sites } : null;
+    const { inline, revision } = load();
+    if (!inline) return null;
+    return { sites: { dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_preview_dialog', label: 'Preview', title: inline.title, children: dialog(inline, revision, Math.min((event?.client?.columns ?? 80) - 4, 76) - 3) }] } } };
   });
 }

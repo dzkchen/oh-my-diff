@@ -120,8 +120,18 @@ pub struct WorkspaceChange {
     pub after: Option<String>,
 }
 
-fn invalid(message: &str) -> io::Error {
-    io::Error::other(message)
+fn invalid(message: impl Into<String>) -> io::Error {
+    io::Error::other(message.into())
+}
+
+fn hardlink(name: &str) -> io::Error {
+    invalid(format!(
+        "workspace hardlink rejected: {name} shares its contents with another file; replace it with a separate copy"
+    ))
+}
+
+fn too_large() -> io::Error {
+    io::Error::new(io::ErrorKind::FileTooLarge, "snapshot size limit")
 }
 
 fn content_hash(bytes: &[u8]) -> String {
@@ -141,6 +151,9 @@ fn read_version(
             if !metadata.is_file() {
                 return Err(invalid("workspace path is not a regular file"));
             }
+            if metadata.nlink() != 1 {
+                return Err(hardlink(name));
+            }
             if metadata.len() > max_bytes as u64 {
                 return Err(invalid("workspace file exceeds limit"));
             }
@@ -151,7 +164,9 @@ fn read_version(
             }
             let after = input.metadata()?;
             if !same_file(&metadata, &after)? {
-                return Err(invalid("workspace file changed during read"));
+                return Err(invalid(format!(
+                    "workspace file changed during read: {name}"
+                )));
             }
             Ok(Some((bytes, metadata.permissions())))
         }
@@ -276,7 +291,7 @@ impl WorkspaceTransaction {
             }
             let expected = self.expected.get(name).cloned().flatten();
             if !fingerprint_matches(&expected, &entry, stat_fingerprint(repository, name)?) {
-                return Err(invalid(&format!("stale expected version for {name}")));
+                return Err(invalid(format!("stale expected version for {name}")));
             }
             before.insert(name.clone(), entry);
         }
@@ -376,7 +391,7 @@ impl WorkspaceTransaction {
                     .as_ref()
                     .map(|(bytes, _)| content_hash(bytes));
                 if &current != expected_after {
-                    return Err(invalid(&format!(
+                    return Err(invalid(format!(
                         "transaction failed: {error}; rollback conflict at {name}"
                     )));
                 }
@@ -424,73 +439,56 @@ impl WorkspaceIndex {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |now| now.as_secs() as i64 - 2);
         let mut stamped = BTreeMap::new();
-        let mut stack = vec![repository.to_path_buf()];
         let mut files = BTreeMap::new();
         let mut bytes = 0_usize;
-        while let Some(directory) = stack.pop() {
-            for entry in fs::read_dir(directory)? {
-                let entry = entry?;
-                let path = entry.path();
-                let metadata = fs::symlink_metadata(&path)?;
-                if metadata.file_type().is_symlink() {
-                    continue;
+        let walker = ignore::WalkBuilder::new(repository)
+            .hidden(false)
+            .git_global(false)
+            .require_git(false)
+            .follow_links(false)
+            .filter_entry(|entry| {
+                !(entry.depth() > 0
+                    && entry.file_type().is_some_and(|kind| kind.is_dir())
+                    && matches!(entry.file_name().to_str(), Some(".git" | ".omd")))
+            })
+            .build();
+        for entry in walker {
+            let entry = entry.map_err(io::Error::other)?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(path)?;
+            if metadata.is_file() {
+                bytes = bytes.saturating_add(metadata.len() as usize);
+                if files.len() >= max_files || bytes > max_bytes {
+                    return Err(invalid("workspace index exceeds bounds"));
                 }
-                if metadata.is_dir() {
-                    if !matches!(
-                        entry.file_name().to_str(),
-                        Some(
-                            ".git"
-                                | ".omd"
-                                | ".docs"
-                                | ".pnpm-store"
-                                | ".pytest_cache"
-                                | ".ruff_cache"
-                                | ".mypy_cache"
-                                | ".tox"
-                                | ".gradle"
-                                | "__pycache__"
-                                | "target"
-                                | "node_modules"
-                                | ".venv"
-                                | "venv"
-                                | "build"
-                                | "dist"
-                        )
-                    ) {
-                        stack.push(path);
+                let name = path
+                    .strip_prefix(repository)
+                    .map_err(|_| invalid("workspace path escaped repository"))?
+                    .to_str()
+                    .ok_or_else(|| invalid("non-UTF8 workspace path"))?
+                    .to_owned();
+                let stamp = (
+                    metadata.len(),
+                    metadata.ctime(),
+                    metadata.ctime_nsec(),
+                    metadata.ino(),
+                );
+                let hash = match cached.get(&name) {
+                    Some((seen, hash)) if *seen == stamp => hash.clone(),
+                    // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
+                    _ if metadata.nlink() != 1 => {
+                        content_hash(format!("hardlink:{stamp:?}").as_bytes())
                     }
-                } else if metadata.is_file() {
-                    bytes = bytes.saturating_add(metadata.len() as usize);
-                    if files.len() >= max_files || bytes > max_bytes {
-                        return Err(invalid("workspace index exceeds bounds"));
+                    _ => {
+                        let (content, _) = read_version(repository, &name, max_bytes)?
+                            .ok_or_else(|| invalid("workspace file disappeared during index"))?;
+                        content_hash(&content)
                     }
-                    let name = path
-                        .strip_prefix(repository)
-                        .map_err(|_| invalid("workspace path escaped repository"))?
-                        .to_str()
-                        .ok_or_else(|| invalid("non-UTF8 workspace path"))?
-                        .to_owned();
-                    let stamp = (
-                        metadata.len(),
-                        metadata.ctime(),
-                        metadata.ctime_nsec(),
-                        metadata.ino(),
-                    );
-                    let hash = match cached.get(&name) {
-                        Some((seen, hash)) if *seen == stamp => hash.clone(),
-                        _ => {
-                            let (content, _) = read_version(repository, &name, max_bytes)?
-                                .ok_or_else(|| {
-                                    invalid("workspace file disappeared during index")
-                                })?;
-                            content_hash(&content)
-                        }
-                    };
-                    if stamp.1 < settled {
-                        stamped.insert(name.clone(), (stamp, hash.clone()));
-                    }
-                    files.insert(name, hash);
+                };
+                if stamp.1 < settled {
+                    stamped.insert(name.clone(), (stamp, hash.clone()));
                 }
+                files.insert(name, hash);
             }
         }
         if let Ok(mut hashes) = HASHES.lock() {
@@ -714,84 +712,115 @@ fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> io::Result<bool> {
         && before.modified()? == after.modified()?
         && before.ctime() == after.ctime()
         && before.ctime_nsec() == after.ctime_nsec()
-        && before.mode() == after.mode()
-        && before.nlink() == 1
-        && after.nlink() == 1)
+        && before.mode() == after.mode())
+}
+
+fn frame(digest: &mut Sha256, name: &str, executable: bool, contents: &[u8]) {
+    digest.update((name.len() as u64).to_le_bytes());
+    digest.update(name.as_bytes());
+    digest.update([u8::from(executable)]);
+    digest.update(contents);
+}
+
+/// Reads each existing path once, within `max_bytes` of names and contents, and fails if any changes meanwhile.
+fn visit(
+    root: &Path,
+    paths: &BTreeSet<String>,
+    max_bytes: usize,
+    mut read: impl FnMut(&str, &mut dyn Read, bool) -> io::Result<usize>,
+) -> io::Result<()> {
+    let root = root.canonicalize()?;
+    let directory = open_directory(&root)?;
+    let mut observed = BTreeMap::new();
+    let mut remaining = max_bytes;
+    for name in paths {
+        let path = safe_path(&root, name)?;
+        let mut input = match open_source(&directory, name) {
+            Ok(input) => input,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                observed.insert(name.clone(), None);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let metadata = input.metadata()?;
+        if !metadata.is_file() {
+            return Err(invalid(format!("snapshot requires regular files: {name}")));
+        }
+        if metadata.nlink() != 1 {
+            return Err(hardlink(name));
+        }
+        let executable = metadata.permissions().mode() & 0o111 != 0;
+        let count = read(
+            name,
+            &mut (&mut input).take(remaining.saturating_add(1) as u64),
+            executable,
+        )?;
+        let cost = count
+            .checked_add(name.len())
+            .ok_or_else(|| invalid("snapshot size overflow"))?;
+        remaining = remaining.checked_sub(cost).ok_or_else(too_large)?;
+        let after = fs::symlink_metadata(&path)?;
+        if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
+            return Err(invalid(format!("source changed during snapshot: {name}")));
+        }
+        observed.insert(name.clone(), Some(metadata));
+    }
+    for (name, before) in observed {
+        match (before, open_source(&directory, &name)) {
+            (None, Err(error)) if error.kind() == io::ErrorKind::NotFound => (),
+            (Some(before), Ok(current)) if same_file(&before, &current.metadata()?)? => (),
+            _ => return Err(invalid("source tree changed during snapshot")),
+        }
+    }
+    Ok(())
 }
 
 impl Snapshot {
     pub fn capture(root: &Path, paths: &BTreeSet<String>, max_bytes: usize) -> io::Result<Self> {
-        let root = root.canonicalize()?;
-        let directory = open_directory(&root)?;
         let mut files = BTreeMap::new();
-        let mut observed = BTreeMap::new();
-        let mut remaining = max_bytes;
-        for name in paths {
-            let path = safe_path(&root, name)?;
-            let mut input = match open_source(&directory, name) {
-                Ok(input) => input,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    observed.insert(name.clone(), None);
-                    continue;
-                }
-                Err(error) => return Err(error),
-            };
-            let metadata = input.metadata()?;
-            if !metadata.is_file() {
-                return Err(invalid("snapshot requires regular files"));
-            }
-            {
-                use std::os::unix::fs::MetadataExt;
-                if metadata.nlink() != 1 {
-                    return Err(invalid("snapshot hardlink rejected"));
-                }
-            }
+        visit(root, paths, max_bytes, |name, input, executable| {
             let mut bytes = Vec::new();
-            (&mut input)
-                .take(remaining.saturating_add(1) as u64)
-                .read_to_end(&mut bytes)?;
-            let cost = bytes
-                .len()
-                .checked_add(name.len())
-                .ok_or_else(|| invalid("snapshot size overflow"))?;
-            remaining = remaining
-                .checked_sub(cost)
-                .ok_or_else(|| invalid("snapshot size limit"))?;
-            let after = fs::symlink_metadata(&path)?;
-            if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
-                return Err(invalid("source changed during snapshot"));
-            }
-            let executable = {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            };
-            files.insert(name.clone(), File { bytes, executable });
-            observed.insert(name.clone(), Some(metadata));
-        }
-        for (name, before) in observed {
-            match (before, open_source(&directory, &name)) {
-                (None, Err(error)) if error.kind() == io::ErrorKind::NotFound => (),
-                (Some(before), Ok(current)) if same_file(&before, &current.metadata()?)? => (),
-                _ => return Err(invalid("source tree changed during snapshot")),
-            }
-        }
+            input.read_to_end(&mut bytes)?;
+            let read = bytes.len();
+            files.insert(name.to_owned(), File { bytes, executable });
+            Ok(read)
+        })?;
         Ok(Self { files })
     }
 
-    pub fn hash(&self) -> io::Result<String> {
-        struct Hasher(Sha256);
-        impl Write for Hasher {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-                self.0.update(bytes);
-                Ok(bytes.len())
+    /// Same digest as `capture(...).hash()`, streamed without holding the contents.
+    pub fn digest(root: &Path, paths: &BTreeSet<String>, max_bytes: usize) -> io::Result<String> {
+        let mut digest = Sha256::new();
+        visit(root, paths, max_bytes, |name, input, executable| {
+            let mut contents = Sha256::new();
+            let mut buffer = [0; 64 * 1024];
+            let mut read = 0;
+            loop {
+                let count = input.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                contents.update(&buffer[..count]);
+                read += count;
             }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
+            frame(&mut digest, name, executable, &contents.finalize());
+            Ok(read)
+        })?;
+        Ok(format!("{:x}", digest.finalize()))
+    }
+
+    pub fn hash(&self) -> String {
+        let mut digest = Sha256::new();
+        for (name, file) in &self.files {
+            frame(
+                &mut digest,
+                name,
+                file.executable,
+                &Sha256::digest(&file.bytes),
+            );
         }
-        let mut hasher = Hasher(Sha256::new());
-        serde_json::to_writer(&mut hasher, self)?;
-        Ok(format!("{:x}", hasher.0.finalize()))
+        format!("{:x}", digest.finalize())
     }
 
     pub fn write_new(&self, root: &Path, max_bytes: usize) -> io::Result<()> {
@@ -803,7 +832,7 @@ impl Snapshot {
                 .and_then(|total| total.checked_add(file.bytes.len()))
                 .ok_or_else(|| invalid("snapshot size overflow"))?;
             if total > max_bytes {
-                return Err(invalid("snapshot size limit"));
+                return Err(too_large());
             }
             if Path::new(name)
                 .ancestors()
@@ -889,7 +918,7 @@ impl Snapshot {
         let changed = self.changed_paths(candidate);
         for name in &changed {
             if self.files.get(name) != current.files.get(name) {
-                return Err(invalid(&format!("intervening edit conflicts: {name}")));
+                return Err(invalid(format!("intervening edit conflicts: {name}")));
             }
         }
         let mut merged = current.clone();
@@ -942,12 +971,35 @@ pub fn capture_tracked(
     approved_untracked: &BTreeSet<String>,
     max_bytes: usize,
 ) -> io::Result<Snapshot> {
+    tracked(root, approved_untracked, |paths| {
+        Snapshot::capture(root, paths, max_bytes)
+    })
+}
+
+/// The `capture_tracked` digest, or `None` when a tracked path is not `readable`.
+pub fn hash_tracked(
+    root: &Path,
+    approved_untracked: &BTreeSet<String>,
+    max_bytes: usize,
+    readable: impl Fn(&str) -> bool,
+) -> io::Result<Option<String>> {
+    tracked(root, approved_untracked, |paths| {
+        let digest = Snapshot::digest(root, paths, max_bytes)?;
+        Ok(paths.iter().all(|path| readable(path)).then_some(digest))
+    })
+}
+
+fn tracked<T>(
+    root: &Path,
+    approved_untracked: &BTreeSet<String>,
+    capture: impl FnOnce(&BTreeSet<String>) -> io::Result<T>,
+) -> io::Result<T> {
     let paths = tracked_paths(root, approved_untracked)?;
-    let snapshot = Snapshot::capture(root, &paths, max_bytes)?;
+    let captured = capture(&paths)?;
     if tracked_paths(root, approved_untracked)? != paths {
         return Err(invalid("tracked path set changed during snapshot"));
     }
-    Ok(snapshot)
+    Ok(captured)
 }
 
 fn git(root: &Path) -> Command {
@@ -1058,6 +1110,86 @@ mod transaction_tests {
         let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
         assert_eq!(after.files["a.txt"], content_hash(b"two\n"));
         assert_eq!(before.changed(&after).len(), 1);
+    }
+
+    #[test]
+    fn streamed_digest_matches_the_captured_snapshot_and_its_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("a.txt"), "one\n").unwrap();
+        fs::write(root.join("b.sh"), "two\n").unwrap();
+        fs::set_permissions(root.join("b.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        let paths = BTreeSet::from(["a.txt".into(), "b.sh".into(), "gone".into()]);
+        let digest = Snapshot::digest(&root, &paths, 64).unwrap();
+        assert_eq!(digest, Snapshot::capture(&root, &paths, 64).unwrap().hash());
+        fs::set_permissions(root.join("b.sh"), fs::Permissions::from_mode(0o644)).unwrap();
+        assert_ne!(Snapshot::digest(&root, &paths, 64).unwrap(), digest);
+        let error = Snapshot::digest(&root, &paths, 16).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
+    }
+
+    #[test]
+    fn workspace_index_follows_the_repository_ignore_rules() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let names = [
+            "build/x.rs",
+            ".cache/note.md",
+            "out/y.txt",
+            ".git/HEAD",
+            ".omd/state",
+        ];
+        for name in names {
+            fs::create_dir_all(root.join(name).parent().unwrap()).unwrap();
+            fs::write(root.join(name), "one\n").unwrap();
+        }
+        fs::write(root.join(".gitignore"), "out/\n").unwrap();
+        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        for name in names {
+            fs::write(root.join(name), "two\n").unwrap();
+        }
+        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        let changed: Vec<_> = before
+            .changed(&after)
+            .into_iter()
+            .map(|change| change.path)
+            .collect();
+        assert_eq!(changed, [".cache/note.md", "build/x.rs"]);
+    }
+
+    #[test]
+    fn hardlinked_files_are_tracked_by_identity_and_never_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("a.txt"), "one\n").unwrap();
+        fs::hard_link(root.join("a.txt"), root.join("b.txt")).unwrap();
+        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        assert_ne!(before.files["b.txt"], content_hash(b"one\n"));
+        fs::write(root.join("b.txt"), "two\n").unwrap();
+        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        assert_eq!(before.changed(&after).len(), 2);
+        let paths = BTreeSet::from(["a.txt".into()]);
+        let error = Snapshot::capture(&root, &paths, 64)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("workspace hardlink rejected: a.txt "),
+            "{error}"
+        );
+        let transaction = WorkspaceTransaction {
+            expected: BTreeMap::from([(
+                "a.txt".into(),
+                Some(Fingerprint::Hash(content_hash(b"one\n"))),
+            )]),
+            writes: BTreeMap::from([("a.txt".into(), "two\n".into())]),
+            ..Default::default()
+        };
+        let error = transaction.apply(&root, || true).unwrap_err().to_string();
+        assert!(
+            error.starts_with("workspace hardlink rejected: a.txt "),
+            "{error}"
+        );
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "two\n");
     }
 
     #[test]

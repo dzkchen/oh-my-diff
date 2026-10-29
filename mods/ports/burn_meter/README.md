@@ -43,7 +43,6 @@ Crossing $1, $5, $10, $25 or $50 in a session shows a toast once.
 - It doesn't spark or rotate comparisons while idle.
 - `/burn` is a modal dialog; upstream's pane stays open beside the prompt.
 - Accounts without rate limits show no plan bars.
-- The band is drawn by a component module, which is experimental.
 
 ## Credit
 

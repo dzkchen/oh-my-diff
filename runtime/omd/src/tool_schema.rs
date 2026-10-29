@@ -1,6 +1,5 @@
 use serde_json::Value;
 use std::io;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -221,22 +220,8 @@ pub fn types(inventory: &Value) -> String {
     output
 }
 
-fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
-        return Ok(());
-    }
-    let mut file = tempfile::NamedTempFile::new_in(
-        path.parent()
-            .ok_or_else(|| io::Error::other("type_output_parent_missing"))?,
-    )?;
-    file.write_all(bytes)?;
-    file.as_file().sync_all()?;
-    file.persist(path).map_err(|error| error.error)?;
-    Ok(())
-}
-
 pub fn write_inventory(root: &Path, inventory: &Value) -> io::Result<()> {
-    write_if_changed(&root.join(INVENTORY_FILE), &serde_json::to_vec(inventory)?)
+    crate::fsio::write_if_changed(&root.join(INVENTORY_FILE), &serde_json::to_vec(inventory)?)
 }
 
 pub fn write_types(root: &Path) -> io::Result<()> {
@@ -244,7 +229,7 @@ pub fn write_types(root: &Path) -> io::Result<()> {
         return Ok(());
     };
     let inventory = serde_json::from_slice(&bytes)?;
-    write_if_changed(&root.join(TYPES_FILE), types(&inventory).as_bytes())
+    crate::fsio::write_if_changed(&root.join(TYPES_FILE), types(&inventory).as_bytes())
 }
 
 pub fn types_path(root: &Path) -> Option<PathBuf> {

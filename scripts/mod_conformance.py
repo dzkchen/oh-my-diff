@@ -83,7 +83,7 @@ def public_sets(sets):
     }
 
 
-def check_launch(contract, sets):
+def check_surfaces(contract, sets):
     problems = []
     source = (ROOT / "mods/api.d.ts").read_text()
     for category, name in {"operations": "HostOperations", "events": "Events", "intercepts": "InterceptSurfaces"}.items():
@@ -94,11 +94,11 @@ def check_launch(contract, sets):
     if declared != sets["capabilities"]:
         problems.append(f"capabilities: public types disagree with host: {sorted(declared ^ sets['capabilities'])}")
     expected = {f"{category}:{name}" for category, names in public_sets(sets).items() for name in names}
-    entries = contract.get("launch", {})
+    entries = contract.get("surfaces", {})
     for name in sorted(expected - entries.keys()):
-        problems.append(f"unclassified launch surface: {name}")
+        problems.append(f"unclassified surface: {name}")
     for name in sorted(entries.keys() - expected):
-        problems.append(f"unknown launch surface: {name}")
+        problems.append(f"unknown surface: {name}")
     decisions = {decision["id"] for decision in contract["decisions"]}
     for name, entry in entries.items():
         if entry.get("status") == "experimental":
@@ -106,8 +106,12 @@ def check_launch(contract, sets):
                 problems.append(f"{name}: experimental surface needs a reason")
             continue
         if entry.get("status") != "frozen":
-            problems.append(f"{name}: invalid launch status")
+            problems.append(f"{name}: invalid surface status")
             continue
+        extra = entry.get("experimental_fields")
+        if extra is not None and (not extra or not entry.get("reason")
+                                  or any(not re.search(rf"\b{re.escape(field)}\??:", source) for field in extra)):
+            problems.append(f"{name}: experimental_fields need a reason and fields declared in api.d.ts")
         if "decision" in entry and entry["decision"] not in decisions:
             problems.append(f"{name}: unknown decision {entry['decision']}")
         consumer = entry.get("consumer", {})
@@ -116,7 +120,7 @@ def check_launch(contract, sets):
         if name.startswith("author_commands:"):
             allowed |= path in (ROOT / "mods/README.md", ROOT / "mods/REFERENCE.md")
         if not allowed or not path.is_file() or not consumer.get("snippet") or consumer["snippet"] not in path.read_text():
-            problems.append(f"{name}: missing launch/example consumer")
+            problems.append(f"{name}: missing first-party or example consumer")
     return problems
 
 
@@ -153,4 +157,4 @@ def check(contract, version, sets):
             problems.append(f"classic hook {entry['hook']}: ledger maps {entry['native']}, runner maps {mapped.get(entry['hook'])}")
         if entry["native"] not in sets["events"] | sets["intercepts"]:
             problems.append(f"classic hook {entry['hook']}: {entry['native']} is not a host event or interceptor")
-    return problems + check_launch(contract, sets)
+    return problems + check_surfaces(contract, sets)

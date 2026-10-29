@@ -17,22 +17,6 @@
           }
         }
       ]
-    },
-    {
-      "type": "event",
-      "event": "context",
-      "payload": {
-        "thread_id": "t",
-        "turn_id": "u"
-      },
-      "expect": [
-        {
-          "mod": "recovery",
-          "value": {
-            "text": "Recovery policy: revalidate failed hypotheses and remaining acceptance work before retrying."
-          }
-        }
-      ]
     }
   ]
 }

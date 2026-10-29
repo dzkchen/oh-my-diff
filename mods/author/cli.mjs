@@ -28,6 +28,10 @@ const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
 const publicExamples = sdkPackage.files.filter(file => file.startsWith('examples/')).map(file => file.slice('examples/'.length));
 
+const USAGE = 'usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | cost DIR [COMMAND [ARGS_JSON]] [--runs N] | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL\n';
+const DEFAULT_COST_RUNS = 10;
+const MAX_COST_RUNS = 100;
+
 /** @returns {never} */
 function fail(message) {
   throw new Error(message);
@@ -315,6 +319,24 @@ async function packageProject(directory) {
   print({ package: target, sha256: packaged.sha256, source_maps: sourceMaps.map(path => join(target, path)) });
 }
 
+function costProject(directory, args) {
+  const at = args.indexOf('--runs');
+  const runs = at === -1 ? String(DEFAULT_COST_RUNS) : args[at + 1] ?? '';
+  if (!/^[1-9]\d*$/.test(runs) || Number(runs) > MAX_COST_RUNS) fail(`cost --runs takes a whole number from 1 to ${MAX_COST_RUNS}`);
+  const call = at === -1 ? args : [...args.slice(0, at), ...args.slice(at + 2)];
+  if (call.length > 2) fail(USAGE.trim());
+  compileJsx(directory);
+  const temporary = mkdtempSync(join(tmpdir(), 'omd-mod-author-'));
+  const store = join(temporary, 'store');
+  try {
+    engineJson(['init', store]);
+    const { manifest } = trustPackage(store, directory);
+    print(JSON.parse(command(engine, ['cost', store, manifest.id, runs, ...call], { capture: true, cwd: temporary })));
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
 function watchProject(directory, store, once) {
   let files = new Set(['mod.json']);
   const reload = () => {
@@ -361,6 +383,7 @@ function watchProject(directory, store, once) {
 
 async function main() {
   const [action, rawDirectory = '.', nameOrStore, extra] = process.argv.slice(2).filter(argument => argument !== '--');
+  if (['--help', '-h', 'help'].includes(action)) return void process.stdout.write(USAGE);
   const directory = resolve(rawDirectory);
   switch (action) {
     case 'create': return createProject(directory, nameOrStore || basename(directory));
@@ -373,6 +396,7 @@ async function main() {
     case 'run': return runScenario(directory, 'mod.test.json');
     case 'debug': return runScenario(directory, 'debug.test.json');
     case 'package': return packageProject(directory);
+    case 'cost': return costProject(directory, process.argv.slice(2).filter(argument => argument !== '--').slice(2));
     case 'watch': return watchProject(directory, resolve(nameOrStore || fail('watch requires STORE')), extra === '--once');
     case 'report':
     case 'events': return print(engineJson([action, directory]));
@@ -380,8 +404,17 @@ async function main() {
     case 'explain': return print(engineJson(['explain', rawDirectory]));
     default:
       process.exitCode = 1;
-      return void process.stderr.write('usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL\n');
+      return void process.stderr.write(USAGE);
   }
 }
 
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    await main();
+  } catch (error) {
+    process.exitCode = 1;
+    const message = error instanceof Error ? error.message : String(error);
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' && !message.startsWith(error.code) ? `${error.code}: ` : '';
+    process.stderr.write(`${code}${message}\n`);
+  }
+}

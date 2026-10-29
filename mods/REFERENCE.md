@@ -2,8 +2,8 @@
 
 This is every [mod API reference page](reference/README.md) in one file, for agents and search.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.163.0`.
-`omd-mod status` reports the host version as `omd` (`1.0.0` in OMD `1.0.0`). Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.164.0`.
+`omd-mod status` reports the OMD release as `host.omd`, the version `compatibility.releases` matches. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
 ## Generated declarations
 
@@ -15,25 +15,44 @@ A store also generates declarations for the running host:
 
 ## Stability
 
-API `1.0.0` is stable. [The conformance registry](conformance/contract.json) marks each public operation, event,
+API `1.0.0` is stable. [The conformance registry](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/contract.json) marks each public operation, event,
 capability, interceptor, component, render site, view field, classic hook and author command as frozen or
 experimental:
 
 - Frozen entries keep their shape through `2027-10-19`; a breaking change needs a major version and a migration note.
 - Experimental ones may change in any release.
+- A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
+  experimental too.
 
-Version and support rules are in [COMPATIBILITY.md](COMPATIBILITY.md).
+Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
 - Raster frame streaming: `terminal.blit`, the `raster` component, `process_raster_v1` and `raster_pixels_v1`.
-- Component modules (`api.component`, `component_modules_v1`) and `component_post`.
-- The `composer_key` and `mention` interceptors, `completion_tokens_v1` and `history_persist`.
-- `sessions.read` with the `sessions_tools` capability, and the `below_composer` site.
+- The `composer_key`, `mention` and `component_change` interceptors and `completion_tokens_v1`.
+- HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
+- `routes.write` (`route_write_v1`), added after 1.0.0.
+- `api.settingsFile` and the settings file (`settings_file_v1`).
+- Focus regions, `key_contexts`, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus`
+  (`terminal_focus_v1`).
+- Layout leaf `title` (`terminal_layout_title_v1`).
+- Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
+- `tools.original` (`tool_original_v1`), added after 1.0.0.
+- The `omd-mod-author cost` report, added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
+
+### Migration notes
+
+- Host calls per callback rise from 128 to 512 (`budget.hostCalls` starts at 512). The raise is additive: a mod that
+  counted calls or stayed under 128 keeps working. The other limits raised with it (the callback transport budget,
+  `process.exchange` and tool interceptor output, `api.state`, package files, view JSON, evidence pages and
+  registrations per mod) only admit more than before, with two visible changes: `evidence.read` without `max_bytes`
+  returns pages of up to 64 KiB instead of 16 KiB, and a `tool` replacement the model cannot take (over 64 KiB and
+  longer than the original, which for a retried call is the latest attempt's output) is dropped with a diagnostic
+  after the chain instead of being refused inside it. Either way the original output stands.
 
 ## Contents
 
@@ -43,7 +62,7 @@ rich children inside buttons (a button uses its typed `text`), audio, telemetry 
 | [Capabilities and authority grants](#capabilities-and-authority-grants) | Every capability, authority grants, structured access, admission policy |
 | [Commands, files and data](#commands-files-and-data) | `exec.run`, workspace reads and writes, `store.*`, reactive state |
 | [Models and routing](#models-and-routing) | Routes, the ledger, model requests and streams, request policy, one-shot model calls |
-| [Agents, contracts and sessions](#agents-contracts-and-sessions) | Contracts, agents, peers, autonomous turns, submissions, lifecycle events |
+| [Agents, contracts and sessions](#agents-contracts-and-sessions) | Contracts, agents, peers, power holds, autonomous turns, submissions, lifecycle events |
 | [App bridge, approvals and tools](#app-bridge-approvals-and-tools) | The app-server bridge, approvals, continuation middleware, tool output, dynamic tools |
 | [Processes, kernels and events](#processes-kernels-and-events) | Framed processes, code-mode kernels, adapters, channels and watches |
 | [Credentials and threads](#credentials-and-threads) | Credentials, secrets, the thread store and turn activity |
@@ -73,10 +92,10 @@ follows.
 
 #### Codex plugins and hooks
 
-Codex 0.163.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
-that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_tool_use`,
-`permission_request`, `post_tool_use`, `pre_compact`, `post_compact`, `session_start`, `session_end`,
-`user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
+Codex 0.164.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
+that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_model_request`,
+`post_model_request`, `pre_tool_use`, `permission_request`, `post_tool_use`, `pre_compact`, `post_compact`,
+`session_start`, `session_end`, `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
 
 A hook can't hold state, stream, draw on screen, route a model or run an agent. When two `pre_tool_use` hooks rewrite
 the same call, the last one to finish wins.
@@ -148,7 +167,7 @@ Any other `OMD_MODE` value is rejected.
 
 #### Host call transport budget
 
-Host call arguments and results share a 128 KiB transport budget per callback.
+Host call arguments and results share a 1 MiB transport budget per callback.
 
 - A result that would exceed the remaining budget becomes a `host_result_limit` error the mod can catch; the
   operation has still run.
@@ -169,7 +188,7 @@ Capabilities name authority classes. A call or registration outside the package'
 
 | Capability | Grants |
 | --- | --- |
-| `exec` | `exec.run`, `environment.read`, `environment.set`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
+| `exec` | `exec.run`, `exec.output_page`, `environment.read`, `environment.set`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
 | `pty` | `terminal.pty` (a writable pane also needs `fs.write`) |
 | `history` | the `history` replacement |
 | `outputs` | `tool_output` observers |
@@ -182,22 +201,22 @@ Capabilities name authority classes. A call or registration outside the package'
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot`, `model.fork` and `agents.spawn {parent_history}` (with `sessions`) |
-| `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
+| `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, `contract.select`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 
 #### Capabilities: terminal, threads and registrations
 
 | Capability | Grants |
 | --- | --- |
-| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
-| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` and `tools.list` |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`, `terminal.image_sample`; the `component_change` interceptor |
+| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `app.routes`, `session.info` and `tools.list` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
-| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
+| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `routes.add`, `routes.write`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
-| `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
+| `interception` | `tool` interceptors, `tools.invoke`, `tools.check`, `tools.original` (`tool_original_v1`) and the `tool_batch` replacement |
 | `input` | `input` and `mention` interceptors |
 | `middleware` | `host_operation`, `model_request` and `response_stream` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
@@ -218,8 +237,9 @@ access](#structured-access-structured_access_v1) describe how they are bound and
 | `fs.external` | `root` on `workspace.read`, `workspace.list`, `workspace.stat` and `workspace.transaction` for the manifest's `fs_access` roots |
 | `mcp` | `mcp.connect`, `mcp.disconnect` for the manifest's `mcp_servers` |
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
-| `request_policy` | a declared final-request policy that refuses every model request unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
+| `request_policy` | a declared final-request policy that refuses every model request except web search unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
+| `power` | `power.hold` and `power.release`; lid-closed holds need the deployed broker (`power_hold_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
 | `history_write` | `app.request thread/rewrite` on the current thread and threads the mod started (`history_rewrite_v1`) |
 | `history_persist` | `history_persist` interceptors, which see and may replace every stored history text (`history_persist_v1`) |
@@ -233,7 +253,7 @@ mod that answered the call without running it.
 
 ### Unrestricted processes and delegated approvals
 
-`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous`, `history_write`
+`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `power`, `autonomous`, `history_write`
 and `history_persist` are authority grants. The manifest declares their scope, which the trust digest binds, so
 changed content or a wider scope needs a new trust.
 
@@ -260,7 +280,7 @@ needs `exec`.
 
 #### Ending and showing the grants
 
-`omd-mod trust ... --expires SECONDS` ends the three grants at a time, project scope keeps them to one repository,
+`omd-mod trust ... --expires SECONDS` ends the authority grants at a time, project scope keeps them to one repository,
 and `omd-mod revoke STORE MOD_ID_OR_PACKAGE` disables the mod and drops its grant at once: capabilities and secret
 environment are cleared, and enabling it again needs a new trust or install.
 
@@ -590,8 +610,8 @@ own source to a sandboxed `exec.run` process without relying on a workspace copy
 | --- | --- |
 | Assets declared per package | at most 16 |
 | `mod.json` | at most 8 KiB |
-| Each other package file | at most 128 KiB (`file_limit` names the file) |
-| Entrypoint and declared text together | at most 256 KiB per callback (`package_text_input_limit`) |
+| Each other package file | at most 512 KiB (`file_limit` names the file) |
+| Entrypoint and declared text together | at most 1 MiB per callback (`package_text_input_limit`) |
 
 A package over the per-callback text limit is refused by inspection, install and `omd-mod-author check`.
 
@@ -649,6 +669,8 @@ lifecycle callback.
   boundary for slash commands.
 - If more than 64 unannounced changes accumulate, subscribers receive one `source: "rescan"`, `unavailable`
   notification instead.
+- A batch of more than 128 changed paths or 16,000 bytes of path names, or one with a path outside the read scope,
+  arrives as `unavailable` with `reason` `workspace_change_batch_limit` or `workspace_change_scope_unavailable`.
 - The host scans only while a mod subscribes, is bounded to 20,000 files and 128 MiB, and reports `unavailable`
   instead of partial coverage.
 
@@ -659,7 +681,10 @@ candidate_sha256}`. It freezes the current tracked and approved-untracked files,
 workspace (`agents` is also required). `expected` rejects a changed candidate.
 
 - References are bound to the caller, package source, generation and thread.
-- Each mod generation and thread holds at most 8 snapshots and 64 MiB, the host at most 32 and 256 MiB; a full host
+- A capture holds at most 128 MiB of file contents and paths (`snapshot_bytes` in the host config can lower it); a
+  larger workspace fails with `snapshot size limit`. Turn evidence then carries `workspace_sha256: null`, as it does
+  when a captured path is unreadable.
+- Each mod generation and thread holds at most 8 snapshots and 128 MiB, the host at most 32 and 256 MiB; a full host
   evicts the oldest snapshot of the largest holder.
 - Identical captures are deduplicated, and the registry clears on owner cleanup or session stop.
 - Snapshots do not authorize reading denied paths.
@@ -690,8 +715,8 @@ result.
 
 #### `store.*` operations
 
-`store.get/put/delete/list/export/reset` operate on a per-mod namespace with `repository` (default) or `user`
-scope.
+`store.get/put/delete/list/export/reset` operate on a per-mod namespace with `repository` (default), `user` or `thread`
+scope (see [Thread-scoped store and `resume`](#thread-scoped-store-and-resume)).
 
 - `put` and `delete` require the current `expected_revision` (`null` to create); a stale revision fails.
 - `reset` needs the current generation.
@@ -713,7 +738,7 @@ the complete namespace or resets it without running any mod code.
 #### `evidence.write` and `evidence.read`
 
 `evidence.write {media_type, content, label?}` stores content-addressed evidence and returns a `ResourceRef`;
-`evidence.read` reads it back in bounded pages.
+`evidence.read {reference, cursor?, max_bytes?}` reads it back in pages of at most 64 KiB (`max_bytes` 1 to 65,536, by default the maximum).
 
 #### `api.state` compare-and-swap
 
@@ -725,11 +750,15 @@ attempt's start, so `Date.now()` in arguments replays).
 If a retry asks for a different host call, it runs again fresh when every recorded call was read-only; otherwise it
 fails with the transient `state_conflict`, because an operation that already ran is never repeated.
 
+Each commit of `api.state` (and of thread and checkout state) is ordered by a write barrier rather than a full fsync: state
+survives a crash or quit in order, but the last commits can be lost on a power failure. `store.*` data and evidence are
+fully synced.
+
 #### `state_scope` (`state_scopes_v1`)
 
 The location of `api.state` follows the manifest's `state_scope` (`state_scopes_v1`).
 
-- `"store"` (the default) keeps one state of at most 192 KiB in the mod store, shared by every OMD process that
+- `"store"` (the default) keeps one state of at most 512 KiB in the mod store, shared by every OMD process that
   uses that store.
 - `"thread"` keeps one state per session thread and selection scope, so a project copy cannot inherit a same-ID
   user copy's state. It forks with the thread and is removed when the thread is deleted. Routing and compaction
@@ -744,11 +773,16 @@ Mods never run with the home directory or filesystem root as the session directo
 notice in `/omd`. `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
 given thread and the checkout of their working directory. A `thread` mod run from `omd-mod command` without `THREAD`
 fails with `state_thread_unavailable`; in the TUI, a slash command typed before the session's thread exists runs once
-it does. A callback result, including its state, stays within 256 KiB.
+it does. A callback result, including its state, stays within 1 MiB.
 
 #### `state_version` migration of thread and checkout state
 
 The `omd-mod migrate` and `rollback` commands act on `"store"` state only.
+
+`omd-mod migrate STORE MOD_ID_OR_PACKAGE` and `omd-mod rollback STORE MOD_ID_OR_PACKAGE BACKUP` take a mod id or a
+package folder. A bare name (no `/`) is a mod id resolved among the store's selected mods (watched folder or
+installed); `.`, `..` and anything with a `/` are package folders. An id that matches copies in more than one scope fails with
+`mod_ambiguous` (pass the folder), and a mod without saved store state fails with `migration_requires_saved_state`.
 
 - Thread and checkout state stored at another `state_version` migrates before the mod's next callback in that
   thread or checkout: the host runs the mod's `migrate` handler (it needs `store`) on it and keeps the previous
@@ -851,16 +885,16 @@ Write observation is the `workspace_change` event described under [Workspace: li
 and changes](#workspace-list-stat-preconditions-backups-and-changes), with each changed path's before and after
 hashes. Only a selected mod that subscribes to it triggers the index scan.
 
-- The scan excludes `.git`, `.omd`, `.docs`, package and Python caches, `target`, `node_modules`, `.venv`, `venv`,
-  `build`, and `dist`.
+- The scan follows the repository's `.gitignore`, `.ignore` and `.git/info/exclude` rules and always skips `.git`
+  and `.omd`.
 - More than 128 changed paths or 16 KB of path names reports `unavailable`, and so does a change outside the
   thread's effective read scope, without exposing its path or hash.
 
 The independent example also shows a direct transaction for a mod tool.
 
-#### The experimental `process` capability
+#### Managed processes
 
-The experimental `process` capability grants `process.which`, `process.start`, `process.exchange`,
+The `exec` capability grants `process.which`, `process.start`, `process.exchange`,
 `process.status`, and `process.stop`. The host resolves an installed executable and its hash, verifies that
 identity at launch, and runs it in a read-only repository sandbox with restricted network access and a private
 scratch directory.
@@ -909,22 +943,28 @@ Routes are configuration, not names in the API.
 #### Route fields
 
 `<OMD_MOD_STORE>/host.json` lists `routes` with `name, provider, model, reasoning_effort, responses_url, rates,
-roles (lead|worker), tools, mods, grant`.
+roles (lead|worker), tools, mods, grant, credential, data`.
 
-A route entry, with every field the host accepts:
+A route entry:
 
 ```json
 {"name": "reviewer", "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "medium",
  "responses_url": "https://api.openai.com/v1/responses", "roles": ["worker"], "tools": ["exec_command"],
- "mods": ["omd_workflow"], "credential": null, "grant": {"path": "/abs/grant.json", "sha256": "<sha256 of the file>"},
+ "mods": ["omd_workflow"], "credential": null, "data": null,
+ "grant": {"path": "/abs/grant.json", "sha256": "<sha256 of the file>"},
  "rates": {"input_microusd_per_million": 1250000, "cached_microusd_per_million": 125000,
            "output_microusd_per_million": 10000000, "reservation_microusd": 200000, "max_output_tokens": 32000,
            "input_token_ceiling": 400000, "included_subscription": false}}
 ```
 
+`rates` also accepts optional `cache_write_microusd_per_million`, `provider_billed` (see [Provider-billed
+routes](#provider-billed-routes-provider_billing_v1)) and `external_subscription` (a subscription billed outside OMD:
+its settled charge counts as a subscription list-equivalent, not a task charge, and needs a granted route).
+
 #### Choosing a route
 
-- `routes.list` returns the routes visible to the calling mod with `billing` and `available`.
+- `routes.list` returns the routes visible to the calling mod with `billing` and `available`, plus `data` on the
+  caller's own routes ([route writes](#route-writes-route_write_v1)).
 - The `routing` replacement returns `{route}` to choose a configured lead route at thread start.
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](#model-requests-and-streams-model_turn_interception_v1)).
@@ -947,6 +987,27 @@ and `routes.select` without restarting.
 - Services, secrets and protected paths stay as loaded at start.
 - An invalid edit keeps the previous routes and `routes.select` reports why.
 - `routes.select` also admits a lead route added after the thread started when it is on the thread's provider.
+
+#### Route writes (`route_write_v1`)
+
+`routes.write {routes, services?}` (capability `packages`, user only) replaces the caller's own routes in
+`host.json` after the user confirms a dialog listing every change. It returns `{routes, services}` (the caller's
+route names and service ids afterwards), `{status: 'declined'}`, or `{unchanged: true}` without asking when
+nothing would change.
+
+- `routes` replaces every route without a `grant` whose `provider` is the caller's mod id. Each must name that
+  provider, have the single role `lead` and no `grant` or `credential`. A paid route (neither `included_subscription` nor
+  `provider_billed`) needs `limits.exposure_microusd` above zero (`routes_write_allowance_required`).
+- A route's `data` (any JSON, at most 2 KiB) is ignored by the host; `routes.list` returns it only to the route's
+  provider mod, and the mod's provider service can read it from `host.json`.
+- `services`, when given, updates service grants the caller already owns: each entry is `{id, credentials?,
+  route?}` and replaces those fields of the caller's grant with that `id` (`routes_write_service_unknown` for any
+  other id, `routes_write_service_field` for any other field). A grant's program, arguments, network, paths and
+  secrets are never written here. Credentials must be existing profiles (a `secret` profile only when the caller
+  owns it). The dialog lists every route and grant field that changes with its new value.
+- The resulting `host.json` is validated as it is at load; a failure is `routes_write_invalid: REASON` and changes
+  nothing, and a `host.json` that changed between the dialog and the write is `routes_write_changed`. Routes apply
+  through `route_reload_v1`; a service picks up a changed grant at its next `providers.register` or `sidecars.start`.
 
 #### Route grant files
 
@@ -1113,7 +1174,9 @@ The payload carries:
 - `output {text (first 4 KiB), tool_calls}`.
 - Raw `usage`, and `cache {read_tokens, write_tokens}`.
 - `cost {microusd, basis}`, where `basis` is `settled`, `unsettled`, `provider_reported`, `included_subscription`,
-  `unpriced` or `synthetic`.
+  `unpriced` or `synthetic`. A request without configured rates is `included_subscription` when it goes to the
+  ChatGPT Codex backend with the signed-in account (the native session on a ChatGPT plan; credits spent past the
+  plan's limit are not reported), otherwise `unpriced`.
 - `context_window` when the session knows it.
 - `timing {started_at_ms, first_event_ms, duration_ms}`.
 - `synthetic` and `error`.
@@ -1140,7 +1203,8 @@ The input is one page:
 - `request_id`, `attempt`, `scope`, `provider`, `route` and `model`.
 - `page` and `pages` (1-based).
 - `cached`.
-- `segments`: the non-empty string leaves of `instructions`, `input`, `tools` and `text`, except structural fields
+- `segments`: the non-empty string leaves of `instructions`, `input`, `tools` and `text` (and `prompt`, `images`
+  and `traces` in image and memory summarization requests), except structural fields
   (`type`, `id`, `call_id`, `status`, `role`, `name`, `namespace`, `detail`, item metadata).
 - `opaque` and `opaque_total`.
 
@@ -1149,7 +1213,7 @@ Each segment is `{id, kind, role, editable, text, bytes, sha256}`:
 - `id` is the JSON pointer (`/input/3/content/0/text`).
 - `kind` is the content kind: `agents_md.instructions`, `user.text`, or `message.<role>` without one,
   `instructions`, `tool_call.arguments`, `tool_call.input`, `tool_output`, `reasoning`, `tool_spec`,
-  `output_schema` or the item type.
+  `output_schema`, `image.prompt`, `memory` or the item type.
 - `bytes` is the UTF-8 size.
 
 | Page limit | Value |
@@ -1204,15 +1268,18 @@ A request is refused, visibly as a turn or call error starting `final_request_re
 #### Declared policies (`request_policy`)
 
 A selection trusted with capability `request_policy` (which needs `middleware`) is a declared policy. While it is
-enabled, every request is refused (`request_policy_unavailable`) unless that mod is loaded, healthy and has a
-required interceptor selecting `model_send`, including after a rejected selection, failed activation, fault or
-failed reload.
+enabled, every request except web search is refused (`request_policy_unavailable`) unless that mod is loaded,
+healthy and has a required interceptor selecting `model_send`, including after a rejected selection, failed
+activation, fault or failed reload.
 
-- While a required `model_send` interceptor or a declared policy exists, transports that cannot pass the stage are
-  refused (`request_policy_unsupported_transport`): realtime calls and their websockets, image generation, web
-  search and memory summarization; Responses websockets are always off under OMD.
+- Image generation and edits and memory summarization pass the stage too (input images arrive as `opaque`).
+  Web search is never policed or refused by final-request policies, even when the policy has failed: it sends recent
+  conversation text and its queries as they are.
+- While a required `model_send` interceptor or a declared policy exists, realtime calls and their websockets are
+  refused (`request_policy_unsupported_transport`, naming the endpoint and the mods whose policy blocks it);
+  Responses websockets are always off under OMD.
 - Disable the mod in `/mods` or `/omd` to send again (only the administrator can disable a managed policy).
-- Status `request_policy_unavailable` names the reason every request is being refused, or is `null`.
+- Status `request_policy_unavailable` names the reason every request except web search is being refused, or is `null`.
 - Without `model_send` interceptors or declared policies the stage does not run and the body is untouched.
 
 #### Records and coverage of final-request policy
@@ -1229,17 +1296,23 @@ replaced bytes) or `final_request_refused` with its reason.
 
 ### Built-in controls
 
-`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}})`, registered during activation, hides
-slash commands, disables collaboration modes and turns off native surfaces from the next idle boundary until the
-mod is disabled, unloaded or fails. Controls belong to the directory OMD was launched in and cover every thread of
+`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}, features: {remove}})`, registered during
+activation, removes slash commands, collaboration modes, native surfaces and Codex features from the next idle
+boundary until the mod is disabled, unloaded or fails. Controls belong to the directory OMD was launched in and cover every thread of
 that session, including threads in its worktrees.
 
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.
+- `features: {remove: ['prevent_idle_sleep']}` (`builtins_features_v1`) takes Codex features out of the session:
+  they read as off everywhere, whatever `config.toml` or `-c` sets, and they leave `/experimental`, the app-server's
+  experimental feature list, `codex features list` and tips. Removing `code_mode` also removes `code_mode_only`.
+  Nothing is written to `config.toml`; disabling the mod brings back the rows and the saved values. A feature that
+  managed requirements pin on stays on. Keys must be Codex feature keys (`invalid_builtins` otherwise).
 - `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed.
-- A turn that requests a disabled mode runs in the default mode with that mode's instructions cleared and a warning
-  (a `warning` notification for app-server clients), including the turn at whose boundary the mod loads.
+- A disabled mode is absent from `collaborationMode/list`. A thread that requests or still holds one is reported in
+  the default mode and runs its next turn there with that mode's instructions cleared and a warning (a `warning`
+  notification for app-server clients), including the turn at whose boundary the mod loads.
 - Tools limited to collaboration modes lose the disabled ones and are not offered when none remain.
 
 ### One-shot model calls and forks (`model_complete_v2`)
@@ -1317,9 +1390,12 @@ The runner adds small helpers to `api`; each calls the host operations named her
 none starts paid work implicitly.
 
 - `api.package` is `{id, version, sha256}` of the running source.
-- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, model, provider,
-  route, turns_started}` for the session thread, also from terminal commands in the same process. `turns_started`
-  counts turns this process started in the thread.
+- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, omd_version, model,
+  provider, route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
+  `cwd` and `model` are the thread's current working directory and model (a settings change shows at once), and
+  `turns_started` counts turns this process started in the thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
+  records in shared state, such as watch IDs, by it. `omd_version` (experimental) is the OMD release, as in the
+  terminal `identity`.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and `api.fs.ancestors(name, from?)`
   (nearest first, up to the workspace root from `from`, else from the session's cwd with `inventory` or the root)
   normalize workspace-relative paths and read through `workspace.stat` (`fs.read`); symlinked components and paths
@@ -1330,7 +1406,7 @@ none starts paid work implicitly.
 - `api.usage.summarize(response)` turns a `model_response` into `{measured, tokens, context, cost, timing, …}`.
   Tokens are provider facts (`measured: false` without usage), `context.ratio` uses the session's context window
   when known, and `cost.source` says whether a charge is projected from configured rates (`configured_rates`),
-  covered by a subscription, synthetic or unknown.
+  reported by the provider (`provider`), covered by a subscription, synthetic or unknown.
 - `api.usage.rateLimits()` reads `account/rateLimits/read` when the mod holds `account`; window expiry stays as the
   provider reports it.
 
@@ -1338,7 +1414,7 @@ none starts paid work implicitly.
 
 - `api.time.sleep(ms)` calls `time.sleep {ms}` (`events`, at most 60 s): the callback waits in place, holding no
   runtime lock, and the wait does not count as own time; cancellation wakes it and ends the callback.
-- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 128 host calls.
+- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 512 host calls.
 - `api.time.after(key, delay_ms, handler)` and `api.time.every(key, interval_ms, handler)` register during
   activation (16 ms to 24 h) and return `{start(), cancel()}` over `events.schedule`/`events.cancel` key
   `time:<key>`.
@@ -1394,7 +1470,6 @@ A requirement names a receipt kind, a producer (`any`, `lead`, `host`, `integrat
 - A weaker selection needs the confirmation printed by `omd-contract plan`.
 - With no selection nothing is gated.
 - An unavailable selection fails closed.
-- Old `workflow.json` selections are not imported.
 
 #### `receipts.submit`
 
@@ -1480,7 +1555,8 @@ still match; invalid state fails closed.
 #### `agents.spawn`
 
 ```ts
-agents.spawn {role, route, prompt, workspace?, tools?, evidence?, snapshot?, parent_history?}
+agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?, snapshot?, parent_history?,
+              resolution_context?}
 ```
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
@@ -1679,6 +1755,37 @@ The sender's package gets `peer_receipt` events:
 Receiving never starts a turn, changes roots or routes, or lends authority; a receiver that wants to act queues its
 own work under its own grants. Revoking or expiring the grant, disabling the mod or stopping the session closes the
 registration.
+
+### Power holds (`power_hold_v1`)
+
+A mod with the `power` authority grant keeps the Mac awake. `power.hold {reason, lid_closed?, max_duration_ms, lease?}`
+returns `{lease, lid_closed}`; passing a `lease` that is still live with the same `lid_closed` returns it unchanged,
+otherwise a new lease starts. `power.release {lease}` returns `{released}`, false when the lease already ended or
+belongs to another mod. Only event callbacks (lifecycle events, timers, channels) may hold
+(`host_operation_event_only` otherwise).
+
+Every lease holds an idle-sleep assertion, so the Mac doesn't sleep from inactivity while the lid is open; the display
+may still sleep. With `lid_closed: true` the lease also asks the authority broker to set `SleepDisabled`, which keeps a
+closed Mac running on battery. Leases from every mod and OMD process share that setting: the first records the previous
+value and the last one to end restores it, then sleeps the Mac if the lid is closed.
+
+A lease ends at `power.release`, after `max_duration_ms`, when the session stops and when OMD exits or crashes. A
+disabled, failed or changed mod loses its leases at the next host event in the session. If the broker or its helper
+exits, the setting is restored and the lease ends, so holding again with that `lease` starts a new one.
+
+| Limit | Value |
+| --- | --- |
+| `reason` | 1 to 128 bytes |
+| `max_duration_ms` | 60 s to 24 h |
+| Live leases per mod in a session | 4 |
+
+| Error | When |
+| --- | --- |
+| `power_unavailable` | `lid_closed` without the deployed broker, or a broker installed before power holds (run `omd-package broker install` again); lid-open holds still work |
+| `authority_power_unavailable` | The broker's power helper is not installed or could not change the setting |
+| `power_lease_limit` | The mod already holds 4 leases |
+| `host_operation_event_only` | `power.hold` from a tool, CLI or component callback |
+| `power_request_invalid` | `reason` or `max_duration_ms` is out of range |
 
 ### Autonomous turns (`autonomous_turns_v1`)
 
@@ -1897,7 +2004,10 @@ Each route lists the parameter fields it accepts; any other non-null field is re
 policy, sandbox, permissions, config, roots, environments, dynamic tools, base instructions, service tier) and
 fields added by a later upstream stay closed until reviewed.
 
-- `model` is allowed only as a configured route.
+- `model` and `modelProvider` are allowed only as a configured route: each must match a `host.json` lead route, and
+  when both are given, the same one. `modelProvider` needs `model` with it (`app_route_model_required`).
+  `thread/settings/update {model, modelProvider}` moves the current thread to that provider from its next turn, as
+  picking another provider's model in `/model` does.
 - `thread/start` and `fuzzyFileSearch` roots must be the session root or one of its `git worktree list` entries.
 - Thread-scoped methods reach the current thread and threads the mod itself started or forked. Their other thread
   ids (`beforeThreadId`) must name one of those.
@@ -2054,7 +2164,7 @@ executor. Only the listed fields may change:
 
 | Surface | Replaceable | `next` resolves to | A handler may return |
 | --- | --- | --- | --- |
-| `tool` | `tool`, `arguments` | `{output, success, truncated}` | that result, a changed `{output, success}` of at most 64 KiB, an answer without calling `next`, or `{deny}` |
+| `tool` | `tool`, `arguments` | `{output, success, truncated, bytes}` | that result, a changed `{output, success}` of at most 256 KiB (the model sees at most 64 KiB, or the original's length if larger; a longer replacement is dropped with a diagnostic and the original stands), an answer without calling `next`, or `{deny}` |
 | `host_operation` | `arguments` | `{value}` | `{value}` or `{error}`, with or without calling `next` |
 | `input` | `text` | `{text}` | what `next` returned, or `{deny}` |
 | `model_request` | `route` (one of `routes`), `effort`, `sections` | `{route, effort, cache}` | what `next` returned, `{deny}`, or a synthetic `{response}` without calling `next` |
@@ -2081,7 +2191,12 @@ shape.
 
 - Native, MCP (retarget by the model-visible name, such as `mcp__server__tool`), mod, subagent, code-mode and
   batched calls all pass through the same chain with their own call IDs.
-- Output beyond 48 KiB arrives truncated with `truncated: true`.
+- Output beyond 256 KiB arrives truncated with `truncated: true`; `next` also resolves with the output's complete `bytes`, and
+  [`tools.original`](#toolsoriginal-tool_original_v1) keeps the complete text as evidence.
+- For a code-mode call, `next` also resolves with `value` when a mod intercepting `tool` requires `code_mode_values_v1`, the structured result the cell receives (omitted above
+  32 KiB or when it and `output` together exceed 256 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
+  `output` (`code_mode_values_v1`). The model and every other caller see `output`. A `value` returned after `next`
+  ran is ignored: the cell keeps the executed result.
 - A tool or host-operation answer runs nothing: the host records the answering mod as `answered_by` on
   `tool_result` and in turn evidence, and the answer cannot attest that a file changed or a process ran.
 - Input handlers cannot answer for the engine, so an outer handler cannot bypass an inner required one.
@@ -2166,6 +2281,19 @@ interceptors, tool and output callbacks, timers and channel events that run mean
 A tool interceptor can hold a call for a person with `terminal.prompt`. The wait does not count against its budget;
 cancelling the call stops the wait, and a later answer is discarded.
 
+#### `tools.original` (`tool_original_v1`)
+
+`tools.original {call_id}` keeps the complete output of a call whose result is passing through a `tool` interceptor
+chain as the mod's own evidence, up to 16 MiB (`blob_too_large` beyond), and returns `{reference, sha256, bytes}`. `reference` is a
+`ResourceRef` to read with `evidence.read` in pages of at most 64 KiB, `sha256` hashes the complete text and `bytes` is its length.
+Call it after `await next(e)` in the same callback with the input's `call_id`: the `output` a handler sees is cut at 256 KiB,
+and `next` resolves with the complete length as `bytes` so the handler can tell. It needs `interception`.
+
+It fails with `tool_original_unavailable` when the call's result is not in a chain, such as before `next` has
+resolved, after the callback ended, for a call an interceptor answered without running it, or for an unknown call.
+A retried call (`:retryN`) yields its latest attempt's original, and that `next` also resolves with `bytes`. Only a host call made from inside that call's own `tool` chain can read it; a timer, another event or another call's chain gets `tool_original_unavailable`.
+The evidence is the mod's rotating evidence (the newest 1,024 records per mod and repository are kept, older ones are dropped down to 768, and the oldest go first while the blobs those records hold exceed 256 MiB; a process checks on its first write and then every 16 writes or 16 MiB).
+
 #### Handler failures and skipped interceptors
 
 A handler that throws, times out or returns an invalid result before calling `next` is skipped and the chain
@@ -2203,7 +2331,7 @@ chain against queued engine results (`{"error":...}` rejects) and returns it wit
 `on('tool_output')` observers (`tool_feedback_v1`) return `{append}` of at most 4 KiB, 16 KiB per call in total,
 added after any interceptor result at any output size.
 
-- Handlers receive the first 48 KiB as `text`, the last 16 KiB as `tail` when the output is longer, and the total
+- Handlers receive the first 256 KiB as `text`, the last 16 KiB as `tail` when the output is longer, and the total
   `bytes`.
 - Image and audio items appear as `[image]` and `[audio]` markers.
 - Tool-output callbacks may call every host operation their grants allow in lifecycle events, such as
@@ -2212,7 +2340,11 @@ added after any interceptor result at any output size.
 #### `replace('tool_batch')`
 
 `replace('tool_batch')` (`tool_batch_v1`) may merge parallel-safe calls of one response into one call of a tool the
-mod registered. The merged call runs through ordinary admission and approvals, and results fan out by call id.
+mod registered. The merged call runs through ordinary admission and approvals, and results fan out by call id: the
+merged tool returns an object keyed by call id whose values are the output text. A merge with
+`success_per_call: true` (`tool_batch_success_v1`) instead reads each value that is exactly `{output, success}` as
+that call's output and own success flag; any other value stays text. `tool` interceptors see the merged call with
+call ID `<batch id>-merge-<index>` and that `batch` position.
 
 #### `intercept('tool_specs')`
 
@@ -2276,11 +2408,9 @@ managed process, feeds a terminal raster, or reacts to background events.
 - `framing: "content-length"` (default), `"ndjson"` or `"raw"`;
 - `network: "none"` or `"loopback"`.
 
-The protocol-named transports are removed.
-
 #### `process.exchange`
 
-`process.exchange` returns messages until the next one would push the encoded `messages` past 48 KiB (at most 64,
+`process.exchange` returns messages until the next one would push the encoded `messages` past 256 KiB (at most 64,
 and always at least one), so a result fits a callback's receipt budget; the rest stays queued for the next call.
 
 Once the process exits, its readers get one second to deliver what it wrote. Output queued by then is returned
@@ -2459,10 +2589,14 @@ exits, even while a background child keeps the output streams open and more outp
 
 #### `workspace.watch`
 
-`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?}` reports external edits as `workspace_change`
+`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?, key?}` reports external edits as `workspace_change`
 with source `external`.
 
 - At most 16 watches per mod.
+- A `key` (1-64 bytes) names one watch per mod in this OMD process. Calling again from the same thread with the
+  same arguments keeps it; other arguments or another thread replace it without counting against the limit, and
+  changes it already queued are still delivered. `workspace.unwatch {key}` stops it; `{watch_id}` stops one of the
+  mod's watches. Keys require `workspace_watch_key_v1`.
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
 
@@ -2517,6 +2651,9 @@ next request or for the thread.
 (`OMD_SECRETS`, JSON `[{id, label, origin, value}]`) into the sidecar only; values never reach the mod runtime or
 the model.
 
+`sidecars.status {id}` returns `{id, running, started_at_ms}` for a sidecar or provider service the caller started
+in this process. Compare `started_at_ms` with a store entry's `provenance.at` to tell whether it predates a change.
+
 #### Credential origins
 
 Every credential profile sends its token to one origin, fixed at enrollment:
@@ -2563,7 +2700,7 @@ with a loopback `responses_url` defines its `route.provider` for the process (at
 at each registration) unless the configuration already defines it; a grant with exactly one secret uses it as the bearer token. A
 thread resumed after its provider is gone continues on the configured provider.
 
-The experimental `providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
+`providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
 efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, default `provider`). It needs a running `providers.register` registration whose
 grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
 or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
@@ -2618,7 +2755,7 @@ thread from event, tool and terminal slash-command callbacks, recorded only whil
 
 #### `sessions.read`
 
-The experimental `sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
+`sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
 `local_visible_records`:
 
 | Record | Fields |
@@ -2666,7 +2803,7 @@ Each item in the view carries:
 - the byte size
 - the `images` count
 
-The view holds the newest items, at most 2048, that fit the callback's 1 MiB runner request, in order and keyed by
+The view holds the newest items, at most 2048, that fit the callback's 4 MiB runner request, in order and keyed by
 their original `index`.
 
 #### History edit rules
@@ -2681,7 +2818,7 @@ their original `index`.
 The transcript and resume data are unchanged, each applied edit is recorded, and an invalid edit or failing mod
 keeps the original request.
 
-### Store-time history rewriting (`history_persist_v1`, experimental)
+### Store-time history rewriting (`history_persist_v1`)
 
 `api.intercept('history_persist', …)` (authority capability `history_persist`) rewrites history text before it is
 stored, for redaction: every text written to the thread's rollout and the prompt-recall file
@@ -2779,7 +2916,7 @@ A row pairs a display item with its model items: a message, or a tool call with 
 
 #### Edits
 
-`edits` apply in order as one revision:
+1 to 256 `edits` (or `undo`, not both) apply in order as one revision:
 
 | Edit | Meaning |
 | --- | --- |
@@ -2800,7 +2937,7 @@ A row pairs a display item with its model items: a message, or a tool call with 
 
 | Error | When |
 | --- | --- |
-| `history_rewrite_invalid` | `edits` or `undo` without `expectedRevision` |
+| `history_rewrite_invalid` | `edits` or `undo` without `expectedRevision`, or not exactly one of 1 to 256 `edits` and `undo` |
 | `history_rewrite_busy` | A turn is in progress or agent mail is pending on the thread. The check is repeated atomically when the thread unloads, so a turn that starts meanwhile is never cut off and the thread stays loaded; retry once it is idle |
 | `history_revision_conflict` | A stale `expectedRevision` |
 
@@ -2979,7 +3116,11 @@ Interceptors of these surfaces skip their own mod's calls like every other surfa
 A manifest's `codex_config` turns on Codex features the package depends on, for every lead thread the session
 starts, resumes or forks while the package is active: `{"codex_config": {"tools.update_plan.enabled": true}}`.
 
-- Keys come from a closed host allowlist (`tools.update_plan.enabled`) and must be `true`.
+- Keys come from a closed host allowlist (`tools.update_plan.enabled`, `tool_output_token_limit.raise`) and must be `true`.
+- `tool_output_token_limit.raise` sets the thread's `tool_output_token_limit` to at least 65,536 tokens (about 256 KiB),
+  keeping a larger configured value. `exec_command` and `write_stdin` still default to 10,000 tokens unless the call
+  sets a larger `max_output_tokens`, which a `tool` interceptor can do. It makes no output smaller or safer: the
+  package must budget model-visible outputs itself, or every long output reaches the model whole.
 - The package must list `codex_config_v1` in `required_features`.
 - Anything else fails inspection with `invalid_codex_config`.
 
@@ -3077,7 +3218,10 @@ The `composer` event (capability `composer`) reports two kinds of payload:
 `api.intercept('composer_edit', …)` sees every mod write and native fill before it reaches the draft: `{source:
 'mod' | 'paste' | 'history' | 'completion', caller, revision, edit}`. Handlers may change only `edit.text` or
 answer `{deny}`, which leaves the draft unchanged and tells the user. They run while the terminal applies the edit,
-so they get no host operations.
+so they get no host operations. The whole chain, including any wait for a runtime busy with another callback, gets
+50 ms; when that runs out a native fill applies unmodified with a status notice and a mod write is refused with
+`mod_runtime_busy`. While a required interceptor selects `composer_edit`, a native fill is refused the same way. A policy or redaction
+interceptor must therefore be `required`: a busy optional one lets a paste or fill through unmodified.
 
 #### `composer_key` interceptor
 
@@ -3110,7 +3254,8 @@ Handlers answer:
 - `{focus: id}` to move focus to another of their own components (or `null` to release it);
 - `{scroll: n}` to clamp the offset.
 
-They run while the terminal handles the gesture, so they get no host operations.
+They run while the terminal handles the gesture, so they get no host operations. The whole chain, including any wait
+for a runtime busy with another callback, gets 50 ms; when that runs out the change applies unchanged.
 
 #### Submitted drafts and `prompt_expanded`
 
@@ -3183,7 +3328,7 @@ component instance. `e` is `{component, id, surface, viewport: {columns, rows}, 
 - hide: return `{tree: []}`.
 
 Trees hold `box`, `line`, `text`, `markdown`, `code`, `diff`, `list` and `native` components (64 components, depth
-6, unique ids, 64 KiB); the native node appears at most once. Hooks compose as one continuation chain in
+6, unique ids, 256 KiB); the native node appears at most once. Hooks compose as one continuation chain in
 interceptor order, so unrelated wrappers nest, and each hook sees the props the hook before it passed on.
 
 #### Render components
@@ -3378,6 +3523,10 @@ document viewers, image previews, warnings, watermarks and dashboards.
 #### Layouts and component types
 
 Views may declare a `layout` tree of splits and tabs with transcript, composer and mod-named sites (`mod/site`).
+A `site:` or `transcript` leaf may set `title` (`terminal_layout_title_v1`), at most 64 bytes without control
+characters: a site's frame shows it instead of the site name and `''` draws no title, and a titled transcript gives
+its top row to a rule carrying the title, accented while the chat has focus in a view with `key_contexts`. A
+`composer` leaf takes no title.
 Components add `document` (up to 100,000 lines with anchors, selection and find), `diff`, `image`, `raster` and
 `terminal` (a PTY session).
 
@@ -3429,6 +3578,9 @@ Leaving the component:
 - Ctrl+] leaves the component (terminals without the kitty keyboard protocol send it as Ctrl+5, which also leaves).
 - Ctrl+C leaves it and keeps its native meaning (interrupt or quit).
 - Esc goes to the mod and leaves the component or closes the dialog.
+- `keys: 'all'` (`terminal_focus_v1`, also on `module`) also forwards Esc, Ctrl+C and the other Ctrl and Alt keys
+  (Ctrl+Z still suspends), so only Ctrl+] (or Ctrl+5) leaves.
+- Key contexts of the component's site owner that name its site get each key before the component does.
 
 Input callbacks run in the terminal process with read-only workspace access, and the view redraws as soon as one
 changes the mod's state. A key that must write (a save) publishes an `events.publish` hop whose `channel` callback
@@ -3468,6 +3620,45 @@ control's only affordance: name its slash command next to it in the hint.
 Key bindings and component actions run only the contributing mod's commands: a bare name is its own `id:name`, and
 a binding or control naming another mod's command is dropped.
 
+#### Focus regions, key contexts and help (`terminal_focus_v1`)
+
+With a view `layout`, the host computes focus regions every frame. The chat (transcript and composer) is region 0
+and each drawn `site:` leaf is a region named by its site, numbered from 1 in layout order; only a `tabs` node's
+active tab counts. When a `tabs` node's active tab changes (a tab click or a new `active`), focus inside it moves to
+the node's newly drawn region.
+
+- A `{region}` key action moves focus without a mod callback: `left`, `right`, `up` and `down` pick the nearest
+  region on that side, `next` and `previous` cycle in layout order, `chat` or `0` returns to the chat, a number
+  from 1 to 12 is that site region and a site name focuses that region. A region gets back the control last focused there, else its
+  first control that is not a keys component or terminal, else no control.
+- The focused region's frame draws in the accent color, or with its leaf's `style.focus` accent.
+- While a region has focus, keys it does not bind never reach the composer. Ctrl, Alt and F-keys still reach
+  `keybindings` and native shortcuts, and native prompts such as approvals keep their keys.
+- Esc in a region returns to the chat. Ctrl+] in a region returns to the chat, or from a focused keys component or
+  terminal to its region; in the chat it focuses the last region (else the first) when the view has key contexts.
+  Clicking a region or a control in it focuses the region, and pastes into a focused region never reach the
+  composer.
+
+View `key_contexts` bind keys that apply only while `when` holds, at most 8 contexts and 32 keys per mod (16 and 128
+composed):
+
+| `when` field | Holds when |
+| --- | --- |
+| `focus` | One name or a list of up to 8 different names: `chat`, `site` (any site region or a control in any site) or a site name. Omitted, anywhere. |
+| `composer` | `empty` or `draft`, by the composer's text. |
+
+- A context that cannot hold in the chat may also bind unmodified keys: named keys other than Esc, Shift+Tab and
+  single printable characters (`h`, `1`, `[`, `?`, `G`; letters match case exactly). A context that can hold there takes `keybindings` key names, and there a key
+  that collides with a native binding is ignored as in `keybindings`.
+- A binding is a key action or `{action, label}`; `label` (at most 64 bytes) names it in the help overlay.
+- Contexts of the focused site's owner (the `owner` of `owner/site`) match first, then the others in composition
+  order. A focused control keeps Enter, Space, Up, Down and a select's Left and Right.
+- `{region}` and `{help: true}` also work in `keybindings`; commands follow the ownership rule below.
+
+`{help: true}` opens a host overlay listing the bindings that apply to the focused region with their labels and
+owning mod, then `keybindings` and the host keys. `/` searches, Up and Down (or `j` and `k`) move, Enter runs the
+selected binding and Esc clears the search or closes the overlay.
+
 #### `component_event`
 
 `component_event`, `view` and `focus` report interaction. `component_event` goes only to the component's owner and
@@ -3489,7 +3680,7 @@ delivered event reports the count as `dropped`.
 
 #### Component modules (`component_modules_v1`)
 
-Component modules are experimental and need the feature `component_modules_v1`, which `mod_host_check.py --static`
+Component modules need the feature `component_modules_v1`, which `mod_host_check.py --static`
 requires of any package that calls `api.component`.
 
 `api.component(module, {init?, view, key?, pointer?, every?})` is registered during activation under the `terminal`
@@ -3523,7 +3714,7 @@ input, or a due `every: {ms, tick}` tick.
 - `pointer(state, {kind: 'pointer', column, row, action, button})` receives pointer events over the region with
   `pointer: true`, consecutive moves coalesced.
 - `view(state, ui)` returns a render tree (`box` without style, `line`, `text`, `markdown`, `code`, `diff`, `list`;
-  at most 64 components, depth 6, 64 KiB).
+  at most 64 components, depth 6, 256 KiB).
 
 `ui` is `{columns, rows, props, post(data)}`, where `rows` is the node's `height` and 0 when it has none (auto
 height). `post` hands the mod's `component_post` hooks `{component, module, data}` at most once per frame (a later
@@ -3568,7 +3759,7 @@ turned off) the view renders again with the new `client`; a burst of changes ren
 
 ##### `raster` component
 
-`{type: 'raster', id, label, alt, width?, height?, pointer?}` is a keyed canvas of 1–200 × 1–40 cells that shows
+`{type: 'raster', id, label, alt, width?, height?, pointer?}` is a keyed canvas of 1–512 × 1–256 cells that shows
 `alt` until its first frame and clips to the component's width.
 
 - An omitted `width` fills the region's width.
@@ -3585,16 +3776,33 @@ turned off) the view renders again with the new `client`; a burst of changes ren
 id). `cells` lists the rect's cells row by row, each a one-cell glyph or `[glyph, fg, bg]` with theme colors or
 null.
 
+`terminal.blit {key, rect, packed}` (`terminal_raster_packed_v1`) passes the same cells as base64 of `rect.width ×
+rect.height` little-endian u32 triplets `[codePoint, fg, bg]`, row by row:
+
+- A code point is one printable column (no controls, combining marks or wide characters).
+- A color is `0x00RRGGBB`, `0x01000000` for the theme default or `0x02000000 | index` for a 0–255 palette color;
+  under `NO_COLOR` every cell draws in the default colors.
+- A cell takes 16 bytes of base64, about half a colored JSON cell, and the host decodes it without a JSON tree. The
+  runner has no `btoa`, so encode with a small helper such as the one in the `raster_wave` example.
+- A callback's host calls, arguments included, share its 1 MiB receipt budget: a packed cell takes 16 bytes of it and
+  a colored JSON cell about 29. Timer ticks are 16 ms apart, so a larger raster should redraw only the cells that
+  change.
+- External clients receive `packed` updates as `cells`.
+
 | Error | When |
 | --- | --- |
 | `terminal_blit_not_owned` | The raster is another mod's. |
 | `terminal_blit_unknown` | The terminal has not received the raster in a view yet, such as one returned by the same callback. |
 | `terminal_blit_too_large` | One call is over 256 KiB. |
 | `terminal_blit_limit` | A blit to a 17th key. |
+| `terminal_blit_packed_invalid` | `packed` is not base64, is not 12 bytes a cell, or has a code point or color outside the rules above; the message names the cell. |
 
-Updates queue per raster and apply one per 16 ms frame, so a timer tick can enqueue an animation. At 32 queued
-updates or 256 KiB the call returns `{status: 'backpressure', retry_after_ms}` instead of `{frame, queued,
-frame_ms}`.
+Cells and packed updates that reach a raster before its next 16 ms frame merge into that frame, later cells
+overwriting earlier ones, so one timer tick can draw a frame in several calls. The call returns `{frame, queued,
+frame_ms}`: the frame the update shows in and the frames pending (a picture, then the cells merged after it). Merged
+cells never take more than the raster, so the call returns `{status: 'backpressure', retry_after_ms: 250}` only while
+a pending frame stays undrawn for four ticks (an inactive tab or unplaced layout). Image and pixel frames keep the
+pacing below.
 
 ##### `terminal.blit` images
 
@@ -3605,14 +3813,14 @@ cells by the same rule and renderers as `image` (Kitty placeholders, iTerm2 inli
 
 - The newest frame replaces the previous one, a cells blit replaces the frame and a frame replaces the cells.
 - It is never stored as a resource, so prefer it to a new `image` resource per frame (which exhausts the record
-  quota) or to cells (about 200 × 80 effective pixels).
+  quota) or to cells (two effective pixels a cell).
 - External clients whose renderer `formats` include the media type receive the frame as sent, other clients with
   `cells` receive half-block cells.
 
 | Error | When |
 | --- | --- |
 | `terminal_blit_image_invalid` | A wrong media type, bad base64 or an image that does not decode within 4096 px per side. |
-| `terminal_blit_invalid` | Both or neither of `image` and `rect`/`cells` are passed. |
+| `terminal_blit_invalid` | Not exactly one of `cells`, `packed`, `image` and `pixels` is passed. |
 
 Both refuse before queueing.
 
@@ -3661,7 +3869,8 @@ One `style: TerminalBoxStyle` object styles a `box`, `pane` or `dialog`, an over
 - `background` and `foreground`: a tone (`accent`, `muted`, ...) or a color (0–255 or `#rrggbb`). A filled or
   bordered box pads its rows to its width, so the fill reaches the edge; other boxes leave rows unpadded.
 - `direction: 'row'` lays children side by side (see [Row layout](#row-layout)).
-- `hover` and `focus` take `{border?, background?, foreground?}` on a `box` or `pane`; other surfaces refuse them
+- `hover` and `focus` take `{border?, background?, foreground?}` on a `box` or `pane`, and `focus` on a layout
+  `site:` leaf while its region has focus; other surfaces refuse them
   (see [Hover and focus accents](#hover-and-focus-accents)).
 
 ##### Row layout
@@ -3735,7 +3944,7 @@ with `other`. It returns `{status: 'accepted', values, other?}` or `declined` wh
 
 ##### `terminal.blit`
 
-`terminal.blit {key, rect, cells}` (`terminal_raster_v1`, experimental) queues a raster update, described in
+`terminal.blit {key, rect, cells | packed}` (`terminal_raster_v1`, experimental) queues a raster update, described in
 [Raster, pointer and overlays](#raster-pointer-and-overlays-terminal_raster_v1).
 
 ##### `terminal.pane` and `terminal.panes`
@@ -3749,10 +3958,10 @@ focused, scroll}]}`; a pane is `visible` while its header row was on screen in t
 
 ##### `terminal.panel`
 
-`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`, experimental) opens Codex's
+`terminal.panel {title, subtitle?, tabs?, items, search?, query?, selected?, close_args?, action}` (`terminal_panel_v1`) opens Codex's
 own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at most 2,000
 bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes); with
-tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, kind, value?, options?}` with
+tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, group?, keywords?, detail?, kind, value?, options?}` with
 unique ids without spaces (up to 128 bytes), labels up to 128 bytes and descriptions up to 256 bytes:
 
 | `kind` | `value` | Space or Enter |
@@ -3764,8 +3973,18 @@ unique ids without spaces (up to 128 bytes), labels up to 128 bytes and descript
 
 Each change runs the caller's command `action.command` with `args`, the item id and the new value joined by spaces
 (`set bars true`), and the panel shows the new value at once. Up and Down move and repeat while held, Left and Right
-switch tabs, `/` searches labels, descriptions and tab titles across every tab when `search` is true, and Esc clears
-the search or closes the panel. A call with the title of the caller's open panel replaces it in place and keeps its
+switch tabs, `/` searches every tab when `search` is true: labels match fuzzily, best first, then items whose
+description, keywords or tab title contain the query; Esc clears the search or closes the panel. Outside a search, a letter moves to
+the next item whose label starts with it, `g` and `G` go to the first and last row, and Home, End, PgUp and PgDn work
+as in every Codex list.
+
+Experimental (`terminal_panel_navigation_v1`): an item's `group` (up to 32 bytes) gathers items under a header row
+with their count, in order of first appearance after any ungrouped items; Space or Enter on the header collapses or
+expands it. `keywords` (up to 256 bytes) is searched but not shown, and `detail` (up to 512 bytes) shows below the
+list while the item is selected. `query` (up to 128 bytes) opens the panel with that search, and `selected` names the
+item to select first. With `close_args`, closing the panel runs `action.command` with `close_args`, the selected item
+id (`-` on a header) and the search the user last chose an item with (cleared when the user ends a search without
+choosing one), joined by spaces, so a mod can reopen the panel where the user left it. A call with the title of the caller's open panel replaces it in place and keeps its
 tab (also across a tab-less panel such as a confirmation), selected item and search; another title opens a new panel
 over it, and Esc returns to the one below. Only the user's own commands and panel actions open panels
 (`host_operation_user_only` elsewhere). Returns `{shown: true}`.
@@ -3820,7 +4039,7 @@ With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with 
 
 Sessions:
 
-- Belong to the calling mod, thread and admitted generation (four per mod, sixteen in all).
+- Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod`, four by default, and sixteen in all).
 - Render only in terminal components owned by that mod.
 - Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads.
 - Queued requests and terminal input retain their original binding and cannot address a replacement session.
@@ -3847,7 +4066,15 @@ When any mod's view sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), 
 sidebar, header and named sites; dialogs, status segments, mod progress and diagnostics, the composer, approvals
 and scrollback remain, and the owned fullscreen viewport is unchanged.
 
-The `above_composer` and `below_composer` (experimental) sites draw in both modes, host-sized to their wrapped
+A launcher can narrow one session's TUI with three environment variables. `OMD_TUI_MOD_UI=ID[,ID…]` keeps sites,
+panels, header, footer, layout and status segments only from the listed mods; other mods keep their `dialog` site,
+`render` hooks, commands, keys and theme, and the status row holds only the listed mods' segments, without upstream
+`/statusline` items or the host summary unless a mod failed. `OMD_TUI_HEADER=off` drops the Codex session header and
+first-run help, and `OMD_TUI_COMPOSER=plain` draws the composer as a bare prompt line without its background,
+blank rows, placeholder or idle hint row. `omd mini` sets all three. They are read once at start, and agent tool
+processes don't inherit them or the launcher's `OH_MY_DIFF_*` variables (a mod's `exec_environment` still can).
+
+The `above_composer` and `below_composer` sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints and status row), with styles, links
 and focusable controls. `above_composer` is clipped to 8 rows and `below_composer` to 6, each scrolling to the
 focused control. Both are hidden while an approval or popup replaces the composer.
@@ -3857,6 +4084,7 @@ focused control. Both are hidden while an approval or popup replaces the compose
 The `terminal` input carries a read-only `identity` (`terminal_identity_v1`):
 
 - `codex_version` from the installed build;
+- `omd_version`, the installed OMD release, such as `1.2.0` or `1.3.0-rc.2` (experimental);
 - `install_profile` (`full`, `platform_only`, `private`, `unknown` or `unreported`);
 - effective `mode` (`omd`);
 - installed, enabled, active and failed mod counts.
@@ -4059,7 +4287,8 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
   `client_surface_operation_unavailable`.
 - `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them.
 - A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and
-  `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload.
+  `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload. Administered content that
+  no longer matches its pin reports `managed_content_stale: ...` instead and loads after `omd-mod package-sync`.
 
 #### Host notifications and server requests
 
@@ -4147,6 +4376,8 @@ User-only operations are never delegated:
 - `commands.invoke`
 - `config.set`
 - `packages.apply`
+- `routes.add`
+- `routes.write`
 - `contract.select`
 
 `prompts.consent` is never delegated either. Whenever a client's action or event caused the call, these operations
@@ -4187,7 +4418,7 @@ it sandboxed with `network: 'loopback'` (`network`) for a loopback `ws://` liste
 The UI process connects with the SDK in `@oh-my-diff/mod-api/client`:
 
 ```ts
-connect({url, token?, command?, name, renderer, operations?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?, onNotification?, onReconnect?, onClose?})
+connect({url, token?, command?, name, renderer, operations?, reconnect?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?, onNotification?, onReconnect?, onClose?})
 ```
 
 It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer subprotocol), `unix://PATH` and
@@ -4195,7 +4426,7 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
 
 - The session's `attach`, `update`, `detach`, `read`, `event`, `action` (serialized), `render`, `resource`,
   `recovery` and `request(method, params)` cover every `omd/*` and app-server method.
-- After a disconnect it reconnects with backoff, re-initializes, re-attaches, replays the last update, resumes the
+- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches, replays the last update, resumes the
   threads it resumed through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`.
 - `unsupported(component, renderer, drawable)` returns null or an `unsupported_element: <type> '<id>': <reason>;
   drawing its fallback "<text>"` error for a component the renderer cannot draw (a type outside `drawable`, a
@@ -4333,6 +4564,29 @@ Callbacks receive explicit settings over the schema's `default` values.
 
 `/omd` stays the native recovery path.
 
+#### Settings file (`settings_file_v1`)
+
+Experimental. A user can set a mod's settings in a file instead of through `settings.write`:
+`settings/<mod_id>.json`, `.yaml` or `.yml` in the mod store, the directory that holds `mods.json`.
+
+- At most one of the three files may exist (more than one is invalid), at most 64 KiB, and its top level must be an
+  object whose keys are the mod's setting names.
+- Its keys override the saved settings (and the schema `default` values) in every callback, render and chain
+  digest. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
+  a wrongly typed value and a missing `required` setting are invalid.
+- Administrator-managed selections ignore the file (status `ignored`).
+- The saved settings must be valid on their own, so a `required` setting without a `default` is saved through
+  `settings.write` or `/omd`; the file then overrides it.
+- An unreadable, oversize, unparsable or invalid file is skipped whole: the saved settings apply, the mod stays on and
+  its view diagnostics carry `settings_file_invalid: <reason>`.
+- Creating, editing or deleting the file applies at the refresh points of a `mods.json` change.
+- `api.settingsFile` is `{path, status: 'missing' | 'loaded' | 'invalid' | 'ignored', error: string | null}`. `path` is the
+  absolute file to tell the user to edit (the `.json` one while none exists); `error` is the reason when `invalid`.
+- `settings.write` of a key the file sets fails with `setting_set_by_file: <key>`. `omd-mod selection-status` lists
+  such keys with origin `file` and the file under `settings_file`.
+
+Require `settings_file_v1` to use it.
+
 ### Host limits
 
 `host.json` may set `mod_limits`:
@@ -4362,7 +4616,7 @@ and example through the real host and reports any it refuses.
 
 #### Registration limits
 
-- At most 16 tools and 16 commands per mod.
+- At most 32 tools and 32 commands per mod.
 - Commands are invoked as `/<id>:<name>`; the bare `/<name>` works only when no built-in command or other mod uses
   that name.
 - Mod ids use `a-z`, `0-9` and `_` up to 24 bytes and never equal the host `origin.caller` labels `model`,
@@ -4373,8 +4627,8 @@ and example through the real host and reports any it refuses.
 
 Keybindings:
 
-- Each mod's view or patch has at most 12 keybindings.
-- The view composed from every mod has at most 64, and a key bound by two mods rejects the later mod's patch.
+- Each mod's view or patch has at most 24 keybindings.
+- The view composed from every mod has at most 128, and a key bound by two mods rejects the later mod's patch.
 
 Components:
 
@@ -4395,7 +4649,7 @@ Text sizes:
 - `text`, `code`, `markdown`, `diff` and `document` are at most 49,152 bytes. The terminal keeps recent markdown
   renders, so a large `markdown` costs its parse, about 1 ms per KiB, only when its text or width changes; stream
   into `code` or `text`.
-- A view or patch is at most 64 KiB of JSON and the composed view 256 KiB. Those JSON limits still apply to
+- A view or patch is at most 256 KiB of JSON and the composed view 1 MiB. Those JSON limits still apply to
   text-heavy views, and escaping can double a text (`\n`, `"` and `\` take two bytes), so clip long text on its
   `JSON.stringify` size rather than its 48 KiB length.
 - Text fields refuse control characters except newlines where a field is multi-line.
@@ -4407,9 +4661,11 @@ reports the composed view's diagnostics under `terminal`.
 #### Input and focus
 
 - A dialog focuses its first item when it opens, or the control it `autofocus`es.
-- Tab and Shift+Tab cycle focus. Up and Down move within a list, multiselect, document or scrolled pane and, at its
-  first or last row (or on any other control), focus the previous or next control; entering a list from above
-  starts at its first row, from below at its last; key panes and terminals are reached only with Tab or a click.
+- Tab and Shift+Tab cycle focus while a dialog shows or a control has focus; otherwise they stay the composer's, and
+  a click, a `hotkey`, `autofocus` or a `{focus}` keybinding focuses a control first. Up and Down move within a
+  list, multiselect, document or scrolled pane and, at its first or last row (or on any other control), focus the
+  previous or next control; entering a list from above starts at its first row, from below at its last; key panes
+  and terminals are reached with Tab once a control has focus, a click or a `{focus}` keybinding.
   Left and Right change a `select`.
 - While a dialog shows or a control has focus, held arrow, page, Home, End, Backspace, Delete and character keys
   repeat; Enter, Space, Tab and Esc act once per press, and a held key never fires a hotkey or view binding.
@@ -4431,8 +4687,8 @@ reports the composed view's diagnostics under `terminal`.
 #### Callback lifetime
 
 - General callbacks get a fresh VM context and activation.
-- A package's later callbacks may reuse its sandboxed runner process and a bounded cache of stripped source and
-  bytecode; runners are never shared between packages.
+- A package's later callbacks may reuse its sandboxed runner process and a bounded
+  bytecode cache; runners are never shared between packages.
 - Work a callback leaves running settles before its result is returned, and a host call from it after the callback
   returned fails that callback.
 - Persist state through `api.state`; module globals do not survive general callbacks.
@@ -4498,8 +4754,8 @@ manifest admits:
   and its `set` lands on the cleared state, even with the value it read; a change of repository during it cancels
   it.
 
-Durable `api.state` is unchanged. Use UI state for open dialogs and filters, and durable state for preferences that
-must survive a restart.
+Saved `api.state` is unchanged. Use UI state for open dialogs and filters, and saved state for preferences that
+must survive a restart (a power failure can lose the last commits; `store.*` data is fully synced).
 
 #### Experimental command views
 
@@ -4524,7 +4780,7 @@ Slash commands, buttons and keybindings run in the terminal as user actions and 
 - `workspace.read/list/stat/check_access/transaction/backup/restore`
 - `store.*`
 - the terminal operations (`app.request`, `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`,
-  `packages.*`, `contract.select`, `sessions.ports`, `settings.write`)
+  `packages.*`, `routes.add`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
 - `turns.activity`
 - `events.publish`
@@ -4534,7 +4790,7 @@ A service call works only while its provider needs no other host operation.
 Component input callbacks run there too but not as user actions, so `packages.apply`, `settings.write`,
 `builtins.invoke`, `credentials.request` and `terminal.import_file` are refused.
 
-Anything else (`task.*`, `contract.*`, `routes.*`, `evidence.*`, `workspace.snapshot/fingerprint`, `process.*`,
+Anything else (`task.*`, `contract.*`, other `routes.*`, `evidence.*`, `workspace.snapshot/fingerprint`, `process.*`,
 `agents.*`) goes through `events.publish` to the mod's own `channel` handler, which runs with the session.
 
 #### Settings defaults
@@ -4560,7 +4816,7 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 
 | Command | Result |
 | --- | --- |
-| `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
+| `omd-mod-author create DIR [ID]` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
 | `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
@@ -4568,10 +4824,11 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
 | `pnpm run package` | Produces a checked package directory, JavaScript debug build, source map, and digest report |
+| `omd-mod-author cost DIR [COMMAND [ARGS_JSON]] [--runs N]` | Activation, first render, callback time, runner count and runner footprint of one package (see [Cost report](#cost-report)) |
 | `pnpm watch STORE` | Re-inspects reviewed local source, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
 | `omd-mod-author report STORE` | Declared-versus-used capabilities, services, operations, and environment |
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
-| `omd-mod-author diagnostics STORE OUTPUT` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
+| `omd-mod-author diagnostics STORE [OUTPUT]` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
 | `omd-mod-author explain DENIAL` | Cause, safe remedy, and the authority boundary for a denial |
 
 #### Author toolchain
@@ -4678,10 +4935,10 @@ Negative tests:
 #### Scenario steps
 
 - Time and events: `invoke(mod, event, name, payload)`, `emit(event, payload)`, `advance(ms)`,
-  `waitUntil(check, until, {everyMs, maxMs})`, `reload()`.
+  `waitUntil(check, until, {everyMs, maxMs})`, `reload()`, `state(mod, {value})` (reads, or first writes, `api.state`).
 - Views and input: `mount(mod)`, `key(mod, name)`, `activate(mod, component)`, `input(mod, component, value)`,
   `select(mod, component, value)`, `pointer(mod, component, {column, row, action})` (with `{client}` for an attached
-  client's event).
+  client's event), `component(mod, module, {instance, props, columns, rows, events})` (steps an `api.component` module).
 - Clients: `attach(name, {renderer})`, `detach(id)`.
 - Interceptors: `intercept(surface, payload, {core: [coreValue(v) | coreError(e)]})`.
 
@@ -4771,7 +5028,7 @@ A `.tsx` file in any subdirectory is an asset source too (skipping `node_modules
 - A relative import of `./row.tsx` becomes `./row.ts` in the output.
 - List the compiled name in `mod.json` `assets` (`"row.ts"`). The host accepts only `.ts`, `.mjs` and `.json` assets,
   and `package` ships only the compiled files, never the `.tsx`.
-- The 128 KiB package file limit applies to each compiled file.
+- The 512 KiB package file limit applies to each compiled file.
 - A hand-written `.ts` beside a `.tsx` fails with `jsx_entrypoint_conflict`.
 
 #### Elements and children
@@ -4827,6 +5084,28 @@ capabilities, service imports/exports, and admitted environment access with what
   `terminal.pty` source passes a `unix_sockets` or `network` option outside comments and strings.
 
 Diagnostics explain how to narrow or explicitly approve authority, but tooling cannot grant permissions by itself.
+
+### Cost report
+
+`omd-mod-author cost DIR` installs the package alone in a scratch store and measures it in the real host, `--runs`
+times (1-100, default 10), each run starting as a launch does: no warm runners and no inspection shared from an earlier host.
+Name one of the package's commands, with an optional JSON payload, to time its callbacks too.
+
+| Field | Meaning |
+| --- | --- |
+| `activation_ms` | Opening a host with the package: runner start, inspection, registration checks |
+| `first_render_ms` | The first `terminal` render after activation; absent without a `terminal` handler |
+| `fresh_callback_ms`, `reused_callback_ms` | The named command's first and second run after activation |
+| `runners` | Runners the package keeps after the last run, idle spares excluded |
+| `runner_peak_footprint_bytes` | Sum of those runners' peak physical memory |
+
+Each timing reports `first`, `p50` and `p95` in milliseconds. `first` includes the cold code cache (`<store>/cache/code`, safe to delete) and, for a newly
+written engine, the operating system's first-launch check, so compare `p50` between versions of a package. The numbers
+are host-side and exclude the terminal's draw. The scratch store has no Git checkout or session thread, so a command
+that writes `checkout` or `thread` state fails there, and a package that requires another fails activation.
+
+A runner loads ICU data on its first `Intl` or `localeCompare` use, about 5 ms; compare ASCII ids and versions with
+plain string and digit comparisons on hot paths.
 
 ## Packaging, publishing and offline scenarios
 
@@ -5062,7 +5341,7 @@ and sources, so unblocking and enabling restores it.
 lose credentials and query strings. Its events:
 
 - `install`, `update`, `uninstall`, `rollback`, `enable`, `disable`, `quarantine`, `unblock`, `revoke`, `trust`,
-  `lifecycle`
+  `lifecycle`, `lifecycle_failed` (an uninstall script failed), `managed_deploy`, `managed_sync_refused`
 - `package_refused` (with an error code and the stripped source)
 - `load_denied` (a selection rejected at reload)
 
@@ -5189,6 +5468,8 @@ Runs `check`, and while its value differs from `until` advances virtual time by 
 
 #### Pointer and client steps
 
+- A `terminal_interact` `key` runs the view's `keybindings` entry, else the first `key_contexts` binding for that key
+  (offline steps have no focus).
 - `terminal_interact` also takes `pointer: {column, row, half?, action, button?}` with `component`. The mounting mod
   receives `component_event {kind: 'pointer'}` with `origin: 'user'`, only for a `box`, `image` or `raster` mounted
   with `pointer: true` (`offline_terminal_component_not_pointer`). Adding `client: ID` delivers it as that attached
@@ -5228,7 +5509,8 @@ another request or stream hook holds the runtime.
 When a non-hook callback holds it, such as a tool waiting for the agent it spawned, a mod-spawned agent's request
 and every response stream proceed at once without hooks; other requests wait up to 2 s first.
 
-- Each skip is recorded as `middleware_skipped` with the hook and reason.
+- Each skip is recorded as `intercept_skipped` with the surface and reason (`mod_callback_in_flight` or
+  `mod_runtime_busy`).
 - A skipped or unsubscribed stream runs without stream hooks for the rest of that response.
 - The middleware log records only selections, transformations and fallbacks, and stops growing at 8 MiB.
 - These skips apply to `api.middleware` hooks. Interceptors hold the runtime only while a handler starts or
@@ -5240,7 +5522,7 @@ and every response stream proceed at once without hooks; other requests wait up 
 `service_dispatch_v1` keeps a service provider's own capability grants, source identity, storage namespace and
 host-operation provenance when a consumer calls it.
 
-- A nested call shares the initiating callback's cancellation, 128-call and 5 s execution budgets.
+- A nested call shares the initiating callback's cancellation, 512-call and 5 s execution budgets.
 - Recursive providers and chains beyond eight callback frames fail closed.
 - Standalone invocations without a provider-aware host dispatcher refuse that provider's host operation.
 - Offline `host_calls` records the actual mod caller for every mocked operation.
@@ -5248,7 +5530,7 @@ host-operation provenance when a consumer calls it.
 ### Callback budgets and the clock
 
 The host answers each host call, including `next` and `time.sleep`, inside the running callback, so a callback runs
-once and makes at most 128 host calls. Offline runners without an interactive host replay the callback once per
+once and makes at most 512 host calls. Offline runners without an interactive host replay the callback once per
 host call instead.
 
 `Date.now()` and `new Date()` return the callback's start time, advanced only by each `time.sleep`'s `slept_ms`,
@@ -5295,7 +5577,9 @@ the `terminal` event input are unchanged.
 
 Without the broker, credential profiles, the trusted grant set, the task ledger and contract state are files in the
 mod store, so any process running as the user can read or change them, including an explicitly unsandboxed child,
-and `status.authority` reports `unprotected (same-user)`.
+and `status.authority` reports `unprotected (same-user)`. Agent commands that Codex runs in its sandbox can't reach
+the mod store, workspace leases, `host.json` protected paths or secret files; commands it runs without one (approved
+escalations, allow rules, full access, an external sandbox) can.
 
 #### The broker
 
@@ -5304,6 +5588,10 @@ and `status.authority` reports `unprotected (same-user)`.
 `/var/run/dev.ohmydiff.broker.sock` only to peers whose kernel audit token resolves to a hardened-runtime binary
 whose code directory hash root has pinned. The broker asks the kernel for the running peer's signing status and
 code directory hash, never reading the executable, so binaries installed under a private home folder verify too.
+It also installs a root LaunchDaemon, `omd-broker power`, that answers only the broker's account on
+`/var/run/dev.ohmydiff.broker.power.sock` and does one thing: set `SleepDisabled` for [power holds](#power-holds-power_hold_v1)
+and put the previous value back when the last hold ends, the broker exits or it restarts after a crash, then sleep
+the Mac if its lid is closed.
 
 #### What the broker protects
 
@@ -5316,7 +5604,10 @@ host:
   as a runner grant (`runner_unverified` otherwise, `runner_changed` when the binary changes after verification).
   Only `omd-mod init`, `omd-mod authorize-runner STORE` (the installer runs it after each update) and broker grant
   import grant a runner; trusting or installing packages never does. A missing runner fails with
-  `runner_unavailable`, with no fallback to another program;
+  `runner_unavailable`, with no fallback to another program. The compiled-module cache in `<store>/cache/code` holds
+  only V8 bytecode and is not used while the broker or an administrator policy pins trust: the runner always compiles
+  the trusted package source, so the cache never supplies code text. Without the broker, a process that can write
+  the store can already change trust through `mods.json`, so the cache adds no authority there;
 - accepts a mod selection only when the broker holds the same grant (path, digest, capabilities, scope and secret
   environment), otherwise `grant_not_brokered`; enabling, disabling and settings changes don't touch the grant.
   `trust`, `trust-all`, exact broker grant import and package installs or updates add grants, and only for the
@@ -5511,7 +5802,8 @@ user and project mods; managed packages keep running while the policy lists them
 recovers from every customization.
 
 When a managed package fails, its required interceptors fail closed (`intercept_required_failed`) until an
-administrator changes or rolls back the policy. `omd-mod reset STORE managed.json` then `package-sync` repairs an
+administrator changes or rolls back the policy. An administrator's required `model_send` policy does not cover web
+search, which final-request policies never see. `omd-mod reset STORE managed.json` then `package-sync` repairs an
 unreadable deployment record, and until that sync the policy's targets fail closed as above.
 
 ## Plugin components and shell commands
@@ -5536,15 +5828,15 @@ The contained directory is an ordinary public-API package with `mod.json` and `i
 
 ### `omd COMMAND` shell dispatch
 
-`omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. It offers
+`omd COMMAND --repo PATH [--store STORE] [--home CODEX_HOME] [--sqlite-home DIR]` dispatches an exported CLI alias. It offers
 `evidence.*` and `sessions.*` only; model and process operations are unavailable. The host store must be protected
 from agent process writes. Ambiguous command ownership fails closed.
 
 ### Independent examples
 
 Independent examples live in [`examples/virtual_reader`](examples/virtual_reader),
-[`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the
-existing [`examples/workspace`](examples/workspace). They demonstrate shared interfaces, not production
+[`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and
+[`examples/workspace`](examples/workspace). They demonstrate shared interfaces, not production
 implementations.
 
 ### Evidence across compaction

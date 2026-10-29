@@ -8,13 +8,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CHANGELOG = ROOT / "changelog.json"
+CHANGELOG = ROOT / "release/changelog.json"
 MARKDOWN = ROOT / "CHANGELOG.md"
 LOCK = ROOT / "runtime/release.lock.json"
 REFERENCE = ROOT / "mods/REFERENCE.md"
+HOST_CRATES = ("runtime/omd/Cargo.toml", "runtime/omd/runner/Cargo.toml")
 REPOSITORY = "dzkchen/oh-my-diff"
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-rc\.\d+)?")
-LABELS = ("New", "Changed", "Fixed", "Decided")
+LABELS = ("New", "Changed", "Fixed")
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)|(?:href|src)=\"([^\"]+)\"")
 
 
@@ -41,7 +42,7 @@ def sections(entry):
 
 def render(entries):
     lines = ["# Changelog", "",
-             "Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and "
+             "Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and "
              "GitHub Releases use the same entries. Entries before the first release are daily development notes.", ""]
     for entry in entries:
         lines += [heading(entry), "", entry["summary"], "", *sections(entry)]
@@ -51,11 +52,10 @@ def render(entries):
 def notes(entries, version):
     entry = next((item for item in entries if item.get("version") == version), None)
     if entry is None:
-        raise SystemExit(f"changelog.json has no {version} entry")
+        raise SystemExit(f"release/changelog.json has no {version} entry")
     channel = " --channel prerelease" if "-" in version else ""
     return "\n".join([entry["summary"], "", *sections(entry),
-                      "OMD 1.0 is labeled beta: not every planned capability is included yet. The label does not mean "
-                      "unstable.", "", "```sh",
+                      "```sh",
                       f"curl --proto '=https' --tlsv1.2 -fsSL https://github.com/{REPOSITORY}/releases/download/v{version}"
                       f"/install.sh | sh -s --{channel} --profile full", "```", "",
                       f"Full history: [CHANGELOG.md](https://github.com/{REPOSITORY}/blob/v{version}/CHANGELOG.md)"]) + "\n"
@@ -63,6 +63,12 @@ def notes(entries, version):
 
 def lock_version():
     return json.loads(LOCK.read_text())["version"]
+
+
+# The host reports its crate version as the OMD release (`host.omd`), so both OMD crates carry the release version.
+def host_versions(revision=None):
+    manifests = [run("git", "show", f"{revision}:{name}") if revision else (ROOT / name).read_text() for name in HOST_CRATES]
+    return {re.search(r'^version = "([^"]+)"$', manifest, re.M).group(1) for manifest in manifests}
 
 
 def broken_links():
@@ -87,14 +93,24 @@ def anchors(path):
             for line in re.sub(r"```.*?```", "", path.read_text(), flags=re.S).splitlines() if line.startswith("#")}
 
 
-def unsynced_reference():
+def reference_drift():
     def normalized(line):
         return re.sub(r"^#+ ", "# ", re.sub(r"\]\([^)]*\)", "]", line))
 
-    combined = {normalized(line) for line in REFERENCE.read_text().splitlines()}
-    pages = sorted(page for page in (REFERENCE.parent / "reference").glob("*.md") if page.name != "README.md")
-    return [f"{page.name}: {line}" for page in pages for line in page.read_text().splitlines()[1:]
-            if line.strip() and normalized(line) not in combined]
+    index = (REFERENCE.parent / "reference/README.md").read_text()
+    pages = [REFERENCE.parent / "reference" / name for name in re.findall(r"^\| \[[^\]]+\]\(([\w-]+\.md)\)", index, re.M)]
+    if unlisted := sorted({page.name for page in (REFERENCE.parent / "reference").glob("*.md")} - {page.name for page in pages} - {"README.md"}):
+        return f"mods/reference/README.md does not list {', '.join(unlisted)}"
+    expected = [(page.name, normalized(line)) for page in pages for line in page.read_text().splitlines() if line.strip()]
+    lines = [normalized(line) for line in REFERENCE.read_text().splitlines() if line.strip()]
+    titles = {normalized(page.read_text().split("\n", 1)[0]) for page in pages}
+    actual = lines[next((index for index, line in enumerate(lines) if line in titles), len(lines)):]
+    for (name, line), found in zip(expected, actual):
+        if line != found:
+            return f"mods/REFERENCE.md has {found!r} where mods/reference/{name} has {line!r}"
+    if len(actual) != len(expected):
+        return f"mods/REFERENCE.md has {len(actual)} lines after the topic pages begin, the pages in reference/README.md order have {len(expected)}"
+    return None
 
 
 def check(version=None):
@@ -120,16 +136,19 @@ def check(version=None):
     if [entry["date"] for entry in entries] != sorted((entry["date"] for entry in entries), reverse=True):
         problems.append("entries must be newest first")
     if MARKDOWN.read_text() != render(entries):
-        problems.append("CHANGELOG.md is stale; regenerate it from changelog.json with `python3 scripts/release.py render`")
+        problems.append("CHANGELOG.md is stale; regenerate it from release/changelog.json with `python3 scripts/release.py render`")
     if version is not None:
         if not VERSION.fullmatch(version):
             problems.append(f"{version} is not vMAJOR.MINOR.PATCH or -rc.N")
         if lock_version() != version:
             problems.append(f"runtime/release.lock.json is {lock_version()}, not {version}")
+        if host_versions() != {version}:
+            problems.append(f"the OMD host crates are {', '.join(sorted(host_versions()))}, not {version}")
         if not entries or entries[0].get("version") != version:
             problems.append(f"the newest changelog entry is not {version}")
     problems += [f"broken link {item}" for item in broken_links()]
-    problems += [f"mods/REFERENCE.md lacks mods/reference/{item}" for item in unsynced_reference()]
+    if drift := reference_drift():
+        problems.append(drift)
     if problems:
         raise SystemExit("\n".join(problems))
     print(f"release metadata consistent{f' for {version}' if version else ''}")
@@ -146,7 +165,7 @@ def changes(commits, existing=()):
     grouped = {label: [] for label in LABELS}
     for section in existing:
         grouped[section["label"]] += section["items"]
-    context = json.loads(run("git", "cliff", "--context", "--config", ROOT / "cliff.toml"))
+    context = json.loads(run("git", "cliff", "--context", "--config", ROOT / "release/cliff.toml"))
     for item in (commit for release in context for commit in release["commits"]):
         line = item["message"].splitlines()[0]
         text = line[:1].upper() + line[1:]
@@ -170,6 +189,9 @@ def prepare(version, summary):
     run("git", "fetch", "--tags", "origin", "main")
     if run("git", "tag", "--list", tag):
         raise SystemExit(f"{tag} already exists")
+    if host_versions("origin/main") != {version}:
+        raise SystemExit(f"main's OMD host crates are {', '.join(sorted(host_versions('origin/main')))}, not {version}: "
+                         "bump codex-omd and codex-omd-runner in the patch and merge that first")
     merged = json.loads(run("git", "show", "origin/main:runtime/release.lock.json"))["version"] == version
     if merged:
         run("git", "tag", "--annotate", tag, "--message", f"Oh My Diff {version}", "origin/main")
@@ -198,7 +220,7 @@ def prepare(version, summary):
     run("git", "push", "--set-upstream", "origin", branch)
     run("gh", "pr", "create", "--repo", REPOSITORY, "--base", "main", "--head", branch,
         "--title", f"chore(release): {version}",
-        "--body", "Review and edit the generated `changelog.json` entry, then run `python3 scripts/release.py render`. "
+        "--body", "Review and edit the generated `release/changelog.json` entry, then run `python3 scripts/release.py render`. "
                   f"Run `mise run release -- {version}` again to cover changes merged to main since, and once more after "
                   "this merges to tag it.", capture=False)
 
@@ -241,7 +263,7 @@ def main():
     prepare_parser.add_argument("--summary", help="one-sentence release summary")
     check_parser = commands.add_parser("check", help="verify changelog, links and, with VERSION, release versions")
     check_parser.add_argument("version", nargs="?")
-    commands.add_parser("render", help="regenerate CHANGELOG.md from changelog.json")
+    commands.add_parser("render", help="regenerate CHANGELOG.md from release/changelog.json")
     commands.add_parser("notes").add_argument("version")
     rollback_parser = commands.add_parser("rollback", help="withdraw a published release")
     rollback_parser.add_argument("version")

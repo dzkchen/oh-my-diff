@@ -1,8 +1,9 @@
 # Agent mod guide
 
 For coding agents building an Oh My Diff (OMD) mod. Follow it top to bottom. Everything here is for mod API
-`1.0.0`, Codex `0.163.0`, Apple Silicon macOS and Node 24.18 or a later 24.x. Only this API
-version loads: check `api` in a mod's `mod.json` against it before reusing older code.
+`1.0.0`, Codex `0.164.0`, Apple Silicon macOS and, for `omd-mod-author` only, Node 24.18 or a later 24.x (mods
+themselves run in OMD's own runtime, not Node). Only this API version loads: check `api` in a mod's `mod.json` against
+it before reusing older code.
 
 Ground rules:
 
@@ -26,7 +27,7 @@ See [Mods, plugins and hooks](../mods/REFERENCE.md#mods-plugins-and-hooks) for w
 
 ```sh
 command -v omd-mod-author omd-mod omd
-node --version                  # v24.18 or later 24.x
+node --version                  # v24.18 or later 24.x, needed only by omd-mod-author
 pnpm --version                  # 11.14 or later
 ```
 
@@ -66,6 +67,9 @@ Add TypeScript once so `pnpm check` checks types:
 ```sh
 pnpm add -D typescript@5.9.3
 ```
+
+Before step 4 replaces `index.ts`, run `pnpm debug` once: its scenario expects a deliberate error and shows it mapped
+to its `index.ts` line, then exits 0.
 
 To start from a bigger working mod, copy one: `omd-mod-author example ./release_check release_check` (or
 `examples ./examples` for all 15). `release_check` shows tools, a command, stream interception and a list view;
@@ -140,7 +144,9 @@ export default function activate(api: ModAPI) {
 ```
 
 The code reads settings from `api.settings`. A setting property may have only `type` (`boolean`, `number`,
-`string`, `array`, `object` or `null`), `enum` and `default`; `integer`, `minimum` and similar keys are refused.
+`string`, `array`, `object` or `null`), `enum`, `default`, `title` and `description`; `integer`, `minimum` and
+similar keys are refused.
+A user may also set them in `settings/<mod id>.json` (or `.yaml`) in the mod store; `api.settingsFile` has its path and status ([reference](../mods/REFERENCE.md#settings-file-settings_file_v1)).
 
 Where to look things up:
 
@@ -160,7 +166,7 @@ Where to look things up:
 Rules that trip agents up:
 
 - Import only types from `@oh-my-diff/mod-api` and files declared in `mod.json` `assets` by relative path
-  (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 128 KiB per file, 256 KiB of entrypoint plus assets.
+  (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 512 KiB per file, 1 MiB of entrypoint plus assets.
 - Don't write `process.` outside a string, or `window.` or `document.` anywhere. Node and browser globals aren't
   there. The host scans the source when it loads the mod (`pnpm test`, `pnpm run`, activation in `codex`) and refuses
   it with `undeclared_environment_use: process`; `omd mods update` and install don't scan.
@@ -193,7 +199,6 @@ Replace `mod.test.json`:
 ```
 
 ```sh
-pnpm debug       # before the next line: a deliberate failure, mapped to its index.ts line
 rm debug.test.json   # it calls the scaffold's /hello, which step 4 replaced
 pnpm check       # syntax and types; prints "check: ok"
 pnpm test        # mod.test.json, then the type check, then any *.test.ts or *.test.mjs files
@@ -252,7 +257,7 @@ omd-mod-author report /tmp/notes-store # declared versus used permissions
 omd-mod-author explain 'capability_denied: exec'
 ```
 
-Inside `codex`, a mod that fails shows in the Mod errors panel and in `/omd`. An activation error
+Inside `codex`, a mod that fails shows in the Mod errors card above the prompt and in `/omd`. An activation error
 `conflict: NAME` means `activate` registered the same command, handler, timer or component name twice.
 
 ## 7. Install, update and remove
@@ -272,8 +277,8 @@ To rehearse on a scratch store first, create one with `omd-mod init /tmp/install
 add `--store /tmp/install-store` to each command (use a different store from
 step 6, where `watch` already turned the mod on). In a non-interactive shell the prompt can't show, so the command
 stops with `package_approval_required`; show the user the permissions in `notes/mod.json`, and pass `--yes` only after
-they agree. `omd install --scope project ./notes` installs it for the current project only; it overrides the same mod
-installed for the user.
+they agree. `omd install --scope project ./notes` installs it for the current project only; it fails with
+`package_scope_conflict` if the same mod is installed for the user.
 
 An update that changes `state_version` keeps the mod off with `state_migration_required` until its saved data is
 converted. Register a handler that rewrites the state, then run `omd-mod migrate STORE notes` and enable it again:
@@ -294,7 +299,7 @@ api.on('migrate', ({ from }) => {
 | The mod breaks `codex` | `omd mods disable notes` from any shell, or `/omd` inside `codex`; `omd mods list` says why it failed |
 | An update broke it | `omd mods disable notes`, `omd mods rollback notes`, then `omd mods enable notes` |
 | `codex` won't start with mods | `omd-package activate direct`, then `omd-package activate full` once fixed |
-| Bad state after a change | Bump `state_version` and add a `migrate` handler ([compatibility](../mods/COMPATIBILITY.md#state-changes)) |
+| Bad state after a change | Bump `state_version` and add a `migrate` handler ([compatibility](../mods/conformance/COMPATIBILITY.md#state-changes)) |
 | A denial you don't understand | `omd-mod-author explain 'DENIAL TEXT'` |
 
 More repairs are in [Install and manage mods](manage-mods.md#when-a-mod-misbehaves).
@@ -335,10 +340,11 @@ with `notes` in place of `my_mod`. Publishing is public: ask the user first.
 ## What is supported
 
 - **Installed and on:** the default OMD+ mods in [the collection](collection.md).
-- **Installed, off until turned on:** the opt-in OMD+ mods and the three plugins.
+- **Installed, off until turned on:** the opt-in OMD+ mods and the four plugins.
 - **Frozen or experimental:** API `1.0.0` is stable. Entries that
   [`contract.json`](../mods/conformance/contract.json) marks frozen keep their shape; experimental ones may change,
-  including raster and `terminal.blit` frames and `omd/*` external-client methods.
+  including raster and `terminal.blit` frames, `omd/*` external-client methods and the `experimental_fields` of
+  frozen entries.
 - **Authority:** a mod gets only the capabilities its manifest lists and the user trusts. Codex and the host keep
   the sandbox, approvals and credentials; permissions the user grants (`os`, network, `approve`, secrets) run with
   the user's authority. See [Composition and safety](../mods/REFERENCE.md#composition-and-safety).

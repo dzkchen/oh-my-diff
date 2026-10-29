@@ -23,9 +23,7 @@ export function createClient(api: ModAPI) {
   };
   const stopServer = (s: State) => api.host.tryCall('process.stop', { session: s.adapter });
   const readFiles = (paths: string[]) => budget({ paths }, a => api.host.tryCall('workspace.read', a));
-  // Reads only documents whose hash differs from the tracked one, in batches that fit the receipt room twice (read, then sent to the server).
-  // A file over the batch size is read alone, or refused with a reason when it cannot fit. A file that is not UTF-8 reads as absent and is
-  // remembered by hash, so it is not read again until it changes.
+  // Batches fit the receipt room twice (read, then sent to the server); non-UTF-8 files are remembered by hash so they aren't reread until changed.
   const readDocuments = (paths: string[], stats: Record<string, FileStat | null>, s: State): Result<Record<string, Source>> => {
     const files: Record<string, Source> = {};
     const total = (list: string[]) => list.reduce((sum, path) => sum + (stats[path]?.size ?? 0), 0);
@@ -239,7 +237,7 @@ export function createClient(api: ModAPI) {
       const outbound: Json[] = [];
       for (const path of Object.keys(s.documents)) {
         if (tracked.size <= 96) break;
-        if (chunk.includes(path)) continue;
+        if (chunk.includes(path) || path === selected[0]) continue;
         tracked.delete(path);
         outbound.push({ jsonrpc: '2.0', method: 'textDocument/didClose', params: doc(s, path) });
         delete s.documents[path];

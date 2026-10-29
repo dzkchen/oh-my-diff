@@ -272,6 +272,12 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
     let base = json!({"schema": 1, "deny": ["denied"], "capabilities": ["interception"], "packages": [
         entry("guard", &guard, &guard_sha, json!({"settings": {"mode": "strict"}}))]});
     admin.administer(base.clone(), "alice");
+    std::fs::create_dir_all(store.root().join("settings")).unwrap();
+    std::fs::write(
+        store.root().join("settings/guard.json"),
+        r#"{"mode":"open"}"#,
+    )
+    .unwrap();
     let host = admin.host("alice");
     assert_eq!(active(&host), ["guard@1.0.0", "plain@1.0.0"]);
     assert!(
@@ -295,6 +301,10 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
     assert_eq!(
         row("guard", "managed")["settings_origin"],
         json!({"mode": "managed"})
+    );
+    assert_eq!(
+        row("guard", "managed")["settings_file"]["status"],
+        "ignored"
     );
     assert_eq!(
         row("plain", "user")["settings_origin"],
@@ -349,6 +359,124 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
         ["guard@1.0.0"],
         "mod-only recovery keeps managed packages"
     );
+}
+
+#[test]
+fn an_unreadable_deployment_record_keeps_loaded_user_mods_running() {
+    let admin = Admin::new();
+    let store = admin.store("alice");
+    let (hello, hello_sha) = admin.package("hello", "hello", COMMAND, &["commands"]);
+    trust(&store, &hello, &hello_sha, &["commands"], "user");
+    admin.write_policy(json!({"schema": 1}));
+    std::fs::write(admin.root.join("store-alice/managed.json"), b"invalid").unwrap();
+    let mut host = admin.host("alice");
+    let generation = host.generation();
+    assert_eq!(
+        host.invoke("hello", generation, "command", "hello", Value::Null)
+            .unwrap(),
+        json!("hi")
+    );
+}
+
+#[test]
+fn selection_status_and_activation_agree_on_precedence_and_changed_sources() {
+    let admin = Admin::new();
+    let store = admin.store("alice");
+    let (user, user_sha) = admin.package("user", "twin", COMMAND, &["commands"]);
+    let (first, first_sha) = admin.package("first", "twin", COMMAND, &["commands"]);
+    let (second, second_sha) = admin.package("second", "twin", COMMAND, &["commands"]);
+    let (edited, edited_sha) = admin.package("edited", "edited", COMMAND, &["commands"]);
+    for (path, sha256, scope) in [
+        (&first, &first_sha, "project"),
+        (&second, &second_sha, "project"),
+        (&user, &user_sha, "user"),
+        (&edited, &edited_sha, "user"),
+    ] {
+        store
+            .trust(path.clone(), sha256, vec!["commands".into()], scope)
+            .unwrap();
+    }
+    let path = admin.root.join("store-alice/mods.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for selection in config["mods"].as_array_mut().unwrap() {
+        selection["enabled"] = json!(true);
+    }
+    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+    std::fs::write(edited.join("index.ts"), format!("{COMMAND};")).unwrap();
+    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
+    let status = host.status();
+    let code = |reason: &Value| {
+        reason
+            .as_str()
+            .unwrap()
+            .split(':')
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    let selections = store.selection_status().unwrap()["selections"].clone();
+    let selections = selections.as_array().unwrap();
+    let rows = selections
+        .iter()
+        .map(|row| {
+            let reason = code(if row["error"].is_null() {
+                &row["reason"]
+            } else {
+                &row["error"]
+            });
+            (
+                row["path"].as_str().unwrap().to_owned(),
+                (row["effective"].as_bool().unwrap(), reason),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut activation = status["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|rejection| {
+            (
+                rejection["path"].as_str().unwrap().to_owned(),
+                (false, code(&rejection["reason"])),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    for loaded in status["mods"].as_array().unwrap() {
+        let row = selections
+            .iter()
+            .find(|row| {
+                ["id", "scope", "sha256"]
+                    .iter()
+                    .all(|key| row[key] == loaded[key])
+            })
+            .unwrap();
+        activation.insert(
+            row["path"].as_str().unwrap().to_owned(),
+            (true, "selected".to_owned()),
+        );
+    }
+    assert_eq!(
+        rows.iter()
+            .map(|(path, (effective, _))| (path, effective))
+            .collect::<Vec<_>>(),
+        activation
+            .iter()
+            .map(|(path, (effective, _))| (path, effective))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(rows[edited.to_str().unwrap()].1, "source_changed");
+    assert_eq!(activation[edited.to_str().unwrap()].1, "untrusted_source");
+    for (path, reason) in [
+        (&first, "mod_conflict"),
+        (&second, "mod_conflict"),
+        (&user, "shadowed_by_project_scope"),
+    ] {
+        assert_eq!(rows[path.to_str().unwrap()], (false, reason.to_owned()));
+        assert_eq!(
+            activation[path.to_str().unwrap()],
+            (false, reason.to_owned())
+        );
+    }
 }
 
 #[test]

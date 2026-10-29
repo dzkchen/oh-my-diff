@@ -28,6 +28,9 @@ next request or for the thread.
 (`OMD_SECRETS`, JSON `[{id, label, origin, value}]`) into the sidecar only; values never reach the mod runtime or
 the model.
 
+`sidecars.status {id}` returns `{id, running, started_at_ms}` for a sidecar or provider service the caller started
+in this process. Compare `started_at_ms` with a store entry's `provenance.at` to tell whether it predates a change.
+
 ### Credential origins
 
 Every credential profile sends its token to one origin, fixed at enrollment:
@@ -74,7 +77,7 @@ with a loopback `responses_url` defines its `route.provider` for the process (at
 at each registration) unless the configuration already defines it; a grant with exactly one secret uses it as the bearer token. A
 thread resumed after its provider is gone continues on the configured provider.
 
-The experimental `providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
+`providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
 efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, default `provider`). It needs a running `providers.register` registration whose
 grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
 or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
@@ -129,7 +132,7 @@ thread from event, tool and terminal slash-command callbacks, recorded only whil
 
 ### `sessions.read`
 
-The experimental `sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
+`sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
 `local_visible_records`:
 
 | Record | Fields |

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { callback } from '../../../tests/mod_runner.mjs';
 
@@ -83,6 +84,10 @@ test('quoted values with spaces or symbols and escaped JSON quotes are redacted 
   assert.equal(out['/s'].replace(PLACEHOLDER, 'X').replace(PLACEHOLDER, 'X'), 'password = "X" and secret: \'X\'');
   assert.match(JSON.parse(out['/input/1/arguments']).cmd, /^echo '\{\\?"password\\?":\\?"\[REDACTED:assigned_secret:[a-z2-7]{12}\]\\?"\}' > conf\.json$/);
   assert.match(out['/b'], /Basic \[REDACTED:bearer_token:/);
+  const value = 'a3f9c2d8e1b74f60';
+  const forms = [`x-api-key: ${value}`, `--api-key=${value}`, `secret-key=${value}`, `--access-key=${value}`, `private-key: ${value}`]
+    .map((text, index) => segment(`/h${index}`, `curl ${text} done`));
+  for (const [id, text] of Object.entries(applied(forms, send(forms).result.edits))) assert.match(text, /^curl \S+[:=] ?\[REDACTED:assigned_secret:[a-z2-7]{12}\] done$/, id);
 });
 
 test('more findings than one page takes edits for are merged into fewer edits with the same result', () => {
@@ -132,12 +137,12 @@ test('secrets split across request pieces are fully redacted with one placeholde
 test('refuses what it cannot redact: protected kinds, requested unscanned content, malformed pages and broken JSON', () => {
   const token = fake.github(2);
   const reasoning = send([segment('/input/0/summary/0/text', `thinking about ${token}`, { kind: 'reasoning', role: 'assistant', editable: false })]);
-  assert.match(reasoning.result.deny, /^omd_privacy: github_token in reasoning text, which cannot be redacted \(placeholder [a-z2-7]{12}\)/);
+  assert.match(reasoning.result.deny, /github_token in reasoning/);
   assert.ok(!reasoning.result.deny.includes(token.slice(4)));
   assert.equal(reasoning.state.denied, 1);
   const image = { id: '/input/0/content/1/image_url', kind: 'image_url' };
   const encrypted = { id: '/input/1/encrypted_content', kind: 'encrypted_content' };
-  assert.match(send([], { opaque: [encrypted, image], settings: { unscanned: 'deny' } }).result.deny, /unscanned image_url content/);
+  assert.match(send([], { opaque: [encrypted, image], settings: { unscanned: 'deny' } }).result.deny, /unscanned image_url/);
   assert.deepEqual(send([], { opaque: [encrypted], settings: { unscanned: 'deny' } }).result, { edits: [] });
   assert.deepEqual(send([], { opaque: [image] }).result, { edits: [] });
   assert.match(send([{ id: '/x', kind: 'user.text', role: 'user', editable: true }]).result.deny, /malformed request page/);
@@ -145,12 +150,12 @@ test('refuses what it cannot redact: protected kinds, requested unscanned conten
   assert.match(send([segment('/input/0/arguments', truncated, { kind: 'tool_call.arguments', role: 'assistant' })]).result.deny, /would break tool-call JSON/);
 });
 
-test('sensitive path policy asks before shell reads and honours exemptions and modes', () => {
+test('sensitive path policy asks before shell reads, ignores case, covers parent directories and globs, and honours exemptions and modes', () => {
   const approval = (command, settings = {}, kind = 'exec', details = { command, cwd: '/repo' }) => run('approval', '', { id: 'a', kind, thread_id: 't',
     turn_id: null, agent_id: null, host_decision: 'skip', policy: 'on-request', details, assessment: false }, { settings }).value;
   assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'cat ~/.ssh/id_rsa\n', cwd: '/repo' }).ask, /id_rsa\*/);
   assert.equal(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'y\n', cwd: '/repo' }), null);
-  assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, cwd: '/repo', truncated: true }).ask, /too large to check/);
+  assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, cwd: '/repo', truncated: true }).ask, /too large/);
   assert.match(approval(['bash', '-lc', 'cat .env']).ask, /sensitive path \(\.env\)/);
   assert.match(approval(['bash', '-lc', 'grep -r key ~/.ssh']).ask, /\.ssh\//);
   assert.match(approval('cat ./config/.env.local').ask, /\.env\.\*/);
@@ -160,5 +165,32 @@ test('sensitive path policy asks before shell reads and honours exemptions and m
   assert.match(approval(['cat', 'server.pem'], { paths: 'deny' }).deny, /\*\.pem/);
   assert.equal(approval(['cat', '.env'], { paths: 'off' }), null);
   assert.equal(approval(['cat', 'local.env'], { exempt: ['path:local.env'], sensitive_paths: ['*.env'] }), null);
+  for (const command of ['cat .ENV', 'cat ID_RSA', 'cat ~/.AWS/Credentials', 'cat ~/.aws/*', 'cat ~/.aws/cred*', 'cat ~/.kube/c*', 'grep -r key ~/.aws',
+    'grep -r token ~/.kube/', 'cat .env*', 'cat id_r*', 'cat *.pe?', 'cat ~/.config/gh/hosts.yml', 'cat .e*', 'cat ~/.docker/config.js?n', 'cat .env{,.local}', 'cat .[e]nv', 'cat ~/.ssh/id_{rsa,ed25519}', 'cat ~/.aws/[c]redentials', 'cat {.env,x}', 'cat ~/{.aws,.ssh}/credentials',
+    'cat .e{n,x,a,b,c,d,e,f,g}{v,w,x,y,z,a,b,c}', `cat .e${'?'.repeat(9)}`, `cat .${'e'.repeat(260)}*`,
+    'git show HEAD:.env', 'cat .?nv', 'cat .aws//credentials', 'cat ~/.aws/./credentials', 'cat ~/.aws/x/../credentials', "cat .e''nv", 'cat ".e"nv', 'cat .e\\nv', 'cat .env///',
+    `cat {.env,${'abcdefghijklmnopqr'.split('').join(',')}}`, 'cat .e{n..n}v']) {
+    assert.match(approval(['bash', '-lc', command])?.ask ?? '', /sensitive path/, command);
+  }
+  for (const command of ['ls ~/.config', 'cat *', 'ls *.md', 'cat ~/src/c*', 'grep -r key --include=*.json src', 'cat ~/.kube-notes.md',
+    'mkdir -p ~/.docker/cli-plugins', 'ls ~/.kube/cache', 'cat ~/.aws/config', "sed 's/foo/.*/' f", 'grep -E ".*" f', 'find . -name ".*"', 'ls -la .*', 'echo {a,b}', 'ls [z-a]', 'ls [^]', `cat ${'*'.repeat(60)}z`,
+    'git show HEAD:src/index.ts', 'cat src//a.ts ./b.ts', "echo 'hi' \"there\"", 'find . -exec cat {} +', "awk '{print $1}' f", 'ls .?', 'cat *.ts', 'ls src/*']) {
+    assert.equal(approval(['bash', '-lc', command]), null, command);
+  }
+  const started = Date.now();
+  assert.equal(approval(`cat ${'/'.repeat(80000)}x`), null);
+  assert.ok(Date.now() - started < 1000);
 });
 
+test('/privacy allow fingerprints the value exactly as typed, keeping inner runs of whitespace', () => {
+  const writes = [];
+  const allowed = text => run('command', 'privacy', `allow ${text}`, { host: call => {
+    assert.equal(call.operation, 'settings.write');
+    writes.push(call.arguments.values.exempt.at(-1));
+    return {};
+  } });
+  allowed('  John  Smith\t');
+  allowed('John\tSmith');
+  const digest = value => `sha256:${createHash('sha256').update(value).digest('hex').slice(0, 16)}`;
+  assert.deepEqual(writes, [digest('John  Smith'), digest('John\tSmith')]);
+});

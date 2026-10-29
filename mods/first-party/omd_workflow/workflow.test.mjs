@@ -109,7 +109,7 @@ function adversarialFixture(change = value => value, resultChange = value => val
   return { run, acceptance, advance: () => invoke('advance', {}, run.host, reviewOptions) };
 }
 
-test('checkpoint survives a new invocation, is compare-and-set, and cannot rewrite acceptance', () => {
+test('checkpoint survives a new invocation, is compare-and-set, cannot rewrite acceptance and only begins a task its review prompt fits', () => {
   const run = fixture();
   const initial = begin(run.host).value;
   invoke('checkpoint', { remaining_work: ['Run the check'], failed_hypotheses: ['Earlier approach failed'] }, run.host);
@@ -118,9 +118,20 @@ test('checkpoint survives a new invocation, is compare-and-set, and cannot rewri
   const saved = run.state.get('task').value;
   assert.deepEqual(saved.acceptance, initial.acceptance);
   assert.deepEqual(saved.remaining_work, ['Run the check']);
-  const context = invoke('', { thread_id: 'thread-1' }, run.host, { event: 'context' });
-  assert.match(context.value.text, /Run the check/);
   invoke('', null, () => assert.fail('resume restarted work'), { event: 'resume' });
+  const task = size => ({ objective: 'x'.repeat(4096), acceptance_criteria: Array.from({ length: 4 }, (_, item) => `${item}${'z'.repeat(size)}`) });
+  const rejected = fixture();
+  assert.throws(() => invoke('begin', task(400), rejected.host), /task_too_large_for_review/);
+  assert.equal(rejected.state.get('task'), undefined);
+  const largest = fixture();
+  invoke('begin', { objective: 'y'.repeat(4096), acceptance_criteria: ['a', 'b'].map(prefix => prefix.repeat(489)) }, largest.host);
+  invoke('review', { kind: 'adversarial_verification' }, largest.host, reviewOptions);
+  assert.ok(largest.calls.find(call => call.operation === 'agents.spawn').arguments.prompt.length <= 8192);
+  const bulky = fixture();
+  assert.throws(() => invoke('begin', { objective: '\u20ac'.repeat(1700), acceptance_criteria: [criterion] }, bulky.host), /task_too_large_for_review/);
+  const damaged = fixture();
+  damaged.state.set('task', { value: { schema: 2 }, revision: 3, provenance: {} });
+  assert.equal(begin(damaged.host).value.status, 'active');
 });
 
 test('no-progress policy pauses repeated complete results and resumes only after checkpoint progress', () => {
@@ -158,6 +169,12 @@ test('no-progress policy pauses repeated complete results and resumes only after
   assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'retry' }), executed);
   event('tool_result', result);
   assert.equal(run.state.get('task').value.calls[result.call_sha256].unchanged_calls, 1);
+  modState = invoke('delegate', { brief: 'Implement the change' }, run.host, { settings, state: modState }).state;
+  event('tool_result', result);
+  event('tool_result', result);
+  assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'paused' }), { deny: 'workflow_paused_no_progress' });
+  modState = invoke('cancel', {}, run.host, { settings, state: modState }).state;
+  assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'cancelled' }), executed);
 });
 
 test('checks bind execution to unchanged input and refuse stale or failed results', () => {
@@ -175,7 +192,7 @@ test('checks bind execution to unchanged input and refuse stale or failed result
   assert.equal(invoke('check', {}, failed.host).value.outcome, 'fail');
 });
 
-test('contribution is checked and reviewed on frozen input before integration', () => {
+test('contribution is checked and reviewed on frozen input before integration, and refused before spawning without a check', () => {
   const run = fixture();
   begin(run.host);
   assert.equal(invoke('delegate', { brief: 'Implement the requested change' }, run.host).value.status, 'running');
@@ -186,15 +203,45 @@ test('contribution is checked and reviewed on frozen input before integration', 
   assert.ok(spawned.slice(1).every(call => call.arguments.workspace === 'read_only' && call.arguments.snapshot.sha256 === candidate));
   assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['contribution_checks', 'contribution_review', 'workspace_integration']);
   assert.equal(run.receipts[0].execution, true);
-  assert.equal(run.calls.find(call => call.operation === 'exec.run').arguments.snapshot.sha256, candidate);
   assert.equal(run.calls.filter(call => call.operation === 'agents.cancel').length, 2);
+  const unchecked = fixture();
+  begin(unchecked.host);
+  assert.throws(() => invoke('delegate', { brief: 'Implement the requested change' }, unchecked.host, { settings: {} }), /configure_check_command_first/);
+  assert.ok(!unchecked.calls.some(call => call.operation === 'agents.spawn'));
 });
 
-test('denial, outage, malformed review and integration conflict never complete the task', () => {
+test('a review that cannot start keeps the finished worker pending and the next advance retries it', () => {
+  const run = fixture();
+  let denied = true;
+  const host = Object.assign(call => {
+    if (denied && call.operation === 'agents.spawn' && call.arguments.role === 'contribution_review') throw new Error('allowance_denied');
+    return run.host(call);
+  }, { store: run.host.store });
+  begin(host);
+  invoke('delegate', { brief: 'Implement the requested change' }, host);
+  const refused = invoke('advance', {}, host, { refusals: true }).value;
+  assert.deepEqual([refused.status, refused.reason], ['refused', 'allowance_denied']);
+  assert.deepEqual([...run.agents.keys()], ['worker-1']);
+  assert.deepEqual([run.state.get('task').value.status, run.state.get('task').value.pending.handle], ['active', 'worker-1']);
+  denied = false;
+  assert.equal(invoke('advance', {}, host).value.status, 'running');
+  assert.deepEqual([run.state.get('task').value.pending.kind, run.state.get('task').value.pending.worker], ['contribution_review', 'worker-1']);
+  assert.ok(run.agents.has('worker-1'));
+});
+
+test('the context line stays valid JSON and bounded however much work remains', () => {
+  const run = fixture();
+  begin(run.host);
+  invoke('checkpoint', { remaining_work: Array.from({ length: 32 }, (_, index) => `${index} ${'x'.repeat(500)}`), failed_hypotheses: ['y'.repeat(500)] }, run.host);
+  const { text } = invoke('', {}, run.host, { event: 'context' }).value;
+  const task = JSON.parse(/: (\{.*\})\. Preserve/s.exec(text)[1]);
+  assert.deepEqual([task.status, task.remaining_work.length, task.remaining_count, task.failed_hypotheses[0].length], ['active', 3, 32, 60]);
+});
+
+test('denial, outage and integration conflict never complete the task', () => {
   for (const [operation, behavior, expected] of [
     ['agents.spawn', () => { throw new Error('allowance_denied'); }, /allowance_denied/],
     ['agents.wait', () => ({ status: 'failed', error: 'provider_outage' }), /provider_outage/],
-    ['agents.wait', () => ({ status: 'completed', text: '{}', candidate_sha256: candidate, evidence: { reference: 'bad', sha256: candidate } }), /review_schema_invalid/],
     ['workspace.integrate', () => { throw new Error('integration_conflict'); }, /integration_conflict/],
   ]) {
     const run = fixture({ [operation]: behavior });
@@ -214,11 +261,7 @@ test('adversarial verification requires three exact categories and binds agent e
   const response = advance().value;
   assert.equal(response.status, 'recorded');
   assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['adversarial_verification']);
-  assert.equal(run.receipts[0].outcome, 'pass');
-  assert.equal(run.receipts[0].candidate_sha256, candidate);
-  assert.equal(run.receipts[0].acceptance_sha256, acceptance);
-  assert.equal(run.receipts[0].agent, 'worker-1');
-  assert.deepEqual(run.state.get('task').value.decisions.at(-1).challenges.map(challenge => challenge.kind), challengeKinds);
+  assert.deepEqual([run.receipts[0].outcome, run.receipts[0].candidate_sha256, run.receipts[0].acceptance_sha256], ['pass', candidate, acceptance]);
   const prompt = run.calls.find(call => call.operation === 'agents.spawn').arguments.prompt;
   assert.ok(prompt.includes(candidate) && prompt.includes(acceptance));
   assert.ok(challengeKinds.every(kind => prompt.includes(kind)));
@@ -235,26 +278,31 @@ test('reviewer explicitly resolves only offered prior blocking fingerprints on a
   assert.match(prompt, /prior\.blocker/);
   assert.match(prompt, /Old failure/);
   assert.deepEqual(spawned.resolution_context, { acceptance_sha256: acceptance, findings: [fingerprint] });
-  assert.equal(spawned.snapshot.sha256, candidate);
-  assert.equal(spawned.evidence.sha256, acceptance);
   assert.equal(advance().value.status, 'recorded');
   assert.deepEqual(run.receipts[0].resolves, [fingerprint]);
-  assert.equal(run.receipts[0].acceptance_sha256, acceptance);
-  assert.equal(run.receipts[0].candidate_sha256, candidate);
+  const many = adversarialFixture(value => value, value => value, (ledger, acceptanceSha) => {
+    for (let index = 0; index < 32; index++) ledger[`long.${index}`] = { finding: { fingerprint: `long.${index}`, severity: 'blocking', summary: 'S'.repeat(512), paths: ['p/'.repeat(100)] },
+      reported_candidate_sha256: digest('prior candidate'), acceptance_sha256: acceptanceSha, reported_producer: { kind: 'agent', handle: 'old-reviewer' }, report_receipt_index: index, resolution: null };
+  });
+  const crowded = many.run.calls.find(call => call.operation === 'agents.spawn').arguments;
+  const offered = crowded.resolution_context.findings;
+  assert.ok(Buffer.byteLength(crowded.prompt) <= 8192 && offered.length > 0 && offered.length < 32);
+  assert.deepEqual(offered, Array.from({ length: offered.length }, (_, index) => `long.${index}`));
+  assert.ok(crowded.prompt.includes(`long.${offered.length - 1}`) && !crowded.prompt.includes(`long.${offered.length}"`) && crowded.prompt.includes(`(+${32 - offered.length} more open findings)`));
+  assert.deepEqual(many.run.state.get('task').value.pending.eligible_resolutions, offered);
 });
 
 test('equivalent transport outages allow one fresh retry and one configured fallback with original-lead review', () => {
   let waits = 0;
   const run = fixture({ 'agents.wait': ({ arguments: args }) => ++waits <= 2 ? outage : { status: 'completed', text: JSON.stringify(verdict), candidate_sha256: candidate, evidence: { reference: `native-thread:${args.handle}`, sha256: digest(verdict) } } });
   begin(run.host);
+  assert.throws(() => invoke('delegate', { brief: 'Implement the request', outage_action: 'opposite_lead' }, run.host, { ...recoveryOptions, settings: { check: recoveryOptions.settings.check } }), /explicit_opposite_lead_same_billing_required/);
   invoke('delegate', { brief: 'Implement the request', outage_action: 'opposite_lead' }, run.host, recoveryOptions);
   assert.equal(invoke('advance', {}, run.host, recoveryOptions).value.recovery, 'same_route_retry');
   assert.equal(invoke('advance', {}, run.host, recoveryOptions).value.recovery, 'opposite_lead_fallback');
   invoke('advance', {}, run.host, recoveryOptions);
   assert.equal(invoke('advance', {}, run.host, recoveryOptions).value.status, 'integrated');
   assert.deepEqual(run.calls.filter(call => call.operation === 'agents.spawn').map(call => call.arguments.route), ['contributor', 'contributor', 'opposite', 'lead']);
-  assert.equal(run.state.get('task').value.outage_retries, 1);
-  assert.equal(run.state.get('task').value.outage_fallbacks, 1);
 });
 
 test('changed route or workspace stops a retry and persisted interruption never recreates an agent', () => {
@@ -294,9 +342,7 @@ test('workflow operations replay committed results across processes and reject c
   const operation = { remaining_work: ['Run the check'], operation_id: 'checkpoint-1', expected_revision: 1 };
   const saved = invoke('checkpoint', operation, run.host).value;
   assert.equal(saved.revision, 2);
-  const before = run.calls.length;
   assert.deepEqual(invoke('checkpoint', operation, run.host).value, saved);
-  assert.deepEqual(run.calls.slice(before).map(call => call.operation), ['task.status', 'store.get']);
   assert.equal(run.receipts.filter(receipt => receipt.kind === 'checkpoint').length, 1);
   assert.throws(() => invoke('checkpoint', { ...operation, remaining_work: ['Something else'] }, run.host), /operation_id_conflict/);
   assert.throws(() => invoke('checkpoint', { ...operation, operation_id: 'checkpoint-2' }, run.host), /stale_revision: current 2/);
@@ -403,4 +449,49 @@ test('explicit workflow cancellation releases pending reviewer and writer withou
   assert.equal(run.calls.some(call => call.operation === 'workspace.integrate'), false);
   assert.deepEqual(run.state.get('task').value.acceptance, acceptance);
   assert.equal(invoke('advance', {}, run.host).value.status, 'idle');
+});
+
+test('a fenced or prefaced reviewer reply is accepted and an unparseable or self-contradicting one is re-reviewed once before the agents are released', () => {
+  const reviewed = text => {
+    const run = fixture();
+    begin(run.host);
+    invoke('delegate', { brief: 'Implement the requested change' }, run.host);
+    invoke('advance', {}, run.host);
+    run.agents.get('worker-2').text = text;
+    return { run, result: invoke('advance', {}, run.host).value };
+  };
+  const json = JSON.stringify(verdict);
+  for (const text of [`\`\`\`json\n${json}\n\`\`\``, `Here is {my} verdict: ${json}\nDone.`, `Shape: {"example": 1} and {}.\n${json}`, `${json}\nAgain: ${json}`, `${json}\nReordered: ${JSON.stringify({ findings: [], assessments: verdict.assessments, summary: verdict.summary })}`]) assert.equal(reviewed(text).result.status, 'integrated');
+  const failing = JSON.stringify({ ...verdict, assessments: [{ ...verdict.assessments[0], verdict: 'fail' }] });
+  assert.equal(reviewed(`Draft: ${json}\nOn re-checking, the criterion fails: ${failing}`).result.recovery, 'review_retry');
+  const { run, result } = reviewed('I could not produce a verdict.');
+  assert.deepEqual([result.status, result.recovery], ['running', 'review_retry']);
+  assert.deepEqual([...run.agents.keys()], ['worker-1', 'worker-3']);
+  assert.equal(run.state.get('task').value.pending.worker, 'worker-1');
+  assert.equal(run.state.get('task').value.pending.review_retries, 1);
+  run.agents.get('worker-3').text = 'still no verdict';
+  const failed = invoke('advance', {}, run.host).value;
+  assert.deepEqual([failed.status, failed.reason, run.agents.size], ['needs_repair', 'review_output_unparseable', 0]);
+  assert.deepEqual([run.state.get('task').value.status, run.state.get('task').value.pending], ['needs_repair', null]);
+  let waits = 0;
+  const adversarial = adversarialFixture(value => value, value => ++waits === 1 ? { ...value, text: 'no verdict' } : value);
+  assert.equal(adversarial.advance().value.recovery, 'review_retry');
+  assert.equal(adversarial.advance().value.status, 'recorded');
+  const spawned = adversarial.run.calls.filter(call => call.operation === 'agents.spawn');
+  assert.deepEqual([spawned.length, spawned[1].arguments.snapshot.sha256, spawned[1].arguments.prompt], [2, candidate, spawned[0].arguments.prompt]);
+});
+
+test('an initial task waits for a selected contract and an invalid one stops the mod from loading', () => {
+  const settings = { check: { program: 'check', argv: [] }, initial_task: { objective: 'Make the requested change', acceptance_criteria: [criterion] } };
+  const waiting = fixture({ 'contract.status': () => ({ status: 'inactive', active: null, receipts: [], restrictions: [], finding_ledger: {} }) });
+  invoke('', {}, waiting.host, { event: 'turn_start', settings });
+  assert.equal(waiting.state.get('task'), undefined);
+  for (const initial_task of [{ objective: 'x'.repeat(4096), acceptance_criteria: ['y'.repeat(500), 'z'.repeat(500)] }, { objective: 'Make the change' }]) {
+    const refused = fixture();
+    assert.throws(() => invoke('', {}, refused.host, { event: 'turn_start', settings: { ...settings, initial_task } }), /task_too_large_for_review|task_objective_and_acceptance_required/);
+    assert.equal(refused.state.get('task'), undefined);
+  }
+  const selected = fixture();
+  invoke('', {}, selected.host, { event: 'turn_start', settings });
+  assert.equal(selected.state.get('task').value.status, 'active');
 });

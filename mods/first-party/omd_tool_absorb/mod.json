@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "omd_tool_absorb",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Runs identical read-only tool calls from one response once and reuses unchanged reads in a code-mode cell",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_tool_absorb"},
+  "capabilities": ["interception", "tools", "fs.read", "inventory", "store", "events", "lifecycle", "commands"],
+  "compatibility": {"required_features": ["tool_batch_v1", "tool_batch_success_v1", "code_mode_values_v1", "continuation_middleware_v1", "tool_continuation_v2", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1"]},
+  "settings_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+}

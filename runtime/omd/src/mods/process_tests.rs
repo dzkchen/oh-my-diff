@@ -6,6 +6,8 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
+const BUDGET: Duration = Duration::from_secs(2);
+
 #[test]
 fn reused_process_resets_callback_globals_and_reloads_source() {
     let mut request = json!({"source":"let count = 0; export default api => api.command('count', () => { globalThis.marker = (globalThis.marker ?? 0) + 1; Array.prototype.marker = (Array.prototype.marker ?? 0) + 1; return { count: ++count, marker: globalThis.marker, intrinsic: [].marker, state: api.state.get() }; });",
@@ -17,7 +19,8 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
         let reply = super::evaluate_warm(
             "fresh-context",
             &request,
-            Duration::from_secs(2),
+            None,
+            BUDGET,
             &|| true,
             &mut |_| unreachable!(),
         )
@@ -33,7 +36,8 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
     let error = super::evaluate_warm(
         "fresh-context",
         &request,
-        Duration::from_secs(2),
+        None,
+        BUDGET,
         &|| started.elapsed() < Duration::from_millis(100),
         &mut |_| unreachable!(),
     )
@@ -51,20 +55,15 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
     let reply = super::evaluate_warm(
         "fresh-context",
         &request,
-        Duration::from_secs(2),
+        None,
+        BUDGET,
         &|| true,
         &mut |_| unreachable!(),
     )
     .unwrap();
     assert_eq!(reply["value"], json!({"changed":true}));
     request["reuse"] = json!(false);
-    let once = super::evaluate(
-        &request,
-        Duration::from_secs(2),
-        &|| true,
-        &mut |_| unreachable!(),
-    )
-    .unwrap();
+    let once = super::evaluate(&request, None, BUDGET, &|| true, &mut |_| unreachable!()).unwrap();
     assert_eq!(reply, once);
     super::invalidate_warm("fresh-context");
 }
@@ -79,7 +78,8 @@ fn reused_process_resends_changed_package_fields_and_replaces_a_runner_that_died
         evaluate_warm(
             "kept-fields",
             request,
-            Duration::from_secs(2),
+            None,
+            BUDGET,
             &|| true,
             &mut |_| unreachable!(),
         )
@@ -132,7 +132,8 @@ fn a_render_runner_killed_idle_by_the_watchdog_fails_the_next_render_once() {
         evaluate_warm(
             "idle-watchdog",
             &request,
-            Duration::from_secs(2),
+            None,
+            BUDGET,
             &|| true,
             &mut |_| unreachable!(),
         )
@@ -165,7 +166,8 @@ fn reused_process_keeps_each_packages_authority_and_host_identity() {
             let reply = evaluate_warm(
                 "cross-package",
                 &request,
-                Duration::from_secs(2),
+                None,
+                BUDGET,
                 &|| true,
                 &mut |frame| {
                     assert_eq!(event, "command");
@@ -201,6 +203,7 @@ fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
         evaluate_warm(
             "memory-limit",
             request,
+            None,
             Duration::from_secs(5),
             &|| true,
             &mut |_| unreachable!(),
@@ -211,6 +214,7 @@ fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
     request["reuse"] = json!(false);
     let error = super::evaluate(
         &request,
+        None,
         Duration::from_secs(5),
         &|| true,
         &mut |_| unreachable!(),
@@ -241,7 +245,8 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
         let error = evaluate_warm(
             "registration-mutation",
             &request,
-            Duration::from_secs(2),
+            None,
+            BUDGET,
             &|| true,
             &mut |_| unreachable!(),
         )
@@ -269,7 +274,8 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
     let reply = evaluate_warm(
         "registration-input",
         &request,
-        Duration::from_secs(2),
+        None,
+        BUDGET,
         &|| true,
         &mut |_| unreachable!(),
     )
@@ -286,7 +292,8 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
     let error = evaluate_warm(
         "cancelled-render",
         &request,
-        Duration::from_secs(2),
+        None,
+        BUDGET,
         &|| false,
         &mut |_| unreachable!(),
     )

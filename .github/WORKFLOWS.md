@@ -2,9 +2,32 @@
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
+| `pr.yml` | pull requests and merge queue | Portable checks, selected native compilation, one `PR gate` status |
 | `validate.yml` | called by the two below | Tests, builds and packages on `macos-15` |
 | `nightly.yml` | daily at 07:17 UTC, or **Run workflow** | Validates; on `main` publishes a nightly prerelease |
 | `release.yml` | `vX.Y.Z` or `vX.Y.Z-rc.N` tag; **Run workflow** is a dry run | Checks versions, validates, publishes the release |
+
+## Pull requests
+
+Every PR runs mod type/static checks, native ownership, first-party mod and plugin lock freshness, selected
+host-free Python tests and workflow linting on Linux. Superseded runs are cancelled. There is no workflow-level path
+filter, so documentation PRs also report `PR gate`. The gate requires successful selection and portable checks, and
+successful native checks when selected; only an intentionally unselected native job may be skipped.
+
+Changes outside Markdown, `docs/`, mod examples/first-party packages, plugins and Python/Node `tests/` select macOS
+patch replay, drift checking and compilation, tests included, of the crates nightly tests plus `codex-cli` and
+`codex-exec`. This conservative default includes unknown paths, API definitions, dependency locks, shared scripts
+and workflow changes. Pull requests compare the merge commit with its first parent. Renames examine both paths. All
+`runtime/` changes, including Markdown mirrors, select native checks to detect patch drift. Other package-only and
+documentation-only changes avoid Rust builds. Native tests are compiled here; their execution and full validation
+remain in nightly and release workflows.
+
+PR, nightly and release jobs use the same Cargo download-cache keys. PR runs only restore: a patch edit falls back
+to the newest cache for the same platform and upstream pin. Only nightly and release runs save, since a cache saved
+by a PR is visible to that PR alone.
+
+`main` requires **PR gate** with an up-to-date branch. Dependabot (`dependabot.yml`) opens one grouped pull request a
+month for GitHub Actions updates. There are no dependency license or scheduled vulnerability checks yet.
 
 ## Validation
 
@@ -13,7 +36,9 @@
 - `test` sets up the pinned Codex tree, applies and re-syncs the patch, and fails if the result differs from the
   checkout. It then runs native tests, Clippy on patched paths, Rustfmt, native ownership, lock drift and mod type
   checks. One upstream test, `filtered_host_additional_permissions`, is excluded as a known baseline failure. The
-  `codex-core` integration suite is advisory for a release and required for a nightly.
+  `codex-core` integration suite is advisory for a release and required for a nightly. Tests run in parallel under
+  `cargo nextest` with upstream's `.config/nextest.toml` and the overrides in `.github/nextest.toml`, one process
+  per test with one retry; doc tests run under `cargo test`. Jobs work under `/Users/runner/omd`, not `/tmp`, which a sandboxed command may write.
 - `build` builds and signs the release host binaries in parallel with `test`.
 - `package` takes those binaries, runs mod tests, Python tests, mod-host scenarios and client acceptance, then packs
   one archive for both profiles and tests install, reinstall, uninstall and recovery.
@@ -29,7 +54,9 @@ prerelease and never marked latest.
 
 ## Releases
 
-The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `changelog.json`.
+The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `release/changelog.json`. The
+host reports its crate version as the OMD release, so first set `codex-omd` and `codex-omd-runner` to the release
+version in a scratch tree, `build.py sync` and merge that; `mise run release` and `release.yml` refuse a mismatch.
 
 1. `mise run release -- 1.2.0 --summary "One sentence."` opens a `chore(release): 1.2.0` pull request with the version
    and a changelog entry with one line per pull request or direct commit merged to `main` since the last one. Edit the entry if needed, then run

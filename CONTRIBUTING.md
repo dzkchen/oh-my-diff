@@ -12,6 +12,15 @@ small, focused changes fit best. For anything large, open an issue first.
   code in `runtime/` only gets general building blocks that many mods can use, never a single feature.
 - **A bug or docs fix:** send a pull request.
 
+## Find your way around
+
+- `runtime/`: the Codex patch, the OMD host crates and the release locks.
+- `mods/`: the published SDK at its top level (the `.d.ts` types, `author/` tooling, `REFERENCE.md` and `reference/`
+  docs), checked data in `conformance/`, and packages in `first-party/`, `examples/` and `ports/`.
+- `plugins/`, `extensions/`: bundled plugins and the curated package index.
+- `scripts/`, `tests/`, `install.sh`: build, install and check tooling. `docs/`: user and author guides.
+- `release/`: the changelog source and its `git-cliff` config. `docker/`: the Linux build container.
+
 ## Set up
 
 You need an Apple Silicon Mac with [mise](https://mise.jdx.dev) and [pnpm](https://pnpm.io) 11.14 or later.
@@ -47,7 +56,7 @@ Edit Rust in a scratch copy of upstream Codex at the pinned version, never `runt
 ```sh
 python3 .github/scripts/build.py setup NAME                                  # prints the scratch tree path
 python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER # cargo in the tree; LOG is a log file path
-python3 .github/scripts/build.py sync NAME                                   # writes runtime/ back and checks it replays
+python3 .github/scripts/build.py sync NAME                                   # writes runtime/ and crate notices back, checks it replays
 python3 .github/scripts/build.py locks                                       # regenerates the source locks
 ```
 
@@ -57,23 +66,25 @@ python3 .github/scripts/build.py locks                                       # r
   `omd-runner` and links it beside the test binaries, where hosts look for it.
 - **Layout:** the tree is `/private/tmp/omd-bNAME/codex` and its target `/private/tmp/omd-bNAME/target`; `OMD_WORK_ROOT`
   replaces `/private/tmp`. The pinned upstream source, without the patch, is the tree's `normalized<version>` tag
-  (`git -C TREE diff normalized1630 -- codex-rs/PATH`).
+  (`git -C TREE diff normalized1640 -- codex-rs/PATH`).
+- **Crate notices:** `sync` regenerates `runtime/crate-notices.txt` with `scripts/crate_notices.py TREE`; the patch sync
+  check in CI fails when it is stale.
 - **Mods:** the tree's `mods/` links to your checkout, so mod edits are ordinary edits there. Run `build.py locks` after
   changing `mods/first-party/` or `plugins/` and commit the result.
 - **V8:** `omd-runner` and `codex-cli` link a V8 prebuilt: fetch it once with `python3 .github/scripts/build.py v8 NAME`.
   A host started from the target finds `omd-runner` beside itself, so build both (`-p codex-cli -p codex-omd-runner`).
-- **Check:** the regression test for your fix, the crate's tests (`-- --test-threads=1`),
+- **Check:** the regression test for your fix, the crate's tests (`cargo NAME LOG nextest run --locked -p CRATE`),
   `cargo NAME LOG clippy --locked -p CRATE --tests`, `rustfmt` on the files you changed and `mise run native:ownership`.
   `sync` must report `"tree_parity": true`; `setup` and `sync` on a fresh `NAME` must leave `git diff` unchanged.
   `runtime/release.lock.json` is rebuilt from signed binaries at release time, so a native change leaves it as is.
 
 ### Linux container
 
-The `Dockerfile` gives a Debian environment with the pinned Rust, Node, Python and pnpm, for building and testing
+`docker/Dockerfile` gives a Debian environment with the pinned Rust, Node, Python and pnpm, for building and testing
 without a Mac. OMD itself supports only Apple Silicon macOS, and the mod host runs mods only there.
 
 ```sh
-docker build -t oh-my-diff .
+docker build -f docker/Dockerfile -t oh-my-diff .
 docker run --rm -it -v omd-work:/home/omd/work oh-my-diff   # then the build.py commands above
 ```
 
@@ -105,4 +116,5 @@ The maintainer cuts releases; the process is in [.github/WORKFLOWS.md](.github/W
 ## License
 
 Your contributions are under the [MIT License](LICENSE). Changes under `runtime/patches`, `runtime/omd` and
-`runtime/native` are Apache-2.0, like the Codex code they patch ([NOTICE](NOTICE)).
+`runtime/native` are Apache-2.0, like the Codex code they patch, and so are changes to the `token_weather` and
+`blast_radius` ports in `mods/ports` ([NOTICE](NOTICE)).

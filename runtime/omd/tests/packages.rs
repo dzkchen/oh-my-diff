@@ -698,7 +698,7 @@ fn repository_blobs_are_refused_while_reading_past_the_package_limits() {
     git(&repository, &["config", "user.name", "Fixture"]);
     let store = store(&temp);
     let mut refusals = Vec::new();
-    for (file, limit) in [("main.ts", 131_072), ("mod.json", 8192)] {
+    for (file, limit) in [("main.ts", 524_288), ("mod.json", 8192)] {
         let path = package.join(file);
         let mut bytes = std::fs::read(&path).unwrap();
         bytes.resize(4 << 20, b'\n');
@@ -1311,12 +1311,12 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
         value["capabilities"] = json!(["commands"]);
         value["entrypoint"] = json!("big.ts");
     });
-    std::fs::write(package.join("big.ts"), vec![b'/'; 131_072]).unwrap();
+    std::fs::write(package.join("big.ts"), vec![b'/'; 524_288]).unwrap();
     assert!(ModStore::inspect_package(&package).is_ok());
-    std::fs::write(package.join("big.ts"), vec![b'/'; 131_073]).unwrap();
+    std::fs::write(package.join("big.ts"), vec![b'/'; 524_289]).unwrap();
     assert!(
         refusal(&store, request(&package, &["commands"]))
-            .contains("file_limit: big.ts exceeds 131072 bytes")
+            .contains("file_limit: big.ts exceeds 524288 bytes")
     );
     std::fs::remove_file(package.join("big.ts")).unwrap();
     std::fs::create_dir(package.join("big.ts")).unwrap();
@@ -1503,6 +1503,33 @@ fn install(store: &ModStore, request: ModInstallRequest) -> codex_omd::ModPackag
 }
 
 #[test]
+fn staging_sweeps_only_leftovers_older_than_an_hour() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["exec"], json!([]));
+    let store = store(&temp);
+    let data = root.join("store");
+    let cache = data.join("package-cache/fixture");
+    let leftover = |path: PathBuf, age: u64| {
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age))
+            .unwrap();
+        path
+    };
+    let old_npm = leftover(data.join(".npm-0123456789ab.old.tmp"), 7200);
+    let old_cache = leftover(cache.join(".sha256-old.old.tmp"), 7200);
+    let fresh = leftover(data.join(".repository-0123456789ab.new.tmp"), 0);
+    let unrelated = leftover(data.join("kept.tmp"), 7200);
+    install(&store, request(&package, &["exec"]));
+    assert!(!old_npm.exists());
+    assert!(!old_cache.exists());
+    assert!(fresh.exists());
+    assert!(unrelated.exists());
+}
+
+#[test]
 fn an_update_keeps_activation_only_when_every_approval_input_is_unchanged() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -1575,4 +1602,75 @@ fn package_requests_refuse_a_wrong_action_another_scope_and_nested_index_sources
         .unwrap_err()
         .to_string();
     assert!(error.contains("index_release_source_invalid"), "{error}");
+}
+
+#[test]
+fn one_copy_of_a_mod_is_on_and_removing_the_package_keeps_the_bundled_copy() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["exec"], json!([]));
+    let bundled = mod_package(
+        &root.join("sources"),
+        "fixture",
+        "1.0.0",
+        &["exec"],
+        json!([]),
+    );
+    let store = store(&temp);
+    install(&store, request(&package, &["exec"]));
+    store.package_enable("fixture").unwrap();
+    let sha256 = ModStore::inspect_package(&bundled).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(bundled.clone(), &sha256, vec!["exec".into()], "user")
+        .unwrap();
+    let refused = store.enable(&bundled, true).unwrap_err().to_string();
+    assert!(
+        refused.contains("mod_conflict: fixture is already on"),
+        "{refused}"
+    );
+
+    store.package_disable("fixture").unwrap();
+    store.enable(&bundled, true).unwrap();
+    let refused = store.package_enable("fixture").unwrap_err().to_string();
+    assert!(
+        refused.contains("mod_conflict: fixture is already on"),
+        "{refused}"
+    );
+
+    let uninstall = store.package_uninstall_plan("fixture").unwrap();
+    store
+        .package_uninstall("fixture", &uninstall.confirmation)
+        .unwrap();
+    let mods = store.configuration().unwrap().mods;
+    assert_eq!(mods.len(), 1);
+    assert_eq!(mods[0].path, bundled);
+    assert!(mods[0].enabled);
+}
+
+#[test]
+fn a_store_written_by_1_0_0_is_read_and_its_node_entry_dropped() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = store(&temp);
+    let file = store.root().join("mods.json");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    config["node"] = json!("/opt/node/bin/node");
+    std::fs::write(&file, serde_json::to_vec(&config).unwrap()).unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &[], json!([]));
+    let sha256 = ModStore::inspect_package(&package).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(package.clone(), &sha256, Vec::new(), "user")
+        .unwrap();
+    store.enable(&package, true).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert!(written.get("node").is_none(), "{written}");
+    assert_eq!(written["mods"][0]["enabled"], true);
 }

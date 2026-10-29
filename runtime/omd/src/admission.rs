@@ -3,9 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::fs::OpenOptions;
 use std::fs::{self};
-use std::io::Write;
 use std::io::{self};
 use std::path::Path;
 use std::path::PathBuf;
@@ -657,16 +655,8 @@ impl Task {
                 return Err(denied("evidence event exceeds size limit"));
             }
             let path = self.evidence.join(format!("{:08}.json", state.sequence));
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)?;
-            let written = file
-                .write_all(&bytes)
-                .and_then(|()| file.sync_all())
-                .and_then(|()| {
-                    crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes))
-                });
+            crate::fsio::create_new(&path, &bytes)?;
+            let written = crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes));
             if written.is_err() {
                 let _ = fs::remove_file(&path);
             }
@@ -1161,6 +1151,7 @@ impl Task {
             .ok_or_else(|| denied("unknown request"))?;
         if attempt.status == "unknown"
             || attempt.settled_microusd.is_some()
+            || attempt.provider_billed
             || !raw_usage.is_object()
         {
             return Err(denied("request settled or invalid raw usage"));

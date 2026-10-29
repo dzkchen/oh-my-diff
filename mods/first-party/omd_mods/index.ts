@@ -2,10 +2,11 @@ import type { Json, ModAPI, PackageCatalogEntry, PackageRequest, PackageState, T
 
 type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; from: string; generation: number };
 type Scope = 'user' | 'project';
-const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'required', 'effective', 'pending', 'failed', 'blocked'] as const;
+const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'required', 'effective', 'pending', 'failed', 'blocked', 'compatible', 'conflicts'] as const;
 type Listed = Pick<PackageState, typeof FIELDS[number]>;
 type Saved = { generation: number; packages: Listed[]; reloadError: string | null; review: Review | null; notice: string | null;
   catalog: PackageCatalogEntry[]; catalogError: string | null; scope: Scope };
+type Remembered = { onboarded?: boolean; selected?: string; query?: string };
 type Property = { type?: string; enum?: Json[]; default?: Json; title?: string; description?: string; choices?: 'routes' };
 const EMPTY: Saved = { generation: 0, packages: [], reloadError: null, review: null, notice: null, catalog: [], catalogError: null, scope: 'user' };
 const LIST = 'mods';
@@ -14,7 +15,21 @@ const UNSET = '-';
 const kept = (item: Pick<PackageState, 'id' | 'required'>) => item.id === SELF || item.required;
 const labelOf = (name: string, property?: Property) => property?.title ?? name.replace(/_/g, ' ');
 const word = (value: string) => /^\S{1,128}$/.test(value);
-const numeric = new Intl.Collator(undefined, { numeric: true }).compare;
+// No Intl.Collator: it loads ICU data in every runner.
+const compare = (a: string, b: string) => {
+  const [x, y] = [a.toLowerCase(), b.toLowerCase()];
+  return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
+};
+const runs = (value: string) => value.match(/\d+|\D+/g) ?? [];
+const numeric = (a: string, b: string) => {
+  const [x, y] = [runs(a), runs(b)];
+  for (let index = 0; index < Math.max(x.length, y.length); index++) {
+    const [p = '', q = ''] = [x[index], y[index]];
+    const order = /^\d/.test(p) && /^\d/.test(q) ? Math.sign(Number(p) - Number(q)) : compare(p, q);
+    if (order) return order;
+  }
+  return 0;
+};
 const newer = (version: string, than: string) => {
   const [core, pre = ''] = version.split(/-(.*)/s), [base, basePre = ''] = than.split(/-(.*)/s);
   return (numeric(core, base) || (!pre === !basePre ? numeric(pre, basePre) : pre ? -1 : 1)) > 0;
@@ -23,13 +38,16 @@ const ACRONYMS = new Set(['cli', 'lsp', 'api', 'mcp', 'ui']);
 const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const SHOWN = 98;
 const CATALOG = 120;
-const TABS = [{ id: 'installed', title: 'Installed' }, { id: 'settings', title: 'Settings' }, { id: 'directory', title: 'Directory' }];
+// The catalog is kept in UI state, which the host caps at 64 KiB (validate_ui_state); stop paging once the raw index pages reach it.
+const INDEX_BYTES = 65_536;
+const TABS = [{ id: 'installed', title: 'All' }, { id: 'settings', title: 'Settings' }, { id: 'directory', title: 'Directory' }];
+const GROUPS = ['Needs attention', 'On', 'Off'];
 
 export default function activate(api: ModAPI) {
-  const compare = new Intl.Collator().compare;
   const encoder = new TextEncoder();
   const saved = (): Saved => ({ ...EMPTY, ...(api.uiState.get() as Partial<Saved> | null ?? {}) });
-  const onboarded = () => (api.state.get() as { onboarded?: boolean } | null)?.onboarded ?? false;
+  const remembered = (): Remembered => (api.state.get() as Remembered | null) ?? {};
+  const onboarded = () => remembered().onboarded ?? false;
   const visible = (value: string, limit = 400) => [...value.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, ' ')].slice(0, limit).join('');
   const clip = (value: string, bytes: number) => { const text = visible(value, bytes); return text.slice(0, encoder.encodeInto(text, new Uint8Array(bytes)).read); };
   const key = (item: Pick<PackageState, 'id' | 'scope'>) => `${item.scope}:${item.id}`;
@@ -49,15 +67,17 @@ export default function activate(api: ModAPI) {
   };
   const ordered = (packages: Listed[]) => packages.sort((a, b) => Number(!a.failed) - Number(!b.failed) || compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
   const search = (state: Saved): Saved => {
-    const trimmed = (entry: PackageCatalogEntry): PackageCatalogEntry => ({ ...entry, description: clip(entry.description, 120), versions: entry.versions.filter(item => !item.blocked).slice(0, 1) });
+    const trimmed = ({ id, latest, description, versions, installed }: PackageCatalogEntry): PackageCatalogEntry =>
+      ({ id, latest, description: clip(description, 120), support: null, versions: versions.filter(item => !item.blocked).slice(0, 1), installed });
     const catalog: PackageCatalogEntry[] = [];
-    let cursor: string | undefined;
+    let cursor: string | undefined, received = 0;
     do {
       const found = api.host.tryCall('packages.index', { limit: Math.min(50, CATALOG - catalog.length), ...cursor && { cursor } });
       if (!found.ok) return { ...state, catalog: [], catalogError: found.error };
       catalog.push(...found.value.packages.map(trimmed));
+      received += encoder.encode(JSON.stringify(found.value)).length;
       cursor = found.value.cursor ?? undefined;
-    } while (cursor && catalog.length < CATALOG);
+    } while (cursor && catalog.length < CATALOG && received < INDEX_BYTES);
     return { ...state, catalog, catalogError: null };
   };
   // A successful change reloads mods, which refuses this callback's later panel calls; the host then reruns every open panel's action.
@@ -146,6 +166,14 @@ export default function activate(api: ModAPI) {
     const config = configured(review.changes);
     return `${review.label}: ${changed(review.changes)} · new permissions: ${review.grants.join(', ') || 'none'}${config.length ? ` · Codex config: ${config.join(', ')}` : ''}`;
   };
+  const attention = (item: Listed) => Boolean(item.failed || item.blocked || !item.compatible || item.conflicts.length);
+  const group = (item: Listed) => attention(item) ? GROUPS[0] : item.enabled ? GROUPS[1] : GROUPS[2];
+  const commands = (): Map<string, string[]> => {
+    const listed = api.host.tryCall('commands.list', null);
+    const owned = new Map<string, string[]>();
+    for (const row of listed.ok ? listed.value.commands : []) if (row.owner && !row.hidden) owned.set(row.owner, [...owned.get(row.owner) ?? [], `/${row.command}`]);
+    return owned;
+  };
   const status = (item: Listed) =>
     !item.installed ? 'removed' : item.blocked ? 'quarantined' : item.failed ? 'failed' : item.pending ? item.effective ? 'stopping' : 'starting'
       : item.effective ? 'on' : item.enabled ? 'shadowed' : 'off';
@@ -160,12 +188,18 @@ export default function activate(api: ModAPI) {
     const installed = state.packages.filter(item => item.installed);
     const on = installed.filter(item => item.effective).length;
     const shown = installed.slice(0, SHOWN);
-    const toggles = shown.map(item => {
+    const owned = commands();
+    const toggles = [...shown].sort((a, b) => GROUPS.indexOf(group(a)) - GROUPS.indexOf(group(b))).map(item => {
       const word = status(item);
       const extra = word === 'on' || word === 'off' ? null : word;
       const fixed = kept(item) && item.enabled;
-      return entry({ id: key(item), tab: 'installed', label: friendly(item.id), ...fixed ? { kind: 'action' } : { kind: 'toggle', value: item.enabled },
-        description: [fixed ? 'always on' : extra, item.scope === 'project' ? 'this project' : null, item.description].filter(Boolean).join(' · ') });
+      const names = owned.get(item.id) ?? [];
+      return entry({ id: key(item), tab: 'installed', group: group(item), label: friendly(item.id), ...fixed ? { kind: 'action' } : { kind: 'toggle', value: item.enabled },
+        description: [fixed ? 'always on' : extra, item.scope === 'project' ? 'this project' : null, item.description].filter(Boolean).join(' · '),
+        keywords: clip([item.id, ...names].join(' '), 256),
+        detail: clip([`${word} · ${item.scope === 'project' ? 'this project' : 'every project'}`, names.length ? `Commands: ${names.join(' ')}` : 'No commands',
+          item.failed && `Why it failed: ${brief(item.failed)}`, item.blocked && `Quarantined: ${item.blocked}`, !item.compatible && 'Needs a newer Oh My Diff',
+          ...item.conflicts.map(conflict => `Conflict: ${conflict}`)].filter(Boolean).join(' · '), 512) });
     });
     const settings = shown.map(item => entry({ id: `open:${key(item)}`, tab: 'settings', label: `${friendly(item.id)} ›`, kind: 'action', description: item.description ?? undefined }));
     const sources: TerminalPanelItem[] = [
@@ -176,14 +210,17 @@ export default function activate(api: ModAPI) {
     const offered = state.catalog.flatMap(item => {
       const local = item.installed ? state.packages.find(other => other.id === item.id) : undefined;
       if (item.installed && (!local || !newer(newest(item), item.installed))) return [];
-      return [entry({ id: local ? `update:${key(local)}` : `get:${item.id}`, tab: 'directory', kind: 'action',
-        label: local ? `${friendly(item.id)} ${item.installed} → ${newest(item)}` : `${friendly(item.id)} ${item.latest}`,
-        description: local ? `Update available · ${item.description}` : item.description })];
+      return [entry(local ? { id: `update:${key(local)}`, tab: 'directory', kind: 'action', label: `${friendly(item.id)} ${item.installed} → ${newest(item)}`,
+        description: `Update available · ${item.description}` }
+        : { id: `get:${item.id}`, tab: 'installed', group: 'Available', kind: 'action', label: `${friendly(item.id)} ${item.latest}`, description: item.description,
+          keywords: item.id, detail: `Not installed · Enter reviews installing it for ${state.scope === 'project' ? 'this project' : 'you'}` })];
     });
     const catalog = offered.slice(0, Math.max(0, 200 - toggles.length - settings.length - sources.length));
+    const { selected, query } = remembered();
     return {
       title: 'Mods', subtitle: subtitle([`${on} of ${installed.length} on`, installed.length > SHOWN && `Showing ${SHOWN}; open another with /mods MOD`, state.reloadError && `The last change was rejected; your mods keep running as before. ${brief(state.reloadError)}`, state.notice]),
       tabs: TABS, search: true, action: { command: 'mods', args: `panel ${state.scope}` }, items: [...toggles, ...settings, ...sources, ...catalog],
+      ...selected ? { selected } : {}, ...query ? { query } : {}, close_args: 'closed',
     };
   };
   const settingItem = (item: PackageState, name: string, property: Property): TerminalPanelItem | null => {
@@ -249,6 +286,11 @@ export default function activate(api: ModAPI) {
   api.command('mods', input => {
     const raw = String(input ?? '');
     const [verb = '', ...rest] = raw.trim().split(/\s+/);
+    if (verb === 'closed') {
+      const [, selected, query] = words(raw, 2);
+      api.state.set({ ...remembered(), selected: selected === UNSET ? undefined : selected, query: clip(query, 128) || undefined } as Json);
+      return null;
+    }
     const current = saved();
     if (!verb || verb === 'open') return show(listing(store(search(refresh({ ...current, review: null }, null)))));
     const lost = api.uiState.get() === null;
@@ -300,7 +342,7 @@ export default function activate(api: ModAPI) {
   api.on('terminal', (input): TerminalPatch | null => {
     const phase = input.presentation?.phase;
     const done = onboarded();
-    if (!done && phase && phase !== 'fresh') api.state.set({ onboarded: true });
+    if (!done && phase && phase !== 'fresh') api.state.set({ ...remembered(), onboarded: true } as Json);
     if (done || phase !== 'fresh') return null;
     return { sites: { welcome: { mode: 'wrap', components: [{ type: 'slot' }, ...welcome(input.identity)] } } };
   });

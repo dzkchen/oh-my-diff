@@ -1,7 +1,7 @@
 # Mod API reference
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.163.0`.
-`omd-mod status` reports the host version as `omd` (`1.0.0` in OMD `1.0.0`). Only this API version loads. [`api.d.ts`](../api.d.ts) is the complete typed surface.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.164.0`.
+`omd-mod status` reports the OMD release as `host.omd`, the version `compatibility.releases` matches. Only this API version loads. [`api.d.ts`](../api.d.ts) is the complete typed surface.
 
 [`REFERENCE.md`](../REFERENCE.md) has every page below in one file, for agents and search.
 
@@ -15,25 +15,44 @@ A store also generates declarations for the running host:
 
 ## Stability
 
-API `1.0.0` is stable. [The conformance registry](../conformance/contract.json) marks each public operation, event,
+API `1.0.0` is stable. [The conformance registry](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/contract.json) marks each public operation, event,
 capability, interceptor, component, render site, view field, classic hook and author command as frozen or
 experimental:
 
 - Frozen entries keep their shape through `2027-10-19`; a breaking change needs a major version and a migration note.
 - Experimental ones may change in any release.
+- A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
+  experimental too.
 
-Version and support rules are in [COMPATIBILITY.md](../COMPATIBILITY.md).
+Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
 - Raster frame streaming: `terminal.blit`, the `raster` component, `process_raster_v1` and `raster_pixels_v1`.
-- Component modules (`api.component`, `component_modules_v1`) and `component_post`.
-- The `composer_key` and `mention` interceptors, `completion_tokens_v1` and `history_persist`.
-- `sessions.read` with the `sessions_tools` capability, and the `below_composer` site.
+- The `composer_key`, `mention` and `component_change` interceptors and `completion_tokens_v1`.
+- HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
+- `routes.write` (`route_write_v1`), added after 1.0.0.
+- `api.settingsFile` and the settings file (`settings_file_v1`).
+- Focus regions, `key_contexts`, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus`
+  (`terminal_focus_v1`).
+- Layout leaf `title` (`terminal_layout_title_v1`).
+- Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
+- `tools.original` (`tool_original_v1`), added after 1.0.0.
+- The `omd-mod-author cost` report, added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
+
+### Migration notes
+
+- Host calls per callback rise from 128 to 512 (`budget.hostCalls` starts at 512). The raise is additive: a mod that
+  counted calls or stayed under 128 keeps working. The other limits raised with it (the callback transport budget,
+  `process.exchange` and tool interceptor output, `api.state`, package files, view JSON, evidence pages and
+  registrations per mod) only admit more than before, with two visible changes: `evidence.read` without `max_bytes`
+  returns pages of up to 64 KiB instead of 16 KiB, and a `tool` replacement the model cannot take (over 64 KiB and
+  longer than the original, which for a retried call is the latest attempt's output) is dropped with a diagnostic
+  after the chain instead of being refused inside it. Either way the original output stands.
 
 ## Contents
 
@@ -43,7 +62,7 @@ rich children inside buttons (a button uses its typed `text`), audio, telemetry 
 | [Capabilities and authority grants](capabilities.md) | Every capability, authority grants, structured access, admission policy |
 | [Commands, files and data](exec-files-and-data.md) | `exec.run`, workspace reads and writes, `store.*`, reactive state |
 | [Models and routing](models.md) | Routes, the ledger, model requests and streams, request policy, one-shot model calls |
-| [Agents, contracts and sessions](agents-and-sessions.md) | Contracts, agents, peers, autonomous turns, submissions, lifecycle events |
+| [Agents, contracts and sessions](agents-and-sessions.md) | Contracts, agents, peers, power holds, autonomous turns, submissions, lifecycle events |
 | [App bridge, approvals and tools](tools-and-middleware.md) | The app-server bridge, approvals, continuation middleware, tool output, dynamic tools |
 | [Processes, kernels and events](processes-and-events.md) | Framed processes, code-mode kernels, adapters, channels and watches |
 | [Credentials and threads](credentials-and-threads.md) | Credentials, secrets, the thread store and turn activity |

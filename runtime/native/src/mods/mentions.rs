@@ -31,8 +31,11 @@ impl ContextualUserFragment for MentionedFile {
         ("<mentioned_file>", "</mentioned_file>")
     }
 
-    fn body(&self) -> String {
-        format!("\n<path>{}</path>\n{}\n", self.path, self.contents)
+    fn body(&self) -> codex_extension_api::ContentItem {
+        codex_extension_api::input_text(format!(
+            "\n<path>{}</path>\n{}\n",
+            self.path, self.contents
+        ))
     }
 }
 
@@ -249,7 +252,8 @@ mod tests {
             },
         );
         assert_eq!(fragments.len(), 2);
-        assert!(fragments[0].body().starts_with("\n<path>first.txt</path>"));
-        assert_eq!(fragments[1].body(), "\n<path>last.txt</path>\nlast\n");
+        let text = |index: usize| fragments[index].body().into_text().unwrap();
+        assert!(text(0).starts_with("\n<path>first.txt</path>"));
+        assert_eq!(text(1), "\n<path>last.txt</path>\nlast\n");
     }
 }
