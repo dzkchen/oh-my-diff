@@ -94,10 +94,8 @@ jobs:
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-lint-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-${{ github.run_id }}
-          restore-keys: |
-            sccache-lint-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-
-            sccache-lint-${{ runner.os }}-
+          key: sccache-lint-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}
+          restore-keys: sccache-lint-${{ runner.os }}-
       - name: Replay patch and check drift
         run: |
           python3 .github/scripts/build.py setup nightly
