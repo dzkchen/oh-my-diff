@@ -938,6 +938,8 @@ A route entry, with every field the host accepts:
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](#model-requests-and-streams-model_turn_interception_v1)).
 - `agents.spawn.route` names a worker route or a registered provider.
+- It may also name a lead route of a registered provider (its model is in that provider's runtime catalog) whose `mods`
+  is empty or lists the caller; the agent is admitted like a cross-provider native child, with no grant.
 - Worker routes require a grant file whose hash, repository (or one of its `repositories`), provider, model and URL
   are rechecked on every request.
 - `routes.add {mod}` (capability `packages`, user only) asks the user, then adds the worker route `plan-MODEL-MOD`
@@ -1519,6 +1521,8 @@ agents.spawn {role, route, prompt, workspace?, tools?, evidence?, snapshot?, par
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
 
+- `route` may also be a lead route of a registered provider whose `mods` is empty or lists the caller; the agent is
+  admitted like a cross-provider native child under `worker_limits`, with no grant.
 - `evidence` delivers a stored evidence reference to the agent.
 - `snapshot` selects a frozen copy and requires `fs.read`. Its permission is always `read_only`, its result
   identifies the captured candidate, and it cannot be integrated as an edit.
@@ -4400,6 +4404,10 @@ Callbacks receive explicit settings over the schema's `default` values.
 `/omd` stays the native recovery path.
 
 ### Host limits
+
+`host.json` `limits.max_depth` (default 2) and `limits.concurrent_workers` (default 4) cap a session's subagents: a mod
+worker or model `spawn_agent` past either is refused with `subagent_depth_limit` or `subagent_concurrency_limit`.
+Running mod workers and model children count; a child between turns or ended does not.
 
 `host.json` may set `mod_limits`:
 

@@ -69,10 +69,10 @@
         "index.ts": "70c71f131ef5e91fac792bda800a351c30e5420037025d811b2c8d3c8e4936a3",
         "mod.json": "32df1185d9957dcc50f607559d9a2a4891cdb564d28341997fed5ace9d8e1eda",
         "setup.mjs": "bfa49531cce434ae774f0c28d005a9d4cbc901bf2f3faf76d28707d8c97667e7",
-        "transport.mjs": "5eff14cc508a8b9f2ca1868ab837d22707acfb0b7d01a0e1d7b2f25890fbaabe"
+        "transport.mjs": "47243819b1e9b26216096ad11e9e50cd3145930c0605f53ba545118fb99bda86"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "f605f71057e2fa90717ed71252bfbbd38f77270c4f62302e16922f9d72bf931a",
+      "package_sha256": "c3e594565ae238047b0266e0d1d570a9791587f31cb324febb29ce01fa47fe66",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.0"
     },
@@ -494,15 +494,21 @@
         "agents",
         "model",
         "store",
-        "terminal"
+        "terminal",
+        "tools",
+        "lifecycle",
+        "events",
+        "threads",
+        "inventory",
+        "autonomous"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "32a022a4de6a914030de902dcddfb6de1c91df0a561aa5b71f5ca4002db938af",
-        "mod.json": "0413f59e80d6ab9a05e70ae6e373da2418be917d54adda6c24677c1dc01c9550"
+        "index.ts": "8bd89100982f370225fce035abdbe5b0139d94e9e4561782395eb38bf2afd308",
+        "mod.json": "fe2bcc5240310aab38a8e3f15ec9bdb228126c376073cb05ef0ceb550318991d"
       },
       "id": "omd_subagent_router",
-      "package_sha256": "a0ef28b584cc04b6b23e69333cd845744dbff6aaf09e6ae452f8b2faa498fd58",
+      "package_sha256": "519899dc59809fdf4c27b4f26571bab588daee294bce1bf08ce6116367277779",
       "source": "mods/first-party/omd_subagent_router",
       "version": "1.0.0"
     },

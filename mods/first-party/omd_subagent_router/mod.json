@@ -5,7 +5,7 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Runs subagents on the model your prompt or settings name, including another provider's, with a notice when it falls back",
+  "description": "Runs subagents on the model your prompt or settings name, including another provider's, and adds a delegate_task tool for background workers",
   "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
@@ -16,14 +16,33 @@
     "agents",
     "model",
     "store",
-    "terminal"
+    "terminal",
+    "tools",
+    "lifecycle",
+    "events",
+    "threads",
+    "inventory",
+    "autonomous"
   ],
+  "autonomy": {
+    "max_queued": 4,
+    "max_turns": 20
+  },
+  "subscriptions": {
+    "app": [
+      "account/rateLimits/updated"
+    ]
+  },
   "compatibility": {
     "required_features": [
       "agent_lifecycle_v1",
       "app_v1",
+      "autonomous_turns_v1",
+      "events_v1",
+      "lifecycle_events_v1",
       "state_scopes_v1",
       "store_v1",
+      "timers_v1",
       "ui_controls_v1"
     ]
   },
@@ -91,6 +110,12 @@
           "high",
           "xhigh"
         ],
+        "default": ""
+      },
+      "fallback_model": {
+        "title": "Fallback model",
+        "description": "Model to use when a subagent's model has no usable route or its provider is near its limit or recently failed; empty keeps the lead's model",
+        "type": "string",
         "default": ""
       }
     },

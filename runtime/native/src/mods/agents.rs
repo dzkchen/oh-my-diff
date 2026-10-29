@@ -1714,6 +1714,19 @@ impl Agents {
             }
             return Ok((route.clone(), true));
         }
+        let provider_lead = routing
+            .route(&request.route, config::RouteRole::Lead, None)
+            .filter(|route| {
+                !route.roles.contains(&config::RouteRole::Worker)
+                    && (route.mods.is_empty() || route.mods.iter().any(|id| id == caller.id))
+                    && codex_models_manager::runtime_models::find(&route.model)
+                        .is_some_and(|(provider, _)| provider == route.provider)
+            });
+        if let Some(route) = provider_lead {
+            let route = route.clone();
+            restrict_tools(&route, request, writable)?;
+            return Ok((route, true));
+        }
         let Some(route) = routing.route(&request.route, config::RouteRole::Worker, Some(caller.id))
         else {
             let route = core
@@ -1734,17 +1747,7 @@ impl Agents {
         ) {
             return Err("worker_grant_missing_changed_or_revoked".into());
         }
-        if !route.tools.is_empty() {
-            if writable
-                || request
-                    .tools
-                    .as_ref()
-                    .is_some_and(|tools| tools.iter().any(|tool| !route.tools.contains(tool)))
-            {
-                return Err("worker_route_authority_exceeded".into());
-            }
-            request.tools = Some(request.tools.take().unwrap_or_else(|| route.tools.clone()));
-        }
+        restrict_tools(route, request, writable)?;
         Ok((route.clone(), true))
     }
 
@@ -2578,4 +2581,20 @@ pub(super) async fn until_cancelled(cancelled: &AtomicBool) {
     while !cancelled.load(Ordering::Acquire) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+fn restrict_tools(route: &Route, request: &mut Spawn, writable: bool) -> Result<(), String> {
+    if route.tools.is_empty() {
+        return Ok(());
+    }
+    if writable
+        || request
+            .tools
+            .as_ref()
+            .is_some_and(|tools| tools.iter().any(|tool| !route.tools.contains(tool)))
+    {
+        return Err("worker_route_authority_exceeded".into());
+    }
+    request.tools = Some(request.tools.take().unwrap_or_else(|| route.tools.clone()));
+    Ok(())
 }

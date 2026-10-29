@@ -4,11 +4,14 @@ use std::collections::BTreeSet;
 
 const ANSWER_CHARS: usize = 4096;
 const FINISHED_LIMIT: usize = 64;
+const SPAWN_RESERVATION_MS: u64 = 30_000;
 
 /// Session-wide agent records; observing one grants no control over it.
 #[derive(Default)]
 pub(super) struct Inventory {
     records: Mutex<BTreeMap<String, Value>>,
+    working: Mutex<BTreeSet<String>>,
+    reserved: Mutex<Vec<(String, String, u64)>>,
     directory: std::sync::OnceLock<std::path::PathBuf>,
 }
 
@@ -107,7 +110,17 @@ impl Inventory {
         if let (Some(record), Some(fields)) = (record.as_object_mut(), fields.as_object()) {
             record.extend(fields.clone());
         }
+        let mut reserved = self.reserved.lock().ok();
         if let Ok(mut records) = self.records.lock() {
+            if record["origin"] == "model"
+                && let Some(reserved) = reserved.as_mut()
+            {
+                let root = root_of(&records, record["parent"]["thread_id"].as_str().unwrap_or(thread))
+                    .to_owned();
+                if let Some(index) = reserved.iter().position(|(owner, ..)| *owner == root) {
+                    reserved.remove(index);
+                }
+            }
             let finished = records
                 .iter()
                 .filter(|(_, record)| record["status"] != "running")
@@ -152,6 +165,52 @@ impl Inventory {
         });
     }
 
+    pub(super) fn turn_started(&self, thread: &str) {
+        if let Ok(mut working) = self.working.lock() {
+            working.insert(thread.to_owned());
+        }
+    }
+
+    /// Admits a model spawn against live children plus spawns admitted but not yet started.
+    pub(super) fn reserve_spawn(
+        &self,
+        root: &str,
+        call_id: &str,
+        counted: impl Fn(&str) -> bool,
+        admit: impl FnOnce(usize) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut reserved = self.reserved.lock().map_err(|_| "inventory lock poisoned")?;
+        let now = now_ms();
+        reserved.retain(|(.., at)| now.saturating_sub(*at) < SPAWN_RESERVATION_MS);
+        let pending = reserved.iter().filter(|(owner, ..)| owner == root).count();
+        admit(self.live_children(root, counted) + pending)?;
+        reserved.push((root.to_owned(), call_id.to_owned(), now));
+        Ok(())
+    }
+
+    pub(super) fn release_spawn(&self, call_id: &str) {
+        if let Ok(mut reserved) = self.reserved.lock() {
+            reserved.retain(|(_, call, _)| call != call_id);
+        }
+    }
+
+    /// Model-spawned children of `root`'s session that are running a turn or have not yet finished their first.
+    pub(super) fn live_children(&self, root: &str, counted: impl Fn(&str) -> bool) -> usize {
+        let (Ok(records), Ok(working)) = (self.records.lock(), self.working.lock()) else {
+            return 0;
+        };
+        records
+            .iter()
+            .filter(|(thread, record)| {
+                record["origin"] == "model"
+                    && record["status"] == "running"
+                    && (record["last_turn"].is_null() || working.contains(thread.as_str()))
+                    && root_of(&records, thread) == root
+                    && counted(thread)
+            })
+            .count()
+    }
+
     pub(super) fn contains(&self, thread: &str) -> bool {
         self.records
             .lock()
@@ -171,6 +230,9 @@ impl Inventory {
         outcome: &str,
         error: Value,
     ) -> Option<Value> {
+        if let Ok(mut working) = self.working.lock() {
+            working.remove(thread);
+        }
         self.update(thread, |record| {
             record["turns"] = json!(record["turns"].as_u64().unwrap_or(0) + 1);
             record["last_turn"] = json!({"turn_id": turn_id, "outcome": outcome, "at_ms": now_ms(),
@@ -227,6 +289,9 @@ impl Inventory {
     }
 
     pub(super) fn end(&self, thread: &str, status: &str, reason: Option<String>) -> Option<Value> {
+        if let Ok(mut working) = self.working.lock() {
+            working.remove(thread);
+        }
         self.update(thread, |record| {
             if record["status"] != "running" {
                 return;

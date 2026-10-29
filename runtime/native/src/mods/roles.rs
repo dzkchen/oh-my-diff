@@ -421,6 +421,34 @@ impl AgentRoleContributor for Mods {
     }
 }
 
+pub(super) fn spawn_capacity_admitted(
+    inventory: &super::inventory::Inventory,
+    lead: &Lead,
+    call_id: &str,
+) -> Result<(), String> {
+    let tracked_as_workers = lead
+        .host
+        .accounts
+        .by_thread
+        .lock()
+        .map_err(|_| "account lock poisoned")?
+        .iter()
+        .filter(|(_, account)| crate::provider_worker(&account.owner))
+        .map(|(thread, _)| thread.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    inventory.reserve_spawn(
+        &inventory.root_thread(&lead.thread.to_string()),
+        call_id,
+        |thread| !tracked_as_workers.contains(thread),
+        |live| {
+            lead.session
+                .task
+                .admit_subagent(lead.depth.saturating_add(1), live)
+                .map_err(|error| error.to_string())
+        },
+    )
+}
+
 pub(super) fn spawn_route_admitted(lead: &Lead, model: Option<&str>) -> Result<(), String> {
     let Some((provider, _)) = model.and_then(codex_models_manager::runtime_models::find) else {
         return Ok(());

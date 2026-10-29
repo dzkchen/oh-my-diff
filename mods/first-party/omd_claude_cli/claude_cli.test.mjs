@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { chmod, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeSync, constants, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -140,6 +141,57 @@ test('one upstream request is admitted and a second is refused', async () => {
     assert.equal(relay.denied, 1);
   } finally {
     relay.abort();
+    await new Promise(resolve => upstream.close(resolve));
+  }
+});
+
+test('the relay decodes compressed request bodies, and refuses bad ones without spending its admission', async () => {
+  const seen = [];
+  const upstream = createServer((incoming, response) => {
+    const chunks = [];
+    incoming.on('data', chunk => chunks.push(chunk));
+    incoming.on('end', () => {
+      seen.push({ encoding: incoming.headers['content-encoding'], body: Buffer.concat(chunks).toString('utf8') });
+      response.writeHead(200, { 'content-type': 'text/event-stream' }).end('event: ping\ndata: {"type":"ping"}\n\n');
+    });
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const json = JSON.stringify({ model, messages: [] });
+  const post = (relay, body, encoding) => new Promise((resolve, reject) => {
+    const outgoing = request(new URL(`${relay.url}/v1/messages`), { method: 'POST',
+      headers: { authorization: 'Bearer fixture', ...encoding ? { 'content-encoding': encoding } : {} } }, response => {
+      response.resume(); response.on('end', () => resolve(response.statusCode));
+    });
+    outgoing.on('error', reject);
+    outgoing.end(body);
+  });
+  const fresh = async () => {
+    const relay = new Relay(`http://127.0.0.1:${upstream.address().port}`, () => {}, () => {}, { model });
+    await relay.listen();
+    return relay;
+  };
+  try {
+    for (const [encoding, compress] of [['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]]) {
+      const relay = await fresh();
+      try {
+        assert.equal(await post(relay, compress(json), encoding), 200, encoding);
+        const last = seen.at(-1);
+        assert.equal(last.encoding, undefined);
+        assert.deepEqual(JSON.parse(last.body), { model, messages: [] });
+      } finally { relay.abort(); }
+    }
+    const relay = await fresh();
+    try {
+      assert.equal(await post(relay, Buffer.from(json), 'zstd'), 415);
+      assert.equal(await post(relay, deflateSync(Buffer.alloc(65 * 1024 * 1024)), 'deflate'), 413);
+      assert.equal(await post(relay, Buffer.from('not compressed'), 'gzip'), 400);
+      assert.equal(relay.denied, 0);
+      const before = seen.length;
+      assert.equal(await post(relay, Buffer.from(json)), 200, 'the admission is still unspent');
+      assert.equal(seen.length, before + 1);
+    } finally { relay.abort(); }
+  } finally {
+    upstream.closeAllConnections();
     await new Promise(resolve => upstream.close(resolve));
   }
 });

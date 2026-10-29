@@ -1721,6 +1721,7 @@ impl TurnLifecycleContributor for Mods {
 
     fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            self.inventory.turn_started(input.thread_store.level_id());
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -2222,6 +2223,9 @@ impl ToolLifecycleContributor for Mods {
                 codex_tools::ToolPayload::Custom { input } => (true, input),
                 _ => return Ok(ToolInterception::Continue(None)),
             };
+            if roles::is_spawn(input.tool_name) {
+                roles::spawn_capacity_admitted(&self.inventory, &lead, input.call_id)?;
+            }
             let original_tool = input.tool_name.clone();
             let scope_agent_id = agent_id(input.thread_store);
             let raw_arguments = raw.chars().take(65_536).collect::<String>();
@@ -2490,6 +2494,9 @@ impl ToolLifecycleContributor for Mods {
 
     fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
+            if roles::is_spawn(input.tool_name) {
+                self.inventory.release_spawn(input.call_id);
+            }
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };

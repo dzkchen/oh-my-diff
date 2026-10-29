@@ -44,7 +44,7 @@ any account uses Console API credits), since the host keeps one route per accoun
 | --- | --- | --- |
 | `extra_usage` | `true` | Keep working on paid extra usage when the plan limit is reached, if your account allows it. `false` stops as soon as a response reports extra usage, which may still be billed. |
 
-To run subagents on Claude while another model leads, turn on `omd_subagent_router` and say, for example, "use sonnet 5.5 as subagents to research".
+To run subagents on Claude while another model leads, turn on `omd_subagent_router` and say, for example, "use sonnet 5.5 as subagents to research". The router skips Claude when its limit is nearly used or it recently failed, and its `delegate_task` tool can run background Claude workers on these routes.
 
 ## Needs and limits
 
