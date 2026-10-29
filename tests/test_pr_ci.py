@@ -117,6 +117,10 @@ class HostedJobs(unittest.TestCase):
             self.assertEqual(build.test_runner(Path("/work"), args, {}, None), 1)
         self.assertEqual(run.call_args.args[0], ["cargo", "build", "--locked", "-p", "codex-core", "-p", "codex-omd-runner",
                                                  "--bin", "omd-runner"])
+        with mock.patch.object(build.subprocess, "run", return_value=mock.Mock(returncode=1)) as run:
+            build.test_runner(Path("/work"), ["test", "--locked", "-p", "codex-core", "--doc"], {}, None)
+        self.assertEqual(run.call_args.args[0], ["cargo", "build", "--locked", "-p", "codex-core", "-p", "codex-omd-runner",
+                                                 "--bin", "omd-runner"])
 
     def test_compile_cache_is_opt_in(self):
         with mock.patch.object(build, "run", return_value=b"host: aarch64-apple-darwin\n"):

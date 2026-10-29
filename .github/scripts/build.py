@@ -124,6 +124,8 @@ def test_runner(work, cargo_args, env, output):
     profile = "release" if release else "debug"
     flags = ["--locked"] * ("--locked" in cargo_args) + ["--release"] * release
     scope = [arg for index, arg in enumerate(cargo_args) if arg == "-p" or cargo_args[index - 1] == "-p"]
+    if "codex-omd-runner" not in scope:
+        scope += ["-p", "codex-omd-runner"]
     status = subprocess.run(["cargo", "build", *flags, *scope, "--bin", "omd-runner"], cwd=work / "codex/codex-rs", env=env,
                             stdout=output, stderr=subprocess.STDOUT).returncode
     link = work / "target" / profile / "deps/omd-runner"

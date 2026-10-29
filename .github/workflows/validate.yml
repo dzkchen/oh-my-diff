@@ -19,6 +19,7 @@ env:
   OMD_SCCACHE: ${{ inputs.version == '' && '1' || '' }}
   SCCACHE_DIR: /Users/runner/omd/sccache
   SCCACHE_CACHE_SIZE: 2G
+  SCCACHE_IDLE_TIMEOUT: '0'
   # Outside /tmp, which a sandboxed command may write: upstream tests expect a write beside the checkout to be denied.
   OMD_WORK_ROOT: /Users/runner/omd
   OMD_NIGHTLY_ROOT: /Users/runner/omd/omd-nightly
