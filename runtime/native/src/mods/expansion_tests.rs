@@ -1454,29 +1454,30 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         .grants("keeper")
         .unwrap()
         .source_sha256;
-    let mut scope = fixture.lead.session.data.0.lock().unwrap();
-    let hosts = scope.as_mut().unwrap();
     let (mut paged, mut cursor, mut pages) = (String::new(), 0, 0);
-    loop {
-        let page = hosts
-            .call(
-                "keeper",
-                &source,
-                "evidence.read",
-                json!({"reference": report["original"]["reference"], "cursor": cursor, "max_bytes": 65_536}),
-                || true,
-            )
-            .unwrap();
-        let text = page["text"].as_str().unwrap();
-        assert!(text.len() <= 65_536);
-        paged.push_str(text);
-        pages += 1;
-        match page["cursor"].as_u64() {
-            Some(next) => cursor = next,
-            None => break,
+    {
+        let mut scope = fixture.lead.session.data.0.lock().unwrap();
+        let hosts = scope.as_mut().unwrap();
+        loop {
+            let page = hosts
+                .call(
+                    "keeper",
+                    &source,
+                    "evidence.read",
+                    json!({"reference": report["original"]["reference"], "cursor": cursor, "max_bytes": 65_536}),
+                    || true,
+                )
+                .unwrap();
+            let text = page["text"].as_str().unwrap();
+            assert!(text.len() <= 65_536);
+            paged.push_str(text);
+            pages += 1;
+            match page["cursor"].as_u64() {
+                Some(next) => cursor = next,
+                None => break,
+            }
         }
     }
-    drop(scope);
     assert_eq!(paged, complete);
     assert_eq!(pages, complete.len().div_ceil(65_536));
     mods.intercept_tool(start("call-early", &EARLY))

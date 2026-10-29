@@ -1486,7 +1486,9 @@ pub fn unpack(packed: &str, count: usize) -> Result<Vec<BlitCell>, String> {
         )));
     }
     bytes
-        .chunks_exact(12)
+        .as_chunks::<12>()
+        .0
+        .iter()
         .enumerate()
         .map(|(index, cell)| {
             let word = |at: usize| {
