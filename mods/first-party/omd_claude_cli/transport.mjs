@@ -13,6 +13,7 @@ import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, translateRequ
 const file = fileURLToPath(import.meta.url);
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
+const CLI_DEADLINE_MS = 30 * 60_000;
 const DECODERS = { gzip: promisify(gunzip), deflate: promisify(inflate), br: promisify(brotliDecompress) };
 
 class BodyError extends Error {
@@ -399,8 +400,9 @@ export function cliArgs(entry, effort) {
 
 export async function runClaude(request, entry, claude, signal, onEvent, {
   upstream = 'https://api.anthropic.com', home = process.env.HOME, username = process.env.USER,
-  translated = null, onHeaders = () => {}, billing = 'subscription', extraUsage = true, account = null } = {}) {
-  const cancelled = () => { if (signal.aborted) throw new Error('claude_request_cancelled'); };
+  translated = null, onHeaders = () => {}, billing = 'subscription', extraUsage = true, account = null, deadlineMs = CLI_DEADLINE_MS } = {}) {
+  let expired = false;
+  const cancelled = () => { if (signal.aborted || expired) throw new Error('claude_request_cancelled'); };
   cancelled();
   translated ??= translateRequest(request, entry.slug);
   const relay = new Relay(upstream, onEvent, onHeaders, { billing, extraUsage, model: entry.model });
@@ -408,6 +410,7 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
   let child;
   let fault;
   const cancel = () => { cancelChild(child); relay.abort(); };
+  const deadline = setTimeout(() => { expired = true; cancel(); }, deadlineMs);
   signal.addEventListener('abort', cancel, { once: true });
   try {
     root = await mkdtemp('/private/tmp/omd-claude-');
@@ -483,8 +486,11 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
       request_id: relay.requestId };
     return responseEvents(relay.capture.message, admission, entry.model, translated.reverse, true, results[0].total_cost_usd, billing);
   } catch (error) {
-    throw signal.aborted ? new Error('claude_request_cancelled') : fault ?? error;
+    if (signal.aborted) throw new Error('claude_request_cancelled');
+    if (expired) throw Object.assign(new Error(`The Claude CLI did not finish within ${Math.round(deadlineMs / 60_000)} minutes (${relay.used ? 'it was still answering' : 'it never sent its request'}), so OMD stopped it. Retry the request; if it keeps happening, run /claude to check the CLI and login, or update the Claude CLI.`), { code: 'claude_upstream_incomplete' });
+    throw fault ?? error;
   } finally {
+    clearTimeout(deadline);
     signal.removeEventListener('abort', cancel);
     cancel();
     if (root) await rm(root, { recursive: true, force: true });

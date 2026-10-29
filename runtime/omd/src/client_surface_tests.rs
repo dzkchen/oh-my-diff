@@ -607,3 +607,117 @@ fn decoder_rejects_oversized_dimensions_before_pixel_allocation() {
     assert!(decode_image(b"GIF89a").is_err());
     assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
 }
+
+fn packed(cells: &[[u32; 3]]) -> String {
+    STANDARD.encode(
+        cells
+            .iter()
+            .flatten()
+            .flat_map(|word| word.to_le_bytes())
+            .collect::<Vec<_>>(),
+    )
+}
+
+#[test]
+fn packed_blits_decode_colors_and_refuse_invalid_cells_before_queueing() {
+    let request = |rect: &Value, packed: &str| {
+        blit_request(
+            "demo",
+            Some("demo"),
+            Some((4, 2)),
+            &json!({"key": "art", "rect": rect, "packed": packed}),
+        )
+    };
+    let rect = json!({"x": 1, "y": 1, "width": 3, "height": 1});
+    let cells = [
+        ['▀' as u32, 0x00ff_8000, PACKED_DEFAULT],
+        ['a' as u32, PACKED_INDEXED | 9, 0x0000_0001],
+        [' ' as u32, PACKED_DEFAULT, PACKED_INDEXED | 255],
+    ];
+    let Ok(Blit {
+        content: BlitContent::Cells { cells: decoded, .. },
+        ..
+    }) = request(&rect, &packed(&cells))
+    else {
+        panic!("packed cells decode");
+    };
+    assert_eq!(
+        decoded,
+        vec![
+            BlitCell {
+                symbol: "▀".into(),
+                fg: Some(crate::ModColor::Rgb(255, 128, 0)),
+                bg: None
+            },
+            BlitCell {
+                symbol: "a".into(),
+                fg: Some(crate::ModColor::Indexed(9)),
+                bg: Some(crate::ModColor::Rgb(0, 0, 1))
+            },
+            BlitCell {
+                symbol: " ".into(),
+                fg: None,
+                bg: Some(crate::ModColor::Indexed(255))
+            },
+        ]
+    );
+    let refused = |rect: &Value, packed: String| {
+        request(rect, &packed)
+            .err()
+            .map(|error| (error.kind, error.message))
+    };
+    let fatal = |message: &str| Some((BlitErrorKind::Fatal, message.to_owned()));
+    let cell = |point: u32, fg: u32| packed(&[[point, fg, PACKED_DEFAULT]]);
+    let one = json!({"x": 0, "y": 0, "width": 1, "height": 1});
+    assert_eq!(
+        refused(&one, "***".into()),
+        fatal("terminal_blit_packed_invalid: bad base64")
+    );
+    assert_eq!(
+        refused(&rect, cell('a' as u32, 0)),
+        fatal("terminal_blit_packed_invalid: 12 bytes for 3 cells, expected 36")
+    );
+    for point in [0x7, 0x4e00, 0x301, 0xd800, 0x11_0000] {
+        assert_eq!(
+            refused(&one, cell(point, 0)),
+            fatal(&format!(
+                "terminal_blit_packed_invalid: cell 0 code point {point:#x} is not one printable column"
+            ))
+        );
+    }
+    for color in [0x0100_0001, 0x0200_0100, 0x0300_0000] {
+        assert_eq!(
+            refused(&one, cell('a' as u32, color)),
+            fatal(&format!(
+                "terminal_blit_packed_invalid: cell 0 color {color:#010x}"
+            ))
+        );
+    }
+    for arguments in [
+        json!({"key": "art", "rect": one, "packed": cell('a' as u32, 0), "cells": ["a"]}),
+        json!({"key": "art", "packed": cell('a' as u32, 0)}),
+        json!({"key": "art", "rect": {"x": 3, "y": 0, "width": 2, "height": 1}, "packed": cell('a' as u32, 0)}),
+    ] {
+        assert_eq!(
+            blit_request("demo", Some("demo"), Some((4, 2)), &arguments)
+                .err()
+                .map(|error| error.message),
+            Some("terminal_blit_invalid".to_owned())
+        );
+    }
+    assert_eq!(
+        blit_request(
+            "intruder",
+            Some("demo"),
+            Some((4, 2)),
+            &json!({"key": "art", "rect": one, "packed": "***"})
+        )
+        .err(),
+        Some(BlitError::retryable("terminal_blit_not_owned"))
+    );
+    assert_eq!(
+        unpacked(json!({"key": "art", "rect": rect, "packed": packed(&cells)})),
+        json!({"key": "art", "rect": rect,
+            "cells": [["▀", "#ff8000", null], ["a", 9, "#000001"], [" ", null, 255]]})
+    );
+}

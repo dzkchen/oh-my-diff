@@ -26,7 +26,7 @@ tools, context and screens. You still run `codex`, with your settings, sign-in a
 
 ## Install
 
-Needs an Apple Silicon Mac, Codex `0.164.x` and Python 3.12+ ([details](docs/install.md#before-you-begin)).
+Needs an Apple Silicon Mac, Codex `0.165.x` and Python 3.12+ ([details](docs/install.md#before-you-begin)).
 
 There are two installs. Pick one; you can switch later by rerunning the command with the other profile.
 
@@ -73,17 +73,14 @@ do, such as read files, use the network or run programs, and asks first. Mods ru
 beside Codex, and if one misbehaves, `omd mods disable ID` switches it off from any shell, even when `codex` won't
 start.
 
-**It stays in step with Codex.** Each OMD release is built on one Codex version line, now `0.164.x`, and follows
+**It stays in step with Codex.** Each OMD release is built on one Codex version line, now `0.165.x`, and follows
 the latest stable Codex. Turn off automatic Codex updates and update Codex only once `omd update` supports the new
 version. Updates are signed and checked before they install, and `omd update rollback` undoes the last one.
 
 ## Status
 
-Mod API `1.0.0` is stable; surfaces marked experimental can change ([compatibility](mods/COMPATIBILITY.md)).
+Mod API `1.0.0` is stable; surfaces marked experimental can change ([compatibility](mods/conformance/COMPATIBILITY.md)).
 The API is still young, so expect new capabilities. If you need a specific one, open an issue or a PR.
-
-I focus mainly on critical fixes and on adding API capabilities for mods. If you'd like to take over
-responsibility for the whole project, please get in touch by [opening an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
 
 This project is still in beta and under active development, expect bugs and some small annoyances (just open an issue and I will get on it ASAP :))
 If you are looking to become a core contributor, get in touch as well!

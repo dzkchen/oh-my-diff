@@ -51,7 +51,7 @@ To run subagents on Claude while another model leads, turn on `omd_subagent_rout
 - Models are the ones your plan offers, read from the installed CLI at login; at most 16 are listed.
 - Plan usage shows no charge. Console usage is billed by Anthropic; each request's cost (the CLI's list-price figure) counts against your OMD budget and allowance alerts.
 - A request for a model other than the selected one is refused.
-- Each request starts a fresh CLI process, adding a fraction of a second.
+- Each request starts a fresh CLI process, adding a fraction of a second. A CLI that has not finished 30 minutes after starting (for example one that never sends its request) is stopped with its child processes and the request fails with `claude_upstream_incomplete`; retry it, and if it repeats check `/claude` or update the CLI.
 - Earlier reasoning isn't sent back to Claude. Images are forwarded.
 - A task an OpenAI lead seals for a subagent (GPT-6.1 calling its spawn tool directly) can't be read by Claude; a Claude
   subagent then works from the conversation it inherits and its agent name.

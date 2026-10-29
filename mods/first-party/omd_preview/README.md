@@ -16,7 +16,7 @@ omd-package mod enable omd_preview
 | --- | --- |
 | `/preview` | Open the last response in your browser |
 | `/preview N` | Open the Nth most recent response. `/preview list` numbers them. |
-| `/preview PATH` | Open a Markdown, code or diff file. Use `./PATH` if the file is named like a subcommand. |
+| `/preview PATH` | Open a Markdown, code or diff file. Use `./PATH` if the file is named like a subcommand. Spaces inside the path are kept as typed; only `--` flags are removed. |
 | `/preview PATH --watch` | Re-render the browser page when the file changes (up to 8 files; not with `--inline`). A missing file is awaited through a watch on its parent directory; one in the repository root or in a missing directory is retried instead, backing off from 2 s to once a minute, until it exists. `/preview unwatch` stops. |
 | `/preview ... --inline` | Show it in a terminal dialog instead. `/preview close` closes it. |
 | `/preview diagrams [N]` | List Mermaid diagrams from the last 10 responses, or open diagram N with its source and a copy button |
@@ -31,7 +31,7 @@ omd-package mod enable omd_preview
 ## Needs and limits
 
 - You need `node` on your `PATH`. Pages are written to `.omd/preview` in the repository.
-- Files up to 5 MB, responses up to about 48 KB. The inline view shows the first 4 KB of Markdown or code and 48 KB of a diff.
+- Files up to 5 MB, responses up to about 48 KB. The inline view shows the first 4 KB of Markdown or code and 48 KB of a diff, also cut at 2,000 lines and 60 KB once quotes and backslashes are escaped; a notice says when it was cut.
 - Highlighting, math and browser diagrams load pinned files from a CDN. Offline they stay as plain source.
 - Browser pages escape source HTML but can load remote and local images.
 - Terminal diagrams cover flowcharts, sequence, class, state and ER diagrams and bar and line charts, up to 4 per response. Others keep their original fence.

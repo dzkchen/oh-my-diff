@@ -4,8 +4,8 @@ Which hosts a mod runs on. The source is [compatibility.json](compatibility.json
 checks it against the host.
 
 API `1.0.0` is stable and supported through `2027-10-19`. Entries marked frozen in
-[the conformance registry](conformance/contract.json) keep their shape until then; a breaking change needs a
-major version and a migration note in [the reference](REFERENCE.md). Experimental entries (including the raster
+[the conformance registry](contract.json) keep their shape until then; a breaking change needs a
+major version and a migration note in [the reference](../REFERENCE.md). Experimental entries (including the raster
 surfaces `terminal.blit` and `process_raster_v1`), and the `experimental_fields` of frozen entries, may change in any
 release.
 
@@ -13,14 +13,15 @@ release.
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.165.0 | next release | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.164.0 | 1.2.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.163.0 | 1.0.0 to 1.1.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 
-Upstream lag on 2026-10-23: none. Codex 0.164.0 is the latest stable Codex release. A newer Codex is supported once an
+Upstream lag on 2026-10-28: none. Codex 0.165.0 is the latest stable Codex release. A newer Codex is supported once an
 OMD release lists it here. Update and roll back OMD with `omd update` and `omd update rollback`
-([install](../docs/install.md#update)).
+([install](../../docs/install.md#update)).
 
 ## What the host checks
 
@@ -46,6 +47,12 @@ These reject older hosts before activation, even when the API version matches.
 | Timers of 16-999 ms | `timers_16ms_v1` |
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
 | `routes.write` | `route_write_v1` |
+| `api.settingsFile` | `settings_file_v1` |
+| `key_contexts`, `region` and `help` key actions, `keys: 'all'`, layout leaf `style.focus` | `terminal_focus_v1` |
+| Layout leaf `title` | `terminal_layout_title_v1` |
+| `power.hold`/`power.release` | `power_hold_v1` |
+| `tools.original` | `tool_original_v1` |
+| `api.builtins` `features.remove` | `builtins_features_v1` |
 | `success_per_call` on a `tool_batch` merge | `tool_batch_success_v1` |
 | `value` in code-mode `tool` results and answers | `code_mode_values_v1` |
 | `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |
@@ -86,7 +93,7 @@ The host never rewrites a mod's code or settings.
 
 ## Tested and not tested
 
-Tested: Apple Silicon macOS with Codex 0.164.0, the OMD+ and OMD Core collections, and the bundled plugins.
+Tested: Apple Silicon macOS with Codex 0.165.0, the OMD+ and OMD Core collections, and the bundled plugins.
 
 Not tested:
 

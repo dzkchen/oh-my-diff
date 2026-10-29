@@ -6,7 +6,7 @@ import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MATRIX = ROOT / "mods/compatibility.json"
+MATRIX = ROOT / "mods/conformance/compatibility.json"
 HOST = ROOT / "runtime/omd/src/mods.rs"
 CARGO = ROOT / "runtime/omd/Cargo.toml"
 

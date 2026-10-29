@@ -20,7 +20,7 @@ Each item in the view carries:
 - the byte size
 - the `images` count
 
-The view holds the newest items, at most 2048, that fit the callback's 1 MiB runner request, in order and keyed by
+The view holds the newest items, at most 2048, that fit the callback's 4 MiB runner request, in order and keyed by
 their original `index`.
 
 ### History edit rules
@@ -133,7 +133,7 @@ A row pairs a display item with its model items: a message, or a tool call with 
 
 ### Edits
 
-`edits` apply in order as one revision:
+1 to 256 `edits` (or `undo`, not both) apply in order as one revision:
 
 | Edit | Meaning |
 | --- | --- |
@@ -154,7 +154,7 @@ A row pairs a display item with its model items: a message, or a tool call with 
 
 | Error | When |
 | --- | --- |
-| `history_rewrite_invalid` | `edits` or `undo` without `expectedRevision` |
+| `history_rewrite_invalid` | `edits` or `undo` without `expectedRevision`, or not exactly one of 1 to 256 `edits` and `undo` |
 | `history_rewrite_busy` | A turn is in progress or agent mail is pending on the thread. The check is repeated atomically when the thread unloads, so a turn that starts meanwhile is never cut off and the thread stays loaded; retry once it is idle |
 | `history_revision_conflict` | A stale `expectedRevision` |
 

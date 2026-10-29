@@ -865,7 +865,7 @@ async fn candidate(
     let host = &lead.host;
     let read = execution::isolated(parent, root, &[], &host.protected_paths(), false)?;
     let paths = execution::all_paths(&lead.session.task, host.config.snapshot_bytes, &read).await?;
-    let snapshot = codex_omd::Snapshot::capture(root, &paths, host.config.snapshot_bytes)
+    let snapshot = codex_omd::Snapshot::capture_tree(root, &paths, host.config.snapshot_bytes)
         .map_err(|e| e.to_string())?;
     Ok((paths, snapshot))
 }
@@ -1190,7 +1190,7 @@ impl Agents {
                     operation: "exec.run".into(), arguments: arguments.clone(),
                 }, &active, false)?;
             let paths = snapshot.files.keys().cloned().collect();
-            if codex_omd::Snapshot::capture(&root, &paths, host.config.snapshot_bytes).map_err(|e| e.to_string())? != *snapshot {
+            if codex_omd::Snapshot::capture_tree(&root, &paths, host.config.snapshot_bytes).map_err(|e| e.to_string())? != *snapshot {
                 return Err("snapshot_execution_changed_source".into());
             }
             if !active() { return Err("snapshot_execution_cancelled".into()); }
@@ -1317,7 +1317,7 @@ impl Agents {
         if !active() {
             return Err("snapshot_cancelled".into());
         }
-        let digest = snapshot.hash().map_err(|e| e.to_string())?;
+        let digest = snapshot.hash();
         if input
             .expected
             .as_ref()
@@ -1423,7 +1423,7 @@ impl Agents {
         if changed.len() > 128 {
             return Err("isolated_worker_change_limit".into());
         }
-        let candidate_sha256 = proposed.hash().map_err(|e| e.to_string())?;
+        let candidate_sha256 = proposed.hash();
         let outcome = operations::gate(
             core,
             lead,
@@ -1658,7 +1658,7 @@ impl Agents {
                             let parent = parent_config(lead).await?;
                             let (_, proposed) = candidate(lead, &parent, &workspace.root).await?;
                             agent.candidate = Some((
-                                proposed.hash().map_err(|e| e.to_string())?,
+                                proposed.hash(),
                                 workspace
                                     .base
                                     .changed_paths(&proposed)

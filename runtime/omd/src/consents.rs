@@ -6,7 +6,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
 use std::io;
-use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -60,12 +59,7 @@ fn with<T>(
     let before = consents.clone();
     let result = change(&mut consents)?;
     if consents != before {
-        let bytes = serde_json::to_vec(&consents)?;
-        let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
-        temporary.write_all(&bytes)?;
-        temporary.as_file().sync_all()?;
-        temporary.persist(path).map_err(|error| error.error)?;
-        fs::File::open(directory)?.sync_all()?;
+        crate::fsio::write_json(&path, &consents)?;
     }
     Ok(result)
 }

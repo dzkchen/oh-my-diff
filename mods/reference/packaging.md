@@ -232,7 +232,7 @@ and sources, so unblocking and enabling restores it.
 lose credentials and query strings. Its events:
 
 - `install`, `update`, `uninstall`, `rollback`, `enable`, `disable`, `quarantine`, `unblock`, `revoke`, `trust`,
-  `lifecycle`
+  `lifecycle`, `lifecycle_failed` (an uninstall script failed), `managed_deploy`, `managed_sync_refused`
 - `package_refused` (with an error code and the stripped source)
 - `load_denied` (a selection rejected at reload)
 
@@ -359,6 +359,8 @@ Runs `check`, and while its value differs from `until` advances virtual time by 
 
 ### Pointer and client steps
 
+- A `terminal_interact` `key` runs the view's `keybindings` entry, else the first `key_contexts` binding for that key
+  (offline steps have no focus).
 - `terminal_interact` also takes `pointer: {column, row, half?, action, button?}` with `component`. The mounting mod
   receives `component_event {kind: 'pointer'}` with `origin: 'user'`, only for a `box`, `image` or `raster` mounted
   with `pointer: true` (`offline_terminal_component_not_pointer`). Adding `client: ID` delivers it as that attached

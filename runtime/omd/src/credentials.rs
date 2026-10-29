@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -195,21 +195,11 @@ impl CredentialProfiles {
         }
         let value = change(&mut index)?;
         if write {
-            let temporary = self
-                .root
-                .join(format!(".profiles.json.{}", std::process::id()));
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&temporary)?;
-            let written = file
-                .write_all(&serde_json::to_vec_pretty(&index)?)
-                .and_then(|()| file.sync_all());
-            if let Err(error) = written.and_then(|()| fs::rename(&temporary, &path)) {
-                let _ = fs::remove_file(&temporary);
-                return Err(error);
-            }
+            crate::fsio::write_bytes(
+                &path,
+                &serde_json::to_vec_pretty(&index)?,
+                crate::fsio::Durability::Durable,
+            )?;
         }
         Ok(value)
     }
@@ -310,7 +300,9 @@ impl CredentialProfiles {
         if !text(label, 64) || !origin(origin_url) || !text(owner, 128) {
             return Err(failure("credential_profile_invalid"));
         }
-        self.insert(label, "secret", None, Some(origin_url), Some(owner))
+        let origin_url =
+            url_origin(origin_url).ok_or_else(|| failure("credential_profile_invalid"))?;
+        self.insert(label, "secret", None, Some(&origin_url), Some(owner))
     }
 
     fn insert(
@@ -424,11 +416,7 @@ impl CredentialProfiles {
             if fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.is_file()) {
                 return Err(failure("credential_store_invalid"));
             }
-            let mut staged = tempfile::NamedTempFile::new_in(&home)?;
-            staged.write_all(value.as_bytes())?;
-            staged.as_file().sync_all()?;
-            staged.persist(&path).map_err(|error| error.error)?;
-            fs::File::open(&home)?.sync_all()
+            crate::fsio::write_bytes(&path, value.as_bytes(), crate::fsio::Durability::Durable)
         })
     }
 

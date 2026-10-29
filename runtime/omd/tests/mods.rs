@@ -394,7 +394,7 @@ fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
         Value::Null
     );
     assert!(
-        invoke(&mut one, "threaded", "fill", json!(200_000))
+        invoke(&mut one, "threaded", "fill", json!(600_000))
             .unwrap_err()
             .to_string()
             .contains("state_limit")
@@ -439,6 +439,23 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
             .is_err()
     );
     assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn hosts_opened_in_one_process_share_inspections_of_unchanged_selections() {
+    let (temp, store, path) = fixture(
+        "export default api => api.command(`c${String(Math.random()).slice(2, 10)}`, () => 1)",
+        &["commands"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let open = || ModHost::open_in(root.join("store"), |_| Ok(()), &root).unwrap();
+    let registrations = |host: &ModHost| host.status()["mods"][0]["registrations"].clone();
+    let first = registrations(&open());
+    assert_eq!(registrations(&open()), first);
+    let source = std::fs::read_to_string(path.join("index.ts")).unwrap();
+    std::fs::write(path.join("index.ts"), source + "\n").unwrap();
+    trust(&store, &path, &["commands"]);
+    assert_ne!(registrations(&open()), first);
 }
 
 #[test]
@@ -1032,7 +1049,7 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
             "run",
             json!("large"),
             || true,
-            |_| Ok(json!({"text": "x".repeat(140_000)})),
+            |_| Ok(json!({"text": "x".repeat(1_100_000)})),
         )
         .unwrap_err();
     assert!(
@@ -1050,7 +1067,7 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
             || true,
             |_| {
                 calls += 1;
-                Ok(json!({"text": "x".repeat(70_000)}))
+                Ok(json!({"text": "x".repeat(600_000)}))
             },
         )
         .unwrap_err();
@@ -1071,7 +1088,7 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
             |_| {
                 calls += 1;
                 Ok(if calls == 1 {
-                    json!({"text": "x".repeat(140_000)})
+                    json!({"text": "x".repeat(1_100_000)})
                 } else {
                     json!("recovered")
                 })
@@ -2565,6 +2582,11 @@ fn codex_config_is_allowlisted_and_reported_for_active_mods() {
         json!({"codex_config":{"tools.update_plan.enabled":true},"compatibility":feature["compatibility"]}),
     );
     trust(&store, &planner, &[]);
+    let budgeter = write(
+        "budgeter",
+        json!({"codex_config":{"tool_output_token_limit.raise":true},"compatibility":feature["compatibility"]}),
+    );
+    trust(&store, &budgeter, &[]);
     for (directory, extra) in [
         (
             "unlisted",
@@ -2593,7 +2615,7 @@ fn codex_config_is_allowlisted_and_reported_for_active_mods() {
     let published = runtime.codex_config();
     assert_eq!(
         published.lock().unwrap().iter().collect::<Vec<_>>(),
-        ["tools.update_plan.enabled"]
+        ["tool_output_token_limit.raise", "tools.update_plan.enabled"]
     );
     let planner_status = runtime.status()["mods"]
         .as_array()
@@ -2604,6 +2626,7 @@ fn codex_config_is_allowlisted_and_reported_for_active_mods() {
         .clone();
     assert_eq!(planner_status, json!({"tools.update_plan.enabled": true}));
     store.enable(&planner, false).unwrap();
+    store.enable(&budgeter, false).unwrap();
     runtime.reload().unwrap();
     assert!(published.lock().unwrap().is_empty());
 }
@@ -3339,6 +3362,83 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
 }
 
 #[test]
+fn settings_file_overrides_saved_settings_and_an_invalid_file_is_skipped_whole() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => api.command('read', () => JSON.stringify([api.settings, api.settingsFile]))",
+        &["commands"],
+    );
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["settings_schema"] = json!({"type":"object","properties":{
+        "mode":{"type":"string","enum":["a","b"],"default":"a"},"count":{"type":"number"}},
+        "additionalProperties":false});
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+    let directory = root.join("store/settings");
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = |extension: &str| directory.join(format!("fixture.{extension}"));
+    let mut runtime = host(&temp);
+    let read = |runtime: &mut ModHost| {
+        runtime.reload().unwrap();
+        let generation = runtime.generation();
+        let reply = runtime
+            .invoke("fixture", generation, "command", "read", Value::Null)
+            .unwrap();
+        serde_json::from_str::<Value>(reply.as_str().unwrap()).unwrap()
+    };
+    assert_eq!(
+        read(&mut runtime),
+        json!([{"mode":"a"},{"path":file("json"),"status":"missing","error":null}])
+    );
+    codex_omd::write_settings(&store, "fixture", &json!({"mode":"b"})).unwrap();
+    std::fs::write(file("yaml"), "mode: a\ncount: 3\n").unwrap();
+    assert!(runtime.refresh_due());
+    assert_eq!(
+        read(&mut runtime),
+        json!([{"mode":"a","count":3},{"path":file("yaml"),"status":"loaded","error":null}])
+    );
+    assert_eq!(
+        store.selection_status().unwrap()["selections"][0]["settings_origin"],
+        json!({"count":"file","mode":"file"})
+    );
+    let refused = codex_omd::write_settings(&store, "fixture", &json!({"count":4}));
+    assert!(
+        refused
+            .unwrap_err()
+            .to_string()
+            .starts_with("setting_set_by_file")
+    );
+    std::fs::write(file("yaml"), "count: 3\n").unwrap();
+    assert_eq!(
+        codex_omd::write_settings(&store, "fixture", &json!({"mode":"b"})).unwrap()["settings"],
+        json!({"mode":"b","count":3})
+    );
+    std::fs::write(file("json"), "{}").unwrap();
+    let invalid = read(&mut runtime);
+    assert_eq!(invalid[0], json!({"mode":"b"}));
+    assert_eq!(invalid[1]["status"], "invalid");
+    assert!(
+        invalid[1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("more_than_one")
+    );
+    std::fs::remove_file(file("yaml")).unwrap();
+    std::fs::write(file("json"), r#"{"mode":"c"}"#).unwrap();
+    let invalid = read(&mut runtime);
+    assert_eq!(invalid[0], json!({"mode":"b"}));
+    assert_eq!(invalid[1]["error"], "invalid_setting: mode");
+    assert_eq!(runtime.status()["mods"][0]["error"], Value::Null);
+    std::fs::remove_file(file("json")).unwrap();
+    assert_eq!(read(&mut runtime)[1]["status"], "missing");
+}
+
+#[test]
 fn settings_a_newer_package_no_longer_declares_are_dropped() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -3404,7 +3504,8 @@ fn terminal_identity_reports_profile_mode_and_mod_counts() {
     let identity = runtime.identity("0.163.0", Some("full"), "omd");
     assert_eq!(
         identity,
-        json!({"codex_version":"0.163.0","install_profile":"full","mode":"omd",
+        json!({"codex_version":"0.163.0","omd_version":OMD_HOST_RELEASE,
+        "install_profile":"full","mode":"omd",
         "mods":{"installed":2,"enabled":1,"active":1,"failed":0}})
     );
     assert_eq!(

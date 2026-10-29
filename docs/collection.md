@@ -3,7 +3,7 @@
 What ships with OMD+, and which mods are on.
 
 - **Installed:** the mod is on disk and listed in `/mods`.
-- **Active (on):** the mod is running. OMD+ installs every mod below and turns on only the first group.
+- **Active (on):** the mod is running. OMD+ installs every mod below except the experimental ones and turns on only the first group.
 - **Experimental:** mod API surfaces marked experimental can change between releases. There may be missing API capabilities, just open an issue for it to be added!
 - **Unsupported:** Linux, Intel Macs, and mods from other sources. OMD shows their permissions and asks before you
   turn them on; it does not review them.
@@ -32,8 +32,8 @@ It applies at your next message. `omd mods list` shows the result.
 | `omd_plan_removal` | Removes `/plan` and plan mode |
 | `omd_plan_panel` | Pins Codex's current plan above the prompt |
 | `omd_statusline` | A configurable status line; `/statusline` edits it |
-| `omd_idle_compact` | Compacts a large idle conversation just before the prompt cache expires |
-| `omd_auto_continue` | Safely declines or answers a prompt nobody answers within two minutes, so the turn continues |
+| `omd_idle_compact` | Compacts a large idle conversation just before the prompt cache expires. The summary loses detail, and a pending approval or question is cancelled |
+| `omd_auto_continue` | Declines an approval, or answers a question, that nobody answers within two minutes, so the turn continues |
 
 OMD Core includes only the first three.
 
@@ -59,8 +59,19 @@ OMD Core includes only the first three.
 | `omd_tool_absorb` | Runs a read the model repeats in one response once, and reuses unchanged file reads in code mode; `/absorb` | |
 | `omd_subagent_router` | Runs subagents on the model your prompt names ("use sonnet 5.5 as subagents to research") or per-role settings, including another provider's | The other provider set up, such as `omd_claude_cli` |
 | `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
+| `omd_workspace` | A tabbed dock beside the chat: numbered tabs for Git changes, a shell and other mods' panels, with resize and focus keys; `/workspace` | `git` on your `PATH` for the Changes panel |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
+
+## Experimental
+
+Not installed with OMD+, and may change or go away. Install one yourself with `omd install <mod>`, then
+`omd mods enable <mod>`.
+
+| Mod | What it does | What it needs |
+| --- | --- | --- |
+| `omd_awake` | `/awake` replaces Codex's Prevent sleep while running: keeps the Mac awake while turns or subagents run, also with the lid closed, and lets it sleep once they finish | macOS; lid-closed needs the authority broker (`omd-package broker install`) |
+| `omd_monitor` | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in, and `/monitor allow owner/repo` |
 
 ## What mods cost
 
@@ -92,7 +103,7 @@ More in the [`omd_profiles` README](../mods/first-party/omd_profiles/README.md).
 
 ## Plugins
 
-OMD+ stages three Codex plugins: `omd-anchored-edit`, `omd-artifact-reading` and `omd-code-execution`. They are
+OMD+ stages four Codex plugins: `omd-anchored-edit`, `omd-artifact-reading`, `omd-code-execution` and `omd-output-budget`. They are
 installed on disk but inert until you add them with `codex plugin add`; see [plugins/README.md](../plugins/README.md).
 OMD Core stages none.
 

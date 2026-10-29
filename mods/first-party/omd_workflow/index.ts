@@ -171,13 +171,19 @@ export default function activate(api: ModAPI) {
   });
   const TASK = { key: 'task', scope: 'thread' as const };
   type Entry = { revision: number; value: Checkpoint };
-  type Op = { id: string | null; binding: string; thread: string; entry: Entry | null };
+  type Op = { id: string | null; binding: string; thread: string; entry: Entry | null; unreadable?: number };
+  const setPaused = (thread: string, paused: boolean) => {
+    const state = api.state.get();
+    const leads = object(state) ? state : {};
+    const existing = leads[thread];
+    api.state.set({ ...leads, [thread]: { ...(object(existing) ? existing : {}), no_progress_paused: paused } });
+  };
   const need = (op: Op) => {
     if (!op.entry) throw new Error('begin_task_first');
     return op.entry;
   };
   const save = (op: Op, value: Checkpoint) => {
-    op.entry = { revision: api.host.call('store.put', { ...TASK, expected_revision: op.entry?.revision ?? null, value: value as unknown as Exclude<Json, null> }).revision, value };
+    op.entry = { revision: api.host.call('store.put', { ...TASK, expected_revision: op.entry?.revision ?? op.unreadable ?? null, value: value as unknown as Exclude<Json, null> }).revision, value };
   };
   const commit = (op: Op, value: Checkpoint, result: Record<string, Json>, unacknowledged = false): Json => {
     const revision = (op.entry?.value.revision ?? 0) + 1;
@@ -209,7 +215,7 @@ export default function activate(api: ModAPI) {
     const binding = await digest({ operation: name, thread, cwd, arguments: args, expected_revision: expected });
     const stored = api.host.call('store.get', TASK);
     const value = parseCheckpoint(stored?.value);
-    const op: Op = { id: id as string, binding, thread, entry: stored && value ? { revision: stored.revision, value } : null };
+    const op: Op = { id: id as string, binding, thread, entry: stored && value ? { revision: stored.revision, value } : null, unreadable: stored && !value ? stored.revision : undefined };
     const prior = value?.operations.find(item => item.id === id);
     if (prior) {
       if (prior.binding !== binding) throw new Error('operation_id_conflict');
@@ -362,12 +368,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       progress_revision: (entry.value.progress_revision ?? 1) + Number(changed), calls: changed ? {} : entry.value.calls } as Checkpoint;
     const audited = ['reviewed_omd', 'solo_evidence'].includes(contract.active?.id ?? '');
     const output = commit(op, value, summary(value), audited);
-    if (changed && entry.value.status === 'paused') {
-      const state = api.state.get();
-      const leads = object(state) ? state : {};
-      const existing = leads[op.thread];
-      api.state.set({ ...leads, [op.thread]: { ...(object(existing) ? existing : {}), no_progress_paused: false } });
-    }
+    if (changed && entry.value.status === 'paused') setPaused(op.thread, false);
     if (audited) acknowledge(op, output);
     return output;
   };
@@ -387,13 +388,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
           if (!(error instanceof Error)) throw error;
         }
       }
-      if (typeof noProgressLimit === 'number' && noProgressLimit > 0) {
-        const state = api.state.get();
-        const leads = object(state) ? state : {};
-        const existing = leads[thread];
-        api.state.set({ ...leads, [thread]: { ...(object(existing) ? existing : {}),
-          no_progress_paused: object(entry?.value) && entry.value.status === 'paused' } });
-      }
+      if (typeof noProgressLimit === 'number' && noProgressLimit > 0) setPaused(thread, object(entry?.value) && entry.value.status === 'paused');
     });
   }
   if (typeof noProgressLimit === 'number' && noProgressLimit > 0) {
@@ -416,12 +411,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
         value: { ...task, calls, status, decisions: count >= noProgressLimit
           ? [...task.decisions, { operation: 'no_progress', call_sha256: event.call_sha256,
               unchanged_calls: count, decision: status === 'paused' ? 'paused' : 'reassess' }].slice(-24) : task.decisions } as unknown as Exclude<Json, null> });
-      if (status === 'paused') {
-        const state = api.state.get();
-        const leads = object(state) ? state : {};
-        const existing = leads[event.thread_id];
-        api.state.set({ ...leads, [event.thread_id]: { ...(object(existing) ? existing : {}), no_progress_paused: true } });
-      }
+      if (status === 'paused') setPaused(event.thread_id, true);
     });
     api.intercept('tool', { required: true }, (e, next) => {
       if (['mod_omd_workflow_checkpoint', 'mod_omd_workflow_cancel'].includes(e.tool)) return next(e);
@@ -450,7 +440,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       const observed = object(lead) ? lead : null;
       const routes = api.host.call('routes.list', null);
       const original = routes.find(value => value.roles.includes('lead') && value.roles.includes('worker') && value.available && value.model === observed?.model && value.provider === observed?.provider);
-      const fallback = route('fallback_route', '');
+      const fallback = api.settings.fallback_route ? route('fallback_route', '') : null;
       if (!original || !fallback || fallback.model === original.model && fallback.provider === original.provider || fallback.model === target.model && fallback.provider === target.provider
           || fallback.billing !== target.billing || original.billing !== reviewer.billing) throw new Error('explicit_opposite_lead_same_billing_required');
       delegation.fallback = fallback;
@@ -591,6 +581,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     if (pending.operation) sweep(op);
     const handles = pending.operation ? [] : [...new Set([pending.handle, pending.worker].filter((value): value is string => !!value))];
     const results = handles.map(handle => ({ handle, result: api.host.tryCall('agents.cancel', { handle }) }));
+    if (entry.value.status === 'paused') setPaused(op.thread, false);
     return commit(op, { ...entry.value, pending: null, status: 'cancelled' }, { status: 'cancelled', agents: results as unknown as Json });
   }));
   api.tool({ name: 'check', description: 'Run the configured executable checks and bind the result to the unchanged candidate and task acceptance',

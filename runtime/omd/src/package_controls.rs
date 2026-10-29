@@ -392,11 +392,21 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                 "settings_schema": manifest["settings_schema"],
                 "settings": crate::effective_settings(
                     manifest.get("settings_schema"),
-                    configured
+                    &configured
                         .iter()
                         .find(|item| selection["path"].as_str() == item.path.to_str())
                         .map(|item| &item.settings)
-                        .unwrap_or(&empty_settings),
+                        .unwrap_or(&empty_settings)
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .chain(
+                            selection["file_settings"]
+                                .as_object()
+                                .into_iter()
+                                .flatten()
+                                .map(|(key, value)| (key.clone(), value.clone())),
+                        )
+                        .collect(),
                 ),
                 "conflicts": selection["reason"]
                     .as_str()

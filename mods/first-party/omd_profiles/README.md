@@ -55,7 +55,7 @@ and weekly windows for ChatGPT and Claude accounts, and plan usage for Cursor ac
 | `/profile list` | Print the profiles. |
 | `/profile add` | Pick an account kind and sign in or enter its key (see above). |
 | `/profile remove NAME` | Remove a profile and, if no other profile uses it, its sign-in. Claude and Cursor accounts are removed with `/claude remove` and `/cursor remove`. |
-| `/profile refresh NAME` | Refresh a credential's sign-in. |
+| `/profile refresh NAME` | Refresh a credential's sign-in; `NAME` is its label or id and may contain spaces. |
 
 ## Needs and limits
 
@@ -66,8 +66,9 @@ and weekly windows for ChatGPT and Claude accounts, and plan usage for Cursor ac
 - The meter shows on threads whose provider holds a listed account: started with `omd-package profiles`, or on a Claude or Cursor model. `/profile` switches from any thread.
 - Switching to a Claude or Cursor account moves the thread to that provider and the account's default model; its other models are in `/model`.
 - Alt+s needs Option-as-Alt in Kitty (`macos_option_as_alt`) and Ghostty (`macos-option-as-alt`) on macOS; `/profile next` works everywhere.
-- The selected model appears in the footer and `/status`. A failed or unsettled switch blocks requests and shows its reason above the prompt; each turn restarts a stopped router.
+- The selected model appears in the footer and `/status`. A failed switch blocks the thread's own requests and shows its reason above the prompt; each turn restarts a stopped router.
 - Paid profiles bill per request against one allowance (USD) that all profiles in a thread share, asked the first time you add one. ChatGPT profiles report no charge.
+- `/model` lists at most 16 profiles; adding a 17th is refused until you remove one.
 - Chat Completions and Anthropic profiles get no hosted tools (web search, tool search).
 - A thread larger than a profile's context window is refused before the provider is called.
 - Claude subscription accounts come from `omd_claude_cli` (`/claude login NAME`) and Cursor accounts from `omd_cursor` (`/cursor setup NAME`); each mod owns its accounts and routes, and `omd_profiles` only lists and switches them.

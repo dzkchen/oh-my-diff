@@ -96,7 +96,11 @@ impl Inventory {
         if let Ok(bytes) = serde_json::to_vec(&agents)
             && std::fs::create_dir_all(directory).is_ok()
         {
-            let _ = crate::persist_view(directory, &format!("{root}.json"), &bytes);
+            let _ = codex_omd::fsio::write_bytes(
+                &directory.join(format!("{root}.json")),
+                &bytes,
+                codex_omd::fsio::Durability::Volatile,
+            );
         }
     }
 

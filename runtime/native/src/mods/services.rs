@@ -8,6 +8,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
+const SERVICE_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Grant {
@@ -602,6 +604,7 @@ impl Services {
                 .map_err(|e| e.to_string())?;
         }
         config.permissions.shell_environment_policy.r#set.clear();
+        config.permissions.file_system_helper_sandbox = false;
         config.permissions.shell_environment_policy.r#set.insert(
             "OMD_SERVICE_ROOT".into(),
             snapshot.path().to_string_lossy().into_owned(),
@@ -805,7 +808,7 @@ impl Services {
             return Err("service_argument_limit".into());
         }
         let task = lead.session.task.clone();
-        let output_bytes = host.config.snapshot_bytes;
+        let output_bytes = SERVICE_OUTPUT_BYTES;
         let timeout = lead
             .session
             .task

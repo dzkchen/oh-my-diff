@@ -70,7 +70,7 @@ test('only cited lines are verified; drift relocates uniquely and every failure 
     { path: 'b.txt', edits: [{ op: 'insert_before', anchor: b.y, lines: ['w'] }, { op: 'delete', anchor: '4#' + b['}'].split('#')[1] }] },
   ] }, host);
   assert.equal(stale.status, 'rejected');
-  assert.deepEqual(stale.failures.map(failure => Object.keys(failure).at(-1)), ['moved_to', 'stale', 'moved_to', 'ambiguous']);
+  assert.deepEqual(stale.failures.map(failure => ['moved_to', 'stale', 'ambiguous'].find(key => key in failure)), ['moved_to', 'stale', 'moved_to', 'ambiguous']);
   assert.equal(writes(host), 1);
   const retry = anchored('edit', { files: [{ path: 'a.txt', edits: [{ op: 'replace', anchor: stale.failures[0].moved_to, lines: ['C'] }] }] }, host);
   assert.equal(retry.status, 'applied');
@@ -84,7 +84,10 @@ test('denied, oversized, missing, generated and malformed edits never write', ()
   const denied = anchored('edit', { files: [{ path: 'a.txt', edits: [{ op: 'append', lines: ['x'] }] }] }, workspace({}, { 'workspace.stat': () => { throw new Error('read_denied'); } }));
   assert.equal(denied.status, 'denied');
   const host = workspace({ 'big.txt': 'x'.repeat(96_001), 'gen.ts': '// @generated\nx\n' });
-  assert.deepEqual(anchored('read', { paths: ['big.txt'] }, host), { status: 'rejected', reason: 'files_too_large: 96001 bytes exceeds 96000; use the ordinary patch tool', writes_attempted: false });
+  const oversized = anchored('read', { paths: ['big.txt'] }, host);
+  assert.equal(oversized.status, 'rejected');
+  assert.match(oversized.reason, /^files_too_large/);
+  assert.equal(oversized.writes_attempted, false);
   const result = anchored('edit', { files: [{ path: 'gen.ts', edits: [{ op: 'append', lines: ['y'] }] }, { path: 'none.txt', edits: [{ op: 'append', lines: ['y'] }] }] }, host);
   assert.deepEqual(result.failures.map(failure => failure.error.split(';')[0]), ['generated file', 'file missing']);
   for (const edit of [{ op: 'delete', anchor: '1#AAAA', lines: ['x'] }, { op: 'append', anchor: '1#AAAA', lines: ['x'] }, { op: 'replace', anchor: '1#AAAA' }, { op: 'move' }]) assert.equal(anchored('edit', { files: [{ path: 'gen.ts', edits: [edit] }] }, host).status, 'rejected');

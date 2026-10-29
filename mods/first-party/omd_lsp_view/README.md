@@ -27,9 +27,9 @@ Lines and columns start at 1. `PATH` is relative to the repository.
 | `/lsp workspace QUERY` | Search symbols across running servers. |
 | `/lsp open PATH:LINE` | Show the lines around a position, with that file's errors. Starts its server if needed. |
 | `/lsp editor PATH:LINE` | Open the position in the editor command set as `editor` in `host.json`. |
-| `/lsp pane` | Pin the results above the prompt, or pop them out again. |
+| `/lsp pane` | Pin the results above the prompt, or pop them out again. Alt+l focuses the pinned results. |
 | `/lsp back` or `/lsp close` | Go back to the results, or close the view. |
-| `/lsp servers` | Show or hide a card of running servers, their open files and current errors. |
+| `/lsp servers` | Show or hide a card of running servers, their open files and current errors. A server running without the workspace index (large repositories) shows `degraded: ` and the reason. |
 
 Enter on a location shows the lines around it, with Open in editor and Back.
 

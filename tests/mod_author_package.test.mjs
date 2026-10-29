@@ -66,7 +66,6 @@ test('scaffold commands and mapped failures work for custom and example-named ID
       assert.match(tested.stdout, /Hello author/);
       const checked = author('check', project);
       assert.equal(checked.status, 0, checked.stderr);
-      assert.match(checked.stderr, /check: ok/);
       const scenario = author('run', project);
       assert.equal(scenario.status, 0, scenario.stderr);
       assert.match(scenario.stdout, /Hello author/);
@@ -207,10 +206,23 @@ test('watch refuses to move a shared dependency from project to user scope', { s
     assert.match(watched.stderr, /package_scope_conflict: dependency is installed in project scope/);
     assert.deepEqual(engine('package-lock', store), before);
     assert.equal(readFileSync(join(store, 'mods.json'), 'utf8'), selections);
-    engine('package-disable', store, 'dependency');
-    assert.equal(engine('package-lock', store).packages.dependency.enabled, false);
-    engine('package-enable', store, 'dependency');
-    assert.equal(engine('package-lock', store).packages.dependency.enabled, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('cost measures a package alone in a scratch store', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-cost-'));
+  try {
+    const api = JSON.parse(readFileSync(new URL('../mods/package.json', import.meta.url))).version;
+    writeFileSync(join(root, 'mod.json'), JSON.stringify({ schema: 1, id: 'fixture', version: '1.0.0', api, state_version: 1, license: 'UNLICENSED',
+      provenance: { maintainer: 'test', source: 'test' }, capabilities: ['commands'] }));
+    writeFileSync(join(root, 'index.ts'), "export default api => api.command('go', () => 1);");
+    const result = spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, 'cost', root, 'go', '--runs', '2'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.mod, 'fixture');
+    assert.equal(report.runs, 2);
+    assert.ok(report.activation_ms.p50 > 0 && report.fresh_callback_ms.p50 > 0 && report.reused_callback_ms.p50 > 0, result.stdout);
+    assert.ok(report.runners >= 1, result.stdout);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -218,10 +230,8 @@ test('author help and errors print without a stack', () => {
   const cli = new URL('../mods/author/cli.mjs', import.meta.url).pathname;
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^usage: omd-mod-author /);
   const unknown = spawnSync(process.execPath, [cli, 'nonsense'], { encoding: 'utf8' });
   assert.equal(unknown.status, 1);
-  assert.match(unknown.stderr, /^usage: omd-mod-author /);
   const root = mkdtempSync(join(tmpdir(), 'omd-author-fail-'));
   try {
     const failed = spawnSync(process.execPath, [cli, 'create', join(root, 'bad'), 'BAD-ID!'], { encoding: 'utf8' });

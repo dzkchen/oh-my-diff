@@ -141,6 +141,18 @@
       "why_mod": "Pins Codex's own update_plan steps above the composer from app notifications; adds no model tool."
     },
     {
+      "path": "mods/first-party/omd_awake",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Removes Codex's prevent_idle_sleep feature with the generic builtins control and holds host power leases from turn, timer and agent-inventory events behind /awake."
+    },
+    {
+      "path": "mods/first-party/omd_monitor",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Live subscriptions across app notifications, workspace watches, timers and a managed adapter process, delivered by steering the running turn or queueing one turn; a hook or skill cannot hold them."
+    },
+    {
       "path": "mods/first-party/omd_continue",
       "extension_type": "mod",
       "role": "bundled",
@@ -319,6 +331,12 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol."
+    },
+    {
+      "path": "mods/examples/raster_wave",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Animates a half-block raster from timer callbacks with packed or JSON terminal.blit cells to show coalesced frames and measure frames shown per second."
     },
     {
       "path": "mods/examples/approval_desk",
@@ -523,6 +541,12 @@
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_workspace",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Lays the screen out as a tabbed dock beside the chat through generic layouts, leaf titles, focus regions and key contexts; adds no model tool."
     }
   ],
   "synthetic_fixtures": [

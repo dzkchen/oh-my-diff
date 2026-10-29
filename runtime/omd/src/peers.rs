@@ -1,12 +1,12 @@
 //! Peer-session mailboxes in a shared mod store, countersigned by the authority broker.
 
 use crate::broker;
+use crate::fsio::write_json;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -100,26 +100,6 @@ pub struct Peers {
     /// Message ids already taken, until they expire; a replay after that is refused as expired.
     seen: Mutex<BTreeMap<String, u64>>,
     sent: Mutex<BTreeMap<String, Sent>>,
-}
-
-fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| failure("peer_path_invalid"))?;
-    private_directory(parent)?;
-    let temporary = parent.join(format!(
-        ".{}.{}.tmp",
-        std::process::id(),
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("entry")
-    ));
-    fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&temporary)?
-        .write_all(&serde_json::to_vec(value)?)?;
-    fs::rename(&temporary, path)
 }
 
 fn private_directory(path: &Path) -> io::Result<()> {
@@ -217,7 +197,7 @@ impl Peers {
     }
 
     pub fn publish(&self, endpoints: &[Endpoint]) -> io::Result<()> {
-        write_atomic(
+        write_json(
             &self
                 .root
                 .join("sessions")
@@ -325,7 +305,8 @@ impl Peers {
                 "package": from.package, "sha256": from.sha256},
             "to": {"session": to, "package": package}, "correlation": correlation, "data": data,
             "sent_at_ms": sent_at_ms, "expires_at_ms": sent_at_ms + ttl_ms});
-        write_atomic(
+        private_directory(&inbox)?;
+        write_json(
             &inbox.join(format!("{id}.json")),
             &sealed(seal, "message", message)?,
         )?;
@@ -395,12 +376,10 @@ impl Peers {
         let receipt = json!({"id": id, "status": status, "reason": reason, "at_ms": now_ms(),
             "by": {"session": self.session, "package": message["to"]["package"]},
             "correlation": message["correlation"]});
-        write_atomic(
-            &self
-                .root
-                .join("receipts")
-                .join(sender)
-                .join(format!("{id}.json")),
+        let receipts = self.root.join("receipts").join(sender);
+        private_directory(&receipts)?;
+        write_json(
+            &receipts.join(format!("{id}.json")),
             &sealed(seal, "receipt", receipt)?,
         )
     }

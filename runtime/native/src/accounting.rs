@@ -6,6 +6,7 @@ use codex_client::Request;
 use codex_client::TransportError;
 use codex_omd::Admission;
 use codex_omd::Task;
+use codex_omd::fsio::Durability;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -58,7 +59,7 @@ fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
         }
     });
     if due {
-        write_cost_capture(account, false)?;
+        write_cost_capture(account, Durability::Volatile)?;
     }
     Ok(())
 }
@@ -70,25 +71,15 @@ fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
         .and_then(|mut snapshots| snapshots.remove(&account.cost_capture))
         .is_some_and(|(_, dirty)| dirty);
     if dirty {
-        write_cost_capture(account, true)?;
+        write_cost_capture(account, Durability::Durable)?;
     }
     Ok(())
 }
 
-fn write_cost_capture(account: &Account, durable: bool) -> Result<(), TransportError> {
+fn write_cost_capture(account: &Account, durability: Durability) -> Result<(), TransportError> {
     let bytes =
         serde_json::to_vec(&account.task.cost_capture().map_err(denied)?).map_err(denied)?;
-    let (directory, name) = account
-        .cost_capture
-        .parent()
-        .zip(
-            account
-                .cost_capture
-                .file_name()
-                .and_then(|name| name.to_str()),
-        )
-        .ok_or_else(|| denied("cost_capture_path_invalid"))?;
-    crate::persist(directory, name, &bytes, durable).map_err(denied)
+    codex_omd::fsio::write_bytes(&account.cost_capture, &bytes, durability).map_err(denied)
 }
 
 pub(crate) fn billing(rates: Option<&Rates>) -> &'static str {
@@ -327,7 +318,7 @@ impl Accounts {
             .map_err(|_| "request state poisoned")?
             .billed
             .remove(request_id);
-        write_cost_capture(&account, true).map_err(|error| error.to_string())?;
+        write_cost_capture(&account, Durability::Durable).map_err(|error| error.to_string())?;
         Ok(
             json!({"request_id": request_id, "ledger_request": request, "cost": {"microusd": microusd, "basis": "provider_reported", "source": source}, "attempt": attempt}),
         )
@@ -552,6 +543,12 @@ impl Accounts {
         };
         let origin =
             json!({"caller":"engine","thread_id":scope["thread_id"],"agent_id":scope["agent_id"]});
+        if let Some(account) = account {
+            account
+                .task
+                .check_active()
+                .map_err(|error| refuse(error.to_string()))?;
+        }
         let dispatcher = self.dispatcher();
         let active = || account.is_none_or(|account| account.task.check_active().is_ok());
         let _thread =
@@ -881,6 +878,7 @@ impl Accounts {
             "provider":account.provider,"effort":effort,"sections":sections,"tools":tools});
         let origin = json!({"caller":"engine","thread_id":thread,
             "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) }});
+        account.task.check_active().map_err(denied)?;
         let dispatcher = self.dispatcher();
         let active = || account.task.check_active().is_ok();
         let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
@@ -1336,6 +1334,7 @@ impl ResponseObserver for Accounts {
                 url = route.url;
             }
         }
+        let routed = url.clone();
         if url.is_empty() {
             url = request.url.clone();
         }
@@ -1355,7 +1354,7 @@ impl ResponseObserver for Accounts {
                 &account.repository_identity,
                 &account.provider,
                 &account.model,
-                &account.url,
+                &routed,
                 rates.included_subscription,
             ) {
                 return Err(denied("worker authorization revoked or changed"));
@@ -1588,13 +1587,39 @@ impl ResponseObserver for Accounts {
             .map(|(_, events)| events)
     }
 
-    fn policed(&self) -> bool {
-        self.runtime.lock().ok().is_some_and(|installed| {
-            installed.as_ref().is_some_and(|(_, required)| {
-                required
-                    .lock()
-                    .map_or(true, |required| required.contains(&"model_send"))
-            })
+    fn police_unary(&self, thread: Option<&str>, body: &mut Value) -> Result<(), TransportError> {
+        let Some(mods) = self.mods() else {
+            return Ok(());
+        };
+        let thread = thread.unwrap_or_default();
+        let account = self
+            .by_thread
+            .lock()
+            .map_err(|_| denied("account lock poisoned"))?
+            .get(thread)
+            .cloned();
+        let request_id = self.request_id();
+        self.police(&mods, account.as_ref(), thread, &request_id, 1, body)
+            .map(drop)
+    }
+
+    fn policed(&self) -> Option<String> {
+        let installed = self.runtime.lock().ok()?;
+        let (mods, required) = installed.as_ref()?;
+        if !required
+            .lock()
+            .map_or(true, |required| required.contains(&"model_send"))
+        {
+            return None;
+        }
+        let owners = mods
+            .try_lock()
+            .map(|mods| mods.policy_owners().join(", "))
+            .unwrap_or_default();
+        Some(if owners.is_empty() {
+            "an enabled mod".into()
+        } else {
+            owners
         })
     }
 
@@ -2058,7 +2083,7 @@ impl Attempt {
             self.required,
         )?
         else {
-            // Registrations change only at reload, so the rest of this response needs no checks.
+            // No interceptor until reload, or an unrequired one skipped as busy: the rest of this response passes through.
             self.mods = None;
             return Ok(None);
         };

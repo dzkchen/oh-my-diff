@@ -31,7 +31,7 @@ From a shell, `omd-package contract select ID@VERSION` picks a contract too.
 | `verify_route` | `verifier` | Route for the independent verification. |
 | `fallback_route` | empty (none) | Route to use if the first one is down. |
 | `initial_task` | `{}` | Start with a task already recorded: an objective and acceptance criteria. |
-| `max_no_progress_calls` | `0` | Limit on workflow calls that make no progress (0 to 32). `0` means no limit. |
+| `max_no_progress_calls` | `0` | How many times the lead may repeat the same tool call with the same result, while a task is active and its checkpoint is unchanged, before the task pauses (0 to 32). A checkpoint with new remaining work or failed hypotheses resumes it. `0` means no limit. |
 
 Set `review_route`, `verify_route` or `fallback_route` to `opposite_lead` to use a route with a different model or provider than your current one.
 

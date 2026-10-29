@@ -1,15 +1,15 @@
 use super::*;
 use codex_extension_api::ToolOutputContributor;
 use codex_extension_api::ToolOutputInput;
+use codex_extension_api::ToolOutputReplacement;
 
 use codex_extension_api::TOOL_OUTPUT_FEEDBACK_BYTES;
 
-const HEAD_BYTES: usize = 48 * 1024;
 const TAIL_BYTES: usize = 16 * 1024;
 const APPEND_BYTES: usize = 4096;
 
 fn bounded(text: &str) -> &str {
-    &text[..text.floor_char_boundary(HEAD_BYTES)]
+    &text[..text.floor_char_boundary(codex_omd::TOOL_OUTPUT_BYTES)]
 }
 
 async fn original(
@@ -17,7 +17,7 @@ async fn original(
     owner: &str,
     source: &str,
     call_id: &str,
-    text: &str,
+    text: Arc<str>,
 ) -> Result<Value, String> {
     let scope = lead.session.data.0.clone();
     let initialized = scope.lock().map_err(|_| "data_scope_poisoned")?.is_some();
@@ -27,7 +27,7 @@ async fn original(
     };
     let (root, thread) = (lead.host.root.clone(), lead.thread.to_string());
     let (owner, source) = (owner.to_owned(), source.to_owned());
-    let (label, text) = (format!("tool_output:{call_id}"), text.to_owned());
+    let label = format!("tool_output:{call_id}");
     tokio::task::spawn_blocking(move || {
         let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
         if scope.is_none() {
@@ -48,6 +48,68 @@ async fn original(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+pub(super) async fn stored(
+    core: &Core,
+    lead: &Lead,
+    caller: &Caller<'_>,
+    arguments: Value,
+) -> Result<Value, String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        call_id: String,
+    }
+    let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
+    let text = expansion::CHAIN_CALL
+        .try_with(|chain| chain.clone())
+        .ok()
+        .filter(|chain| *chain == input.call_id)
+        .and_then(|call_id| {
+            core.expansion
+                .originals
+                .lock()
+                .ok()?
+                .get(&(lead.thread.to_string(), call_id))
+                .cloned()
+        })
+        .ok_or("tool_original_unavailable: only the call's own interceptor chain can read it")?;
+    let reference = original(lead, caller.id, caller.source, &input.call_id, text.clone()).await?;
+    Ok(
+        json!({"reference": reference, "sha256": codex_omd::resource_data::hash(text.as_bytes()),
+        "bytes": text.len()}),
+    )
+}
+
+pub(super) struct Stash<'a> {
+    originals: &'a Mutex<BTreeMap<(String, String), Arc<str>>>,
+    key: (String, String),
+}
+
+impl<'a> Stash<'a> {
+    pub(super) fn new(
+        originals: &'a Mutex<BTreeMap<(String, String), Arc<str>>>,
+        key: (String, String),
+        text: Arc<str>,
+    ) -> Self {
+        if let Ok(mut originals) = originals.lock() {
+            originals.insert(key.clone(), text);
+        }
+        Self { originals, key }
+    }
+
+    fn latest(&self) -> Option<Arc<str>> {
+        self.originals.lock().ok()?.get(&self.key).cloned()
+    }
+}
+
+impl Drop for Stash<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut originals) = self.originals.lock() {
+            originals.remove(&self.key);
+        }
+    }
 }
 
 fn append(value: Value) -> Result<Option<String>, String> {
@@ -76,7 +138,7 @@ impl ToolOutputContributor for Mods {
     fn replace_tool_output<'a>(
         &'a self,
         input: ToolOutputInput<'a>,
-    ) -> ExtensionFuture<'a, Option<String>> {
+    ) -> ExtensionFuture<'a, Option<ToolOutputReplacement>> {
         Box::pin(async move {
             let diagnostic = |message: String| {
                 self.views
@@ -84,17 +146,33 @@ impl ToolOutputContributor for Mods {
             };
             let head = bounded(input.text);
             let mut executed = json!({"output": head, "success": input.success,
-                "truncated": input.text.len() > HEAD_BYTES});
+                "truncated": input.text.len() > codex_omd::TOOL_OUTPUT_BYTES, "bytes": input.text.len()});
             if let Some(value) = input.value
                 && serde_json::to_vec(value).is_ok_and(|bytes| {
-                    bytes.len() <= 32_768 && head.len() + bytes.len() <= HEAD_BYTES
+                    bytes.len() <= 32_768
+                        && head.len() + bytes.len() <= codex_omd::TOOL_OUTPUT_BYTES
                 })
             {
                 executed["value"] = value.clone();
             }
             let mut text = None;
             let mut replaced_by = "feedback".to_owned();
-            match self.resume(input.call_id, Ok(executed.clone())).await {
+            let stash = self
+                .pending
+                .lock()
+                .is_ok_and(|pending| pending.contains_key(input.call_id))
+                .then(|| {
+                    Stash::new(
+                        &self.expansion.originals,
+                        (
+                            thread_id(input.thread_store).unwrap_or_default(),
+                            input.call_id.to_owned(),
+                        ),
+                        Arc::from(input.text),
+                    )
+                });
+            let resumed = self.resume(input.call_id, Ok(executed.clone())).await;
+            match resumed {
                 Some(Ok(chain))
                     if chain.result.get("deny").is_some()
                         || chain.result["output"] != executed["output"] =>
@@ -114,8 +192,24 @@ impl ToolOutputContributor for Mods {
                 }
                 _ => {}
             }
+            let latest = stash.as_ref().and_then(Stash::latest);
+            let original_text = latest.as_deref().unwrap_or(input.text);
+            let original_bytes = original_text.len();
+            let replaced = |text: Option<String>| {
+                text.map(|text| ToolOutputReplacement {
+                    text,
+                    original_bytes,
+                })
+            };
+            let limit = codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES.max(original_bytes);
+            if text.as_ref().is_some_and(|text| text.len() > limit) {
+                diagnostic(format!(
+                    "{replaced_by}: replacement over the {limit}-byte limit dropped"
+                ));
+                text = None;
+            }
             let Some(lead) = input.thread_store.get::<Lead>() else {
-                return text;
+                return replaced(text);
             };
             if text.is_some() && replaced_by != "intercept" {
                 let (runtime, id) = (self.runtime.clone(), replaced_by.clone());
@@ -129,9 +223,10 @@ impl ToolOutputContributor for Mods {
                 .await
                 .ok()
                 .flatten();
+                let kept = latest.clone().unwrap_or_else(|| Arc::from(input.text));
                 if let Some(source) = source
                     && let Err(error) =
-                        original(&lead, &replaced_by, &source, input.call_id, input.text).await
+                        original(&lead, &replaced_by, &source, input.call_id, kept).await
                 {
                     diagnostic(format!("{replaced_by}: original unavailable: {error}"));
                 }
@@ -143,11 +238,11 @@ impl ToolOutputContributor for Mods {
                         &lead,
                         input.call_id,
                         &replaced_by,
-                        input.text,
+                        original_text,
                         text,
                     );
                 }
-                return text;
+                return replaced(text);
             }
             let runtime = self.runtime.clone();
             let observers = tokio::task::spawn_blocking(move || {
@@ -175,7 +270,7 @@ impl ToolOutputContributor for Mods {
                 json!({"call_id": input.call_id, "tool": input.tool_name.to_string(),
                     "arguments": arguments, "success": input.success,
                     "text": bounded(text),
-                    "tail": (text.len() > HEAD_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
+                    "tail": (text.len() > codex_omd::TOOL_OUTPUT_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
                     "bytes": text.len()})
             };
             let mut appended = String::new();
@@ -218,11 +313,11 @@ impl ToolOutputContributor for Mods {
                     &lead,
                     input.call_id,
                     &replaced_by,
-                    input.text,
+                    original_text,
                     text,
                 );
             }
-            text
+            replaced(text)
         })
     }
 }

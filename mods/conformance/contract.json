@@ -40,6 +40,7 @@
     "capabilities:packages": {"status":"frozen","consumer":{"path":"mods/examples/package_panel/mod.json","snippet":"\"packages\""},"decision":"coordination.packages"},
     "capabilities:peers": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "capabilities:policy": {"status":"frozen","consumer":{"path":"mods/examples/admission_guard/mod.json","snippet":"\"policy\""},"decision":"coordination.admission"},
+    "capabilities:power": {"status":"experimental","reason":"Added after 1.0.0 for power holds; experimental."},
     "capabilities:pty": {"status":"frozen","consumer":{"path":"mods/examples/shell_pane/mod.json","snippet":"\"pty\""},"decision":"terminal.pty"},
     "capabilities:request_policy": {"status":"frozen","consumer":{"path":"mods/first-party/omd_privacy/mod.json","snippet":"\"request_policy\""},"decision":"kernel.final_request_policy"},
     "capabilities:services": {"status":"frozen","consumer":{"path":"mods/examples/service-consumer/mod.json","snippet":"\"services\""},"decision":"kernel.inter_mod_services"},
@@ -86,7 +87,7 @@
     "events:session": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "events:start": {"status":"frozen","consumer":{"path":"mods/examples/external_client/index.ts","snippet":"api.on('start'"},"decision":"context.lifecycle"},
     "events:stop": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/index.ts","snippet":"api.on('stop'"},"decision":"context.lifecycle"},
-    "events:terminal": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"api.on('terminal'"},"decision":"terminal.view"},
+    "events:terminal": {"status":"frozen","experimental_fields":["omd_version"],"reason":"The `identity` `omd_version` was added after 1.0.0.","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"api.on('terminal'"},"decision":"terminal.view"},
     "events:thread_settings": {"status":"frozen","consumer":{"path":"mods/first-party/omd_statusline/index.ts","snippet":"api.on('thread_settings'"},"decision":"coordination.lifecycle_events"},
     "events:timer": {"status":"frozen","consumer":{"path":"mods/examples/external_client/index.ts","snippet":"api.on('timer'"},"decision":"context.events"},
     "events:tool_batch": {"status":"frozen","consumer":{"path":"mods/examples/read_batcher/index.ts","snippet":"api.replace('tool_batch'"},"decision":"tool.batch"},
@@ -130,7 +131,7 @@
     "intercepts:peer_send": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "intercepts:render": {"status":"frozen","consumer":{"path":"mods/examples/reactive_dashboard/index.ts","snippet":"api.intercept('render'"},"decision":"terminal.rendering"},
     "intercepts:response_stream": {"status":"frozen","consumer":{"path":"mods/examples/kernel/index.ts","snippet":"api.intercept('response_stream'"},"decision":"kernel.request_stream_middleware"},
-    "intercepts:tool": {"status":"frozen","experimental_fields":["value"],"reason":"Code-mode `value` (code_mode_values_v1) was added after 1.0.0.","consumer":{"path":"mods/examples/interception/index.ts","snippet":"api.intercept('tool'"},"decision":"tool.interception"},
+    "intercepts:tool": {"status":"frozen","experimental_fields":["value","bytes"],"reason":"Code-mode `value` (code_mode_values_v1) and the result `bytes` (tool_original_v1) were added after 1.0.0.","consumer":{"path":"mods/examples/interception/index.ts","snippet":"api.intercept('tool'"},"decision":"tool.interception"},
     "intercepts:tool_specs": {"status":"frozen","consumer":{"path":"mods/examples/tool_guide/index.ts","snippet":"api.intercept('tool_specs'"},"decision":"tool.specs"},
     "intercepts:turn_stop": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:agents.cancel": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.tryCall('agents.cancel'"},"decision":"coordination.agents"},
@@ -183,6 +184,8 @@
     "operations:packages.reload": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('packages.reload'"},"decision":"coordination.packages"},
     "operations:peers.list": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:peers.send": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
+    "operations:power.hold": {"status":"experimental","reason":"Added after 1.0.0 for power holds; experimental."},
+    "operations:power.release": {"status":"experimental","reason":"Added after 1.0.0 for power holds; experimental."},
     "operations:process.exchange": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/client.ts","snippet":"api.host.tryCall('process.exchange'"},"decision":"tool.managed_process"},
     "operations:process.start": {"status":"frozen","consumer":{"path":"mods/examples/external_client/index.ts","snippet":"api.host.tryCall('process.start'"},"decision":"tool.managed_process"},
     "operations:process.status": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/client.ts","snippet":"api.host.tryCall('process.status'"},"decision":"tool.managed_process"},
@@ -200,7 +203,7 @@
     "operations:routes.write": {"status":"experimental","reason":"Added after 1.0.0 for mod-owned provider routes; experimental."},
     "operations:routes.list": {"status":"frozen","experimental_fields":["data"],"reason":"Route `data` (route_write_v1) was added after 1.0.0.","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('routes.list'"},"decision":"coordination.lead_route"},
     "operations:routes.select": {"status":"frozen","consumer":{"path":"mods/examples/profile_switcher/index.ts","snippet":"api.host.tryCall('routes.select'"},"decision":"coordination.credentials"},
-    "operations:session.info": {"status":"frozen","experimental_fields":["process_id"],"reason":"`process_id` was added after 1.0.0.","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.host.tryCall('session.info'"},"decision":"coordination.sdk_helpers"},
+    "operations:session.info": {"status":"frozen","experimental_fields":["process_id","omd_version"],"reason":"`process_id` and `omd_version` were added after 1.0.0.","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.host.tryCall('session.info'"},"decision":"coordination.sdk_helpers"},
     "operations:sessions.list": {"status":"frozen","consumer":{"path":"mods/examples/scoped_data/index.ts","snippet":"api.host.tryCall('sessions.list'"},"decision":"shared.session_index"},
     "operations:sessions.ports": {"status":"frozen","consumer":{"path":"mods/examples/port_list/index.ts","snippet":"api.host.call('sessions.ports'"},"decision":"terminal.surface"},
     "operations:sessions.read": {"status":"frozen","consumer":{"path":"mods/examples/tool_history/index.ts","snippet":"api.host.call('sessions.read'"},"decision":"shared.session_index"},
@@ -227,7 +230,7 @@
     "operations:terminal.open": {"status":"frozen","consumer":{"path":"mods/examples/image_preview/index.ts","snippet":"api.host.call('terminal.open'"},"decision":"terminal.media_and_prompts"},
     "operations:terminal.pane": {"status":"frozen","consumer":{"path":"mods/examples/reactive_dashboard/index.ts","snippet":"api.host.call('terminal.pane'"},"decision":"terminal.interaction"},
     "operations:terminal.panes": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
-    "operations:terminal.panel": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('terminal.panel'"},"decision":"terminal.controls"},
+    "operations:terminal.panel": {"status":"frozen","experimental_fields":["group","keywords","detail","query","selected","close_args"],"reason":"Panel navigation fields (terminal_panel_navigation_v1) were added after 1.0.0.","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('terminal.panel'"},"decision":"terminal.controls"},
     "operations:terminal.prompt": {"status":"frozen","consumer":{"path":"mods/examples/confirm_note/index.ts","snippet":"api.host.call('terminal.prompt'"},"decision":"terminal.media_and_prompts"},
     "operations:terminal.pty": {"status":"frozen","consumer":{"path":"mods/examples/shell_pane/index.ts","snippet":"api.host.call('terminal.pty'"},"decision":"terminal.pty"},
     "operations:terminal.selection": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"api.host.call('terminal.selection'"},"decision":"terminal.controls"},
@@ -237,6 +240,7 @@
     "operations:tools.define": {"status":"frozen","consumer":{"path":"mods/examples/status_tools/index.ts","snippet":"api.host.call('tools.define'"},"decision":"tool.dynamic"},
     "operations:tools.invoke": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:tools.list": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
+    "operations:tools.original": {"status":"experimental","reason":"Added after 1.0.0 to keep a tool interceptor's complete original output; experimental."},
     "operations:tools.undefine": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:turns.abort": {"status":"frozen","consumer":{"path":"mods/examples/status_tools/index.ts","snippet":"api.host.call('turns.abort'"},"decision":"context.turn_activity"},
     "operations:turns.activity": {"status":"frozen","consumer":{"path":"mods/examples/turn_recap/index.ts","snippet":"api.host.call('turns.activity'"},"decision":"context.turn_activity"},
@@ -293,8 +297,9 @@
     "view_fields:greeting": {"status":"frozen","consumer":{"path":"mods/first-party/omd_logo/index.ts","snippet":"greeting:"},"decision":"terminal.view"},
     "view_fields:header": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "view_fields:inline_sites": {"status":"frozen","consumer":{"path":"mods/examples/quiet_inline/index.ts","snippet":"inline_sites:"},"decision":"terminal.view"},
-    "view_fields:keybindings": {"status":"frozen","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"keybindings:"},"decision":"terminal.view"},
-    "view_fields:layout": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"layout:"},"decision":"terminal.view"},
+    "view_fields:key_contexts": {"status":"experimental","reason":"Focus regions and key contexts (terminal_focus_v1) were added after 1.0.0."},
+    "view_fields:keybindings": {"status":"frozen","experimental_fields":["region","help"],"reason":"The `region` and `help` key actions (terminal_focus_v1) were added after 1.0.0.","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"keybindings:"},"decision":"terminal.view"},
+    "view_fields:layout": {"status":"frozen","experimental_fields":["title","focus"],"reason":"Layout leaf `title` (terminal_layout_title_v1) and `style.focus` (terminal_focus_v1) were added after 1.0.0.","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"layout:"},"decision":"terminal.view"},
     "view_fields:panels": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "view_fields:placeholder": {"status":"experimental","reason":"No verified top-level TerminalView consumer in the first-party collection; nested component styles do not qualify."},
     "view_fields:session_title_suffix": {"status":"frozen","consumer":{"path":"mods/first-party/omd_logo/index.ts","snippet":"session_title_suffix:"},"decision":"terminal.view"},
@@ -348,9 +353,10 @@
     "classic_hooks:WorktreeCreate": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "classic_hooks:WorktreeRemove": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "author_commands:check": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm check"}},
-    "author_commands:create": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author create DIR ID"}},
+    "author_commands:cost": {"status":"experimental","reason":"Added after 1.0.0 for author cost reports; experimental."},
+    "author_commands:create": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author create DIR [ID]"}},
     "author_commands:debug": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm debug"}},
-    "author_commands:diagnostics": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author diagnostics STORE OUTPUT"}},
+    "author_commands:diagnostics": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author diagnostics STORE [OUTPUT]"}},
     "author_commands:events": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author events STORE"}},
     "author_commands:example": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author example DIR NAME"}},
     "author_commands:examples": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author examples DIR"}},
@@ -684,7 +690,7 @@
       "replace": null,
       "timing": "any callback; `migrate` on a state-version change",
       "ownership": "mod: keys and values; host: namespaces, revisions, provenance, bounds and export",
-      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 192 KiB in every scope, compare-and-swap writes retried at most twice by replaying recorded host results; general callbacks reactivate in fresh VM contexts even when sandboxed processes and bounded compilation caches are reused; module globals do not persist between general callbacks",
+      "limits": "256-byte keys, 64 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 512 KiB in every scope, compare-and-swap writes retried at most twice by replaying recorded host results; general callbacks reactivate in fresh VM contexts even when sandboxed processes and bounded compilation caches are reused; module globals do not persist between general callbacks",
       "native": "native hooks hold no state between invocations",
       "covers": {
         "capabilities": [
@@ -740,7 +746,7 @@
       "replace": null,
       "timing": "registered at activation; ordinary tools are callable for the whole generation",
       "ownership": "host: the executor, permissions, deadlines, accounting and the tool lifecycle",
-      "limits": "16 tools per mod, namespaced `mod_<id>_<name>`, 8 KiB schema validated by the native tool registry",
+      "limits": "32 tools per mod, namespaced `mod_<id>_<name>`, 8 KiB schema validated by the native tool registry",
       "native": "native plugins add tools only through MCP servers, as a separate process with its own transport",
       "covers": {
         "capabilities": [
@@ -780,7 +786,7 @@
       "group": "tool",
       "decision": "Tool call continuation: transform, retarget, deny, answer, hold, retry or invoke",
       "observe": "`intercept('tool')` with the tool, arguments, call, thread, agent, schema and batch position; `next` resolves to the executed result",
-      "alter": "pass a changed tool or arguments to `next`, return `{deny}`, transform the result, answer without running the tool, call `next` again to retry, or run and assess other tools with `tools.invoke` and `tools.check`",
+      "alter": "pass a changed tool or arguments to `next`, return `{deny}`, transform the result, answer without running the tool, call `next` again to retry, or run and assess other tools with `tools.invoke` and `tools.check`, or keep the complete output as evidence with `tools.original` (`tool_original_v1`)",
       "replace": null,
       "timing": "before native hooks and permission checks; the result returns after the handler and before upstream truncation",
       "ownership": "host: permissions, the executor and completion evidence",
@@ -797,7 +803,8 @@
         ],
         "operations": [
           "tools.invoke",
-          "tools.check"
+          "tools.check",
+          "tools.original"
         ]
       },
       "replace_note": "composed interceptors, no exclusive owner"
@@ -995,14 +1002,14 @@
     {
       "id": "tool.builtins",
       "group": "tool",
-      "decision": "Built-in commands and collaboration modes",
-      "observe": "the registry snapshot lists hidden commands and disabled modes",
-      "alter": "`api.builtins` hides commands and disables modes",
+      "decision": "Built-in commands, collaboration modes, surfaces and Codex features",
+      "observe": "the registry snapshot lists hidden commands, disabled modes and surfaces, and removed features",
+      "alter": "`api.builtins` removes commands, modes, surfaces and Codex features (`features.remove`, `builtins_features_v1`)",
       "replace": null,
       "timing": "registered at activation; applied at the next idle boundary; restored on disable, unload or failure",
       "ownership": "mod: which built-ins; host: protected recovery commands and the default mode",
-      "limits": "`/omd`, `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed; a disabled mode is clamped to default at turn start with a warning",
-      "native": "native plugins cannot remove built-in commands or modes",
+      "limits": "`/omd`, `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed; a disabled mode is left out of `collaborationMode/list` and refused by `thread/settings/update` and `turn/start`, and a resumed thread holding it is clamped to default at turn start with a warning; a removed feature reads as off and leaves every feature list without writing config",
+      "native": "native plugins cannot remove built-in commands, modes or features",
       "covers": {
         "capabilities": [
           "builtins"
@@ -1155,7 +1162,7 @@
       "id": "terminal.identity_and_rich_presentation",
       "group": "terminal",
       "decision": "Launch identity, styled header lines and width-bounded boxes",
-      "observe": "the read-only `identity` on the terminal input: installed Codex version, install profile, effective mode and installed, enabled and active mod counts",
+      "observe": "the read-only `identity` on the terminal input: installed Codex and OMD versions, install profile, effective mode and installed, enabled and active mod counts",
       "alter": "a `line` of styled spans and `box` width bounds",
       "replace": null,
       "timing": "every terminal redraw on the alternate screen, including Codex's owned fullscreen transcript",
@@ -1266,11 +1273,11 @@
       "group": "terminal",
       "decision": "Keyed rasters, pointer capture, overlays, Kitty image placement and client facts",
       "observe": "the `terminal` event carries `client` graphics, pointer, reduced-motion and cell-pixel facts; pointer components report `enter`, `leave`, `move`, `down`, `up` and `drag` with half-cell rows",
-      "alter": "`terminal.blit` queues partial cell updates into the mod's own `raster`; named sites may be overlays anchored to the screen or a component with z-order and clipping",
+      "alter": "`terminal.blit` queues partial cell updates (JSON `cells` or base64 `packed` u32 triplets) into the mod's own `raster`; named sites may be overlays anchored to the screen or a component with z-order and clipping",
       "replace": null,
-      "timing": "one queued blit applied per 16 ms frame; newest image or raw-pixel frame replaces pending frames; latest-wins pointer motion; a press captures until release",
+      "timing": "cell and packed blits that arrive before the next 16 ms frame merge into it, later cells winning; newest image or raw-pixel frame replaces pending frames; latest-wins pointer motion; a press captures until release",
       "ownership": "mod: its own rasters, overlays and images; host: frame pacing, hit-testing layers, image ids and teardown",
-      "limits": "rasters 200x40 cells, 16 per mod, 32 queued cell updates or 256 KiB; overlay z 0–9; encoded images 8 MiB and 4,096 px; raw RGB/RGBA 4,096 px per side (64 MiB maximum), one immutable newest frame per raster, process and generation scoped handles",
+      "limits": "rasters 512x256 cells, 16 per mod, 256 KiB per call, pending cells bounded by the raster; overlay z 0–9; encoded images 8 MiB and 4,096 px; raw RGB/RGBA 4,096 px per side (64 MiB maximum), one immutable newest frame per raster, process and generation scoped handles",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
@@ -1391,7 +1398,7 @@
       "replace": null,
       "timing": "after the handler returns, before upstream truncation and history recording",
       "ownership": "mod: appended feedback; host: call id, status, the retrievable original and the ledger hashes",
-      "limits": "handlers see the first 48 KiB plus a 16 KiB tail; feedback extends any output by at most 16 KiB; image and audio items appear as markers",
+      "limits": "handlers see the first 256 KiB plus a 16 KiB tail; feedback extends any output by at most 16 KiB; image and audio items appear as markers",
       "native": "PostToolUse hooks can add feedback but cannot keep a retrievable original",
       "covers": {
         "capabilities": [
@@ -1959,6 +1966,30 @@
       }
     },
     {
+      "id": "coordination.power_holds",
+      "group": "coordination",
+      "decision": "Explicitly granted leases that keep the Mac awake",
+      "observe": null,
+      "alter": "hold an idle-sleep assertion, and with the deployed broker `SleepDisabled`, until released or expired (`power.hold`, `power.release`)",
+      "replace": null,
+      "timing": "immediate; a lease ends on release, expiry, session stop, host exit and broker or helper loss, and at the next host event after its mod is disabled, fails or changes",
+      "ownership": "user: the hash-bound, expiring and revocable `power` grant; host: per-mod leases and expiry; broker: reference-counted `SleepDisabled` restored to its previous value",
+      "limits": "lid-closed holds fail closed without the deployed broker; 60 s to 24 h per lease; 4 live leases per mod in a session",
+      "native": "upstream `features.prevent_idle_sleep` holds an idle assertion during a turn only",
+      "covers": {
+        "capabilities": [
+          "power"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "power.hold",
+          "power.release"
+        ],
+        "intercepts": []
+      }
+    },
+    {
       "id": "coordination.autonomous_turns",
       "group": "coordination",
       "decision": "Opt-in attributed autonomous prompt queues and turn continuation",
@@ -2138,7 +2169,7 @@
     },
     {
       "id": "limits",
-      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 128 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including its host-call waits (every host call, `next` and `time.sleep` included, is answered live; replay happens only in offline runners and in the state-conflict retry), and 192 KiB state in every scope."
+      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 32 tools and 32 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 512 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including its host-call waits (every host call, `next` and `time.sleep` included, is answered live; replay happens only in offline runners and in the state-conflict retry), and 512 KiB state in every scope."
     },
     {
       "id": "first_party_parity",

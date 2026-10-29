@@ -268,9 +268,9 @@ pub(super) fn isolated(
         ("LANG".into(), "en_US.UTF-8".into()),
         ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
         ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
-        ("OMD_NARROW_SANDBOX".into(), "1".into()),
     ]);
     config.permissions.shell_environment_policy.use_profile = false;
+    config.permissions.file_system_helper_sandbox = true;
     config.mcp_servers.set(HashMap::new()).map_err(error)?;
     config.agent_max_depth = 0;
     config.agent_max_threads = Some(1);
@@ -316,6 +316,7 @@ pub(super) async fn command(
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
             justification: None,
             arg0: None,
+            file_system_helper_sandbox: config.permissions.file_system_helper_sandbox,
         },
         &config.permissions.effective_permission_profile(),
         &config.cwd,
@@ -390,7 +391,7 @@ impl ParentState {
         let tracked = codex_omd::tracked_paths(&host.repository, &untracked).map_err(error)?;
         let mut paths = tracked.clone();
         paths.extend(candidate_paths);
-        let current = Snapshot::capture(&host.repository, &paths, host.config.snapshot_bytes)
+        let current = Snapshot::capture_tree(&host.repository, &paths, host.config.snapshot_bytes)
             .map_err(error)?;
         Ok(Self {
             untracked,
@@ -404,8 +405,12 @@ impl ParentState {
         Ok(
             codex_omd::tracked_paths(&host.repository, &self.untracked).map_err(error)?
                 == self.tracked
-                && Snapshot::capture(&host.repository, &self.paths, host.config.snapshot_bytes)
-                    .map_err(error)?
+                && Snapshot::capture_tree(
+                    &host.repository,
+                    &self.paths,
+                    host.config.snapshot_bytes,
+                )
+                .map_err(error)?
                     == *expected,
         )
     }

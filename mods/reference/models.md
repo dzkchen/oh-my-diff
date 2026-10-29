@@ -13,7 +13,7 @@ Routes are configuration, not names in the API.
 `<OMD_MOD_STORE>/host.json` lists `routes` with `name, provider, model, reasoning_effort, responses_url, rates,
 roles (lead|worker), tools, mods, grant, credential, data`.
 
-A route entry, with every field the host accepts:
+A route entry:
 
 ```json
 {"name": "reviewer", "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "medium",
@@ -24,6 +24,10 @@ A route entry, with every field the host accepts:
            "output_microusd_per_million": 10000000, "reservation_microusd": 200000, "max_output_tokens": 32000,
            "input_token_ceiling": 400000, "included_subscription": false}}
 ```
+
+`rates` also accepts optional `cache_write_microusd_per_million`, `provider_billed` (see [Provider-billed
+routes](#provider-billed-routes-provider_billing_v1)) and `external_subscription` (a subscription billed outside OMD:
+its settled charge counts as a subscription list-equivalent, not a task charge, and needs a granted route).
 
 ### Choosing a route
 
@@ -269,7 +273,8 @@ The input is one page:
 - `request_id`, `attempt`, `scope`, `provider`, `route` and `model`.
 - `page` and `pages` (1-based).
 - `cached`.
-- `segments`: the non-empty string leaves of `instructions`, `input`, `tools` and `text`, except structural fields
+- `segments`: the non-empty string leaves of `instructions`, `input`, `tools` and `text` (and `prompt`, `images`
+  and `traces` in image and memory summarization requests), except structural fields
   (`type`, `id`, `call_id`, `status`, `role`, `name`, `namespace`, `detail`, item metadata).
 - `opaque` and `opaque_total`.
 
@@ -278,7 +283,7 @@ Each segment is `{id, kind, role, editable, text, bytes, sha256}`:
 - `id` is the JSON pointer (`/input/3/content/0/text`).
 - `kind` is the content kind: `agents_md.instructions`, `user.text`, or `message.<role>` without one,
   `instructions`, `tool_call.arguments`, `tool_call.input`, `tool_output`, `reasoning`, `tool_spec`,
-  `output_schema` or the item type.
+  `output_schema`, `image.prompt`, `memory` or the item type.
 - `bytes` is the UTF-8 size.
 
 | Page limit | Value |
@@ -333,15 +338,18 @@ A request is refused, visibly as a turn or call error starting `final_request_re
 ### Declared policies (`request_policy`)
 
 A selection trusted with capability `request_policy` (which needs `middleware`) is a declared policy. While it is
-enabled, every request is refused (`request_policy_unavailable`) unless that mod is loaded, healthy and has a
-required interceptor selecting `model_send`, including after a rejected selection, failed activation, fault or
-failed reload.
+enabled, every request except web search is refused (`request_policy_unavailable`) unless that mod is loaded,
+healthy and has a required interceptor selecting `model_send`, including after a rejected selection, failed
+activation, fault or failed reload.
 
-- While a required `model_send` interceptor or a declared policy exists, transports that cannot pass the stage are
-  refused (`request_policy_unsupported_transport`): realtime calls and their websockets, image generation, web
-  search and memory summarization; Responses websockets are always off under OMD.
+- Image generation and edits and memory summarization pass the stage too (input images arrive as `opaque`).
+  Web search is never policed or refused by final-request policies, even when the policy has failed: it sends recent
+  conversation text and its queries as they are.
+- While a required `model_send` interceptor or a declared policy exists, realtime calls and their websockets are
+  refused (`request_policy_unsupported_transport`, naming the endpoint and the mods whose policy blocks it);
+  Responses websockets are always off under OMD.
 - Disable the mod in `/mods` or `/omd` to send again (only the administrator can disable a managed policy).
-- Status `request_policy_unavailable` names the reason every request is being refused, or is `null`.
+- Status `request_policy_unavailable` names the reason every request except web search is being refused, or is `null`.
 - Without `model_send` interceptors or declared policies the stage does not run and the body is untouched.
 
 ### Records and coverage of final-request policy
@@ -358,17 +366,23 @@ replaced bytes) or `final_request_refused` with its reason.
 
 ## Built-in controls
 
-`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}})`, registered during activation, hides
-slash commands, disables collaboration modes and turns off native surfaces from the next idle boundary until the
-mod is disabled, unloaded or fails. Controls belong to the directory OMD was launched in and cover every thread of
+`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}, features: {remove}})`, registered during
+activation, removes slash commands, collaboration modes, native surfaces and Codex features from the next idle
+boundary until the mod is disabled, unloaded or fails. Controls belong to the directory OMD was launched in and cover every thread of
 that session, including threads in its worktrees.
 
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.
+- `features: {remove: ['prevent_idle_sleep']}` (`builtins_features_v1`) takes Codex features out of the session:
+  they read as off everywhere, whatever `config.toml` or `-c` sets, and they leave `/experimental`, the app-server's
+  experimental feature list, `codex features list` and tips. Removing `code_mode` also removes `code_mode_only`.
+  Nothing is written to `config.toml`; disabling the mod brings back the rows and the saved values. A feature that
+  managed requirements pin on stays on. Keys must be Codex feature keys (`invalid_builtins` otherwise).
 - `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed.
-- A turn that requests a disabled mode runs in the default mode with that mode's instructions cleared and a warning
-  (a `warning` notification for app-server clients), including the turn at whose boundary the mod loads.
+- A disabled mode is absent from `collaborationMode/list`. A thread that requests or still holds one is reported in
+  the default mode and runs its next turn there with that mode's instructions cleared and a warning (a `warning`
+  notification for app-server clients), including the turn at whose boundary the mod loads.
 - Tools limited to collaboration modes lose the disabled ones and are not offered when none remain.
 
 ## One-shot model calls and forks (`model_complete_v2`)
@@ -446,11 +460,12 @@ The runner adds small helpers to `api`; each calls the host operations named her
 none starts paid work implicitly.
 
 - `api.package` is `{id, version, sha256}` of the running source.
-- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, model, provider,
-  route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
+- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, omd_version, model,
+  provider, route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
   `cwd` and `model` are the thread's current working directory and model (a settings change shows at once), and
   `turns_started` counts turns this process started in the thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
-  records in shared state, such as watch IDs, by it.
+  records in shared state, such as watch IDs, by it. `omd_version` (experimental) is the OMD release, as in the
+  terminal `identity`.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and `api.fs.ancestors(name, from?)`
   (nearest first, up to the workspace root from `from`, else from the session's cwd with `inventory` or the root)
   normalize workspace-relative paths and read through `workspace.stat` (`fs.read`); symlinked components and paths
@@ -461,7 +476,7 @@ none starts paid work implicitly.
 - `api.usage.summarize(response)` turns a `model_response` into `{measured, tokens, context, cost, timing, …}`.
   Tokens are provider facts (`measured: false` without usage), `context.ratio` uses the session's context window
   when known, and `cost.source` says whether a charge is projected from configured rates (`configured_rates`),
-  covered by a subscription, synthetic or unknown.
+  reported by the provider (`provider`), covered by a subscription, synthetic or unknown.
 - `api.usage.rateLimits()` reads `account/rateLimits/read` when the mod holds `account`; window expiry stays as the
   provider reports it.
 
@@ -469,7 +484,7 @@ none starts paid work implicitly.
 
 - `api.time.sleep(ms)` calls `time.sleep {ms}` (`events`, at most 60 s): the callback waits in place, holding no
   runtime lock, and the wait does not count as own time; cancellation wakes it and ends the callback.
-- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 128 host calls.
+- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 512 host calls.
 - `api.time.after(key, delay_ms, handler)` and `api.time.every(key, interval_ms, handler)` register during
   activation (16 ms to 24 h) and return `{start(), cancel()}` over `events.schedule`/`events.cancel` key
   `time:<key>`.

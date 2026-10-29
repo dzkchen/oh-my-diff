@@ -14,6 +14,7 @@ fn snapshot() -> Snapshot {
             File {
                 bytes: b"dirty tracked input".to_vec(),
                 executable: false,
+                symlink: false,
             },
         )]),
     }
@@ -28,6 +29,7 @@ fn worktree_contains_snapshot_without_touching_original_inputs() {
         File {
             bytes: b"source.txt\n".to_vec(),
             executable: false,
+            symlink: false,
         },
     );
     let workspace = create_worktree(&input, &temp.path().join("isolated"), 4096).unwrap();
@@ -67,6 +69,7 @@ fn integration_candidate_preserves_unrelated_edits_and_rejects_conflicts() {
         File {
             bytes: b"user".to_vec(),
             executable: false,
+            symlink: false,
         },
     );
     let merged = base.merge_candidate(&candidate, &current).unwrap();
@@ -97,6 +100,7 @@ fn rejects_unsafe_names_size_overflow_and_existing_destinations() {
             File {
                 bytes: Vec::new(),
                 executable: false,
+                symlink: false,
             },
         );
         assert!(input.write_new(&temp.path().join("invalid"), 4096).is_err());
@@ -179,6 +183,7 @@ fn materialization_does_not_write_or_chmod_a_replacement_symlink_target() {
             File {
                 bytes: vec![b'x'; 4_000_000],
                 executable: true,
+                symlink: false,
             },
         )]),
     };

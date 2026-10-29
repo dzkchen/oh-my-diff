@@ -656,7 +656,7 @@ async fn run(
             Ok(
                 json!({"thread_id": lead.thread.to_string(), "root": host.repository,
                 "cwd": snapshot.cwd(), "codex_version": env!("CARGO_PKG_VERSION"),
-                "model": snapshot.model,
+                "omd_version": codex_omd::OMD_HOST_RELEASE, "model": snapshot.model,
                 "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
                 "route": account.and_then(|account| account.route), "turns_started": turns,
                 "process_id": crate::accounting::process_id()}),
@@ -671,6 +671,22 @@ async fn run(
         "peers.list" | "peers.send" => {
             let endpoints = super::peering::current_endpoints(core).await;
             core.peering.call(lead, &caller, request, endpoints)
+        }
+        "power.hold" | "power.release" => {
+            if operation == "power.hold" && caller.origin != Origin::Event {
+                return Err("host_operation_event_only: power.hold".into());
+            }
+            let power = lead.session.power.clone();
+            let (id, source) = (caller.id.to_owned(), caller.source.to_owned());
+            tokio::task::spawn_blocking(move || {
+                if request.operation == "power.hold" {
+                    power.hold(&id, &source, &request.arguments)
+                } else {
+                    power.release(&id, &request.arguments)
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?
         }
         "turns.abort" => {
             #[derive(serde::Deserialize)]

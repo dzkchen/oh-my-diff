@@ -237,7 +237,7 @@ export function createClient(api: ModAPI) {
       const outbound: Json[] = [];
       for (const path of Object.keys(s.documents)) {
         if (tracked.size <= 96) break;
-        if (chunk.includes(path)) continue;
+        if (chunk.includes(path) || path === selected[0]) continue;
         tracked.delete(path);
         outbound.push({ jsonrpc: '2.0', method: 'textDocument/didClose', params: doc(s, path) });
         delete s.documents[path];

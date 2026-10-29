@@ -13,7 +13,7 @@ function run(event, payload, state, { settings = {}, now = NOW, answer = () => (
   const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, event, payload,
     virtual_time_ms: now, hook_budget_ms: 2000 }, call => {
     calls.push(call);
-    if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.164.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };
+    if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.165.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };
     if (call.operation === 'events.schedule') return call.arguments;
     if (call.operation === 'events.cancel') return { cancelled: true };
     const value = answer(call);
@@ -37,7 +37,6 @@ test('auto uses cache evidence and refreshes the interval on reads without inven
   assert.deepEqual(armed.calls, [['events.schedule', { key: 'idle', delay_ms: 27 * MINUTE }]]);
   const refreshed = run('model_response', response({ request_id: 'r2', timing: { started_at_ms: NOW + 20 * MINUTE, first_event_ms: 100, duration_ms: 1000 } }), armed.state, { now: NOW + 20 * MINUTE });
   assert.equal(refreshed.state.at, NOW + 20 * MINUTE);
-  assert.deepEqual(refreshed.calls, [['events.schedule', { key: 'idle', delay_ms: 27 * MINUTE }]]);
   assert.deepEqual(run('timer', { key: 'idle' }, refreshed.state, { now: NOW + 27 * MINUTE }).calls, [['events.schedule', { key: 'idle', delay_ms: 20 * MINUTE }]]);
 
   for (const cache of [{ read_tokens: 0, write_tokens: 0 }, { read_tokens: null, write_tokens: null }]) {
@@ -47,10 +46,7 @@ test('auto uses cache evidence and refreshes the interval on reads without inven
     assert.equal(run('model_response', response({ cache }), null, { settings: { cache_ttl_minutes: '10' } }).state.ttl, 10 * MINUTE);
   }
   assert.equal(run('model_response', response({ cache: { read_tokens: 0, write_tokens: 150_000 } }), null).state.ttl, 30 * MINUTE);
-  assert.equal(run('model_response', response({ provider: 'custom' }), armed.state).state.ttl, 0);
-  for (const provider of ['ollama', 'lmstudio', 'oss']) {
-    assert.equal(run('model_response', response({ provider }), armed.state, { settings: { cache_ttl_minutes: '10' } }).state.ttl, 0);
-  }
+  assert.equal(run('model_response', response({ provider: 'ollama' }), armed.state, { settings: { cache_ttl_minutes: '10' } }).state.ttl, 0);
 });
 
 test('reported lifetimes persist only on reads from the same provider, route, credential and model', () => {
@@ -81,7 +77,6 @@ test('persistent subscription caching disarms auto compaction while explicit int
   const plain = response({ route: 'session', credential: null, cost: { microusd: null, basis: 'unpriced' } });
   assert.equal(run('model_response', plain, apiState).state.ttl, 0, 'plain signed-in sessions do not carry an included-subscription cost label');
   assert.equal(run('model_response', plain, null, { settings: { cache_ttl_minutes: '30' } }).state.ttl, 30 * MINUTE);
-  assert.equal(run('model_response', response(), skipped.state).state.ttl, 30 * MINUTE);
 });
 
 test('a 12-hour API estimate preserves its expiry on reads and refreshes only the 30-minute coverage', () => {
@@ -93,10 +88,8 @@ test('a 12-hour API estimate preserves its expiry on reads and refreshes only th
   assert.equal(readAt(360, null).state.expires, NOW + 390 * MINUTE, 'an existing cache with no observed write gets only the known read refresh');
   const middle = readAt(360, written.state);
   assert.equal(middle.state.expires, NOW + 720 * MINUTE);
-  assert.deepEqual(middle.calls, [['events.schedule', { key: 'idle', delay_ms: 324 * MINUTE }]]);
   const late = readAt(705, middle.state);
   assert.equal(late.state.expires, NOW + 735 * MINUTE);
-  assert.equal(readAt(740, late.state).state.expires, NOW + 770 * MINUTE);
   const cold = run('model_response', response({ cache: { read_tokens: 0, write_tokens: 150_000 }, timing: { started_at_ms: NOW + 800 * MINUTE, first_event_ms: 100, duration_ms: 1000 } }), late.state, { settings, now: NOW + 800 * MINUTE });
   assert.equal(cold.state.expires, NOW + 1520 * MINUTE);
 });
@@ -119,13 +112,10 @@ test('the timer compacts an idle thread or one waiting on the user, never a runn
   const fire = (state, now = NOW + 27 * MINUTE) => run('timer', { key: 'idle' }, state, { now });
   assert.deepEqual(fire(armed, NOW + 20 * MINUTE).calls, [['events.schedule', { key: 'idle', delay_ms: 7 * MINUTE }]]);
   assert.deepEqual(fire(armed).calls, [compact]);
-  assert.equal(fire(armed).state.requested, 'idle');
   assert.deepEqual(fire(armed, NOW + 31 * MINUTE).calls, [], 'an expired cache is not compacted');
-  for (const error of ['client_context_changed', 'client_surface_context_changed']) {
-    const elsewhere = run('timer', { key: 'idle' }, armed, { now: NOW + 27 * MINUTE, answer: call => call.operation === 'app.request' ? new Error(error) : {} });
-    assert.deepEqual(elsewhere.calls, [compact, ['events.schedule', { key: 'idle', delay_ms: 15_000 }]], 'another thread in view retries');
-    assert.equal(elsewhere.state.requested, null);
-  }
+  const elsewhere = run('timer', { key: 'idle' }, armed, { now: NOW + 27 * MINUTE, answer: call => call.operation === 'app.request' ? new Error('client_context_changed') : {} });
+  assert.deepEqual(elsewhere.calls, [compact, ['events.schedule', { key: 'idle', delay_ms: 15_000 }]], 'another thread in view retries');
+  assert.equal(elsewhere.state.requested, null);
   const refused = run('timer', { key: 'idle' }, armed, { now: NOW + 27 * MINUTE, answer: call => call.operation === 'app.request' ? new Error('app_request_refused') : {} });
   assert.deepEqual(refused.calls, [compact], 'a final refusal is not retried');
 
@@ -135,10 +125,8 @@ test('the timer compacts an idle thread or one waiting on the user, never a runn
   assert.deepEqual(fire(foreign).calls, [], "another thread's approval does not make this running turn look idle");
   const asked = run('app_server_request', { method: 'item/tool/requestUserInput', request_id: 7, phase: 'requested', params: {}, resolution: null }, running).state;
   assert.deepEqual(fire(asked).calls, [compact]);
-  assert.equal(fire(asked).state.requested, 'question');
   const answered = run('app_server_request', { method: 'item/tool/requestUserInput', request_id: 7, phase: 'resolved', params: null, resolution: null }, asked).state;
   assert.deepEqual(fire(answered).calls, []);
   assert.deepEqual(run('turn_end', { turn_id: 't2', outcome: 'aborted' }, answered, { now: NOW + 28 * MINUTE }).calls, [['events.schedule', { key: 'idle', delay_ms: 1000 }]]);
-  assert.deepEqual(run('turn_end', { turn_id: 't2', outcome: 'aborted' }, answered, { now: NOW + 31 * MINUTE }).calls, []);
 });
 

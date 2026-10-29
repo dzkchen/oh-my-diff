@@ -37,12 +37,6 @@ use codex_omd::ModHost;
 use codex_omd::ModHostCall;
 use codex_omd::ModTool;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::PermissionProfileSnapshot;
-use codex_protocol::permissions::FileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -528,9 +522,12 @@ fn publish(
         .into_iter()
         .flatten()
         .filter_map(|item| {
-            item["error"]
-                .as_str()
-                .map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))
+            item["error"].as_str().map(|error| {
+                (
+                    item["id"].as_str().unwrap_or("mod").to_owned(),
+                    error.to_owned(),
+                )
+            })
         })
         .collect::<Vec<_>>();
     errors.extend(
@@ -543,45 +540,33 @@ fn publish(
                     .as_str()
                     .filter(|reason| !reason.starts_with("shadowed_"))
                     .map(|reason| {
-                        format!(
-                            "{}: {reason}",
+                        (
                             item["id"]
                                 .as_str()
                                 .or(item["path"].as_str())
                                 .unwrap_or("selection")
+                                .to_owned(),
+                            reason.to_owned(),
                         )
                     })
             }),
     );
     if let Some(error) = status["reload_error"].as_str() {
-        errors.push(format!("Reload: {error}"));
+        errors.push(("Reload".to_owned(), error.to_owned()));
     }
     if !errors.is_empty() {
         terminal
             .view
             .title
             .get_or_insert_with(|| "Mod recovery".into());
-        terminal.view.panels.insert(
-            0,
-            codex_omd::ModPanel {
-                title: "Mod errors".into(),
-                lines: errors
-                    .into_iter()
-                    .take(16)
-                    .map(|error| {
-                        error
-                            .chars()
-                            .filter(|c| !c.is_control())
-                            .take(180)
-                            .collect()
-                    })
-                    .collect(),
-            },
-        );
     }
-    views.base(host, terminal, input, rendered_ms);
+    views.base(host, terminal, errors, input, rendered_ms);
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
+    codex_features::set_removed(
+        &host.repository.to_string_lossy(),
+        builtins.removed_features(),
+    );
     let name = codex_omd::builtins_snapshot(&host.repository);
     // A missing snapshot reads as no controls, so a repository without any keeps no file.
     if builtins == codex_omd::BuiltinSnapshot::from_controls(&[]) {
@@ -596,13 +581,17 @@ fn observes_workspace(runtime: &ModHost) -> bool {
     runtime.has_event("workspace_change") || runtime.uses_operation("turns.activity")
 }
 
-fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) {
-    let _ = host.refresh_session(session);
+fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) -> Option<String> {
+    let refreshed = host
+        .refresh_session(session)
+        .err()
+        .map(|error| format!("OMD session refresh failed: {error}"));
     if let Ok(mut runtime) = runtime.lock() {
         runtime.turn_boundary();
         refresh_contract(&runtime, session);
         codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
     }
+    refreshed
 }
 
 fn refresh_contract(runtime: &ModHost, session: &Session) {
@@ -647,6 +636,7 @@ impl Core {
             expansion::release_owner(self, &id);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_owned(&id, generation);
+                lead.session.power.release_owner(&id);
                 access::release_servers(lead, generation, Some(&id)).await;
             }
         }
@@ -688,6 +678,7 @@ impl Core {
             expansion::retain_sources(self, sources);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_stale(*generation);
+                lead.session.power.retain(sources);
                 self.services.cleanup_stale(*generation, sources).await;
                 access::release_servers(lead, *generation, None).await;
             }
@@ -1045,11 +1036,7 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         thread: Option<&str>,
         forked_from: Option<&str>,
     ) -> Result<(), String> {
-        let profile = config.permissions.effective_permission_profile();
-        if matches!(profile, PermissionProfile::External { .. }) {
-            return Err("mods_require_native_sandbox_for_host_owned_files".into());
-        }
-        let mut denies = Vec::new();
+        let mut denied = Vec::new();
         for path in self.host.protected_paths() {
             if path
                 .canonicalize()
@@ -1059,39 +1046,26 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             {
                 return Err("protected_mod_path_must_be_canonical_and_external".into());
             }
-            let path =
-                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
-            denies.push(FileSystemSandboxEntry::new(
-                FileSystemPath::Path { path: path.into() },
-                FileSystemAccessMode::Deny,
-            ));
+            denied.push(
+                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
+                    .map_err(|_| "protected_path_unavailable")?,
+            );
         }
+        config.permissions.sandbox_denied_paths = denied;
         config.model_provider.supports_websockets = false;
-        if self
-            .codex_config
-            .lock()
-            .is_ok_and(|keys| keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN))
-        {
-            config.update_plan_enabled = true;
+        if let Ok(keys) = self.codex_config.lock() {
+            if keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
+                config.update_plan_enabled = true;
+            }
+            if keys.contains(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE) {
+                config.tool_output_token_limit = Some(
+                    config
+                        .tool_output_token_limit
+                        .unwrap_or_default()
+                        .max(codex_omd::RAISED_TOOL_OUTPUT_TOKENS),
+                );
+            }
         }
-        let mut filesystem = profile.file_system_sandbox_policy();
-        filesystem
-            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
-        let protected = PermissionProfile::from_runtime_permissions(
-            &filesystem,
-            profile.network_sandbox_policy(),
-        );
-        config
-            .permissions
-            .shell_environment_policy
-            .r#set
-            .insert("OMD_NARROW_SANDBOX".into(), "1".into());
-        config
-            .permissions
-            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(
-                protected,
-            ))
-            .map_err(|e| e.to_string())?;
         let mut runtime = match self.runtime.try_lock() {
             Ok(runtime) => runtime,
             Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
@@ -1747,8 +1721,12 @@ impl TurnLifecycleContributor for Mods {
             let runtime = self.runtime.clone();
             let session = lead.session.clone();
             let host = lead.host.clone();
-            let _ =
-                tokio::task::spawn_blocking(move || refresh_turn(&host, &session, &runtime)).await;
+            let refreshed =
+                tokio::task::spawn_blocking(move || refresh_turn(&host, &session, &runtime))
+                    .await
+                    .unwrap_or_else(|error| Some(error.to_string()));
+            self.views
+                .diagnostic(&self.host, "session_refresh", refreshed);
             self.publish_workspace_changes(&lead).await;
             let evidence = evidence::begin(&self.core, &lead).await;
             if let Ok(mut turns) = self.turns.lock() {
@@ -2140,6 +2118,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
             expansion::release_thread(self, lead.thread);
             self.environment.clear(Some(&lead.thread.to_string()), None);
             lead.session.processes.cleanup();
+            lead.session.power.clear();
+            codex_features::set_removed(
+                &lead.host.repository.to_string_lossy(),
+                Default::default(),
+            );
             lead.session.access.cleanup();
             let _ = lead.session.persist_cost_capture();
         })
@@ -2347,9 +2330,16 @@ impl ToolLifecycleContributor for Mods {
                         invoked.remove(&call_id);
                     }
                     let outcome = outcome.map_err(std::io::Error::other)?;
+                    let bytes = outcome.output.len();
+                    if let Ok(mut originals) = core.expansion.originals.lock()
+                        && let Some(text) =
+                            originals.get_mut(&(thread_id.to_string(), base_call.clone()))
+                    {
+                        *text = Arc::from(outcome.output.as_str());
+                    }
                     let (output, truncated) = expansion::bounded_output(outcome.output);
                     return Ok(
-                        json!({"output": output, "success": outcome.success, "truncated": truncated, "call_id": call_id}),
+                        json!({"output": output, "success": outcome.success, "truncated": truncated, "bytes": bytes, "call_id": call_id}),
                     );
                 };
                 first

@@ -4,7 +4,7 @@ export default function activate(api: ModAPI) {
   api.command('shell', cwd => {
     const started = api.host.call('terminal.pty', { action: 'start', session: 'shell', cwd: String(cwd || '.') });
     api.state.set('status' in started ? null : 'shell');
-    return { display: 'status' in started ? 'Shell declined' : 'Shell pane opened; Tab focuses it, Ctrl+] leaves it' };
+    return { display: 'status' in started ? 'Shell declined' : 'Shell pane opened; Alt+t or a click focuses it, Ctrl+] leaves it' };
   });
   api.command('run', line => {
     const [program, ...argv] = String(line).trim().split(/\s+/);
@@ -19,6 +19,6 @@ export default function activate(api: ModAPI) {
     return { display: 'Shell stopped' };
   });
   api.on('terminal', () => api.state.get() === 'shell'
-    ? { sites: { 'shell_pane/shell': { components: [{ type: 'terminal', id: 'shell_pane', label: 'Shell', session: 'shell', height: 16 }] } } }
+    ? { keybindings: { 'Alt+t': { focus: 'shell_pane' } }, sites: { 'shell_pane/shell': { components: [{ type: 'terminal', id: 'shell_pane', label: 'Shell', session: 'shell', height: 16 }] } } }
     : null);
 }
