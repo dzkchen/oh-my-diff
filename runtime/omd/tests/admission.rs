@@ -214,3 +214,19 @@ fn revoked_or_stopped_reservations_cannot_dispatch_and_dispatch_is_one_shot() {
             .is_err()
     );
 }
+
+#[test]
+fn explicit_resume_restarts_the_wall_clock() {
+    let directory = tempfile::tempdir().unwrap();
+    let evidence = directory.path().join("task");
+    let short = Limits {
+        seconds: 1,
+        ..limits()
+    };
+    let task = Task::create(short.clone(), evidence.clone()).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    assert!(task.check_active().is_err());
+    drop(task);
+    let resumed = Task::open(short, evidence, Some("user")).unwrap();
+    resumed.check_active().unwrap();
+}

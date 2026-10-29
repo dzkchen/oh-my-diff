@@ -97,6 +97,7 @@ pub use workspace::observe_workspace_changes;
 pub use workspace::record_workspace_change;
 pub use workspace::take_workspace_changes;
 pub use workspace::tracked_paths;
+pub use workspace::tree_path;
 pub use workspace::workspace_path;
 
 pub use mods::AUTHORITY_CAPABILITIES;

@@ -203,7 +203,7 @@ const MAX_TOTAL_WORKERS: usize = 1_024;
 pub struct Task {
     limits: Mutex<Limits>,
     started: Instant,
-    created_unix_millis: u128,
+    started_unix_millis: Mutex<u128>,
     evidence: PathBuf,
     state: Mutex<State>,
     external_routes: Mutex<BTreeSet<(String, String)>>,
@@ -255,7 +255,7 @@ impl Task {
             return Err(denied("evidence_anchor_mismatch"));
         }
         let task = Self {
-            created_unix_millis: unix_millis()?,
+            started_unix_millis: Mutex::new(unix_millis()?),
             limits: Mutex::new(limits.clone()),
             started: Instant::now(),
             evidence,
@@ -577,13 +577,10 @@ impl Task {
             created_unix_millis.ok_or_else(|| denied("created timestamp missing"))?;
         let recorded_limits = recorded_limits
             .ok_or_else(|| denied("resume evidence must begin with task creation"))?;
-        if unix_millis()? >= created_unix_millis.saturating_add(u128::from(limits.seconds) * 1000) {
-            return Err(denied("task expired before resume"));
-        }
         let task = Self {
             limits: Mutex::new(recorded_limits),
             started: Instant::now(),
-            created_unix_millis,
+            started_unix_millis: Mutex::new(created_unix_millis),
             evidence,
             state: Mutex::new(state),
             external_routes: Mutex::new(BTreeSet::new()),
@@ -611,8 +608,11 @@ impl Task {
     }
 
     fn deadline_unix_millis(&self) -> u128 {
-        self.created_unix_millis
-            .saturating_add(u128::from(self.limits().seconds) * 1000)
+        (*self
+            .started_unix_millis
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+        .saturating_add(u128::from(self.limits().seconds) * 1000)
     }
 
     fn expired(&self) -> bool {
@@ -1374,7 +1374,7 @@ impl Task {
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        if state.status != TaskStatus::Paused || self.expired() {
+        if state.status != TaskStatus::Paused {
             return Err(denied("task is not resumable"));
         }
         let ceiling = self.limits();
@@ -1384,6 +1384,10 @@ impl Task {
             &mut state,
             &serde_json::json!({"event": "task_resumed", "reference": reference, "remaining": {"requests": remaining_requests, "exposure_microusd": remaining_exposure}}),
         )?;
+        *self
+            .started_unix_millis
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))? = unix_millis()?;
         state.status = TaskStatus::Active;
         Ok(())
     }

@@ -533,6 +533,12 @@ impl Accounts {
         };
         let origin =
             json!({"caller":"engine","thread_id":scope["thread_id"],"agent_id":scope["agent_id"]});
+        if let Some(account) = account {
+            account
+                .task
+                .check_active()
+                .map_err(|error| refuse(error.to_string()))?;
+        }
         let dispatcher = self.dispatcher();
         let active = || account.is_none_or(|account| account.task.check_active().is_ok());
         let _thread =
@@ -862,6 +868,7 @@ impl Accounts {
             "provider":account.provider,"effort":effort,"sections":sections,"tools":tools});
         let origin = json!({"caller":"engine","thread_id":thread,
             "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) }});
+        account.task.check_active().map_err(denied)?;
         let dispatcher = self.dispatcher();
         let active = || account.task.check_active().is_ok();
         let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));

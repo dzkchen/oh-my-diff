@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.165.0.patch",
-    "sha256": "ece440e0b7d979e671f2951cf1f19d080ef2106334b50510ebb9ef4056888c3f"
+    "sha256": "06314e541412d346d8b3372a5a5aef7b01acaa331a0afeea5fa1a3d243d286c0"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -975,7 +975,7 @@
     },
     "codex-rs/ext/omd/src/accounting.rs": {
       "before": null,
-      "after": "b8188c30757dab7e42b3c6b229f0bbfb8bdcb702627110907f5f92090dac5e42"
+      "after": "8d51779d2b53ee5f4b14f60edc3d8f163c76c5d9b3913697759e8712d7740fb6"
     },
     "codex-rs/ext/omd/src/accounting_tests.rs": {
       "before": null,
@@ -987,7 +987,7 @@
     },
     "codex-rs/ext/omd/src/clients.rs": {
       "before": null,
-      "after": "699670e6815d47262464d9d56ba2250078e5bfd36daf6435faf26db71a378dc3"
+      "after": "fdc128f5d1fcbe54ecc324b4e219a3e67e4f1686f8f31dd694f83b805a68b60c"
     },
     "codex-rs/ext/omd/src/clients_tests.rs": {
       "before": null,
@@ -1015,7 +1015,7 @@
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "b45df20237e761a3ce046f41f3e5448a9ed43ad196302a8e21cebb2ec8e6d071"
+      "after": "ba69079e450dedca984694817a8730b3a73631094dcfc2a06aa43a34ffb72447"
     },
     "codex-rs/ext/omd/src/generic_host.rs": {
       "before": null,
@@ -1035,7 +1035,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "1d24030d7126b9ba292cf8194c567cb6014d331ea86a9ad9429a7ddbf4e39230"
+      "after": "6f12a6fed7228aaaa1ff278a7b2c468fec8feabb1f61310ad35440da65fc417f"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -1043,7 +1043,7 @@
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
-      "after": "b0c32f4896db539246906916175ce12595c5b26e010e3cd2233a577085f1b947"
+      "after": "5d35cd19fb999b2047ae73ff6dba556a2012382b64c1c0ffd149352204162734"
     },
     "codex-rs/ext/omd/src/mods/autonomy.rs": {
       "before": null,
@@ -1131,7 +1131,7 @@
     },
     "codex-rs/ext/omd/src/mods/snapshots.rs": {
       "before": null,
-      "after": "a05c1ff6b869657d3c73885caa1e0ddba9dfaf31a45de57ea58ad26834c6da0f"
+      "after": "5379221ab99f53363869941f2bf7eedd04036a39e8935ca48ff71ac158c3413c"
     },
     "codex-rs/ext/omd/src/mods/tools.rs": {
       "before": null,
@@ -1143,7 +1143,7 @@
     },
     "codex-rs/ext/omd/src/workspace_operations.rs": {
       "before": null,
-      "after": "d3c5365d187c5d4d68b579c7fa86a643c1895534187b3c80fa0c5a3e35204bdc"
+      "after": "9d6980aae36b83066ac64cf1e6c283c9123e945fda5cb47f3313c3a0cdd2e139"
     },
     "codex-rs/ext/omd/src/workspace_watch.rs": {
       "before": null,
@@ -1267,7 +1267,7 @@
     },
     "codex-rs/omd/src/admission.rs": {
       "before": null,
-      "after": "6ef9db4c601301c5b2338dec974a499501523a9bac8737bcae8e09fa113e070e"
+      "after": "da78f965ea132378fbb0540fe63bae84325aa42b560f69ec5bf53d42be6dc4b6"
     },
     "codex-rs/omd/src/app_routes.json": {
       "before": null,
@@ -1391,7 +1391,7 @@
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "d8ee52d11c70775772363e07e95a3a91e1d8c502a71235901f3a478576de2043"
+      "after": "c57bcdf8d5c821d8e5788d17a9f9aa81d517849636b9df3f14ec2f2555069679"
     },
     "codex-rs/omd/src/mod_limits.rs": {
       "before": null,
@@ -1575,7 +1575,7 @@
     },
     "codex-rs/omd/src/workspace.rs": {
       "before": null,
-      "after": "cddfb436993eb04c6dcc503a3456c25e52fd473754b635d5042cdb1aea2d47a5"
+      "after": "cc76d692bdc191ad377c6406c7c39a01af588f177f2c7830f563350225303e2a"
     },
     "codex-rs/omd/src/workspace_lease.rs": {
       "before": null,
@@ -1583,7 +1583,7 @@
     },
     "codex-rs/omd/tests/admission.rs": {
       "before": null,
-      "after": "871902cf91774d43cdc67036ecfffce3021c4bfc8242fe186e8d0faf25a75167"
+      "after": "faded7e232989da294f5eeb032270ab8d4b96f21972eb7d0a9b71e72e26259f2"
     },
     "codex-rs/omd/tests/examples.rs": {
       "before": null,
@@ -1647,7 +1647,7 @@
     },
     "codex-rs/omd/tests/workspace.rs": {
       "before": null,
-      "after": "72cb9768273c32b1bff048744072f409e3ecd318202a39897d8769b4741454de"
+      "after": "f1608d0df95144bbe84c1ae16a4afc2da148eb9b3e8a03b4e665058fb78c7eb0"
     },
     "codex-rs/protocol/src/error_tests.rs": {
       "before": "630ae421712e745e295fdeceb45aac5bc3511c96fbadbe7f601ef1f8f035c4d3",

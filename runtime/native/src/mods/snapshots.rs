@@ -296,8 +296,8 @@ pub(super) fn permitted(
     protected: &[PathBuf],
 ) -> Result<(), String> {
     for name in snapshot.files.keys() {
-        let path = codex_omd::workspace_path(&authority.repository, name)
-            .map_err(|error| error.to_string())?;
+        let path =
+            codex_omd::tree_path(&authority.repository, name).map_err(|error| error.to_string())?;
         if !authority.readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
             return Err("snapshot_permission_denied".into());
         }
@@ -318,13 +318,13 @@ pub(super) fn capture(
     let paths = codex_omd::tracked_paths(&authority.repository, approved)
         .map_err(|error| error.to_string())?;
     for name in &paths {
-        let path = codex_omd::workspace_path(&authority.repository, name)
-            .map_err(|error| error.to_string())?;
+        let path =
+            codex_omd::tree_path(&authority.repository, name).map_err(|error| error.to_string())?;
         if !authority.readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
             return Err("snapshot_permission_denied".into());
         }
     }
-    let snapshot = Snapshot::capture(&authority.repository, &paths, limit)
+    let snapshot = Snapshot::capture_tree(&authority.repository, &paths, limit)
         .map_err(|error| error.to_string())?;
     if !active() {
         return Err("snapshot_cancelled".into());
@@ -441,6 +441,7 @@ mod tests {
                     codex_omd::File {
                         bytes: vec![number as u8],
                         executable: false,
+                        symlink: false,
                     },
                 )]),
             };
@@ -476,6 +477,7 @@ mod tests {
                 codex_omd::File {
                     bytes: number.to_le_bytes().to_vec(),
                     executable: false,
+                    symlink: false,
                 },
             )]),
         };
@@ -556,7 +558,9 @@ mod tests {
         assert!(permitted(&captured, &denied, &[]).is_err());
         std::fs::remove_file(root.join("source")).unwrap();
         std::os::unix::fs::symlink("elsewhere", root.join("source")).unwrap();
-        assert!(capture(&readable, &[], &paths, 128, &|| true).is_err());
+        let linked = capture(&readable, &[], &paths, 128, &|| true).unwrap();
+        assert!(linked.files["source"].symlink);
+        assert_eq!(linked.files["source"].bytes, b"elsewhere");
     }
 
     #[test]
