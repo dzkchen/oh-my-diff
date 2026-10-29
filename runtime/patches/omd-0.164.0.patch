@@ -74749,10 +74749,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..76bb50ce8c621d6da8225df191b86bb7dbd6228e
+index 0000000000000000000000000000000000000000..89d1279a95ec4ef6b5a27abfb59de4dbf8acac78
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4761 @@
+@@ -0,0 +1,4762 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -76209,29 +76209,30 @@ index 0000000000000000000000000000000000000000..76bb50ce8c621d6da8225df191b86bb7
 +        .grants("keeper")
 +        .unwrap()
 +        .source_sha256;
-+    let mut scope = fixture.lead.session.data.0.lock().unwrap();
-+    let hosts = scope.as_mut().unwrap();
 +    let (mut paged, mut cursor, mut pages) = (String::new(), 0, 0);
-+    loop {
-+        let page = hosts
-+            .call(
-+                "keeper",
-+                &source,
-+                "evidence.read",
-+                json!({"reference": report["original"]["reference"], "cursor": cursor, "max_bytes": 65_536}),
-+                || true,
-+            )
-+            .unwrap();
-+        let text = page["text"].as_str().unwrap();
-+        assert!(text.len() <= 65_536);
-+        paged.push_str(text);
-+        pages += 1;
-+        match page["cursor"].as_u64() {
-+            Some(next) => cursor = next,
-+            None => break,
++    {
++        let mut scope = fixture.lead.session.data.0.lock().unwrap();
++        let hosts = scope.as_mut().unwrap();
++        loop {
++            let page = hosts
++                .call(
++                    "keeper",
++                    &source,
++                    "evidence.read",
++                    json!({"reference": report["original"]["reference"], "cursor": cursor, "max_bytes": 65_536}),
++                    || true,
++                )
++                .unwrap();
++            let text = page["text"].as_str().unwrap();
++            assert!(text.len() <= 65_536);
++            paged.push_str(text);
++            pages += 1;
++            match page["cursor"].as_u64() {
++                Some(next) => cursor = next,
++                None => break,
++            }
 +        }
 +    }
-+    drop(scope);
 +    assert_eq!(paged, complete);
 +    assert_eq!(pages, complete.len().div_ceil(65_536));
 +    mods.intercept_tool(start("call-early", &EARLY))
@@ -97985,10 +97986,10 @@ index 0000000000000000000000000000000000000000..333060130f2fd47f9b6dd447e77affa8
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..63db904b56fed05d78365a4630360e8c46ee577f
+index 0000000000000000000000000000000000000000..9c1d1b0dde36891523a877c7db5219af26e870d7
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1611 @@
+@@ -0,0 +1,1613 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -99477,7 +99478,9 @@ index 0000000000000000000000000000000000000000..63db904b56fed05d78365a4630360e8c
 +        )));
 +    }
 +    bytes
-+        .chunks_exact(12)
++        .as_chunks::<12>()
++        .0
++        .iter()
 +        .enumerate()
 +        .map(|(index, cell)| {
 +            let word = |at: usize| {
@@ -152558,10 +152561,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a1dd5b2814acf75230f100ffe6d7c969d651c276
+index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a514f59cda7
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2242 @@
+@@ -0,0 +1,2244 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -154639,6 +154642,8 @@ index 0000000000000000000000000000000000000000..a1dd5b2814acf75230f100ffe6d7c969
 +
 +    #[tokio::test]
 +    #[serial_test::serial]
++    // The held guard is the point: the sample must not need it on the event loop.
++    #[allow(clippy::await_holding_lock)]
 +    async fn image_samples_reply_off_the_event_loop() -> color_eyre::Result<()> {
 +        let mut app = crate::app::test_support::make_test_app().await;
 +        let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
@@ -163745,10 +163750,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f7e19aa319b52beb3f36fec5f713fc20309027db
+index 0000000000000000000000000000000000000000..934447e449fb14aadeeb1368d5cca66358fe007a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1742 @@
+@@ -0,0 +1,1744 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -165270,7 +165275,9 @@ index 0000000000000000000000000000000000000000..f7e19aa319b52beb3f36fec5f713fc20
 +    })
 +}
 +
-+static COMPOSED: Mutex<Option<(String, Vec<Value>, Vec<Value>)>> = Mutex::new(None);
++type Composed = (String, Vec<Value>, Vec<Value>);
++
++static COMPOSED: Mutex<Option<Composed>> = Mutex::new(None);
 +
 +fn composition_key(runtime: &ModHost) -> String {
 +    format!(
@@ -165493,7 +165500,7 @@ index 0000000000000000000000000000000000000000..f7e19aa319b52beb3f36fec5f713fc20
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..69688c86789b78033203496a376ee95f85e34df6
+index 0000000000000000000000000000000000000000..71346dfa32218d7ee142400fb2ad530746af306e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
 @@ -0,0 +1,770 @@
@@ -166228,7 +166235,7 @@ index 0000000000000000000000000000000000000000..69688c86789b78033203496a376ee95f
 +    wait_until("the command list was never composed", || {
 +        composed_commands(rows.clone())[1]["hidden"] == true
 +    });
-+    assert_eq!(composed_commands(rows.clone())[0]["hidden"], false);
++    assert_eq!(composed_commands(rows)[0]["hidden"], false);
 +    *COMPOSED.locked() = None;
 +}
 +
