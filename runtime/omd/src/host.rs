@@ -21,7 +21,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::sync::PoisonError;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -234,9 +236,25 @@ pub fn session_call(
     dispatcher(thread, caller, source, policy, call, active)
 }
 
+/// A protected root's canonical form, resolved again whenever the root itself (for example a retargeted symlink) changes.
+fn canonical_root(root: &Path) -> Option<PathBuf> {
+    static CANONICAL: LazyLock<Mutex<BTreeMap<PathBuf, (crate::FileStamp, PathBuf)>>> =
+        LazyLock::new(Default::default);
+    let stamp = crate::file_stamp(&fs::symlink_metadata(root).ok()?);
+    let mut known = CANONICAL.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((known_stamp, canonical)) = known.get(root)
+        && *known_stamp == stamp
+    {
+        return Some(canonical.clone());
+    }
+    let canonical = root.canonicalize().ok()?;
+    known.insert(root.to_path_buf(), (stamp, canonical.clone()));
+    Some(canonical)
+}
+
 pub fn deny_protected(profile: &mut String, protected: &[PathBuf]) -> Result<(), String> {
     for root in protected.iter().cloned().chain(credential_paths()) {
-        for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
+        for path in std::iter::once(root.clone()).chain(canonical_root(&root)) {
             let literal = serde_json::to_string(&path.to_string_lossy())
                 .map_err(|error| error.to_string())?;
             profile.push_str(&format!(
@@ -571,12 +589,24 @@ fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
     .then_some(path)
 }
 
+/// A program's SHA-256, rehashed only when its file stamp changes.
 pub fn program_hash(path: &Path) -> Result<String, String> {
-    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    static HASHES: LazyLock<Mutex<BTreeMap<PathBuf, (crate::FileStamp, String)>>> =
+        LazyLock::new(Default::default);
+    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
     if metadata.len() > 128 * 1024 * 1024 {
         return Err("exec_program_too_large".into());
     }
-    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let stamp = crate::file_stamp(&metadata);
+    if let Some((known, digest)) = HASHES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(path)
+        && *known == stamp
+    {
+        return Ok(digest.clone());
+    }
     let mut hasher = Sha256::new();
     let mut chunk = vec![0_u8; 64 * 1024];
     loop {
@@ -586,7 +616,13 @@ pub fn program_hash(path: &Path) -> Result<String, String> {
         }
         hasher.update(&chunk[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let digest = format!("{:x}", hasher.finalize());
+    let mut hashes = HASHES.lock().unwrap_or_else(PoisonError::into_inner);
+    if hashes.len() >= 1024 {
+        hashes.clear();
+    }
+    hashes.insert(path.to_path_buf(), (stamp, digest.clone()));
+    Ok(digest)
 }
 
 fn stored_outputs(owner: &Path) -> Result<Vec<(std::time::SystemTime, PathBuf, u64)>, String> {
@@ -705,7 +741,7 @@ impl Host<'_> {
                     }
                 }
             }
-            crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Durable)
+            crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Ordered)
                 .map_err(|error| error.to_string())?;
         }
         Ok(json!({"reference": digest, "sha256": digest}))
@@ -800,7 +836,7 @@ impl Host<'_> {
                 self.repository().to_path_buf(),
             ])
             .any(|other| {
-                overlaps(&other) || other.canonicalize().is_ok_and(|other| overlaps(&other))
+                overlaps(&other) || canonical_root(&other).is_some_and(|other| overlaps(&other))
             })
         {
             return Err(format!("fs_root_protected: {root}"));
@@ -1769,5 +1805,22 @@ mod installation_tests {
         assert!(install_session_dispatcher(dispatcher()).is_err());
         drop(second);
         assert!(install_session_dispatcher(dispatcher()).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod program_hash_tests {
+    use super::*;
+
+    #[test]
+    fn program_hash_follows_the_file_stamp() {
+        let directory = tempfile::tempdir().unwrap();
+        let program = directory.path().join("program");
+        fs::write(&program, "one").unwrap();
+        let first = program_hash(&program).unwrap();
+        assert_eq!(first, sha256(b"one"));
+        assert_eq!(program_hash(&program).unwrap(), first);
+        fs::write(&program, "three").unwrap();
+        assert_eq!(program_hash(&program).unwrap(), sha256(b"three"));
     }
 }

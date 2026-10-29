@@ -300,7 +300,7 @@ impl DataStore<'_> {
             if bytes.len() > SCOPE_BYTES || document.entries.len() > KEY_LIMIT {
                 return Err(failure("store_quota"));
             }
-            crate::fsio::write_bytes(&path, &bytes, crate::fsio::Durability::Durable)?;
+            crate::fsio::write_bytes(&path, &bytes, crate::fsio::Durability::Ordered)?;
         }
         Ok(value)
     }

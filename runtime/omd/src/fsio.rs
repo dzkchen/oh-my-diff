@@ -13,7 +13,7 @@ pub const STAGING_PREFIX: &str = ".tmp";
 pub enum Durability {
     /// The data and the rename survive power loss: the file and its directory are synced.
     Durable,
-    /// Crash consistency without durability: a write barrier orders the data before the rename (mod state).
+    /// Crash consistency without durability: a write barrier orders the data before the rename (mod state, stored data, exec output, cost snapshots).
     Ordered,
     /// Atomic but unsynced: a crash leaves the old or new file, power loss may lose the write.
     Volatile,

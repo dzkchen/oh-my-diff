@@ -519,9 +519,7 @@ impl Services {
         if !metadata.is_file() || metadata.len() > 134_217_728 {
             return Err("service_executable_limit".into());
         }
-        if execution::hash(&std::fs::read(&grant.program).map_err(|e| e.to_string())?)
-            != grant.program_sha256
-        {
+        if codex_omd::host::program_hash(&grant.program)? != grant.program_sha256 {
             return Err("service_executable_changed".into());
         }
         let manager = host

@@ -50675,10 +50675,10 @@ index 0000000000000000000000000000000000000000..87b5e4661cabfc0a8cbebabb8469cf51
 +mod tests;
 diff --git a/codex-rs/core/src/tools/batch_tests.rs b/codex-rs/core/src/tools/batch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5d7da689b705ee591e9bd048fd2c1fc91158c27c
+index 0000000000000000000000000000000000000000..33009eaaa1932a5ade9dde5bd63310739f75e1db
 --- /dev/null
 +++ b/codex-rs/core/src/tools/batch_tests.rs
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,69 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -50725,13 +50725,12 @@ index 0000000000000000000000000000000000000000..5d7da689b705ee591e9bd048fd2c1fc9
 +        text(fan_out("b", &merged, true)),
 +        ("missing".to_owned(), Some(false))
 +    );
++    let (extra, success) = text(fan_out("c", &merged, true));
 +    assert_eq!(
-+        text(fan_out("c", &merged, true)),
-+        (
-+            r#"{"extra":1,"output":"x","success":true}"#.to_owned(),
-+            Some(true)
-+        )
++        serde_json::from_str::<serde_json::Value>(&extra).ok(),
++        Some(serde_json::json!({"extra": 1, "output": "x", "success": true}))
 +    );
++    assert_eq!(success, Some(true));
 +    assert_eq!(
 +        text(fan_out("b", &merged, false)),
 +        (
@@ -53392,7 +53391,7 @@ index 0000000000000000000000000000000000000000..849d5c204dad866d56258a136ce8e440
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d32fc76f6db0bdc4b6c6f06caa245d0bbcff3682
+index 0000000000000000000000000000000000000000..33f5e1a1998871f700bafca76c9bb8714703251b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,2348 @@
@@ -53469,7 +53468,7 @@ index 0000000000000000000000000000000000000000..d32fc76f6db0bdc4b6c6f06caa245d0b
 +        .and_then(|mut snapshots| snapshots.remove(&account.cost_capture))
 +        .is_some_and(|(_, dirty)| dirty);
 +    if dirty {
-+        write_cost_capture(account, Durability::Durable)?;
++        write_cost_capture(account, Durability::Ordered)?;
 +    }
 +    Ok(())
 +}
@@ -53709,7 +53708,7 @@ index 0000000000000000000000000000000000000000..d32fc76f6db0bdc4b6c6f06caa245d0b
 +            .map_err(|_| "request state poisoned")?
 +            .billed
 +            .remove(request_id);
-+        write_cost_capture(&account, Durability::Durable).map_err(|error| error.to_string())?;
++        write_cost_capture(&account, Durability::Ordered).map_err(|error| error.to_string())?;
 +        Ok(
 +            json!({"request_id": request_id, "ledger_request": request, "cost": {"microusd": microusd, "basis": "provider_reported", "source": source}, "attempt": attempt}),
 +        )
@@ -75034,10 +75033,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..89d1279a95ec4ef6b5a27abfb59de4dbf8acac78
+index 0000000000000000000000000000000000000000..d57edddb5a3b8e60122e9cfca565e002ceb60326
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4762 @@
+@@ -0,0 +1,4763 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -77572,7 +77571,8 @@ index 0000000000000000000000000000000000000000..89d1279a95ec4ef6b5a27abfb59de4db
 +                            std::fs::write(config, serde_json::to_vec(&value)?)?;
 +                        }
 +                        "replace" => {
-+                            std::fs::write(path.join("index.ts"), "export default () => {}")?
++                            std::fs::write(path.join("index.ts"), "export default () => {}")?;
++                            std::thread::sleep(std::time::Duration::from_millis(2100));
 +                        }
 +                        "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
 +                        "cancel" => active.set(false),
@@ -80274,20 +80274,23 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +}
 diff --git a/codex-rs/ext/omd/src/mods/launch_snapshot.rs b/codex-rs/ext/omd/src/mods/launch_snapshot.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1dbd7f502d56bea9d2e2a5d380624f5be22f93cd
+index 0000000000000000000000000000000000000000..7cd10346f6f9f54ccc951a322abe3e79867f054a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/launch_snapshot.rs
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,224 @@
 +use std::collections::BTreeMap;
 +use std::fs;
 +use std::io::Read;
 +use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 +use std::path::{Path, PathBuf};
++use std::sync::{LazyLock, Mutex, PoisonError};
 +
 +pub(super) struct Tree {
 +    pub files: BTreeMap<PathBuf, Vec<u8>>,
 +    pub links: BTreeMap<PathBuf, PathBuf>,
++    stamps: BTreeMap<PathBuf, codex_omd::FileStamp>,
 +    root: PathBuf,
++    stable: bool,
 +}
 +
 +pub(super) fn capture(root: &Path) -> Result<Tree, String> {
@@ -80298,7 +80301,9 @@ index 0000000000000000000000000000000000000000..1dbd7f502d56bea9d2e2a5d380624f5b
 +    let mut tree = Tree {
 +        files: BTreeMap::new(),
 +        links: BTreeMap::new(),
++        stamps: BTreeMap::new(),
 +        root: canonical,
++        stable: true,
 +    };
 +    let mut pending = vec![root.to_path_buf()];
 +    let mut total = 0;
@@ -80332,20 +80337,23 @@ index 0000000000000000000000000000000000000000..1dbd7f502d56bea9d2e2a5d380624f5b
 +                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
 +                    .open(&path)
 +                    .map_err(|error| error.to_string())?;
-+                if !file
-+                    .metadata()
-+                    .map_err(|error| error.to_string())?
-+                    .is_file()
-+                {
++                let metadata = file.metadata().map_err(|error| error.to_string())?;
++                if !metadata.is_file() {
 +                    return Err("service_dependency_type_invalid".into());
 +                }
-+                file.take(64 * 1024 * 1024 + 1)
++                (&file)
++                    .take(64 * 1024 * 1024 + 1)
 +                    .read_to_end(&mut bytes)
 +                    .map_err(|error| error.to_string())?;
 +                total += bytes.len();
 +                if bytes.len() > 64 * 1024 * 1024 || total > 128 * 1024 * 1024 {
 +                    return Err("service_source_limit".into());
 +                }
++                let stamp = codex_omd::file_stamp(&metadata);
++                tree.stable &= file
++                    .metadata()
++                    .is_ok_and(|after| codex_omd::file_stamp(&after) == stamp);
++                tree.stamps.insert(path.clone(), stamp);
 +                tree.files.insert(path, bytes);
 +            } else {
 +                return Err("service_dependency_type_invalid".into());
@@ -80355,7 +80363,36 @@ index 0000000000000000000000000000000000000000..1dbd7f502d56bea9d2e2a5d380624f5b
 +    Ok(tree)
 +}
 +
++type TreeStamp = (
++    BTreeMap<PathBuf, codex_omd::FileStamp>,
++    BTreeMap<PathBuf, PathBuf>,
++);
++
++/// The tree's digest, rehashed only when its file list, link targets or any file stamp changes.
 +pub(super) fn digest(tree: &Tree) -> String {
++    static DIGESTS: LazyLock<Mutex<BTreeMap<PathBuf, (TreeStamp, String)>>> =
++        LazyLock::new(Default::default);
++    if !tree.stable {
++        return hash_tree(tree);
++    }
++    let fingerprint = (tree.stamps.clone(), tree.links.clone());
++    if let Some((known, digest)) = DIGESTS
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .get(&tree.root)
++        && *known == fingerprint
++    {
++        return digest.clone();
++    }
++    let digest = hash_tree(tree);
++    DIGESTS
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .insert(tree.root.clone(), (fingerprint, digest.clone()));
++    digest
++}
++
++fn hash_tree(tree: &Tree) -> String {
 +    let mut rows = BTreeMap::new();
 +    for (path, bytes) in &tree.files {
 +        rows.insert(
@@ -82268,10 +82305,10 @@ index 0000000000000000000000000000000000000000..d9862c2d373581af18e23ae25f9381a2
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..36d55b0536a7dc47806eeac0a3a27e90eea3be9f
+index 0000000000000000000000000000000000000000..4f0752668ba895963036b8f0cc5655925698cee3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1074 @@
+@@ -0,0 +1,1072 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -82793,9 +82830,7 @@ index 0000000000000000000000000000000000000000..36d55b0536a7dc47806eeac0a3a27e90
 +        if !metadata.is_file() || metadata.len() > 134_217_728 {
 +            return Err("service_executable_limit".into());
 +        }
-+        if execution::hash(&std::fs::read(&grant.program).map_err(|e| e.to_string())?)
-+            != grant.program_sha256
-+        {
++        if codex_omd::host::program_hash(&grant.program)? != grant.program_sha256 {
 +            return Err("service_executable_changed".into());
 +        }
 +        let manager = host
@@ -89135,10 +89170,10 @@ index 0000000000000000000000000000000000000000..782b9faae4eeff2303e7b46dda2dcfc0
 +  calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
 diff --git a/codex-rs/omd/runner/src/main.rs b/codex-rs/omd/runner/src/main.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..febef4e11fecac483ecb9be1c00d7efe8404dd3e
+index 0000000000000000000000000000000000000000..4fa68b64f4b61fb86f294e316a654576547d29e8
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/main.rs
-@@ -0,0 +1,1116 @@
+@@ -0,0 +1,1119 @@
 +mod crypto;
 +
 +use serde_json::Map;
@@ -89197,12 +89232,15 @@ index 0000000000000000000000000000000000000000..febef4e11fecac483ecb9be1c00d7efe
 +    INPUT.with_borrow_mut(|input| {
 +        let stdin = std::io::stdin();
 +        let mut stdin = stdin.lock();
++        let mut scanned = 0;
 +        loop {
-+            if let Some(end) = input.iter().position(|byte| *byte == b'\n') {
++            if let Some(end) = input[scanned..].iter().position(|byte| *byte == b'\n') {
++                let end = scanned + end;
 +                let line = String::from_utf8_lossy(&input[..end]).into_owned();
 +                input.drain(..=end);
 +                return Ok(line);
 +            }
++            scanned = input.len();
 +            if input.len() > INPUT_LIMIT {
 +                return Err("input_limit");
 +            }
@@ -93810,10 +93848,10 @@ index 0000000000000000000000000000000000000000..5ee4769d9113294f2fe4c8cc29e9cacc
 +}
 diff --git a/codex-rs/omd/src/app_routes.rs b/codex-rs/omd/src/app_routes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b97d4bbf4235b1efdab887b4f8a28c4483574bde
+index 0000000000000000000000000000000000000000..dab6fe30b23595d6490a56678f011ed72016cfa5
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.rs
-@@ -0,0 +1,613 @@
+@@ -0,0 +1,618 @@
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -93897,16 +93935,21 @@ index 0000000000000000000000000000000000000000..b97d4bbf4235b1efdab887b4f8a28c44
 +}
 +
 +pub fn classes_named_in(source: &str) -> Option<BTreeSet<&'static str>> {
-+    let named: BTreeSet<_> = TABLE
-+        .requests
-+        .iter()
-+        .filter(|(method, _)| {
-+            ['\'', '"', '`']
-+                .iter()
-+                .any(|quote| source.contains(&format!("{quote}{method}{quote}")))
-+        })
-+        .map(|(_, route)| route.class.as_str())
-+        .collect();
++    let mut named = BTreeSet::new();
++    for quote in *b"'\"`" {
++        let mut open = None;
++        for (index, byte) in source.bytes().enumerate() {
++            if byte != quote {
++                continue;
++            }
++            if let Some(start) = open
++                && let Some(route) = TABLE.requests.get(&source[start + 1..index])
++            {
++                named.insert(route.class.as_str());
++            }
++            open = Some(index);
++        }
++    }
 +    (!named.is_empty()).then_some(named)
 +}
 +
@@ -102456,7 +102499,7 @@ index 0000000000000000000000000000000000000000..64d28ee59f68767cd2d3b8ac869a0401
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..36c5b959ef80c8d7a80a5271c65238fb8d0424c0
+index 0000000000000000000000000000000000000000..f3c1f2a11b201a3c3a18173e36fe2f5809115a37
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
 @@ -0,0 +1,432 @@
@@ -102762,7 +102805,7 @@ index 0000000000000000000000000000000000000000..36c5b959ef80c8d7a80a5271c65238fb
 +            if bytes.len() > SCOPE_BYTES || document.entries.len() > KEY_LIMIT {
 +                return Err(failure("store_quota"));
 +            }
-+            crate::fsio::write_bytes(&path, &bytes, crate::fsio::Durability::Durable)?;
++            crate::fsio::write_bytes(&path, &bytes, crate::fsio::Durability::Ordered)?;
 +        }
 +        Ok(value)
 +    }
@@ -102919,10 +102962,10 @@ index 0000000000000000000000000000000000000000..9bd4322894b74db06818c99ddc5479d0
 +}
 diff --git a/codex-rs/omd/src/event_bus.rs b/codex-rs/omd/src/event_bus.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..af6c2536550fcc062bd2773764b2bb3c699fbdfb
+index 0000000000000000000000000000000000000000..8685d0e0e953c10ecc6f2bc5d949a7d6c6a1ad08
 --- /dev/null
 +++ b/codex-rs/omd/src/event_bus.rs
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,237 @@
 +use crate::app_routes::subscribed;
 +use serde_json::Value;
 +use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -103054,20 +103097,26 @@ index 0000000000000000000000000000000000000000..af6c2536550fcc062bd2773764b2bb3c
 +        if correlation.as_ref().is_some_and(|c| c.len() > 256) {
 +            return Err(io::Error::other("channel_correlation_too_large"));
 +        }
-+        let queued = self
-+            .subscribers
++        if self
++            .sequences
 +            .values()
-+            .flat_map(|subscriber| {
-+                subscriber
-+                    .queue
-+                    .iter()
-+                    .map(|(event, _)| event.publisher.as_str())
-+            })
-+            .collect::<BTreeSet<_>>();
-+        self.sequences.retain(|publisher, sequences| {
-+            now.duration_since(sequences.used) < CHANNEL_PUBLISHER_IDLE
-+                || queued.contains(publisher.as_str())
-+        });
++            .any(|sequences| now.duration_since(sequences.used) >= CHANNEL_PUBLISHER_IDLE)
++        {
++            let queued = self
++                .subscribers
++                .values()
++                .flat_map(|subscriber| {
++                    subscriber
++                        .queue
++                        .iter()
++                        .map(|(event, _)| event.publisher.as_str())
++                })
++                .collect::<BTreeSet<_>>();
++            self.sequences.retain(|publisher, sequences| {
++                now.duration_since(sequences.used) < CHANNEL_PUBLISHER_IDLE
++                    || queued.contains(publisher.as_str())
++            });
++        }
 +        let current = self.sequences.get(publisher);
 +        if !current.is_some_and(|sequences| sequences.channels.contains_key(name))
 +            && (current.is_some_and(|sequences| sequences.channels.len() >= CHANNELS_PER_PUBLISHER)
@@ -103472,7 +103521,7 @@ index 0000000000000000000000000000000000000000..7f016fb395d63716bdf94a2f8baae584
 +}
 diff --git a/codex-rs/omd/src/fsio.rs b/codex-rs/omd/src/fsio.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f63928c4458c4f48aa78f4d86ce40d5b5a90ea12
+index 0000000000000000000000000000000000000000..f08500cadea6fc511d7d581bcde993890135bcfa
 --- /dev/null
 +++ b/codex-rs/omd/src/fsio.rs
 @@ -0,0 +1,101 @@
@@ -103491,7 +103540,7 @@ index 0000000000000000000000000000000000000000..f63928c4458c4f48aa78f4d86ce40d5b
 +pub enum Durability {
 +    /// The data and the rename survive power loss: the file and its directory are synced.
 +    Durable,
-+    /// Crash consistency without durability: a write barrier orders the data before the rename (mod state).
++    /// Crash consistency without durability: a write barrier orders the data before the rename (mod state, stored data, exec output, cost snapshots).
 +    Ordered,
 +    /// Atomic but unsynced: a crash leaves the old or new file, power loss may lose the write.
 +    Volatile,
@@ -103995,10 +104044,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2357070ef
+index 0000000000000000000000000000000000000000..e2e8c6577b893848495a890147af0a5eadd6b89b
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1773 @@
+@@ -0,0 +1,1826 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -104022,7 +104071,9 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +use std::process::Command;
 +use std::process::Stdio;
 +use std::sync::Arc;
++use std::sync::LazyLock;
 +use std::sync::Mutex;
++use std::sync::PoisonError;
 +use std::time::Duration;
 +use std::time::Instant;
 +
@@ -104235,9 +104286,25 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +    dispatcher(thread, caller, source, policy, call, active)
 +}
 +
++/// A protected root's canonical form, resolved again whenever the root itself (for example a retargeted symlink) changes.
++fn canonical_root(root: &Path) -> Option<PathBuf> {
++    static CANONICAL: LazyLock<Mutex<BTreeMap<PathBuf, (crate::FileStamp, PathBuf)>>> =
++        LazyLock::new(Default::default);
++    let stamp = crate::file_stamp(&fs::symlink_metadata(root).ok()?);
++    let mut known = CANONICAL.lock().unwrap_or_else(PoisonError::into_inner);
++    if let Some((known_stamp, canonical)) = known.get(root)
++        && *known_stamp == stamp
++    {
++        return Some(canonical.clone());
++    }
++    let canonical = root.canonicalize().ok()?;
++    known.insert(root.to_path_buf(), (stamp, canonical.clone()));
++    Some(canonical)
++}
++
 +pub fn deny_protected(profile: &mut String, protected: &[PathBuf]) -> Result<(), String> {
 +    for root in protected.iter().cloned().chain(credential_paths()) {
-+        for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
++        for path in std::iter::once(root.clone()).chain(canonical_root(&root)) {
 +            let literal = serde_json::to_string(&path.to_string_lossy())
 +                .map_err(|error| error.to_string())?;
 +            profile.push_str(&format!(
@@ -104572,12 +104639,24 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +    .then_some(path)
 +}
 +
++/// A program's SHA-256, rehashed only when its file stamp changes.
 +pub fn program_hash(path: &Path) -> Result<String, String> {
-+    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
++    static HASHES: LazyLock<Mutex<BTreeMap<PathBuf, (crate::FileStamp, String)>>> =
++        LazyLock::new(Default::default);
++    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
++    let metadata = file.metadata().map_err(|error| error.to_string())?;
 +    if metadata.len() > 128 * 1024 * 1024 {
 +        return Err("exec_program_too_large".into());
 +    }
-+    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
++    let stamp = crate::file_stamp(&metadata);
++    if let Some((known, digest)) = HASHES
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .get(path)
++        && *known == stamp
++    {
++        return Ok(digest.clone());
++    }
 +    let mut hasher = Sha256::new();
 +    let mut chunk = vec![0_u8; 64 * 1024];
 +    loop {
@@ -104587,7 +104666,13 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +        }
 +        hasher.update(&chunk[..read]);
 +    }
-+    Ok(format!("{:x}", hasher.finalize()))
++    let digest = format!("{:x}", hasher.finalize());
++    let mut hashes = HASHES.lock().unwrap_or_else(PoisonError::into_inner);
++    if hashes.len() >= 1024 {
++        hashes.clear();
++    }
++    hashes.insert(path.to_path_buf(), (stamp, digest.clone()));
++    Ok(digest)
 +}
 +
 +fn stored_outputs(owner: &Path) -> Result<Vec<(std::time::SystemTime, PathBuf, u64)>, String> {
@@ -104706,7 +104791,7 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +                    }
 +                }
 +            }
-+            crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Durable)
++            crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Ordered)
 +                .map_err(|error| error.to_string())?;
 +        }
 +        Ok(json!({"reference": digest, "sha256": digest}))
@@ -104801,7 +104886,7 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +                self.repository().to_path_buf(),
 +            ])
 +            .any(|other| {
-+                overlaps(&other) || other.canonicalize().is_ok_and(|other| overlaps(&other))
++                overlaps(&other) || canonical_root(&other).is_some_and(|other| overlaps(&other))
 +            })
 +        {
 +            return Err(format!("fs_root_protected: {root}"));
@@ -105770,6 +105855,23 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +        assert!(install_session_dispatcher(dispatcher()).is_err());
 +        drop(second);
 +        assert!(install_session_dispatcher(dispatcher()).is_ok());
++    }
++}
++
++#[cfg(test)]
++mod program_hash_tests {
++    use super::*;
++
++    #[test]
++    fn program_hash_follows_the_file_stamp() {
++        let directory = tempfile::tempdir().unwrap();
++        let program = directory.path().join("program");
++        fs::write(&program, "one").unwrap();
++        let first = program_hash(&program).unwrap();
++        assert_eq!(first, sha256(b"one"));
++        assert_eq!(program_hash(&program).unwrap(), first);
++        fs::write(&program, "three").unwrap();
++        assert_eq!(program_hash(&program).unwrap(), sha256(b"three"));
 +    }
 +}
 diff --git a/codex-rs/omd/src/host/environment.rs b/codex-rs/omd/src/host/environment.rs
@@ -107820,10 +107922,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759b9db13d4
+index 0000000000000000000000000000000000000000..9101333ce8458303826253e088cf50c2b6e9fb80
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6750 @@
+@@ -0,0 +1,6848 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -109060,11 +109162,44 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +    String::from_utf8(visible).unwrap_or_default()
 +}
 +
++type SourceUseScan = (ModSourceUse, Vec<String>, Vec<String>);
++
++/// Reuses a scan while the package content hash, manifest and registrations that it compared are unchanged.
++fn cached_source_use(
++    sha256: &str,
++    package: &ModPackage,
++    registrations: &Registrations,
++    code: impl FnOnce() -> String,
++) -> Result<SourceUseScan> {
++    type Scans = HashMap<String, (ModPackage, Registrations, SourceUseScan)>;
++    static SCANS: std::sync::LazyLock<Mutex<Scans>> = std::sync::LazyLock::new(Default::default);
++    let cached = SCANS.lock().ok().and_then(|scans| {
++        scans
++            .get(sha256)
++            .filter(|(scanned, registered, _)| scanned == package && registered == registrations)
++            .map(|(_, _, scan)| scan.clone())
++    });
++    if let Some(scan) = cached {
++        return Ok(scan);
++    }
++    let scan = source_use(&code(), package, registrations)?;
++    if let Ok(mut scans) = SCANS.lock() {
++        if scans.len() >= 256 {
++            scans.clear();
++        }
++        scans.insert(
++            sha256.to_owned(),
++            (package.clone(), registrations.clone(), scan.clone()),
++        );
++    }
++    Ok(scan)
++}
++
 +fn source_use(
 +    source: &str,
 +    package: &ModPackage,
 +    registrations: &Registrations,
-+) -> Result<(ModSourceUse, Vec<String>, Vec<String>)> {
++) -> Result<SourceUseScan> {
 +    let mut operations = quoted_calls(source, "host.call(")?;
 +    operations.extend(quoted_calls(source, "host.tryCall(")?);
 +    operations.sort();
@@ -110581,7 +110716,7 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +    selection: ModSelection,
 +    source: Arc<str>,
 +    assets: Arc<BTreeMap<String, Value>>,
-+    request_metadata: Arc<OnceLock<(Value, String)>>,
++    request_metadata: Arc<OnceLock<(Value, String, [u8; 32])>>,
 +    /// The store's code cache; `None` runs without one.
 +    code_cache: Option<Arc<code_cache::CacheRoot>>,
 +    adapter: Option<Value>,
@@ -110728,6 +110863,8 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +
 +type Brokered = Option<(u64, BTreeSet<String>)>;
 +
++type CallbackVerdict = (Instant, Option<FileStamp>, String, String);
++
 +#[cfg(test)]
 +mod reload_tests {
 +    use super::*;
@@ -110798,6 +110935,16 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +            host.check_callback_authority(&loaded).unwrap();
 +        }
 +        assert_eq!(store::READS.get(), reads);
++        host.check_callback_authority(&loaded).unwrap();
++        std::fs::write(package.join("index.ts"), "export default () => {}").unwrap();
++        host.check_callback_authority(&loaded).unwrap();
++        host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
++        assert!(
++            host.check_callback_authority(&loaded)
++                .unwrap_err()
++                .to_string()
++                .contains("untrusted_source")
++        );
 +    }
 +
 +    #[test]
@@ -110994,6 +111141,7 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +    admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
 +    brokered: Option<(Instant, String, Authority)>,
 +    callback_configuration: Mutex<Option<(ConfigurationStamp, String, Arc<ModConfiguration>)>>,
++    callback_verdicts: HashMap<(String, PathBuf, String), CallbackVerdict>,
 +    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    codex_config: Arc<Mutex<BTreeSet<String>>>,
@@ -111255,10 +111403,12 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +                        .iter()
 +                        .any(|prefix| call.operation.starts_with(prefix))
 +                    || matches!(call.operation.as_str(), "environment.read" | "environment.set");
-+                let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if masked {Value::Null} else {call.arguments.clone()}});
-+                let _ = access.with(|runtime| {
-+                    Ok(runtime.event_except("host_operation", before, id, active, scope))
-+                });
++                if access.with(|runtime| Ok(runtime.has_event("host_operation"))).unwrap_or(false) {
++                    let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if masked {Value::Null} else {call.arguments.clone()}});
++                    let _ = access.with(|runtime| {
++                        Ok(runtime.event_except("host_operation", before, id, active, scope))
++                    });
++                }
 +                let intercepted = (!private && event != "intercept")
 +                    .then(|| access.with(|runtime| Ok(runtime.intercepts("host_operation"))))
 +                    .and_then(|intercepts| intercepts.ok().flatten());
@@ -111286,17 +111436,19 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +                } else {
 +                    chain::dispatch(&mut *access, &mut *host, id, generation, call.clone(), active, scope)
 +                };
-+                let after = match &result {
-+                    Ok(value) => {
-+                        json!({"phase":"after","caller":id,"operation":call.operation,"result":if masked {Value::Null} else {value.clone()}})
-+                    }
-+                    Err(error) => {
-+                        json!({"phase":"after","caller":id,"operation":call.operation,"error":if masked {"private_operation_failed".to_owned()} else {error.to_string()}})
-+                    }
-+                };
-+                let _ = access.with(|runtime| {
-+                    Ok(runtime.event_except("host_operation", after, id, active, scope))
-+                });
++                if access.with(|runtime| Ok(runtime.has_event("host_operation"))).unwrap_or(false) {
++                    let after = match &result {
++                        Ok(value) => {
++                            json!({"phase":"after","caller":id,"operation":call.operation,"result":if masked {Value::Null} else {value.clone()}})
++                        }
++                        Err(error) => {
++                            json!({"phase":"after","caller":id,"operation":call.operation,"error":if masked {"private_operation_failed".to_owned()} else {error.to_string()}})
++                        }
++                    };
++                    let _ = access.with(|runtime| {
++                        Ok(runtime.event_except("host_operation", after, id, active, scope))
++                    });
++                }
 +                result
 +            },
 +            progress,
@@ -111575,6 +111727,7 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +            admissions: BTreeMap::new(),
 +            brokered: None,
 +            callback_configuration: Mutex::default(),
++            callback_verdicts: HashMap::new(),
 +            required_surfaces: Arc::default(),
 +            intercepted_surfaces: Arc::default(),
 +            codex_config: Arc::default(),
@@ -111611,6 +111764,7 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
 +    pub fn set_checkout(&mut self, repository: &Path) {
 +        self.configuration_stamp = None;
++        self.callback_verdicts.clear();
 +        if self.project.as_deref() != repository.canonicalize().ok().as_deref() {
 +            for loaded in self.loaded.values_mut() {
 +                loaded.clear_ui();
@@ -111892,7 +112046,10 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +            brokered.as_ref().map(|(_, grants)| grants),
 +            self.managed.as_ref().map(|managed| &managed.policy),
 +            &mut rejected,
-+            store::package,
++            |path| {
++                store::verified(path)
++                    .map(|v| (v.package.clone(), v.source.clone(), v.sha256.clone()))
++            },
 +        )?;
 +        let adapters = Self::adapters(&selected);
 +        let seeded = std::mem::take(&mut self.seeded);
@@ -111947,14 +112104,14 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +                if package.assets.is_empty() {
 +                    return Ok(BTreeMap::new());
 +                }
-+                let (_, _, hash, files) = store::package_with_assets(&selection.path)?;
-+                if hash != selection.sha256 {
++                let verified = store::verified(&selection.path)?;
++                if verified.sha256 != selection.sha256 {
 +                    return Err(failure(format!(
 +                        "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
 +                        package.id
 +                    )));
 +                }
-+                Ok(store::asset_map(files))
++                Ok(store::asset_map(verified.assets.clone()))
 +            })();
 +            let assets = match assets {
 +                Ok(assets) => assets,
@@ -112298,12 +112455,12 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +            .iter()
 +            .filter_map(|(id, (selection, package, _))| {
 +                let module = package.adapter_module.as_ref()?;
-+                let (_, _, hash, assets) = store::package_with_assets(&selection.path).ok()?;
-+                if hash != selection.sha256 {
++                let verified = store::verified(&selection.path).ok()?;
++                if verified.sha256 != selection.sha256 {
 +                    return None;
 +                }
 +                let file = |asset: &String| {
-+                    assets.get(asset).map(|source| {
++                    verified.assets.get(asset).map(|source| {
 +                        json!({"source": source, "filename": selection.path.join(asset)})
 +                    })
 +                };
@@ -112833,23 +112990,29 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +        for tool in &registrations.tools {
 +            tool_validator(&tool.parameters)?;
 +        }
-+        let mut code = loaded.source.to_string();
-+        for name in registrations
-+            .modules
-+            .iter()
-+            .filter(|name| !name.ends_with(".json"))
-+        {
-+            if let Some(text) = loaded
-+                .assets
-+                .get(name)
-+                .and_then(|asset| asset["text"].as_str())
-+            {
-+                code.push('\n');
-+                code.push_str(text);
-+            }
-+        }
-+        let (source_use, unused_grants, unused_environment) =
-+            source_use(&code, &loaded.package, &registrations)?;
++        let (source_use, unused_grants, unused_environment) = cached_source_use(
++            &loaded.selection.sha256,
++            &loaded.package,
++            &registrations,
++            || {
++                let mut code = loaded.source.to_string();
++                for name in registrations
++                    .modules
++                    .iter()
++                    .filter(|name| !name.ends_with(".json"))
++                {
++                    if let Some(text) = loaded
++                        .assets
++                        .get(name)
++                        .and_then(|asset| asset["text"].as_str())
++                    {
++                        code.push('\n');
++                        code.push_str(text);
++                    }
++                }
++                code
++            },
++        )?;
 +        Ok((registrations, source_use, unused_grants, unused_environment))
 +    }
 +
@@ -113016,7 +113179,44 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +        )
 +    }
 +
++    /// Between broker refreshes a passed check stands until `mods.json` or the authority inventory changes.
 +    fn check_callback_authority(&mut self, loaded: &Loaded) -> Result<()> {
++        let key = (
++            loaded.package.id.clone(),
++            loaded.selection.path.clone(),
++            loaded.selection.scope.clone(),
++        );
++        let modified = configuration_stamp(&self.store.root.join("mods.json"));
++        let grant = store::grant(&json!(loaded.selection));
++        if let Some((at, stamp, sha256, granted)) = self.callback_verdicts.get(&key)
++            && modified.is_some()
++            && self.fresh_broker() == Some(*at)
++            && *stamp == modified
++            && *sha256 == self.configuration_sha256
++            && *granted == grant
++        {
++            return Ok(());
++        }
++        self.check_callback_authority_now(loaded)?;
++        if self.configuration_stamp.is_some()
++            && let Some(at) = self.fresh_broker()
++        {
++            self.callback_verdicts.insert(
++                key,
++                (at, modified, self.configuration_sha256.clone(), grant),
++            );
++        }
++        Ok(())
++    }
++
++    fn fresh_broker(&self) -> Option<Instant> {
++        self.brokered
++            .as_ref()
++            .filter(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
++            .map(|(at, _, _)| *at)
++    }
++
++    fn check_callback_authority_now(&mut self, loaded: &Loaded) -> Result<()> {
 +        let (configuration_sha256, configuration) = self.callback_configuration();
 +        let authority = self.authority(&configuration_sha256)?;
 +        let hash = self.authority_hash(&configuration_sha256, &authority);
@@ -115688,10 +115888,10 @@ index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7b
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b0f49cb0f30e40f82ca0740c36fd6fa007af715b
+index 0000000000000000000000000000000000000000..583b18730d19d1182b550fd0cec4413aa6619014
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,487 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -115869,6 +116069,35 @@ index 0000000000000000000000000000000000000000..b0f49cb0f30e40f82ca0740c36fd6fa0
 +    metadata: &'a Value,
 +    #[serde(flatten)]
 +    invocation: Value,
++    #[serde(skip)]
++    kept: [u8; 32],
++}
++
++impl process::Kept for Request<'_> {
++    fn kept_digest(&self) -> Result<[u8; 32]> {
++        Ok(self.kept)
++    }
++
++    fn kept_line(&self) -> Result<Vec<u8>> {
++        let mut line: std::collections::BTreeMap<&str, &Value> = self
++            .metadata
++            .as_object()
++            .into_iter()
++            .flatten()
++            .filter(|(field, _)| !process::KEPT_FIELDS.contains(&field.as_str()))
++            .map(|(field, value)| (field.as_str(), value))
++            .collect();
++        line.extend(
++            self.invocation
++                .as_object()
++                .into_iter()
++                .flatten()
++                .map(|(field, value)| (field.as_str(), value)),
++        );
++        let kept = json!(process::KEPT_FIELDS);
++        line.insert("kept", &kept);
++        process::request_line(&line)
++    }
 +}
 +
 +impl std::ops::Index<&str> for Request<'_> {
@@ -115879,7 +116108,7 @@ index 0000000000000000000000000000000000000000..b0f49cb0f30e40f82ca0740c36fd6fa0
 +    }
 +}
 +
-+fn metadata(loaded: &Loaded) -> (Value, String) {
++fn metadata(loaded: &Loaded) -> Result<(Value, String, [u8; 32])> {
 +    let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join(&loaded.package.entrypoint),
 +        "api": MOD_API_VERSION,
 +        "assets": loaded.assets.as_ref(),
@@ -115908,7 +116137,8 @@ index 0000000000000000000000000000000000000000..b0f49cb0f30e40f82ca0740c36fd6fa0
 +        }
 +    }
 +    let identity = format!("{:x}", identity.finalize());
-+    (request, identity)
++    let kept = process::kept_digest(&request)?;
++    Ok((request, identity, kept))
 +}
 +
 +/// A component instance keeps one runner, and with it its module state, for as long as it stays mounted.
@@ -115937,9 +116167,16 @@ index 0000000000000000000000000000000000000000..b0f49cb0f30e40f82ca0740c36fd6fa0
 +        .collect::<std::result::Result<Vec<_>, _>>()?;
 +    let mut forwarded = 0;
 +    let mut waited = Duration::ZERO;
-+    let (metadata, identity) = loaded.request_metadata.get_or_init(|| metadata(loaded));
++    let (metadata, identity, kept) = match loaded.request_metadata.get() {
++        Some(cached) => cached,
++        None => {
++            let computed = metadata(loaded)?;
++            loaded.request_metadata.get_or_init(|| computed)
++        }
++    };
 +    let mut request = Request {
 +        metadata,
++        kept: *kept,
 +        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
 +    };
 +    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
@@ -122952,10 +123189,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e4202b5e3
+index 0000000000000000000000000000000000000000..3a7cd8e3482dcbf2fe929e7b82d53f3ce51004ff
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,836 @@
+@@ -0,0 +1,899 @@
 +use super::Result;
 +use super::code_cache::CacheRoot;
 +use super::code_cache::CodeCache;
@@ -123031,6 +123268,28 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +const MEMORY_POLL: Duration = Duration::from_millis(50);
 +/// Live runner pids `(exceeded, reaped)`; signals and reaps both happen under this lock, so a reused pid is never killed.
 +static TRACKED: Mutex<BTreeMap<u32, (bool, bool)>> = Mutex::new(BTreeMap::new());
++static IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++static WATCHDOG: std::sync::OnceLock<std::thread::Thread> = std::sync::OnceLock::new();
++
++/// Runners execute mod code only inside a conversation, so the watchdog polls only while one is open.
++struct InFlight;
++
++impl InFlight {
++    fn enter() -> Self {
++        if IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::AcqRel) == 0
++            && let Some(watchdog) = WATCHDOG.get()
++        {
++            watchdog.unpark();
++        }
++        Self
++    }
++}
++
++impl Drop for InFlight {
++    fn drop(&mut self) {
++        IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
++    }
++}
 +
 +fn untrack(pid: u32) -> bool {
 +    TRACKED
@@ -123085,14 +123344,17 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +
 +/// The V8 heap flag does not bound ArrayBuffers, so one shared thread kills any runner whose peak physical footprint passes `MEMORY_LIMIT`.
 +fn track(child: &Child) {
-+    static WATCHDOG: std::sync::Once = std::sync::Once::new();
 +    TRACKED
 +        .lock()
 +        .unwrap_or_else(PoisonError::into_inner)
 +        .insert(child.id(), (false, false));
-+    WATCHDOG.call_once(|| {
++    WATCHDOG.get_or_init(|| {
 +        std::thread::spawn(|| {
 +            loop {
++                if IN_FLIGHT.load(std::sync::atomic::Ordering::Acquire) == 0 {
++                    std::thread::park();
++                    continue;
++                }
 +                std::thread::sleep(MEMORY_POLL);
 +                let mut tracked = TRACKED.lock().unwrap_or_else(PoisonError::into_inner);
 +                for (pid, (exceeded, _)) in tracked
@@ -123106,7 +123368,9 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +                    }
 +                }
 +            }
-+        });
++        })
++        .thread()
++        .clone()
 +    });
 +}
 +
@@ -123174,7 +123438,7 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +
 +pub(super) const INPUT_LIMIT: usize = 4_194_304;
 +
-+fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
++pub(super) fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
 +    let mut bytes = serde_json::to_vec(request)?;
 +    if bytes.len() > INPUT_LIMIT {
 +        return Err(failure("input_limit"));
@@ -123184,9 +123448,24 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +}
 +
 +/// Package-identity fields a reused runner keeps, so matching requests omit them and stay under the pipe buffer.
-+const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
++pub(super) const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
 +
-+fn kept_digest<R>(request: &R) -> Result<[u8; 32]>
++pub(super) trait Kept {
++    fn kept_digest(&self) -> Result<[u8; 32]>;
++    fn kept_line(&self) -> Result<Vec<u8>>;
++}
++
++impl Kept for Value {
++    fn kept_digest(&self) -> Result<[u8; 32]> {
++        kept_digest(self)
++    }
++
++    fn kept_line(&self) -> Result<Vec<u8>> {
++        kept_line(self)
++    }
++}
++
++pub(super) fn kept_digest<R>(request: &R) -> Result<[u8; 32]>
 +where
 +    R: for<'a> std::ops::Index<&'a str, Output = Value>,
 +{
@@ -123199,7 +123478,7 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +    Ok(digest.finalize().into())
 +}
 +
-+fn kept_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
++pub(super) fn kept_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
 +    let mut line = serde_json::to_value(request)?;
 +    if let Some(fields) = line.as_object_mut() {
 +        for field in KEPT_FIELDS {
@@ -123246,6 +123525,7 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +    active: &dyn Fn() -> bool,
 +    host: &mut dyn FnMut(Value) -> Result<Value>,
 +) -> (Result<Option<Value>>, Instant) {
++    let _in_flight = InFlight::enter();
 +    let budgeted = || Instant::now() + budget + Duration::from_millis(250);
 +    let mut deadline = if fresh {
 +        Instant::now() + RUNNER_START
@@ -123526,14 +123806,12 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +    host: &mut dyn FnMut(Value) -> Result<Value>,
 +) -> Result<Value>
 +where
-+    R: serde::Serialize + for<'a> std::ops::Index<&'a str, Output = Value>,
++    R: serde::Serialize + Kept + for<'a> std::ops::Index<&'a str, Output = Value>,
 +{
 +    let kept = (request["reuse"] == true)
-+        .then(|| kept_digest(request))
++        .then(|| request.kept_digest())
 +        .transpose()?;
-+    let serve = if kept.is_some() {
-+        request_line(request)?
-+    } else {
++    let serve = || {
 +        request_line(
 +            &[
 +                "name",
@@ -123546,7 +123824,7 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +            .map(|field| (field, &request[field]))
 +            .into_iter()
 +            .collect::<std::collections::BTreeMap<_, _>>(),
-+        )?
++        )
 +    };
 +    let _stepping = Stepping::enter(key, request["event"] == "component");
 +    let mut reused = WARM.lock().ok().and_then(|mut runners| {
@@ -123562,8 +123840,25 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +    let mut cache = None;
 +    let fresh = reused.is_none();
 +    let (mut warm, bytes) = match reused {
-+        Some(warm) if kept.is_some() && warm.kept == kept => (warm, kept_line(request)?),
++        Some(warm) if kept.is_some() && warm.kept == kept => match request.kept_line() {
++            Ok(line) => (warm, line),
++            Err(error) => {
++                pool(warm);
++                return Err(error);
++            }
++        },
 +        Some(warm) => {
++            let serve = match if kept.is_some() {
++                request_line(request)
++            } else {
++                serve()
++            } {
++                Ok(serve) => serve,
++                Err(error) => {
++                    pool(warm);
++                    return Err(error);
++                }
++            };
 +            // The activation request differs from this one only in the serve fields.
 +            if warm.base + serve.len() > INPUT_LIMIT + 1 {
 +                pool(warm);
@@ -123573,6 +123868,11 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +        }
 +        None => {
 +            let bytes = request_line(request)?;
++            let base = if kept.is_some() {
++                0
++            } else {
++                bytes.len().saturating_sub(serve()?.len())
++            };
 +            let pinned = (request["event"] == "component").then(|| {
 +                request["payload"]["client"]
 +                    .as_str()
@@ -123592,7 +123892,7 @@ index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e
 +                }
 +            };
 +            warm.pinned = pinned;
-+            warm.base = bytes.len().saturating_sub(serve.len());
++            warm.base = base;
 +            cache = cache_root.and_then(|root| CodeCache::open(root, request));
 +            (warm, offer(cache.as_ref(), bytes))
 +        }
@@ -124789,10 +125089,10 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca23884746
+index 0000000000000000000000000000000000000000..9f759dc33333b1273743e7c33b16edfe16bb5fdd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1521 @@
+@@ -0,0 +1,1547 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -125055,7 +125355,13 @@ index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca
 +#[cfg(test)]
 +thread_local! { pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 +
-+type VerifiedPackage = (Vec<(PathBuf, FileStamp)>, ModPackage, String);
++pub(super) struct VerifiedPackage {
++    files: Vec<(PathBuf, FileStamp)>,
++    pub(super) package: ModPackage,
++    pub(super) sha256: String,
++    pub(super) source: String,
++    pub(super) assets: BTreeMap<String, String>,
++}
 +
 +static VERIFIED_PACKAGES: LazyLock<Mutex<HashMap<PathBuf, Arc<VerifiedPackage>>>> =
 +    LazyLock::new(Default::default);
@@ -125157,31 +125463,44 @@ index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca
 +}
 +
 +pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
++    verified(path).map(|verified| identity(&verified))
++}
++
++fn identity(verified: &VerifiedPackage) -> (ModPackage, String) {
++    (verified.package.clone(), verified.sha256.clone())
++}
++
++/// The package as last read, reread only when one of its files changed.
++pub(super) fn verified(path: &Path) -> Result<Arc<VerifiedPackage>> {
 +    match reused_package(path) {
 +        Some(verified) => Ok(verified),
 +        None => inspect_verified(path),
 +    }
 +}
 +
-+fn inspect_verified(path: &Path) -> Result<(ModPackage, String)> {
-+    let (package, _, hash, _, files, _) = inspect_package(path, false, None)?;
-+    let mut verified = VERIFIED_PACKAGES.lock().map_err(failure)?;
-+    if verified.len() >= 256 {
-+        verified.clear();
++fn inspect_verified(path: &Path) -> Result<Arc<VerifiedPackage>> {
++    let (package, source, sha256, assets, files, _) = inspect_package(path, true, None)?;
++    let verified = Arc::new(VerifiedPackage {
++        files,
++        package,
++        sha256,
++        source,
++        assets,
++    });
++    let mut cache = VERIFIED_PACKAGES.lock().map_err(failure)?;
++    if cache.len() >= 256 {
++        cache.clear();
 +    }
-+    verified.insert(
-+        path.to_owned(),
-+        Arc::new((files, package.clone(), hash.clone())),
-+    );
-+    Ok((package, hash))
++    cache.insert(path.to_owned(), verified.clone());
++    Ok(verified)
 +}
 +
-+fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
++fn reused_package(path: &Path) -> Option<Arc<VerifiedPackage>> {
 +    if !path.is_absolute() || path.canonicalize().ok()? != path {
 +        return None;
 +    }
 +    let verified = VERIFIED_PACKAGES.lock().ok()?.get(path).cloned()?;
-+    ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
++    ModStore::stamps_unchanged(&verified.files).then_some(verified)
 +}
 +
 +type InspectedPackage = (
@@ -125296,13 +125615,13 @@ index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca
 +}
 +
 +fn state_value(bytes: &[u8], version: u32) -> Result<Value> {
-+    let state: Value = serde_json::from_slice(bytes)?;
++    let mut state: Value = serde_json::from_slice(bytes)?;
 +    if state["schema"] != super::MOD_STATE_STORAGE_SCHEMA_VERSION || state["version"] != version {
 +        return Err(failure(
 +            "state_migration_required: previous state preserved",
 +        ));
 +    }
-+    Ok(state["value"].clone())
++    Ok(state["value"].take())
 +}
 +
 +fn directory_state(directory: &Path, name: &str, version: u32) -> Result<Value> {
@@ -125660,7 +125979,7 @@ index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca
 +        let verified = VERIFIED_PACKAGES.lock().ok()?;
 +        paths
 +            .into_iter()
-+            .map(|path| verified.get(path).map(|package| package.0.clone()))
++            .map(|path| verified.get(path).map(|package| package.files.clone()))
 +            .collect::<Option<Vec<_>>>()
 +            .map(|files| files.concat())
 +    }
@@ -125714,12 +126033,19 @@ index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca
 +        let mut valid = Vec::new();
 +        let mut inspections = entries
 +            .iter()
-+            .map(|selection| reused_package(&selection.path).map(Ok))
++            .map(|selection| {
++                reused_package(&selection.path).map(|verified| Ok(identity(&verified)))
++            })
 +            .collect::<Vec<_>>();
 +        let misses = (0..entries.len())
 +            .filter(|index| inspections[*index].is_none())
 +            .collect::<Vec<_>>();
-+        let inspect = |index: usize| (index, inspect_verified(&entries[index].path));
++        let inspect = |index: usize| {
++            (
++                index,
++                inspect_verified(&entries[index].path).map(|verified| identity(&verified)),
++            )
++        };
 +        let inspected = if misses.len() > 4 {
 +            let next = std::sync::atomic::AtomicUsize::new(0);
 +            std::thread::scope(|scope| {
@@ -141703,10 +142029,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..85f4f21de9a0ed6d76324c15fe8d58f8960c177c
+index 0000000000000000000000000000000000000000..a986fc2989f8e4d5bcd09fbba8ecd81959d3b684
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4896 @@
+@@ -0,0 +1,4897 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -142123,6 +142449,7 @@ index 0000000000000000000000000000000000000000..85f4f21de9a0ed6d76324c15fe8d58f8
 +        "export default () => { throw new Error('broken') }",
 +    )
 +    .unwrap();
++    std::thread::sleep(std::time::Duration::from_millis(2100));
 +    assert!(
 +        runtime
 +            .invoke("fixture", generation, "command", "count", Value::Null)

@@ -56,12 +56,15 @@ fn read_line() -> Result<String, &'static str> {
     INPUT.with_borrow_mut(|input| {
         let stdin = std::io::stdin();
         let mut stdin = stdin.lock();
+        let mut scanned = 0;
         loop {
-            if let Some(end) = input.iter().position(|byte| *byte == b'\n') {
+            if let Some(end) = input[scanned..].iter().position(|byte| *byte == b'\n') {
+                let end = scanned + end;
                 let line = String::from_utf8_lossy(&input[..end]).into_owned();
                 input.drain(..=end);
                 return Ok(line);
             }
+            scanned = input.len();
             if input.len() > INPUT_LIMIT {
                 return Err("input_limit");
             }

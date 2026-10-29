@@ -2,8 +2,8 @@ import type { Json, ModAPI, RenderEvent, RenderExecCall, RenderParsedCommand, Re
 
 type Row = { name: string; args: string; marker: (string | null)[]; failed: boolean; running: boolean };
 
-const utf8 = new TextEncoder();
-const bytes = (text: string) => utf8.encode(text).length;
+const ASCII = /^[\x20-\x7e]*$/;
+const bytes = (text: string) => { let size = 0; for (const char of text) { const point = char.codePointAt(0)!; size += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4; } return size; };
 
 const WIDE = /[ᄀ-ᅟ\u17A4⺀-꓏ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3ffff}]|\p{Extended_Pictographic}|\p{Emoji_Presentation}/u;
 const ZERO = /[\u1160-\u11ff\uD7B0-\uD7FF\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]/u;
@@ -12,12 +12,13 @@ const EMOJI = /^(?:[\p{Extended_Pictographic}\p{Regional_Indicator}]|[#*0-9]\uFE
 let segments: Intl.Segmenter | undefined;
 const segmenter = () => segments ??= new Intl.Segmenter();
 // The native renderer treats variation-selector-1 quotes as two cells.
-const widthOf = (text: string) => [...segmenter().segment(text)].reduce((sum, { segment }) => sum + (EMOJI.test(segment) ? 2
+const widthOf = (text: string) => ASCII.test(text) ? text.length : [...segmenter().segment(text)].reduce((sum, { segment }) => sum + (EMOJI.test(segment) ? 2
   : [...segment.replace(/([‘’“”])\uFE01/gu, '$1$1')].reduce((width, char) => width + (char !== '\u115F' && ZERO.test(char) ? 0 : char === '\u17D8' ? 3 : WIDE.test(char) ? 2 : 1), 0)), 0);
 
 const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   if (cells < 1 || chars < 1 || limit < 3) return '';
   const flat = text.replace(/\s+/g, ' ').trim();
+  if (ASCII.test(flat)) return flat.length <= Math.min(cells, chars, limit) ? flat : `${flat.slice(0, Math.min(cells - 1, chars - 1, limit - 3))}…`;
   const all = [...flat];
   if (all.length <= chars && widthOf(flat) <= cells && bytes(flat) <= limit) return flat;
   const kept: string[] = [];
@@ -25,11 +26,14 @@ const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   let size = 3;
   let count = 1;
   for (const { segment: char } of segmenter().segment(flat)) {
-    if (width + widthOf(char) > cells || count + [...char].length > chars || size + bytes(char) > limit) break;
+    const cost = widthOf(char);
+    const length = [...char].length;
+    const weight = bytes(char);
+    if (width + cost > cells || count + length > chars || size + weight > limit) break;
     kept.push(char);
-    width += widthOf(char);
-    size += bytes(char);
-    count += [...char].length;
+    width += cost;
+    size += weight;
+    count += length;
   }
   return `${kept.join('')}…`;
 };

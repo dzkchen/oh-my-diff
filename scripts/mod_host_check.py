@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import re
@@ -111,7 +112,7 @@ class Host:
         return status or {"mods": [], "terminal": {"diagnostics": [f"status: {error}"]}}
 
     def offline_command(self, location, mod, name):
-        scenario = self.work / "scenario.json"
+        scenario = self.work / f"{location.name}-offline.json"
         scenario.write_text(json.dumps({
             "schema": 1, "host_operations": {operation: [{"result": reply, "optional": True}] * 32 for operation, reply in MOCKS.items()},
             "steps": [{"type": "invoke", "mod": mod, "event": "command", "name": name, "payload": "", "thread_id": "host-check"}]}))
@@ -271,7 +272,7 @@ def check(host, paths, providers, commands, scenarios):
         report["first-party together"] = [f"{name}: {reason}" for name, reason in refused.items()]
         report["first-party together"] += problems_from_status(status, "default", ids)
         report["first-party together"] += collisions(status, {manifest(path)["id"] for path in first_party})
-    for path in paths:
+    def package(path):
         mod = manifest(path)["id"]
         location, refused = host.store(f"store-{path.parent.name}-{path.name}", [path], providers)
         found = static_problems(path) + [f"{name}: {reason}" for name, reason in refused.items()]
@@ -292,7 +293,10 @@ def check(host, paths, providers, commands, scenarios):
             found += problems_from_status(host.status(location), f"after /{mod}:{name}", ids)
         if scenarios and (path / "mod.test.json").is_file():
             found += host.scenario(path, providers)
-        report[f"{path.parent.name}/{path.name}"] = sorted(set(found))
+        return f"{path.parent.name}/{path.name}", sorted(set(found))
+
+    with ThreadPoolExecutor(max(1, os.cpu_count() or 1)) as pool:
+        report |= dict(pool.map(package, paths))
     return {name: found for name, found in report.items() if found}
 
 
