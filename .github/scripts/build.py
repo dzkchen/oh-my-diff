@@ -2,6 +2,7 @@
 import argparse
 import functools
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -164,7 +165,7 @@ def v8(args):
             try:
                 with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response:
                     return response.read()
-            except (urllib.error.URLError, TimeoutError) as error:
+            except (OSError, http.client.HTTPException) as error:
                 if delay is None or (isinstance(error, urllib.error.HTTPError) and error.code < 500):
                     raise
                 print(f"V8 download of {name} failed ({error}); retrying in {delay} s", file=sys.stderr)
