@@ -71,7 +71,7 @@ fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
         .and_then(|mut snapshots| snapshots.remove(&account.cost_capture))
         .is_some_and(|(_, dirty)| dirty);
     if dirty {
-        write_cost_capture(account, Durability::Durable)?;
+        write_cost_capture(account, Durability::Ordered)?;
     }
     Ok(())
 }
@@ -311,7 +311,7 @@ impl Accounts {
             .map_err(|_| "request state poisoned")?
             .billed
             .remove(request_id);
-        write_cost_capture(&account, Durability::Durable).map_err(|error| error.to_string())?;
+        write_cost_capture(&account, Durability::Ordered).map_err(|error| error.to_string())?;
         Ok(
             json!({"request_id": request_id, "ledger_request": request, "cost": {"microusd": microusd, "basis": "provider_reported", "source": source}, "attempt": attempt}),
         )

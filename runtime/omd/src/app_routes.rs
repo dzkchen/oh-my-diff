@@ -82,7 +82,7 @@ pub fn class(capability: &str) -> bool {
 
 pub fn classes_named_in(source: &str) -> Option<BTreeSet<&'static str>> {
     let mut named = BTreeSet::new();
-    for quote in [b'\'', b'"', b'`'] {
+    for quote in *b"'\"`" {
         let mut open = None;
         for (index, byte) in source.bytes().enumerate() {
             if byte != quote {

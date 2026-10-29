@@ -2532,7 +2532,8 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
                             std::fs::write(config, serde_json::to_vec(&value)?)?;
                         }
                         "replace" => {
-                            std::fs::write(path.join("index.ts"), "export default () => {}")?
+                            std::fs::write(path.join("index.ts"), "export default () => {}")?;
+                            std::thread::sleep(std::time::Duration::from_millis(2100));
                         }
                         "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
                         "cancel" => active.set(false),

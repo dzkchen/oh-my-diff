@@ -260,7 +260,13 @@ pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<Strin
 #[cfg(test)]
 thread_local! { pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
-type VerifiedPackage = (Vec<(PathBuf, FileStamp)>, ModPackage, String);
+pub(super) struct VerifiedPackage {
+    files: Vec<(PathBuf, FileStamp)>,
+    pub(super) package: ModPackage,
+    pub(super) sha256: String,
+    pub(super) source: String,
+    pub(super) assets: BTreeMap<String, String>,
+}
 
 static VERIFIED_PACKAGES: LazyLock<Mutex<HashMap<PathBuf, Arc<VerifiedPackage>>>> =
     LazyLock::new(Default::default);
@@ -362,31 +368,44 @@ pub(super) fn asset_map(assets: BTreeMap<String, String>) -> BTreeMap<String, Va
 }
 
 pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
+    verified(path).map(|verified| identity(&verified))
+}
+
+fn identity(verified: &VerifiedPackage) -> (ModPackage, String) {
+    (verified.package.clone(), verified.sha256.clone())
+}
+
+/// The package as last read, reread only when one of its files changed.
+pub(super) fn verified(path: &Path) -> Result<Arc<VerifiedPackage>> {
     match reused_package(path) {
         Some(verified) => Ok(verified),
         None => inspect_verified(path),
     }
 }
 
-fn inspect_verified(path: &Path) -> Result<(ModPackage, String)> {
-    let (package, _, hash, _, files, _) = inspect_package(path, false, None)?;
-    let mut verified = VERIFIED_PACKAGES.lock().map_err(failure)?;
-    if verified.len() >= 256 {
-        verified.clear();
+fn inspect_verified(path: &Path) -> Result<Arc<VerifiedPackage>> {
+    let (package, source, sha256, assets, files, _) = inspect_package(path, true, None)?;
+    let verified = Arc::new(VerifiedPackage {
+        files,
+        package,
+        sha256,
+        source,
+        assets,
+    });
+    let mut cache = VERIFIED_PACKAGES.lock().map_err(failure)?;
+    if cache.len() >= 256 {
+        cache.clear();
     }
-    verified.insert(
-        path.to_owned(),
-        Arc::new((files, package.clone(), hash.clone())),
-    );
-    Ok((package, hash))
+    cache.insert(path.to_owned(), verified.clone());
+    Ok(verified)
 }
 
-fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
+fn reused_package(path: &Path) -> Option<Arc<VerifiedPackage>> {
     if !path.is_absolute() || path.canonicalize().ok()? != path {
         return None;
     }
     let verified = VERIFIED_PACKAGES.lock().ok()?.get(path).cloned()?;
-    ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
+    ModStore::stamps_unchanged(&verified.files).then_some(verified)
 }
 
 type InspectedPackage = (
@@ -865,7 +884,7 @@ impl ModStore {
         let verified = VERIFIED_PACKAGES.lock().ok()?;
         paths
             .into_iter()
-            .map(|path| verified.get(path).map(|package| package.0.clone()))
+            .map(|path| verified.get(path).map(|package| package.files.clone()))
             .collect::<Option<Vec<_>>>()
             .map(|files| files.concat())
     }
@@ -919,12 +938,19 @@ impl ModStore {
         let mut valid = Vec::new();
         let mut inspections = entries
             .iter()
-            .map(|selection| reused_package(&selection.path).map(Ok))
+            .map(|selection| {
+                reused_package(&selection.path).map(|verified| Ok(identity(&verified)))
+            })
             .collect::<Vec<_>>();
         let misses = (0..entries.len())
             .filter(|index| inspections[*index].is_none())
             .collect::<Vec<_>>();
-        let inspect = |index: usize| (index, inspect_verified(&entries[index].path));
+        let inspect = |index: usize| {
+            (
+                index,
+                inspect_verified(&entries[index].path).map(|verified| identity(&verified)),
+            )
+        };
         let inspected = if misses.len() > 4 {
             let next = std::sync::atomic::AtomicUsize::new(0);
             std::thread::scope(|scope| {
