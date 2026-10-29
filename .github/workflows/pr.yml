@@ -64,7 +64,6 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: '0'
       OMD_WORK_ROOT: /Users/runner/omd
       OMD_SCCACHE: '1'
-      OMD_SCCACHE_TOOL: aqua:mozilla/sccache@0.19.0
       SCCACHE_DIR: /Users/runner/omd/sccache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -72,10 +71,8 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550
         with:
-          install_args: node python@3.14.6 ${{ env.OMD_SCCACHE_TOOL }}
+          install_args: node python@3.14.6 aqua:mozilla/sccache
           cache_save: false
-      - name: Put sccache on PATH
-        run: dirname "$(mise exec "$OMD_SCCACHE_TOOL" -- which sccache)" >> "$GITHUB_PATH"
       - name: Install pinned Rust toolchain
         run: |
           OMD_RUST_TOOLCHAIN=$(python3 -c 'import json; print(json.load(open("upstream.lock.json"))["rust_toolchain"])')

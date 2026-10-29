@@ -28,9 +28,9 @@ since a cache saved by a PR is visible to that PR alone. PR checks set `OMD_WORK
 the V8 cache lands where validation saved it, and `build.py v8` reuses a cached V8 file only when it matches the pinned
 checksum, retrying a failed download. PR jobs never save the mise cache (`cache_save: false`).
 
-**Compile cache.** Nightly jobs set `OMD_SCCACHE=1`, which makes `build.py` set `RUSTC_WRAPPER=sccache` (mise-installed,
-pinned by `OMD_SCCACHE_TOOL`) over a local `SCCACHE_DIR`, not the GitHub backend. Each job restores that directory with
-`actions/cache/restore` and saves it with `if: always()` as `sccache-JOB-OS-HASH-RUN_ID`, where HASH covers
+**Compile cache.** Nightly jobs set `OMD_SCCACHE=1`, which makes `build.py` set `RUSTC_WRAPPER=sccache` (pinned in
+`mise.toml`) over a local 2 GB `SCCACHE_DIR`, not the GitHub backend. Each job restores that directory with
+`actions/cache/restore` and saves it with `if: always()` as `sccache-JOB-OS-HASH-RUN_ID-ATTEMPT`, where HASH covers
 `upstream.lock.json` and `runtime/patches/manifest.json`, so a failed run still keeps what it compiled. Restore falls
 back to the newest cache for the job. `sccache --show-stats` ends every job. A key includes the compile directory and
 every `CARGO_*` variable, so PR `native` uses the nightly work root and tree name (`/Users/runner/omd/omd-bnightly`),
