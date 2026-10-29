@@ -22,9 +22,10 @@ and workflow changes. Pull requests compare the merge commit with its first pare
 documentation-only changes avoid Rust builds. Native tests are compiled here; their execution and full validation
 remain in nightly and release workflows.
 
-PR, nightly and release jobs use the same Cargo download-cache keys. PR runs only restore: a patch edit falls back
-to the newest cache for the same platform and upstream pin. Only nightly and release runs save, since a cache saved
-by a PR is visible to that PR alone.
+PR, nightly and release jobs use the same Cargo download-cache and V8 prebuilt-cache keys. PR runs only restore: a
+patch edit falls back to the newest cache for the same platform and upstream pin. Only nightly and release runs save,
+since a cache saved by a PR is visible to that PR alone. PR checks set `OMD_V8_DIR` to the path validation saves, and
+`build.py v8` reuses a cached V8 file only when it matches the pinned checksum, retrying a failed download.
 
 `main` requires **PR gate** with an up-to-date branch. Dependabot (`dependabot.yml`) opens one grouped pull request a
 month for GitHub Actions updates. There are no dependency license or scheduled vulnerability checks yet.
