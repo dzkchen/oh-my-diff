@@ -255,6 +255,15 @@ impl Mods {
         inventory::notify(&self.runtime, &self.inventory, "start", record);
     }
 
+    fn set_provider_worker_idle(&self, thread: &str, idle: bool) {
+        if let Ok(accounts) = self.host.accounts.by_thread.lock()
+            && let Some(account) = accounts.get(thread)
+            && crate::provider_worker(&account.owner)
+        {
+            let _ = account.task.set_worker_idle(&account.owner, idle);
+        }
+    }
+
     fn agent_turn(
         &self,
         thread_store: &codex_extension_api::ExtensionData,
@@ -262,6 +271,7 @@ impl Mods {
         outcome: &str,
         error: Value,
     ) {
+        self.set_provider_worker_idle(thread_store.level_id(), true);
         if let Some(record) = self.inventory.turn(
             thread_store.level_id(),
             turn_store.level_id(),
@@ -480,6 +490,10 @@ fn initialize(
         .accounts
         .install_mod_dispatcher(dispatcher);
     intercept::install_notifier(&extension.core);
+    extension
+        .core
+        .inventory
+        .persist_to(extension.core.host.root.join("agents"));
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
     registry.thread_lifecycle_contributor(extension.clone());
@@ -1691,6 +1705,8 @@ impl TurnLifecycleContributor for Mods {
 
     fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            self.inventory.turn_started(input.thread_store.level_id());
+            self.set_provider_worker_idle(input.thread_store.level_id(), false);
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1848,6 +1864,15 @@ impl ThreadLifecycleContributor<Config> for Mods {
             });
             let Some((owner, depth)) = thread_owner(&input, thread, parent_session.is_some())
             else {
+                if parent.is_some()
+                    && codex_model_provider_info::runtime_provider(&input.config.model_provider_id)
+                        .is_some()
+                {
+                    host.accounts.refuse(
+                        &thread.to_string(),
+                        "agent_parent_unavailable: a subagent on a registered provider runs only beside its parent session".into(),
+                    );
+                }
                 return;
             };
             let session = match parent_session {
@@ -1873,15 +1898,61 @@ impl ThreadLifecycleContributor<Config> for Mods {
             let route = (owner == "lead")
                 .then(|| host.lead_route(input.config))
                 .flatten();
-            if let Err(error) =
-                host.enroll(thread, &session, &owner, route.as_ref(), Some(input.config))
-            {
+            let parent_account = parent.and_then(|parent| {
+                host.accounts
+                    .by_thread
+                    .lock()
+                    .ok()?
+                    .get(&parent.to_string())
+                    .map(|account| (account.owner.clone(), account.provider.clone()))
+            });
+            let cross_provider = parent_account.as_ref().filter(|(owner, provider)| {
+                crate::cross_provider_child(
+                    owner,
+                    provider,
+                    &input.config.model_provider_id,
+                    &input.config.configured_model_provider_id,
+                )
+            });
+            let enrolled = match cross_provider {
+                Some((parent_owner, _)) => host.enroll_cross_provider(
+                    thread,
+                    &session,
+                    &owner,
+                    parent_owner,
+                    depth,
+                    &input.config.model_provider_id,
+                    input.config.model.as_deref().unwrap_or_default(),
+                ),
+                None => host.enroll(thread, &session, &owner, route.as_ref(), Some(input.config)),
+            };
+            if let Err(error) = enrolled {
                 self.views.diagnostic(
                     &self.host,
                     "session",
                     Some(format!("OMD ledger enrollment failed: {error}")),
                 );
+                if cross_provider.is_some() {
+                    host.accounts.refuse(&thread.to_string(), error);
+                }
                 return;
+            }
+            if owner != "lead"
+                && let Some((provider, model, billing)) =
+                    host.accounts.by_thread.lock().ok().and_then(|accounts| {
+                        let account = accounts.get(&thread.to_string())?;
+                        Some((
+                            account.provider.clone(),
+                            account.model.clone(),
+                            account
+                                .rates
+                                .is_some()
+                                .then(|| crate::accounting::billing(account.rates.as_ref())),
+                        ))
+                    })
+            {
+                self.inventory
+                    .describe(&thread.to_string(), &provider, &model, billing);
             }
             if owner == "lead" {
                 let runtime = self.runtime.clone();
@@ -2025,13 +2096,16 @@ impl ThreadLifecycleContributor<Config> for Mods {
             {
                 inventory::notify(&self.runtime, &self.inventory, "end", record);
             }
+            self.host.accounts.forget_thread(thread);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
-            if let Ok(mut accounts) = self.host.accounts.by_thread.lock() {
-                accounts.remove(&lead.thread.to_string());
+            if let Ok(mut accounts) = self.host.accounts.by_thread.lock()
+                && let Some(account) = accounts.remove(&lead.thread.to_string())
+                && crate::provider_worker(&account.owner)
+            {
+                let _ = account.task.finish_worker(&account.owner);
             }
-            self.host.accounts.forget_thread(&lead.thread.to_string());
             expansion::release_thread(self, lead.thread);
             if let Ok(mut invokers) = self.expansion.invokers.lock() {
                 invokers.remove(&lead.thread.to_string());
@@ -2041,6 +2115,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 return;
             }
             self.expansion.forget_inventory(lead.thread);
+            self.inventory.forget_session(&lead.thread.to_string());
             self.agents.cleanup_session(&lead.session).await;
             self.agents.cleanup_snapshots(lead.thread);
             self.services.cleanup_session(&lead.session).await;
@@ -2142,6 +2217,9 @@ impl ToolLifecycleContributor for Mods {
                 codex_tools::ToolPayload::Custom { input } => (true, input),
                 _ => return Ok(ToolInterception::Continue(None)),
             };
+            if roles::is_spawn(input.tool_name) {
+                roles::spawn_capacity_admitted(&self.inventory, &lead, input.call_id)?;
+            }
             let original_tool = input.tool_name.clone();
             let scope_agent_id = agent_id(input.thread_store);
             let raw_arguments = raw.chars().take(65_536).collect::<String>();
@@ -2157,6 +2235,9 @@ impl ToolLifecycleContributor for Mods {
                     .agent_spawn
                     .lock()
                     .is_ok_and(|intercepts| intercepts.is_some());
+            if !spawn && roles::is_spawn(input.tool_name) {
+                roles::spawn_route_admitted(&lead, arguments["model"].as_str())?;
+            }
             let surface = if spawn { "agent_spawn" } else { "tool" };
             let payload = if spawn {
                 self.spawn_payload(&lead, &arguments, &lead.host.repository)
@@ -2414,6 +2495,7 @@ impl ToolLifecycleContributor for Mods {
 
     fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
+            self.inventory.release_spawn(input.call_id);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };

@@ -3,11 +3,14 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex, PoisonError};
 
 pub(super) struct Tree {
     pub files: BTreeMap<PathBuf, Vec<u8>>,
     pub links: BTreeMap<PathBuf, PathBuf>,
+    stamps: BTreeMap<PathBuf, codex_omd::FileStamp>,
     root: PathBuf,
+    stable: bool,
 }
 
 pub(super) fn capture(root: &Path) -> Result<Tree, String> {
@@ -18,7 +21,9 @@ pub(super) fn capture(root: &Path) -> Result<Tree, String> {
     let mut tree = Tree {
         files: BTreeMap::new(),
         links: BTreeMap::new(),
+        stamps: BTreeMap::new(),
         root: canonical,
+        stable: true,
     };
     let mut pending = vec![root.to_path_buf()];
     let mut total = 0;
@@ -52,20 +57,23 @@ pub(super) fn capture(root: &Path) -> Result<Tree, String> {
                     .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
                     .open(&path)
                     .map_err(|error| error.to_string())?;
-                if !file
-                    .metadata()
-                    .map_err(|error| error.to_string())?
-                    .is_file()
-                {
+                let metadata = file.metadata().map_err(|error| error.to_string())?;
+                if !metadata.is_file() {
                     return Err("service_dependency_type_invalid".into());
                 }
-                file.take(64 * 1024 * 1024 + 1)
+                (&file)
+                    .take(64 * 1024 * 1024 + 1)
                     .read_to_end(&mut bytes)
                     .map_err(|error| error.to_string())?;
                 total += bytes.len();
                 if bytes.len() > 64 * 1024 * 1024 || total > 128 * 1024 * 1024 {
                     return Err("service_source_limit".into());
                 }
+                let stamp = codex_omd::file_stamp(&metadata);
+                tree.stable &= file
+                    .metadata()
+                    .is_ok_and(|after| codex_omd::file_stamp(&after) == stamp);
+                tree.stamps.insert(path.clone(), stamp);
                 tree.files.insert(path, bytes);
             } else {
                 return Err("service_dependency_type_invalid".into());
@@ -75,7 +83,36 @@ pub(super) fn capture(root: &Path) -> Result<Tree, String> {
     Ok(tree)
 }
 
+type TreeStamp = (
+    BTreeMap<PathBuf, codex_omd::FileStamp>,
+    BTreeMap<PathBuf, PathBuf>,
+);
+
+/// The tree's digest, rehashed only when its file list, link targets or any file stamp changes.
 pub(super) fn digest(tree: &Tree) -> String {
+    static DIGESTS: LazyLock<Mutex<BTreeMap<PathBuf, (TreeStamp, String)>>> =
+        LazyLock::new(Default::default);
+    if !tree.stable {
+        return hash_tree(tree);
+    }
+    let fingerprint = (tree.stamps.clone(), tree.links.clone());
+    if let Some((known, digest)) = DIGESTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&tree.root)
+        && *known == fingerprint
+    {
+        return digest.clone();
+    }
+    let digest = hash_tree(tree);
+    DIGESTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(tree.root.clone(), (fingerprint, digest.clone()));
+    digest
+}
+
+fn hash_tree(tree: &Tree) -> String {
     let mut rows = BTreeMap::new();
     for (path, bytes) in &tree.files {
         rows.insert(

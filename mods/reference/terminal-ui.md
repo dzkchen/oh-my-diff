@@ -225,6 +225,8 @@ A `site:` or `transcript` leaf may set `title` (`terminal_layout_title_v1`), at 
 characters: a site's frame shows it instead of the site name and `''` draws no title, and a titled transcript gives
 its top row to a rule carrying the title, accented while the chat has focus in a view with `key_contexts`. A
 `composer` leaf takes no title.
+A layout nests splits and tabs at most 6 levels deep, with 2–4 children per split, 1–6 tabs per `tabs` node and at
+most 12 leaves.
 Components add `document` (up to 100,000 lines with anchors, selection and find), `diff`, `image`, `raster` and
 `terminal` (a PTY session).
 
@@ -302,8 +304,17 @@ rows left after the region's other components and gaps. In a row layout each get
   a mod can keep the ratio in its layout.
 - Clicking a tab title switches the tab and sends `component_event {kind: 'select', component, index}` with the
   `tabs` node's path (`terminal_tabs_v1`), so the owner can keep `active` in its layout.
+- Releasing a drag that started on a `site:` leaf's top frame row (not a tab bar or split border) over another site
+  leaf or the chat sends one `component_event {kind: 'dock', component, content, target, edge, columns, rows}`
+  (`terminal_layout_dock_v1`). `component` is the dragged leaf's path and `content` its `site:<name>`. `target` is the
+  leaf path it was dropped on; for the chat it is the path of the split holding the transcript and composer, or the
+  transcript leaf without a composer. `edge` is `left`, `right`, `top` or `bottom` over the outer quarter of the
+  target and `center` over its middle, never over the chat. `columns` and `rows` are the size of the area the layout
+  was drawn in. While dragging, the host shades where the pane would land. It changes nothing itself and sends nothing
+  when the drag is cancelled with Esc or ends on the dragged leaf or outside every zone, so the owner republishes its
+  layout.
 
-Both go only to the mod whose view supplied the layout.
+These go only to the mod whose view supplied the layout.
 
 ### View keybindings and command ownership
 
@@ -451,6 +462,9 @@ rows}`:
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |
 | `cell_px` | The measured cell size or null. |
 | `columns` and `rows` | The terminal grid. |
+| `welcome` | `terminal_welcome_area_v1`: `{columns, rows}` of the blank area a `welcome` site gets this frame (the chat width beside any sidebar or dock, by the unused transcript height), or null when the welcome cannot show. Size welcome content from it; a change renders the view again. |
+| `chat` | `terminal_chat_area_v1`: `{x, y, columns, rows}` of the chat column this frame (the conversation and prompt box, beside any sidebar, dock or layout region), or null before the first fullscreen draw. Place art relative to the conversation with it; a change renders the view again. |
+| `colors` | `terminal_colors_v1`: the colours the terminal shows, `truecolor`, `256` or `16`. |
 
 `client` is null without a terminal client. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`; a burst of changes renders once per render in progress.
@@ -496,7 +510,8 @@ rect.height` little-endian u32 triplets `[codePoint, fg, bg]`, row by row:
 | `terminal_blit_packed_invalid` | `packed` is not base64, is not 12 bytes a cell, or has a code point or color outside the rules above; the message names the cell. |
 
 Cells and packed updates that reach a raster before its next 16 ms frame merge into that frame, later cells
-overwriting earlier ones, so one timer tick can draw a frame in several calls. The call returns `{frame, queued,
+overwriting earlier ones, so one timer tick can draw a frame in several calls. Cells identical to what the raster
+already shows are dropped: a call that changes nothing returns `queued: 0` and draws no frame. The call returns `{frame, queued,
 frame_ms}`: the frame the update shows in and the frames pending (a picture, then the cells merged after it). Merged
 cells never take more than the raster, so the call returns `{status: 'backpressure', retry_after_ms: 250}` only while
 a pending frame stays undrawn for four ticks (an inactive tab or unplaced layout). Image and pixel frames keep the
@@ -553,6 +568,28 @@ layout instead of in the sidebar.
   `offset.y` within ±200, and a screen anchor cannot use `clip: 'anchor'`.
 - Overlays are not exclusive: when several patches set one for the same site, the patch that composes last wins,
   and a `wrap` patch overrides another mod's overlay without a claim or a `terminal.conflicts` entry.
+
+#### Underlay (`terminal_underlay_v1`)
+
+`underlay: {raster: KEY}` draws one of the mod's own cell rasters under the whole fullscreen screen, behind the
+conversation, the prompt box and the footer. It is experimental and exclusive: the first mod in composition order
+owns it, and later claims become `terminal.conflicts` entries.
+
+- The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
+  raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a
+  blit at the new size starts a fresh raster; a reply with `frame: 1` and `queued: 1` means the raster restarted, so
+  send it whole.
+- It is painted after the transcript and the bottom pane and before selection, layout regions, the sidebar,
+  overlays, the `welcome` site and dialogs, so all of those draw over it.
+- Its background colours every cell whose background is the terminal default, and Codex's raised surface (menus,
+  list views, the prompt box, submitted prompts) gets the same colour lifted the way Codex lifts the terminal
+  background. Text with the default colour on a coloured cell gets a readable foreground; explicit colours stay,
+  except on a light terminal, where any that would be hard to read get a readable one.
+- Its glyphs land only in blank cells after each row's last character plus a 2-cell gutter: at full colour in the
+  transcript, faintly (35 %) on the raised surface. Transcript images, the footer and OMD's own copies never get
+  them; the terminal's own selection (for example Shift-drag) copies what the screen shows.
+- Image and pixel frames draw nothing. Nothing draws under `NO_COLOR`, with fewer than 256 colours (`colors: '16'`),
+  below 60 columns, inline (`--no-alt-screen`) or in an external client.
 
 ### Box model (`terminal_box_model_v1`)
 
@@ -742,7 +779,7 @@ for example after a package manager upgrade. Pins live in `pty-pins.json` in the
 
 Sessions:
 
-- Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod`, four by default, and sixteen in all).
+- Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod` in `host.json` `mod_limits`: four by default, up to sixteen, and sixteen in all).
 - Render only in terminal components owned by that mod.
 - Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads.
 - Queued requests and terminal input retain their original binding and cannot address a replacement session.

@@ -797,6 +797,9 @@ fn visit(
         };
         let changed = || raced(format!("source changed during snapshot: {name}"));
         let count = if metadata.file_type().is_symlink() {
+            if visit == Visit::Contents {
+                return Err(invalid("snapshot symlink rejected"));
+            }
             let (parent, leaf) = open_parent(&root, name)?;
             let link = rustix::fs::readlinkat(&parent, leaf.as_os_str(), Vec::new())?;
             let count = read(name, &mut link.as_bytes(), SYMLINK)?;
@@ -1107,14 +1110,17 @@ pub fn capture_tracked(
     })
 }
 
-/// The `capture_tracked` digest with each submodule's recorded commit, or `None` when a tracked path is not `readable`.
+/// The `capture_tracked` digest with each submodule's recorded commit, or `None` when the tracked paths are not `readable`.
 pub fn hash_tracked(
     root: &Path,
     approved_untracked: &BTreeSet<String>,
     max_bytes: usize,
-    readable: impl Fn(&str) -> bool,
+    readable: impl Fn(&BTreeSet<String>) -> bool,
 ) -> io::Result<Option<String>> {
     tracked(root, approved_untracked, |paths, submodules| {
+        if !readable(paths) {
+            return Ok(None);
+        }
         let mut digest = Snapshot::digest(root, paths, max_bytes)?;
         if !submodules.is_empty() {
             let mut combined = Sha256::new();
@@ -1124,7 +1130,7 @@ pub fn hash_tracked(
             }
             digest = format!("{:x}", combined.finalize());
         }
-        Ok(paths.iter().all(|path| readable(path)).then_some(digest))
+        Ok(Some(digest))
     })
 }
 
@@ -1275,8 +1281,10 @@ mod transaction_tests {
         assert_eq!(digest, Snapshot::capture(&root, &paths, 64).unwrap().hash());
         fs::set_permissions(root.join("b.sh"), fs::Permissions::from_mode(0o644)).unwrap();
         assert_ne!(Snapshot::digest(&root, &paths, 64).unwrap(), digest);
-        let error = Snapshot::digest(&root, &paths, 16).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
+        assert_ne!(
+            Snapshot::digest(&root, &paths, 1).unwrap(),
+            Snapshot::digest(&root, &paths, 64).unwrap()
+        );
     }
 
     #[test]
