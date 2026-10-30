@@ -24,6 +24,7 @@ const HARD_FAILURES = ['authorization', 'rate_limit', 'allowance'];
 const FULL_PERCENT = 90;
 const COOLDOWN_MS = 15 * 60_000;
 const STALE_MS = 60 * 60_000;
+const RECHECK_MS = STALE_MS / 6;
 const WAKE_MS = 1500;
 const WAKE_TRIES = 4;
 const INLINE_BYTES = 5120;
@@ -33,22 +34,27 @@ const ID_BYTES = 128;
 const ERROR_BYTES = 1024;
 const RUNNING = 'Its result wakes this thread when it finishes, so end your turn.';
 const UNWOKEN = 'Its result will not wake this thread; call delegate_task status to check on it.';
-const DESCRIPTION = "Start a background subagent on a worker route and collect its result. Use native spawn_agent for same-provider work that finishes within this turn; use delegate_task for another provider's model, a worktree, or work that outlives the turn. start takes task, role, model, isolation (shared is read-only, or worktree), mode (async or wait) and request_id to retry safely; status, cancel and integrate (a worktree result) take a handle; targets lists usable routes. A finished task wakes this thread.";
+const DESCRIPTION = "Start a background subagent on a worker route and collect its result. Use native spawn_agent for same-provider work that finishes within this turn; use delegate_task for another provider's model, a worktree, or work that outlives the turn. start takes task, role, model, isolation (shared is read-only, or worktree), mode (async, or wait for up to 30 s) and request_id to retry safely; status, cancel and integrate (a worktree result) take a handle; targets lists usable routes. A finished task wakes this thread.";
 const utf8 = new TextEncoder();
 const bytes = (text: string) => utf8.encode(text).length;
 const clip = (text: string, max: number) => text.slice(0, utf8.encodeInto(text, new Uint8Array(max)).read);
+const truncate = (text: string, max: number) => {
+  const size = bytes(text);
+  const marker = `… [cut to ${max} of ${size} bytes]`;
+  return size <= max ? text : clip(text, max - bytes(marker)) + marker;
+};
 const LEAD = /^(?:default|lead|same|inherit)/i;
-const EFFORT = String.raw`(?:\s+(?:at|with)\s+(none|minimal|low|medium|high|xhigh)(?:\s+effort)?)?`;
-const USE = new RegExp(String.raw`\buse\s+([a-z][\w.\- ]{0,40}?)${EFFORT}\s+(?:as|for)\s+(?:the\s+)?(?:sub-?agents?|agents?|helpers?)(?:\s+(?:to|for)\s+(\w+))?`, 'gi');
-const MENTION = new RegExp(String.raw`(?<![\w.])@([a-z][\w.\-]{0,40})${EFFORT}\s+for\s+(\w+)`, 'gi');
+const EFFORT = String.raw`(?:\s+(?:at|with)\s+(${EFFORTS.join('|')})(?:\s+effort)?)?`;
+const USE = new RegExp(String.raw`\buse\s+([a-z][\w.\- ]{0,40}?)${EFFORT}\s+(?:as|for)\s+(?:the\s+)?(?:sub-?agents?|agents?|helpers?)(?:\s+(?:to|for)\s+(?:the\s+)?(\w+))?`, 'gi');
+const MENTION = new RegExp(String.raw`(?<![\w.])@([a-z][\w.\-]{0,40})${EFFORT}\s+for\s+(?:the\s+)?(\w+)`, 'gi');
 
 const roleOf = (word: string | undefined): Role | 'all' => ROLE_WORDS.find(([, pattern]) => pattern.test(word ?? ''))?.[0] ?? 'all';
 const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9.]+/g, ' ').trim().split(' ').filter(Boolean);
 
-function directives(text: string): Directives {
-  const found: Directives = {};
-  for (const pattern of [USE, MENTION]) {
-    for (const [, query, effort, role] of text.matchAll(pattern)) found[roleOf(role)] = { query: query.trim().replace(/^the\s+/i, ''), effort: (effort?.toLowerCase() ?? null) as ReasoningEffort | null };
+function directives(text: string) {
+  const found: { role: Role | 'all'; choice: Choice; warn: boolean }[] = [];
+  for (const [pattern, warn] of [[USE, true], [MENTION, false]] as const) {
+    for (const [, query, effort, role] of text.matchAll(pattern)) found.push({ role: roleOf(role), choice: { query: query.trim().replace(/^the\s+/i, ''), effort: (effort?.toLowerCase() ?? null) as ReasoningEffort | null }, warn });
   }
   return found;
 }
@@ -130,18 +136,18 @@ export default function activate(api: ModAPI) {
     const now = Date.now();
     remember(value => {
       const known = value.windows?.[id];
-      return known && known.used === used && known.resets === resets && now - known.at < STALE_MS / 6 ? null : { ...value, windows: { ...value.windows, [id]: { used, resets, at: now } } };
+      return known && known.used === used && known.resets === resets && now - known.at < RECHECK_MS ? null : { ...value, windows: { ...value.windows, [id]: { used, resets, at: now } } };
     });
   });
 
   api.intercept('input', (event, next) => {
-    const found = Object.entries(directives(event.text));
+    const found = directives(event.text);
     if (!found.length) return next(event);
     const models = catalog();
     const kept: Directives = {};
-    for (const [role, choice] of found) {
-      if (LEAD.test(choice.query) || resolve(models, choice.query)) kept[role as Role | 'all'] = choice;
-      else fallback(`No model matches "${choice.query}", so ${role === 'all' ? '' : `${role} `}subagents keep the lead's model`);
+    for (const { role, choice, warn } of found) {
+      if (LEAD.test(choice.query) || resolve(models, choice.query)) kept[role] = choice;
+      else if (warn) fallback(`No model matches "${choice.query}", so ${role === 'all' ? '' : `${role} `}subagents keep the lead's model`);
     }
     if (Object.keys(kept).length) save({ ...current(), ...kept });
     return next(event);
@@ -193,22 +199,24 @@ export default function activate(api: ModAPI) {
 
   const schedule = (delay = WAKE_MS) => api.host.tryCall('events.schedule', { key: 'wake', delay_ms: delay });
 
-  const retire = (handle: string, outcome: Outcome) => {
-    if (outcome.status === 'completed') api.host.tryCall('agents.result', { handle, consume: true });
-    else api.host.tryCall('agents.cancel', { handle });
-  };
-
   const settle = (handle: string, outcome: Outcome) => {
     const state = current();
     const task = state.tasks?.[handle];
     if (!task || task.status !== 'running' || outcome.status === 'running') return false;
-    const done = outcome.status === 'completed';
-    const category = done ? undefined : outcome.failure?.category;
-    save({ ...state, tasks: { ...state.tasks, [handle]: { ...task, status: done ? 'completed' : 'failed', ...done
-      ? { text: clip(outcome.text ?? '', TEXT_BYTES), held: task.isolation === 'worktree', ...outcome.candidate_sha256 ? { candidate: outcome.candidate_sha256 } : {}, ...outcome.changed_paths ? { paths: outcome.changed_paths.slice(0, 50) } : {} }
-      : { error: clip(outcome.error ?? 'failed', ERROR_BYTES) } } } });
-    if (category && HARD_FAILURES.includes(category)) remember(value => ({ ...value, failed: { ...value.failed, [task.provider]: { at: Date.now(), category } } }));
-    retire(handle, outcome);
+    let next: Task;
+    if (outcome.status === 'completed') {
+      const consumed = api.host.tryCall('agents.result', { handle, consume: true });
+      const result: Outcome = consumed.ok && consumed.value.status === 'completed' ? consumed.value : outcome;
+      next = { ...task, status: 'completed', text: truncate(result.text ?? '', TEXT_BYTES), held: task.isolation === 'worktree' };
+      if (result.candidate_sha256) next.candidate = result.candidate_sha256;
+      if (result.changed_paths) next.paths = result.changed_paths.slice(0, 50);
+    } else {
+      api.host.tryCall('agents.cancel', { handle });
+      next = { ...task, status: 'failed', error: clip(outcome.error ?? 'failed', ERROR_BYTES) };
+      const category = outcome.failure?.category;
+      if (category && HARD_FAILURES.includes(category)) remember(value => ({ ...value, failed: { ...value.failed, [task.provider]: { at: Date.now(), category } } }));
+    }
+    save({ ...state, tasks: { ...state.tasks, [handle]: next } });
     return true;
   };
 
@@ -239,10 +247,11 @@ export default function activate(api: ModAPI) {
     if (known) return report(known);
     const task = typeof input.task === 'string' ? input.task.trim() : '';
     if (!task || bytes(task) > 8000) return { status: 'refused', error: 'task must be a brief of 1 to 8000 bytes' };
-    const role = ['research', 'review', 'worker'].includes(input.role as string) ? input.role as Role : 'general';
+    const role = ROLES.includes(input.role as Role) ? input.role as Role : 'general';
     const worktree = input.isolation === 'worktree';
     const lead = api.session().model;
-    const asked = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : role === 'general' ? '' : defaults[role]?.query ?? '';
+    const preferred = role === 'general' ? state.all : state[role] ?? state.all ?? defaults[role];
+    const asked = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : preferred?.query ?? '';
     const wanted = [asked, spare, lead ?? ''].map(query => LEAD.test(query) ? lead ?? '' : query).filter((query, index, all) => query && all.indexOf(query) === index);
     const models = catalog();
     const seen = vitals().value;
@@ -279,12 +288,8 @@ export default function activate(api: ModAPI) {
     save({ ...state, tasks });
     if (skipped.length) fallback(`${skipped.join('; ')}, so this ${role} task runs on ${chosen.name}`);
     if (input.mode === 'wait') {
-      const limit = Math.min(120_000, Math.max(1000, typeof input.timeout_ms === 'number' ? input.timeout_ms : 30_000));
-      for (let waits = Math.ceil(limit / 30_000); waits-- > 0;) {
-        const waited = api.host.tryCall('agents.wait', { handle });
-        if (!waited.ok) break;
-        if (waited.value.status !== 'running') { settle(handle, waited.value); break; }
-      }
+      const waited = api.host.tryCall('agents.wait', { handle });
+      if (waited.ok) settle(handle, waited.value);
     } else {
       const early = api.host.tryCall('agents.result', { handle });
       if (early.ok) settle(handle, early.value);
@@ -292,19 +297,22 @@ export default function activate(api: ModAPI) {
     return report(handle);
   };
 
-  const status = (input: Record<string, Json>): Json => {
-    const handle = typeof input.handle === 'string' ? input.handle : '';
-    const tasks = current().tasks ?? {};
-    if (!handle) return { tasks: Object.entries(tasks).map(([name, task]) => ({ handle: name, role: task.role, route: task.route, status: task.status })) };
-    if (tasks[handle]?.status === 'running') {
-      const result = api.host.tryCall('agents.result', { handle });
-      settle(handle, result.ok ? result.value : { status: 'failed', error: result.error });
-    }
-    return report(handle);
+  const poll = (handle: string) => {
+    const result = api.host.tryCall('agents.result', { handle });
+    settle(handle, result.ok ? result.value : { status: 'failed', error: result.error });
   };
 
-  const cancel = (input: Record<string, Json>): Json => {
-    const handle = typeof input.handle === 'string' ? input.handle : '';
+  const status = (handle: string): Json => {
+    const tasks = current().tasks ?? {};
+    if (handle) {
+      if (tasks[handle]?.status === 'running') poll(handle);
+      return report(handle);
+    }
+    for (const name of Object.keys(tasks)) if (tasks[name].status === 'running') poll(name);
+    return { tasks: Object.entries(current().tasks ?? {}).map(([name, task]) => ({ handle: name, role: task.role, route: task.route, status: task.status })) };
+  };
+
+  const cancel = (handle: string): Json => {
     const state = current();
     const task = state.tasks?.[handle];
     if (!task) return { status: 'unknown', error: `No delegated task ${handle}` };
@@ -315,8 +323,7 @@ export default function activate(api: ModAPI) {
     return report(handle);
   };
 
-  const integrate = (input: Record<string, Json>): Json => {
-    const handle = typeof input.handle === 'string' ? input.handle : '';
+  const integrate = (handle: string): Json => {
     const state = current();
     const task = state.tasks?.[handle];
     if (!task?.held) return { status: 'refused', error: `${handle || 'No handle'} is not a finished worktree task waiting to be integrated` };
@@ -341,20 +348,20 @@ export default function activate(api: ModAPI) {
   api.tool({ name: 'delegate_task', description: DESCRIPTION, parameters: { type: 'object', additionalProperties: false, required: ['action'], properties: {
     action: { type: 'string', enum: ['start', 'status', 'cancel', 'integrate', 'targets'] },
     task: { type: 'string', description: 'The brief; the subagent sees only this' },
-    role: { type: 'string', enum: ['research', 'review', 'worker', 'general'] },
+    role: { type: 'string', enum: [...ROLES, 'general'] },
     model: { type: 'string' },
     mode: { type: 'string', enum: ['async', 'wait'] },
-    timeout_ms: { type: 'integer', description: 'Wait mode limit, 1000 to 120000' },
     request_id: { type: 'string', maxLength: ID_BYTES },
     isolation: { type: 'string', enum: ['shared', 'worktree'] },
     handle: { type: 'string' },
   } } }, value => {
     const input = value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const handle = typeof input.handle === 'string' ? input.handle : '';
     switch (input.action) {
       case 'start': return start(input);
-      case 'status': return status(input);
-      case 'cancel': return cancel(input);
-      case 'integrate': return integrate(input);
+      case 'status': return status(handle);
+      case 'cancel': return cancel(handle);
+      case 'integrate': return integrate(handle);
       case 'targets': return targets();
       default: return { status: 'refused', error: 'action must be start, status, cancel, integrate or targets' };
     }
@@ -373,9 +380,10 @@ export default function activate(api: ModAPI) {
     const lines = ready.map(([handle, task]) => {
       const head = `Task ${handle} (${task.role}, ${task.model}) ${task.status}`;
       const body = JSON.stringify(task.status === 'completed' ? task.text ?? '' : task.error ?? '');
-      if (bytes(body) > room) return `${head}; the result is too large to inline, call delegate_task status with handle ${handle}.`;
+      const held = task.held ? ` Its changes wait for delegate_task integrate (or cancel) with handle ${handle}; changed paths: ${clip(JSON.stringify(task.paths ?? []), 600)}.` : '';
+      if (bytes(body) > room) return `${head}; the result is too large to inline, call delegate_task status with handle ${handle}.${held}`;
       room -= bytes(body);
-      return `${head}: ${body}`;
+      return `${head}: ${body}${held}`;
     });
     const sequence = (state.wakes ?? 0) + 1;
     const wake = `wake:${sequence}`;

@@ -75,14 +75,13 @@ function toolName(namespace: string, name: string): string {
   return value;
 }
 
-// The CLI drops replayed thinking from its history input, so reasoning items carry only the visible summary.
-// Codex sends an item id only in `prefix_rest` form, so local ids keep Claude's ids away from other providers.
 export function localId(id: string): string {
   return id.replaceAll('_', '-');
 }
 
 const SEALED = new Set(['collaboration/spawn_agent', 'collaboration/send_message', 'collaboration/followup_task']);
 
+// The CLI drops replayed thinking from its history input, so reasoning items carry only the visible summary.
 export function reasoningItem(block: Row, id: string): Row {
   return { type: 'reasoning', id, summary: block.thinking ? [{ type: 'summary_text', text: block.thinking }] : [] };
 }

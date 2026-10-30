@@ -800,6 +800,10 @@ impl Services {
                 host.worker_limits(&lead.session)?,
             )
             .map_err(|e| e.to_string())?;
+        lead.session
+            .task
+            .set_worker_idle(&worker, true)
+            .map_err(|e| e.to_string())?;
         let mut argv = vec![grant.program.to_string_lossy().into_owned()];
         argv.extend(grant.arguments);
         if argv.len() > 128 || argv.iter().map(String::len).sum::<usize>() > 8192 {

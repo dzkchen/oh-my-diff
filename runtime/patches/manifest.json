@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.165.0.patch",
-    "sha256": "07b6efc360beac070fe2630c1040b8162ff86ab6ae2aee8cdf6bef41b7a91cec"
+    "sha256": "d38e60ffcbf9eb73a7e23a77a384154700079b9e25b617cc6ec2ddb333d8025d"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -423,7 +423,7 @@
     },
     "codex-rs/core/src/agent/control/spawn.rs": {
       "before": "ef28e41960381a4c789904d8dec9cd6a1f3cf1baf7772d444c4061f731badc23",
-      "after": "f8fa0f164a5cd260f642be6db1193be9f58cf032d918d995c6f8e3f671f33fb1"
+      "after": "4c725207a77f42fd67600df596b54cc58568a864cfbf148a3bab1f526eac47ca"
     },
     "codex-rs/core/src/agent/control_tests.rs": {
       "before": "2dc6f77e98ee343f3c669a94227c4a0f281e8d4ae31607ba831353ddeb76c5bf",
@@ -551,7 +551,7 @@
     },
     "codex-rs/core/src/session/handlers.rs": {
       "before": "e24598bddd85d7a3093769ab0a03d0b99257aeef4c1fa3452afd16159dd30d47",
-      "after": "8301530c4455872905ea57c401ecf12373a8e74191f70265a49ed03669cb6c5e"
+      "after": "5ee5a7b4b930ee6f9c681cb1318c8464c9835489cf65e75938d4758ee07bdbc3"
     },
     "codex-rs/core/src/session/input_queue.rs": {
       "before": "11212b3d8fa379ecbabcf8392889e157964075617cfb5d55b3ec5c2477ffaa45",
@@ -563,7 +563,7 @@
     },
     "codex-rs/core/src/session/mod.rs": {
       "before": "3f61ed4dab05cd45e09112e80201be2ceee162522101ee8b332ed03bf67d4bca",
-      "after": "00046ca92a795ea5b87d812285e37f70d54b28be9aef2dfb48e8241844b5cd4b"
+      "after": "495244499b8c48a6708ce0ca1a1fd8c672779f05790415bb2c91bbfca9338865"
     },
     "codex-rs/core/src/session/persisted_text.rs": {
       "before": null,
@@ -599,7 +599,7 @@
     },
     "codex-rs/core/src/session/tests.rs": {
       "before": "625af7f9cfcb070e5fb911bda6dd2d151f5fa20821762256b8f573c42c7970f8",
-      "after": "7ead7bc2667265f3aea49998929e0e50123b6c2ad673faf5d17589eb560efc9b"
+      "after": "ed2f6492d048c5551c4707d9aa7751bec1543dcfb43cea8a83a83fade6124929"
     },
     "codex-rs/core/src/session/thread_settings.rs": {
       "before": "8cb0389c891c92d06383232ca7ff7a8912db326c6ae618558942b9860e9662b5",
@@ -615,11 +615,11 @@
     },
     "codex-rs/core/src/session/turn_input.rs": {
       "before": "0799dfee3688431e8de90bbdb23fa43fd8f34f4ac05687e716cf50fb1c463945",
-      "after": "8d1a4f26bde1c50bd9f3a7a3095ddcdeeb6142332c543fcb8d2de7a90a2019ee"
+      "after": "45ea7de08f8114e31f739cb9bd784ec913018337f1969bb19f362a9ff12cbd6e"
     },
     "codex-rs/core/src/session/turn_input_tests.rs": {
       "before": "1e96d4ec3b0738b878116fd3003d23eb70b46f6a5bc051cd1738bb78838a913f",
-      "after": "b1ecc9636051af3360da6be1a9be74750962684b240d4fe1e7fb0404d8d6a659"
+      "after": "23cffafbc70459aef610aaa2ca5c79749868a552b3b4de578a2940231167994b"
     },
     "codex-rs/core/src/session_prefix.rs": {
       "before": "55fbadc012f15a58b4b8e34fa2c132c553f60d844e877182ecbe13ecf51404b6",
@@ -735,7 +735,7 @@
     },
     "codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs": {
       "before": "deb261b59d20e6cf4adaf171f22cb8ba9f53d341d360fe98fa8a8c5dca078f85",
-      "after": "41da39a6505faa208a043e788c952715c676e06685965c30958e1fd9c059a648"
+      "after": "9b9c98867b0772cb4ea0c69f579e703accf8a5ba12c079196f175fc20329d0b9"
     },
     "codex-rs/core/src/tools/handlers/multi_agents_tests.rs": {
       "before": "bf706c283895c6eb438786f5882c5ff0dff8bbef92ec4185b26a18c7de065ce4",
@@ -1079,7 +1079,7 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "e7033623596b5d45eab36b61a3ad96ce302f53bc1903274f2d5d8ca8e563cf8d"
+      "after": "6010d7b45825f40cab79aee8af1965fdc1420497e9bac6354ee648c319877ba5"
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
@@ -1087,7 +1087,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "cae184114c5bac75bb745ee168ad1f42d9788112ff85b06869225f49750189b6"
+      "after": "fd8c33e998697bbc4c81d3947a1efdd3208bd875b849f0114ed6e08ba2ab193d"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -1095,7 +1095,7 @@
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
-      "after": "20b2c642b760414175ef0d20ce206cc92130ef73b53e4a1ca8b378841d5872b6"
+      "after": "1a6cc1dec4aa6d8028a08f63a4ac109cf931071b8781d91febc0ea0e12d850a8"
     },
     "codex-rs/ext/omd/src/mods/autonomy.rs": {
       "before": null,
@@ -1143,7 +1143,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "afdd59e30981852d18dcdcd61893e59f5de89fb296753cac9c53f8e2eed90e08"
+      "after": "8736e6a6725e2187df05df27b140f7b4a146febf89580c9a71e77295bbb723f1"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -1151,7 +1151,7 @@
     },
     "codex-rs/ext/omd/src/mods/inventory.rs": {
       "before": null,
-      "after": "548fa6e54ca8f14d53606fb8640b5e318f7372d490beb132dd3351368422be60"
+      "after": "9b4447cf718b0199f0ced329add71f69bab8aa1fa26fd1842b837c4ed9afc5f2"
     },
     "codex-rs/ext/omd/src/mods/launch_snapshot.rs": {
       "before": null,
@@ -1179,7 +1179,7 @@
     },
     "codex-rs/ext/omd/src/mods/services.rs": {
       "before": null,
-      "after": "1ae0b0795b4bbeffe140bd34d67234b3fa4e76998f85a6ac54d651098de06b14"
+      "after": "c519515a1a148ea0a03cb11e317f6f667a66516bbffd297f7cd4e45e5850bf7b"
     },
     "codex-rs/ext/omd/src/mods/snapshots.rs": {
       "before": null,
@@ -1319,7 +1319,7 @@
     },
     "codex-rs/omd/src/admission.rs": {
       "before": null,
-      "after": "00f3258dc09088c2835d7d29e3508d03dc43b49e07c7a0c2b5a68b53a8c089da"
+      "after": "48bdfe2c2eb3c60b2da6d4a8d4eae98224cf9c02b45169f140bddc5deb491ab7"
     },
     "codex-rs/omd/src/app_routes.json": {
       "before": null,
@@ -1635,7 +1635,7 @@
     },
     "codex-rs/omd/tests/admission.rs": {
       "before": null,
-      "after": "1ec35807708d851ee70e8be63597cc79b07cafc6d3fc112464edcb566164fe5c"
+      "after": "f61e70f857975061546f900201a92f04b45290d2fa45c9325405a226a85ae8f3"
     },
     "codex-rs/omd/tests/examples.rs": {
       "before": null,

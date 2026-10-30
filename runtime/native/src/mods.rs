@@ -255,6 +255,15 @@ impl Mods {
         inventory::notify(&self.runtime, &self.inventory, "start", record);
     }
 
+    fn set_provider_worker_idle(&self, thread: &str, idle: bool) {
+        if let Ok(accounts) = self.host.accounts.by_thread.lock()
+            && let Some(account) = accounts.get(thread)
+            && crate::provider_worker(&account.owner)
+        {
+            let _ = account.task.set_worker_idle(&account.owner, idle);
+        }
+    }
+
     fn agent_turn(
         &self,
         thread_store: &codex_extension_api::ExtensionData,
@@ -262,6 +271,7 @@ impl Mods {
         outcome: &str,
         error: Value,
     ) {
+        self.set_provider_worker_idle(thread_store.level_id(), true);
         if let Some(record) = self.inventory.turn(
             thread_store.level_id(),
             turn_store.level_id(),
@@ -1696,6 +1706,7 @@ impl TurnLifecycleContributor for Mods {
     fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             self.inventory.turn_started(input.thread_store.level_id());
+            self.set_provider_worker_idle(input.thread_store.level_id(), false);
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -2085,6 +2096,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             {
                 inventory::notify(&self.runtime, &self.inventory, "end", record);
             }
+            self.host.accounts.forget_thread(thread);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
@@ -2094,7 +2106,6 @@ impl ThreadLifecycleContributor<Config> for Mods {
             {
                 let _ = account.task.finish_worker(&account.owner);
             }
-            self.host.accounts.forget_thread(&lead.thread.to_string());
             expansion::release_thread(self, lead.thread);
             if let Ok(mut invokers) = self.expansion.invokers.lock() {
                 invokers.remove(&lead.thread.to_string());
@@ -2484,9 +2495,7 @@ impl ToolLifecycleContributor for Mods {
 
     fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
-            if roles::is_spawn(input.tool_name) {
-                self.inventory.release_spawn(input.call_id);
-            }
+            self.inventory.release_spawn(input.call_id);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };

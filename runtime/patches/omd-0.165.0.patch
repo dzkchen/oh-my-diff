@@ -19940,7 +19940,7 @@ index 587f4cdaebffca42c2d19451e8ba0e8db18c6598..b2aa8b7a22e8cc529838b6cd0738da66
              trace.record_agent_result_interaction(
                  outcome.turn_id.as_str(),
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 22cd725605272a5e4e3b475c8ad2fb2835df0203..e8411c5db85ef3c4ea9bcb0259533b0764a77ce2 100644
+index 22cd725605272a5e4e3b475c8ad2fb2835df0203..9dea4b4db431bfc9c9a227a694b6471db374b955 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -445,6 +445,13 @@ impl LocalAgentControl {
@@ -19966,7 +19966,7 @@ index 22cd725605272a5e4e3b475c8ad2fb2835df0203..e8411c5db85ef3c4ea9bcb0259533b07
              config
                  .permissions
                  .set_permission_profile_from_session_snapshot(runtime_permission_profile)
-@@ -469,15 +476,21 @@ impl LocalAgentControl {
+@@ -469,15 +476,23 @@ impl LocalAgentControl {
              config.model = Some(model);
          }
          if config.model_provider_id != stored_model_provider {
@@ -19979,13 +19979,15 @@ index 22cd725605272a5e4e3b475c8ad2fb2835df0203..e8411c5db85ef3c4ea9bcb0259533b07
 -                        "Model provider `{stored_model_provider}` not found"
 -                    ))
 -                })?;
-+            config.model_provider =
++            let mut provider =
 +                crate::session::switchable_model_provider(&config, &stored_model_provider)
 +                    .ok_or_else(|| {
 +                        CodexErr::InvalidRequest(format!(
 +                            "Model provider `{stored_model_provider}` not found"
 +                        ))
 +                    })?;
++            provider.supports_websockets &= config.model_provider.supports_websockets;
++            config.model_provider = provider;
 +            if stored_model_provider != config.configured_model_provider_id {
 +                config
 +                    .web_search_mode
@@ -19997,7 +19999,7 @@ index 22cd725605272a5e4e3b475c8ad2fb2835df0203..e8411c5db85ef3c4ea9bcb0259533b07
              config.model_provider_id = stored_model_provider;
          }
          let parent_thread_id = owner_thread_id
-@@ -1113,7 +1126,9 @@ impl LocalAgentControl {
+@@ -1113,7 +1128,9 @@ impl LocalAgentControl {
              (MultiAgentVersion::Disabled | MultiAgentVersion::V1, _)
              | (MultiAgentVersion::V2, _) => (None, None),
          };
@@ -20008,7 +20010,7 @@ index 22cd725605272a5e4e3b475c8ad2fb2835df0203..e8411c5db85ef3c4ea9bcb0259533b07
          // `record_conversation_items` only queues persistence writes asynchronously.
          // Flush before snapshotting store history for a fork.
          parent_thread.ensure_rollout_materialized().await;
-@@ -1174,6 +1189,14 @@ impl LocalAgentControl {
+@@ -1174,6 +1191,14 @@ impl LocalAgentControl {
              forked_rollout_items = items;
          }
          let retain_forked_item = |envelope: &mut ResponseItemEnvelope, replaced: &mut bool| {
@@ -23216,18 +23218,22 @@ index 7e46b02e35ac4c0fba07e1a02805a8e0f3e056d2..0b1c1d00595881321256c66376d650d8
 +    assert!(session.active_turn.lock().await.is_none());
 +}
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 5ded792689cdc7fd179540545d9e792a6d057dab..2bc774666a033893892035cba54df962ad687ea1 100644
+index 5ded792689cdc7fd179540545d9e792a6d057dab..5a8eccef9dce4e7f227e575e85875525e30992a7 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
-@@ -85,6 +85,7 @@ pub async fn inter_agent_communication(
-     communication: crate::PendingAgentMessage,
+@@ -86,9 +86,11 @@ pub async fn inter_agent_communication(
      start_options: codex_protocol::turn_input::TurnStartOptions,
  ) {
-+    sess.answer_forwarded_question(&communication).await;
      let trigger_turn = communication.trigger_turn;
++    let author = communication.author.clone();
      sess.input_queue
          .enqueue_mailbox_communication(communication, start_options)
-@@ -315,7 +316,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
+         .await;
++    sess.answer_forwarded_question(&author).await;
+     crate::agent_communication::emit_agent_communication_receive(&sub_id);
+     if trigger_turn
+         || sess.features.enabled(Feature::WakeOnAgentMessages)
+@@ -315,7 +317,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
          .unified_exec_manager
          .terminate_all_processes()
          .await;
@@ -23236,7 +23242,7 @@ index 5ded792689cdc7fd179540545d9e792a6d057dab..2bc774666a033893892035cba54df962
          sess.services.local_agent_runtime.record_shutdown_failure(
              AgentTreeShutdownFailure::operation_failed(
                  "session_shutdown",
-@@ -721,6 +722,10 @@ pub(super) async fn submission_loop(
+@@ -721,6 +723,10 @@ pub(super) async fn submission_loop(
                      false
                  }
                  Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
@@ -23423,7 +23429,7 @@ index 95301d6bc3575643fc1349c4f5813f3b9fd7b7b3..889bea5473815f1be9e261290982d2b2
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6bc6336b4 100644
+index aba497125ce18b608ad2ddeadcd4827ee0214cb5..d6ee778adb49c1a0b37795354832727f7c408299 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -172,6 +172,7 @@ use codex_protocol::request_permissions::RequestPermissionProfile;
@@ -23703,7 +23709,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
          self.maybe_mirror_event_text_to_realtime(&legacy_source)
              .await;
          self.maybe_clear_realtime_handoff_for_event(&legacy_source)
-@@ -2574,6 +2777,134 @@ impl Session {
+@@ -2574,6 +2777,131 @@ impl Session {
          }
      }
 
@@ -23788,10 +23794,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
 +        }
 +    }
 +
-+    pub(crate) async fn answer_forwarded_question(
-+        &self,
-+        communication: &codex_protocol::protocol::InterAgentCommunication,
-+    ) {
++    pub(crate) async fn answer_forwarded_question(&self, author: &codex_protocol::AgentPath) {
 +        let parent = match &self.state.lock().await.session_configuration.session_source {
 +            SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
 +                agent_path: Some(path),
@@ -23802,7 +23805,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
 +                .and_then(|(parent, _)| codex_protocol::AgentPath::try_from(parent).ok()),
 +            _ => None,
 +        };
-+        if parent.as_ref() != Some(&communication.author) {
++        if parent.as_ref() != Some(author) {
 +            return;
 +        }
 +        let pending = match self.active_turn.lock().await.as_mut() {
@@ -23838,7 +23841,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
      /// Forwards terminal turn events from spawned MultiAgentV2 children to their direct parent.
      async fn maybe_notify_parent_of_terminal_turn(
          &self,
-@@ -3345,7 +3676,11 @@ impl Session {
+@@ -3345,7 +3673,11 @@ impl Session {
              match active.as_mut() {
                  Some(at) => {
                      let mut ts = at.turn_state.lock().await;
@@ -23851,7 +23854,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
                  }
                  None => None,
              }
-@@ -3745,6 +4080,10 @@ impl Session {
+@@ -3745,6 +4077,10 @@ impl Session {
          let policy: codex_utils_output_truncation::TruncationPolicy =
              model_info.truncation_policy.into();
          for envelope in &mut items {
@@ -23862,7 +23865,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
              if matches!(
                  envelope.item,
                  ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
-@@ -4037,6 +4376,7 @@ impl Session {
+@@ -4037,6 +4373,7 @@ impl Session {
          let inherited_environments = inherited_environments.unwrap_or_else(|| environments.clone());
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -23870,7 +23873,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -4044,6 +4384,27 @@ impl Session {
+@@ -4044,6 +4381,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -23898,7 +23901,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4371,10 +4732,19 @@ impl Session {
+@@ -4371,10 +4729,19 @@ impl Session {
                  ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
              )
          }) {
@@ -23922,7 +23925,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
          }
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
-@@ -4600,6 +4970,10 @@ impl Session {
+@@ -4600,6 +4967,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -23933,7 +23936,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4609,6 +4983,7 @@ impl Session {
+@@ -4609,6 +4980,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -23941,7 +23944,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
                  })
                  .await
              {
-@@ -4697,6 +5072,10 @@ impl Session {
+@@ -4697,6 +5069,10 @@ impl Session {
                  }
              }
          }
@@ -23952,7 +23955,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4706,6 +5085,7 @@ impl Session {
+@@ -4706,6 +5082,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -23960,7 +23963,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
                  })
                  .await
              {
-@@ -4901,7 +5281,7 @@ impl Session {
+@@ -4901,7 +5278,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -23969,7 +23972,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6
          {
              error!("failed to record rollout items: {e:#}");
              return false;
-@@ -4911,7 +5291,12 @@ impl Session {
+@@ -4911,7 +5288,12 @@ impl Session {
 
      pub(crate) async fn clone_history(&self) -> ContextManager {
          let state = self.state.lock().await;
@@ -24298,7 +24301,7 @@ index 48fe180dcb034d0bd94961e94e2ebf12d9a74ed4..d882d5191085381b6bf47b444414bf92
          // Save changed settings first. The manager then installs any new environment list before
          // waking waiting work. The next step cannot read either until we release this lock.
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 182e03e588530491da22d5ea931e98f90372b127..2104ff2ca7fed1d9b0fa7e118f4a6a869bc6429f 100644
+index 182e03e588530491da22d5ea931e98f90372b127..125f184575ee1d97e97b3224ac647d61f83ea726 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
 @@ -3,6 +3,8 @@ use crate::agent::LocalAgentControl;
@@ -24780,7 +24783,7 @@ index 182e03e588530491da22d5ea931e98f90372b127..2104ff2ca7fed1d9b0fa7e118f4a6a86
  #[tokio::test]
  async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
      let (sess, tc, _rx) = make_session_and_context_with_rx().await;
-@@ -13587,3 +13882,63 @@ async fn rejected_mcp_refresh_then_corrected_user_config_blocks_ordinary_replace
+@@ -13587,3 +13882,55 @@ async fn rejected_mcp_refresh_then_corrected_user_config_blocks_ordinary_replace
          "rejection must not permit same-name ordinary-auth replacement in this session"
      );
  }
@@ -24820,21 +24823,13 @@ index 182e03e588530491da22d5ea931e98f90372b127..2104ff2ca7fed1d9b0fa7e118f4a6a86
 +        rx.recv().await.map(|event| event.msg),
 +        Ok(EventMsg::RequestUserInput(_))
 +    ) {}
-+    let message = |author: &str| {
-+        InterAgentCommunication::new(
-+            AgentPath::try_from(author).expect("valid agent path"),
-+            AgentPath::try_from("/root/worker").expect("valid agent path"),
-+            Vec::new(),
-+            "use 8080".to_string(),
-+            /*trigger_turn*/ false,
-+        )
-+    };
++    let author = |path: &str| AgentPath::try_from(path).expect("valid agent path");
 +
 +    session
-+        .answer_forwarded_question(&message("/root/other"))
++        .answer_forwarded_question(&author("/root/other"))
 +        .await;
 +    assert!(!pending.is_finished());
-+    session.answer_forwarded_question(&message("/root")).await;
++    session.answer_forwarded_question(&author("/root")).await;
 +    let answered = pending
 +        .await
 +        .expect("request task")
@@ -25393,7 +25388,7 @@ index b31eeca5d5a9e20f382f6e4e78c5c5a7c837f64d..953098c4cced3783c84d47156131d085
          FileSystemSandboxContext {
              sandbox_override: SandboxOverride::NoOverride,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..561f1642319d45a16204bbf86ac288c69c9045ac 100644
+index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..8eba9b50db1dad7ce1b3dfc71a9c2796fd300c7c 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -234,7 +234,8 @@ pub(super) async fn handle(
@@ -25552,7 +25547,7 @@ index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..561f1642319d45a16204bbf86ac288c6
  #[tracing::instrument(
      name = "codex.turn_input",
      level = "trace",
-@@ -707,9 +847,11 @@ impl Session {
+@@ -707,6 +847,7 @@ impl Session {
          if !has_trigger_turn
              && !self.has_outstanding_durable_sleep()
              && !self.should_wake_on_agent_messages().await
@@ -25560,11 +25555,7 @@ index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..561f1642319d45a16204bbf86ac288c6
          {
              return None;
          }
-+        self.input_queue.clear_completion_wake();
-         let active_turn = active_turn.get_or_insert_with(ActiveTurn::default);
-         let previous_options = if has_trigger_turn {
-             Default::default()
-@@ -757,6 +899,20 @@ impl Session {
+@@ -757,6 +898,20 @@ impl Session {
          Some(configuration.clone())
      }
 
@@ -25586,10 +25577,10 @@ index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..561f1642319d45a16204bbf86ac288c6
          if !self.features.enabled(Feature::WakeOnAgentMessages)
              || self.is_interrupted()
 diff --git a/codex-rs/core/src/session/turn_input_tests.rs b/codex-rs/core/src/session/turn_input_tests.rs
-index 2dca0905370b5aeb46c27a7acf8cedabc601138a..f9e179ada9f6ba1777c9c5e90b5a9be0a7a2eb6a 100644
+index 2dca0905370b5aeb46c27a7acf8cedabc601138a..6046a9c9ce90eced5daedf831c9b49e1f49e5b4e 100644
 --- a/codex-rs/core/src/session/turn_input_tests.rs
 +++ b/codex-rs/core/src/session/turn_input_tests.rs
-@@ -899,6 +899,57 @@ async fn agent_message_wake_reservation_preserves_existing_boundaries(
+@@ -899,6 +899,58 @@ async fn agent_message_wake_reservation_preserves_existing_boundaries(
      );
  }
 
@@ -25630,7 +25621,7 @@ index 2dca0905370b5aeb46c27a7acf8cedabc601138a..f9e179ada9f6ba1777c9c5e90b5a9be0
 +    assert!(session.reserve_pending_work_turn().await.is_none());
 +    assert!(session.input_queue.settle_completion_wake(cohort[1]));
 +    assert_eq!(session.reserve_pending_work_turn().await.is_some(), wakes);
-+    assert_eq!(session.input_queue.completion_wake_due(), !wakes);
++    assert!(session.input_queue.completion_wake_due());
 +    if wakes {
 +        assert_eq!(
 +            session
@@ -25641,13 +25632,14 @@ index 2dca0905370b5aeb46c27a7acf8cedabc601138a..f9e179ada9f6ba1777c9c5e90b5a9be0
 +                .len(),
 +            2
 +        );
++        assert!(!session.input_queue.completion_wake_due());
 +    }
 +}
 +
  #[tokio::test]
  async fn steer_only_requires_active_turn() {
      let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
-@@ -1138,3 +1189,75 @@ async fn steer_preserves_request_origin(
+@@ -1138,3 +1190,75 @@ async fn steer_preserves_request_origin(
      );
      session.abort_all_tasks(TurnAbortReason::Interrupted).await;
  }
@@ -27700,10 +27692,10 @@ index edc9467b4d02cc023d8961373637116cf8ba6f6f..9e5a77b33141225cd928ebfb10ead2e5
          .join("\n");
      format!(
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs
-index d74729ef218b40dd244f1497e34439c765bfcdae..153a5b85f4522d6e626f6ed82a2bb3230ac91202 100644
+index d74729ef218b40dd244f1497e34439c765bfcdae..6c5ff93b2cd953ef5e8b56b06146ae069d52ab02 100644
 --- a/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs
 +++ b/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs
-@@ -415,3 +415,40 @@ fn list_agents_tool_status_schema_includes_interrupted() {
+@@ -415,3 +415,39 @@ fn list_agents_tool_status_schema_includes_interrupted() {
          ])
      );
  }
@@ -27742,7 +27734,6 @@ index d74729ef218b40dd244f1497e34439c765bfcdae..153a5b85f4522d6e626f6ed82a2bb323
 +        "- Claude CLI: `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`"
 +    ));
 +    assert!(!description.contains("Claude via the Claude CLI"));
-+    assert!(!description.contains("Provider:"));
 +}
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
 index 9582a977e096bdd07fd8874d79a3cbbd3edbdb6c..45b4ff4b1a646e85265696b77511261f5bf1c983 100644
@@ -63482,10 +63473,10 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1b06e09b088d25d6b7166ffa82d5e969b0e2c101
+index 0000000000000000000000000000000000000000..2a1112136fdeccf94c23be850f37fd8238f7711e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,775 @@
+@@ -0,0 +1,780 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -63922,6 +63913,11 @@ index 0000000000000000000000000000000000000000..1b06e09b088d25d6b7166ffa82d5e969
 +        })?;
 +        route.model = model.to_owned();
 +        let worker = format!("{owner}@{}", ThreadId::new());
++        let parent = if provider_worker(parent) {
++            parent
++        } else {
++            "lead"
++        };
 +        session
 +            .task
 +            .start_worker(
@@ -66832,10 +66828,10 @@ index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd713
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..978ecaa8807f72477d99256a52264220a9ca8363
+index 0000000000000000000000000000000000000000..83de40553994958e222330c051ccf3b4aa195d20
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2606 @@
+@@ -0,0 +1,2615 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -67093,6 +67089,15 @@ index 0000000000000000000000000000000000000000..978ecaa8807f72477d99256a52264220
 +        inventory::notify(&self.runtime, &self.inventory, "start", record);
 +    }
 +
++    fn set_provider_worker_idle(&self, thread: &str, idle: bool) {
++        if let Ok(accounts) = self.host.accounts.by_thread.lock()
++            && let Some(account) = accounts.get(thread)
++            && crate::provider_worker(&account.owner)
++        {
++            let _ = account.task.set_worker_idle(&account.owner, idle);
++        }
++    }
++
 +    fn agent_turn(
 +        &self,
 +        thread_store: &codex_extension_api::ExtensionData,
@@ -67100,6 +67105,7 @@ index 0000000000000000000000000000000000000000..978ecaa8807f72477d99256a52264220
 +        outcome: &str,
 +        error: Value,
 +    ) {
++        self.set_provider_worker_idle(thread_store.level_id(), true);
 +        if let Some(record) = self.inventory.turn(
 +            thread_store.level_id(),
 +            turn_store.level_id(),
@@ -68534,6 +68540,7 @@ index 0000000000000000000000000000000000000000..978ecaa8807f72477d99256a52264220
 +    fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
 +            self.inventory.turn_started(input.thread_store.level_id());
++            self.set_provider_worker_idle(input.thread_store.level_id(), false);
 +            let Some(lead) = input
 +                .thread_store
 +                .get::<Lead>()
@@ -68923,6 +68930,7 @@ index 0000000000000000000000000000000000000000..978ecaa8807f72477d99256a52264220
 +            {
 +                inventory::notify(&self.runtime, &self.inventory, "end", record);
 +            }
++            self.host.accounts.forget_thread(thread);
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
 +                return;
 +            };
@@ -68932,7 +68940,6 @@ index 0000000000000000000000000000000000000000..978ecaa8807f72477d99256a52264220
 +            {
 +                let _ = account.task.finish_worker(&account.owner);
 +            }
-+            self.host.accounts.forget_thread(&lead.thread.to_string());
 +            expansion::release_thread(self, lead.thread);
 +            if let Ok(mut invokers) = self.expansion.invokers.lock() {
 +                invokers.remove(&lead.thread.to_string());
@@ -69322,9 +69329,7 @@ index 0000000000000000000000000000000000000000..978ecaa8807f72477d99256a52264220
 +
 +    fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
 +        Box::pin(async move {
-+            if roles::is_spawn(input.tool_name) {
-+                self.inventory.release_spawn(input.call_id);
-+            }
++            self.inventory.release_spawn(input.call_id);
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
 +                return;
 +            };
@@ -70262,10 +70267,10 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..88a907c0ade59fbe9d6ce987b04d88dfa2d666fe
+index 0000000000000000000000000000000000000000..a4c1a4abbdd5bc614f410f07a1791cbd93dcdf73
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2633 @@
+@@ -0,0 +1,2634 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -72505,6 +72510,7 @@ index 0000000000000000000000000000000000000000..88a907c0ade59fbe9d6ce987b04d88df
 +            .model_providers
 +            .get(&route.provider)
 +            .cloned()
++            .or_else(|| codex_model_provider_info::runtime_provider(&route.provider))
 +            .ok_or("configured_provider_missing")?;
 +        if configured
 +            && route.rates.included_subscription
@@ -76897,10 +76903,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..35b6c0a468ebe9b48dbc8760d4f1d7232105a455
+index 0000000000000000000000000000000000000000..bda86aa10f15704b4261d4df702d7e4504b38318
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5060 @@
+@@ -0,0 +1,5073 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -81034,6 +81040,17 @@ index 0000000000000000000000000000000000000000..35b6c0a468ebe9b48dbc8760d4f1d723
 +            .admit(&account.owner, "other", "other-fast", 0)
 +            .is_err()
 +    );
++    let grandchild = ThreadId::new();
++    host.enroll_cross_provider(
++        grandchild,
++        session,
++        &format!("agent:{grandchild}"),
++        &format!("agent:{}", ThreadId::new()),
++        2,
++        "other",
++        "other-new",
++    )
++    .unwrap();
 +
 +    let missing = ThreadId::new();
 +    let error = host
@@ -81098,6 +81115,7 @@ index 0000000000000000000000000000000000000000..35b6c0a468ebe9b48dbc8760d4f1d723
 +        attempt(2).await.as_deref(),
 +        Some("subagent_depth_limit: depth 3 exceeds limits.max_depth 2")
 +    );
++    inventory.release_spawn("spawn");
 +
 +    let child = |index: u32| format!("child-{index}");
 +    for index in 0..3 {
@@ -81145,6 +81163,7 @@ index 0000000000000000000000000000000000000000..35b6c0a468ebe9b48dbc8760d4f1d723
 +        &child(3),
 +        json!({"origin": "model", "parent": {"thread_id": lead, "agent_id": null}}),
 +    );
++    inventory.release_spawn("spawn");
 +    inventory.turn_started(&child(0));
 +    assert!(attempt(0).await.is_some(), "a child running again counts");
 +    inventory.end(&child(0), "completed", None);
@@ -82235,10 +82254,10 @@ index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8a77f46216d30bb312cd81b54211e1fd8e1f7783
+index 0000000000000000000000000000000000000000..7b3d15893bdef93b366b63d1ba10bd66e92d7f00
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,356 @@
 +use super::*;
 +use codex_omd::peers::now_ms;
 +use std::collections::BTreeSet;
@@ -82279,9 +82298,13 @@ index 0000000000000000000000000000000000000000..8a77f46216d30bb312cd81b54211e1fd
 +            .flatten()
 +        {
 +            if entry
-+                .metadata()
-+                .and_then(|metadata| metadata.modified())
-+                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
++                .path()
++                .extension()
++                .is_some_and(|extension| extension == "json")
++                && entry
++                    .metadata()
++                    .and_then(|metadata| metadata.modified())
++                    .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
 +            {
 +                let _ = std::fs::remove_file(entry.path());
 +            }
@@ -82355,20 +82378,7 @@ index 0000000000000000000000000000000000000000..8a77f46216d30bb312cd81b54211e1fd
 +        if let (Some(record), Some(fields)) = (record.as_object_mut(), fields.as_object()) {
 +            record.extend(fields.clone());
 +        }
-+        let mut reserved = self.reserved.lock().ok();
 +        if let Ok(mut records) = self.records.lock() {
-+            if record["origin"] == "model"
-+                && let Some(reserved) = reserved.as_mut()
-+            {
-+                let root = root_of(
-+                    &records,
-+                    record["parent"]["thread_id"].as_str().unwrap_or(thread),
-+                )
-+                .to_owned();
-+                if let Some(index) = reserved.iter().position(|(owner, ..)| *owner == root) {
-+                    reserved.remove(index);
-+                }
-+            }
 +            let finished = records
 +                .iter()
 +                .filter(|(_, record)| record["status"] != "running")
@@ -84692,10 +84702,10 @@ index 0000000000000000000000000000000000000000..5a33edfcf10f7038c297782b4b7fc345
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..47b5aed54312d8fbe060a9dabb1c8ab219ddada5
+index 0000000000000000000000000000000000000000..ac9f836bcb950f6c4a43c41a79a52b913fdacba4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1073 @@
+@@ -0,0 +1,1077 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -85497,6 +85507,10 @@ index 0000000000000000000000000000000000000000..47b5aed54312d8fbe060a9dabb1c8ab2
 +                lead.depth.saturating_add(1),
 +                host.worker_limits(&lead.session)?,
 +            )
++            .map_err(|e| e.to_string())?;
++        lead.session
++            .task
++            .set_worker_idle(&worker, true)
 +            .map_err(|e| e.to_string())?;
 +        let mut argv = vec![grant.program.to_string_lossy().into_owned()];
 +        argv.extend(grant.arguments);
@@ -92744,10 +92758,10 @@ index 0000000000000000000000000000000000000000..ad5f898f3b768a805a06d0f816c6082d
 +};
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e1e196efe3191529be9b3e5b4eac9343cdeaa4f9
+index 0000000000000000000000000000000000000000..e6300c478b808b130654373e44d0850a80e03ddf
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1576 @@
+@@ -0,0 +1,1591 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -92883,6 +92897,7 @@ index 0000000000000000000000000000000000000000..e1e196efe3191529be9b3e5b4eac9343
 +    requests: u32,
 +    exposure: u64,
 +    status: WorkerStatus,
++    idle: bool,
 +    objective: Option<String>,
 +    result: Option<VersionMarker>,
 +}
@@ -92986,7 +93001,7 @@ index 0000000000000000000000000000000000000000..e1e196efe3191529be9b3e5b4eac9343
 +    state
 +        .workers
 +        .values()
-+        .filter(|worker| worker.status == WorkerStatus::Active)
++        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle)
 +        .count()
 +}
 +
@@ -93176,6 +93191,7 @@ index 0000000000000000000000000000000000000000..e1e196efe3191529be9b3e5b4eac9343
 +                            requests: 0,
 +                            exposure: 0,
 +                            status: WorkerStatus::Active,
++                            idle: false,
 +                            objective: None,
 +                            result: None,
 +                        },
@@ -93490,13 +93506,10 @@ index 0000000000000000000000000000000000000000..e1e196efe3191529be9b3e5b4eac9343
 +        if state.status != TaskStatus::Active || self.expired() {
 +            return Err(denied("task stopped or expired"));
 +        }
-+        let valid_parent = if depth == 1 {
-+            parent == "lead"
-+        } else {
-+            state.workers.get(&parent).is_some_and(|worker| {
-+                worker.status == WorkerStatus::Active && worker.depth.checked_add(1) == Some(depth)
-+            })
-+        };
++        let valid_parent = parent == "lead"
++            || state.workers.get(&parent).is_some_and(|worker| {
++                worker.status == WorkerStatus::Active && worker.depth < depth
++            });
 +        let ceiling = self.limits();
 +        check_depth(depth, ceiling.max_depth)?;
 +        if !valid_parent {
@@ -93527,6 +93540,7 @@ index 0000000000000000000000000000000000000000..e1e196efe3191529be9b3e5b4eac9343
 +                requests: 0,
 +                exposure: 0,
 +                status: WorkerStatus::Active,
++                idle: false,
 +                objective: None,
 +                result: None,
 +            },
@@ -93546,6 +93560,21 @@ index 0000000000000000000000000000000000000000..e1e196efe3191529be9b3e5b4eac9343
 +            active_workers(&state).saturating_add(other_running),
 +            ceiling.concurrent_workers,
 +        )
++    }
++
++    /// An idle worker keeps its limits and route but holds no concurrency slot.
++    pub fn set_worker_idle(&self, id: &str, idle: bool) -> io::Result<()> {
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        let worker = state
++            .workers
++            .get_mut(id)
++            .filter(|worker| worker.status == WorkerStatus::Active)
++            .ok_or_else(|| denied("unknown or inactive worker"))?;
++        worker.idle = idle;
++        Ok(())
 +    }
 +
 +    pub fn claim_worker_objective(&self, id: &str, objective: &str) -> io::Result<()> {
@@ -140235,10 +140264,10 @@ index 0000000000000000000000000000000000000000..6531a6ad6f21a8018898d3f6ac1780b6
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..35d7cb97a90f8b22618bf0eeee1db5d38a1427e8
+index 0000000000000000000000000000000000000000..c4fb783bcbfaaf3ff8321a2b00c59de49ec6172c
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,263 @@
 +use codex_omd::Limits;
 +use codex_omd::Task;
 +use codex_omd::WorkerLimits;
@@ -140316,6 +140345,9 @@ index 0000000000000000000000000000000000000000..35d7cb97a90f8b22618bf0eeee1db5d3
 +        full
 +    );
 +    assert_eq!(refusal(task.admit_subagent(1, 0)), full);
++    task.set_worker_idle("two", true).unwrap();
++    task.admit_subagent(1, 0).unwrap();
++    task.set_worker_idle("two", false).unwrap();
 +    assert_eq!(
 +        refusal(task.start_worker("deep".into(), "one".into(), 3, worker())),
 +        "subagent_depth_limit: depth 3 exceeds limits.max_depth 2"

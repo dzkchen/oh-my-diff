@@ -59,6 +59,7 @@ test('mentions set a role and effort, and later directives replace earlier ones'
   const routed = spawn({ prompt: 'Review the diff' }, { state: first });
   assert.equal(routed.next.model, 'claude-opus-5-5');
   assert.equal(routed.next.effort, 'xhigh');
+  assert.deepEqual(prompt('use opus as subagents for the review'), { review: { query: 'opus', effort: null } }, 'the role word may follow "the"');
   const reset = prompt('use the lead model as subagents for review', first);
   assert.equal(spawn({ prompt: 'Review the diff' }, { state: reset }).next.model, null);
 });
@@ -76,6 +77,8 @@ test('an unknown or unroutable model falls back to the lead model with a notice'
   assert.equal(said.state, null, 'nothing unresolvable is kept');
   assert.equal(said.notices.length, 2, 'one toast and one transcript line');
   assert.match(said.notices[0], /No model matches "gemini"/);
+  const file = submit('Read @README.md for the setup steps');
+  assert.deepEqual([file.state, file.notices], [null, []], 'an unresolvable mention is dropped without a warning');
   const unknown = spawn({}, { settings: { research_model: 'gemini' } });
   assert.equal(unknown.next.model, null);
   assert.match(unknown.notices[0], /No model matches "gemini"/);
@@ -149,12 +152,11 @@ test('delegate_task start routes the role model to a worker route, scopes the wo
   assert.equal(delegate({ action: 'start', task: ' ' }).value.status, 'refused');
 });
 
-test('delegate_task wait polls within the limit and ends with the running text when the task is still going', () => {
+test('delegate_task wait waits once and ends with the running text when the task is still going', () => {
   const running = delegate({ action: 'start', task: 'Review', mode: 'wait' }, { answer: { 'agents.wait': () => ({ status: 'running' }) } });
   assert.equal(running.of('agents.wait').length, 1);
   assert.match(running.value.text, /end your turn/);
-  const long = delegate({ action: 'start', task: 'Review', mode: 'wait', timeout_ms: 600_000 }, { answer: { 'agents.wait': () => ({ status: 'running' }) } });
-  assert.equal(long.of('agents.wait').length, 4);
+  assert.ok(!source.includes('timeout_ms'));
   const done = delegate({ action: 'start', task: 'Review', mode: 'wait' }, { answer: { 'agents.wait': () => ({ status: 'completed', text: 'All clear', consumed: false }) } });
   assert.equal(done.value.result, 'All clear');
   assert.deepEqual(done.of('agents.result'), [{ handle: 'h1', consume: true }]);
@@ -196,8 +198,6 @@ test('rate-limit windows are recorded account-wide in the store, by limit id', (
   assert.deepEqual(Object.keys(put.value.windows), ['claude']);
   assert.deepEqual({ ...put.value.windows.claude, at: 0 }, { used: 92, resets: 1_900_100_000_000, at: 0 });
   assert.equal(update({ primary: { usedPercent: 10 } }).of('store.put')[0].value.windows.codex.resets, null);
-  const unchanged = update({ limitId: 'claude', secondary: { usedPercent: 92, resetsAt: 1_900_100_000 } });
-  assert.equal(unchanged.of('store.put').length, 1, 'the first notice is stored');
   const again = fire('app_notification', '', { method: 'account/rateLimits/updated', params: { rateLimits: { limitId: 'claude', secondary: { usedPercent: 92, resetsAt: 1_900_100_000 } } }, thread_id: null, coalesced: 0, dropped: 0 },
     { answer: stored({ windows: { claude: { used: 92, resets: 1_900_100_000_000, at: Date.now() } } }) });
   assert.deepEqual(again.of('store.put'), [], 'an unchanged window is not rewritten');
@@ -318,4 +318,35 @@ test('a lead route on a runtime-registered provider is a delegate target', () =>
   const sonnet = delegate({ action: 'start', task: 'Read the docs', model: 'claude-sonnet-5-5' }, { routes: leadOnly });
   assert.deepEqual(sonnet.of('agents.spawn'), [{ role: 'general', route: 'claude', prompt: 'Read the docs', workspace: 'read_only', model: 'claude-sonnet-5-5', tools: ['exec_command', 'write_stdin'] }]);
   assert.equal(sonnet.value.model, 'claude-sonnet-5-5');
+});
+
+test('a finished worktree task keeps what agents.result returns when agent_end arrives, and its wake line names how to integrate', () => {
+  const result = { status: 'completed', text: 'patched', consumed: true, candidate_sha256: 'c'.repeat(64), changed_paths: ['a.ts', 'b.ts'] };
+  const started = delegate({ action: 'start', task: 'Fix it', isolation: 'worktree' });
+  assert.equal(started.state.tasks.h1.status, 'running');
+  const ended = fire('agent_end', '', { handle: 'h1', role: 'worker', status: 'completed', text: 'patched' }, { state: started.state, answer: { 'agents.result': () => result } });
+  assert.deepEqual(ended.of('agents.result'), [{ handle: 'h1', consume: true }]);
+  const shown = delegate({ action: 'status', handle: 'h1' }, { state: ended.state });
+  assert.deepEqual([shown.value.changed_paths, shown.value.candidate_sha256], [['a.ts', 'b.ts'], 'c'.repeat(64)]);
+  assert.match(shown.value.note, /integrate/);
+  const woke = fire('timer', '', { key: 'wake' }, { state: ended.state });
+  assert.match(woke.of('turns.queue')[0].prompt, /Task h1 .* completed: "patched" Its changes wait for delegate_task integrate \(or cancel\) with handle h1; changed paths: \["a\.ts","b\.ts"\]\./);
+});
+
+test('a result over 8 KiB is stored within the limit with a truncation marker', () => {
+  const big = delegate({ action: 'start', task: 'Long' }, { answer: { 'agents.result': () => ({ status: 'completed', text: 'é'.repeat(9000), consumed: true }) } });
+  const text = big.state.tasks.h1.text;
+  assert.ok(Buffer.byteLength(text) <= 8192);
+  assert.match(text, /… \[cut to 8192 of 18000 bytes\]$/);
+  assert.equal(delegate({ action: 'start', task: 'Short' }, { answer: { 'agents.result': () => ({ status: 'completed', text: 'ok', consumed: true }) } }).state.tasks.h1.text, 'ok');
+});
+
+test('the status list settles running tasks, and a start without model follows the prompt directives', () => {
+  const state = { tasks: { a: task('research'), b: task('review') } };
+  const listed = delegate({ action: 'status' }, { state, answer: { 'agents.result': args => { if (args.handle === 'a') throw new Error('agent_unknown'); return { status: 'running' }; } } });
+  assert.deepEqual(listed.value.tasks.map(item => [item.handle, item.status]), [['a', 'failed'], ['b', 'running']]);
+  const routed = delegate({ action: 'start', task: 'Map it', role: 'research' }, { state: { research: { query: 'sonnet', effort: null } } });
+  assert.equal(routed.of('agents.spawn')[0].route, 'sonnet-worker');
+  const general = delegate({ action: 'start', task: 'Map it' }, { state: { all: { query: 'sonnet', effort: null }, research: { query: 'gpt', effort: null } } });
+  assert.equal(general.of('agents.spawn')[0].route, 'sonnet-worker');
 });

@@ -57,7 +57,7 @@
       },
       "research_effort": {
         "title": "Research subagent effort",
-        "description": "Reasoning effort for research subagents; empty keeps the model's default",
+        "description": "Reasoning effort for research subagents, applied only together with the research model setting; empty uses the effort the lead put in the spawn call if the model supports it, else the model's default",
         "type": "string",
         "enum": [
           "",
@@ -78,7 +78,7 @@
       },
       "review_effort": {
         "title": "Review subagent effort",
-        "description": "Reasoning effort for review subagents; empty keeps the model's default",
+        "description": "Reasoning effort for review subagents, applied only together with the review model setting; empty uses the effort the lead put in the spawn call if the model supports it, else the model's default",
         "type": "string",
         "enum": [
           "",
@@ -99,7 +99,7 @@
       },
       "worker_effort": {
         "title": "Worker subagent effort",
-        "description": "Reasoning effort for worker subagents; empty keeps the model's default",
+        "description": "Reasoning effort for worker subagents, applied only together with the worker model setting; empty uses the effort the lead put in the spawn call if the model supports it, else the model's default",
         "type": "string",
         "enum": [
           "",

@@ -44,7 +44,7 @@ any account uses Console API credits), since the host keeps one route per accoun
 | --- | --- | --- |
 | `extra_usage` | `true` | Keep working on paid extra usage when the plan limit is reached, if your account allows it. `false` stops as soon as a response reports extra usage, which may still be billed. |
 
-To run subagents on Claude while another model leads, turn on `omd_subagent_router` and say, for example, "use sonnet 5.5 as subagents to research". The router skips Claude when its limit is nearly used or it recently failed, and its `delegate_task` tool can run background Claude workers on these routes.
+To run subagents on Claude while another model leads, turn on `omd_subagent_router` and say, for example, "use sonnet 5.5 as subagents to research". The router skips Claude when its limit is nearly used or a `delegate_task` task on it recently failed (only those failures are recorded), and its `delegate_task` tool can run background Claude workers on these routes.
 
 ## Needs and limits
 
@@ -53,9 +53,7 @@ To run subagents on Claude while another model leads, turn on `omd_subagent_rout
 - A request for a model other than the selected one is refused.
 - Each request starts a fresh CLI process, adding a fraction of a second. A CLI that has not finished 30 minutes after starting (for example one that never sends its request) is stopped with its child processes and the request fails with `claude_upstream_incomplete`; retry it, and if it repeats check `/claude` or update the CLI.
 - Earlier reasoning isn't sent back to Claude. Images are forwarded.
-- A task an OpenAI lead seals for a subagent (GPT-6.1 calling its spawn tool directly) can't be read by Claude; a Claude
-  subagent then works from the conversation it inherits and its agent name.
-- Setup raises the per-subagent limit in `host.json` `worker_limits` to at least 300 requests and a day, within the session's `limits`, keeping higher values you set.
+- Setup raises the per-subagent limit in `host.json` `worker_limits` to at least 300 requests and a day, within the session's `limits`, keeping higher values you set. After upgrading, run `/claude login` again to apply them.
 - After a switch to Claude, an OpenAI compaction summary is first rewritten as plain text by OpenAI (one OpenAI request; if it fails, Claude continues without that summary and a warning shows); OpenAI's encrypted reasoning isn't sent.
 - A prompt over the model's context window is refused (`context_length_exceeded`).
 
