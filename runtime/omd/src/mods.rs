@@ -1234,11 +1234,44 @@ fn outside_literals(source: &str) -> String {
     String::from_utf8(visible).unwrap_or_default()
 }
 
+type SourceUseScan = (ModSourceUse, Vec<String>, Vec<String>);
+
+/// Reuses a scan while the package content hash, manifest and registrations that it compared are unchanged.
+fn cached_source_use(
+    sha256: &str,
+    package: &ModPackage,
+    registrations: &Registrations,
+    code: impl FnOnce() -> String,
+) -> Result<SourceUseScan> {
+    type Scans = HashMap<String, (ModPackage, Registrations, SourceUseScan)>;
+    static SCANS: std::sync::LazyLock<Mutex<Scans>> = std::sync::LazyLock::new(Default::default);
+    let cached = SCANS.lock().ok().and_then(|scans| {
+        scans
+            .get(sha256)
+            .filter(|(scanned, registered, _)| scanned == package && registered == registrations)
+            .map(|(_, _, scan)| scan.clone())
+    });
+    if let Some(scan) = cached {
+        return Ok(scan);
+    }
+    let scan = source_use(&code(), package, registrations)?;
+    if let Ok(mut scans) = SCANS.lock() {
+        if scans.len() >= 256 {
+            scans.clear();
+        }
+        scans.insert(
+            sha256.to_owned(),
+            (package.clone(), registrations.clone(), scan.clone()),
+        );
+    }
+    Ok(scan)
+}
+
 fn source_use(
     source: &str,
     package: &ModPackage,
     registrations: &Registrations,
-) -> Result<(ModSourceUse, Vec<String>, Vec<String>)> {
+) -> Result<SourceUseScan> {
     let mut operations = quoted_calls(source, "host.call(")?;
     operations.extend(quoted_calls(source, "host.tryCall(")?);
     operations.sort();
@@ -2780,7 +2813,7 @@ struct Loaded {
     selection: ModSelection,
     source: Arc<str>,
     assets: Arc<BTreeMap<String, Value>>,
-    request_metadata: Arc<OnceLock<(Value, String)>>,
+    request_metadata: Arc<OnceLock<(Value, String, [u8; 32])>>,
     /// The store's code cache; `None` runs without one.
     code_cache: Option<Arc<code_cache::CacheRoot>>,
     adapter: Option<Value>,
@@ -2927,6 +2960,8 @@ fn read_configuration(
 
 type Brokered = Option<(u64, BTreeSet<String>)>;
 
+type CallbackVerdict = (Instant, Option<FileStamp>, String, String);
+
 #[cfg(test)]
 mod reload_tests {
     use super::*;
@@ -2997,6 +3032,16 @@ mod reload_tests {
             host.check_callback_authority(&loaded).unwrap();
         }
         assert_eq!(store::READS.get(), reads);
+        host.check_callback_authority(&loaded).unwrap();
+        std::fs::write(package.join("index.ts"), "export default () => {}").unwrap();
+        host.check_callback_authority(&loaded).unwrap();
+        host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
+        assert!(
+            host.check_callback_authority(&loaded)
+                .unwrap_err()
+                .to_string()
+                .contains("untrusted_source")
+        );
     }
 
     #[test]
@@ -3193,6 +3238,7 @@ pub struct ModHost {
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
     callback_configuration: Mutex<Option<(ConfigurationStamp, String, Arc<ModConfiguration>)>>,
+    callback_verdicts: HashMap<(String, PathBuf, String), CallbackVerdict>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
     codex_config: Arc<Mutex<BTreeSet<String>>>,
@@ -3454,10 +3500,12 @@ fn invoke(
                         .iter()
                         .any(|prefix| call.operation.starts_with(prefix))
                     || matches!(call.operation.as_str(), "environment.read" | "environment.set");
-                let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if masked {Value::Null} else {call.arguments.clone()}});
-                let _ = access.with(|runtime| {
-                    Ok(runtime.event_except("host_operation", before, id, active, scope))
-                });
+                if access.with(|runtime| Ok(runtime.has_event("host_operation"))).unwrap_or(false) {
+                    let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if masked {Value::Null} else {call.arguments.clone()}});
+                    let _ = access.with(|runtime| {
+                        Ok(runtime.event_except("host_operation", before, id, active, scope))
+                    });
+                }
                 let intercepted = (!private && event != "intercept")
                     .then(|| access.with(|runtime| Ok(runtime.intercepts("host_operation"))))
                     .and_then(|intercepts| intercepts.ok().flatten());
@@ -3485,17 +3533,19 @@ fn invoke(
                 } else {
                     chain::dispatch(&mut *access, &mut *host, id, generation, call.clone(), active, scope)
                 };
-                let after = match &result {
-                    Ok(value) => {
-                        json!({"phase":"after","caller":id,"operation":call.operation,"result":if masked {Value::Null} else {value.clone()}})
-                    }
-                    Err(error) => {
-                        json!({"phase":"after","caller":id,"operation":call.operation,"error":if masked {"private_operation_failed".to_owned()} else {error.to_string()}})
-                    }
-                };
-                let _ = access.with(|runtime| {
-                    Ok(runtime.event_except("host_operation", after, id, active, scope))
-                });
+                if access.with(|runtime| Ok(runtime.has_event("host_operation"))).unwrap_or(false) {
+                    let after = match &result {
+                        Ok(value) => {
+                            json!({"phase":"after","caller":id,"operation":call.operation,"result":if masked {Value::Null} else {value.clone()}})
+                        }
+                        Err(error) => {
+                            json!({"phase":"after","caller":id,"operation":call.operation,"error":if masked {"private_operation_failed".to_owned()} else {error.to_string()}})
+                        }
+                    };
+                    let _ = access.with(|runtime| {
+                        Ok(runtime.event_except("host_operation", after, id, active, scope))
+                    });
+                }
                 result
             },
             progress,
@@ -3774,6 +3824,7 @@ impl ModHost {
             admissions: BTreeMap::new(),
             brokered: None,
             callback_configuration: Mutex::default(),
+            callback_verdicts: HashMap::new(),
             required_surfaces: Arc::default(),
             intercepted_surfaces: Arc::default(),
             codex_config: Arc::default(),
@@ -3810,6 +3861,7 @@ impl ModHost {
     /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
     pub fn set_checkout(&mut self, repository: &Path) {
         self.configuration_stamp = None;
+        self.callback_verdicts.clear();
         if self.project.as_deref() != repository.canonicalize().ok().as_deref() {
             for loaded in self.loaded.values_mut() {
                 loaded.clear_ui();
@@ -4091,7 +4143,10 @@ impl ModHost {
             brokered.as_ref().map(|(_, grants)| grants),
             self.managed.as_ref().map(|managed| &managed.policy),
             &mut rejected,
-            store::package,
+            |path| {
+                store::verified(path)
+                    .map(|v| (v.package.clone(), v.source.clone(), v.sha256.clone()))
+            },
         )?;
         let adapters = Self::adapters(&selected);
         let seeded = std::mem::take(&mut self.seeded);
@@ -4146,14 +4201,14 @@ impl ModHost {
                 if package.assets.is_empty() {
                     return Ok(BTreeMap::new());
                 }
-                let (_, _, hash, files) = store::package_with_assets(&selection.path)?;
-                if hash != selection.sha256 {
+                let verified = store::verified(&selection.path)?;
+                if verified.sha256 != selection.sha256 {
                     return Err(failure(format!(
                         "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
                         package.id
                     )));
                 }
-                Ok(store::asset_map(files))
+                Ok(store::asset_map(verified.assets.clone()))
             })();
             let assets = match assets {
                 Ok(assets) => assets,
@@ -4497,12 +4552,12 @@ impl ModHost {
             .iter()
             .filter_map(|(id, (selection, package, _))| {
                 let module = package.adapter_module.as_ref()?;
-                let (_, _, hash, assets) = store::package_with_assets(&selection.path).ok()?;
-                if hash != selection.sha256 {
+                let verified = store::verified(&selection.path).ok()?;
+                if verified.sha256 != selection.sha256 {
                     return None;
                 }
                 let file = |asset: &String| {
-                    assets.get(asset).map(|source| {
+                    verified.assets.get(asset).map(|source| {
                         json!({"source": source, "filename": selection.path.join(asset)})
                     })
                 };
@@ -5032,23 +5087,29 @@ impl ModHost {
         for tool in &registrations.tools {
             tool_validator(&tool.parameters)?;
         }
-        let mut code = loaded.source.to_string();
-        for name in registrations
-            .modules
-            .iter()
-            .filter(|name| !name.ends_with(".json"))
-        {
-            if let Some(text) = loaded
-                .assets
-                .get(name)
-                .and_then(|asset| asset["text"].as_str())
-            {
-                code.push('\n');
-                code.push_str(text);
-            }
-        }
-        let (source_use, unused_grants, unused_environment) =
-            source_use(&code, &loaded.package, &registrations)?;
+        let (source_use, unused_grants, unused_environment) = cached_source_use(
+            &loaded.selection.sha256,
+            &loaded.package,
+            &registrations,
+            || {
+                let mut code = loaded.source.to_string();
+                for name in registrations
+                    .modules
+                    .iter()
+                    .filter(|name| !name.ends_with(".json"))
+                {
+                    if let Some(text) = loaded
+                        .assets
+                        .get(name)
+                        .and_then(|asset| asset["text"].as_str())
+                    {
+                        code.push('\n');
+                        code.push_str(text);
+                    }
+                }
+                code
+            },
+        )?;
         Ok((registrations, source_use, unused_grants, unused_environment))
     }
 
@@ -5215,7 +5276,44 @@ impl ModHost {
         )
     }
 
+    /// Between broker refreshes a passed check stands until `mods.json` or the authority inventory changes.
     fn check_callback_authority(&mut self, loaded: &Loaded) -> Result<()> {
+        let key = (
+            loaded.package.id.clone(),
+            loaded.selection.path.clone(),
+            loaded.selection.scope.clone(),
+        );
+        let modified = configuration_stamp(&self.store.root.join("mods.json"));
+        let grant = store::grant(&json!(loaded.selection));
+        if let Some((at, stamp, sha256, granted)) = self.callback_verdicts.get(&key)
+            && modified.is_some()
+            && self.fresh_broker() == Some(*at)
+            && *stamp == modified
+            && *sha256 == self.configuration_sha256
+            && *granted == grant
+        {
+            return Ok(());
+        }
+        self.check_callback_authority_now(loaded)?;
+        if self.configuration_stamp.is_some()
+            && let Some(at) = self.fresh_broker()
+        {
+            self.callback_verdicts.insert(
+                key,
+                (at, modified, self.configuration_sha256.clone(), grant),
+            );
+        }
+        Ok(())
+    }
+
+    fn fresh_broker(&self) -> Option<Instant> {
+        self.brokered
+            .as_ref()
+            .filter(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
+            .map(|(at, _, _)| *at)
+    }
+
+    fn check_callback_authority_now(&mut self, loaded: &Loaded) -> Result<()> {
         let (configuration_sha256, configuration) = self.callback_configuration();
         let authority = self.authority(&configuration_sha256)?;
         let hash = self.authority_hash(&configuration_sha256, &authority);

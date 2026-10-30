@@ -170,11 +170,14 @@ class UpdateSelection(unittest.TestCase):
             self.assertEqual([item["version"] for item in self.module.releases(url, channel="prerelease")], versions)
             self.assertEqual(fetched.call_count, 4)
             fetched.reset_mock()
-            self.assertEqual(self.module.releases(url, pin="0.1.0")[0]["version"], "0.1.0")
+            self.assertEqual(next(self.module.releases(url, channel="prerelease"))["version"], versions[0])
+            self.assertEqual(fetched.call_count, 2)
+            fetched.reset_mock()
+            self.assertEqual(next(self.module.releases(url, pin="0.1.0"))["version"], "0.1.0")
             self.assertEqual(fetched.call_count, 1)
-            self.assertEqual(self.module.releases(url, pin="0.9.9"), [])
+            self.assertEqual(list(self.module.releases(url, pin="0.9.9")), [])
             with self.assertRaisesRegex(ValueError, "pinned version is malformed"):
-                self.module.releases(url, pin="bad pin")
+                list(self.module.releases(url, pin="bad pin"))
 
     def test_installer_accepts_the_pinned_upstream_minor(self):
         module = installer()
@@ -436,6 +439,77 @@ class UpdateSelection(unittest.TestCase):
         os.link(objects / "shared", self.root / "shared")
         self.module.collect(self.root)
         self.assertEqual([path.name for path in objects.iterdir()], ["shared"])
+
+    def test_background_prune_keeps_the_current_and_previous_generations_only(self):
+        releases = self.root / "releases"
+        previous, stale = releases / ("1" * 32), releases / ("2" * 32)
+        for generation in (previous, stale):
+            generation.mkdir()
+            (generation / "receipt.json").write_text("{}")
+        (releases / ("failed-" + "3" * 32)).mkdir()
+        (self.root / "previous").symlink_to(previous)
+        removed = []
+        args = types.SimpleNamespace(bin_dir=self.root / "bin")
+        with patch.object(self.module, "remove_generation", side_effect=lambda old, *rest: removed.append(old.name)):
+            self.module.prune(self.root, self.current, args)
+        self.assertEqual(removed, [stale.name])
+        self.assertFalse((releases / ("failed-" + "3" * 32)).exists())
+
+    def test_downloads_retry_transient_errors_then_explain_the_failure(self):
+        body, attempts = b"archive", []
+        expected = self.module.hashlib.sha256(body).hexdigest()
+
+        class Response:
+            headers = {"Content-Length": str(len(body))}
+            def __init__(self, data): self.data = data
+            def __enter__(self): return self
+            def __exit__(self, *arguments): return False
+            def read(self, size):
+                data, self.data = self.data, b""
+                return data
+
+        def opened(url, timeout):
+            attempts.append(url)
+            if len(attempts) < 3:
+                raise urllib.error.URLError("connection reset")
+            return Response(body)
+        target = self.root / "archive"
+        with patch.object(self.module, "opened", opened), patch.object(self.module.time, "sleep"):
+            self.assertEqual(self.module.download("https://example.test/a", expected, target), len(body))
+            self.assertEqual((len(attempts), target.read_bytes()), (3, body))
+            target.unlink()
+            with patch.object(self.module, "opened", side_effect=urllib.error.URLError("no route")), \
+                    self.assertRaisesRegex(ValueError, r"Network error while contacting GitHub \(no route\); check your connection"):
+                self.module.download("https://example.test/a", expected, target)
+        self.assertFalse(target.exists())
+
+    def test_downloads_retry_short_reads_and_stop_when_cancelled(self):
+        body = b"archive"
+        expected = self.module.hashlib.sha256(body).hexdigest()
+        attempts = []
+
+        class Response:
+            def __init__(self, data): self.data, self.headers = data, {"Content-Length": str(len(body))}
+            def __enter__(self): return self
+            def __exit__(self, *arguments): return False
+            def read(self, size):
+                data, self.data = self.data, b""
+                return data
+
+        def opened(url, timeout):
+            attempts.append(url)
+            return Response(body[:3] if len(attempts) == 1 else body)
+        target = self.root / "archive"
+        with patch.object(self.module, "opened", opened), patch.object(self.module.time, "sleep"):
+            self.assertEqual(self.module.download("https://example.test/a", expected, target), len(body))
+        self.assertEqual(len(attempts), 2)
+        stopped = self.module.threading.Event()
+        stopped.set()
+        target.unlink()
+        with patch.object(self.module, "opened", side_effect=urllib.error.URLError("no route")) as refused, \
+                self.assertRaisesRegex(ValueError, "download cancelled"):
+            self.module.download("https://example.test/a", expected, target, stopped=stopped)
+        refused.assert_not_called()
 
     def test_uninstall_removes_older_generations_before_current_and_cleans_leftovers(self):
         bin_dir = self.root / "bin"

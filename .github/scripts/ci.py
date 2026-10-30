@@ -20,6 +20,8 @@ from scripts import authority_broker, install_support as support, package as rel
 WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 TREE = "nightly"
 CRATES = ["codex-omd", "codex-omd-runner", "codex-omd-extension", "codex-tui", "codex-core-plugins", "codex-git-utils"]
+HELPERS = ["codex-omd-runner", "codex-rmcp-client", "codex-cli", "codex-code-mode-host"]
+SUITE_CRATES = {"native": CRATES, "core": ["codex-core"], "core-integration": ["codex-core"]}
 SOURCE_PATH = re.compile(r"--> ([^:\s]+):\d")
 
 
@@ -41,6 +43,10 @@ def cargo_step(log, *args):
 
 def packages(names):
     return [flag for name in names for flag in ("-p", name)]
+
+
+def scope(suite):
+    return list(dict.fromkeys([*SUITE_CRATES[suite], *HELPERS]))
 
 
 def drift(*paths):
@@ -71,23 +77,29 @@ def tree_steps():
             Step("verified V8", ["python3", ".github/scripts/build.py", "v8", TREE], fatal=True)]
 
 
+def helpers(suite):
+    return Step("test helper binaries", cargo_step("test-helpers", "build", *packages(scope(suite)), "--bins"))
+
+
 def job_steps(job):
     artifact_dir = build.work_dir(TREE) / "artifacts"
     manager = str(artifact_dir / "omd-mod")
     if job == "build":
         return [*tree_steps(), Step("host binaries", ["python3", ".github/scripts/build.py", "artifacts", TREE])]
-    if job == "test":
-        tests = ["python3", ".github/scripts/ci.py", "tests", "--suite"]
+    tests = ["python3", ".github/scripts/ci.py", "tests", "--suite"]
+    if job == "native":
+        return [*tree_steps(), helpers("native"), Step("cargo test native crates", [*tests, "native"])]
+    if job == "core":
+        return [*tree_steps(), helpers("core"),
+                Step("cargo test core", [*tests, "core"], env=core_env()),
+                Step("cargo test core integration", [*tests, "core-integration"], env=core_env(), advisory=True)]
+    if job == "lint":
         return [
             *tree_steps(),
             Step("patch sync", ["python3", ".github/scripts/build.py", "sync", TREE]),
             Step("patch matches checkout", drift("runtime", "upstream.lock.json")),
-            Step("test helper binaries", cargo_step("test-helpers", "build", "-p", "codex-rmcp-client", "-p", "codex-cli",
-                                                    "-p", "codex-code-mode-host", "--bins")),
-            Step("cargo test native crates", [*tests, "native"]),
-            Step("cargo test core", [*tests, "core"], env=core_env()),
-            Step("cargo test core integration", [*tests, "core-integration"], env=core_env(), advisory=True),
             Step("clippy omd paths", cargo_step("clippy", "clippy", *packages(CRATES), "--tests"), check=own_paths_only),
+            Step("check pull request crates", ["python3", ".github/scripts/build.py", "check", TREE]),
             Step("rustfmt", cargo_step("fmt", "fmt", *packages([*CRATES, "codex-core"]), "--", "--check")),
             Step("native ownership", ["mise", "run", "native:ownership"]),
             Step("locks", ["python3", ".github/scripts/build.py", "locks"]),
@@ -152,7 +164,7 @@ def validate(job, release):
     for step, result in results:
         if result["status"]:
             lines += ["", f"## {step.name}", "", "```", *result["tail"], "```"]
-    if job == "test":
+    if job == "core":
         lines += ["", "Known upstream baseline excluded: `filtered_host_additional_permissions`."]
     if advisory:
         lines += [f"Not required for a release: {', '.join(advisory)}."]
@@ -164,7 +176,7 @@ def validate(job, release):
 
 def cargo_tests(suite):
     work = build.work_dir(TREE)
-    names = ["codex-core"] if suite.startswith("core") else CRATES
+    names = SUITE_CRATES[suite]
     metadata = json.loads(build.run("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1", cwd=work / "codex/codex-rs"))
     targets = set()
     for package in metadata["packages"]:
@@ -181,12 +193,13 @@ def cargo_tests(suite):
     elif suite == "core":
         targets.discard(("--test", "all"))
     failed = False
+    only = " | ".join(f"package(={name})" for name in names)
     for index, flags in enumerate(sorted(targets)):
         if flags == ("--doc",):
             args = ["test", "--locked", "--no-fail-fast", *packages(names), *flags, "--message-format=json-render-diagnostics", "--"]
         else:
             args = ["nextest", "run", "--locked", "--no-fail-fast", "--no-tests=pass", "--tool-config-file",
-                    f"omd:{build.ROOT / '.github/nextest.toml'}", *packages(names), *flags,
+                    f"omd:{build.ROOT / '.github/nextest.toml'}", *packages(scope(suite)), "-E", only, *flags,
                     "--cargo-message-format=json-render-diagnostics", "--"]
         if suite.startswith("core"):
             args += ["--skip", "shell_startup_credentials_are_brokered::filtered_host_additional_permissions"]
@@ -343,7 +356,7 @@ def publish(directory, notes=None, dry_run=False):
 def main():
     parser = argparse.ArgumentParser(description="Hosted validation, packaging and publication for nightlies and tagged releases")
     parser.add_argument("command", choices=("validate", "tests", "package", "publish"))
-    parser.add_argument("--job", choices=("build", "test", "package"), help="validate: the job's steps")
+    parser.add_argument("--job", choices=("build", "native", "core", "lint", "acceptance"), help="validate: the job's steps")
     parser.add_argument("--directory", type=Path, default=Path("release"))
     parser.add_argument("--suite", choices=("native", "core", "core-integration"))
     parser.add_argument("--release", action="store_true", help="validate: the core integration suite reports but does not gate")

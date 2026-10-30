@@ -3,7 +3,7 @@
 | Workflow | Trigger | Does |
 | --- | --- | --- |
 | `pr.yml` | pull requests and merge queue | Portable checks, selected native compilation, one `PR gate` status |
-| `validate.yml` | called by the two below | Tests, builds and packages on `macos-15` |
+| `validate.yml` | called by the two below | Tests, lints, builds and packages on `macos-15` |
 | `nightly.yml` | daily at 07:17 UTC, or **Run workflow** | Validates; on `main` publishes a nightly prerelease |
 | `release.yml` | `vX.Y.Z` or `vX.Y.Z-rc.N` tag; **Run workflow** is a dry run | Checks versions, validates, publishes the release |
 
@@ -24,28 +24,47 @@ remain in nightly and release workflows.
 
 PR, nightly and release jobs use the same Cargo download-cache and V8 prebuilt-cache keys. PR runs only restore: a
 patch edit falls back to the newest cache for the same platform and upstream pin. Only nightly and release runs save,
-since a cache saved by a PR is visible to that PR alone. PR checks set `OMD_V8_DIR` to the path validation saves, and
-`build.py v8` reuses a cached V8 file only when it matches the pinned checksum, retrying a failed download.
+since a cache saved by a PR is visible to that PR alone. PR checks set `OMD_WORK_ROOT` to the path validation uses, so
+the V8 cache lands where validation saved it, and `build.py v8` reuses a cached V8 file only when it matches the pinned
+checksum, retrying a failed download. PR jobs never save the mise cache (`cache_save: false`).
+
+**Compile cache.** Nightly jobs set `OMD_SCCACHE=1`, which makes `build.py` set `RUSTC_WRAPPER=sccache` (pinned in
+`mise.toml`) over a local 2 GB `SCCACHE_DIR`, not the GitHub backend. Each job restores that directory with
+`actions/cache/restore` and saves it with `if: always()` as `sccache-JOB-OS-HASH-RUN_ID-ATTEMPT`, where HASH covers
+`upstream.lock.json` and `runtime/patches/manifest.json`, so a failed run still keeps what it compiled. Restore falls
+back to the newest cache for the job. `sccache --show-stats` ends every job. A key includes the compile directory and
+every `CARGO_*` variable, so PR `native` uses the nightly work root and tree name (`/Users/runner/omd/omd-bnightly`),
+the same `CARGO_*` values and the same `build.py check` package set, and restores `sccache-lint-*`, which the nightly
+`lint` job fills with that exact check. Tagged releases leave `OMD_SCCACHE` empty and compile uncached;
+`scripts/build_provenance.py` accepts only `RUSTC_WRAPPER=sccache` for a build without `OMD_RELEASE_VERSION` and
+records the wrapper and its version. `CARGO_BUILD_JOBS` is set once in `validate.yml` and once in `pr.yml`.
 
 `main` requires **PR gate** with an up-to-date branch. Dependabot (`dependabot.yml`) opens one grouped pull request a
 month for GitHub Actions updates. There are no dependency license or scheduled vulnerability checks yet.
 
 ## Validation
 
-`validate.yml` runs `.github/scripts/ci.py validate --job JOB` in three jobs. No provider credentials are used.
+`validate.yml` runs `.github/scripts/ci.py validate --job JOB` in five parallel jobs, then packages. No provider
+credentials are used. Four macOS jobs start together; `acceptance` and `package` follow `build`, so at most five run at
+once, the free-plan limit.
 
-- `test` sets up the pinned Codex tree, applies and re-syncs the patch, and fails if the result differs from the
-  checkout. It then runs native tests, Clippy on patched paths, Rustfmt, native ownership, lock drift and mod type
-  checks. One upstream test, `filtered_host_additional_permissions`, is excluded as a known baseline failure. The
-  `codex-core` integration suite is advisory for a release and required for a nightly. Tests run in parallel under
+- `native` sets up the pinned Codex tree and runs the native crate tests. `core` runs `codex-core` unit tests and its
+  `all` integration suite, which is advisory for a release and required for a nightly. One upstream test,
+  `filtered_host_additional_permissions`, is excluded as a known baseline failure. Tests run in parallel under
   `cargo nextest` with upstream's `.config/nextest.toml` and the overrides in `.github/nextest.toml`, one process
-  per test with one retry; doc tests run under `cargo test`. Jobs work under `/Users/runner/omd`, not `/tmp`, which a sandboxed command may write.
-- `build` builds and signs the release host binaries in parallel with `test`.
-- `package` takes those binaries, runs mod tests, Python tests, mod-host scenarios and client acceptance, then packs
-  one archive for both profiles and tests install, reinstall, uninstall and recovery.
+  per test with one retry; doc tests run under `cargo test`. Every cargo command in a job names the same `-p`
+  packages (the suite's crates plus the helper binaries), narrowing the run with a nextest filter, so features unify
+  once and dependencies compile once. Jobs work under `/Users/runner/omd`, not `/tmp`, which a sandboxed command may write.
+- `lint` applies and re-syncs the patch and fails if the result differs from the checkout, then runs Clippy on patched
+  paths, a `cargo check --tests` of the crates a pull request compiles (to fill the PR compile cache), Rustfmt, native
+  ownership, lock drift and mod type checks.
+- `build` builds and signs the release host binaries.
+- `acceptance` takes those binaries and runs mod tests, Python tests, mod-host scenarios and client acceptance.
+- `package` takes the same binaries, packs one archive for both profiles and tests install, reinstall, uninstall and
+  recovery.
 
 The `package` artifact (7 days) holds the archive, `omd-release.json`, `provenance.json`, `install.sh`, a source
-tarball and `SHA256SUMS`. Each job's logs are in `validation-report-JOB` (14 days).
+tarball and `SHA256SUMS`. Each job's logs are in `validation-report-JOB` (14 days); the `package` report holds `profile-acceptance.json`.
 
 ## Nightly
 

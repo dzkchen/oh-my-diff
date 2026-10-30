@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -207,6 +208,63 @@ class ProfileModeTests(unittest.TestCase):
             result = subprocess.run(["sh", launcher])
             self.assertEqual(result.returncode, 7)
             self.assertEqual((base / "seen").read_text().split(), (base / "pid").read_text().split())
+
+    def test_launcher_announces_a_staged_release_once_while_another_session_is_open(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            for path in (base / "root/update", base / "root/current/bin", base / "root/sessions"):
+                path.mkdir(parents=True)
+            for path, text in ((base / "root/current/bin/codex", "#!/bin/sh\n"), (base / "install.sh", f'echo "$@" >> {base}/calls\n')):
+                path.write_text(text)
+            (base / "root/current/bin/codex").chmod(0o755)
+            record = {"binary": {"installed_path": str(base / "root/current/bin/codex")}, "store": str(base / "store"),
+                      "profile": "platform", "activation": {"selection": "platform"},
+                      "update": {"root": str(base / "root"), "installer": str(base / "install.sh"), "python": "python3"}}
+            launcher = base / "launcher"
+            launcher.write_text(profiles.selected_text(record))
+            (base / "root/update/ready.json").write_text("{}")
+            other = subprocess.Popen(["sleep", "30"])
+            self.addCleanup(other.kill)
+            (base / "root/sessions" / str(other.pid)).touch()
+            calls = lambda: (base / "calls").read_text().count("launch") if (base / "calls").exists() else 0
+            subprocess.run(["sh", launcher], check=True)
+            self.assertEqual(calls(), 1)
+            (base / "root/update/announced").touch()
+            subprocess.run(["sh", launcher], check=True)
+            self.assertEqual(calls(), 1)
+            other.kill()
+            other.wait()
+            subprocess.run(["sh", launcher], check=True)
+            self.assertEqual(calls(), 2)
+
+    def test_launcher_rearms_a_stale_announcement_while_a_recycled_pid_holds_a_marker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            for path in (base / "root/update", base / "root/current/bin", base / "root/sessions"):
+                path.mkdir(parents=True)
+            for path, text in ((base / "root/current/bin/codex", "#!/bin/sh\n"), (base / "install.sh", f'echo "$@" >> {base}/calls\n')):
+                path.write_text(text)
+            (base / "root/current/bin/codex").chmod(0o755)
+            record = {"binary": {"installed_path": str(base / "root/current/bin/codex")}, "store": str(base / "store"),
+                      "profile": "platform", "activation": {"selection": "platform"},
+                      "update": {"root": str(base / "root"), "installer": str(base / "install.sh"), "python": "python3"}}
+            launcher = base / "launcher"
+            launcher.write_text(profiles.selected_text(record))
+            (base / "root/update/ready.json").write_text("{}")
+            other = subprocess.Popen(["sleep", "30"])
+            self.addCleanup(other.kill)
+            (base / "root/sessions" / str(other.pid)).touch()
+            announced = base / "root/update/announced"
+            announced.touch()
+            os.utime(announced, (time.time() + 1, time.time() + 1))
+            subprocess.run(["sh", launcher], check=True)
+            calls = lambda: (base / "calls").read_text().count("launch") if (base / "calls").exists() else 0
+            self.assertEqual(calls(), 0)
+            old = time.time() - 7200
+            os.utime(announced, (old, old))
+            os.utime(base / "root/update/ready.json", (old - 60, old - 60))
+            subprocess.run(["sh", launcher], check=True)
+            self.assertEqual(calls(), 1)
 
     def test_uninstall_removes_plugins_added_from_this_installation(self):
         with tempfile.TemporaryDirectory() as temporary:

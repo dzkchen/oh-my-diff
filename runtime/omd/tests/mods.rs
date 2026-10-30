@@ -414,6 +414,7 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
         "export default () => { throw new Error('broken') }",
     )
     .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2100));
     assert!(
         runtime
             .invoke("fixture", generation, "command", "count", Value::Null)
