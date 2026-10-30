@@ -90,7 +90,8 @@ Experimental (`process_streams_v1`): under `raw` the host reads stdout and stder
 
 With the `os` grant, `sandbox: "none"` starts a listed program (`path` and `sha256` still pinned) with the same
 environment rules as [unsandboxed `exec.run`](running-commands.md#execrun-with-sandbox-none); `network` comes from
-`os_access`. The host keeps ownership, limits, cancellation and process-group teardown, and stops it when the grant
+`os_access`. The first start of a binary asks the user, who can decline (`process_program_declined`); see [Authority
+grants](authority-grants.md#os_access-manifest-field). The host keeps ownership, limits, cancellation and process-group teardown, and stops it when the grant
 expires or is revoked, the mod reloads or is disabled, or its source changes.
 
 ### `process.start` framing

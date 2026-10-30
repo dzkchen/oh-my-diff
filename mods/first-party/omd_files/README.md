@@ -74,9 +74,9 @@ It has no settings.
 - [`omd_workspace`](../omd_workspace/README.md) turned on. Opening a file needs `editor` in `host.json`; without it a
   text, Markdown, PDF or image file opens in its macOS app after you confirm.
 - `d` runs outside the session sandbox (the `os` grant, limited to the Trash commands below) because the Trash is
-  outside the workspace. It uses the first that runs: `/usr/bin/trash` (macOS 15 and later), a `trash` on `PATH`,
-  `gio trash` (Linux), then Finder through `osascript`, which macOS may ask you to allow. Without any of them `d` says
-  so; use `D`.
+  outside the workspace. It uses the first that runs: `/usr/bin/trash` (macOS 15 and later), a `trash` on `PATH`, then
+  Finder through `osascript`, which macOS may ask you to allow. Without any of them `d` says so; use `D`. Only macOS
+  can keep a program outside the sandbox off the network, so on Linux `d` always says so.
 - Rename, move and `D` run in the session sandbox, so they work only inside the workspace and where the sandbox allows
   writes.
 - A directory lists its first 1,000 entries (fewer when names are long), and the current column shows the 150 around

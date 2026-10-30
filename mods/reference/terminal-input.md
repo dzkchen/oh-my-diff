@@ -140,6 +140,7 @@ component's owner and also reports, with `origin` `user` or `mod`:
 | `scroll` | A pane's `offset`. |
 | `pointer` | Cell-relative `{column, row, action, button}`. |
 | `open` / `close` | Panes and dialogs (`ui_composition_v1`). |
+| `exit`, `title`, `bell` and `notify` | A `terminal` component's program, as described under [the terminal pane extension](terminal-operations.md#terminal-pane-extension-terminal_pty_v2) (experimental). |
 
 The other kinds are described with their sources: `input` under [Component key and paste
 input](#component-key-and-paste-input-terminal_input_v1), `pointer` under [Pointer events](#pointer-events), and

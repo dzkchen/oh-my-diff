@@ -151,11 +151,11 @@ test('a branch without commits of its own, or the default branch, ranks by plain
   assert.deepEqual(main.logs.map(argv => argv.includes('--not')), [false]);
 });
 
-test('quoted mentions keep spaces and escapes', () => {
-  const text = 'see @"src/a b.ts", @"docs/say \\"hi\\".md" and @plain/c.ts';
+test('quoted mentions keep spaces, escapes and a trailing dot', () => {
+  const text = 'see @"src/a b.ts", @"docs/say \\"hi\\".md", @"lib/v1." and @plain/c.ts';
   const queued = run('intercept', { surface: 'input', input: { text, attachments: 0 }, origin: { caller: 'user' } },
     call => ({ result: { text: call.arguments.input.text }, trace: [] }), '0').state;
-  assert.deepEqual(queued, ['src/a b.ts', 'docs/say "hi".md', 'plain/c.ts']);
+  assert.deepEqual(queued, ['src/a b.ts', 'docs/say "hi".md', 'lib/v1.', 'plain/c.ts']);
 });
 
 test('names with tabs, newlines and spaces parse from NUL-separated Git output, limited to the session folder', () => {

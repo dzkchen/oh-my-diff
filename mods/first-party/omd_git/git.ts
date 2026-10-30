@@ -49,8 +49,9 @@ export const summary = (text: string) => {
   return [...errors, ...rest, ...hints].join(' ');
 };
 
-export const parseStatus = (out: string): { head: Head; files: Change[] } => {
+export const parseStatus = (out: string, truncated = false): { head: Head; files: Change[]; more: boolean } => {
   const records = out.split('\0');
+  if (truncated) records.pop();
   const field = (key: string) => records.find(record => record.startsWith(`# branch.${key} `))?.slice(`# branch.${key} `.length) ?? '';
   const branch = field('head');
   const ab = field('ab');
@@ -61,13 +62,13 @@ export const parseStatus = (out: string): { head: Head; files: Change[] } => {
     const record = records[index];
     const kind = record[0];
     if (kind === '?') files.push({ path: record.slice(2), kind, x: '?', y: '?' });
-    else if (kind === '1' || kind === '2' || kind === 'u') {
+    else if (kind === '1' || kind === 'u' || (kind === '2' && index + 1 < records.length)) {
       const change: Change = { path: record.split(' ').slice(PATH_FIELD[kind]).join(' '), kind, x: record[2].replace('.', ' '), y: record[3].replace('.', ' ') };
       if (kind === '2') change.orig = records[++index];
       files.push(change);
     }
   }
-  return { head, files: files.slice(0, ROWS) };
+  return { head, files: files.slice(0, ROWS), more: truncated || files.length > ROWS };
 };
 
 export const headline = ({ branch, upstream, ab }: Head) => {

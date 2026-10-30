@@ -238,7 +238,8 @@ fn active_workers(state: &State) -> usize {
     state
         .workers
         .values()
-        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle)
+        // A closing worker's own thread has ended; its running descendants count for it.
+        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle && !worker.closing)
         .count()
 }
 

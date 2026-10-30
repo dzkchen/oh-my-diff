@@ -25,6 +25,7 @@ pub mod peers;
 pub mod plan_routes;
 pub mod power;
 pub mod process_raster;
+pub mod program_trust;
 pub mod resource_data;
 pub mod route_writes;
 pub mod scoped_data;

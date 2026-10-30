@@ -18,7 +18,7 @@ terminal entries. The details are on these pages:
 A mod's `terminal` handler receives the `terminal` event, `{event, ledger, identity?, presentation?, client?,
 clients?}`, and returns a `TerminalPatch` (the same type as `TerminalView`) or null. The host composes every mod's
 patch into one view. The terminal surface's host features are `terminal_surface_v1`, `terminal_media_v1`,
-`terminal_prompt_v1` and `terminal_pty_v1`.
+`terminal_prompt_v1` and `terminal_pty_v1`; `terminal_pty_v2` is experimental.
 
 | Term | Type in `api.d.ts` | Meaning | Details |
 | --- | --- | --- | --- |
@@ -39,7 +39,7 @@ only" means no page describes the field beyond its type.
 
 | Field | Type | Status | Details |
 | --- | --- | --- | --- |
-| `welcome` | `{show_while_composing?}` | frozen | [`welcome` site](layout-and-styling.md#welcome-site) |
+| `welcome` | `{show_while_composing?, hidden?}` | frozen; `hidden` is experimental | [`welcome` site](layout-and-styling.md#welcome-site) |
 | `session_title_suffix` | string | frozen | [Title suffix and greeting](layout-and-styling.md#title-suffix-and-greeting) |
 | `greeting` | string | frozen | [Title suffix and greeting](layout-and-styling.md#title-suffix-and-greeting) |
 | `title` | string | frozen | [Default styling](layout-and-styling.md#default-styling) |
@@ -164,13 +164,15 @@ These terminal entries are experimental in the conformance registry or in
 | Render sites `user_message`, `tool_result`, `turn_duration`, `notice`, `session_mode`, `composer_hint` | [Render hooks](render-hooks.md#render-components) |
 | View fields `foreground`, `background`, `panels`, `header`, `footer`, `placeholder`, `surface_styles`, `key_contexts`; the `header` site | [View fields](#view-fields) |
 | Layout leaf `title` (`terminal_layout_title_v1`) and `style.focus` | [Layout and styling](layout-and-styling.md#layouts-and-component-types) |
-| The `dock` component event fields `content`, `target`, `edge` (`terminal_layout_dock_v1`) | [Layout and styling](layout-and-styling.md#layout-region-sizing-split-resize-and-tab-select) |
+| The `dock` component event fields `content`, `target`, `edge`, `columns`, `rows` (`terminal_layout_dock_v1`) | [Layout and styling](layout-and-styling.md#layout-region-sizing-split-resize-and-tab-select) |
 | `code` component `start` | [Layout and styling](layout-and-styling.md#code-highlighting-terminal_code_highlight_v1) |
 | Focus regions, `key_contexts`, the `region` and `help` key actions, `keys: 'all'` (`terminal_focus_v1`) | [Terminal input](terminal-input.md#focus-regions-key-contexts-and-help-terminal_focus_v1) |
 | The `view` and `focus` events | [Terminal input](terminal-input.md#component_event) |
 | The `component_change` and `composer_key` interceptors | [Terminal input](terminal-input.md#component_change-interceptor), [Commands and composer](commands-and-composer.md#composer_key-interceptor) |
 | `terminal.panes` | [Terminal operations](terminal-operations.md#terminalpane-and-terminalpanes) |
 | `terminal.panel` navigation fields (`terminal_panel_navigation_v1`) | [Terminal operations](terminal-operations.md#terminalpanel) |
-| `terminal` event `omd_version` and `sites` | [Terminal operations](terminal-operations.md#terminal-event-client) |
+| The terminal pane extension (`terminal_pty_v2`): `autofocus`, `terminal.pty` `files`, and the `exit`, `title`, `bell` and `notify` component events | [Terminal operations](terminal-operations.md#terminal-pane-extension-terminal_pty_v2) |
+| `welcome: {hidden}` (`terminal_welcome_hidden_v1`) | [`welcome` site](layout-and-styling.md#welcome-site) |
+| `terminal` event `omd_version`, `welcome`, `chat`, `colors` and `sites` | [Terminal operations](terminal-operations.md#terminal-event-client) |
 | `builtins.invoke` | [Commands and composer](commands-and-composer.md#builtinsinvoke-and-apibuiltins) |
 | `api.uiState` and command views | [Experimental session UI state](#experimental-session-ui-state) |

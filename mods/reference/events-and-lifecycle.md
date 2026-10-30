@@ -53,7 +53,7 @@ no page describes the event beyond its type. An event marked experimental may ch
 | `process_event` | `{session, kind: 'output', bytes}` or `{session, kind: 'exit'}` | nothing | `api.on` | frozen | [Managed processes](managed-processes.md#process-notifications) |
 | `timer` | `{key}` | nothing | `api.on` | frozen | [Timers](#timers-timers_v1) |
 | `channel` | `{publisher, channel, data, correlation, sequence, dropped}` | nothing | `api.on` | frozen | [`events.publish`](#eventspublish) |
-| `component_event` | `{component, thread_id, kind, ...}` | nothing | `api.on` | frozen; experimental fields: `content`, `target`, `edge` | [Terminal input](terminal-input.md#component_event) |
+| `component_event` | `{component, thread_id, kind, ...}` | nothing | `api.on` | frozen; experimental fields: `content`, `target`, `edge`, `columns`, `rows` | [Terminal input](terminal-input.md#component_event) |
 | `component_post` | `{component, module, client?, data}` | nothing | `api.on` | frozen | [Terminal input](terminal-input.md#component-module-handlers) |
 | `view` | `{phase, view, view_id, dropped?}` | nothing | `api.on` | experimental | [Terminal input](terminal-input.md#component_event) |
 | `focus` | `{focused, dropped?}` | nothing | `api.on` | experimental | [Terminal input](terminal-input.md#component_event) |

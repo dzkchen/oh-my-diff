@@ -29,6 +29,7 @@ policy and protection.
 | [`omd-mod credentials STORE`](credentials.md#omd-mod-credentials) | List credential profiles (id, label, kind, provider, origin, status) without secret material |
 | `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN` | Store stdin as a secret owned by `MOD_ID` (replacing that mod's same-label secret) and print the profile |
 | `omd-mod authorize-runner STORE` | With the [authority broker](protected-authority.md) deployed, grant the `omd-runner` beside this `omd-mod` as the store's runner (the installer runs it after each update); without the broker it does nothing |
+| [`omd-mod trust-program STORE MOD_ID PROGRAM`](authority-grants.md#os_access-manifest-field) | Pin an unsandboxed program for a mod ahead of time, for headless runs; MOD_ID must be an active mod whose `os_access` lists the program |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
 | `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Also grants the `omd-runner` beside this `omd-mod` as the runner; imports no package-source provenance. |
 

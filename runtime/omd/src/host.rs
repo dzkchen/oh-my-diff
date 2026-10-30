@@ -501,6 +501,7 @@ impl Drop for Child {
 }
 
 /// Starts `command` as the leader of a new session without a controlling terminal; its environment must already be cleared and set in full.
+/// On macOS `POSIX_SPAWN_SETSID` does this without forking the multithreaded host, which a `pre_exec` hook would make std do.
 #[cfg(target_os = "macos")]
 fn spawn_session(command: &Command, stdin: bool) -> std::io::Result<Child> {
     use std::ffi::CString;
@@ -1370,6 +1371,17 @@ impl Host<'_> {
             .is_some_and(|expected| *expected != digest)
         {
             return Err("exec_program_changed".into());
+        }
+        if unrestricted.is_some()
+            && !crate::program_trust::ensure(
+                self.data_root,
+                caller.id,
+                &program,
+                &digest,
+                self.active,
+            )?
+        {
+            return Err("exec_program_declined".into());
         }
         let cwd = match (input.cwd.as_deref(), unrestricted) {
             (None | Some("") | Some("."), _) => repository.clone(),

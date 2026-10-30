@@ -35,6 +35,8 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - Layout leaf `title` (`terminal_layout_title_v1`).
 - Dragging a layout pane to dock it: the `content`, `target` and `edge` fields of the `dock` component event
   (`terminal_layout_dock_v1`).
+- The terminal pane extension: keys, mouse, cursor, OSC signals, session directories, binary pins and `autofocus`
+  (`terminal_pty_v2`), added after 1.0.0.
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
 - `tools.original` (`tool_original_v1`), added after 1.0.0.
 - The `omd-mod-author cost` report, added after 1.0.0.
@@ -63,8 +65,8 @@ These frozen entries have experimental fields:
 | Frozen entry | Experimental fields |
 | --- | --- |
 | `events:agent` | `provider`, `model`, `billing` |
-| `events:component_event` | `content`, `target`, `edge` |
-| `events:terminal` | `omd_version`, `sites` |
+| `events:component_event` | `content`, `target`, `edge`, `columns`, `rows` |
+| `events:terminal` | `omd_version`, `welcome`, `chat`, `colors`, `sites` |
 | `replacements:tool_batch` | `success_per_call` |
 | `intercepts:tool` | `value`, `bytes` |
 | `operations:agents.inventory` | `provider`, `model`, `billing` |
@@ -77,6 +79,7 @@ These frozen entries have experimental fields:
 | `components:code` | `start` |
 | `view_fields:keybindings` | `region`, `help` |
 | `view_fields:layout` | `title`, `focus` |
+| `view_fields:welcome` | `hidden` |
 
 ### Not provided
 

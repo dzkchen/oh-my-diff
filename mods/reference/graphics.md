@@ -119,7 +119,8 @@ Both refuse before queueing.
 
 `underlay: {raster: KEY}` draws one of the mod's own cell rasters under the whole fullscreen screen, behind the
 conversation, the prompt box and the footer. It is experimental and exclusive: the first mod in composition order
-owns it, and later claims become `terminal.conflicts` entries.
+owns it, and later claims become `terminal.conflicts` entries. A raster key another mod already draws is refused the
+same way: the underlay is dropped and the conflict names that mod.
 
 - The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
   raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a

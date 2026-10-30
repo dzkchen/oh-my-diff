@@ -58,15 +58,15 @@ keys of the panel you're in. Esc returns to the chat. For example, in Files, `Sp
 
 | Key | Where | Does |
 | --- | --- | --- |
-| `1`–`5` | everywhere except Hunks | Status, Files, Branches, Commits, Stash |
-| `h` / `l` | everywhere except Hunks | Previous / next panel |
+| `1`–`5` | outside hunks | Status, Files, Branches, Commits, Stash |
+| `h` / `l` | outside hunks | Previous / next panel (in hunks `h` goes back to the files) |
 | `j` / `k` | everywhere | Next / previous item; the main view follows |
 | `J` / `K` | everywhere | Scroll the main view |
 | `R` | everywhere | Refresh, and look for a repository again |
-| `P` / `p` | everywhere | Push / pull, after you confirm (a branch without an upstream is pushed to `origin` and tracked; a detached HEAD isn't pushed). When the remote rejects a push that isn't a fast-forward, as after an amend or reword, it offers `push --force-with-lease` |
+| `P` / `p` | everywhere | Push / pull, after you confirm (a branch without an upstream is pushed to `origin` and tracked; a detached HEAD isn't pushed). When the remote rejects the push and the branch has diverged from its upstream, as after an amend or reword, it offers `push --force-with-lease`; a branch that is only behind, or new here while `origin` has its name, is told to pull first |
 | `m` | everywhere | Continue or abort the rebase, merge, cherry-pick or revert in progress (shown in Status) |
 | `@` | everywhere | Add the selection to the prompt: an `@` mention for a file, the hunk as a diff block, or a branch, commit or stash reference |
-| `Space` | Files | Stage or unstage the file; on a conflicted file, mark it resolved after you confirm |
+| `Space` | Files | Stage or unstage the file (a staged rename with its old path); on a conflicted file, mark it resolved after you confirm |
 | `a` | Files | Stage everything, or unstage everything when all is staged |
 | `d` | Files | Discard the file's changes (a staged rename restores the old path), or delete an untracked file, after you confirm |
 | `Enter` | Files | Stage hunks of the file (an untracked or binary file has none: `Space` stages it whole) |
@@ -90,10 +90,12 @@ amend also undoes its fixup commit while HEAD is still that commit.
 | `/git` | Show the repository and usage |
 | `/git refresh` | Reload the panel |
 
-The panel reloads when you act in it, when a turn ends, when the session's directory changes and when files or the
-repository's Git metadata (HEAD, index, refs) change on disk. It uses a `workspace.watch` rather than polling, so a
-commit, checkout or fetch made in another terminal shows at once. It doesn't reload while its tab isn't in the dock,
-and it skips the watch event caused by your own action in the panel, because the panel has already reloaded.
+The panel reloads when you act in it, when the session's directory changes and when files or the repository's Git
+metadata (HEAD, index, refs) change on disk. It uses a `workspace.watch` rather than polling, so a commit, checkout
+or fetch made in another terminal shows at once. A file edit reloads only the status; branches, commits and stashes
+reload when HEAD or a ref changes. Without the watch, or in a repository other than the workspace's, it also reloads
+when a turn ends. It doesn't reload while its tab isn't in the dock, and it skips the watch event caused by your own
+action in the panel, because the panel has already reloaded.
 
 ## Settings
 

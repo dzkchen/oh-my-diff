@@ -1738,16 +1738,64 @@ fn an_underlay_never_takes_a_raster_another_mod_already_draws() {
     let other = package(
         &root,
         "other",
-        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'}}));",
+        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'},welcome:{hidden:true}}));",
         &["terminal"],
     );
     trust(&store, &other, &["terminal"]);
     let view = host(&temp).terminal_view(json!({}), || true);
     assert_eq!(view.component_owners["shared"], "fixture");
     assert_eq!(
+        view.view.welcome.as_ref().map(|welcome| welcome.hidden),
+        Some(false)
+    );
+    assert_eq!(
         view.view.raster_declared("shared"),
         Some((Some(4), Some(2)))
     );
+    assert_eq!(view.view.underlay, None);
+    assert!(
+        view.conflicts
+            .iter()
+            .any(|conflict| conflict.field == "underlay" && conflict.rejected == "other")
+    );
+}
+
+#[test]
+fn a_later_welcome_writer_keeps_the_underlay_owners_hidden_welcome() {
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:true}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let view = host(&temp).terminal_view(json!({}), || true);
+    let welcome = view.view.welcome.unwrap();
+    assert!(welcome.show_while_composing && welcome.hidden);
+
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true,show_while_composing:true}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:false}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let welcome = host(&temp)
+        .terminal_view(json!({}), || true)
+        .view
+        .welcome
+        .unwrap();
+    assert!(welcome.show_while_composing && welcome.hidden);
 }
 
 #[test]
@@ -2344,6 +2392,26 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
         "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env',write:true}))",
         &["commands", "exec", "fs.write"],
     );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let capabilities = ["commands", "exec", "os", "pty"];
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => api.command('open',()=>api.host.call('terminal.pty',{action:'start',session:'s',program:'/bin/echo',sandbox:'none'}))",
+        &capabilities,
+    );
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+    manifest["os_access"] = json!({"programs": ["/bin/echo"]});
+    std::fs::write(
+        path.join("mod.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    trust(&store, &path, &capabilities);
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let (temp, _, _) = fixture(
         "export default (api: any) => api.command('count',()=>{ api.atom<number>('n', 0).set(1); return null; })",

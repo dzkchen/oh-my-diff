@@ -18,7 +18,15 @@ export default function activate(api: ModAPI) {
     api.state.set(null);
     return { display: 'Shell stopped' };
   });
+  api.on('component_event', event => {
+    if (event.component !== 'shell_pane') return;
+    if (event.kind === 'exit') {
+      api.host.tryCall('terminal.pty', { action: 'stop', session: 'shell' });
+      api.state.set(null);
+    }
+    if (event.kind === 'notify') api.host.call('terminal.notice', { text: `Shell: ${event.text}` });
+  });
   api.on('terminal', () => api.state.get() === 'shell'
-    ? { keybindings: { 'Alt+t': { focus: 'shell_pane' } }, sites: { 'shell_pane/shell': { components: [{ type: 'terminal', id: 'shell_pane', label: 'Shell', session: 'shell', height: 16 }] } } }
+    ? { keybindings: { 'Alt+t': { focus: 'shell_pane' } }, sites: { 'shell_pane/shell': { components: [{ type: 'terminal', id: 'shell_pane', label: 'Shell', session: 'shell', height: 16, autofocus: true }] } } }
     : null);
 }

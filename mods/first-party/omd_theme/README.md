@@ -74,9 +74,11 @@ sessions.
   during turns, take over `/theme` and read `TERM_PROGRAM`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR` and
   `WEZTERM_EXECUTABLE`. The capabilities are `terminal`, `commands`, `store`, `events`, `lifecycle`, `builtins` and
   `exec`.
-- It needs an OMD host with the screen underlay (`terminal_underlay_v1`).
-- Animation runs eight frames a second while the session is idle and sends only the changed part of each row. A
-  still or paused scene redraws nothing.
+- It needs an OMD host with the screen underlay (`terminal_underlay_v1`), the terminal colors (`terminal_colors_v1`)
+  and the welcome area and its hiding (`terminal_welcome_area_v1`, `terminal_welcome_hidden_v1`; the scene replaces
+  the welcome while it owns the underlay). The chat column (`terminal_chat_area_v1`) is optional.
+- Animation runs eight frames a second while the session is idle and sends only the changed cells. A still or paused
+  scene redraws nothing.
 - A change made in one session reaches other running sessions at their next new session.
 
 ## More

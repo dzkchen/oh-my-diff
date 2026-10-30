@@ -537,6 +537,8 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - Layout leaf `title` (`terminal_layout_title_v1`).
 - Dragging a layout pane to dock it: the `content`, `target` and `edge` fields of the `dock` component event
   (`terminal_layout_dock_v1`).
+- The terminal pane extension: keys, mouse, cursor, OSC signals, session directories, binary pins and `autofocus`
+  (`terminal_pty_v2`), added after 1.0.0.
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
 - `tools.original` (`tool_original_v1`), added after 1.0.0.
 - The `omd-mod-author cost` report, added after 1.0.0.
@@ -565,8 +567,8 @@ These frozen entries have experimental fields:
 | Frozen entry | Experimental fields |
 | --- | --- |
 | `events:agent` | `provider`, `model`, `billing` |
-| `events:component_event` | `content`, `target`, `edge` |
-| `events:terminal` | `omd_version`, `sites` |
+| `events:component_event` | `content`, `target`, `edge`, `columns`, `rows` |
+| `events:terminal` | `omd_version`, `welcome`, `chat`, `colors`, `sites` |
 | `replacements:tool_batch` | `success_per_call` |
 | `intercepts:tool` | `value`, `bytes` |
 | `operations:agents.inventory` | `provider`, `model`, `billing` |
@@ -579,6 +581,7 @@ These frozen entries have experimental fields:
 | `components:code` | `start` |
 | `view_fields:keybindings` | `region`, `help` |
 | `view_fields:layout` | `title`, `focus` |
+| `view_fields:welcome` | `hidden` |
 
 #### Not provided
 
@@ -1072,6 +1075,7 @@ policy and protection.
 | [`omd-mod credentials STORE`](reference/credentials.md#omd-mod-credentials) | List credential profiles (id, label, kind, provider, origin, status) without secret material |
 | `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN` | Store stdin as a secret owned by `MOD_ID` (replacing that mod's same-label secret) and print the profile |
 | `omd-mod authorize-runner STORE` | With the [authority broker](reference/protected-authority.md) deployed, grant the `omd-runner` beside this `omd-mod` as the store's runner (the installer runs it after each update); without the broker it does nothing |
+| [`omd-mod trust-program STORE MOD_ID PROGRAM`](reference/authority-grants.md#os_access-manifest-field) | Pin an unsandboxed program for a mod ahead of time, for headless runs; MOD_ID must be an active mod whose `os_access` lists the program |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
 | `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Also grants the `omd-runner` beside this `omd-mod` as the runner; imports no package-source provenance. |
 
@@ -1666,8 +1670,17 @@ needs `exec`.
 - A program is `*`, a bare name resolved on `PATH` outside the repository, or an absolute path.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
+- Every unsandboxed `exec.run`, `process.start` and `terminal.pty` start asks once per mod and binary ("Run NAME for
+  mod ID?") and again when the binary's hash changes, as after an upgrade. A callback outside a command waits for the
+  answer.
+- The three share the pins in `program-pins.json` in the mod store. `omd-mod trust-program STORE MOD_ID PROGRAM` pins a
+  binary ahead of time for headless runs, where an unpinned run fails `program_unconfirmed` and names the resolved path
+  to pass as PROGRAM. MOD_ID must be an active mod whose `os_access` lists the program.
+- A declined prompt fails `exec_program_declined` or `process_program_declined`, and a terminal start returns
+  `{status: 'declined'}`.
 - Unsandboxed runs get the user's `HOME`, `USER`, `LOGNAME`, `SHELL`, locale and `SSH_AUTH_SOCK`, so `ssh`-based tools
-  reach the user's SSH agent; other variables come only from declared `exec_environment` names.
+  reach the user's SSH agent; the full environment is listed under
+  [`exec.run` with `sandbox: "none"`](reference/running-commands.md#execrun-with-sandbox-none).
 
 #### `approves` manifest field
 
@@ -2795,6 +2808,8 @@ may connect to. It needs the `unix_sockets` capability (experimental).
 With the `os` grant, `sandbox: "none"` runs a program listed in `os_access` without the session sandbox.
 
 - `cwd` may be absolute.
+- The first run of a binary asks the user, who can decline (`exec_program_declined`); see [Authority
+  grants](reference/authority-grants.md#os_access-manifest-field).
 - A program reached through a symlink outside the repository runs as the link, so a version-manager shim such as
   `node` from mise or Volta runs the version it manages.
 - The environment is cleared and then holds `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale,
@@ -3002,9 +3017,11 @@ The independent example also shows a direct transaction for a mod tool.
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
 - `git: true` (`workspace_watch_git_v1`, an experimental field) also reports changes to the repository's Git metadata,
-  found from the workspace root upward (linked worktrees, submodules and separate Git directories included): `HEAD`,
-  `index`, `packed-refs` and `refs/…`, as paths `.git/HEAD` and so on with `before` and `after` null. Lock files and
-  objects are left out. Outside a repository the call fails `watch_git_unavailable`.
+  found from the workspace root upward (linked worktrees and submodules included): `HEAD`, `index`, `packed-refs` and
+  `refs/…`, as paths `.git/HEAD` and so on with `before` and `after` null. Lock files and objects are left out. A `.git`
+  file is followed only to a Git directory that proves the link: a worktree's backlink, or a submodule directory under
+  an enclosing repository's `.git/modules`. Outside a repository, and for a `--separate-git-dir` repository or a
+  submodule of a linked worktree, the call fails `watch_git_unavailable`.
 
 Watches end and deliver as described in [Callback delivery](reference/events-and-lifecycle.md#callback-delivery).
 
@@ -3274,7 +3291,8 @@ Experimental (`process_streams_v1`): under `raw` the host reads stdout and stder
 
 With the `os` grant, `sandbox: "none"` starts a listed program (`path` and `sha256` still pinned) with the same
 environment rules as [unsandboxed `exec.run`](reference/running-commands.md#execrun-with-sandbox-none); `network` comes from
-`os_access`. The host keeps ownership, limits, cancellation and process-group teardown, and stops it when the grant
+`os_access`. The first start of a binary asks the user, who can decline (`process_program_declined`); see [Authority
+grants](reference/authority-grants.md#os_access-manifest-field). The host keeps ownership, limits, cancellation and process-group teardown, and stops it when the grant
 expires or is revoked, the mod reloads or is disabled, or its source changes.
 
 #### `process.start` framing
@@ -3382,7 +3400,7 @@ no page describes the event beyond its type. An event marked experimental may ch
 | `process_event` | `{session, kind: 'output', bytes}` or `{session, kind: 'exit'}` | nothing | `api.on` | frozen | [Managed processes](reference/managed-processes.md#process-notifications) |
 | `timer` | `{key}` | nothing | `api.on` | frozen | [Timers](#timers-timers_v1) |
 | `channel` | `{publisher, channel, data, correlation, sequence, dropped}` | nothing | `api.on` | frozen | [`events.publish`](#eventspublish) |
-| `component_event` | `{component, thread_id, kind, ...}` | nothing | `api.on` | frozen; experimental fields: `content`, `target`, `edge` | [Terminal input](reference/terminal-input.md#component_event) |
+| `component_event` | `{component, thread_id, kind, ...}` | nothing | `api.on` | frozen; experimental fields: `content`, `target`, `edge`, `columns`, `rows` | [Terminal input](reference/terminal-input.md#component_event) |
 | `component_post` | `{component, module, client?, data}` | nothing | `api.on` | frozen | [Terminal input](reference/terminal-input.md#component-module-handlers) |
 | `view` | `{phase, view, view_id, dropped?}` | nothing | `api.on` | experimental | [Terminal input](reference/terminal-input.md#component_event) |
 | `focus` | `{focused, dropped?}` | nothing | `api.on` | experimental | [Terminal input](reference/terminal-input.md#component_event) |
@@ -5088,7 +5106,7 @@ terminal entries. The details are on these pages:
 A mod's `terminal` handler receives the `terminal` event, `{event, ledger, identity?, presentation?, client?,
 clients?}`, and returns a `TerminalPatch` (the same type as `TerminalView`) or null. The host composes every mod's
 patch into one view. The terminal surface's host features are `terminal_surface_v1`, `terminal_media_v1`,
-`terminal_prompt_v1` and `terminal_pty_v1`.
+`terminal_prompt_v1` and `terminal_pty_v1`; `terminal_pty_v2` is experimental.
 
 | Term | Type in `api.d.ts` | Meaning | Details |
 | --- | --- | --- | --- |
@@ -5109,7 +5127,7 @@ only" means no page describes the field beyond its type.
 
 | Field | Type | Status | Details |
 | --- | --- | --- | --- |
-| `welcome` | `{show_while_composing?}` | frozen | [`welcome` site](reference/layout-and-styling.md#welcome-site) |
+| `welcome` | `{show_while_composing?, hidden?}` | frozen; `hidden` is experimental | [`welcome` site](reference/layout-and-styling.md#welcome-site) |
 | `session_title_suffix` | string | frozen | [Title suffix and greeting](reference/layout-and-styling.md#title-suffix-and-greeting) |
 | `greeting` | string | frozen | [Title suffix and greeting](reference/layout-and-styling.md#title-suffix-and-greeting) |
 | `title` | string | frozen | [Default styling](reference/layout-and-styling.md#default-styling) |
@@ -5234,14 +5252,16 @@ These terminal entries are experimental in the conformance registry or in
 | Render sites `user_message`, `tool_result`, `turn_duration`, `notice`, `session_mode`, `composer_hint` | [Render hooks](reference/render-hooks.md#render-components) |
 | View fields `foreground`, `background`, `panels`, `header`, `footer`, `placeholder`, `surface_styles`, `key_contexts`; the `header` site | [View fields](#view-fields) |
 | Layout leaf `title` (`terminal_layout_title_v1`) and `style.focus` | [Layout and styling](reference/layout-and-styling.md#layouts-and-component-types) |
-| The `dock` component event fields `content`, `target`, `edge` (`terminal_layout_dock_v1`) | [Layout and styling](reference/layout-and-styling.md#layout-region-sizing-split-resize-and-tab-select) |
+| The `dock` component event fields `content`, `target`, `edge`, `columns`, `rows` (`terminal_layout_dock_v1`) | [Layout and styling](reference/layout-and-styling.md#layout-region-sizing-split-resize-and-tab-select) |
 | `code` component `start` | [Layout and styling](reference/layout-and-styling.md#code-highlighting-terminal_code_highlight_v1) |
 | Focus regions, `key_contexts`, the `region` and `help` key actions, `keys: 'all'` (`terminal_focus_v1`) | [Terminal input](reference/terminal-input.md#focus-regions-key-contexts-and-help-terminal_focus_v1) |
 | The `view` and `focus` events | [Terminal input](reference/terminal-input.md#component_event) |
 | The `component_change` and `composer_key` interceptors | [Terminal input](reference/terminal-input.md#component_change-interceptor), [Commands and composer](reference/commands-and-composer.md#composer_key-interceptor) |
 | `terminal.panes` | [Terminal operations](reference/terminal-operations.md#terminalpane-and-terminalpanes) |
 | `terminal.panel` navigation fields (`terminal_panel_navigation_v1`) | [Terminal operations](reference/terminal-operations.md#terminalpanel) |
-| `terminal` event `omd_version` and `sites` | [Terminal operations](reference/terminal-operations.md#terminal-event-client) |
+| The terminal pane extension (`terminal_pty_v2`): `autofocus`, `terminal.pty` `files`, and the `exit`, `title`, `bell` and `notify` component events | [Terminal operations](reference/terminal-operations.md#terminal-pane-extension-terminal_pty_v2) |
+| `welcome: {hidden}` (`terminal_welcome_hidden_v1`) | [`welcome` site](reference/layout-and-styling.md#welcome-site) |
+| `terminal` event `omd_version`, `welcome`, `chat`, `colors` and `sites` | [Terminal operations](reference/terminal-operations.md#terminal-event-client) |
 | `builtins.invoke` | [Commands and composer](reference/commands-and-composer.md#builtinsinvoke-and-apibuiltins) |
 | `api.uiState` and command views | [Experimental session UI state](#experimental-session-ui-state) |
 
@@ -5393,6 +5413,12 @@ The reserved `welcome` site renders bounded generic components centered in the o
 `welcome: {show_while_composing: true}` keeps the site visible with a draft, including while the slash command, file
 or mention popup is open; the default shows it only with an empty composer.
 
+`welcome: {hidden: true}` (`terminal_welcome_hidden_v1`, experimental) keeps the welcome area under the same rules, with
+Codex's own welcome and animation off, but draws no `welcome` site there. Use it when a mod fills the fresh screen
+another way, such as an underlay. `hidden` takes effect only for the mod that owns the composed underlay, so a later
+`welcome` writer can't un-hide it, not even by turning `show_while_composing` off, and a refused underlay brings the
+usual welcome back.
+
 - Accepted/running and resumed sessions, transcript selection/search, raw output and overlays suppress it.
 - Any history beyond the startup header and notices (a command's output, a rejected submission) hides it until a new
   thread, like Codex's own welcome.
@@ -5445,7 +5471,7 @@ Every `TerminalComponent` type in [`api.d.ts`](api.d.ts) with its fields (`?` ma
 | `diff` | `id, label, unified, selected?, height?, action?` | [Layout region sizing](#layout-region-sizing-split-resize-and-tab-select) |
 | `image` | `id, label, image, alt, height?, pointer?` | [Graphics](reference/graphics.md#image-component) |
 | `raster` (experimental) | `id, label, alt, width?, height?, pointer?` | [Graphics](reference/graphics.md#raster-component) |
-| `terminal` | `id, label, session, height?` | [`terminal.pty`](reference/terminal-operations.md#terminalpty) |
+| `terminal` | `id, label, session, height?, autofocus?` | [`terminal.pty`](reference/terminal-operations.md#terminalpty) |
 | `module` | `id, label, module, props?, height?, keys?, pointer?` | [Component modules](reference/terminal-input.md#component-modules-component_modules_v1) |
 | `slot` | none | [View limits](#view-limits) |
 | `native` | `style?` | [Render hooks](reference/render-hooks.md#render-interceptor-and-hook-results) |
@@ -5462,13 +5488,14 @@ rows left after the region's other components and gaps. In a row layout each get
   `tabs` node's path (`terminal_tabs_v1`), so the owner can keep `active` in its layout.
 - Releasing a drag that started on a `site:` leaf's top frame row (not a tab bar or split border) over another site leaf
   or the chat sends one `component_event {kind: 'dock', component, content, target, edge, columns, rows}`
-  (`terminal_layout_dock_v1`; `content`, `target` and `edge` are experimental fields). `component` is the dragged leaf's
-  path and `content` its `site:<name>`. `target` is the leaf path it was dropped on; for the chat it is the path of the
-  split holding the transcript and composer, or the transcript leaf without a composer. `edge` is `left`, `right`, `top`
-  or `bottom` over the outer quarter of the target and `center` over its middle, never over the chat. `columns` and
-  `rows` are the size of the area the layout was drawn in. While dragging, the host shades where the pane would land. It
-  changes nothing itself and sends nothing when the drag is cancelled with Esc or ends on the dragged leaf or outside
-  every zone, so the owner republishes its layout.
+  (`terminal_layout_dock_v1`; `content`, `target`, `edge`, `columns` and `rows` are experimental fields). `component`
+  is the dragged leaf's path and `content` its `site:<name>`. `target` is the leaf path it was dropped on; for the chat
+  it is the path of the split holding the transcript and composer, or the transcript leaf without a composer. `edge` is
+  `left`, `right`, `top` or `bottom` over the outer quarter of the target and `center` over its middle, never over the
+  chat. `columns` and `rows` are the size of the area the layout was drawn in. While dragging, the host tints where the
+  pane would land and draws its edge in the accent; cells it can't blend (including ANSI 0-15 backgrounds) keep their
+  color and get the edge reversed. It changes nothing itself and sends nothing when the drag is cancelled with Esc or
+  ends on the dragged leaf or outside every zone, so the owner republishes its layout.
 
 These go only to the mod whose view supplied the layout.
 
@@ -5762,6 +5789,7 @@ component's owner and also reports, with `origin` `user` or `mod`:
 | `scroll` | A pane's `offset`. |
 | `pointer` | Cell-relative `{column, row, action, button}`. |
 | `open` / `close` | Panes and dialogs (`ui_composition_v1`). |
+| `exit`, `title`, `bell` and `notify` | A `terminal` component's program, as described under [the terminal pane extension](reference/terminal-operations.md#terminal-pane-extension-terminal_pty_v2) (experimental). |
 
 The other kinds are described with their sources: `input` under [Component key and paste
 input](#component-key-and-paste-input-terminal_input_v1), `pointer` under [Pointer events](#pointer-events), and
@@ -5972,7 +6000,8 @@ Both refuse before queueing.
 
 `underlay: {raster: KEY}` draws one of the mod's own cell rasters under the whole fullscreen screen, behind the
 conversation, the prompt box and the footer. It is experimental and exclusive: the first mod in composition order
-owns it, and later claims become `terminal.conflicts` entries.
+owns it, and later claims become `terminal.conflicts` entries. A raster key another mod already draws is refused the
+same way: the underlay is dropped and the conflict names that mod.
 
 - The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
   raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a
@@ -6247,16 +6276,44 @@ command after confirmation, in the session sandbox without network (macOS) with 
 The confirmation names the program, write and network access and that the mod can type into the pane.
 
 With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with the real `HOME` (no `write` or
-`network` fields), skips the per-start confirmation and stops when the grant ends.
+`network` fields) and stops when the grant ends.
+
+- The host hashes the resolved program and asks once per mod and binary ("Allow and remember"). It starts without
+  asking while the hash matches and asks again when the binary changes, for example after a package manager upgrade.
+  Pins live in `program-pins.json` in the mod store and are shared with the other unsandboxed starts, as described in
+  [Authority grants](reference/authority-grants.md#os_access-manifest-field).
+- A declined prompt returns `{status: 'declined'}`. A start that reaches the spawn without that approval or a matching
+  pin fails `pty_program_unpinned`.
+- The pane gets the environment of an
+  [unsandboxed `exec.run`](reference/running-commands.md#execrun-with-sandbox-none), the mod's declared `exec_environment` names
+  included, plus `SSH_AUTH_SOCK`, `TERM=xterm-256color` and, on a 24-bit color terminal, `COLORTERM=truecolor`. 24-bit
+  colors are drawn at the terminal's color depth.
 
 Sessions:
 
 - Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod` in `host.json` `mod_limits`: four by
   default, up to sixteen, and sixteen in all).
 - Render only in terminal components owned by that mod.
-- Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads.
+- Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads. A stop
+  hangs up the program (SIGHUP) and kills it 2 s later if it still runs.
 - Queued requests and terminal input retain their original binding and cannot address a replacement session.
 - A focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
+
+#### Terminal pane extension (`terminal_pty_v2`)
+
+`terminal_pty_v2` (experimental) adds:
+
+| Addition | Behavior |
+| --- | --- |
+| Keys | xterm encodings: F1-F12, PgUp/PgDn, Insert, Home/End, Shift+Tab, modified arrows (`CSI 1;m X`), Alt as an Esc prefix, Ctrl+Space and Ctrl+symbol control bytes, application-cursor mode. |
+| Mouse | When the program enables mouse reporting, clicks, releases, drags, motion and the wheel go to it in its encoding (SGR, UTF-8 or X10) with modifiers. Otherwise the wheel scrolls the pane's scrollback, or sends Up/Down on the alternate screen. |
+| Drawing | A focused pane draws its cursor; wide characters take two cells; italic, underline and dim are kept. |
+| Signals | Title changes (OSC 0/2), the bell and OSC 9 / OSC 777 notifications reach the owner as `component_event` `title {title}`, `bell` and `notify {text}` (1 KiB, ten a second). The exit arrives once as `exit {session, exit_code, files}`. A drawn `terminal` component whose session isn't running (never started, stopped, or ended by the host on a thread switch, reload or restart) reports `exit {session, exit_code: null}` once, so the owner can drop its layout. |
+| Links | OSC 8 `http`/`https` links become terminal hyperlinks. |
+| Replies | The pane answers device attributes (`CSI c`), status (`CSI 5n`) and cursor position (`CSI 6n`) queries, as a terminal does. |
+| Clipboard | An OSC 52 copy asks the user once per pane ("Allow for this pane"), then goes through the terminal's clipboard. A decline lasts for the pane. |
+| Session directory | `start {files: {NAME: text}}` (four files, 16 KiB each, names `[A-Za-z0-9._-]`) writes a private directory; every `{dir}` in `argv` is its path. The exit event and a `read` after the exit return its top-level regular files (64 KiB in all; symlinks and hard links are skipped), including files the program wrote. It is removed when the session stops or is replaced; one left behind when OMD quits is removed by the next start. Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach; sandboxed panes keep it in the scratch `HOME` they share, so other sandboxed panes can read it. Errors: `pty_files_invalid`. |
+| Focus | `autofocus: true` on the `terminal` component focuses it when it appears while nothing else has focus, and when its focus region is entered. A focused terminal shows a Ctrl+] hint until the first key; inside a focus region the first Ctrl+] leaves for the region and a second for the chat. A key for a terminal whose program has ended leaves it. When a focused terminal unmounts, focus returns to where it was before. |
 
 ### Terminal identity (`terminal_identity_v1`)
 

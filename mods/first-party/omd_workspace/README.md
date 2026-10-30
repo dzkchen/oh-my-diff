@@ -59,7 +59,8 @@ Pick a preset with `/workspace layout NAME`. `side: left` mirrors each one.
 Then rearrange it:
 
 - **Drag** a panel by its title row onto another panel. Dropping on an edge splits beside it, and dropping in the
-  center tabs with it. In a tab group, grab the frame line under the tab bar.
+  center tabs with it. In a tab group, grab the frame line under the tab bar. A panel drawn without a title or frame
+  can't be dragged; move it with `/workspace move`.
 - **Move** with `/workspace move PANEL left|right|up|down|tab`, or exchange two panels with
   `/workspace swap PANEL PANEL`. `PANEL` is a panel's number, title or id. Arguments split on spaces, so a title with
   spaces can only be named by its number or id. `chat` counts as a panel for `swap` only.
@@ -132,17 +133,19 @@ Other mods place their panels through the `omd.workspace` 1.2.0 service:
 
 | Method | Does |
 | --- | --- |
-| `register {id, title, site, tabs?, order?, placement?, replaces?}` | Adds or replaces a panel (see below). |
+| `register {id, title, site, tabs?, order?, placement?, show?, replaces?}` | Adds or replaces a panel (see below); one registered while the workspace is off shows when it is turned on. |
 | `unregister {id}` | Removes a panel. |
-| `panels` | The shown panels in order. |
+| `panels` | The shown panels in order; none while the workspace is off. |
 | `arrange {tree}` | Sets the whole arrangement, unless the user has arranged it or the `arrangement` setting holds a valid tree (`/workspace reset` clears the user's arrangement but not that setting). A tree is `"chat"`, a panel id, `{split: 'horizontal' \| 'vertical', children: [2-4], ratio?}` or `{tabs: [panel ids]}`, with `chat` once and outside tabs. A refused tree returns `{error}` with the reason. |
 | `arrangement {}` | `{tree, by: 'user' \| 'mod' \| 'settings', preset?}`: the arrangement with every shown panel. |
+| `mode {level, target?}` | Sets the screen mode like `/workspace mode`: `level` is `normal`, `half` or `full`, `target` is `chat` (the default), `dock` or a shown panel id. Unregistering the target clears it; returns `{error}` while the workspace is off. |
 
 `register` fields:
 
 - `id`: any id except a built-in or terminal panel's, `chat` or `dock`.
 - `site`: `<mod>/<name>`, drawn by the registering mod.
 - `tabs`: up to 4 `{title, site}` entries, giving the panel its own tab bar.
+- `show: true`: also brings it to the front of its tab group.
 - `placement {beside, edge, share?}`: where it first appears. `beside` is `chat` or a panel id, `edge` is `left`,
   `right`, `top`, `bottom` or `tab`, and `share` is 5–95 percent.
 - `replaces`: a built-in panel (`changes` or `terminal`) it stands in for. That panel is hidden unless the `panels`

@@ -74,6 +74,8 @@ may connect to. It needs the `unix_sockets` capability (experimental).
 With the `os` grant, `sandbox: "none"` runs a program listed in `os_access` without the session sandbox.
 
 - `cwd` may be absolute.
+- The first run of a binary asks the user, who can decline (`exec_program_declined`); see [Authority
+  grants](authority-grants.md#os_access-manifest-field).
 - A program reached through a symlink outside the repository runs as the link, so a version-manager shim such as
   `node` from mise or Volta runs the version it manages.
 - The environment is cleared and then holds `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale,

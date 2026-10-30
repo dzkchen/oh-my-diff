@@ -505,7 +505,21 @@ async fn run(
             .filter(|arguments| arguments.get("raster").is_some())
             .and_then(|_| super::expansion::blit_sink(core, lead, &caller));
         let thread = lead.thread.to_string();
+        let store = host.root.clone();
         let result = tokio::task::spawn_blocking(move || {
+            if request.operation == "process.start"
+                && request.arguments["sandbox"] == "none"
+                && let Some(access) = os_access.as_ref()
+            {
+                trust_start(
+                    access,
+                    &request.arguments,
+                    &authority.repository,
+                    &store,
+                    &id,
+                    &active,
+                )?;
+            }
             processes.call(
                 crate::managed_process::ProcessOwner {
                     thread: Some(&thread),
@@ -751,9 +765,66 @@ async fn run(
     }
 }
 
+fn trust_start(
+    access: &codex_omd::ModOsAccess,
+    arguments: &Value,
+    repository: &std::path::Path,
+    store: &std::path::Path,
+    id: &str,
+    active: &dyn Fn() -> bool,
+) -> Result<(), String> {
+    let (Some(name), Some(path), Some(sha256)) = (
+        arguments["name"].as_str(),
+        arguments["path"].as_str(),
+        arguments["sha256"].as_str(),
+    ) else {
+        return Err("process_program_or_arguments_invalid".to_owned());
+    };
+    let path = std::path::Path::new(path);
+    if codex_omd::host::unrestricted_program(access, name, repository)? != path {
+        return Err("process_program_or_arguments_invalid".to_owned());
+    }
+    if codex_omd::host::program_hash(path).ok().as_deref() != Some(sha256) {
+        return Err("process_executable_changed".to_owned());
+    }
+    if !codex_omd::program_trust::ensure(store, id, path, sha256, active)? {
+        return Err("process_program_declined".to_owned());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsandboxed_process_start_checks_the_program_before_asking() {
+        let access = codex_omd::ModOsAccess {
+            programs: vec!["sh".into()],
+            network: true,
+        };
+        let (repository, store) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let sh = codex_omd::host::unrestricted_program(&access, "sh", repository.path()).unwrap();
+        let start = |path: &std::path::Path| {
+            trust_start(
+                &access,
+                &json!({"name": "sh", "path": path, "sha256": "aa"}),
+                repository.path(),
+                store.path(),
+                "m",
+                &|| true,
+            )
+        };
+        assert_eq!(
+            start(std::path::Path::new("/bin/ls")),
+            Err("process_program_or_arguments_invalid".into())
+        );
+        assert_eq!(start(&sh), Err("process_executable_changed".into()));
+        assert_eq!(
+            codex_omd::program_trust::pinned(store.path(), "m", &sh),
+            None
+        );
+    }
 
     #[test]
     fn live_exec_write_reserves_the_workspace_across_sessions() {

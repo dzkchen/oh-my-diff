@@ -165,7 +165,7 @@ export default function activate(api: ModAPI) {
       return;
     }
     const partial = !quiet && same && tick.drawn > 0;
-    const rects = partial ? changed(frame(tick.drawn), next) : bands({ x: 0, y: 0, width, height });
+    const rects = partial ? changed(frame(tick.drawn), next, BAND_CELLS) : bands({ x: 0, y: 0, width, height });
     let lost = false;
     for (const band of rects) {
       const reply = api.host.tryCall('terminal.blit', { key: view.raster, rect: band, packed: pack(next, band) });
@@ -192,10 +192,7 @@ export default function activate(api: ModAPI) {
     if (!drawable({ ...s, view })) return {};
     const patch: TerminalPatch = { underlay: { raster: view.raster } };
     if (view.phase !== 'fresh') return patch;
-    patch.welcome = { show_while_composing: true };
-    return { ...patch, sites: { welcome: { mode: 'wrap', components: [
-      { type: 'box', id: 'omd_theme_hidden', label: 'Welcome hidden by the theme', min_width: 500, children: [{ type: 'slot' }] },
-    ] } } };
+    return { ...patch, welcome: { show_while_composing: true, hidden: true } };
   });
 
   const remembered = (): Remembered => api.uiState.get() as Remembered | null ?? {};

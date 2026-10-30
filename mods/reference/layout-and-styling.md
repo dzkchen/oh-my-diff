@@ -32,6 +32,12 @@ The reserved `welcome` site renders bounded generic components centered in the o
 `welcome: {show_while_composing: true}` keeps the site visible with a draft, including while the slash command, file
 or mention popup is open; the default shows it only with an empty composer.
 
+`welcome: {hidden: true}` (`terminal_welcome_hidden_v1`, experimental) keeps the welcome area under the same rules, with
+Codex's own welcome and animation off, but draws no `welcome` site there. Use it when a mod fills the fresh screen
+another way, such as an underlay. `hidden` takes effect only for the mod that owns the composed underlay, so a later
+`welcome` writer can't un-hide it, not even by turning `show_while_composing` off, and a refused underlay brings the
+usual welcome back.
+
 - Accepted/running and resumed sessions, transcript selection/search, raw output and overlays suppress it.
 - Any history beyond the startup header and notices (a command's output, a rejected submission) hides it until a new
   thread, like Codex's own welcome.
@@ -84,7 +90,7 @@ Every `TerminalComponent` type in [`api.d.ts`](../api.d.ts) with its fields (`?`
 | `diff` | `id, label, unified, selected?, height?, action?` | [Layout region sizing](#layout-region-sizing-split-resize-and-tab-select) |
 | `image` | `id, label, image, alt, height?, pointer?` | [Graphics](graphics.md#image-component) |
 | `raster` (experimental) | `id, label, alt, width?, height?, pointer?` | [Graphics](graphics.md#raster-component) |
-| `terminal` | `id, label, session, height?` | [`terminal.pty`](terminal-operations.md#terminalpty) |
+| `terminal` | `id, label, session, height?, autofocus?` | [`terminal.pty`](terminal-operations.md#terminalpty) |
 | `module` | `id, label, module, props?, height?, keys?, pointer?` | [Component modules](terminal-input.md#component-modules-component_modules_v1) |
 | `slot` | none | [View limits](#view-limits) |
 | `native` | `style?` | [Render hooks](render-hooks.md#render-interceptor-and-hook-results) |
@@ -101,13 +107,14 @@ rows left after the region's other components and gaps. In a row layout each get
   `tabs` node's path (`terminal_tabs_v1`), so the owner can keep `active` in its layout.
 - Releasing a drag that started on a `site:` leaf's top frame row (not a tab bar or split border) over another site leaf
   or the chat sends one `component_event {kind: 'dock', component, content, target, edge, columns, rows}`
-  (`terminal_layout_dock_v1`; `content`, `target` and `edge` are experimental fields). `component` is the dragged leaf's
-  path and `content` its `site:<name>`. `target` is the leaf path it was dropped on; for the chat it is the path of the
-  split holding the transcript and composer, or the transcript leaf without a composer. `edge` is `left`, `right`, `top`
-  or `bottom` over the outer quarter of the target and `center` over its middle, never over the chat. `columns` and
-  `rows` are the size of the area the layout was drawn in. While dragging, the host shades where the pane would land. It
-  changes nothing itself and sends nothing when the drag is cancelled with Esc or ends on the dragged leaf or outside
-  every zone, so the owner republishes its layout.
+  (`terminal_layout_dock_v1`; `content`, `target`, `edge`, `columns` and `rows` are experimental fields). `component`
+  is the dragged leaf's path and `content` its `site:<name>`. `target` is the leaf path it was dropped on; for the chat
+  it is the path of the split holding the transcript and composer, or the transcript leaf without a composer. `edge` is
+  `left`, `right`, `top` or `bottom` over the outer quarter of the target and `center` over its middle, never over the
+  chat. `columns` and `rows` are the size of the area the layout was drawn in. While dragging, the host tints where the
+  pane would land and draws its edge in the accent; cells it can't blend (including ANSI 0-15 backgrounds) keep their
+  color and get the edge reversed. It changes nothing itself and sends nothing when the drag is cancelled with Esc or
+  ends on the dragged leaf or outside every zone, so the owner republishes its layout.
 
 These go only to the mod whose view supplied the layout.
 

@@ -103,9 +103,11 @@ The independent example also shows a direct transaction for a mod tool.
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
 - `git: true` (`workspace_watch_git_v1`, an experimental field) also reports changes to the repository's Git metadata,
-  found from the workspace root upward (linked worktrees, submodules and separate Git directories included): `HEAD`,
-  `index`, `packed-refs` and `refs/…`, as paths `.git/HEAD` and so on with `before` and `after` null. Lock files and
-  objects are left out. Outside a repository the call fails `watch_git_unavailable`.
+  found from the workspace root upward (linked worktrees and submodules included): `HEAD`, `index`, `packed-refs` and
+  `refs/…`, as paths `.git/HEAD` and so on with `before` and `after` null. Lock files and objects are left out. A `.git`
+  file is followed only to a Git directory that proves the link: a worktree's backlink, or a submodule directory under
+  an enclosing repository's `.git/modules`. Outside a repository, and for a `--separate-git-dir` repository or a
+  submodule of a linked worktree, the call fails `watch_git_unavailable`.
 
 Watches end and deliver as described in [Callback delivery](events-and-lifecycle.md#callback-delivery).
 

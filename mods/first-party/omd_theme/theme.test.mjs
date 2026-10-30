@@ -50,12 +50,12 @@ test('the scene goes under the whole screen and hides the welcome mark on a fres
   assert.deepEqual(start.of('events.schedule'), [{ key: `f.${NOW}.-1.0.0.0.0`, delay_ms: 16 }]);
   const view = draw(start.state).value;
   assert.deepEqual(view.underlay, { raster: 'omd_theme_t1' });
-  assert.equal(view.sites.welcome.mode, 'wrap');
+  assert.deepEqual([view.welcome, view.sites], [{ show_while_composing: true, hidden: true }, undefined]);
   const shown = draw(start.state).state;
   const blind = call({ event: 'terminal', state: shown, payload: { event: 'turn', ledger: null, presentation: { thread_id: 't1', phase: 'started', surface: 'fullscreen' }, client: null, clients: [] } });
   assert.deepEqual([blind.value.underlay, blind.state.view.columns], [{ raster: 'omd_theme_t1' }, 120]);
   const later = draw(start.state, { phase: 'started' }).value;
-  assert.deepEqual([later.underlay, later.sites], [{ raster: 'omd_theme_t1' }, undefined]);
+  assert.deepEqual([later.underlay, later.welcome], [{ raster: 'omd_theme_t1' }, undefined]);
   for (const [name, extra] of [['NO_COLOR', { graphics: 'text' }], ['16 colours', { colors: '16' }], ['narrow', { columns: 59 }], ['inline', { surface: 'inline' }]]) {
     assert.deepEqual(draw(start.state, extra).value, {}, name);
   }
@@ -70,7 +70,7 @@ test('each thread draws its own raster, so a hidden thread never paints over the
   assert.ok(blits.length > 0 && blits.every(blit => blit.key === 'omd_theme_0199ab2'));
 });
 
-test('the frame chain blits the screen in bands, then only the changed span of each row', () => {
+test('the frame chain blits the screen in bands, then only the changed rows, merged into bands', () => {
   const state = ready();
   const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
   const full = first.of('terminal.blit');
@@ -90,8 +90,8 @@ test('the frame chain blits the screen in bands, then only the changed span of e
   assert.ok(next.delay_ms > 0 && next.delay_ms <= 250);
   const second = tick(state, next.key, NOW + 266);
   const diffs = second.of('terminal.blit');
-  assert.ok(diffs.length > 0 && diffs.every(blit => blit.rect.height === 1 && blit.rect.x + blit.rect.width <= 120));
-  assert.ok(diffs.reduce((sum, blit) => sum + blit.rect.width, 0) < 120 * 44 / 2);
+  assert.ok(diffs.length > 0 && diffs.length < 44 && diffs.every(blit => blit.rect.x + blit.rect.width <= 120 && blit.rect.width * blit.rect.height <= 14_000));
+  diffs.forEach(blit => assert.equal(decode(blit.packed).length, blit.rect.width * blit.rect.height * 12));
   const [after] = second.of('events.schedule');
   assert.equal(after.key, `f.${NOW}.2.120.44.${KEY}.0`);
   assert.ok(after.delay_ms > 0 && after.delay_ms <= 125);

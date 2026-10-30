@@ -187,7 +187,7 @@ export type TerminalComponent =
   | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number; pointer?: boolean }
   /** A keyed canvas of `width`×`height` cells (up to 512×256) drawn by `terminal.blit`; `alt` shows until the first frame. */
   | { type: 'raster'; id: string; label: string; alt: string; width?: number; height?: number; pointer?: boolean }
-  | { type: 'terminal'; id: string; label: string; session: string; height?: number }
+  | { type: 'terminal'; id: string; label: string; session: string; height?: number; /** `terminal_pty_v2`: focuses the terminal when it appears with nothing else focused and when its focus region is entered. */ autofocus?: boolean }
   /** A region drawn by the mod's `api.component(module, ...)`; `keys` takes focus on click or Tab, `pointer` sends pointer events. */
   | { type: 'module'; id: string; label: string; module: string; props?: Json; height?: number; keys?: boolean | 'all'; pointer?: boolean }
   | { type: 'slot' }
@@ -208,7 +208,8 @@ export type TerminalOverlay = {
   offset?: { x: number; y: number }; width: number; height: number; z?: number; clip?: 'screen' | 'anchor'; style?: TerminalFrameStyle;
 };
 export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[]; overlay?: TerminalOverlay };
-export type TerminalWelcome = { show_while_composing?: boolean };
+/** `hidden` (`terminal_welcome_hidden_v1`): keep the welcome area, with Codex's own welcome off, but draw no `welcome` site. Applies only to the mod that owns the composed underlay; otherwise (or if its underlay is refused) it is false. */
+export type TerminalWelcome = { show_while_composing?: boolean; hidden?: boolean };
 /** Host startup selection uses a null thread_id; live acceptance/resume supplies the real thread. */
 export type TerminalPresentation = { thread_id: string | null; phase: 'fresh' | 'started' | 'resumed'; surface?: 'inline' | 'fullscreen' };
 export interface TerminalTheme {
@@ -344,7 +345,7 @@ export type ClassicHook = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 
 export type ClassicEnvelope = { hook: ClassicHook; event: string; subject: Json; thread_id: string | null; turn_id: string | null;
   origin: Json | null; generation: string | null; original: Json; effective: Json; delivery: 'required' | 'optional' };
 export type HistoryEdit = { drop?: number[]; replace?: { index: number; text: string }[]; insert?: { before: number; role: 'user' | 'developer'; text: string }[] };
-export type PtyRequest = { action: 'start'; session: string; cwd?: string; program?: string; argv?: string[]; sha256?: string; write?: boolean; network?: 'loopback'; sandbox?: 'none' } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
+export type PtyRequest = { action: 'start'; session: string; cwd?: string; program?: string; argv?: string[]; sha256?: string; write?: boolean; network?: 'loopback'; sandbox?: 'none'; /** `terminal_pty_v2`: written into the session directory; `{dir}` in `argv` is its path. */ files?: Record<string, string> } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
 export type TurnActivity = {
   turn_id: string; started_at: string | null; ended_at: string | null;
   outcome: 'completed' | 'aborted' | 'error' | 'interrupted' | 'running' | 'unknown'; reason: string | null; error: AgentFailure | null; unrecorded_end: boolean;
@@ -503,7 +504,7 @@ export interface HostOperations {
   /** The `pixels` form needs the `raster_pixels_v1` feature and `packed` the `terminal_raster_packed_v1` feature: base64 of little-endian u32 `[codePoint, fg, bg]` per cell, colors `0x00RRGGBB`, `0x01000000` (theme default) or `0x02000000 | index`. */
   'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] } | { key: string; rect: { x: number; y: number; width: number; height: number }; packed: string } | { key: string; image: { media_type: 'image/png' | 'image/jpeg'; base64: string } } | { key: string; pixels: { source: string; format: 'rgb' | 'rgba'; width: number; height: number; sequence: number } };
     result: { frame: number; queued: number; frame_ms: number } | { status: 'backpressure'; retry_after_ms: number } };
-  'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
+  'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null; files?: Record<string, string> } | { stopped: true } | Declined };
   /** `route` names a configured worker route the mod may use, or `lead` for the thread's lead route when it lists the mod in `mods`. */
   'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };
   /** Requires agents, sessions and sessions_tools because the snapshot includes tool payloads. */
@@ -551,7 +552,8 @@ export interface Events {
   timer: { input: { key: string }; output: void };
   /** Independent per-channel sequence; restarts at 1 after publisher reclamation (15 minutes idle and no queued events). */
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; thread_id: string | null; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close' | 'dock';
+  component_event: { input: { component: string; thread_id: string | null; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close' | 'dock' | 'exit' | 'title' | 'bell' | 'notify';
+    /** `terminal_pty_v2` terminal events: `exit` carries `session`, `exit_code` (null when the host ended or never had the session) and `files`; `title` carries `title`; `notify` carries `text`. */ session?: string; exit_code?: number | null; files?: Record<string, string>; title?: string;
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
     pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number;

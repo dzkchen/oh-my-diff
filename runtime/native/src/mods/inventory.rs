@@ -6,12 +6,20 @@ const ANSWER_CHARS: usize = 4096;
 pub(super) const FINISHED_LIMIT: usize = 64;
 const SPAWN_RESERVATION_MS: u64 = 30_000;
 
+/// A tool-path reservation expires; a guarded one lasts until its guard releases it, however long setup takes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SpawnHold {
+    Expiring,
+    Guarded,
+}
+
 /// Session-wide agent records; observing one grants no control over it.
 #[derive(Default)]
 pub(super) struct Inventory {
     records: Mutex<BTreeMap<String, Value>>,
     working: Mutex<BTreeSet<String>>,
-    reserved: Mutex<Vec<(String, String, u64)>>,
+    /// Root, call id and reservation time (`None` while guarded).
+    reserved: Mutex<Vec<(String, String, Option<u64>)>>,
     directory: std::sync::OnceLock<std::path::PathBuf>,
 }
 
@@ -186,6 +194,7 @@ impl Inventory {
         &self,
         root: &str,
         call_id: &str,
+        hold: SpawnHold,
         counted: impl Fn(&str) -> bool,
         admit: impl FnOnce(usize) -> Result<(), String>,
     ) -> Result<(), String> {
@@ -194,10 +203,15 @@ impl Inventory {
             .lock()
             .map_err(|_| "inventory lock poisoned")?;
         let now = now_ms();
-        reserved.retain(|(.., at)| now.saturating_sub(*at) < SPAWN_RESERVATION_MS);
+        reserved
+            .retain(|(.., at)| at.is_none_or(|at| now.saturating_sub(at) < SPAWN_RESERVATION_MS));
         let pending = reserved.iter().filter(|(owner, ..)| owner == root).count();
         admit(self.live_children(root, counted) + pending)?;
-        reserved.push((root.to_owned(), call_id.to_owned(), now));
+        reserved.push((
+            root.to_owned(),
+            call_id.to_owned(),
+            (hold == SpawnHold::Expiring).then_some(now),
+        ));
         Ok(())
     }
 
