@@ -59,7 +59,8 @@ remain outside the mod API.
 Every mod's `terminal` patch composes in the same order (`ui_composition_v1`):
 
 - Sites wrap or replace. A wrap encloses the site's replacement whichever composes first. A site's `overlay` is not
-  claimed, so the last patch that sets one wins, even a wrap over another mod's.
+  claimed, so the last patch that sets one wins. Only mod `owner` replaces or wraps its `owner/name` site; any other
+  mod's patch for it is refused and reported as a conflict. Native sites keep the rules above.
 - Presentation fields merge.
 - Exclusive fields (layout, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status
   budget) go to the first claimant. Each later claim is reported in `omd-mod status` under `terminal.conflicts` as

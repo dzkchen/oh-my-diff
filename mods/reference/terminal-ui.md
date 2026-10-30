@@ -225,6 +225,8 @@ A `site:` or `transcript` leaf may set `title` (`terminal_layout_title_v1`), at 
 characters: a site's frame shows it instead of the site name and `''` draws no title, and a titled transcript gives
 its top row to a rule carrying the title, accented while the chat has focus in a view with `key_contexts`. A
 `composer` leaf takes no title.
+A layout nests splits and tabs at most 6 levels deep, with 2–4 children per split, 1–6 tabs per `tabs` node and at
+most 12 leaves.
 Components add `document` (up to 100,000 lines with anchors, selection and find), `diff`, `image`, `raster` and
 `terminal` (a PTY session).
 
@@ -302,8 +304,16 @@ rows left after the region's other components and gaps. In a row layout each get
   a mod can keep the ratio in its layout.
 - Clicking a tab title switches the tab and sends `component_event {kind: 'select', component, index}` with the
   `tabs` node's path (`terminal_tabs_v1`), so the owner can keep `active` in its layout.
+- Releasing a drag that started on a `site:` leaf's top frame row (not a tab bar or split border) over another site
+  leaf or the chat sends one `component_event {kind: 'dock', component, content, target, edge}`
+  (`terminal_layout_dock_v1`). `component` is the dragged leaf's path and `content` its `site:<name>`. `target` is the
+  leaf path it was dropped on; for the chat it is the path of the split holding the transcript and composer, or the
+  transcript leaf without a composer. `edge` is `left`, `right`, `top` or `bottom` over the outer quarter of the
+  target and `center` over its middle, never over the chat. While dragging, the host shades where the pane would
+  land. It changes nothing itself and sends nothing when the drag is cancelled with Esc or ends on the dragged leaf
+  or outside every zone, so the owner republishes its layout.
 
-Both go only to the mod whose view supplied the layout.
+These go only to the mod whose view supplied the layout.
 
 ### View keybindings and command ownership
 
@@ -737,7 +747,7 @@ With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with 
 
 Sessions:
 
-- Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod`, four by default, and sixteen in all).
+- Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod` in `host.json` `mod_limits`: four by default, up to sixteen, and sixteen in all).
 - Render only in terminal components owned by that mod.
 - Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads.
 - Queued requests and terminal input retain their original binding and cannot address a replacement session.

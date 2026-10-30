@@ -37,15 +37,21 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - Focus regions, `key_contexts`, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus`
   (`terminal_focus_v1`).
 - Layout leaf `title` (`terminal_layout_title_v1`).
+- Dragging a layout pane to dock it: the `dock` component event (`terminal_layout_dock_v1`).
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
 - `tools.original` (`tool_original_v1`), added after 1.0.0.
 - The `omd-mod-author cost` report, added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
-rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
+rich children inside buttons (a button uses its typed `text`), audio, telemetry and floating panes.
 
 ### Migration notes
 
+- A site named `owner/name` is replaced or wrapped only by mod `owner`; a patch from any other mod is now refused and
+  reported under `terminal.conflicts`. This is a safety fix to the frozen `ui_composition_v1` (Mod API `1.0.0`): before,
+  any mod could wrap or replace another mod's site. A mod that composes into a site it does not own must ask its
+  owner for a native slot or its own site. Native sites (no `/`) compose as before.
+- A layout may nest 6 levels instead of 4. The raise is additive: every layout valid before stays valid.
 - Host calls per callback rise from 128 to 512 (`budget.hostCalls` starts at 512). The raise is additive: a mod that
   counted calls or stayed under 128 keeps working. The other limits raised with it (the callback transport budget,
   `process.exchange` and tool interceptor output, `api.state`, package files, view JSON, evidence pages and

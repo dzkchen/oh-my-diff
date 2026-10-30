@@ -137,7 +137,7 @@ Require `settings_file_v1` to use it.
 | `watches_per_mod` | 16 | 64 |
 | `paths_per_watch` | 32 | 256 |
 | `timers_per_mod` | 16 | 64 |
-| `pty_panes_per_mod` | 4 | 8 |
+| `pty_panes_per_mod` | 4 | 16 |
 | `completion_items` | 200 | 1000 |
 
 ### Fault limit

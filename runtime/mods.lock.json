@@ -679,17 +679,19 @@
         "store",
         "exec",
         "pty",
+        "fs.write",
+        "network",
         "services",
         "lifecycle",
         "inventory"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "6f6600a627945784a1f58836539bcd3e549beadd2d8223571bcbde6a08ae1225",
-        "mod.json": "d3fbfcb8a23bd9b0a573e78ef9ce27c5ec16a33e1a786a4b234c1ecb93e0c8fe"
+        "index.ts": "88d9d3765f7c3e624790cd66ffd3b081b3ffea9f80669b3a7d48f8cb54083434",
+        "mod.json": "6db612a4d49762814129055250958dddca8eaecb74db9fb82dacfd7f83fbbaf2"
       },
       "id": "omd_workspace",
-      "package_sha256": "5ddb7ddfff817cf3dccad7a5419e32f32a3325be786734ec0991cc8df90c317c",
+      "package_sha256": "3fcbd4eb520b9bcf13d06659f8b10c668699ee7b705bf4613116bd9c307ccac2",
       "source": "mods/first-party/omd_workspace",
       "version": "1.0.0"
     }

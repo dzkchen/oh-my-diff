@@ -32313,7 +32313,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd0d541c54 100644
+index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..bd0e15a648cbb22689cad1d08008b7f181f33d3b 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -32336,7 +32336,31 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
      /// Keeps protected screens quarantined until initialized chat receives genuine user input.
      startup_protected_input_boundary: bool,
      /// Keeps that boundary armed while an approval waits for the typing-idle timer or a visible
-@@ -982,6 +988,19 @@ impl App {
+@@ -951,6 +957,9 @@ impl App {
+         {
+             self.chat_widget.interrupt_config_editor_transition();
+         }
++        if matches!(&event, TuiEvent::FocusLost) && crate::mod_layout::cancel_dock() {
++            tui.frame_requester().schedule_frame();
++        }
+
+         if self.overlay.is_none()
+             && self
+@@ -961,6 +970,13 @@ impl App {
+             return Ok(AppRunControl::Continue);
+         }
+
++        if matches!(&event, TuiEvent::Key(key) if key.code == KeyCode::Esc && key.kind == KeyEventKind::Press)
++            && crate::mod_layout::cancel_dock()
++        {
++            tui.frame_requester().schedule_frame();
++            return Ok(AppRunControl::Continue);
++        }
++
+         let mut event = if let TuiEvent::Key(mut key_event) = event {
+             let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+             if self.should_recover_vim_insert_escape(key_event)
+@@ -982,6 +998,19 @@ impl App {
              event
          };
 
@@ -32356,7 +32380,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
          self.cancel_primed_browsing_for_event(&event);
          let voice_toggle = |app: &Self, key: KeyEvent| {
              key.kind == KeyEventKind::Press
-@@ -994,7 +1013,11 @@ impl App {
+@@ -994,7 +1023,11 @@ impl App {
                  && app.keymap.chat.toggle_voice.is_pressed(key)
          };
          // Find consumes otherwise-unhandled keys; let enabled voice controls reach App.
@@ -32369,7 +32393,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
              if voice_toggle(self, *key) && !self.transcript_view.owns_interaction_key(*key))
              && self.handle_owned_transcript_event(tui, app_server, &event)?
          {
-@@ -1090,6 +1113,7 @@ impl App {
+@@ -1090,6 +1123,7 @@ impl App {
 
          match &event {
              TuiEvent::FocusLost => {
@@ -32377,7 +32401,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
                  self.chat_widget
                      .set_sparkle_terminal_focus(/*focused*/ false);
                  let now = Instant::now();
-@@ -1102,6 +1126,7 @@ impl App {
+@@ -1102,6 +1136,7 @@ impl App {
                  }
              }
              TuiEvent::FocusGained => {
@@ -32385,7 +32409,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
                  self.recap.note_focus_gained();
              }
              _ => {}
-@@ -1123,6 +1148,10 @@ impl App {
+@@ -1123,6 +1158,10 @@ impl App {
                      // [tui-textarea]: https://github.com/rhysd/tui-textarea/blob/4d18622eeac13b309e0ff6a55a46ac6706da68cf/src/textarea.rs#L782-L783
                      // [iTerm2]: https://github.com/gnachman/iTerm2/blob/5d0c0d9f68523cbd0494dad5422998964a2ecd8d/sources/iTermPasteHelper.m#L206-L216
                      let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
@@ -32396,7 +32420,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
                      if self.backtrack.primed && !pasted.is_empty() {
                          if self.backtrack.overlay_preview_active {
                              self.cancel_transcript_browsing(tui);
-@@ -1213,6 +1242,10 @@ impl App {
+@@ -1213,6 +1252,10 @@ impl App {
          }
          // Both transcript owners must consume completions before automatic work advances.
          if idle_draw {
@@ -32407,7 +32431,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
              tui.clipboard.advance(tui.frame_requester());
          }
          Ok(AppRunControl::Continue)
-@@ -1228,7 +1261,107 @@ impl App {
+@@ -1228,7 +1271,107 @@ impl App {
          Ok(())
      }
 
@@ -32515,7 +32539,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1247,33 +1380,48 @@ impl App {
+@@ -1247,33 +1390,48 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -32571,7 +32595,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
              Ok(rendered_area)
          })
      }
-@@ -1283,6 +1431,7 @@ impl App {
+@@ -1283,6 +1441,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -106175,7 +106199,7 @@ index 0000000000000000000000000000000000000000..37289c249d6276718dc135b516890b67
 +mod session_policy;
 diff --git a/codex-rs/omd/src/mod_limits.rs b/codex-rs/omd/src/mod_limits.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5d6a3e4e76f74f4803caf5c44cbd266ed14bfd7b
+index 0000000000000000000000000000000000000000..203f1b2d4bf2c1f9a9f4601737ad6335d4e32c05
 --- /dev/null
 +++ b/codex-rs/omd/src/mod_limits.rs
 @@ -0,0 +1,45 @@
@@ -106210,7 +106234,7 @@ index 0000000000000000000000000000000000000000..5d6a3e4e76f74f4803caf5c44cbd266e
 +            watches_per_mod: self.watches_per_mod.clamp(1, 64),
 +            paths_per_watch: self.paths_per_watch.clamp(1, 256),
 +            timers_per_mod: self.timers_per_mod.clamp(1, 64),
-+            pty_panes_per_mod: self.pty_panes_per_mod.clamp(1, 8),
++            pty_panes_per_mod: self.pty_panes_per_mod.clamp(1, 16),
 +            completion_items: self.completion_items.clamp(1, 1000),
 +        }
 +    }
@@ -107820,10 +107844,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759b9db13d4
+index 0000000000000000000000000000000000000000..2f74f5441dd535616b7518ca772ac6e49a6035dc
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6750 @@
+@@ -0,0 +1,6751 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -108229,6 +108253,7 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +    "settings_file_v1",
 +    "terminal_focus_v1",
 +    "terminal_layout_title_v1",
++    "terminal_layout_dock_v1",
 +    "terminal_raster_packed_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
@@ -126316,10 +126341,10 @@ index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3ab44e547
+index 0000000000000000000000000000000000000000..c2e14c4631fdaf8ffa4f05fa159d432343a90afe
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2476 @@
+@@ -0,0 +1,2488 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 24;
@@ -126487,7 +126512,7 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +
 +impl ModLayout {
 +    fn walk(&self, depth: usize, leaves: &mut Vec<String>) -> bool {
-+        if depth > 4 {
++        if depth > 6 {
 +            return false;
 +        }
 +        match self {
@@ -128495,6 +128520,18 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +        let mut candidate = target.clone();
 +        let mut candidate_claims = claims.clone();
 +        let mut conflicts = Vec::new();
++        self.sites.retain(|name, _| match name.split_once('/') {
++            Some((owner, _)) if owner != id => {
++                conflicts.push(ModViewConflict {
++                    field: format!("sites.{name}"),
++                    owner: owner.to_owned(),
++                    rejected: id.to_owned(),
++                    origin: origin.to_owned(),
++                });
++                false
++            }
++            _ => true,
++        });
 +        let mut claim = |field: String| {
 +            let owner = candidate_claims
 +                .entry(field.clone())
@@ -128798,10 +128835,10 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f06f03ed1c710028e06fa095ed3756d6a3a2ce4a
+index 0000000000000000000000000000000000000000..6a5e14086f4dd101d8155a47221f7c366d4b6c58
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,371 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -128978,6 +129015,32 @@ index 0000000000000000000000000000000000000000..f06f03ed1c710028e06fa095ed3756d6
 +}
 +
 +#[test]
++fn layouts_nest_five_splits_and_no_more() {
++    let nested = |splits: usize| {
++        let mut node = json!({"content": "transcript"});
++        for index in 0..splits {
++            node = json!({"split": "vertical", "children": [node, {"content": format!("site:a/s{index}")}]});
++        }
++        json!({"layout": node})
++    };
++    assert!(view(nested(5)).is_ok());
++    assert!(view(nested(6)).is_err());
++}
++
++#[test]
++fn components_nest_six_deep_and_no_more() {
++    let nested = |depth: usize| {
++        let mut node = json!({"type": "text", "id": "leaf", "label": "Leaf", "text": "x"});
++        for index in 1..depth {
++            node = json!({"type": "box", "id": format!("b{index}"), "label": "B", "children": [node]});
++        }
++        json!({"sites": {"a/x": {"components": [node]}}})
++    };
++    assert!(ModViewPatch::parse(nested(6)).is_ok());
++    assert!(ModViewPatch::parse(nested(7)).is_err());
++}
++
++#[test]
 +fn patches_claim_layout_once() {
 +    let mut target = ModView::default();
 +    let mut claims = BTreeMap::new();
@@ -129063,6 +129126,32 @@ index 0000000000000000000000000000000000000000..f06f03ed1c710028e06fa095ed3756d6
 +    let sidebar = serde_json::to_value(&target.sites["sidebar"]).unwrap();
 +    assert_eq!(sidebar["mode"], "replace");
 +    assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
++}
++
++#[test]
++fn only_a_sites_owner_replaces_or_wraps_it() {
++    let mut target = ModView::default();
++    let mut claims = BTreeMap::new();
++    let text = |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
++    let wrap = json!({"mode": "wrap", "components": [{"type": "box", "id": "frame", "label": "Frame",
++        "children": [{"type": "slot"}]}]});
++    let mut compose = |id: &str, site: Value| {
++        ModViewPatch::parse(json!({"sites": {"a/x": site}}))
++            .unwrap()
++            .apply(&mut target, &mut claims, id, "idle")
++            .unwrap()
++    };
++    let refused = |rejected: &str| ModViewConflict {
++        field: "sites.a/x".into(),
++        owner: "a".into(),
++        rejected: rejected.into(),
++        origin: "idle".into(),
++    };
++    assert_eq!(compose("b", text("intruder")), vec![refused("b")]);
++    assert_eq!(compose("c", wrap), vec![refused("c")]);
++    assert!(compose("a", text("own")).is_empty());
++    let site = serde_json::to_value(&target.sites["a/x"]).unwrap();
++    assert_eq!(site["components"][0]["id"], "own");
 +}
 +
 +#[test]
@@ -160878,10 +160967,10 @@ index 0000000000000000000000000000000000000000..444a73f47042d6e6a9d8cba4746d0a5c
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d528bbf5a
+index 0000000000000000000000000000000000000000..0ee8adfd23a53006d55526dc817e141d97fc79a6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,347 @@
+@@ -0,0 +1,520 @@
 +use crate::omd::LockExt;
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
@@ -160891,11 +160980,14 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +use ratatui::layout::Rect;
 +use std::collections::BTreeMap;
 +use std::sync::Mutex;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
 +
 +const MIN_CELLS: u16 = 3;
 +
 +#[derive(Clone, Debug, PartialEq, Eq)]
 +pub(crate) struct Region {
++    pub(crate) path: String,
 +    pub(crate) content: String,
 +    pub(crate) area: Rect,
 +    pub(crate) style: Option<codex_omd::ModBoxStyle>,
@@ -160944,6 +161036,40 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +            None => transcript,
 +        })
 +    }
++
++    fn chat_path(&self) -> Option<String> {
++        let path = |content: &str| {
++            self.regions
++                .iter()
++                .find(|region| region.content == content)
++                .map(|region| region.path.as_str())
++        };
++        let transcript = path("transcript")?;
++        let shared = |composer: &str| {
++            transcript
++                .split('.')
++                .zip(composer.split('.'))
++                .take_while(|(a, b)| a == b)
++                .map(|(segment, _)| segment)
++                .collect::<Vec<_>>()
++                .join(".")
++        };
++        Some(path("composer").map_or_else(|| transcript.to_owned(), shared))
++    }
++}
++
++struct Dock {
++    path: String,
++    content: String,
++    origin: (u16, u16),
++    at: (u16, u16),
++    active: bool,
++}
++
++struct Zone {
++    target: String,
++    edge: &'static str,
++    shade: Rect,
 +}
 +
 +#[derive(Default)]
@@ -160953,10 +161079,12 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +    ratios: BTreeMap<String, Vec<u16>>,
 +    active: BTreeMap<String, usize>,
 +    drag: Option<(String, usize)>,
++    dock: Option<Dock>,
 +    last: Placement,
 +}
 +
 +static STATE: Mutex<Option<State>> = Mutex::new(None);
++static SWALLOW: AtomicBool = AtomicBool::new(false);
 +
 +fn with<T>(run: impl FnOnce(&mut State) -> T) -> T {
 +    let mut guard = STATE.locked();
@@ -160999,6 +161127,7 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +                area.height -= 1;
 +            }
 +            out.regions.push(Region {
++                path: path.to_owned(),
 +                content: leaf.content.clone(),
 +                area,
 +                style: leaf.style,
@@ -161092,6 +161221,9 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +pub(crate) fn place(layout: &ModLayout, owner: Option<&str>, area: Rect) -> Placement {
 +    with(|state| {
 +        if state.layout.as_ref() != Some(layout) {
++            if state.dock.as_ref().is_some_and(|dock| dock.active) {
++                SWALLOW.store(true, Ordering::Relaxed);
++            }
 +            *state = State {
 +                layout: Some(layout.clone()),
 +                ..State::default()
@@ -161130,6 +161262,86 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +    None
 +}
 +
++fn inside(area: Rect, column: u16, row: u16) -> bool {
++    column >= area.x && column < area.right() && row >= area.y && row < area.bottom()
++}
++
++fn zone(last: &Placement, source: &str, column: u16, row: u16) -> Option<Zone> {
++    if last
++        .regions
++        .iter()
++        .any(|region| region.path == source && inside(region.area, column, row))
++    {
++        return None;
++    }
++    let (target, area, centre) = last
++        .regions
++        .iter()
++        .find(|region| region.content.starts_with("site:") && inside(region.area, column, row))
++        .map(|region| (region.path.clone(), region.area, true))
++        .or_else(|| {
++            let chat = last.chat().filter(|chat| inside(*chat, column, row))?;
++            Some((last.chat_path()?, chat, false))
++        })?;
++    let (left, top) = (u32::from(column - area.x), u32::from(row - area.y));
++    let (width, height) = (u32::from(area.width), u32::from(area.height));
++    let edge = [
++        ("left", left, width),
++        ("right", width - 1 - left, width),
++        ("top", top, height),
++        ("bottom", height - 1 - top, height),
++    ]
++    .into_iter()
++    .filter(|(_, distance, span)| distance * 4 < *span)
++    .min_by_key(|(_, distance, span)| distance * 1000 / span)
++    .map(|(edge, _, _)| edge)
++    .or(centre.then_some("center"))?;
++    let (half_width, half_height) = (area.width / 2, area.height / 2);
++    let shade = match edge {
++        "left" => Rect {
++            width: half_width,
++            ..area
++        },
++        "right" => Rect {
++            x: area.x + half_width,
++            width: area.width - half_width,
++            ..area
++        },
++        "top" => Rect {
++            height: half_height,
++            ..area
++        },
++        "bottom" => Rect {
++            y: area.y + half_height,
++            height: area.height - half_height,
++            ..area
++        },
++        _ => area,
++    };
++    Some(Zone {
++        target,
++        edge,
++        shade,
++    })
++}
++
++pub(crate) fn dock_preview() -> Option<Rect> {
++    with(|state| {
++        let dock = state.dock.as_ref().filter(|dock| dock.active)?;
++        zone(&state.last, &dock.path, dock.at.0, dock.at.1).map(|zone| zone.shade)
++    })
++}
++
++pub(crate) fn cancel_dock() -> bool {
++    with(|state| {
++        let cancelled = state.dock.take().is_some_and(|dock| dock.active);
++        if cancelled {
++            SWALLOW.store(true, Ordering::Relaxed);
++        }
++        cancelled
++    })
++}
++
 +fn on_handle(handle: &Handle, column: u16, row: u16) -> bool {
 +    let end = handle.starts[handle.index] + handle.sizes[handle.index];
 +    let next = handle.starts[handle.index + 1];
@@ -161143,6 +161355,9 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +pub(crate) fn pointer(event: MouseEvent) -> bool {
 +    with(|state| match event.kind {
 +        MouseEventKind::Down(MouseButton::Left) => {
++            SWALLOW.store(false, Ordering::Relaxed);
++            state.dock = None;
++            state.drag = None;
 +            if let Some((path, index)) = state.last.tabs.iter().find_map(|bar| {
 +                (event.row == bar.area.y
 +                    && event.column >= bar.area.x
@@ -161165,9 +161380,38 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +                .iter()
 +                .find(|handle| on_handle(handle, event.column, event.row))
 +                .map(|handle| (handle.path.clone(), handle.index));
++            state.dock = state
++                .last
++                .regions
++                .iter()
++                .find(|region| {
++                    region.content.starts_with("site:")
++                        && event.row == region.area.y
++                        && inside(region.area, event.column, event.row)
++                })
++                .filter(|_| state.drag.is_none())
++                .map(|region| Dock {
++                    path: region.path.clone(),
++                    content: region.content.clone(),
++                    origin: (event.column, event.row),
++                    at: (event.column, event.row),
++                    active: false,
++                });
 +            state.drag.is_some()
 +        }
 +        MouseEventKind::Drag(MouseButton::Left) => {
++            if SWALLOW.load(Ordering::Relaxed) {
++                return true;
++            }
++            if let Some(dock) = &mut state.dock {
++                let at = (event.column, event.row);
++                if at == dock.origin && !dock.active {
++                    return false;
++                }
++                dock.active = true;
++                dock.at = at;
++                return true;
++            }
 +            let Some((path, index)) = state.drag.clone() else {
 +                return false;
 +            };
@@ -161200,6 +161444,24 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +            true
 +        }
 +        MouseEventKind::Up(MouseButton::Left) => {
++            if SWALLOW.swap(false, Ordering::Relaxed) {
++                return true;
++            }
++            if let Some(dock) = state.dock.take() {
++                if !dock.active {
++                    return false;
++                }
++                if let (Some(zone), Some(owner)) = (
++                    zone(&state.last, &dock.path, event.column, event.row),
++                    &state.owner,
++                ) {
++                    crate::mod_surface::layout_event(
++                        owner,
++                        serde_json::json!({"component": dock.path, "kind": "dock", "content": dock.content, "target": zone.target, "edge": zone.edge}),
++                    );
++                }
++                return true;
++            }
 +            let Some((path, _)) = state.drag.take() else {
 +                return false;
 +            };
@@ -161231,10 +161493,10 @@ index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_layout_tests.rs b/codex-rs/tui/src/mod_layout_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..430d9a5984e15be5e0dccb0e1f36c1538a4af5c6
+index 0000000000000000000000000000000000000000..f160870f06a3d041654f304426152419334b58da
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout_tests.rs
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,268 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -161319,6 +161581,7 @@ index 0000000000000000000000000000000000000000..430d9a5984e15be5e0dccb0e1f36c153
 +    assert_eq!(
 +        placement.regions[0],
 +        Region {
++            path: "r.0".into(),
 +            content: "site:files/tree".into(),
 +            area: Rect::new(0, 0, 20, 10),
 +            style: Some(codex_omd::ModBoxStyle {
@@ -161352,6 +161615,155 @@ index 0000000000000000000000000000000000000000..430d9a5984e15be5e0dccb0e1f36c153
 +    assert!(!pointer(at(MouseEventKind::Down(MouseButton::Left), 31)));
 +    let placement = place(&layout, None, Rect::new(0, 0, 42, 10));
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
++}
++
++fn dock_layout() -> ModLayout {
++    layout(serde_json::json!({
++        "split": "horizontal",
++        "children": [
++            {"split": "vertical", "children": [{"content": "site:a/one"}, {"content": "site:a/two"}]},
++            {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}
++        ]
++    }))
++}
++
++fn mouse(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
++    MouseEvent {
++        kind,
++        column,
++        row,
++        modifiers: crossterm::event::KeyModifiers::NONE,
++    }
++}
++
++fn dock_drag(from: (u16, u16), to: (u16, u16)) {
++    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), from)));
++    pointer(mouse(MouseEventKind::Drag(MouseButton::Left), to));
++    pointer(mouse(MouseEventKind::Up(MouseButton::Left), to));
++}
++
++#[test]
++#[serial_test::serial]
++fn dock_drags_shade_edges_and_centre_of_a_site_and_only_edges_of_the_chat() {
++    place(&dock_layout(), Some("owner"), Rect::new(0, 0, 100, 40));
++    let hover = |at| {
++        assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 0))));
++        assert!(pointer(mouse(MouseEventKind::Drag(MouseButton::Left), at)));
++        let shade = dock_preview();
++        assert!(pointer(mouse(MouseEventKind::Up(MouseButton::Left), at)));
++        assert_eq!(dock_preview(), None);
++        shade
++    };
++    for (at, shade) in [
++        ((1, 30), Some(Rect::new(0, 20, 25, 20))),
++        ((48, 30), Some(Rect::new(25, 20, 25, 20))),
++        ((25, 21), Some(Rect::new(0, 20, 50, 10))),
++        ((25, 38), Some(Rect::new(0, 30, 50, 10))),
++        ((25, 30), Some(Rect::new(0, 20, 50, 20))),
++        ((1, 21), Some(Rect::new(0, 20, 25, 20))),
++        ((10, 21), Some(Rect::new(0, 20, 50, 10))),
++        ((51, 10), Some(Rect::new(50, 0, 25, 40))),
++        ((98, 10), Some(Rect::new(75, 0, 25, 40))),
++        ((75, 1), Some(Rect::new(50, 0, 50, 20))),
++        ((75, 38), Some(Rect::new(50, 20, 50, 20))),
++        ((75, 20), None),
++        ((10, 5), None),
++        ((120, 5), None),
++    ] {
++        assert_eq!(hover(at), shade, "{at:?}");
++    }
++
++    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 0))));
++    assert!(!pointer(mouse(MouseEventKind::Drag(MouseButton::Left), (10, 0))));
++    assert_eq!(dock_preview(), None);
++    assert!(!pointer(mouse(MouseEventKind::Up(MouseButton::Left), (10, 0))));
++
++    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 0))));
++    assert!(!cancel_dock());
++    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 1))));
++    assert!(!pointer(mouse(MouseEventKind::Drag(MouseButton::Left), (30, 30))));
++    assert!(!pointer(mouse(MouseEventKind::Up(MouseButton::Left), (30, 30))));
++
++    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 0))));
++    assert!(pointer(mouse(MouseEventKind::Drag(MouseButton::Left), (30, 30))));
++    assert!(cancel_dock());
++    assert_eq!(dock_preview(), None);
++    assert!(pointer(mouse(MouseEventKind::Drag(MouseButton::Left), (31, 30))));
++    assert!(pointer(mouse(MouseEventKind::Up(MouseButton::Left), (30, 30))));
++    assert!(!pointer(mouse(MouseEventKind::Up(MouseButton::Left), (30, 30))));
++    hide();
++}
++
++#[test]
++#[serial_test::serial]
++fn a_dock_release_sends_one_event_with_its_target_and_edge_to_the_layout_owner() {
++    let directory = tempfile::tempdir().unwrap();
++    let root = directory.path().canonicalize().unwrap();
++    let data = root.join("store");
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
++    let package = root.join("owner");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::to_vec(&serde_json::json!({"schema": 1, "id": "owner", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["terminal", "store"]})).unwrap()).unwrap();
++    std::fs::write(
++        package.join("index.ts"),
++        "export default api => api.on('component_event', e => { api.state.set([...(api.state.get() ?? []), { kind: e.kind, component: e.component, content: e.content, target: e.target, edge: e.edge }]); });",
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    store
++        .trust(
++            package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["terminal".into(), "store".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    std::fs::write(
++        data.join("mod-status.json"),
++        serde_json::to_vec(&codex_omd::ModHost::open(data.clone()).unwrap().status()).unwrap(),
++    )
++    .unwrap();
++    let _environment = crate::omd::tests::omd_environment(&data);
++    let _host = crate::mod_runtime::test_fresh_host();
++    crate::mod_surface::test_forget_subscribers();
++
++    place(&dock_layout(), Some("owner"), Rect::new(0, 0, 100, 40));
++    let source = (10, 0);
++    dock_drag(source, (75, 20));
++    dock_drag(source, (10, 5));
++    dock_drag(source, (120, 5));
++    dock_drag(source, source);
++    for to in [(1, 30), (48, 30), (25, 21), (25, 38), (25, 30), (75, 38)] {
++        dock_drag(source, to);
++    }
++    hide();
++
++    let event = |target: &str, edge: &str| {
++        serde_json::json!({"kind": "dock", "component": "r.0.0", "content": "site:a/one", "target": target, "edge": edge})
++    };
++    let expected = serde_json::json!([
++        event("r.0.1", "left"),
++        event("r.0.1", "right"),
++        event("r.0.1", "top"),
++        event("r.0.1", "bottom"),
++        event("r.0.1", "center"),
++        event("r.1", "bottom"),
++    ]);
++    let state = || {
++        crate::mod_runtime::shared_host()
++            .unwrap()
++            .lock()
++            .unwrap()
++            .state("owner")
++            .cloned()
++            .unwrap_or_default()
++    };
++    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
++    while state().as_array().map_or(0, Vec::len) < 6 && std::time::Instant::now() < deadline {
++        std::thread::sleep(std::time::Duration::from_millis(10));
++    }
++    assert_eq!(state(), expected);
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
 new file mode 100644
@@ -161913,10 +162325,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e951187974612
+index 0000000000000000000000000000000000000000..f7faffc7f029308c0239c2e46e043898c53f3a42
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,659 @@
 +use crate::omd::LockExt;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -161932,6 +162344,8 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +use std::path::Path;
 +use std::sync::Arc;
 +use std::sync::Mutex;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
 +
 +const PANES: usize = 16;
 +const WRITE_BYTES: usize = 4096;
@@ -161942,6 +162356,7 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +    handle: codex_utils_pty::ProcessHandle,
 +    screen: Arc<Mutex<vt100::Parser>>,
 +    exit: Arc<Mutex<Option<i32>>>,
++    drawn: Arc<AtomicBool>,
 +    size: (u16, u16),
 +    unrestricted: bool,
 +}
@@ -162210,11 +162625,14 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +    )));
 +    let exit = Arc::new(Mutex::new(None));
 +    let (mut output, exited) = (spawned.stdout_rx, spawned.exit_rx);
-+    let (reader, reader_frames) = (screen.clone(), frames.clone());
++    let drawn = Arc::new(AtomicBool::new(true));
++    let (reader, reader_drawn, reader_frames) = (screen.clone(), drawn.clone(), frames.clone());
 +    tokio::spawn(async move {
 +        while let Some(bytes) = output.recv().await {
 +            reader.locked().process(&bytes);
-+            reader_frames.schedule_frame();
++            if reader_drawn.swap(false, Ordering::Relaxed) {
++                reader_frames.schedule_frame();
++            }
 +        }
 +    });
 +    let status = exit.clone();
@@ -162239,6 +162657,7 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +            handle: spawned.session,
 +            screen,
 +            exit,
++            drawn,
 +            size: (size.rows, size.cols),
 +            unrestricted: arguments["sandbox"] == "none",
 +        },
@@ -162299,6 +162718,7 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        ))];
 +    };
 +    let (rows, cols) = (height.max(2), width.max(10));
++    pane.drawn.store(true, Ordering::Relaxed);
 +    let mut screen = pane.screen.locked();
 +    if pane.size != (rows, cols) {
 +        pane.size = (rows, cols);
@@ -162342,6 +162762,13 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        lines.push(Line::from(format!("{prefix}[shell exited with {code}]")));
 +    }
 +    lines
++}
++
++pub(crate) fn hide(binding: Option<&Binding>, session: &str) {
++    let mut sessions = sessions();
++    if let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) {
++        pane.drawn.store(false, Ordering::Relaxed);
++    }
 +}
 +
 +pub(crate) fn key(binding: Option<&Binding>, session: &str, key: KeyEvent) -> bool {
@@ -162525,6 +162952,40 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        assert!(binding("m", Some("a"), &fresh).is_err());
 +        assert!(view_binding("m", Some("a"), 3, fresh.admission, "admitted").is_err());
 +        assert!(sessions().panes.is_empty());
++    }
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn output_of_an_undrawn_pane_requests_no_frames_until_drawn() {
++        let _restore = test_scope();
++        let owners = BTreeMap::from([("m".to_owned(), "source".to_owned())]);
++        context(1, Some("a".into()));
++        retain(1, "admitted", &owners, &Default::default());
++        let authority = codex_omd::client_surface::Authority {
++            epoch: 1,
++            admission: codex_omd::client_surface::admission(),
++            configuration: "admitted".into(),
++            source: "source".into(),
++        };
++        let a = binding("m", Some("a"), &authority).unwrap();
++        let dir = tempfile::tempdir().unwrap();
++        let mut command = std::process::Command::new("/bin/sh");
++        command
++            .args(["-c", "while :; do printf x; sleep 0.02; done"])
++            .current_dir(dir.path());
++        let (frames, mut requests) = crate::tui::FrameRequester::test_channel();
++        start(&a, &json!({"session": "t1"}), command, dir.path(), frames)
++            .await
++            .unwrap();
++        let mut count = || std::iter::from_fn(|| requests.try_recv().ok()).count();
++        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
++        assert_eq!(count(), 1);
++        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
++        assert_eq!(count(), 0);
++        rows(Some(&a), "t1", 40, 4, "");
++        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
++        assert_eq!(count(), 1);
++        context(2, None);
 +    }
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
@@ -166812,10 +167273,10 @@ index 0000000000000000000000000000000000000000..71346dfa32218d7ee142400fb2ad5307
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a62aaf4b818d8c2b37c842143fa011d5911e66cb
+index 0000000000000000000000000000000000000000..335bc174209c8d45c4010d09324cd0044d10b2e9
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1168 @@
+@@ -0,0 +1,1173 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -166953,6 +167414,11 @@ index 0000000000000000000000000000000000000000..a62aaf4b818d8c2b37c842143fa011d5
 +        triggers: [(trigger.to_owned(), id.to_owned())].into(),
 +        ..Default::default()
 +    }))
++}
++
++#[cfg(test)]
++pub(crate) fn test_forget_subscribers() {
++    with(|state| state.checked = None);
 +}
 +
 +pub(crate) fn attach(sender: &AppEventSender, thread: Option<String>) {
@@ -169034,10 +169500,10 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259027e37f0
+index 0000000000000000000000000000000000000000..993d9494113bbd2cc986f599c28523461ece5cef
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5614 @@
+@@ -0,0 +1,5656 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -169185,6 +169651,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    owners: Vec<String>,
 +    component_owners: BTreeMap<String, String>,
 +    pty_bindings: BTreeMap<String, crate::mod_pty::Binding>,
++    terminals: BTreeMap<(String, String), (bool, Option<crate::mod_pty::Binding>)>,
 +    key_panes: BTreeSet<String>,
 +    all_keys: BTreeSet<String>,
 +    dialog: Option<String>,
@@ -169899,6 +170366,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    owners: Vec::new(),
 +    component_owners: BTreeMap::new(),
 +    pty_bindings: BTreeMap::new(),
++    terminals: BTreeMap::new(),
 +    key_panes: BTreeSet::new(),
 +    all_keys: BTreeSet::new(),
 +    dialog: None,
@@ -171334,11 +171802,16 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +                    interaction.scroll_limits.insert(id.clone(), limit);
 +                    let offset = interaction.scroll.entry(id.clone()).or_insert(*scroll);
 +                    *offset = (*offset).min(limit);
-+                    nested
-+                        .into_iter()
-+                        .skip(usize::from(*offset))
-+                        .take(PANE_ROWS)
-+                        .collect()
++                    let window = usize::from(*offset)..usize::from(*offset) + PANE_ROWS;
++                    let mut kept = Vec::new();
++                    for (index, row) in nested.into_iter().enumerate() {
++                        if window.contains(&index) {
++                            kept.push(row);
++                        } else {
++                            note_terminals(&row, false, interaction);
++                        }
++                    }
++                    kept
 +                };
 +                let start = rows.len();
 +                rows.extend(framed(&frame, width, Some(head), body));
@@ -171639,6 +172112,10 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    let inner = frame.draw(area, title, buffer);
 +    let rows = stack(components, inner.width.max(1), &frame, interaction);
 +    let scroll = focused_scroll(&rows, inner.height, interaction);
++    let window = scroll..scroll + usize::from(inner.height);
++    for (index, row) in rows.iter().enumerate() {
++        note_terminals(row, window.contains(&index), interaction);
++    }
 +    let lines = rows
 +        .iter()
 +        .skip(scroll)
@@ -171650,6 +172127,32 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        .render(inner, buffer);
 +    mark_links(buffer, inner, &rows[scroll.min(rows.len())..]);
 +    register_component_targets(inner, rows, scroll, interaction);
++}
++
++fn note_terminals(row: &ComponentRow, shown: bool, interaction: &mut Interaction) {
++    if let (Some(ComponentTarget::Terminal(session, binding)), Some(id)) = (&row.target, &row.id) {
++        let owner = interaction
++            .component_owners
++            .get(id)
++            .cloned()
++            .unwrap_or_default();
++        interaction
++            .terminals
++            .entry((owner, session.clone()))
++            .or_insert_with(|| (false, binding.clone()))
++            .0 |= shown;
++    }
++    for beside in &row.beside {
++        note_terminals(beside, shown, interaction);
++    }
++}
++
++fn hide_undrawn_terminals(interaction: &mut Interaction) {
++    for ((_, session), (shown, binding)) in std::mem::take(&mut interaction.terminals) {
++        if !shown {
++            crate::mod_pty::hide(binding.as_ref(), &session);
++        }
++    }
 +}
 +
 +fn focused_scroll(rows: &[ComponentRow], height: u16, interaction: &Interaction) -> usize {
@@ -171958,6 +172461,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    }
 +    render_overlays(area, snapshot, style, buffer, &mut interaction);
 +    render_dialog(area, chat, snapshot, style, buffer, &mut interaction);
++    hide_undrawn_terminals(&mut interaction);
 +    highlight_focus(buffer, &interaction);
 +}
 +
@@ -172528,6 +173032,9 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +            .collect::<Vec<_>>();
 +        Paragraph::new(Line::from(spans)).render(bar.area, buffer);
 +    }
++    if let Some(shade) = crate::mod_layout::dock_preview() {
++        buffer.set_style(shade, crate::style::selection_style());
++    }
 +    if std::mem::take(&mut interaction.follow_tab)
 +        && let Some(region) = interaction.focus_region.clone()
 +    {
@@ -172535,6 +173042,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    }
 +    render_overlays(screen, snapshot, style, buffer, &mut interaction);
 +    render_dialog(screen, chat, snapshot, style, buffer, &mut interaction);
++    hide_undrawn_terminals(&mut interaction);
 +    highlight_focus(buffer, &interaction);
 +}
 +
@@ -174904,10 +175412,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb212d73410330c97a6a7edc1939baf6ce541d06
+index 0000000000000000000000000000000000000000..f467b4b5d0f03b68ffe0bd6e3adf0dc0b056d7a0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2340 @@
+@@ -0,0 +1,2417 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -177247,6 +177755,83 @@ index 0000000000000000000000000000000000000000..fb212d73410330c97a6a7edc1939baf6
 +    assert!(focus("clock"));
 +    assert!(holds_keys());
 +    preview(ModViewSnapshot::default());
++}
++
++#[tokio::test]
++#[serial_test::serial]
++async fn a_terminal_scrolled_out_of_its_site_requests_no_frames() {
++    let _scope = crate::mod_pty::test_scope();
++    let owners = BTreeMap::from([("m".to_owned(), "source".to_owned())]);
++    crate::mod_pty::context(1, Some("a".into()));
++    crate::mod_pty::retain(1, "admitted", &owners, &Default::default());
++    let snapshot = ModViewSnapshot {
++        contributors: vec!["m".into()],
++        input: serde_json::json!({"ledger": {"thread_id": "a"}, "pty_scope": {
++            "epoch": 1, "admission": codex_omd::client_surface::admission(), "configuration": "admitted"
++        }}),
++        ..Default::default()
++    };
++    let mut interaction = Interaction {
++        component_owners: BTreeMap::from([("term".to_owned(), "m".to_owned())]),
++        ..Interaction::default()
++    };
++    bind_terminals(&mut interaction, &snapshot);
++    let dir = tempfile::tempdir().unwrap();
++    let mut command = std::process::Command::new("/bin/sh");
++    command
++        .args(["-c", "while :; do printf x; sleep 0.02; done"])
++        .current_dir(dir.path());
++    let (frames, mut requests) = crate::tui::FrameRequester::test_channel();
++    crate::mod_pty::start(
++        &interaction.pty_bindings["m"].clone(),
++        &serde_json::json!({"session": "t1"}),
++        command,
++        dir.path(),
++        frames,
++    )
++    .await
++    .unwrap();
++    let parse = |components: serde_json::Value| {
++        let view =
++            ModView::parse(serde_json::json!({"sites": {"sidebar": {"components": components}}}))
++                .unwrap();
++        site(&view, "sidebar").unwrap().components.clone()
++    };
++    let body = serde_json::json!([
++        {"type": "text", "id": "intro", "label": "Intro", "text": "line\n".repeat(20)},
++        {"type": "terminal", "id": "term", "label": "Term", "session": "t1", "height": 4}]);
++    let flat = parse(body.clone());
++    let paned = parse(serde_json::json!([
++        {"type": "pane", "id": "box", "label": "Box", "children": body}]));
++    let frame = Frame::new(ModBoxStyle::default(), look(), false, false);
++    let draw = |components: &[ModComponent], height: u16, interaction: &mut Interaction| {
++        let area = Rect::new(0, 0, 40, height);
++        let mut buffer = Buffer::empty(area);
++        render_site(
++            area,
++            components,
++            Style::default(),
++            &mut buffer,
++            interaction,
++            frame,
++            None,
++        );
++        hide_undrawn_terminals(interaction);
++    };
++    let mut count = || std::iter::from_fn(|| requests.try_recv().ok()).count();
++    for (components, height) in [(&flat, 6), (&paned, 40)] {
++        let mut hidden = 0;
++        for _ in 0..5 {
++            draw(components, height, &mut interaction);
++            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
++            hidden += count();
++        }
++        assert!(hidden <= 1, "{hidden} frames for a scrolled-out terminal");
++    }
++    draw(&flat, 40, &mut interaction);
++    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
++    assert_eq!(count(), 1);
++    crate::mod_pty::context(2, None);
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs
 new file mode 100644
