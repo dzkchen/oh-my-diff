@@ -45,7 +45,7 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
     relative.to_str().map(str::to_owned)
 }
 
-const GIT_FILES: [&str; 3] = ["HEAD", "index", "packed-refs"];
+const WORKTREE_GIT_FILES: [&str; 2] = ["HEAD", "index"];
 
 fn git_dirs(root: &Path) -> Option<(PathBuf, PathBuf)> {
     let top = root.ancestors().find(|dir| dir.join(".git").exists())?;
@@ -84,12 +84,12 @@ fn git_change(dirs: &(PathBuf, PathBuf), path: &Path) -> Option<String> {
         .strip_prefix(&dirs.0)
         .ok()
         .and_then(Path::to_str)
-        .filter(|name| GIT_FILES[..2].contains(name));
+        .filter(|name| WORKTREE_GIT_FILES.contains(name));
     let shared = || {
         path.strip_prefix(&dirs.1)
             .ok()
             .and_then(Path::to_str)
-            .filter(|name| *name == GIT_FILES[2] || name.starts_with("refs/"))
+            .filter(|name| *name == "packed-refs" || name.starts_with("refs/"))
     };
     own.or_else(shared)
         .filter(|name| !name.ends_with(".lock"))

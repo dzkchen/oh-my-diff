@@ -91,7 +91,7 @@ needs `exec`.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
 - Unsandboxed runs get the user's `HOME`, `USER`, `LOGNAME`, `SHELL`, locale and `SSH_AUTH_SOCK`, so `ssh`-based tools
-  reach the user's SSH agent; other variables come only from declared `exec_environment` names.
+  reach the user's SSH agent; the full environment is listed under `exec.run` with `sandbox: "none"`.
 
 ### `approves` manifest field
 

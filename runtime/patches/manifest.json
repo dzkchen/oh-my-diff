@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.165.0.patch",
-    "sha256": "0d3e60c57231bf3fe2fd34149769b62df6ea4c6d0369db5f30333f91be136a5f"
+    "sha256": "08cbef0284d96ba050bbe28fbcfbc0d9fd9e2828db14085a4be2580bd67689a3"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1119,7 +1119,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion/activity.rs": {
       "before": null,
-      "after": "cf33faffd397313671f7b08a2fe2b2d002b54197b7e6bf1a4629e0c86f99da98"
+      "after": "91bff6295552dfa01f892b2578833d18da7ba25e8038e945b547378ed728456d"
     },
     "codex-rs/ext/omd/src/mods/expansion/approvals.rs": {
       "before": null,
@@ -1127,7 +1127,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion/delivery.rs": {
       "before": null,
-      "after": "feab92fe3ecc828acef55108672e425821a71ee49a04fb2c17883c712aeced5f"
+      "after": "41fbf714a13658f10cad81e4087b293f2b5a637b5dbace4e23a57cce7bc0e6c8"
     },
     "codex-rs/ext/omd/src/mods/expansion/tool_batch.rs": {
       "before": null,
@@ -1199,7 +1199,7 @@
     },
     "codex-rs/ext/omd/src/workspace_watch.rs": {
       "before": null,
-      "after": "61b440dba6332f01eba8fcbda49509601796c21c598e425198a6775dacf2c5c4"
+      "after": "49d3b9f672bacbf1f98ada771fa3817359ae232aae3a5e52b3fc8ce71fd090d4"
     },
     "codex-rs/ext/omd/src/workspace_watch_tests.rs": {
       "before": null,
@@ -1435,7 +1435,7 @@
     },
     "codex-rs/omd/src/host.rs": {
       "before": null,
-      "after": "9911ed76d36e6de0958e3b1df9bc16905fdafad9fe94bd2229af3544ce879269"
+      "after": "a06d38402294e9707033e3c807fc009f868a408f4b8dcf2855e7428c56144b0f"
     },
     "codex-rs/omd/src/host/environment.rs": {
       "before": null,

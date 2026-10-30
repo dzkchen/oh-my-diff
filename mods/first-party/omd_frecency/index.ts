@@ -59,7 +59,7 @@ const unquote = (quoted: string) => {
   }
 };
 const mentioned = (text: string) => [...new Set([...text.matchAll(/@?"((?:[^"\\\n]|\\.){1,256})"|(\S{1,256})/g)]
-  .map(match => (match[1] !== undefined ? unquote(match[1]) : match[2]).replace(/^[(\['"`<]*@?/, '').replace(/^\.\//, '').replace(/[,;:.!?)\]'"`>]+$/, '').replace(/(:\d+)+$/, ''))
+  .map(match => (match[1] !== undefined ? unquote(match[1]) : match[2].replace(/^[(\['"`<]*@?/, '').replace(/[,;:.!?)\]'"`>]+$/, '').replace(/(:\d+)+$/, '')).replace(/^\.\//, ''))
   .filter(path => /\/|\.\w{1,10}$/.test(path) && !path.startsWith('/') && !path.split('/').includes('..')))].slice(0, 16);
 
 export default function activate(api: ModAPI) {

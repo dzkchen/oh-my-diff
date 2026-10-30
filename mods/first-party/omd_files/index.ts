@@ -9,7 +9,7 @@ type Preview =
   | { kind: 'none'; path: string; text: string };
 type View = {
   root: string; tabs: Tab[]; tab: number; hidden: boolean; find: string | null; pending: boolean; seek: number; notice: string | null;
-  parent: Entry[]; entries: Entry[]; truncated: boolean; preview: Preview | null; recent: string[];
+  parent: Entry[]; entries: Entry[]; truncated: boolean; preview: Preview | null;
 };
 type State = { placed: boolean; view: View | null; watch?: string };
 type Action = [string, () => string | null];
@@ -48,7 +48,7 @@ const CASE_RENAME = [
 ].join('\n');
 const THUMBNAIL = 'dir=$(mktemp -d) && trap \'rm -rf "$dir"\' EXIT && sips -s format jpeg -s formatOptions 50 -Z 480 "./$1" --out "$dir/preview.jpg" >/dev/null && base64 -i "$dir/preview.jpg"';
 const FINDER = ['-e', 'on run argv', '-e', 'tell application "Finder" to delete (POSIX file (item 1 of argv) as alias)', '-e', 'end run'];
-const TRASHES: [string, string[]][] = [['/usr/bin/trash', []], ['trash', []], ['gio', ['trash']], ['osascript', FINDER]];
+const TRASHES: [string, string[]][] = [['/usr/bin/trash', []], ['trash', []], ['osascript', FINDER]];
 const encoder = new TextEncoder();
 const bytesOf = (value: unknown) => encoder.encode(JSON.stringify(value)).length;
 
@@ -86,7 +86,7 @@ const depth = (preview: Preview | null) => {
 };
 const blank = (root: string, dir: string): View => ({
   root, tabs: [{ dir, sel: {} }], tab: 0, hidden: false, find: null, pending: false, seek: 0, notice: null,
-  parent: [], entries: [], truncated: false, preview: null, recent: [],
+  parent: [], entries: [], truncated: false, preview: null,
 });
 const tab = (v: View) => v.tabs[v.tab];
 const index = (v: View) => Math.max(0, v.entries.findIndex(([name]) => name === tab(v).sel[tab(v).dir]));
@@ -228,7 +228,6 @@ export default function activate(api: ModAPI) {
     }
     return `No match for ${v.find}`;
   };
-  const switchTab = (v: View, at: number) => reach(v, at);
   const open = (v: View) => {
     const entry = current(v);
     if (!entry) return null;
@@ -265,7 +264,7 @@ export default function activate(api: ModAPI) {
       if (run.value.exit_code === 0) return null;
       return `${run.value.stderr.trim() || `${program} failed`}; D deletes permanently`;
     }
-    return `No Trash command ran (trash, gio or osascript: ${last}); D deletes permanently`;
+    return `No Trash command ran (trash or osascript: ${last}); D deletes permanently`;
   };
   const exists = (path: string) => {
     const stat = api.host.tryCall('workspace.stat', { paths: [path] });
@@ -282,6 +281,15 @@ export default function activate(api: ModAPI) {
     return path.startsWith(`${from}/`) ? path.slice(from.length + 1) : `${root()}/${path}`;
   };
 
+  const ranked = (): string[] => {
+    try {
+      const result = api.services.call('omd.frecency', 'rank', { query: '' }) as { paths?: string[] };
+      return (result.paths ?? []).filter(item => typeof item === 'string').slice(0, RECENT);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return [];
+    }
+  };
   const actions = (v: View): Record<string, Action> => {
     const entry = current(v);
     const path = entry ? join(tab(v).dir, entry[0]) : null;
@@ -291,7 +299,6 @@ export default function activate(api: ModAPI) {
       j: ['Next entry', () => { select(v, index(v) + 1); return null; }],
       k: ['Previous entry', () => { select(v, index(v) - 1); return null; }],
       l: ['Enter the directory or open the file', () => open(v)],
-      Enter: ['Enter the directory or open the file', () => open(v)],
       g: ['g g: first entry', () => { if (v.pending) select(v, 0); v.pending = !v.pending; return null; }],
       G: ['Last entry', () => { select(v, v.entries.length - 1); return null; }],
       J: ['Scroll the preview down', () => { v.seek = Math.max(0, Math.min(v.seek + SEEK, depth(v.preview))); return null; }],
@@ -311,14 +318,15 @@ export default function activate(api: ModAPI) {
       n: ['Next match', () => find(v, 1)],
       N: ['Previous match', () => find(v, -1)],
       z: ['Jump to a frequent file', () => {
-        if (!v.recent.length) return 'No frequent files yet: turn on omd_frecency and mention files with @';
+        const recent = ranked();
+        if (!recent.length) return 'No frequent files yet: turn on omd_frecency and mention files with @';
         const answer = api.host.tryCall('terminal.prompt', {
           kind: 'choice', title: 'Jump', message: 'Files ranked by omd_frecency, or type a path', other: true,
-          options: v.recent.map(value => ({ value, label: cut(value, 120) })),
+          options: recent.map(value => ({ value, label: cut(value, 120) })),
         });
         if (!answer.ok || answer.value.status !== 'accepted') return null;
         const value = answer.value.values?.[0] ?? answer.value.value ?? '';
-        const typed = answer.value.other ? v.recent.find(item => smart(value, item)) ?? value : value;
+        const typed = answer.value.other ? recent.find(item => smart(value, item)) ?? value : value;
         return typed ? jump(v, typed) : null;
       }],
       r: ['Rename or move', () => {
@@ -327,7 +335,7 @@ export default function activate(api: ModAPI) {
         if (!to || to === entry[0]) return null;
         const target = join(tab(v).dir, to).replace(/\/+$/, '');
         if (target.split('/').includes('..') || to.startsWith('/')) return 'Stay inside the workspace: no .. or absolute paths';
-        return rename(path, target) ?? jump(v, target) ?? `Moved to ${target}`;
+        return rename(path, target) ?? enter(v, parentOf(target), nameOf(target)) ?? `Moved to ${target}`;
       }],
       d: ['Move to the Trash', () => {
         if (!path || !entry || !confirm('Trash', `Move ${path}${everything} to the Trash?`)) return null;
@@ -347,18 +355,19 @@ export default function activate(api: ModAPI) {
       }],
       '.': [v.hidden ? 'Hide dotfiles' : 'Show dotfiles', () => { v.hidden = !v.hidden; return reach(v, v.tab); }],
     };
+    own.Enter = own.l;
     for (let at = 0; at < TABS; at++) {
       const item = v.tabs[at];
       own[String(at + 1)] = item
-        ? [`Tab ${at + 1}: ${item.dir || '/'}`, () => switchTab(v, at)]
+        ? [`Tab ${at + 1}: ${item.dir || '/'}`, () => reach(v, at)]
         : [`Tab ${at + 1} (t opens one)`, () => `No tab ${at + 1}: t opens one`];
     }
     if (v.tabs.length > 1) {
-      own['['] = ['Previous tab', () => switchTab(v, (v.tab + v.tabs.length - 1) % v.tabs.length)];
-      own[']'] = ['Next tab', () => switchTab(v, (v.tab + 1) % v.tabs.length)];
+      own['['] = ['Previous tab', () => reach(v, (v.tab + v.tabs.length - 1) % v.tabs.length)];
+      own[']'] = ['Next tab', () => reach(v, (v.tab + 1) % v.tabs.length)];
       own.q = ['Close this tab', () => {
         const closing = v.tab;
-        const error = switchTab(v, closing + 1 < v.tabs.length ? closing + 1 : closing - 1);
+        const error = reach(v, closing + 1 < v.tabs.length ? closing + 1 : closing - 1);
         if (error) return error;
         v.tabs.splice(closing, 1);
         if (v.tab > closing) v.tab -= 1;
@@ -470,18 +479,9 @@ export default function activate(api: ModAPI) {
       return false;
     }
   };
-  const ranked = (v: View) => {
-    try {
-      const result = api.services.call('omd.frecency', 'rank', { query: '' }) as { paths?: string[] };
-      v.recent = (result.paths ?? []).filter(item => typeof item === 'string').slice(0, RECENT);
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
-    }
-  };
   const refresh = (state: State) => {
     if (!state.placed) return;
     const v = viewOf(state);
-    ranked(v);
     reach(v, v.tab);
   };
   const start = (fresh: boolean) => {
