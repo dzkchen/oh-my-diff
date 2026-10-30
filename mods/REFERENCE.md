@@ -265,6 +265,8 @@ needs `exec`.
 - A program is `*`, a bare name resolved on `PATH` outside the repository, or an absolute path.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
+- Unsandboxed runs get the user's `HOME`, `USER`, `LOGNAME`, `SHELL`, locale and `SSH_AUTH_SOCK`, so `ssh`-based tools
+  reach the user's SSH agent; other variables come only from declared `exec_environment` names.
 
 #### `approves` manifest field
 
@@ -520,6 +522,8 @@ write?, network?, unix_sockets?, guards?, required_access?, exclusive_workspace?
 - Commands, buttons and keybindings run `exec.run` without network; `network: "loopback"` there fails with
   `exec_network_unavailable_in_commands`.
 - Without `write` the repository is read-only. With `network: "loopback"` only local binding is allowed.
+- The command starts in its own session without a controlling terminal, so a program that would prompt on
+  `/dev/tty` (git credentials, ssh passphrases) fails instead of drawing over the TUI.
 - Cancellation kills the process group and returns `exec_cancelled`.
 
 #### `exec.run` limits
@@ -1910,6 +1914,8 @@ Observe-only events (capability `lifecycle` unless noted), all for the lead thre
   thread's working directory, workspace roots or model settings change.
 - `worktree {phase: 'created' | 'removed', path, owner: 'agent' | 'tui'}` for isolated agent worktrees and
   worktrees the terminal creates or removes.
+- `mods_changed {active}` (`mods_changed_v1`) with the ids of the active mods after a reload added or removed one;
+  native mods reload at the next turn or surface call, so a mod turned off in `/mods` is reported then.
 - `elicitation_result {server, request_id, action, content, by}` (capability `approvals`) after an MCP elicitation
   is answered; password and write-only fields are `[redacted]`, and `content` is the string `[redacted]` when the
   host no longer holds the request's schema.
@@ -2589,7 +2595,7 @@ exits, even while a background child keeps the output streams open and more outp
 
 #### `workspace.watch`
 
-`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?, key?}` reports external edits as `workspace_change`
+`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?, key?, git?}` reports external edits as `workspace_change`
 with source `external`.
 
 - At most 16 watches per mod.
@@ -2599,6 +2605,10 @@ with source `external`.
   mod's watches. Keys require `workspace_watch_key_v1`.
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
+- `git: true` (`workspace_watch_git_v1`) also reports changes to the repository's Git metadata, found from the
+  workspace root upward (worktrees included): `HEAD`, `index`, `packed-refs` and `refs/…`, as paths `.git/HEAD` and so
+  on with `before` and `after` null. Lock files and objects are left out. Outside a repository the call fails
+  `watch_git_unavailable`.
 
 #### Callback delivery
 
@@ -3561,6 +3571,13 @@ an `image` back to image pixels.
 
 Spans accept `fg` and `bg` theme colors, `italic` and `underline` (`terminal_style_v1`); `document` keeps span
 styles.
+
+#### Code highlighting
+
+A `code` component with a `language` (a name or file extension such as `rust`, `ts` or `py`) draws its `text`
+in the user's syntax theme. An unknown or missing `language`, or a line over 4 KiB, draws it plain. `start` (a line index,
+default 0) draws from that line while highlighting from the top of `text`, so a scrolled view keeps comments and
+strings that open above it.
 
 #### Component key and paste input (`terminal_input_v1`)
 

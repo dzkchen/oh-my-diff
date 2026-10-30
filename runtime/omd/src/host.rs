@@ -546,7 +546,14 @@ pub fn unrestricted_command(
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default());
     for name in [
-        "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "SSH_AUTH_SOCK",
     ]
     .into_iter()
     .chain(exec_environment.iter().map(String::as_str))
@@ -1233,7 +1240,13 @@ impl Host<'_> {
         };
         {
             use std::os::unix::process::CommandExt;
-            command.process_group(0);
+            unsafe {
+                command.pre_exec(|| {
+                    rustix::process::setsid()
+                        .map(drop)
+                        .map_err(std::io::Error::from)
+                });
+            }
         }
         command
             .current_dir(&cwd)

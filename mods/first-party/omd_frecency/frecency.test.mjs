@@ -188,3 +188,9 @@ test('recent commits skip empty ones and huge ones, and a commit cut by a trunca
     assert.ok(logs.length <= 2);
   }
 });
+
+test('omd.frecency rank serves the same ranking to other mods, by use and Git alone for an empty query', () => {
+  const { host } = repository({ tick: 4, files: { 'src/used.ts': [3, 4] } }, branch() + modified('src/dirty.ts'));
+  assert.deepEqual(run('service', { query: '' }, host, 'omd.frecency.rank').value, { paths: ['src/dirty.ts', 'src/used.ts'] });
+  assert.deepEqual(run('service', { query: 'dirty' }, host, 'omd.frecency.rank').value.paths[0], 'src/dirty.ts');
+});

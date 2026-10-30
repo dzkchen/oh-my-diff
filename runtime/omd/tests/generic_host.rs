@@ -1835,6 +1835,37 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
 }
 
 #[test]
+fn exec_children_lead_their_own_session_without_the_terminal() {
+    let _exec = exec_slot();
+    let (_temp, _repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["exec", "os"]);
+    let access = codex_omd::ModOsAccess {
+        programs: strings(&["sh"]),
+        network: true,
+    };
+    let granted = Caller {
+        os_access: Some(&access),
+        ..caller(&capabilities, &[], Origin::Tool)
+    };
+    let stat = host
+        .call(
+            &granted,
+            "exec.run",
+            json!({"program": "sh", "argv": ["-c", "ps -o stat= -p $$"], "sandbox": "none"}),
+        )
+        .unwrap();
+    assert!(stat["stdout"].as_str().unwrap().contains('s'), "{stat}");
+}
+
+#[test]
 fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let _exec = exec_slot();
     let (temp, repository, data, authority) = setup();
@@ -1880,6 +1911,20 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let environment = environment["stdout"].as_str().unwrap();
     assert!(environment.contains(&format!("HOME={}", std::env::var("HOME").unwrap())));
     assert!(!environment.contains("CODEX_HOME=") && !environment.contains("OPENAI_API_KEY="));
+    let saved = std::env::var_os("SSH_AUTH_SOCK");
+    unsafe { std::env::set_var("SSH_AUTH_SOCK", "/private/tmp/omd-agent.sock") };
+    let agent = host
+        .call(
+            &granted,
+            "exec.run",
+            json!({"program": "env", "sandbox": "none"}),
+        )
+        .unwrap();
+    match saved {
+        Some(value) => unsafe { std::env::set_var("SSH_AUTH_SOCK", value) },
+        None => unsafe { std::env::remove_var("SSH_AUTH_SOCK") },
+    }
+    assert!(agent["stdout"].as_str().unwrap().contains("SSH_AUTH_SOCK=/private/tmp/omd-agent.sock"), "{agent}");
     let refused = |caller: &Caller<'_>, arguments: Value| {
         host.call(caller, "exec.run", arguments).unwrap_err()
     };

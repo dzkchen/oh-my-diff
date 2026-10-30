@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "id": "omd_workspace",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "api": "1.0.0",
   "state_version": 1,
   "description": "A tabbed dock beside the chat for a shell, Git changes and other mods' panels, with focus keys, resize keys, screen modes and a panel registry",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_workspace"},
   "capabilities": ["terminal", "commands", "store", "exec", "pty", "services", "lifecycle", "inventory"],
-  "compatibility": {"required_features": ["store_v1", "exec_v1", "terminal_surface_v1", "terminal_lists_v1", "terminal_tabs_v1", "terminal_pty_v1", "terminal_focus_v1", "terminal_layout_title_v1", "settings_file_v1", "service_dispatch_v1", "lifecycle_events_v1"]},
+  "compatibility": {"required_features": ["store_v1", "exec_v1", "terminal_surface_v1", "terminal_lists_v1", "terminal_tabs_v1", "terminal_pty_v1", "terminal_focus_v1", "terminal_layout_title_v1", "settings_file_v1", "service_dispatch_v1", "lifecycle_events_v1", "mods_changed_v1"]},
   "services": {"exports": [{"name": "omd.workspace", "version": "1.0.0", "methods": {"register": {"input": "object", "output": "object"}, "unregister": {"input": "object", "output": "object"}, "panels": {"input": "null", "output": "object"}}}]},
   "settings_schema": {
     "type": "object",

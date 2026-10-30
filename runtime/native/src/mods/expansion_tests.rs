@@ -4179,7 +4179,7 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         id: "observer",
         capabilities: &["lifecycle", "approvals", "autonomous", "store"],
         manifest: json!({"autonomy": {"max_queued": 1, "max_turns": 1, "max_continuations": 1}}),
-        source: "export default function (api) {\n  const log = e => api.state.set([...(api.state.get() ?? []), e]);\n  api.on('tool_batch_end', log);\n  api.on('instructions_loaded', log);\n  api.on('elicitation_result', log);\n  api.on('worktree', log);\n  api.on('thread_settings', log);\n  api.intercept('elicitation', (e, next) => e.server === 'docs' ? { accept: { name: 'omd' } } : e.server === 'extra' ? { accept: { other: 1 } } : next(e));\n  api.intercept('turn_stop', (e, next) => e.outcome === 'error' ? { continue: 'retry after ' + e.error } : next(e));\n}\n",
+        source: "export default function (api) {\n  const log = e => api.state.set([...(api.state.get() ?? []), e]);\n  api.on('tool_batch_end', log);\n  api.on('instructions_loaded', log);\n  api.on('elicitation_result', log);\n  api.on('worktree', log);\n  api.on('thread_settings', log);\n  api.on('mods_changed', log);\n  api.intercept('elicitation', (e, next) => e.server === 'docs' ? { accept: { name: 'omd' } } : e.server === 'extra' ? { accept: { other: 1 } } : next(e));\n  api.intercept('turn_stop', (e, next) => e.outcome === 'error' ? { continue: 'retry after ' + e.error } : next(e));\n}\n",
     }]) else {
         return;
     };
@@ -4352,6 +4352,18 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         json!({"phase": "created", "path": "/scratch/agent", "owner": "agent"})
     );
     assert_eq!(log[6]["roots"]["added"], json!(["/extra"]));
+
+    {
+        let runtime = core.runtime.lock().unwrap();
+        core.expansion.refresh(&runtime);
+        *core.expansion.active.lock().unwrap() = Some(vec!["gone".to_owned()]);
+        core.expansion.refresh(&runtime);
+        core.expansion.refresh(&runtime);
+    }
+    assert!(!delivery::deliver(core).await);
+    let log = core.runtime.lock().unwrap().state("observer").cloned().unwrap();
+    assert_eq!(log.as_array().unwrap().len(), 8, "only a changed set is reported: {log}");
+    assert_eq!(log[7], json!({"active": ["observer"]}));
 }
 
 #[tokio::test(flavor = "multi_thread")]

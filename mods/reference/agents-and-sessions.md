@@ -469,6 +469,8 @@ Observe-only events (capability `lifecycle` unless noted), all for the lead thre
   thread's working directory, workspace roots or model settings change.
 - `worktree {phase: 'created' | 'removed', path, owner: 'agent' | 'tui'}` for isolated agent worktrees and
   worktrees the terminal creates or removes.
+- `mods_changed {active}` (`mods_changed_v1`) with the ids of the active mods after a reload added or removed one;
+  native mods reload at the next turn or surface call, so a mod turned off in `/mods` is reported then.
 - `elicitation_result {server, request_id, action, content, by}` (capability `approvals`) after an MCP elicitation
   is answered; password and write-only fields are `[redacted]`, and `content` is the string `[redacted]` when the
   host no longer holds the request's schema.

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "omd_files",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "description": "A yazi-style file manager in the workspace dock: Miller columns, tabs, find, frecency jump, previews, file operations and @ mentions",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_files"},
+  "capabilities": ["terminal", "commands", "store", "exec", "events", "services", "lifecycle", "fs.read", "fs.write", "composer", "inventory"],
+  "subscriptions": {"channels": ["omd_files/blit"]},
+  "compatibility": {"required_features": ["store_v1", "exec_v1", "events_v1", "timers_v1", "terminal_surface_v1", "terminal_focus_v1", "terminal_input_v1", "terminal_box_model_v1", "terminal_prompt_v1", "terminal_editor_v1", "terminal_raster_v1", "ui_composition_v1", "composer_v2", "service_dispatch_v1", "mods_changed_v1", "workspace_watch_key_v1"]},
+  "services": {"imports": [{"name": "omd.workspace", "version": "1.0.0"}, {"name": "omd.frecency", "version": "1.0.0", "optional": true}]}
+}

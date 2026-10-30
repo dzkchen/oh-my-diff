@@ -260,6 +260,13 @@ an `image` back to image pixels.
 Spans accept `fg` and `bg` theme colors, `italic` and `underline` (`terminal_style_v1`); `document` keeps span
 styles.
 
+### Code highlighting
+
+A `code` component with a `language` (a name or file extension such as `rust`, `ts` or `py`) draws its `text`
+in the user's syntax theme. An unknown or missing `language`, or a line over 4 KiB, draws it plain. `start` (a line index,
+default 0) draws from that line while highlighting from the top of `text`, so a scrolled view keeps comments and
+strings that open above it.
+
 ### Component key and paste input (`terminal_input_v1`)
 
 A `pane` or `document` with `keys: true` (`terminal_input_v1`) forwards keys and pastes while focused as

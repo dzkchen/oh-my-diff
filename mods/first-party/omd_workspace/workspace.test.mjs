@@ -25,7 +25,7 @@ function run(event, payload, { state = null, settings = {}, name, world = {} } =
   const host = ({ operation, arguments: args }) => {
     calls.push({ operation, arguments: args });
     if (operation === 'exec.run') return { stderr: '', ...git(world, args.argv) };
-    if (operation === 'session.info') return { thread_id: 't1' };
+    if (operation === 'session.info') return { thread_id: 't1', root: '/repo', cwd: '/repo' };
     if (operation === 'terminal.pty') {
       if (world.declined) return { status: 'declined' };
       return args.action === 'read' ? { text: '', running: !world.exited, exit_code: null } : { session: 'shell', running: true };
@@ -152,6 +152,16 @@ test('a registered panel with tabs nests in the dock and every key and layout li
   assert.deepEqual(titles, ['1 Changes', '2 Shell', '3 git', '4 files', '5 agents', '6 notes']);
   assert.deepEqual(layout.children[1].tabs[2].node, { tabs: [{ title: 't0', node: leaf('git/t0') }, { title: 't1', node: leaf('git/t1') }], active: 0 });
   assert.ok(cells(layout) <= 12 && depth(layout) <= 4);
+  const restarted = run('start', null, { state }).state;
+  assert.equal(restarted.registered.length, 4);
+  const at = 10_000_000;
+  const aged = { ...restarted, started: { '/repo': at }, registered: restarted.registered.map(panel => ({ ...panel, seen: { '/repo': panel.id === 'git' ? at : 0, ...(panel.id === 'files' ? { '/other': 1 } : {}) } })) };
+  const pruned = run('turn_start', { index: 0 }, { state: aged }).state;
+  assert.deepEqual(pruned.registered.map(panel => [panel.id, panel.seen]), [['git', { '/repo': at }], ['files', { '/other': 1 }]]);
+  assert.equal(pruned.started['/repo'], undefined);
+  assert.equal(run('turn_start', { index: 0 }, { state: { ...aged, started: {} } }).state.registered.length, 4);
+  const changed = run('mods_changed', { active: ['omd_workspace', 'git', 'agents'] }, { state: aged }).state;
+  assert.deepEqual(changed.registered.map(panel => [panel.id, panel.seen]), [['git', aged.registered[0].seen], ['files', { '/other': 1 }], ['agents', aged.registered[2].seen]]);
 
   for (const id of ['a', 'b', 'c', 'd', 'e']) state = register(state, id, 1);
   const six = draw(state, { settings: { panels: 'a, b, c, d, e, terminal, git' } });

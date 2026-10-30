@@ -59,6 +59,8 @@ OMD Core includes only the first three.
 | `omd_tool_absorb` | Runs a read the model repeats in one response once, and reuses unchanged file reads in code mode; `/absorb` | |
 | `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 | `omd_workspace` | A tabbed dock beside the chat: numbered tabs for Git changes, a shell and other mods' panels, with resize and focus keys; `/workspace` | `git` on your `PATH` for the Changes panel |
+| `omd_git` | A lazygit-style Git panel in the workspace dock: stage files and hunks, branches, commits, stash, push and pull; `/git` | `omd_workspace` turned on and `git` on your `PATH` |
+| `omd_files` | A yazi-style file manager in the workspace dock: Miller columns, tabs, find, frecency jump, previews and file operations; `/files` | `omd_workspace` turned on; `omd_frecency` for the jump list |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 

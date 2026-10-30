@@ -206,6 +206,7 @@ pub(crate) const LIFECYCLE_EVENTS: &[&str] = &[
     "instructions_loaded",
     "thread_settings",
     "worktree",
+    "mods_changed",
     "elicitation_result",
 ];
 

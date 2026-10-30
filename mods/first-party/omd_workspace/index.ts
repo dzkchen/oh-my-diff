@@ -1,7 +1,7 @@
 import type { CommandResult, Json, KeyAction, KeyContext, LayoutNode, ModAPI, TerminalComponent, TerminalPatch } from '../../api.d.ts';
 
 type Tab = { title: string; site: string };
-type Panel = { id: string; title: string; site: string; tabs?: Tab[]; order?: number };
+type Panel = { id: string; title: string; site: string; tabs?: Tab[]; order?: number; seen?: Record<string, number> };
 type File = { path: string; code: string };
 type Changes = { files: File[]; total: number; selected: string | null; diff: string; error: string | null };
 type Thread = { shell?: boolean; changes?: Changes };
@@ -9,7 +9,7 @@ type Level = 'normal' | 'half' | 'full';
 type Border = 'rounded' | 'plain' | 'double' | 'thick';
 type State = {
   off: boolean; registered: Panel[]; share: number | null; stack: Record<string, number[]>; tabs: Record<string, number>; dock: string | null;
-  mode: { target: string; level: Exclude<Level, 'normal'> } | null; threads: Record<string, Thread>;
+  mode: { target: string; level: Exclude<Level, 'normal'> } | null; threads: Record<string, Thread>; started?: Record<string, number>;
 };
 
 const BUILTIN: Panel[] = [
@@ -37,6 +37,7 @@ const THREADS = 6;
 const STATE_BYTES = 120_000;
 const ROWS = 50;
 const REGISTERED = 16;
+const REREGISTER_MS = 60_000;
 const CLIP = 30_000;
 const BUDGET = 40_000;
 const LINES = 1_000;
@@ -260,6 +261,38 @@ export default function activate(api: ModAPI) {
     ];
   };
 
+  const root = () => {
+    try {
+      return api.session().root;
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return '';
+    }
+  };
+  api.on('start', () => changed(state => {
+    state.started = Object.fromEntries([...Object.entries(state.started ?? {}).filter(([key]) => key !== root()).slice(-15), [root(), Date.now()]]);
+  }));
+  api.on('turn_start', () => changed(state => {
+    const here = root();
+    const since = state.started?.[here];
+    if (since === undefined) return;
+    delete state.started?.[here];
+    state.registered = state.registered.flatMap(panel => {
+      if ((panel.seen?.[here] ?? 0) >= since - REREGISTER_MS) return [panel];
+      const seen = Object.fromEntries(Object.entries(panel.seen ?? {}).filter(([key]) => key !== here));
+      return Object.keys(seen).length ? [{ ...panel, seen }] : [];
+    });
+  }));
+
+  api.on('mods_changed', ({ active }) => changed(state => {
+    const here = root();
+    state.registered = state.registered.flatMap(panel => {
+      if (active.includes(panel.site.split('/')[0])) return [panel];
+      const seen = Object.fromEntries(Object.entries(panel.seen ?? {}).filter(([key]) => key !== here));
+      return Object.keys(seen).length ? [{ ...panel, seen }] : [];
+    });
+  }));
+
   api.on('terminal', ({ ledger, client }): TerminalPatch | null => {
     const state = load();
     if (state.off) return null;
@@ -404,6 +437,7 @@ export default function activate(api: ModAPI) {
       const panel: Panel = { id, title, site: where, ...(tabs ? { tabs: tabs as Tab[] } : {}), ...(typeof raw.order === 'number' && Number.isFinite(raw.order) ? { order: raw.order } : {}) };
       return changed(state => {
         const others = state.registered.filter(item => item.id !== id);
+        panel.seen = { ...state.registered.find(item => item.id === id)?.seen, [root()]: Date.now() };
         const taken = new Set([...BUILTIN, ...others].flatMap(sitesOf));
         if (sitesOf(panel).some((name, index, all) => taken.has(name) || all.indexOf(name) !== index)) return refuse('site in use');
         if (others.length >= REGISTERED) return refuse('too many panels');

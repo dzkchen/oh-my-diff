@@ -158,6 +158,13 @@ export default function activate(api: ModAPI) {
     ? { items: rank(event.query, event.candidates.map(candidate => candidate.path)).map(path => ({ path })) }
     : null);
 
+  api.provide({ name: 'omd.frecency', version: '1.0.0', methods: { rank: { input: 'object', output: 'object' } } }, {
+    rank: input => {
+      const query = (input as { query?: unknown } | null)?.query;
+      return { paths: rank(typeof query === 'string' ? query.slice(0, 256) : '', []) };
+    },
+  });
+
   api.intercept('input', (event, next) => {
     const tokens = mentioned(event.text);
     if (tokens.length) api.state.set([...new Set([...(api.state.get() as string[] | null ?? []), ...tokens])].slice(-16));

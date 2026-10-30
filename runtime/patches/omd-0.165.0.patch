@@ -61362,10 +61362,10 @@ index 0000000000000000000000000000000000000000..91fdd2e51e6d86e394a73c8dc848a378
 +}
 diff --git a/codex-rs/ext/omd/src/generic_host.rs b/codex-rs/ext/omd/src/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..012e5887f683575267c8a0ca938bf1f6a3715425
+index 0000000000000000000000000000000000000000..69b65d04b36d84fc52262b3c43ae027db69eb34e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/generic_host.rs
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,297 @@
 +use crate::workspace_operations::WorkspaceAuthority;
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
@@ -61574,6 +61574,7 @@ index 0000000000000000000000000000000000000000..012e5887f683575267c8a0ca938bf1f6
 +    "instructions_loaded",
 +    "thread_settings",
 +    "worktree",
++    "mods_changed",
 +    "elicitation_result",
 +];
 +
@@ -72032,10 +72033,10 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..260a0a05ae88c14ca8f4975d621042cd9d9081ce
+index 0000000000000000000000000000000000000000..d6720d0bc28e61f8d1677204d6f1a02fe2e0206b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,840 @@
+@@ -0,0 +1,848 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -72103,6 +72104,7 @@ index 0000000000000000000000000000000000000000..260a0a05ae88c14ca8f4975d621042cd
 +
 +#[derive(Default)]
 +pub(super) struct State {
++    active: Mutex<Option<Vec<String>>>,
 +    recording: AtomicBool,
 +    tool_output: AtomicBool,
 +    approval: AtomicBool,
@@ -72281,6 +72283,13 @@ index 0000000000000000000000000000000000000000..260a0a05ae88c14ca8f4975d621042cd
 +            }),
 +            Ordering::Release,
 +        );
++        let mut active: Vec<String> = runtime.owners().into_iter().map(|(id, _)| id).collect();
++        active.sort();
++        if let Ok(mut previous) = self.active.lock()
++            && previous.replace(active.clone()).is_some_and(|previous| previous != active)
++        {
++            broadcast(self, "mods_changed", serde_json::json!({ "active": active }));
++        }
 +        let recording = runtime.uses_operation("turns.activity");
 +        self.recording.swap(recording, Ordering::AcqRel) && !recording
 +    }
@@ -73578,10 +73587,10 @@ index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a1705295830007
+index 0000000000000000000000000000000000000000..2511422e1858ba2dcdd133ac075a3fc7f5ad3943
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,723 @@
+@@ -0,0 +1,732 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -73910,8 +73919,14 @@ index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a17052
 +            let Some(lead) = core.expansion.thread(thread) else {
 +                return;
 +            };
-+            let changes =
++            let (git, paths): (Vec<String>, Vec<String>) =
++                paths.into_iter().partition(|path| path.starts_with(".git/"));
++            let mut changes =
 +                super::activity::external_changes(core, &lead, &paths, include_ignored).await;
++            changes.extend(
++                git.into_iter()
++                    .map(|path| json!({"path": path, "before": null, "after": null})),
++            );
 +            if changes.is_empty() {
 +                return;
 +            }
@@ -74035,6 +74050,8 @@ index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a17052
 +        include_ignored: bool,
 +        #[serde(default)]
 +        key: Option<String>,
++        #[serde(default)]
++        git: bool,
 +    }
 +    fn recursive() -> bool {
 +        true
@@ -74098,6 +74115,7 @@ index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a17052
 +            caller.source,
 +            &input.paths,
 +            input.recursive,
++            input.git,
 +            input.debounce_ms,
 +            input.key.as_deref().map(|key| (key, shape.as_str())),
 +            sink,
@@ -75011,10 +75029,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..89d1279a95ec4ef6b5a27abfb59de4dbf8acac78
+index 0000000000000000000000000000000000000000..bbd107f95cea1ecca80e9a6c79df2296281b8de6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4762 @@
+@@ -0,0 +1,4774 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -79196,7 +79214,7 @@ index 0000000000000000000000000000000000000000..89d1279a95ec4ef6b5a27abfb59de4db
 +        id: "observer",
 +        capabilities: &["lifecycle", "approvals", "autonomous", "store"],
 +        manifest: json!({"autonomy": {"max_queued": 1, "max_turns": 1, "max_continuations": 1}}),
-+        source: "export default function (api) {\n  const log = e => api.state.set([...(api.state.get() ?? []), e]);\n  api.on('tool_batch_end', log);\n  api.on('instructions_loaded', log);\n  api.on('elicitation_result', log);\n  api.on('worktree', log);\n  api.on('thread_settings', log);\n  api.intercept('elicitation', (e, next) => e.server === 'docs' ? { accept: { name: 'omd' } } : e.server === 'extra' ? { accept: { other: 1 } } : next(e));\n  api.intercept('turn_stop', (e, next) => e.outcome === 'error' ? { continue: 'retry after ' + e.error } : next(e));\n}\n",
++        source: "export default function (api) {\n  const log = e => api.state.set([...(api.state.get() ?? []), e]);\n  api.on('tool_batch_end', log);\n  api.on('instructions_loaded', log);\n  api.on('elicitation_result', log);\n  api.on('worktree', log);\n  api.on('thread_settings', log);\n  api.on('mods_changed', log);\n  api.intercept('elicitation', (e, next) => e.server === 'docs' ? { accept: { name: 'omd' } } : e.server === 'extra' ? { accept: { other: 1 } } : next(e));\n  api.intercept('turn_stop', (e, next) => e.outcome === 'error' ? { continue: 'retry after ' + e.error } : next(e));\n}\n",
 +    }]) else {
 +        return;
 +    };
@@ -79369,6 +79387,18 @@ index 0000000000000000000000000000000000000000..89d1279a95ec4ef6b5a27abfb59de4db
 +        json!({"phase": "created", "path": "/scratch/agent", "owner": "agent"})
 +    );
 +    assert_eq!(log[6]["roots"]["added"], json!(["/extra"]));
++
++    {
++        let runtime = core.runtime.lock().unwrap();
++        core.expansion.refresh(&runtime);
++        *core.expansion.active.lock().unwrap() = Some(vec!["gone".to_owned()]);
++        core.expansion.refresh(&runtime);
++        core.expansion.refresh(&runtime);
++    }
++    assert!(!delivery::deliver(core).await);
++    let log = core.runtime.lock().unwrap().state("observer").cloned().unwrap();
++    assert_eq!(log.as_array().unwrap().len(), 8, "only a changed set is reported: {log}");
++    assert_eq!(log[7], json!({"active": ["observer"]}));
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -85310,10 +85340,10 @@ index 0000000000000000000000000000000000000000..75293b4fe6fe6b1e7790966df06dca05
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb4eb622e3
+index 0000000000000000000000000000000000000000..d882cb3b4f9213da11ed3a03fa6c12d3a68dcec3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch.rs
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,285 @@
 +use codex_file_watcher::DebouncedWatchReceiver;
 +use codex_file_watcher::FileWatcher;
 +use codex_file_watcher::WatchPath;
@@ -85359,6 +85389,46 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +        return None;
 +    }
 +    relative.to_str().map(str::to_owned)
++}
++
++const GIT_FILES: [&str; 3] = ["HEAD", "index", "packed-refs"];
++
++fn git_dirs(root: &Path) -> Option<(PathBuf, PathBuf)> {
++    let top = root.ancestors().find(|dir| dir.join(".git").exists())?;
++    let dot = top.join(".git").canonicalize().ok()?;
++    if dot.is_dir() {
++        return Some((dot.clone(), dot));
++    }
++    let text = std::fs::read_to_string(&dot).ok()?;
++    let git = top
++        .join(text.strip_prefix("gitdir:")?.trim())
++        .canonicalize()
++        .ok()?;
++    let common = git
++        .join(std::fs::read_to_string(git.join("commondir")).ok()?.trim())
++        .canonicalize()
++        .ok()?;
++    let backlink = std::fs::read_to_string(git.join("gitdir")).ok()?;
++    (git.parent() == Some(common.join("worktrees").as_path())
++        && Path::new(backlink.trim()).canonicalize().ok()? == dot)
++        .then_some((git, common))
++}
++
++fn git_change(dirs: &(PathBuf, PathBuf), path: &Path) -> Option<String> {
++    let own = path
++        .strip_prefix(&dirs.0)
++        .ok()
++        .and_then(Path::to_str)
++        .filter(|name| GIT_FILES[..2].contains(name));
++    let shared = || {
++        path.strip_prefix(&dirs.1)
++            .ok()
++            .and_then(Path::to_str)
++            .filter(|name| *name == GIT_FILES[2] || name.starts_with("refs/"))
++    };
++    own.or_else(shared)
++        .filter(|name| !name.ends_with(".lock"))
++        .map(|name| format!(".git/{name}"))
 +}
 +
 +fn keyed(watches: &BTreeMap<(String, String), Watch>, owner: &str, key: &str) -> Option<String> {
@@ -85422,6 +85492,7 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +        source: &str,
 +        paths: &[String],
 +        recursive: bool,
++        git: bool,
 +        debounce_ms: Option<u64>,
 +        key: Option<(&str, &str)>,
 +        sink: ChangeSink,
@@ -85437,6 +85508,11 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +            .iter()
 +            .map(|path| self.resolve(path))
 +            .collect::<io::Result<Vec<_>>>()?;
++        let dirs = if git {
++            Some(git_dirs(&self.root).ok_or_else(|| io::Error::other("watch_git_unavailable"))?)
++        } else {
++            None
++        };
 +        let mut watches = self
 +            .watches
 +            .lock()
@@ -85467,26 +85543,41 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +            format!("w{}", *next)
 +        };
 +        let (subscriber, receiver) = self.watcher.add_subscriber();
-+        let registration = subscriber.register_paths(
-+            resolved
-+                .iter()
-+                .map(|path| WatchPath {
-+                    path: path.clone(),
-+                    recursive,
-+                })
-+                .collect(),
-+        );
++        let mut targets: Vec<WatchPath> = resolved
++            .iter()
++            .map(|path| WatchPath {
++                path: path.clone(),
++                recursive,
++            })
++            .collect();
++        if let Some((git, common)) = &dirs {
++            for (path, recursive) in [(git, false), (common, false), (&common.join("refs"), true)] {
++                if !targets.iter().any(|target| target.path == *path) {
++                    targets.push(WatchPath {
++                        path: path.clone(),
++                        recursive,
++                    });
++                }
++            }
++        }
++        let registration = subscriber.register_paths(targets);
 +        let mut receiver = DebouncedWatchReceiver::new(receiver, Duration::from_millis(debounce));
 +        let (root, protected, watch_id) = (self.root.clone(), self.protected.clone(), id.clone());
 +        let task = tokio::spawn(async move {
 +            let _subscriber = subscriber;
 +            while let Some(event) = receiver.recv().await {
-+                let changed: Vec<String> = event
++                let mut changed: Vec<String> = event
 +                    .paths
 +                    .iter()
 +                    .filter(|path| !protected.iter().any(|p| path.starts_with(p)))
-+                    .filter_map(|path| relative(&root, path))
++                    .filter_map(|path| {
++                        dirs.as_ref()
++                            .and_then(|dirs| git_change(dirs, path))
++                            .or_else(|| relative(&root, path))
++                    })
 +                    .collect();
++                changed.sort();
++                changed.dedup();
 +                if !changed.is_empty() {
 +                    sink(&watch_id, changed);
 +                }
@@ -85540,10 +85631,10 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986f4e611fe
+index 0000000000000000000000000000000000000000..fc79aa218b57eea074e4003a401514c61c3be941
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,236 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -85580,7 +85671,7 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    let (dir, watches) = fixture();
 +    let (sink, rx) = channel_sink();
 +    let (id, _) = watches
-+        .watch("m", "sha", &["src".to_owned()], true, Some(50), None, sink)
++        .watch("m", "sha", &["src".to_owned()], true, false, Some(50), None, sink)
 +        .unwrap();
 +    tokio::time::sleep(Duration::from_millis(300)).await;
 +    let file = dir.path().join("src/a.txt");
@@ -85612,7 +85703,7 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +        let (sink, _rx) = channel_sink();
 +        assert!(
 +            watches
-+                .watch("m", "sha", &[path.to_owned()], false, None, None, sink)
++                .watch("m", "sha", &[path.to_owned()], false, false, None, None, sink)
 +                .is_err(),
 +            "{path}"
 +        );
@@ -85620,13 +85711,13 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    let (sink, _rx) = channel_sink();
 +    assert!(
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, Some(10), None, sink)
++            .watch("m", "sha", &["src".to_owned()], false, false, Some(10), None, sink)
 +            .is_err()
 +    );
 +    let (sink, _rx) = channel_sink();
 +    assert!(
 +        watches
-+            .watch("m", "sha", &[], false, None, None, sink)
++            .watch("m", "sha", &[], false, false, None, None, sink)
 +            .is_err()
 +    );
 +}
@@ -85637,7 +85728,7 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    for _ in 0..codex_omd::mod_limits::ModLimits::default().watches_per_mod {
 +        let (sink, _rx) = channel_sink();
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, None, None, sink)
++            .watch("m", "sha", &["src".to_owned()], false, false, None, None, sink)
 +            .unwrap();
 +    }
 +    let (sink, _rx) = channel_sink();
@@ -85647,7 +85738,7 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +                "m",
 +                "sha",
 +                &["src".to_owned()],
-+                false,
++                false, false,
 +                None,
 +                None,
 +                sink.clone()
@@ -85656,7 +85747,7 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    );
 +    assert!(
 +        watches
-+            .watch("other", "sha", &["src".to_owned()], false, None, None, sink)
++            .watch("other", "sha", &["src".to_owned()], false, false, None, None, sink)
 +            .is_ok()
 +    );
 +    watches.retain_sources(&BTreeMap::from([("other".to_owned(), "sha".to_owned())]));
@@ -85671,7 +85762,7 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    let (_dir, watches) = fixture();
 +    let watch = |key: Option<(&str, &str)>| {
 +        let (sink, _rx) = channel_sink();
-+        watches.watch("m", "sha", &["src".to_owned()], false, None, key, sink)
++        watches.watch("m", "sha", &["src".to_owned()], false, false, None, key, sink)
 +    };
 +    let (first, replaced) = watch(Some(("k", "a"))).unwrap();
 +    assert_eq!(replaced, None);
@@ -85686,6 +85777,99 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    assert!(!watches.unwatch_key("other", "k"));
 +    assert!(watches.unwatch_key("m", "k"));
 +    assert!(!watches.unwatch("m", &second));
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_git_watch_reports_head_index_and_refs_but_not_objects_or_locks() {
++    let (dir, watches) = fixture();
++    let git = dir.path().join(".git");
++    std::fs::create_dir_all(git.join("refs/heads")).unwrap();
++    std::fs::create_dir_all(git.join("objects/ab")).unwrap();
++    let (sink, rx) = channel_sink();
++    watches
++        .watch("m", "sha", &["src".to_owned()], true, true, Some(50), None, sink)
++        .unwrap();
++    tokio::time::sleep(Duration::from_millis(300)).await;
++    let seen = tokio::task::spawn_blocking(move || {
++        let mut seen = std::collections::BTreeSet::new();
++        for round in 0..20 {
++            std::fs::write(git.join("objects/ab/cd"), round.to_string()).unwrap();
++            std::fs::write(git.join("index.lock"), round.to_string()).unwrap();
++            std::fs::write(git.join("HEAD"), format!("ref: refs/heads/b{round}\n")).unwrap();
++            std::fs::write(git.join("refs/heads/main"), round.to_string()).unwrap();
++            while let Ok((_, paths)) = rx.recv_timeout(Duration::from_millis(500)) {
++                seen.extend(paths);
++            }
++            if seen.contains(".git/HEAD") && seen.contains(".git/refs/heads/main") {
++                break;
++            }
++        }
++        seen
++    })
++    .await
++    .unwrap();
++    assert!(seen.contains(".git/HEAD") && seen.contains(".git/refs/heads/main"), "{seen:?}");
++    assert!(seen.iter().all(|path| !path.contains("objects") && !path.ends_with(".lock")), "{seen:?}");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_git_watch_needs_a_repository() {
++    let dir = tempfile::tempdir().unwrap();
++    let watches = WorkspaceWatches::new(
++        Arc::new(FileWatcher::new().unwrap()),
++        dir.path().to_path_buf(),
++        Vec::new(),
++        Default::default(),
++    )
++    .unwrap();
++    let (sink, _rx) = channel_sink();
++    let error = watches
++        .watch("m", "sha", &[".".to_owned()], true, true, None, None, sink)
++        .unwrap_err();
++    assert_eq!(error.to_string(), "watch_git_unavailable");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_worktree_git_watch_reports_its_own_head_and_shared_refs_only() {
++    let dir = tempfile::tempdir().unwrap();
++    let base = dir.path().canonicalize().unwrap();
++    let (main, tree) = (base.join("main/.git"), base.join("tree"));
++    let own = main.join("worktrees/tree");
++    for path in [main.join("refs/heads"), own.clone(), tree.clone()] {
++        std::fs::create_dir_all(path).unwrap();
++    }
++    std::fs::write(own.join("commondir"), "../..\n").unwrap();
++    std::fs::write(own.join("gitdir"), format!("{}\n", tree.join(".git").display())).unwrap();
++    std::fs::write(tree.join(".git"), format!("gitdir: {}\n", own.display())).unwrap();
++    let watches = WorkspaceWatches::new(Arc::new(FileWatcher::new().unwrap()), tree.clone(), Vec::new(), Default::default()).unwrap();
++    let (sink, rx) = channel_sink();
++    watches.watch("m", "sha", &[".".to_owned()], true, true, Some(50), None, sink).unwrap();
++    tokio::time::sleep(Duration::from_millis(300)).await;
++    let seen = tokio::task::spawn_blocking(move || {
++        let mut seen = std::collections::BTreeSet::new();
++        for round in 0..20 {
++            std::fs::write(main.join("HEAD"), round.to_string()).unwrap();
++            std::fs::write(own.join("HEAD"), round.to_string()).unwrap();
++            std::fs::write(main.join("refs/heads/x"), round.to_string()).unwrap();
++            while let Ok((_, paths)) = rx.recv_timeout(Duration::from_millis(500)) {
++                seen.extend(paths);
++            }
++            if seen.contains(".git/HEAD") && seen.contains(".git/refs/heads/x") {
++                break;
++            }
++        }
++        seen
++    })
++    .await
++    .unwrap();
++    assert_eq!(seen, [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(), "{seen:?}");
++
++    std::fs::write(tree.join(".git"), format!("gitdir: {}\n", base.join("main/.git").display())).unwrap();
++    let (sink, _rx) = channel_sink();
++    assert_eq!(
++        watches.watch("n", "sha", &[".".to_owned()], true, true, None, None, sink).unwrap_err().to_string(),
++        "watch_git_unavailable"
++    );
 +}
 diff --git a/codex-rs/ext/omd/tests/omd_mod_cli.rs b/codex-rs/ext/omd/tests/omd_mod_cli.rs
 new file mode 100644
@@ -103966,10 +104150,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2357070ef
+index 0000000000000000000000000000000000000000..e9e9d71c23876dc3ea05450d1a3f81df33e47c08
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1773 @@
+@@ -0,0 +1,1786 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -104518,7 +104702,14 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +        .env_clear()
 +        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
 +    for name in [
-+        "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
++        "HOME",
++        "USER",
++        "LOGNAME",
++        "SHELL",
++        "LANG",
++        "LC_ALL",
++        "LC_CTYPE",
++        "SSH_AUTH_SOCK",
 +    ]
 +    .into_iter()
 +    .chain(exec_environment.iter().map(String::as_str))
@@ -105205,7 +105396,13 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +        };
 +        {
 +            use std::os::unix::process::CommandExt;
-+            command.process_group(0);
++            unsafe {
++                command.pre_exec(|| {
++                    rustix::process::setsid()
++                        .map(drop)
++                        .map_err(std::io::Error::from)
++                });
++            }
 +        }
 +        command
 +            .current_dir(&cwd)
@@ -107790,10 +107987,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759b9db13d4
+index 0000000000000000000000000000000000000000..9a1de9a41ff834e15485ea67b6fbe535d7de16f4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6750 @@
+@@ -0,0 +1,6753 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -108140,6 +108337,7 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +    "tool_batch_success_v1",
 +    "code_mode_values_v1",
 +    "workspace_watch_key_v1",
++    "workspace_watch_git_v1",
 +    "terminal_surface_v1",
 +    "credentials_v1",
 +    "completion_v1",
@@ -108188,6 +108386,7 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +    "compaction_intercept_v1",
 +    "composer_v2",
 +    "lifecycle_events_v1",
++    "mods_changed_v1",
 +    "user_submissions_v1",
 +    "terminal_raster_v1",
 +    "svg_assets_v1",
@@ -108574,6 +108773,7 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +    ("instructions_loaded", "lifecycle"),
 +    ("thread_settings", "lifecycle"),
 +    ("worktree", "lifecycle"),
++    ("mods_changed", "lifecycle"),
 +    ("elicitation_result", "approvals"),
 +    ("composer", "composer"),
 +    ("prompt_expanded", "middleware"),
@@ -118356,7 +118556,7 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..83e535fed2250e8307c6bacfeb0847b5ea4ebe29
+index 0000000000000000000000000000000000000000..39e7e7336dc713490705cd84d9667334318b3217
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,226 @@
@@ -118432,7 +118632,7 @@ index 0000000000000000000000000000000000000000..83e535fed2250e8307c6bacfeb0847b5
 +    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/34"}]}},
 +    "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},
 +    "app.routes": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"class":{"anyOf":[{"const":"input"},{"const":"network"},{"const":"history"},{"const":"context"},{"const":"tools"},{"const":"commands"},{"const":"lifecycle"},{"const":"interception"},{"const":"compaction"},{"const":"middleware"},{"const":"services"},{"const":"virtual_reads"},{"const":"terminal"},{"const":"exec"},{"const":"fs.read"},{"const":"fs.write"},{"const":"unix_sockets"},{"const":"model"},{"const":"agents"},{"const":"store"},{"const":"sessions"},{"const":"sessions_tools"},{"const":"contracts"},{"const":"builtins"},{"const":"threads"},{"const":"config"},{"const":"config.write"},{"const":"inventory"},{"const":"account"},{"const":"packages"},{"const":"approvals"},{"const":"events"},{"const":"credentials"},{"const":"composer"},{"const":"pty"},{"const":"outputs"},{"const":"os"},{"const":"approve"},{"const":"approve.override"},{"const":"request_policy"},{"const":"peers"},{"const":"power"},{"const":"autonomous"},{"const":"history_write"},{"const":"history_persist"},{"const":"fs.external"},{"const":"http"},{"const":"mcp"},{"const":"policy"}]},"contexts":{"type":"array","items":{"anyOf":[{"const":"event"},{"const":"user"}]}},"confirm":{"type":"boolean"}},"required":["method","class","contexts","confirm"]}}},
-+    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"}},"required":["paths"]},"result":{"$ref":"#/$defs/61"}},
++    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"},"git":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/61"}},
 +    "workspace.unwatch": {"arguments":{"anyOf":[{"$ref":"#/$defs/61"},{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}]},"result":{"$ref":"#/$defs/59"}},
 +    "events.publish": {"arguments":{"type":"object","properties":{"channel":{"type":"string"},"data":{},"correlation":{"type":"string"}},"required":["channel","data"]},"result":{"type":"object","properties":{"delivered":{"type":"number"},"dropped":{"type":"number"}},"required":["delivered","dropped"]}},
 +    "events.schedule": {"arguments":{"$ref":"#/$defs/62"},"result":{"$ref":"#/$defs/62"}},
@@ -126286,10 +126486,10 @@ index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3ab44e547
+index 0000000000000000000000000000000000000000..a371d452a2297a1a21edb8c1065d5ac74ee6ccf9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2476 @@
+@@ -0,0 +1,2478 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 24;
@@ -126859,6 +127059,8 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +        text: String,
 +        #[serde(default)]
 +        language: Option<String>,
++        #[serde(default)]
++        start: usize,
 +    },
 +    Pane {
 +        id: String,
@@ -137741,10 +137943,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb0c3f8840fb03a2f1d18941708bea666894e200
+index 0000000000000000000000000000000000000000..7e078206f155cc574cddf830358db28093803c28
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2097 @@
+@@ -0,0 +1,2142 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -139582,6 +139784,37 @@ index 0000000000000000000000000000000000000000..cb0c3f8840fb03a2f1d18941708bea66
 +}
 +
 +#[test]
++fn exec_children_lead_their_own_session_without_the_terminal() {
++    let _exec = exec_slot();
++    let (_temp, _repository, data, authority) = setup();
++    let active = || true;
++    let host = Host {
++        authority: &authority,
++        data_root: &data,
++        environment: None,
++        active: &active,
++        record_changes: false,
++    };
++    let capabilities = strings(&["exec", "os"]);
++    let access = codex_omd::ModOsAccess {
++        programs: strings(&["sh"]),
++        network: true,
++    };
++    let granted = Caller {
++        os_access: Some(&access),
++        ..caller(&capabilities, &[], Origin::Tool)
++    };
++    let stat = host
++        .call(
++            &granted,
++            "exec.run",
++            json!({"program": "sh", "argv": ["-c", "ps -o stat= -p $$"], "sandbox": "none"}),
++        )
++        .unwrap();
++    assert!(stat["stdout"].as_str().unwrap().contains('s'), "{stat}");
++}
++
++#[test]
 +fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
 +    let _exec = exec_slot();
 +    let (temp, repository, data, authority) = setup();
@@ -139627,6 +139860,20 @@ index 0000000000000000000000000000000000000000..cb0c3f8840fb03a2f1d18941708bea66
 +    let environment = environment["stdout"].as_str().unwrap();
 +    assert!(environment.contains(&format!("HOME={}", std::env::var("HOME").unwrap())));
 +    assert!(!environment.contains("CODEX_HOME=") && !environment.contains("OPENAI_API_KEY="));
++    let saved = std::env::var_os("SSH_AUTH_SOCK");
++    unsafe { std::env::set_var("SSH_AUTH_SOCK", "/private/tmp/omd-agent.sock") };
++    let agent = host
++        .call(
++            &granted,
++            "exec.run",
++            json!({"program": "env", "sandbox": "none"}),
++        )
++        .unwrap();
++    match saved {
++        Some(value) => unsafe { std::env::set_var("SSH_AUTH_SOCK", value) },
++        None => unsafe { std::env::remove_var("SSH_AUTH_SOCK") },
++    }
++    assert!(agent["stdout"].as_str().unwrap().contains("SSH_AUTH_SOCK=/private/tmp/omd-agent.sock"), "{agent}");
 +    let refused = |caller: &Caller<'_>, arguments: Value| {
 +        host.call(caller, "exec.run", arguments).unwrap_err()
 +    };
@@ -161658,10 +161905,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e951187974612
+index 0000000000000000000000000000000000000000..41bfff980575d84ce48dcb4da53e1ca7a827640a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,617 @@
 +use crate::omd::LockExt;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -161936,6 +162183,13 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +    for name in ["PATH", "LANG", "USER", "SHELL"] {
 +        if let Ok(value) = std::env::var(name) {
 +            environment.insert(name.to_owned(), value);
++        }
++    }
++    for (name, value) in command.get_envs() {
++        if name == "SSH_AUTH_SOCK"
++            && let Some(value) = value
++        {
++            environment.insert("SSH_AUTH_SOCK".to_owned(), value.to_string_lossy().into_owned());
 +        }
 +    }
 +    let size = codex_utils_pty::TerminalSize { rows: 24, cols: 80 };
@@ -168779,10 +169033,10 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259027e37f0
+index 0000000000000000000000000000000000000000..ee5f43b761414a840c455f2358f7f12280a8d90c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5614 @@
+@@ -0,0 +1,5646 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -169701,12 +169955,21 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        .sum()
 +}
 +
-+/// The most recently drawn markdown renders, so a draw re-parses only changed or resized text.
 +fn markdown_lines(text: &str, width: u16) -> Arc<[HyperlinkLine]> {
++    rendered_lines(text, width, None)
++}
++
++fn code_lines(text: &str, language: &str) -> Arc<[HyperlinkLine]> {
++    rendered_lines(text, 0, Some(language))
++}
++
++/// The most recently drawn markdown and code renders, so a draw re-parses only changed or resized text.
++fn rendered_lines(text: &str, width: u16, language: Option<&str>) -> Arc<[HyperlinkLine]> {
 +    use std::hash::Hash;
 +    use std::hash::Hasher;
 +    let mut hasher = std::collections::hash_map::DefaultHasher::new();
 +    text.hash(&mut hasher);
++    language.hash(&mut hasher);
 +    let key = (
 +        hasher.finish(),
 +        width,
@@ -169724,14 +169987,31 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +            return lines;
 +        }
 +    }
-+    let lines: Arc<[HyperlinkLine]> = crate::markdown::render_markdown_agent_with_list_spacing(
-+        text,
-+        Some(usize::from(width)),
-+        None,
-+        None,
-+        crate::markdown_render::ListSpacing::AfterMultiline,
-+    )
-+    .into();
++    let lines: Arc<[HyperlinkLine]> = match language {
++        Some(language) => {
++            match (!language.is_empty())
++                .then(|| crate::render::highlight::highlight_code_to_styled_spans(text, language))
++                .flatten()
++            {
++                Some(lines) => lines
++                    .into_iter()
++                    .map(|spans| HyperlinkLine::from(Line::from(spans)))
++                    .collect(),
++                None => text
++                    .lines()
++                    .map(|line| HyperlinkLine::from(Line::from(line.to_owned()).cyan()))
++                    .collect(),
++            }
++        }
++        None => crate::markdown::render_markdown_agent_with_list_spacing(
++            text,
++            Some(usize::from(width)),
++            None,
++            None,
++            crate::markdown_render::ListSpacing::AfterMultiline,
++        )
++        .into(),
++    };
 +    let mut cache = MARKDOWN.locked();
 +    cache.retain(|(cached, _, _)| *cached != key);
 +    cache.push((key, markdown_weight(&lines), Arc::clone(&lines)));
@@ -170487,10 +170767,12 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +                }
 +            }
 +            ModComponent::Line { .. } => 1,
-+            ModComponent::Text { text, .. }
-+            | ModComponent::Markdown { text, .. }
-+            | ModComponent::Code { text, .. } => {
++            ModComponent::Text { text, .. } | ModComponent::Markdown { text, .. } => {
 +                u16::try_from(text.lines().count().max(1)).unwrap_or(u16::MAX)
++            }
++            ModComponent::Code { text, start, .. } => {
++                u16::try_from(text.lines().count().saturating_sub(*start).max(1))
++                    .unwrap_or(u16::MAX)
 +            }
 +            ModComponent::Button { .. }
 +            | ModComponent::Input { .. }
@@ -171004,6 +171286,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +                label,
 +                text,
 +                language,
++                start,
 +            } => {
 +                if let Some(language) = language {
 +                    rows.push(ComponentRow {
@@ -171016,12 +171299,15 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +                        ..ComponentRow::default()
 +                    });
 +                }
-+                for line in text.lines() {
++                for line in code_lines(text, language.as_deref().unwrap_or_default())
++                    .iter()
++                    .skip(*start)
++                {
 +                    rows.push(ComponentRow {
 +                        id: None,
 +                        label: None,
 +                        links: Vec::new(),
-+                        line: Line::from(line.to_owned()).cyan(),
++                        line: line.line.clone(),
 +                        target: None,
 +                        regions: Vec::new(),
 +                        ..ComponentRow::default()
@@ -174649,10 +174935,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb212d73410330c97a6a7edc1939baf6ce541d06
+index 0000000000000000000000000000000000000000..a9f6fbe99fefd1813ed32daf7251daee64deb1e5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2340 @@
+@@ -0,0 +1,2387 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -175995,6 +176281,53 @@ index 0000000000000000000000000000000000000000..fb212d73410330c97a6a7edc1939baf6
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
 +        .len();
 +    assert!(cached < 20, "{cached} entries");
++}
++
++#[test]
++#[serial_test::serial]
++fn code_highlights_known_languages_and_keeps_plain_cyan_otherwise() {
++    let colors = |language: &str| {
++        let mut colors = Vec::new();
++        for line in code_lines("fn main() {\n    let x = \"a\"; // b\n}", language).iter() {
++            for span in &line.line.spans {
++                if !colors.contains(&span.style.fg) {
++                    colors.push(span.style.fg);
++                }
++            }
++        }
++        colors.len()
++    };
++    assert!(colors("rust") > 2, "{} colors", colors("rust"));
++    let text = "/* open\n still comment */\nfn main() {}";
++    let full = code_lines(text, "rust");
++    let snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++        {"type":"code","id":"src","label":"Source","text":text,"language":"rust","start":1}
++    ]}},"sidebar_width":40}));
++    let area = Rect::new(0, 0, 80, 24);
++    sync_interaction(&snapshot.view);
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &snapshot);
++    let rows = (0..area.height)
++        .map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol().to_owned()).collect::<String>())
++        .collect::<Vec<_>>();
++    assert!(!rows.iter().any(|row| row.contains("/* open")));
++    let y = rows.iter().position(|row| row.contains("still comment")).expect("comment row");
++    let x = rows[y].find("still").expect("comment column");
++    let x = u16::try_from(rows[y][..x].chars().count()).expect("column");
++    let comment = full[1].line.spans.iter().find(|span| span.content.contains("still")).expect("span");
++    assert_eq!(buffer[(x, u16::try_from(y).expect("row"))].fg, comment.style.fg.expect("comment color"));
++    for language in ["", "no-such-language"] {
++        let lines = code_lines("a\nb", language);
++        assert_eq!(lines.len(), 2);
++        assert!(lines.iter().all(|line| {
++            line.line.style.fg == Some(Color::Cyan)
++                || line
++                    .line
++                    .spans
++                    .iter()
++                    .all(|span| span.style.fg == Some(Color::Cyan))
++        }));
++    }
 +}
 +
 +#[test]
