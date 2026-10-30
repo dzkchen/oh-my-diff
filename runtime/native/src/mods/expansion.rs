@@ -247,9 +247,15 @@ impl State {
         let mut active: Vec<String> = runtime.owners().into_iter().map(|(id, _)| id).collect();
         active.sort();
         if let Ok(mut previous) = self.active.lock()
-            && previous.replace(active.clone()).is_some_and(|previous| previous != active)
+            && previous
+                .replace(active.clone())
+                .is_none_or(|previous| previous != active)
         {
-            broadcast(self, "mods_changed", serde_json::json!({ "active": active }));
+            broadcast(
+                self,
+                "mods_changed",
+                serde_json::json!({ "active": active }),
+            );
         }
         let recording = runtime.uses_operation("turns.activity");
         self.recording.swap(recording, Ordering::AcqRel) && !recording

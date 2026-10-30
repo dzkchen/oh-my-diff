@@ -58,13 +58,16 @@ fn git_dirs(root: &Path) -> Option<(PathBuf, PathBuf)> {
         .join(text.strip_prefix("gitdir:")?.trim())
         .canonicalize()
         .ok()?;
-    let common = git
-        .join(std::fs::read_to_string(git.join("commondir")).ok()?.trim())
-        .canonicalize()
-        .ok()?;
+    let Ok(common) = std::fs::read_to_string(git.join("commondir")) else {
+        return (git.join("HEAD").is_file()
+            && git.join("refs").is_dir()
+            && git.join("objects").is_dir())
+        .then(|| (git.clone(), git));
+    };
+    let common = git.join(common.trim()).canonicalize().ok()?;
     let backlink = std::fs::read_to_string(git.join("gitdir")).ok()?;
     (git.parent() == Some(common.join("worktrees").as_path())
-        && Path::new(backlink.trim()).canonicalize().ok()? == dot)
+        && git.join(backlink.trim()).canonicalize().ok()? == dot)
         .then_some((git, common))
 }
 

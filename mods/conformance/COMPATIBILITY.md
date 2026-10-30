@@ -58,6 +58,8 @@ These reject older hosts before activation, even when the API version matches.
 | `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |
 | `workspace.watch` `git` | `workspace_watch_git_v1` |
 | `mods_changed` event | `mods_changed_v1` |
+| `terminal` event `client.sites` | `terminal_site_area_v1` |
+| `code` component `start` and `language` highlighting | `terminal_code_highlight_v1` |
 | Declared assets | `package_text_assets_v1` |
 | Relative asset imports | `package_imports_v1` |
 | `api.component` | `component_modules_v1` |

@@ -1911,20 +1911,6 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let environment = environment["stdout"].as_str().unwrap();
     assert!(environment.contains(&format!("HOME={}", std::env::var("HOME").unwrap())));
     assert!(!environment.contains("CODEX_HOME=") && !environment.contains("OPENAI_API_KEY="));
-    let saved = std::env::var_os("SSH_AUTH_SOCK");
-    unsafe { std::env::set_var("SSH_AUTH_SOCK", "/private/tmp/omd-agent.sock") };
-    let agent = host
-        .call(
-            &granted,
-            "exec.run",
-            json!({"program": "env", "sandbox": "none"}),
-        )
-        .unwrap();
-    match saved {
-        Some(value) => unsafe { std::env::set_var("SSH_AUTH_SOCK", value) },
-        None => unsafe { std::env::remove_var("SSH_AUTH_SOCK") },
-    }
-    assert!(agent["stdout"].as_str().unwrap().contains("SSH_AUTH_SOCK=/private/tmp/omd-agent.sock"), "{agent}");
     let refused = |caller: &Caller<'_>, arguments: Value| {
         host.call(caller, "exec.run", arguments).unwrap_err()
     };

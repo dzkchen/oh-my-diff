@@ -7,13 +7,15 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 REVIEWED_IDENTIFIERS = {"claude", "anthropic", "lsp", "git"}
 HOST_WORDS = {"artifact", "auto", "budget", "cli", "code", "compact", "context", "continue", "cursor", "edit", "execution",
-              "fix", "idle", "lines", "model", "mods", "output", "panel", "picker", "plan", "preview", "read", "reading",
+              "files", "fix", "idle", "lines", "model", "mods", "output", "panel", "picker", "plan", "preview", "read", "reading",
               "removal", "source", "sync", "tool", "update", "usage", "view", "workspace"}
 GENERIC_LITERALS = {
     "git": "Git executable used for tracked-path discovery",
     "github_pat_": "GitHub token prefix redacted from mod output",
     "profiles": "upstream Codex config profiles table",
     "profiles.json": "credential profile store",
+    "watch_git_unavailable": "error of the generic workspace.watch Git metadata option",
+    "workspace_watch_git_v1": "host feature of the generic workspace.watch Git metadata option",
 }
 NATIVE_SOURCES = ("runtime/omd/src", "runtime/omd/runner/src", "runtime/native/src")
 RUNNER_SCRIPTS = ("runtime/omd/runner/src/bootstrap.js", "runtime/omd/runner/src/dispatch.js", "runtime/omd/runner/src/step.js")
@@ -96,6 +98,8 @@ def inspect(root):
             raise ValueError(f"native_surface_missing:{surface}")
         for token in re.finditer(r'"([^"\n]+)"', match.group(1)):
             name = token.group(1)
+            if name in GENERIC_LITERALS:
+                continue
             for identifier in feature(name, vocabulary):
                 offset = match.start(1) + token.start()
                 findings.append({"path": str(source.relative_to(root)), "line": text.count("\n", 0, offset) + 1,

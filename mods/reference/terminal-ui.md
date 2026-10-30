@@ -260,7 +260,7 @@ an `image` back to image pixels.
 Spans accept `fg` and `bg` theme colors, `italic` and `underline` (`terminal_style_v1`); `document` keeps span
 styles.
 
-### Code highlighting
+### Code highlighting (`terminal_code_highlight_v1`)
 
 A `code` component with a `language` (a name or file extension such as `rust`, `ts` or `py`) draws its `text`
 in the user's syntax theme. An unknown or missing `language`, or a line over 4 KiB, draws it plain. `start` (a line index,
@@ -449,7 +449,7 @@ operations `component_event` hooks make, on either surface), and detaching unmou
 #### `terminal` event `client`
 
 The `terminal` event carries `client: {kind: 'terminal', graphics, pointer, reduced_motion, cell_px, columns,
-rows}`:
+rows, sites?}`:
 
 | Field | Meaning |
 | --- | --- |
@@ -458,9 +458,12 @@ rows}`:
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |
 | `cell_px` | The measured cell size or null. |
 | `columns` and `rows` | The terminal grid. |
+| `sites` | `terminal_site_area_v1`: `{[site]: {columns, rows}}` for each of the receiving mod's own `mod/site` sites the last frame drew as a layout leaf or an overlay, the cells its components got inside the frame's border, padding and title. Absent when the last frame drew none; sites stacked in the sidebar are not listed. |
 
 `client` is null without a terminal client. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`; a burst of changes renders once per render in progress.
+A drawn site's area renders the view again the same way, except when it returns within a second to the area it had
+before the last change, as a view that sizes its own layout from `sites` would cause.
 
 #### `raster` component
 

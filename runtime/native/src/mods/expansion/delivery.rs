@@ -326,8 +326,9 @@ async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending
             let Some(lead) = core.expansion.thread(thread) else {
                 return;
             };
-            let (git, paths): (Vec<String>, Vec<String>) =
-                paths.into_iter().partition(|path| path.starts_with(".git/"));
+            let (git, paths): (Vec<String>, Vec<String>) = paths
+                .into_iter()
+                .partition(|path| path.starts_with(".git/"));
             let mut changes =
                 super::activity::external_changes(core, &lead, &paths, include_ignored).await;
             changes.extend(

@@ -1272,6 +1272,42 @@ fn startup_terminal_preview_rejects_native_task_operations_at_host_boundary() {
 }
 
 #[test]
+fn terminal_client_sites_reach_only_the_mod_that_owns_them() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    for id in ["alpha", "beta", "gamma"] {
+        let path = package(
+            &root,
+            id,
+            "export default api => api.on('terminal', ({ client }) => ({status: [client.columns + '|' + (Object.entries(client.sites ?? {}).map(([name, area]) => `${name}=${area.columns}x${area.rows}`).join(',') || 'none')]}))",
+            &["terminal"],
+        );
+        trust(&store, &path, &["terminal"]);
+    }
+    let mut runtime = host(&temp);
+    let client = json!({"kind": "terminal", "columns": 120, "rows": 40, "sites": {
+        "alpha/git": {"columns": 50, "rows": 30},
+        "alpha/files": {"columns": 20, "rows": 9},
+        "beta/panel": {"columns": 70, "rows": 30},
+        "alphabet/x": {"columns": 1, "rows": 1},
+    }});
+    let terminal = runtime.terminal_view(json!({"event": "draw", "client": client}), || true);
+    let mut seen = terminal.view.status.clone();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            "120|alpha/files=20x9,alpha/git=50x30",
+            "120|beta/panel=70x30",
+            "120|none",
+        ],
+        "{:?}",
+        terminal.diagnostics
+    );
+}
+
+#[test]
 fn terminal_components_compose_in_dependency_order_and_observers_contribute_status() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

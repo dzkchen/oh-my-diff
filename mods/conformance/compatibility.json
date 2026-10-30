@@ -147,7 +147,9 @@
       "settings_file_v1",
       "terminal_focus_v1",
       "terminal_layout_title_v1",
-      "terminal_raster_packed_v1"
+      "terminal_raster_packed_v1",
+      "terminal_site_area_v1",
+      "terminal_code_highlight_v1"
     ]
   },
   "apis": [

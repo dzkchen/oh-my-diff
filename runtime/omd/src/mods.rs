@@ -406,6 +406,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_focus_v1",
     "terminal_layout_title_v1",
     "terminal_raster_packed_v1",
+    "terminal_site_area_v1",
+    "terminal_code_highlight_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -640,7 +642,7 @@ pub fn capability_phrase(capability: &str) -> &str {
         "pty" => "run interactive terminal programs",
         "history" => "edit the conversation history",
         "outputs" => "change tool output",
-        "os" => "run listed programs unsandboxed with your account's full access",
+        "os" => "run listed programs unsandboxed with your account's full access and SSH agent",
         "approve" => "approve tool calls for you",
         "approve.override" => "approve commands your own rules forbid",
         "http" => "send web requests to the sites it lists",
@@ -663,7 +665,7 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     let granted = |name: &str| capabilities.iter().any(|c| c == name);
     let mut exposure = Vec::new();
     if granted("os") {
-        exposure.push("os: listed programs run unsandboxed as your account; they can read every file your account can read (including secret files such as ~/.ssh, ~/.codex/auth.json and browser profiles), change mod stores and control files, use the network as os_access allows and start processes OMD does not supervise. OMD sanitizes their environment and supervises, cancels and limits the processes it starts, but cannot undo their side effects. Only the OS-separated broker protects grants, credentials and evidence anchors from them.");
+        exposure.push("os: listed programs run unsandboxed as your account; they can read every file your account can read (including secret files such as ~/.ssh, ~/.codex/auth.json and browser profiles), change mod stores and control files, use the network as os_access allows, sign in through your SSH agent (SSH_AUTH_SOCK) and start processes OMD does not supervise. OMD sanitizes their environment and supervises, cancels and limits the processes it starts, but cannot undo their side effects. Only the OS-separated broker protects grants, credentials and evidence anchors from them.");
     }
     if granted("approve") {
         exposure.push("approve: this mod may approve exec, patch, MCP and network requests inside its approves scope without asking you; managed-policy and host denials still apply and any error asks you.");
@@ -872,6 +874,24 @@ const MAX_WORKERS: usize = 8;
 const CANCEL_POLL: Duration = Duration::from_millis(10);
 
 /// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
+/// A `terminal` payload's `client.sites` keeps only the receiving mod's own `owner/name` sites; `None` when it has none to filter.
+fn own_sites(payload: &Value, id: &str) -> Option<Value> {
+    let sites = payload.get("client")?.get("sites")?.as_object()?;
+    let own: serde_json::Map<String, Value> = sites
+        .iter()
+        .filter(|(name, _)| name.split_once('/').is_some_and(|(owner, _)| owner == id))
+        .map(|(name, area)| (name.clone(), area.clone()))
+        .collect();
+    let mut payload = payload.clone();
+    let client = payload.get_mut("client")?.as_object_mut()?;
+    if own.is_empty() {
+        client.remove("sites");
+    } else {
+        client.insert("sites".to_owned(), Value::Object(own));
+    }
+    Some(payload)
+}
+
 fn concurrently<T: Send, R: Send>(
     items: Vec<T>,
     active: &dyn Fn() -> bool,
@@ -5928,9 +5948,14 @@ impl ModHost {
         let mut results = Vec::new();
         let mut stale = Vec::new();
         for id in self.event_ids("terminal") {
+            let own = own_sites(&payload, &id);
+            let hash = own.as_ref().map_or_else(
+                || payload_hash.clone(),
+                |own| digest(own.to_string().as_bytes()),
+            );
             let key = self
                 .terminal_state_key(&id, thread.as_deref())
-                .map(|stamp| format!("{stamp}:{payload_hash}"));
+                .map(|stamp| format!("{stamp}:{hash}"));
             // A handler that read the clock is rerun once its result is a second old.
             if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
                 && key == cached
@@ -5940,12 +5965,12 @@ impl ModHost {
                 continue;
             }
             let begun = self.begin(&id, generation, &active, thread.as_deref());
-            stale.push((results.len(), key, begun));
+            stale.push((results.len(), key, begun, own));
             results.push((id, None));
         }
         // Terminal handlers make no host calls, so their runners work in parallel.
         let payload = &payload;
-        let replies = concurrently(stale, &active, |(index, key, begun), active| {
+        let replies = concurrently(stale, &active, |(index, key, begun, own), active| {
             let reply = begun.and_then(|mut invocation| {
                 if invocation.migrate {
                     invocation.loaded.state =
@@ -5957,7 +5982,7 @@ impl ModHost {
                             &invocation.loaded,
                             "terminal",
                             "",
-                            payload.clone(),
+                            own.unwrap_or_else(|| payload.clone()),
                             &[],
                             active,
                             &mut |call| {
@@ -5986,7 +6011,7 @@ impl ModHost {
                                 generation,
                                 "terminal",
                                 "",
-                                payload.clone(),
+                                own_sites(payload, &id).unwrap_or_else(|| payload.clone()),
                                 &active,
                             ),
                         result => result,
@@ -6060,7 +6085,11 @@ impl ModHost {
         self.renders.remove(id);
         // A command's result stands in for the `terminal` handler for a second, like a clock read.
         if matched && let Some(stamp) = stamp {
-            let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
+            let own = own_sites(payload, id);
+            let key = format!(
+                "{stamp}:{}",
+                digest(own.as_ref().unwrap_or(payload).to_string().as_bytes())
+            );
             self.renders
                 .insert(id.to_owned(), (key, patch, Some(Instant::now())));
         }

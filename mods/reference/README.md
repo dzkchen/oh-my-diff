@@ -53,6 +53,10 @@ rich children inside buttons (a button uses its typed `text`), audio, telemetry 
   returns pages of up to 64 KiB instead of 16 KiB, and a `tool` replacement the model cannot take (over 64 KiB and
   longer than the original, which for a retried call is the latest attempt's output) is dropped with a diagnostic
   after the chain instead of being refused inside it. Either way the original output stands.
+- `exec.run` children now start in their own session without a controlling terminal: a program that prompted on
+  `/dev/tty` (git credentials, ssh passphrases, `sudo`) fails instead of drawing over the TUI and waiting. Pass input
+  through `stdin` or the program's non-interactive flags. Runs with `sandbox: "none"` also receive `SSH_AUTH_SOCK`,
+  so programs under an `os` grant can sign in through the user's SSH agent.
 
 ## Contents
 

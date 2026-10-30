@@ -205,9 +205,9 @@ with source `external`.
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
 - `git: true` (`workspace_watch_git_v1`) also reports changes to the repository's Git metadata, found from the
-  workspace root upward (worktrees included): `HEAD`, `index`, `packed-refs` and `refs/…`, as paths `.git/HEAD` and so
-  on with `before` and `after` null. Lock files and objects are left out. Outside a repository the call fails
-  `watch_git_unavailable`.
+  workspace root upward (linked worktrees, submodules and separate Git directories included): `HEAD`, `index`,
+  `packed-refs` and `refs/…`, as paths `.git/HEAD` and so on with `before` and `after` null. Lock files and objects
+  are left out. Outside a repository the call fails `watch_git_unavailable`.
 
 ### Callback delivery
 

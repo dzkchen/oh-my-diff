@@ -218,6 +218,8 @@ export interface TerminalTheme {
 export type TerminalClient = {
   kind: 'terminal'; graphics: 'kitty' | 'iip' | 'cells' | 'text'; pointer: 'half_cell' | 'cell' | 'none'; reduced_motion: boolean;
   cell_px: { width: number; height: number } | null; columns: number; rows: number;
+  /** Needs `terminal_site_area_v1`: the content area the last frame gave each of this mod's own `mod/site` layout leaves and overlays. */
+  sites?: Record<string, { columns: number; rows: number }>;
 };
 /** An external client attached over `omd/client/attach`; `viewport` is null until the client reports one. */
 export type ClientEntry = {
