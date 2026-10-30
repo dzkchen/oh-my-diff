@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.165.0.patch",
-    "sha256": "1122c35c3a99f27b2342ef2038c0ca0252d0445bc84548d24289244233e29709"
+    "sha256": "07b6efc360beac070fe2630c1040b8162ff86ab6ae2aee8cdf6bef41b7a91cec"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1183,7 +1183,7 @@
     },
     "codex-rs/ext/omd/src/mods/snapshots.rs": {
       "before": null,
-      "after": "14c1075ae1341d1794185e965e89e99eddf1346f95b76bab5a6750f2ee5183b9"
+      "after": "7d1fd55853d7619fb3374ef85de673f283408d21d4bbe9c3efea276e96539fa3"
     },
     "codex-rs/ext/omd/src/mods/tools.rs": {
       "before": null,
@@ -1195,7 +1195,7 @@
     },
     "codex-rs/ext/omd/src/workspace_operations.rs": {
       "before": null,
-      "after": "f0739ae6f4f6d20f82d58d2628f6b1a61fd2223eaabfc1997663dcaef70cc010"
+      "after": "3a144310e6ac508143fb308139dbd2940a8492d60c273cbff0f3354da2ceb4c8"
     },
     "codex-rs/ext/omd/src/workspace_watch.rs": {
       "before": null,
@@ -1627,7 +1627,7 @@
     },
     "codex-rs/omd/src/workspace.rs": {
       "before": null,
-      "after": "fa0df12aba30ba086594dab2e5d4d0aaaf88add1f6e88934f1d6f2bd393e6aa3"
+      "after": "565059c17462e446098b04968e4d9cd8e48b931d76f3eade101592f3d77720e0"
     },
     "codex-rs/omd/src/workspace_lease.rs": {
       "before": null,

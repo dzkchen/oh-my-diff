@@ -298,9 +298,12 @@ pub(super) fn permitted(
     for name in snapshot.files.keys() {
         let path =
             codex_omd::tree_path(&authority.repository, name).map_err(|error| error.to_string())?;
-        if !authority.tree_readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
+        if protected.iter().any(|root| path.starts_with(root)) {
             return Err("snapshot_permission_denied".into());
         }
+    }
+    if !authority.tree_readable(snapshot.files.keys()) {
+        return Err("snapshot_permission_denied".into());
     }
     Ok(())
 }
@@ -320,9 +323,12 @@ pub(super) fn capture(
     for name in &paths {
         let path =
             codex_omd::tree_path(&authority.repository, name).map_err(|error| error.to_string())?;
-        if !authority.tree_readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
+        if protected.iter().any(|root| path.starts_with(root)) {
             return Err("snapshot_permission_denied".into());
         }
+    }
+    if !authority.tree_readable(&paths) {
+        return Err("snapshot_permission_denied".into());
     }
     let snapshot = Snapshot::capture_tree(&authority.repository, &paths, limit)
         .map_err(|error| error.to_string())?;

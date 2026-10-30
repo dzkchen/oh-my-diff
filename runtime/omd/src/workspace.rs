@@ -1110,14 +1110,17 @@ pub fn capture_tracked(
     })
 }
 
-/// The `capture_tracked` digest with each submodule's recorded commit, or `None` when a tracked path is not `readable`.
+/// The `capture_tracked` digest with each submodule's recorded commit, or `None` when the tracked paths are not `readable`.
 pub fn hash_tracked(
     root: &Path,
     approved_untracked: &BTreeSet<String>,
     max_bytes: usize,
-    readable: impl Fn(&str) -> bool,
+    readable: impl Fn(&BTreeSet<String>) -> bool,
 ) -> io::Result<Option<String>> {
     tracked(root, approved_untracked, |paths, submodules| {
+        if !readable(paths) {
+            return Ok(None);
+        }
         let mut digest = Snapshot::digest(root, paths, max_bytes)?;
         if !submodules.is_empty() {
             let mut combined = Sha256::new();
@@ -1127,7 +1130,7 @@ pub fn hash_tracked(
             }
             digest = format!("{:x}", combined.finalize());
         }
-        Ok(paths.iter().all(|path| readable(path)).then_some(digest))
+        Ok(Some(digest))
     })
 }
 
