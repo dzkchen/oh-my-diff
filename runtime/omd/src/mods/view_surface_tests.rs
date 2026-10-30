@@ -191,7 +191,8 @@ fn components_nest_six_deep_and_no_more() {
     let nested = |depth: usize| {
         let mut node = json!({"type": "text", "id": "leaf", "label": "Leaf", "text": "x"});
         for index in 1..depth {
-            node = json!({"type": "box", "id": format!("b{index}"), "label": "B", "children": [node]});
+            node =
+                json!({"type": "box", "id": format!("b{index}"), "label": "B", "children": [node]});
         }
         json!({"sites": {"a/x": {"components": [node]}}})
     };
@@ -291,7 +292,8 @@ fn a_wrap_encloses_a_replacement_composed_after_it() {
 fn only_a_sites_owner_replaces_or_wraps_it() {
     let mut target = ModView::default();
     let mut claims = BTreeMap::new();
-    let text = |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
+    let text =
+        |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
     let wrap = json!({"mode": "wrap", "components": [{"type": "box", "id": "frame", "label": "Frame",
         "children": [{"type": "slot"}]}]});
     let mut compose = |id: &str, site: Value| {
@@ -368,4 +370,28 @@ fn key_contexts_are_bounded_and_compose_with_their_owner() {
         matches!(&composed.keys["Enter"].action, ModKeyAction::Command { command, .. } if command == "first:open")
     );
     assert!(!composed.keys.contains_key("x"));
+}
+
+#[test]
+fn the_underlay_names_a_raster_and_goes_to_its_first_claimant() {
+    assert!(view(json!({"underlay": {"raster": "Scene!"}})).is_err());
+    assert!(view(json!({"underlay": {"raster": "scene", "opacity": 1}})).is_err());
+    let mut target = ModView::default();
+    let mut claims = BTreeMap::new();
+    let mut apply = |id: &str, raster: &str| {
+        ModViewPatch::parse(json!({"underlay": {"raster": raster}}))
+            .unwrap()
+            .apply(&mut target, &mut claims, id, "idle")
+            .unwrap()
+    };
+    assert_eq!(apply("first", "scene"), Vec::new());
+    assert_eq!(apply("second", "other")[0].field, "underlay");
+    assert_eq!(
+        target.underlay,
+        Some(ModUnderlay {
+            raster: "scene".into()
+        })
+    );
+    assert_eq!(target.raster_declared("scene"), Some((None, None)));
+    assert_eq!(target.raster_declared("other"), None);
 }

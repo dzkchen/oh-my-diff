@@ -12,7 +12,7 @@
       "id": "omd_claude_cli",
       "version": "1.0.0",
       "extension_type": "mod",
-      "capability": "Opt-in Claude models from your official Claude CLI login, switchable in-session with /model, plus ask_claude delegation",
+      "capability": "Opt-in Claude models from your official Claude CLI login, switchable in-session with /model",
       "source": "mods/first-party/omd_claude_cli",
       "license": "MIT",
       "maintainer": "Oh My Diff",
@@ -300,6 +300,22 @@
       "support_status": "reviewed_candidate"
     },
     {
+      "id": "omd_subagent_router",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in subagent model routing: prompt directives and per-role defaults pick each spawn's model and effort, including another provider's, with a visible fallback to the lead's model; its delegate_task tool runs background workers on worker routes and in worktrees",
+      "source": "mods/first-party/omd_subagent_router",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.165.0; OMD 1.1.0; mod API 1.0.0; agent_lifecycle_v1, app_v1, autonomous_turns_v1, events_v1, lifecycle_events_v1, state_scopes_v1, store_v1, timers_v1, ui_controls_v1",
+      "tested_versions": [
+        "Codex 0.165.0",
+        "OMD 1.1.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
       "id": "omd_tool_fix",
       "version": "1.0.0",
       "extension_type": "mod",
@@ -567,6 +583,22 @@
       "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; store_v1, exec_v1, terminal_surface_v1, terminal_lists_v1, terminal_tabs_v1, terminal_pty_v1, pty_programs_v1, terminal_focus_v1, terminal_layout_title_v1, terminal_layout_dock_v1, ui_controls_v1, settings_file_v1, service_dispatch_v1, lifecycle_events_v1",
+      "tested_versions": [
+        "Codex 0.165.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_theme",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in /theme panel: animated character-drawn scenes behind the whole screen, prompt box and menus, and terminal background steps",
+      "source": "mods/first-party/omd_theme",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; terminal_underlay_v1, terminal_raster_packed_v1, timers_16ms_v1, terminal_panel_navigation_v1; optional terminal_chat_area_v1, terminal_colors_v1, terminal_welcome_area_v1",
       "tested_versions": [
         "Codex 0.165.0",
         "OMD 1.2.0 pre-release (offline checks)",

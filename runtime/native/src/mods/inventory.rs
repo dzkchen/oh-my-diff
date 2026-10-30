@@ -3,15 +3,114 @@ use codex_omd::peers::now_ms;
 use std::collections::BTreeSet;
 
 const ANSWER_CHARS: usize = 4096;
-const FINISHED_LIMIT: usize = 64;
+pub(super) const FINISHED_LIMIT: usize = 64;
+const SPAWN_RESERVATION_MS: u64 = 30_000;
 
 /// Session-wide agent records; observing one grants no control over it.
 #[derive(Default)]
 pub(super) struct Inventory {
     records: Mutex<BTreeMap<String, Value>>,
+    working: Mutex<BTreeSet<String>>,
+    reserved: Mutex<Vec<(String, String, u64)>>,
+    directory: std::sync::OnceLock<std::path::PathBuf>,
+}
+
+fn root_of<'a>(records: &'a BTreeMap<String, Value>, thread: &'a str) -> &'a str {
+    let mut root = thread;
+    for _ in 0..16 {
+        match records
+            .get(root)
+            .and_then(|record| record["parent"]["thread_id"].as_str())
+        {
+            Some(parent) => root = parent,
+            None => break,
+        }
+    }
+    root
 }
 
 impl Inventory {
+    pub(super) fn persist_to(&self, directory: std::path::PathBuf) {
+        let day = std::time::Duration::from_secs(86_400);
+        for entry in std::fs::read_dir(&directory)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if (name.ends_with(".json") || name.starts_with(codex_omd::fsio::STAGING_PREFIX))
+                && entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        let _ = self.directory.set(directory);
+    }
+
+    pub(super) fn forget_session(&self, thread: &str) {
+        if let Ok(mut records) = self.records.lock() {
+            let session = records
+                .keys()
+                .filter(|id| root_of(&records, id) == thread)
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut working = self.working.lock().ok();
+            for id in session {
+                records.remove(&id);
+                if let Some(working) = working.as_mut() {
+                    working.remove(&id);
+                }
+            }
+        }
+        if let Some(directory) = self.directory.get() {
+            let _ = std::fs::remove_file(directory.join(format!("{thread}.json")));
+        }
+    }
+
+    fn snapshot(
+        &self,
+        records: &BTreeMap<String, Value>,
+        thread: &str,
+    ) -> Option<(String, Vec<Value>)> {
+        self.directory.get()?;
+        let root = root_of(records, thread);
+        if root == thread {
+            return None;
+        }
+        let agents = records
+            .iter()
+            .filter(|(id, _)| id.as_str() != root && root_of(records, id) == root)
+            .map(|(_, record)| {
+                let mut record = record.clone();
+                record["answer"] = Value::Null;
+                if record["last_turn"].is_object() {
+                    record["last_turn"]["answer"] = Value::Null;
+                }
+                record
+            })
+            .collect();
+        Some((root.to_owned(), agents))
+    }
+
+    fn save(&self, snapshot: Option<(String, Vec<Value>)>) {
+        let (Some(directory), Some((root, agents))) = (self.directory.get(), snapshot) else {
+            return;
+        };
+        if let Ok(bytes) = serde_json::to_vec(&agents)
+            && std::fs::create_dir_all(directory).is_ok()
+        {
+            let _ = codex_omd::fsio::write_bytes(
+                &directory.join(format!("{root}.json")),
+                &bytes,
+                codex_omd::fsio::Durability::Volatile,
+            );
+        }
+    }
+
     pub(super) fn start(&self, thread: &str, fields: Value) -> Value {
         let mut record = json!({"agent_id": null, "thread_id": thread,
             "parent": {"thread_id": null, "agent_id": null}, "origin": "native", "owner": null,
@@ -23,9 +122,15 @@ impl Inventory {
             record.extend(fields.clone());
         }
         if let Ok(mut records) = self.records.lock() {
+            let parents = records
+                .values()
+                .chain([&record])
+                .filter_map(|record| record["parent"]["thread_id"].as_str())
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>();
             let finished = records
                 .iter()
-                .filter(|(_, record)| record["status"] != "running")
+                .filter(|(id, record)| record["status"] != "running" && !parents.contains(*id))
                 .map(|(thread, record)| (record["ended_at_ms"].as_u64(), thread.clone()))
                 .collect::<BTreeSet<_>>();
             for (_, thread) in finished
@@ -35,6 +140,9 @@ impl Inventory {
                 records.remove(thread);
             }
             records.insert(thread.to_owned(), record.clone());
+            let snapshot = self.snapshot(&records, thread);
+            drop(records);
+            self.save(snapshot);
         }
         record
     }
@@ -43,7 +151,77 @@ impl Inventory {
         let mut records = self.records.lock().ok()?;
         let record = records.get_mut(thread)?;
         change(record);
-        Some(record.clone())
+        let record = record.clone();
+        let snapshot = self.snapshot(&records, thread);
+        drop(records);
+        self.save(snapshot);
+        Some(record)
+    }
+
+    pub(super) fn describe(
+        &self,
+        thread: &str,
+        provider: &str,
+        model: &str,
+        billing: Option<&str>,
+    ) {
+        self.update(thread, |record| {
+            record["provider"] = json!(provider);
+            record["model"] = json!(model);
+            record["billing"] = json!(billing);
+        });
+    }
+
+    pub(super) fn turn_started(&self, thread: &str) {
+        if let Ok(records) = self.records.lock()
+            && records.contains_key(thread)
+            && let Ok(mut working) = self.working.lock()
+        {
+            working.insert(thread.to_owned());
+        }
+    }
+
+    /// Admits a model spawn against live children plus spawns admitted but not yet started.
+    pub(super) fn reserve_spawn(
+        &self,
+        root: &str,
+        call_id: &str,
+        counted: impl Fn(&str) -> bool,
+        admit: impl FnOnce(usize) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut reserved = self
+            .reserved
+            .lock()
+            .map_err(|_| "inventory lock poisoned")?;
+        let now = now_ms();
+        reserved.retain(|(.., at)| now.saturating_sub(*at) < SPAWN_RESERVATION_MS);
+        let pending = reserved.iter().filter(|(owner, ..)| owner == root).count();
+        admit(self.live_children(root, counted) + pending)?;
+        reserved.push((root.to_owned(), call_id.to_owned(), now));
+        Ok(())
+    }
+
+    pub(super) fn release_spawn(&self, call_id: &str) {
+        if let Ok(mut reserved) = self.reserved.lock() {
+            reserved.retain(|(_, call, _)| call != call_id);
+        }
+    }
+
+    /// Model-spawned children of `root`'s session that are running a turn or have not yet finished their first.
+    pub(super) fn live_children(&self, root: &str, counted: impl Fn(&str) -> bool) -> usize {
+        let (Ok(records), Ok(working)) = (self.records.lock(), self.working.lock()) else {
+            return 0;
+        };
+        records
+            .iter()
+            .filter(|(thread, record)| {
+                record["origin"] == "model"
+                    && record["status"] == "running"
+                    && (record["last_turn"].is_null() || working.contains(thread.as_str()))
+                    && root_of(&records, thread) == root
+                    && counted(thread)
+            })
+            .count()
     }
 
     pub(super) fn contains(&self, thread: &str) -> bool {
@@ -65,6 +243,9 @@ impl Inventory {
         outcome: &str,
         error: Value,
     ) -> Option<Value> {
+        if let Ok(mut working) = self.working.lock() {
+            working.remove(thread);
+        }
         self.update(thread, |record| {
             record["turns"] = json!(record["turns"].as_u64().unwrap_or(0) + 1);
             record["last_turn"] = json!({"turn_id": turn_id, "outcome": outcome, "at_ms": now_ms(),
@@ -121,6 +302,9 @@ impl Inventory {
     }
 
     pub(super) fn end(&self, thread: &str, status: &str, reason: Option<String>) -> Option<Value> {
+        if let Ok(mut working) = self.working.lock() {
+            working.remove(thread);
+        }
         self.update(thread, |record| {
             if record["status"] != "running" {
                 return;
@@ -140,17 +324,7 @@ impl Inventory {
         let Ok(records) = self.records.lock() else {
             return thread.to_owned();
         };
-        let mut root = thread;
-        for _ in 0..16 {
-            match records
-                .get(root)
-                .and_then(|record| record["parent"]["thread_id"].as_str())
-            {
-                Some(parent) => root = parent,
-                None => break,
-            }
-        }
-        root.to_owned()
+        root_of(&records, thread).to_owned()
     }
 
     pub(super) fn list(&self) -> Vec<Value> {

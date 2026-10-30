@@ -61,6 +61,54 @@ fn worker_route_grants_are_exact_nontransferable_and_share_allowances() {
 }
 
 #[test]
+fn depth_and_concurrency_refusals_are_distinct_and_readable() {
+    let directory = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), directory.path().join("task")).unwrap();
+    let refusal = |result: std::io::Result<()>| result.unwrap_err().to_string();
+    task.start_worker("one".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.start_worker("two".into(), "lead".into(), 1, worker())
+        .unwrap();
+    let full = "subagent_concurrency_limit: 2 running of limits.concurrent_workers 2";
+    assert_eq!(
+        refusal(task.start_worker("three".into(), "lead".into(), 1, worker())),
+        full
+    );
+    assert_eq!(refusal(task.admit_subagent(1, 0)), full);
+    task.set_worker_idle("two", true).unwrap();
+    task.admit_subagent(1, 0).unwrap();
+    task.set_worker_idle("two", false).unwrap();
+    assert_eq!(
+        refusal(task.start_worker("deep".into(), "one".into(), 3, worker())),
+        "subagent_depth_limit: depth 3 exceeds limits.max_depth 2"
+    );
+    task.finish_worker("one").unwrap();
+    task.admit_subagent(2, 0).unwrap();
+    assert_eq!(refusal(task.admit_subagent(1, 1)), full);
+    assert_eq!(
+        refusal(task.admit_subagent(3, 0)),
+        "subagent_depth_limit: depth 3 exceeds limits.max_depth 2"
+    );
+}
+
+#[test]
+fn a_parent_finished_before_its_child_stops_when_the_child_does() {
+    let directory = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), directory.path().join("task")).unwrap();
+    task.start_worker("one".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.start_worker("two".into(), "one".into(), 2, worker())
+        .unwrap();
+    task.finish_worker("one").unwrap();
+    assert!(task.admit_subagent(1, 0).is_err());
+    task.finish_worker("two").unwrap();
+    task.start_worker("three".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.start_worker("four".into(), "lead".into(), 1, worker())
+        .unwrap();
+}
+
+#[test]
 fn unknown_usage_remains_reserved_after_worker_exit() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();

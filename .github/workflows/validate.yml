@@ -13,15 +13,19 @@ permissions:
 
 env:
   CARGO_INCREMENTAL: '0'
-  CARGO_BUILD_JOBS: '2'
+  CARGO_BUILD_JOBS: '3'
   CARGO_PROFILE_TEST_DEBUG: '0'
   OMD_RELEASE_VERSION: ${{ inputs.version }}
+  OMD_SCCACHE: ${{ inputs.version == '' && '1' || '' }}
+  SCCACHE_DIR: /Users/runner/omd/sccache
+  SCCACHE_CACHE_SIZE: 2G
+  SCCACHE_IDLE_TIMEOUT: '0'
   # Outside /tmp, which a sandboxed command may write: upstream tests expect a write beside the checkout to be denied.
   OMD_WORK_ROOT: /Users/runner/omd
   OMD_NIGHTLY_ROOT: /Users/runner/omd/omd-nightly
 
 jobs:
-  test:
+  native:
     runs-on: macos-15
     timeout-minutes: 360
     steps: &rust-job
@@ -30,7 +34,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550
         with:
-          install_args: node python@3.14.6 aqua:nextest-rs/nextest/cargo-nextest
+          install_args: node python@3.14.6 aqua:nextest-rs/nextest/cargo-nextest aqua:mozilla/sccache
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
         with:
           package_json_file: mods/package.json
@@ -52,6 +56,15 @@ jobs:
           path: ${{ env.OMD_WORK_ROOT }}/omd-cache/v8
           key: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-${{ hashFiles('runtime/patches/manifest.json') }}
           restore-keys: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-
+      - name: Restore sccache
+        if: env.OMD_SCCACHE != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-
+            sccache-${{ github.job }}-${{ runner.os }}-
       - name: Validate
         run: python3 .github/scripts/ci.py validate --job "$GITHUB_JOB" ${OMD_RELEASE_VERSION:+--release}
       - name: Pack host binaries
@@ -75,13 +88,33 @@ jobs:
             ${{ env.OMD_NIGHTLY_ROOT }}/logs/
             ${{ env.OMD_WORK_ROOT }}/omd-bnightly/logs/
           retention-days: 14
+      - name: sccache statistics
+        if: always() && env.OMD_SCCACHE != ''
+        continue-on-error: true
+        run: sccache --show-stats && sccache --stop-server
+      - name: Save sccache
+        if: always() && env.OMD_SCCACHE != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+  core:
+    runs-on: macos-15
+    timeout-minutes: 360
+    steps: *rust-job
+
+  lint:
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps: *rust-job
 
   build:
     runs-on: macos-15
     timeout-minutes: 180
     steps: *rust-job
 
-  package:
+  acceptance:
     needs: build
     runs-on: macos-15
     timeout-minutes: 120
@@ -102,7 +135,38 @@ jobs:
       - name: Unpack host binaries
         run: mkdir -p "$OMD_WORK_ROOT/omd-bnightly" && tar -xf "$OMD_NIGHTLY_ROOT/host-binaries.tar" -C "$OMD_WORK_ROOT/omd-bnightly"
       - name: Validate
-        run: python3 .github/scripts/ci.py validate --job package
+        run: python3 .github/scripts/ci.py validate --job acceptance
+      - name: Preserve validation logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: validation-report-acceptance
+          path: |
+            ${{ env.OMD_NIGHTLY_ROOT }}/report.md
+            ${{ env.OMD_NIGHTLY_ROOT }}/logs/
+          retention-days: 14
+
+  package:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550
+        with:
+          install_args: node python@3.14.6
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          package_json_file: mods/package.json
+      - run: pnpm --dir mods install --frozen-lockfile --prefer-offline
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: host-binaries
+          path: ${{ env.OMD_NIGHTLY_ROOT }}
+      - name: Unpack host binaries
+        run: mkdir -p "$OMD_WORK_ROOT/omd-bnightly" && tar -xf "$OMD_NIGHTLY_ROOT/host-binaries.tar" -C "$OMD_WORK_ROOT/omd-bnightly"
       - name: Build and test the package
         run: python3 .github/scripts/ci.py package ${OMD_RELEASE_VERSION:+--version "$OMD_RELEASE_VERSION"}
       - name: Upload validated package
@@ -118,8 +182,5 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: validation-report-package
-          path: |
-            ${{ env.OMD_NIGHTLY_ROOT }}/report.md
-            ${{ env.OMD_NIGHTLY_ROOT }}/logs/
-            ${{ env.OMD_NIGHTLY_ROOT }}/profile-acceptance.json
+          path: ${{ env.OMD_NIGHTLY_ROOT }}/profile-acceptance.json
           retention-days: 14

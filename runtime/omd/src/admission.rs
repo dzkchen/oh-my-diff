@@ -133,8 +133,10 @@ struct Worker {
     requests: u32,
     exposure: u64,
     status: WorkerStatus,
+    idle: bool,
     objective: Option<String>,
     result: Option<VersionMarker>,
+    closing: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -212,6 +214,32 @@ pub struct Task {
 
 fn denied(message: &str) -> io::Error {
     io::Error::other(message)
+}
+
+fn check_depth(depth: u32, max_depth: u32) -> io::Result<()> {
+    if depth > max_depth {
+        return Err(io::Error::other(format!(
+            "subagent_depth_limit: depth {depth} exceeds limits.max_depth {max_depth}"
+        )));
+    }
+    Ok(())
+}
+
+fn check_concurrency(running: usize, cap: u32) -> io::Result<()> {
+    if running >= cap as usize {
+        return Err(io::Error::other(format!(
+            "subagent_concurrency_limit: {running} running of limits.concurrent_workers {cap}"
+        )));
+    }
+    Ok(())
+}
+
+fn active_workers(state: &State) -> usize {
+    state
+        .workers
+        .values()
+        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle)
+        .count()
 }
 
 fn unix_millis() -> io::Result<u128> {
@@ -400,8 +428,10 @@ impl Task {
                             requests: 0,
                             exposure: 0,
                             status: WorkerStatus::Active,
+                            idle: false,
                             objective: None,
                             result: None,
+                            closing: false,
                         },
                     );
                 }
@@ -714,31 +744,25 @@ impl Task {
         if state.status != TaskStatus::Active || self.expired() {
             return Err(denied("task stopped or expired"));
         }
-        let valid_parent = if depth == 1 {
-            parent == "lead"
-        } else {
-            state.workers.get(&parent).is_some_and(|worker| {
-                worker.status == WorkerStatus::Active && worker.depth.checked_add(1) == Some(depth)
-            })
-        };
+        let valid_parent = parent == "lead"
+            || state.workers.get(&parent).is_some_and(|worker| {
+                worker.status == WorkerStatus::Active && worker.depth < depth
+            });
         let ceiling = self.limits();
+        check_depth(depth, ceiling.max_depth)?;
+        if !valid_parent {
+            return Err(denied("invalid worker parent"));
+        }
         if limits.requests == 0
             || limits.seconds == 0
             || depth == 0
-            || depth > ceiling.max_depth
-            || !valid_parent
             || limits.requests > ceiling.requests
             || limits.seconds > ceiling.seconds
             || limits.exposure_microusd > ceiling.exposure_microusd
-            || state
-                .workers
-                .values()
-                .filter(|worker| worker.status == WorkerStatus::Active)
-                .count()
-                >= ceiling.concurrent_workers as usize
         {
-            return Err(denied("worker limits exceed task ceiling or capacity"));
+            return Err(denied("worker limits exceed task ceiling"));
         }
+        check_concurrency(active_workers(&state), ceiling.concurrent_workers)?;
         self.record(
             &mut state,
             &serde_json::json!({"event": "worker_started", "worker": id, "parent": parent, "depth": depth, "limits": limits}),
@@ -754,10 +778,41 @@ impl Task {
                 requests: 0,
                 exposure: 0,
                 status: WorkerStatus::Active,
+                idle: false,
                 objective: None,
                 result: None,
+                closing: false,
             },
         );
+        Ok(())
+    }
+
+    /// Admits a model-spawned subagent at `depth` beside `other_running` live children the task does not track as workers.
+    pub fn admit_subagent(&self, depth: u32, other_running: usize) -> io::Result<()> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        let ceiling = self.limits();
+        check_depth(depth, ceiling.max_depth)?;
+        check_concurrency(
+            active_workers(&state).saturating_add(other_running),
+            ceiling.concurrent_workers,
+        )
+    }
+
+    /// An idle worker keeps its limits and route but holds no concurrency slot.
+    pub fn set_worker_idle(&self, id: &str, idle: bool) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        let worker = state
+            .workers
+            .get_mut(id)
+            .filter(|worker| worker.status == WorkerStatus::Active)
+            .ok_or_else(|| denied("unknown or inactive worker"))?;
+        worker.idle = idle;
         Ok(())
     }
 
@@ -822,6 +877,8 @@ impl Task {
             .ok_or_else(|| denied("worker disappeared"))?;
         worker.status = WorkerStatus::Completed;
         worker.result = Some(result);
+        let parent = worker.parent.clone();
+        let _ = self.stop_if_closing(&mut state, &parent);
         Ok(())
     }
 
@@ -878,31 +935,39 @@ impl Task {
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        if !state
-            .workers
-            .get(id)
-            .is_some_and(|worker| worker.status == WorkerStatus::Active)
-        {
-            return Err(denied("unknown or inactive worker"));
-        }
-        if state
-            .workers
-            .values()
-            .any(|worker| worker.status == WorkerStatus::Active && worker.parent == id)
-        {
-            return Err(denied("worker has active descendants"));
-        }
-        self.record(
-            &mut state,
-            &serde_json::json!({"event": "worker_stopped", "worker": id}),
-        )?;
         state
             .workers
             .get_mut(id)
-            .ok_or_else(|| denied("worker disappeared"))?
-            .status = WorkerStatus::Stopped;
-        self.archive_worker(&mut state, id)?;
-        Ok(())
+            .filter(|worker| worker.status == WorkerStatus::Active)
+            .ok_or_else(|| denied("unknown or inactive worker"))?
+            .closing = true;
+        self.stop_if_closing(&mut state, id)
+    }
+
+    fn stop_if_closing(&self, state: &mut State, id: &str) -> io::Result<()> {
+        if !state
+            .workers
+            .get(id)
+            .is_some_and(|worker| worker.closing && worker.status == WorkerStatus::Active)
+            || state
+                .workers
+                .values()
+                .any(|worker| worker.status == WorkerStatus::Active && worker.parent == id)
+        {
+            return Ok(());
+        }
+        self.record(
+            state,
+            &serde_json::json!({"event": "worker_stopped", "worker": id}),
+        )?;
+        let worker = state
+            .workers
+            .get_mut(id)
+            .ok_or_else(|| denied("worker disappeared"))?;
+        worker.status = WorkerStatus::Stopped;
+        let parent = worker.parent.clone();
+        self.archive_worker(state, id)?;
+        self.stop_if_closing(state, &parent)
     }
 
     pub fn authorize_route(&self, provider: &str, model: &str) -> io::Result<()> {

@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "id": "omd_subagent_router",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Runs subagents on the model your prompt or settings name, including another provider's, and adds a delegate_task tool for background workers",
+  "license": "MIT",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party/omd_subagent_router"
+  },
+  "capabilities": [
+    "input",
+    "agents",
+    "model",
+    "store",
+    "terminal",
+    "tools",
+    "lifecycle",
+    "events",
+    "threads",
+    "inventory",
+    "autonomous"
+  ],
+  "autonomy": {
+    "max_queued": 4,
+    "max_turns": 20
+  },
+  "subscriptions": {
+    "app": [
+      "account/rateLimits/updated"
+    ]
+  },
+  "compatibility": {
+    "required_features": [
+      "agent_lifecycle_v1",
+      "app_v1",
+      "autonomous_turns_v1",
+      "events_v1",
+      "lifecycle_events_v1",
+      "state_scopes_v1",
+      "store_v1",
+      "timers_v1",
+      "ui_controls_v1"
+    ]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "research_model": {
+        "title": "Research subagent model",
+        "description": "Model for research subagents when the prompt names none, such as \"sonnet 5.5\"; empty keeps the lead's model",
+        "type": "string",
+        "default": ""
+      },
+      "research_effort": {
+        "title": "Research subagent effort",
+        "description": "Reasoning effort for research subagents, applied only together with the research model setting; empty uses the effort the lead put in the spawn call if the model supports it, else the model's default",
+        "type": "string",
+        "enum": [
+          "",
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default": ""
+      },
+      "review_model": {
+        "title": "Review subagent model",
+        "description": "Model for review subagents when the prompt names none, such as \"sonnet 5.5\"; empty keeps the lead's model",
+        "type": "string",
+        "default": ""
+      },
+      "review_effort": {
+        "title": "Review subagent effort",
+        "description": "Reasoning effort for review subagents, applied only together with the review model setting; empty uses the effort the lead put in the spawn call if the model supports it, else the model's default",
+        "type": "string",
+        "enum": [
+          "",
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default": ""
+      },
+      "worker_model": {
+        "title": "Worker subagent model",
+        "description": "Model for worker subagents when the prompt names none, such as \"sonnet 5.5\"; empty keeps the lead's model",
+        "type": "string",
+        "default": ""
+      },
+      "worker_effort": {
+        "title": "Worker subagent effort",
+        "description": "Reasoning effort for worker subagents, applied only together with the worker model setting; empty uses the effort the lead put in the spawn call if the model supports it, else the model's default",
+        "type": "string",
+        "enum": [
+          "",
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default": ""
+      },
+      "fallback_model": {
+        "title": "Fallback model",
+        "description": "Model to use when a subagent's model has no usable route or its provider is near its limit or recently failed; empty keeps the lead's model",
+        "type": "string",
+        "default": ""
+      }
+    },
+    "additionalProperties": false
+  }
+}

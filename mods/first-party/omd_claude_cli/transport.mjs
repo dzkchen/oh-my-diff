@@ -1,4 +1,6 @@
 import { createServer, request as httpRequest } from 'node:http';
+import { brotliDecompress, gunzip, inflate } from 'node:zlib';
+import { promisify } from 'node:util';
 import { request as httpsRequest } from 'node:https';
 import { spawn, spawnSync } from 'node:child_process';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
@@ -6,12 +8,17 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, translateRequest, responseEvents, reasoningItem } from './index.ts';
+import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
 const CLI_DEADLINE_MS = 30 * 60_000;
+const DECODERS = { gzip: promisify(gunzip), deflate: promisify(inflate), br: promisify(brotliDecompress) };
+
+class BodyError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
 
 export function cliEnv(values = {}) {
   return { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !CLI_ENV_OVERRIDE.test(name))), ...values };
@@ -92,15 +99,20 @@ export function withoutCliContext(body) {
   return body;
 }
 
-async function bodyOf(request, limit = BODY_LIMIT) {
+async function bodyOf(request, limit = BODY_LIMIT, { encoded = true } = {}) {
+  const encoding = String(request.headers['content-encoding'] ?? 'identity').trim().toLowerCase();
+  if (encoding !== 'identity' && !(encoded && DECODERS[encoding])) throw new BodyError(415, 'unsupported_content_encoding');
   let size = 0;
   const chunks = [];
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > limit) throw new Error('request_size_limit');
+    if (size > limit) throw new BodyError(413, 'request_size_limit');
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks);
+  const raw = Buffer.concat(chunks);
+  if (encoding === 'identity') return raw;
+  try { return await DECODERS[encoding](raw, { maxOutputLength: limit }); }
+  catch (error) { throw new BodyError(error.code === 'ERR_BUFFER_TOO_LARGE' ? 413 : 400, 'invalid_content_encoding'); }
 }
 
 // Maps the subscription's unified 5-hour and 7-day windows onto a `claude` rate-limit header family for /status.
@@ -189,7 +201,7 @@ export class Capture {
     }
   }
   id(index, kind) {
-    return `${this.message.id}-${kind}-${index}`;
+    return localId(`${this.message.id}-${kind}-${index}`);
   }
   event(event) {
     if (event.type === 'message_start') {
@@ -305,7 +317,7 @@ export class Relay {
       }
       const target = new URL('/v1/messages', this.upstream);
       const headers = { ...request.headers, 'accept-encoding': 'identity' };
-      for (const key of ['host', 'connection', 'content-length', 'transfer-encoding', 'proxy-authorization', 'proxy-connection']) delete headers[key];
+      for (const key of ['host', 'connection', 'content-length', 'content-encoding', 'transfer-encoding', 'proxy-authorization', 'proxy-connection']) delete headers[key];
       const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
       await new Promise((resolve, reject) => {
         const upstream = send(target, { method: 'POST', headers, timeout: 600000 }, incoming => {
@@ -343,8 +355,13 @@ export class Relay {
         upstream.end(JSON.stringify(withoutCliContext(body)));
       });
     } catch (error) {
-      this.failure = error?.constructor?.name ?? 'relay_error';
-      response.destroy();
+      if (error instanceof BodyError) {
+        this.used = 0;
+        response.writeHead(error.status, { connection: 'close' }).end(error.message);
+      } else {
+        this.failure = error?.constructor?.name ?? 'relay_error';
+        response.destroy();
+      }
     } finally {
       this.sockets.delete(request.socket);
     }
@@ -572,7 +589,7 @@ async function serve(routePath, home, username) {
       return;
     }
     if (request.method === 'POST' && request.url === '/_omd/nonce') {
-      try { nonce = unseal(token, String(await bodyOf(request, 256))); } catch { response.writeHead(401).end(); return; }
+      try { nonce = unseal(token, String(await bodyOf(request, 256, { encoded: false }))); } catch (error) { response.writeHead(error.status ?? 401).end(); return; }
       response.writeHead(204).end();
       return;
     }
@@ -586,7 +603,7 @@ async function serve(routePath, home, username) {
       entry = models.find(model => model.slug === payload.model);
       translated = translateRequest(payload, entry?.slug);
     } catch (error) {
-      response.writeHead(400).end(String(error?.message ?? 'invalid_claude_request'));
+      response.writeHead(error.status ?? 400).end(String(error?.message ?? 'invalid_claude_request'));
       return;
     }
     const controller = new AbortController();

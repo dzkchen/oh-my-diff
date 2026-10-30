@@ -198,8 +198,8 @@ workspace (`agents` is also required). `expected` rejects a changed candidate.
 
 - References are bound to the caller, package source, generation and thread.
 - A capture holds at most 128 MiB of file contents and paths (`snapshot_bytes` in the host config can lower it); a
-  larger workspace fails with `snapshot size limit`. Turn evidence then carries `workspace_sha256: null`, as it does
-  when a captured path is unreadable.
+  larger workspace fails with `snapshot size limit`. Turn evidence still identifies such a workspace; its
+  `workspace_sha256` is `null` only when a captured path is unreadable.
 - Each mod generation and thread holds at most 8 snapshots and 128 MiB, the host at most 32 and 256 MiB; a full host
   evicts the oldest snapshot of the largest holder.
 - Identical captures are deduplicated, and the registry clears on owner cleanup or session stop.
@@ -335,7 +335,8 @@ Reactive state gives a mod typed handles on `api.state` keys and a way to react 
 `agents.spawn` accepts a host-authorized route and a `workspace` of `read_only` or `isolated_worktree`. A writable
 child receives a captured, isolated worktree under the native task scratch area; its parent repository is never its
 working directory. A `read_only` child may list `tools` from `exec_command`, `write_stdin`
-and `web_search`; any other name fails with `read_only_tool_surface_invalid`.
+and `web_search`; any other name fails with `read_only_tool_surface_invalid`. Only a `provider_billed` route admits
+`web_search`: other routes refuse hosted tool declarations at the child's first request.
 
 `agents.wait` and `agents.result` return a host-attested thread reference and SHA256 of the final text. A mod
 should validate that text against its declared result schema and source-reference rules before calling

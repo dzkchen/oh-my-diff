@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REVIEWED_IDENTIFIERS = {"claude", "anthropic", "lsp", "git"}
 HOST_WORDS = {"artifact", "auto", "budget", "cli", "code", "compact", "context", "continue", "cursor", "edit", "execution",
               "fix", "idle", "lines", "model", "mods", "output", "panel", "picker", "plan", "preview", "read", "reading",
-              "removal", "source", "sync", "tool", "update", "usage", "view", "workspace"}
+              "removal", "source", "subagent", "sync", "theme", "tool", "update", "usage", "view", "workspace"}
 GENERIC_LITERALS = {
     "git": "Git executable used for tracked-path discovery",
     "github_pat_": "GitHub token prefix redacted from mod output",

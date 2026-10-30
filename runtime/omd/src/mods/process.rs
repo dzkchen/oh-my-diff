@@ -73,6 +73,28 @@ const MEMORY_LIMIT: u64 = 512 << 20;
 const MEMORY_POLL: Duration = Duration::from_millis(50);
 /// Live runner pids `(exceeded, reaped)`; signals and reaps both happen under this lock, so a reused pid is never killed.
 static TRACKED: Mutex<BTreeMap<u32, (bool, bool)>> = Mutex::new(BTreeMap::new());
+static IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static WATCHDOG: std::sync::OnceLock<std::thread::Thread> = std::sync::OnceLock::new();
+
+/// Runners execute mod code only inside a conversation, so the watchdog polls only while one is open.
+struct InFlight;
+
+impl InFlight {
+    fn enter() -> Self {
+        if IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::AcqRel) == 0
+            && let Some(watchdog) = WATCHDOG.get()
+        {
+            watchdog.unpark();
+        }
+        Self
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
 
 fn untrack(pid: u32) -> bool {
     TRACKED
@@ -127,14 +149,17 @@ fn overran(child: &Child) -> bool {
 
 /// The V8 heap flag does not bound ArrayBuffers, so one shared thread kills any runner whose peak physical footprint passes `MEMORY_LIMIT`.
 fn track(child: &Child) {
-    static WATCHDOG: std::sync::Once = std::sync::Once::new();
     TRACKED
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .insert(child.id(), (false, false));
-    WATCHDOG.call_once(|| {
+    WATCHDOG.get_or_init(|| {
         std::thread::spawn(|| {
             loop {
+                if IN_FLIGHT.load(std::sync::atomic::Ordering::Acquire) == 0 {
+                    std::thread::park();
+                    continue;
+                }
                 std::thread::sleep(MEMORY_POLL);
                 let mut tracked = TRACKED.lock().unwrap_or_else(PoisonError::into_inner);
                 for (pid, (exceeded, _)) in tracked
@@ -148,7 +173,9 @@ fn track(child: &Child) {
                     }
                 }
             }
-        });
+        })
+        .thread()
+        .clone()
     });
 }
 
@@ -216,7 +243,7 @@ fn runner() -> Result<Child> {
 
 pub(super) const INPUT_LIMIT: usize = 4_194_304;
 
-fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
+pub(super) fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(request)?;
     if bytes.len() > INPUT_LIMIT {
         return Err(failure("input_limit"));
@@ -226,9 +253,24 @@ fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
 }
 
 /// Package-identity fields a reused runner keeps, so matching requests omit them and stay under the pipe buffer.
-const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
+pub(super) const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
 
-fn kept_digest<R>(request: &R) -> Result<[u8; 32]>
+pub(super) trait Kept {
+    fn kept_digest(&self) -> Result<[u8; 32]>;
+    fn kept_line(&self) -> Result<Vec<u8>>;
+}
+
+impl Kept for Value {
+    fn kept_digest(&self) -> Result<[u8; 32]> {
+        kept_digest(self)
+    }
+
+    fn kept_line(&self) -> Result<Vec<u8>> {
+        kept_line(self)
+    }
+}
+
+pub(super) fn kept_digest<R>(request: &R) -> Result<[u8; 32]>
 where
     R: for<'a> std::ops::Index<&'a str, Output = Value>,
 {
@@ -241,7 +283,7 @@ where
     Ok(digest.finalize().into())
 }
 
-fn kept_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
+pub(super) fn kept_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut line = serde_json::to_value(request)?;
     if let Some(fields) = line.as_object_mut() {
         for field in KEPT_FIELDS {
@@ -288,6 +330,7 @@ fn converse(
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
 ) -> (Result<Option<Value>>, Instant) {
+    let _in_flight = InFlight::enter();
     let budgeted = || Instant::now() + budget + Duration::from_millis(250);
     let mut deadline = if fresh {
         Instant::now() + RUNNER_START
@@ -568,14 +611,12 @@ pub(super) fn evaluate_warm<R>(
     host: &mut dyn FnMut(Value) -> Result<Value>,
 ) -> Result<Value>
 where
-    R: serde::Serialize + for<'a> std::ops::Index<&'a str, Output = Value>,
+    R: serde::Serialize + Kept + for<'a> std::ops::Index<&'a str, Output = Value>,
 {
     let kept = (request["reuse"] == true)
-        .then(|| kept_digest(request))
+        .then(|| request.kept_digest())
         .transpose()?;
-    let serve = if kept.is_some() {
-        request_line(request)?
-    } else {
+    let serve = || {
         request_line(
             &[
                 "name",
@@ -588,7 +629,7 @@ where
             .map(|field| (field, &request[field]))
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>(),
-        )?
+        )
     };
     let _stepping = Stepping::enter(key, request["event"] == "component");
     let mut reused = WARM.lock().ok().and_then(|mut runners| {
@@ -604,8 +645,25 @@ where
     let mut cache = None;
     let fresh = reused.is_none();
     let (mut warm, bytes) = match reused {
-        Some(warm) if kept.is_some() && warm.kept == kept => (warm, kept_line(request)?),
+        Some(warm) if kept.is_some() && warm.kept == kept => match request.kept_line() {
+            Ok(line) => (warm, line),
+            Err(error) => {
+                pool(warm);
+                return Err(error);
+            }
+        },
         Some(warm) => {
+            let serve = match if kept.is_some() {
+                request_line(request)
+            } else {
+                serve()
+            } {
+                Ok(serve) => serve,
+                Err(error) => {
+                    pool(warm);
+                    return Err(error);
+                }
+            };
             // The activation request differs from this one only in the serve fields.
             if warm.base + serve.len() > INPUT_LIMIT + 1 {
                 pool(warm);
@@ -615,6 +673,11 @@ where
         }
         None => {
             let bytes = request_line(request)?;
+            let base = if kept.is_some() {
+                0
+            } else {
+                bytes.len().saturating_sub(serve()?.len())
+            };
             let pinned = (request["event"] == "component").then(|| {
                 request["payload"]["client"]
                     .as_str()
@@ -634,7 +697,7 @@ where
                 }
             };
             warm.pinned = pinned;
-            warm.base = bytes.len().saturating_sub(serve.len());
+            warm.base = base;
             cache = cache_root.and_then(|root| CodeCache::open(root, request));
             (warm, offer(cache.as_ref(), bytes))
         }

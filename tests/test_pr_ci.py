@@ -5,10 +5,12 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest import mock
 
 from scripts.pr_ci import gate, needs_native
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".github/scripts"))
+import build
 import ci
 
 
@@ -81,3 +83,48 @@ class PullRequestChecks(unittest.TestCase):
             self.assertEqual(subprocess.run(ci.drift("runtime"), cwd=root, capture_output=True).returncode, 0)
             (root / "runtime/new.rs").write_text("contents\n")
             self.assertNotEqual(subprocess.run(ci.drift("runtime"), cwd=root, capture_output=True).returncode, 0)
+
+
+class HostedJobs(unittest.TestCase):
+    def steps(self, job):
+        with mock.patch.object(ci, "core_env", return_value={}):
+            return {step.name: step for step in ci.job_steps(job)}
+
+    def test_jobs_split_the_old_test_job_and_keep_every_step(self):
+        names = {job: list(self.steps(job)) for job in ("native", "core", "lint", "acceptance", "build")}
+        self.assertEqual(names["native"][2:], ["test helper binaries", "cargo test native crates"])
+        self.assertEqual(names["core"][2:], ["test helper binaries", "cargo test core", "cargo test core integration"])
+        self.assertEqual(names["lint"], ["setup", "verified V8", "patch sync", "patch matches checkout", "clippy omd paths",
+                                         "check pull request crates", "rustfmt", "native ownership", "locks",
+                                         "locks match checkout", "mods install", "mods typecheck"])
+        self.assertEqual(names["acceptance"], ["mods install", "mods tests", "python tests", "host check with scenarios",
+                                               "client acceptance"])
+        self.assertTrue(self.steps("core")["cargo test core integration"].advisory)
+
+    def test_every_cargo_invocation_of_a_test_job_selects_the_same_packages(self):
+        for job, suite in (("native", "native"), ("core", "core"), ("core", "core-integration")):
+            helper = self.steps(job)["test helper binaries"].argv
+            selected = [name for flag, name in zip(helper, helper[1:]) if flag == "-p"]
+            with self.subTest(job=job, suite=suite):
+                self.assertEqual(selected, ci.scope(suite))
+                self.assertTrue(set(ci.SUITE_CRATES[suite]) <= set(selected))
+                self.assertTrue(set(ci.HELPERS) <= set(selected))
+        self.assertEqual(ci.scope("core"), ci.scope("core-integration"))
+
+    def test_runner_is_built_with_the_packages_of_the_test_run(self):
+        args = ["nextest", "run", "--locked", "-p", "codex-core", "-p", "codex-omd-runner", "--lib"]
+        with mock.patch.object(build.subprocess, "run", return_value=mock.Mock(returncode=1)) as run:
+            self.assertEqual(build.test_runner(Path("/work"), args, {}, None), 1)
+        self.assertEqual(run.call_args.args[0], ["cargo", "build", "--locked", "-p", "codex-core", "-p", "codex-omd-runner",
+                                                 "--bin", "omd-runner"])
+        with mock.patch.object(build.subprocess, "run", return_value=mock.Mock(returncode=1)) as run:
+            build.test_runner(Path("/work"), ["test", "--locked", "-p", "codex-core", "--doc"], {}, None)
+        self.assertEqual(run.call_args.args[0], ["cargo", "build", "--locked", "-p", "codex-core", "-p", "codex-omd-runner",
+                                                 "--bin", "omd-runner"])
+
+    def test_compile_cache_is_opt_in(self):
+        with mock.patch.object(build, "run", return_value=b"host: aarch64-apple-darwin\n"):
+            with mock.patch.dict(os.environ, {"OMD_SCCACHE": "", "RUSTC_WRAPPER": ""}):
+                self.assertFalse(build.cargo_env(Path("/work")).get("RUSTC_WRAPPER"))
+            with mock.patch.dict(os.environ, {"OMD_SCCACHE": "1"}):
+                self.assertEqual(build.cargo_env(Path("/work"))["RUSTC_WRAPPER"], "sccache")

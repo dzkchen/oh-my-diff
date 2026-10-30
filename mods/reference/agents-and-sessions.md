@@ -115,11 +115,16 @@ still match; invalid state fails closed.
 
 ```ts
 agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?, snapshot?, parent_history?,
-              resolution_context?}
+              resolution_context?, model?}
 ```
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
 
+- `route` may also be a lead route of a registered provider ([Choosing a route](models.md#choosing-a-route)); the
+  agent runs under `worker_limits`.
+- `model` picks another model from that provider's runtime catalog on such a lead route (rates and billing stay the
+  route's); outside the catalog it fails with `agent_model_not_in_route_provider_catalog`, and on any other route a
+  `model` other than the route's fails with `agent_model_requires_provider_lead_route`.
 - `evidence` delivers a stored evidence reference to the agent.
 - `snapshot` selects a frozen copy and requires `fs.read`. Its permission is always `read_only`, its result
   identifies the captured candidate, and it cannot be integrated as an edit.
@@ -174,6 +179,24 @@ uncertain in-flight requests.
 - Agent handles and snapshot handles do not survive process restart; mods must reconcile saved pending work without
   silently spawning replacements.
 
+### Native subagents
+
+Multi-agent V2 children behave like this in OMD (V1 sessions keep upstream behaviour):
+
+- **Completion wake.** When a child's result reaches an idle parent (the root or another child), the parent starts one
+  turn about 500 ms after the last result, and that turn reads every queued result. An interrupted parent and Plan
+  mode stay idle. A result over 16 KiB is cut with a pointer to `list_agents`. A `wait_agent` that times out tells
+  the model to end its turn.
+- **Forwarding.** A child's approval, permission or MCP elicitation request is reported to the parent's mailbox; only
+  the user can answer it. A child may call `request_user_input`: its question is queued in the parent's mailbox and
+  read at the parent's next turn (it does not start one), and the TUI shows "Waiting on you in <thread>" so the user
+  can answer meanwhile. The parent's next `send_message` or `followup_task` to that child answers the question ("Your
+  parent replied; its message follows." then the message); the user can answer too. The question card stays until the child's turn ends.
+- **Caps.** Every model `spawn_agent` counts against `host.json` `limits.max_depth` (default 2) and
+  `limits.concurrent_workers` (default 4) and is refused with `subagent_depth_limit` or
+  `subagent_concurrency_limit` ([Host limits](packages-and-limits.md#host-limits)). These apply in addition to
+  Codex's `agents.max_threads`.
+
 ## Agent definitions, inventory and spawn interception (`agent_lifecycle_v1`)
 
 ### Agent definitions
@@ -222,8 +245,12 @@ or answer `{deny}`.
   identity or outcome.
 - A `cwd` or `tools` change on a configured role is refused (`agent_spawn_override_requires_definition`): express
   it as a definition.
-- The host re-checks route admission, worker limits and the parent's permission profile after the transform. Nested
-  tool and model calls of the child go through interception and admission as usual.
+- After the transform the host validates the model and effort, and the child keeps the parent's permission profile.
+  Nested tool and model calls of the child go through interception and admission as usual.
+- A `model` that a provider registered (the spawn tool's model list names its provider) runs the child on that
+  provider. It needs a lead route there (`agent_route_unavailable` otherwise); the child is then admitted as a
+  worker on that route under `worker_limits` and accounted at the route's rates; if admission fails, every request of
+  the child is refused. Opaque reasoning and compaction items from the parent's history are not sent to it.
 - With `agent_spawn` interceptors registered, native spawn calls reach them instead of `tool` interceptors.
 
 ### `agents.inventory`
@@ -234,6 +261,7 @@ or answer `{deny}`.
 - the parent thread and agent;
 - the owner mod, definition and source digest;
 - role;
+- provider, model and billing basis, once known;
 - status (`running`, `completed`, `failed`, `cancelled`);
 - start and end time, and duration;
 - turn count;

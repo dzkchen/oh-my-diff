@@ -71,7 +71,7 @@ fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
         .and_then(|mut snapshots| snapshots.remove(&account.cost_capture))
         .is_some_and(|(_, dirty)| dirty);
     if dirty {
-        write_cost_capture(account, Durability::Durable)?;
+        write_cost_capture(account, Durability::Ordered)?;
     }
     Ok(())
 }
@@ -256,9 +256,16 @@ pub struct Accounts {
     dispatcher: Mutex<Option<ModDispatcher>>,
     notifier: Mutex<Option<ModNotifier>>,
     requests: Arc<Mutex<RequestState>>,
+    refused: Mutex<BTreeMap<String, String>>,
 }
 
 impl Accounts {
+    pub(crate) fn refuse(&self, thread: &str, reason: String) {
+        if let Ok(mut refused) = self.refused.lock() {
+            refused.insert(thread.to_owned(), reason);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn mod_installation(&self) -> (usize, usize, usize) {
         let runtime = self.runtime.lock().unwrap();
@@ -311,7 +318,7 @@ impl Accounts {
             .map_err(|_| "request state poisoned")?
             .billed
             .remove(request_id);
-        write_cost_capture(&account, Durability::Durable).map_err(|error| error.to_string())?;
+        write_cost_capture(&account, Durability::Ordered).map_err(|error| error.to_string())?;
         Ok(
             json!({"request_id": request_id, "ledger_request": request, "cost": {"microusd": microusd, "basis": "provider_reported", "source": source}, "attempt": attempt}),
         )
@@ -372,6 +379,9 @@ impl Accounts {
     }
 
     pub fn forget_thread(&self, thread: &str) {
+        if let Ok(mut refused) = self.refused.lock() {
+            refused.remove(thread);
+        }
         if let Ok(mut state) = self.requests.lock() {
             state.retries.remove(thread);
             state.fingerprints.remove(thread);
@@ -1241,6 +1251,14 @@ impl ResponseObserver for Accounts {
         else {
             return Ok(None);
         };
+        if let Some(reason) = self
+            .refused
+            .lock()
+            .map_err(|_| denied("refusal lock poisoned"))?
+            .get(&thread)
+        {
+            return Err(denied(reason));
+        }
         let Some(account) = self
             .by_thread
             .lock()
