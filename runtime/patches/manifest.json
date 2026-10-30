@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.165.0.patch",
-    "sha256": "8e42b80587017aa07955175aacc4c754e863ce66df67fd9ee7b1838a3b8104e3"
+    "sha256": "dd30da0f5634e47ae4e2224b2d97784d6bf60fc17697360f0cfc14f875a7ecc4"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -921,9 +921,21 @@
       "before": "d7b78dc5bc20a931552e4065ba4a8ce57f8cda544eb1cbc88d8e6c07c3c19c3e",
       "after": "9b2c917564f14cac81b2d095a454b05bc81931fca2db7aef779eebb6a45bb8e9"
     },
+    "codex-rs/exec-server/src/fs_sandbox.rs": {
+      "before": "29d0decd8ba36a25b2c3617051ec201be577d84989fb6396d550b52ccd4f5275",
+      "after": "7011296f5599155585b3b7901b7dd28b08c51e379be985023679ebf9f0361a2f"
+    },
     "codex-rs/exec-server/src/process_sandbox.rs": {
       "before": "e66a8116655beeef5ccb9070f43b9945f9688adf8277ed6a7a91b0a04969aebe",
-      "after": "30f75dae42886eab21a7e292013f487ab476ebc8e0aef15e84ffff0f6d38caf7"
+      "after": "0ee6adba0febb4bfbf254663dd8b8d4dbfa65dfadfc4ca1b16ba08ad9019d2c0"
+    },
+    "codex-rs/exec-server/src/process_sandbox_tests.rs": {
+      "before": "4c9c561c93151dab05f38d58ca0edf6ae9c26024992434d0ec4ece5ac90e825c",
+      "after": "e50b728cbde4afeecefaa8b065c651f0f2397200c62d9909d915d1722ef0e6cc"
+    },
+    "codex-rs/exec-server/src/runtime_options.rs": {
+      "before": "2750a1c967d35aa1a328a3d18fdb7ec608e11f9385c3efebccc897f5e381dec1",
+      "after": "a3af4f2996ca774f2e775393f3fe25f82f4f20f0ae9fbc67d62f07195a8f7b12"
     },
     "codex-rs/exec-server/src/server/transport.rs": {
       "before": "44d0c5309e66fa5740543b08467bcea7e23dcb900ac3a116b2146173fe730276",
@@ -1083,7 +1095,7 @@
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
-      "after": "381942edc550c32542d3ce306413ad85755a32e9c09e1d00356b3a7e96d7fe81"
+      "after": "d55c20946f3ddc9cf308b71fa209d2c6ab2b89c72feb358bf4ea66f762ae1b0f"
     },
     "codex-rs/ext/omd/src/mods/autonomy.rs": {
       "before": null,
@@ -1131,7 +1143,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "70787385154d44ec74067dd9827c670017f3c5bbb57d0f2aaaf85fff90e6483c"
+      "after": "445c80711b6fde73b100c3521413ee11888c3b1926a91a46ca259d071f5f4588"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -1167,7 +1179,7 @@
     },
     "codex-rs/ext/omd/src/mods/services.rs": {
       "before": null,
-      "after": "3ee2052158cd34a763c46bc3859d8cbb739b821a20233dbe7e0f63705f96fade"
+      "after": "bc31bc431cdaab1d7ef2fa9c5645d5f29b65c6d529378638e253ad7a1b8f9d62"
     },
     "codex-rs/ext/omd/src/mods/snapshots.rs": {
       "before": null,
@@ -1471,7 +1483,7 @@
     },
     "codex-rs/omd/src/mods/operation_schema.json": {
       "before": null,
-      "after": "aed31c189cd02d603d978e3a36e0720ebedd76cfb525aeccb88fc99efa0b81d8"
+      "after": "58e238b6ad839ad89b2a4ae9428b967c2c3f8f373a4ee1051ce2565b28e2e0f3"
     },
     "codex-rs/omd/src/mods/operation_validation.rs": {
       "before": null,

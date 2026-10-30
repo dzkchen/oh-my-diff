@@ -335,7 +335,8 @@ Reactive state gives a mod typed handles on `api.state` keys and a way to react 
 `agents.spawn` accepts a host-authorized route and a `workspace` of `read_only` or `isolated_worktree`. A writable
 child receives a captured, isolated worktree under the native task scratch area; its parent repository is never its
 working directory. A `read_only` child may list `tools` from `exec_command`, `write_stdin`
-and `web_search`; any other name fails with `read_only_tool_surface_invalid`.
+and `web_search`; any other name fails with `read_only_tool_surface_invalid`. Only a `provider_billed` route admits
+`web_search`: other routes refuse hosted tool declarations at the child's first request.
 
 `agents.wait` and `agents.result` return a host-attested thread reference and SHA256 of the final text. A mod
 should validate that text against its declared result schema and source-reference rules before calling

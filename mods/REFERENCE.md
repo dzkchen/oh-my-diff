@@ -819,7 +819,8 @@ Reactive state gives a mod typed handles on `api.state` keys and a way to react 
 `agents.spawn` accepts a host-authorized route and a `workspace` of `read_only` or `isolated_worktree`. A writable
 child receives a captured, isolated worktree under the native task scratch area; its parent repository is never its
 working directory. A `read_only` child may list `tools` from `exec_command`, `write_stdin`
-and `web_search`; any other name fails with `read_only_tool_surface_invalid`.
+and `web_search`; any other name fails with `read_only_tool_surface_invalid`. Only a `provider_billed` route admits
+`web_search`: other routes refuse hosted tool declarations at the child's first request.
 
 `agents.wait` and `agents.result` return a host-attested thread reference and SHA256 of the final text. A mod
 should validate that text against its declared result schema and source-reference rules before calling
@@ -1558,13 +1559,16 @@ still match; invalid state fails closed.
 
 ```ts
 agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?, snapshot?, parent_history?,
-              resolution_context?}
+              resolution_context?, model?}
 ```
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
 
 - `route` may also be a lead route of a registered provider whose `mods` is empty or lists the caller; the agent is
   admitted like a cross-provider native child under `worker_limits`, with no grant.
+- `model` picks another model from that provider's runtime catalog on such a lead route (rates and billing stay the
+  route's); outside the catalog it fails with `agent_model_not_in_route_provider_catalog`, and on any other route a
+  `model` other than the route's fails with `agent_model_requires_provider_lead_route`.
 - `evidence` delivers a stored evidence reference to the agent.
 - `snapshot` selects a frozen copy and requires `fs.read`. Its permission is always `read_only`, its result
   identifies the captured candidate, and it cannot be integrated as an edit.
@@ -2713,8 +2717,10 @@ thread resumed after its provider is gone continues on the configured provider.
 efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, default `provider`). It needs a running `providers.register` registration whose
 grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
 or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
-(shell, freeform `apply_patch`, tool search). Picking one switches the thread to that provider from the next turn;
-history carries over except reasoning another provider produced. A compaction checkpoint only another provider can
+(shell, freeform `apply_patch`, tool search, multi-agent v2). Picking one switches the thread to that provider from the
+next turn; history carries over except reasoning another provider produced. Codex sends an item id only in
+`prefix_rest` form, so a provider gives its items ids without `_` unless every provider accepts them, and marks
+plaintext function arguments with `encrypted_function_args: []`. A compaction checkpoint only another provider can
 read is first rewritten as a plaintext summary by that provider (one request on its account); if that fails, the turn
 shows a warning and runs without the summary.
 

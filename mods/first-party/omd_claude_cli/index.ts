@@ -76,6 +76,13 @@ function toolName(namespace: string, name: string): string {
 }
 
 // The CLI drops replayed thinking from its history input, so reasoning items carry only the visible summary.
+// Codex sends an item id only in `prefix_rest` form, so local ids keep Claude's ids away from other providers.
+export function localId(id: string): string {
+  return id.replaceAll('_', '-');
+}
+
+const SEALED = new Set(['collaboration/spawn_agent', 'collaboration/send_message', 'collaboration/followup_task']);
+
 export function reasoningItem(block: Row, id: string): Row {
   return { type: 'reasoning', id, summary: block.thinking ? [{ type: 'summary_text', text: block.thinking }] : [] };
 }
@@ -217,20 +224,21 @@ export function responseEvents(assistant: Row, admission: Row, model: string,
   const inputTokens = usage.input_tokens + cacheRead + cacheWrite;
   const id = typeof assistant.id === 'string' ? assistant.id : 'claude-native';
   const events: Row[] = streamed ? [] : [{ type: 'response.created', response: { id } }];
+  const item = localId(id);
   const content = Array.isArray(assistant.content) ? assistant.content.filter(Boolean) : [];
   if (!streamed) {
     for (const [index, block] of content.entries()) {
       if (block.type === 'thinking' || block.type === 'redacted_thinking') {
-        events.push({ type: 'response.output_item.done', item: reasoningItem(block, `${id}-reasoning-${index}`) });
+        events.push({ type: 'response.output_item.done', item: reasoningItem(block, `${item}-reasoning-${index}`) });
       }
     }
     const output = content.filter(block => block.type === 'text').map(block => block.text).join('');
     if (output) {
-      const item = { type: 'message', id: `${id}-text`, role: 'assistant',
-                     content: [{ type: 'output_text', text: output }] };
-      events.push({ type: 'response.output_item.added', item: { ...item, content: [] } });
+      const message = { type: 'message', id: `${item}-text`, role: 'assistant',
+                        content: [{ type: 'output_text', text: output }] };
+      events.push({ type: 'response.output_item.added', item: { ...message, content: [] } });
       events.push({ type: 'response.output_text.delta', delta: output });
-      events.push({ type: 'response.output_item.done', item });
+      events.push({ type: 'response.output_item.done', item: message });
     }
   }
   for (const block of content) {
@@ -238,16 +246,17 @@ export function responseEvents(assistant: Row, admission: Row, model: string,
     if (typeof block.name !== 'string' || !block.name.startsWith('mcp__omd__')) throw new Error('unknown_native_tool');
     const tool = reverse[block.name.slice('mcp__omd__'.length)];
     if (!tool) throw new Error('tool_outside_host_inventory');
-    const item = tool.kind === 'search'
-      ? { type: 'tool_search_call', id: block.id, call_id: block.id, execution: 'client', arguments: block.input }
+    const call = tool.kind === 'search'
+      ? { type: 'tool_search_call', id: localId(block.id), call_id: block.id, execution: 'client', arguments: block.input }
       : tool.kind === 'custom'
-        ? { type: 'custom_tool_call', id: block.id, call_id: block.id, namespace: tool.namespace,
+        ? { type: 'custom_tool_call', id: localId(block.id), call_id: block.id, namespace: tool.namespace,
             name: tool.name, input: block.input?.input }
-        : { type: 'function_call', id: block.id, call_id: block.id, namespace: tool.namespace,
-            name: tool.name, arguments: JSON.stringify(block.input) };
-    if (tool.kind === 'custom' && typeof item.input !== 'string') throw new Error('invalid_custom_tool_input');
-    events.push({ type: 'response.output_item.added', item });
-    events.push({ type: 'response.output_item.done', item });
+        : { type: 'function_call', id: localId(block.id), call_id: block.id, namespace: tool.namespace,
+            name: tool.name, arguments: JSON.stringify(block.input),
+            ...SEALED.has(`${tool.namespace}/${tool.name}`) ? { encrypted_function_args: [] } : {} };
+    if (tool.kind === 'custom' && typeof call.input !== 'string') throw new Error('invalid_custom_tool_input');
+    events.push({ type: 'response.output_item.added', item: call });
+    events.push({ type: 'response.output_item.done', item: call });
   }
   const creation = usage.cache_creation;
   const ttl = creation?.ephemeral_5m_input_tokens > 0 ? 300 : creation?.ephemeral_1h_input_tokens > 0 ? 3600 : null;

@@ -30914,8 +30914,51 @@ index ee497de6895073054de1aa5e45eedcaab7f79435..d569294da756cba17c9c2b99dec63e3e
  Use a protected transport or TLS proxy for remote access; authentication is checked at connection time and these flags do not apply to stdio, remote registration, or forwarding.
 
  App-server clients can supply the raw token through `environment/add.authBearerToken` or `auth_bearer_token` in an `environments.toml` URL entry; omission preserves unauthenticated behavior.
+diff --git a/codex-rs/exec-server/src/fs_sandbox.rs b/codex-rs/exec-server/src/fs_sandbox.rs
+index 63eefde6ee8caf9f52f2cdb0c4c03622c32a311a..1781e5e33b32dd687c49bf54987105bff08c2d30 100644
+--- a/codex-rs/exec-server/src/fs_sandbox.rs
++++ b/codex-rs/exec-server/src/fs_sandbox.rs
+@@ -150,7 +150,7 @@ impl FileSystemSandboxRunner {
+         workspace_roots: &[AbsolutePathBuf],
+         sandbox_context: &FileSystemSandboxContext,
+     ) -> Result<SandboxExecRequest, JSONRPCErrorError> {
+-        let helper = &self.runtime_paths.codex_self_exe;
++        let helper = &self.runtime_paths.launch_exe();
+         let sandbox_manager = SandboxManager::for_file_system_helpers()
+             .with_linux_sandbox_pid_namespace(self.runtime_paths.linux_sandbox_pid_namespace);
+         #[cfg(target_os = "macos")]
+@@ -843,6 +843,29 @@ mod tests {
+         );
+     }
+
++    #[cfg(target_os = "macos")]
++    #[test]
++    fn sandbox_exec_request_launches_the_helper_behind_an_install_symlink() {
++        let codex_self_exe = std::env::current_exe()
++            .expect("current exe")
++            .canonicalize()
++            .expect("canonical exe");
++        let bin = tempfile::tempdir().expect("bin directory");
++        let link = bin.path().join("codex");
++        std::os::unix::fs::symlink(&codex_self_exe, &link).expect("install link");
++        let runtime_paths = ExecServerRuntimeOptions::new(link.clone(), /*codex_linux_sandbox_exe*/ None)
++            .expect("runtime paths");
++        let cwd = AbsolutePathBuf::from_absolute_path(std::env::temp_dir().as_path())
++            .expect("absolute cwd");
++        let policy = restricted_policy(Vec::new());
++        let request = FileSystemSandboxRunner::new(runtime_paths)
++            .sandbox_command(&sandbox_context_with_cwd(&policy, PathUri::from_abs_path(&cwd)))
++            .expect("sandbox command");
++
++        assert!(request.command.contains(&codex_self_exe.display().to_string()));
++        assert!(!request.command.contains(&link.display().to_string()));
++    }
++
+     /// Tilde patterns stay home-relative when Windows sandbox commands start at another cwd.
+     #[test]
+     fn windows_cwd_relative_denial_binding_keeps_tilde_patterns_home_relative() {
 diff --git a/codex-rs/exec-server/src/process_sandbox.rs b/codex-rs/exec-server/src/process_sandbox.rs
-index 488b7c97f249ffd71a69def81a88f902246858f7..2ceb9e79548ac4f721a00e6ef5867ce9249cbb7f 100644
+index 488b7c97f249ffd71a69def81a88f902246858f7..2ce59199a3908e57c28fbb684ed48d446480ea0d 100644
 --- a/codex-rs/exec-server/src/process_sandbox.rs
 +++ b/codex-rs/exec-server/src/process_sandbox.rs
 @@ -135,8 +135,9 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
@@ -30929,6 +30972,73 @@ index 488b7c97f249ffd71a69def81a88f902246858f7..2ceb9e79548ac4f721a00e6ef5867ce9
      #[cfg(target_os = "windows")]
      let network_proxy = if params.sandbox.is_none() {
          // Shared Windows ingress selects a route from the sandbox token's SID. Native launches
+@@ -273,11 +274,7 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
+             helper_args.push(arg0.clone());
+             helper_args.extend(params.argv.iter().cloned());
+             (
+-                runtime_paths
+-                    .codex_self_exe
+-                    .as_path()
+-                    .as_os_str()
+-                    .to_owned(),
++                runtime_paths.launch_exe().as_path().as_os_str().to_owned(),
+                 helper_args,
+             )
+         },
+diff --git a/codex-rs/exec-server/src/process_sandbox_tests.rs b/codex-rs/exec-server/src/process_sandbox_tests.rs
+index d0cd73545e44b42bdc3c3fd6d7979f557eb3a9af..87877e77e601b357a2f07d5bcff9b3574e97528d 100644
+--- a/codex-rs/exec-server/src/process_sandbox_tests.rs
++++ b/codex-rs/exec-server/src/process_sandbox_tests.rs
+@@ -190,9 +190,15 @@ async fn sandbox_request_routes_custom_arg0_to_inner_helper() {
+         .try_into()
+         .expect("absolute cwd");
+     let cwd_uri = PathUri::from_abs_path(&cwd);
+-    let self_exe = std::env::current_exe().expect("current executable");
++    let self_exe = std::env::current_exe()
++        .expect("current executable")
++        .canonicalize()
++        .expect("canonical executable");
++    let bin = tempfile::tempdir().expect("bin directory");
++    let link = bin.path().join("codex");
++    std::os::unix::fs::symlink(&self_exe, &link).expect("install link");
+     let runtime_paths =
+-        ExecServerRuntimeOptions::new(self_exe.clone(), Some(self_exe)).expect("runtime paths");
++        ExecServerRuntimeOptions::new(link, Some(self_exe.clone())).expect("runtime paths");
+     let sandbox = FileSystemSandboxContext::from_permission_profile(
+         PermissionProfile::workspace_write(),
+         cwd_uri.clone(),
+@@ -243,6 +249,8 @@ async fn sandbox_request_routes_custom_arg0_to_inner_helper() {
+     assert_eq!(prepared.arg0, Some(CODEX_LINUX_SANDBOX_ARG0.to_string()));
+     #[cfg(target_os = "macos")]
+     assert_eq!(prepared.arg0, None);
++    #[cfg(target_os = "macos")]
++    assert_eq!(prepared.command[helper_mode - 1], self_exe.display().to_string());
+ }
+
+ #[cfg(target_os = "macos")]
+diff --git a/codex-rs/exec-server/src/runtime_options.rs b/codex-rs/exec-server/src/runtime_options.rs
+index e3146c6e57d1a218a05ccd6eb0e296d92c208ee7..20cc89fb28e4cd1e5da7ea01441b1ae3274c9d5b 100644
+--- a/codex-rs/exec-server/src/runtime_options.rs
++++ b/codex-rs/exec-server/src/runtime_options.rs
+@@ -53,6 +53,18 @@ impl ExecServerRuntimeOptions {
+         })
+     }
+
++    /// The Codex executable to launch now; Seatbelt cannot exec through an install symlink.
++    pub fn launch_exe(&self) -> AbsolutePathBuf {
++        #[cfg(target_os = "macos")]
++        if let Some(path) = std::fs::canonicalize(self.codex_self_exe.as_path())
++            .ok()
++            .and_then(|path| AbsolutePathBuf::from_absolute_path(path).ok())
++        {
++            return path;
++        }
++        self.codex_self_exe.clone()
++    }
++
+     /// Applies the PID namespace policy chosen by trusted executor provisioning.
+     pub fn with_linux_sandbox_pid_namespace(mut self, mode: LinuxSandboxPidNamespace) -> Self {
+         self.linux_sandbox_pid_namespace = mode;
 diff --git a/codex-rs/exec-server/src/server/transport.rs b/codex-rs/exec-server/src/server/transport.rs
 index 4bb1d1f1209de73a2a6deba69b6cc6c47edd37a0..998a368a734fca3d7a757fcb7af3c41a45fa9838 100644
 --- a/codex-rs/exec-server/src/server/transport.rs
@@ -70130,10 +70240,10 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f69175a1753c5240558e4a3445e4cfb150e196b1
+index 0000000000000000000000000000000000000000..887083a7c084cf29d54357bdeb6259b1585e0963
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2600 @@
+@@ -0,0 +1,2629 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -70910,6 +71020,8 @@ index 0000000000000000000000000000000000000000..f69175a1753c5240558e4a3445e4cfb1
 +    resolution_context: Option<ResolutionContext>,
 +    #[serde(default)]
 +    parent_history: bool,
++    #[serde(default)]
++    model: Option<String>,
 +}
 +
 +#[derive(Deserialize)]
@@ -71848,7 +71960,10 @@ index 0000000000000000000000000000000000000000..f69175a1753c5240558e4a3445e4cfb1
 +            {
 +                return Err("worker_route_authority_exceeded".into());
 +            }
-+            return Ok((route.clone(), true));
++            let runtime = codex_models_manager::runtime_models::find(&route.model)
++                .is_some_and(|(provider, _)| provider == route.provider);
++            unchanged_model(request, route)?;
++            return Ok((route.clone(), !runtime));
 +        }
 +        let provider_lead = routing
 +            .route(&request.route, config::RouteRole::Lead, None)
@@ -71859,9 +71974,24 @@ index 0000000000000000000000000000000000000000..f69175a1753c5240558e4a3445e4cfb1
 +                        .is_some_and(|(provider, _)| provider == route.provider)
 +            });
 +        if let Some(route) = provider_lead {
-+            let route = route.clone();
++            let mut route = route.clone();
++            if let Some(model) = request.model.take() {
++                let info = codex_models_manager::runtime_models::find(&model)
++                    .filter(|(provider, _)| *provider == route.provider)
++                    .map(|(_, info)| info)
++                    .ok_or("agent_model_not_in_route_provider_catalog")?;
++                if !info
++                    .supported_reasoning_levels
++                    .iter()
++                    .any(|level| level.effort == route.reasoning_effort)
++                    && let Some(effort) = info.default_reasoning_level
++                {
++                    route.reasoning_effort = effort;
++                }
++                route.model = model;
++            }
 +            restrict_tools(&route, request, writable)?;
-+            return Ok((route, true));
++            return Ok((route, false));
 +        }
 +        let Some(route) = routing.route(&request.route, config::RouteRole::Worker, Some(caller.id))
 +        else {
@@ -71869,6 +71999,7 @@ index 0000000000000000000000000000000000000000..f69175a1753c5240558e4a3445e4cfb1
 +                .services
 +                .route(caller.id, caller.generation, &request.route)
 +                .await?;
++            unchanged_model(request, &route)?;
 +            return Ok((route, false));
 +        };
 +        let grant = route.grant.as_ref().ok_or("worker_route_requires_grant")?;
@@ -71883,6 +72014,7 @@ index 0000000000000000000000000000000000000000..f69175a1753c5240558e4a3445e4cfb1
 +        ) {
 +            return Err("worker_grant_missing_changed_or_revoked".into());
 +        }
++        unchanged_model(request, route)?;
 +        restrict_tools(route, request, writable)?;
 +        Ok((route.clone(), true))
 +    }
@@ -72717,6 +72849,13 @@ index 0000000000000000000000000000000000000000..f69175a1753c5240558e4a3445e4cfb1
 +    while !cancelled.load(Ordering::Acquire) {
 +        tokio::time::sleep(Duration::from_millis(50)).await;
 +    }
++}
++
++fn unchanged_model(request: &Spawn, route: &Route) -> Result<(), String> {
++    if request.model.as_ref().is_some_and(|model| *model != route.model) {
++        return Err("agent_model_requires_provider_lead_route".into());
++    }
++    Ok(())
 +}
 +
 +fn restrict_tools(route: &Route, request: &mut Spawn, writable: bool) -> Result<(), String> {
@@ -76732,10 +76871,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..998a35922d7262e4e00af4a6a73678a6d5026127
+index 0000000000000000000000000000000000000000..928625fd620cddcb2c0b2e170bf3d1a15ae1e33e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5016 @@
+@@ -0,0 +1,5042 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -79612,9 +79751,9 @@ index 0000000000000000000000000000000000000000..998a35922d7262e4e00af4a6a73678a6
 +    };
 +    *fixture.lead.session.contract.lock().unwrap() =
 +        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
-+    let model: codex_protocol::openai_models::ModelInfo =
-+        codex_models_manager::model_info::model_info_from_slug("provider-worker-model");
-+    codex_models_manager::runtime_models::set("provider-worker", vec![model]);
++    let models = ["provider-worker-model", "provider-worker-other"]
++        .map(codex_models_manager::model_info::model_info_from_slug);
++    codex_models_manager::runtime_models::set("provider-worker", models.to_vec());
 +    let route = |name: &str, model: &str, mods: Value| {
 +        json!({"name": name, "roles": ["lead"], "provider": "provider-worker", "model": model,
 +            "mods": mods, "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
@@ -79626,6 +79765,7 @@ index 0000000000000000000000000000000000000000..998a35922d7262e4e00af4a6a73678a6
 +        fixture.lead.host.root.join("host.json"),
 +        json!({"routes": [
 +            route("open", "provider-worker-model", json!([])),
++            route("granted", "provider-worker-model", json!(["delegate"])),
 +            route("other-mod", "provider-worker-model", json!(["someone-else"])),
 +            route("unregistered", "not-a-runtime-model", json!([])),
 +        ], "worker_limits": {"requests": 5, "seconds": 60, "exposure_microusd": 0}})
@@ -79634,7 +79774,7 @@ index 0000000000000000000000000000000000000000..998a35922d7262e4e00af4a6a73678a6
 +    .unwrap();
 +    let grants = fixture.core.runtime.lock().unwrap().grants("delegate");
 +    let cancelled = Arc::new(AtomicBool::new(false));
-+    let spawn = |route: &'static str| {
++    let spawn_model = |route: &'static str, model: Option<&'static str>| {
 +        let (core, lead, grants, cancelled) = (&fixture.core, &fixture.lead, grants.clone(), &cancelled);
 +        async move {
 +            operations::dispatch(
@@ -79651,18 +79791,43 @@ index 0000000000000000000000000000000000000000..998a35922d7262e4e00af4a6a73678a6
 +                None,
 +                ModHostCall {
 +                    operation: "agents.spawn".into(),
-+                    arguments: json!({"role": "r", "route": route, "prompt": "x"}),
++                    arguments: json!({"role": "r", "route": route, "prompt": "x", "model": model}),
 +                },
 +                cancelled,
 +            )
 +            .await
 +        }
 +    };
++    let spawn = |route: &'static str| spawn_model(route, None);
 +    let refused = |result: Result<Value, String>| result.err().unwrap_or_default();
 +    assert_eq!(
 +        refused(spawn("open").await),
 +        "native_thread_manager_stopped",
 +        "a registered provider's open lead route is admitted up to thread start"
++    );
++    assert_eq!(
++        refused(spawn_model("open", Some("provider-worker-other")).await),
++        "native_thread_manager_stopped",
++        "another model from the route provider's runtime catalog is admitted on its lead route"
++    );
++    assert_eq!(
++        refused(spawn_model("open", Some("gpt-5.5")).await),
++        "agent_model_not_in_route_provider_catalog"
++    );
++    let (routing, _) = fixture.lead.host.route_config();
++    let granted = routing
++        .route("granted", crate::config::RouteRole::Lead, None)
++        .unwrap()
++        .clone();
++    fixture
++        .lead
++        .host
++        .enroll(fixture.lead.thread, &fixture.lead.session, "lead", Some(&granted), None)
++        .unwrap();
++    assert_eq!(
++        refused(spawn_model("lead", Some("provider-worker-other")).await),
++        "agent_model_requires_provider_lead_route",
++        "the lead alias keeps the lead's model"
 +    );
 +    assert_eq!(refused(spawn("other-mod").await), "provider_not_registered_or_stopped");
 +    codex_models_manager::runtime_models::set("provider-worker", Vec::new());
@@ -84440,10 +84605,10 @@ index 0000000000000000000000000000000000000000..5a33edfcf10f7038c297782b4b7fc345
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..36d55b0536a7dc47806eeac0a3a27e90eea3be9f
+index 0000000000000000000000000000000000000000..d28393ee5a9e371348797357a2c5cb8b2f363e5a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1074 @@
+@@ -0,0 +1,1075 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -84730,6 +84895,7 @@ index 0000000000000000000000000000000000000000..36d55b0536a7dc47806eeac0a3a27e90
 +            info.truncation_policy =
 +                codex_protocol::openai_models::TruncationPolicyConfig::tokens(10_000);
 +            info.supports_search_tool = true;
++            info.multi_agent_version = Some(codex_protocol::protocol::MultiAgentVersion::V2);
 +            info.used_fallback_model_metadata = false;
 +            models.push(info);
 +        }
@@ -120620,7 +120786,7 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..e31b2aa99189ee01caf917c517dc4eda67e76f37
+index 0000000000000000000000000000000000000000..62b48f4aa97caebd292c051e42c119562ee41060
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,226 @@
@@ -120667,7 +120833,7 @@ index 0000000000000000000000000000000000000000..e31b2aa99189ee01caf917c517dc4eda
 +    "contract.status": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"none"},{"const":"active"},{"const":"unavailable"}]},"active":{"anyOf":[{"type":"null"},{"type":"object","properties":{"schema":{"const":2},"id":{"type":"string"},"version":{"type":"number"},"description":{"type":"string"},"assurance":{"type":"string"},"gates":{"type":"object","properties":{"complete":{"$ref":"#/$defs/20"},"integrate":{"$ref":"#/$defs/20"}},"required":[]},"restrict":{"type":"array","items":{"type":"string"}}},"required":["schema","id","version","description","assurance","gates"]}]},"provenance":{},"receipts":{"$ref":"#/$defs/42"},"finding_ledger":{"type":"object","properties":{},"required":[],"additionalProperties":{"type":"object","properties":{"finding":{"$ref":"#/$defs/39"},"reported_candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"reported_producer":{"$ref":"#/$defs/38"},"report_receipt_index":{"type":"number"},"resolution":{"anyOf":[{"type":"null"},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"producer":{"$ref":"#/$defs/38"},"receipt_index":{"type":"number"}},"required":["candidate_sha256","producer","receipt_index"]}]}},"required":["finding","reported_candidate_sha256","acceptance_sha256","reported_producer","report_receipt_index","resolution"]}},"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/46"}},"required":["status","active","provenance","receipts","finding_ledger","restrictions","scoped_restrictions"]}},
 +    "contract.restrict": {"arguments":{"type":"object","properties":{"operations":{"type":"array","items":{"type":"string"}},"scoped":{"$ref":"#/$defs/46"},"reason":{"type":"string"}},"required":["reason"]},"result":{"type":"object","properties":{"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/46"}},"required":["restrictions","scoped_restrictions"]}},
 +    "contract.select": {"arguments":{"type":"object","properties":{"contract":{"type":"string"}},"required":["contract"]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"selected":{},"applies":{"const":"next_session"}},"required":["selected","applies"]}]}},
-+    "agents.spawn": {"arguments":{"type":"object","properties":{"role":{"type":"string"},"route":{"type":"string"},"prompt":{"type":"string"},"definition":{"type":"string"},"workspace":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"tools":{"type":"array","items":{"type":"string"}},"evidence":{"$ref":"#/$defs/1"},"snapshot":{"$ref":"#/$defs/1"},"parent_history":{"anyOf":[{"const":false},{"const":true}]},"resolution_context":{"type":"object","properties":{"acceptance_sha256":{"type":"string"},"findings":{"type":"array","items":{"type":"string"}}},"required":["acceptance_sha256","findings"]}},"required":["prompt"]},"result":{"type":"object","properties":{"handle":{"type":"string"},"route":{"type":"string"},"permissions":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"parent_history":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/30"}]}},"required":["handle","route","permissions"]}},
++    "agents.spawn": {"arguments":{"type":"object","properties":{"role":{"type":"string"},"route":{"type":"string"},"prompt":{"type":"string"},"definition":{"type":"string"},"workspace":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"tools":{"type":"array","items":{"type":"string"}},"evidence":{"$ref":"#/$defs/1"},"snapshot":{"$ref":"#/$defs/1"},"parent_history":{"anyOf":[{"const":false},{"const":true}]},"resolution_context":{"type":"object","properties":{"acceptance_sha256":{"type":"string"},"findings":{"type":"array","items":{"type":"string"}}},"required":["acceptance_sha256","findings"]},"model":{"type":"string"}},"required":["prompt"]},"result":{"type":"object","properties":{"handle":{"type":"string"},"route":{"type":"string"},"permissions":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"parent_history":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/30"}]}},"required":["handle","route","permissions"]}},
 +    "agents.message": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"message":{"type":"string"}},"required":["handle","message"]},"result":{"type":"object","properties":{"delivered":{"type":"boolean"}},"required":["delivered"]}},
 +    "agents.cancel": {"arguments":{"type":"object","properties":{"handle":{"type":"string"}},"required":["handle"]},"result":{"$ref":"#/$defs/47"}},
 +    "agents.result": {"arguments":{"$ref":"#/$defs/48"},"result":{"$ref":"#/$defs/55"}},

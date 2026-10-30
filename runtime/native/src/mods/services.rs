@@ -284,6 +284,7 @@ impl Services {
             info.truncation_policy =
                 codex_protocol::openai_models::TruncationPolicyConfig::tokens(10_000);
             info.supports_search_tool = true;
+            info.multi_agent_version = Some(codex_protocol::protocol::MultiAgentVersion::V2);
             info.used_fallback_model_metadata = false;
             models.push(info);
         }

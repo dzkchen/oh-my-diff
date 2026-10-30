@@ -42,6 +42,8 @@ test('Claude mod translates host requests and replays host tool results', () => 
   { upstream_requests: 1 }, model, first.reverse, false, 0.042);
   assert.equal(response.find(event => event.type === 'response.output_item.done' &&
     event.item.type === 'custom_tool_call').item.input, '*** Begin Patch');
+  assert.deepEqual(response.filter(event => event.type === 'response.output_item.done').map(event => [event.item.id, event.item.call_id]),
+    [['msg-1-text', undefined], ['call-2', 'call_2']]);
   assert.equal(response.at(-1).response.usage.input_tokens, 16);
   assert.equal(response.at(-1).response.usage.omd_subscription_charge, 'unknown');
   assert.equal(response.at(-1).response.model, 'claude-opus-5-5-20261001');
@@ -56,6 +58,12 @@ test('Claude mod translates host requests and replays host tool results', () => 
   assert.deepEqual(prototypeTools.manifest.map(tool => tool.name), names);
   const returned = responseEvents({ id: 'names', model, usage: { input_tokens: 1, output_tokens: 1 }, content: names.map((name, index) => ({ type: 'tool_use', id: `name-${index}`, name: `mcp__omd__${name}`, input: {} })) }, {}, model, prototypeTools.reverse);
   assert.deepEqual(returned.filter(event => event.type === 'response.output_item.done').map(event => event.item.name), names);
+  const collaboration = translateRequest({ ...prompt, tools: [{ type: 'namespace', name: 'collaboration', tools: [{ type: 'function', name: 'spawn_agent' }] },
+    { type: 'function', name: 'exec_command' }] }, model);
+  const calls = responseEvents({ id: 'calls', model, usage: { input_tokens: 1, output_tokens: 1 }, content: [
+    { type: 'tool_use', id: 'spawn', name: 'mcp__omd__collaboration__spawn_agent', input: { message: 'plain' } },
+    { type: 'tool_use', id: 'exec', name: 'mcp__omd__exec_command', input: {} }] }, {}, model, collaboration.reverse);
+  assert.deepEqual(calls.filter(event => event.type === 'response.output_item.done').map(event => event.item.encrypted_function_args), [[], undefined]);
 });
 
 test('history from another provider carries over: opaque reasoning dropped, hosted calls kept as text', () => {

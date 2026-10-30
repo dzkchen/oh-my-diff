@@ -2874,9 +2874,9 @@ async fn mod_workers_may_run_on_a_registered_providers_lead_route() {
     };
     *fixture.lead.session.contract.lock().unwrap() =
         crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
-    let model: codex_protocol::openai_models::ModelInfo =
-        codex_models_manager::model_info::model_info_from_slug("provider-worker-model");
-    codex_models_manager::runtime_models::set("provider-worker", vec![model]);
+    let models = ["provider-worker-model", "provider-worker-other"]
+        .map(codex_models_manager::model_info::model_info_from_slug);
+    codex_models_manager::runtime_models::set("provider-worker", models.to_vec());
     let route = |name: &str, model: &str, mods: Value| {
         json!({"name": name, "roles": ["lead"], "provider": "provider-worker", "model": model,
             "mods": mods, "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
@@ -2888,6 +2888,7 @@ async fn mod_workers_may_run_on_a_registered_providers_lead_route() {
         fixture.lead.host.root.join("host.json"),
         json!({"routes": [
             route("open", "provider-worker-model", json!([])),
+            route("granted", "provider-worker-model", json!(["delegate"])),
             route("other-mod", "provider-worker-model", json!(["someone-else"])),
             route("unregistered", "not-a-runtime-model", json!([])),
         ], "worker_limits": {"requests": 5, "seconds": 60, "exposure_microusd": 0}})
@@ -2896,7 +2897,7 @@ async fn mod_workers_may_run_on_a_registered_providers_lead_route() {
     .unwrap();
     let grants = fixture.core.runtime.lock().unwrap().grants("delegate");
     let cancelled = Arc::new(AtomicBool::new(false));
-    let spawn = |route: &'static str| {
+    let spawn_model = |route: &'static str, model: Option<&'static str>| {
         let (core, lead, grants, cancelled) = (&fixture.core, &fixture.lead, grants.clone(), &cancelled);
         async move {
             operations::dispatch(
@@ -2913,18 +2914,43 @@ async fn mod_workers_may_run_on_a_registered_providers_lead_route() {
                 None,
                 ModHostCall {
                     operation: "agents.spawn".into(),
-                    arguments: json!({"role": "r", "route": route, "prompt": "x"}),
+                    arguments: json!({"role": "r", "route": route, "prompt": "x", "model": model}),
                 },
                 cancelled,
             )
             .await
         }
     };
+    let spawn = |route: &'static str| spawn_model(route, None);
     let refused = |result: Result<Value, String>| result.err().unwrap_or_default();
     assert_eq!(
         refused(spawn("open").await),
         "native_thread_manager_stopped",
         "a registered provider's open lead route is admitted up to thread start"
+    );
+    assert_eq!(
+        refused(spawn_model("open", Some("provider-worker-other")).await),
+        "native_thread_manager_stopped",
+        "another model from the route provider's runtime catalog is admitted on its lead route"
+    );
+    assert_eq!(
+        refused(spawn_model("open", Some("gpt-5.5")).await),
+        "agent_model_not_in_route_provider_catalog"
+    );
+    let (routing, _) = fixture.lead.host.route_config();
+    let granted = routing
+        .route("granted", crate::config::RouteRole::Lead, None)
+        .unwrap()
+        .clone();
+    fixture
+        .lead
+        .host
+        .enroll(fixture.lead.thread, &fixture.lead.session, "lead", Some(&granted), None)
+        .unwrap();
+    assert_eq!(
+        refused(spawn_model("lead", Some("provider-worker-other")).await),
+        "agent_model_requires_provider_lead_route",
+        "the lead alias keeps the lead's model"
     );
     assert_eq!(refused(spawn("other-mod").await), "provider_not_registered_or_stopped");
     codex_models_manager::runtime_models::set("provider-worker", Vec::new());

@@ -139,7 +139,7 @@
     "operations:agents.list": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:agents.message": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:agents.result": {"status":"frozen","consumer":{"path":"mods/first-party/omd_workflow/index.ts","snippet":"api.host.tryCall('agents.result'"},"decision":"coordination.agents"},
-    "operations:agents.spawn": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('agents.spawn'"},"decision":"coordination.agents"},
+    "operations:agents.spawn": {"status":"frozen","experimental_fields":["model"],"reason":"`model` on a runtime provider's lead route was added after 1.0.0.","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('agents.spawn'"},"decision":"coordination.agents"},
     "operations:agents.wait": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('agents.wait'"},"decision":"coordination.agents"},
     "operations:app.request": {"status":"frozen","consumer":{"path":"mods/examples/worktree_task/index.ts","snippet":"api.host.call('app.request'"},"decision":"coordination.app_bridge"},
     "operations:app.respond": {"status":"frozen","consumer":{"path":"mods/first-party/omd_auto_continue/index.ts","snippet":"api.host.tryCall('app.respond'"},"decision":"coordination.app_bridge"},

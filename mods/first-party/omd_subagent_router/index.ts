@@ -18,7 +18,7 @@ const ROLE_WORDS: [Role, RegExp][] = [
   ['research', /\b(?:research|investigat|explor|look (?:up|into)|find out|survey)/i],
   ['worker', /\b(?:implement|write|edit|fix|build|code|work)/i],
 ];
-const READ_TOOLS = ['exec_command', 'write_stdin', 'web_search'];
+const READ_TOOLS = ['exec_command', 'write_stdin'];
 const LIMIT_IDS: Record<string, string> = { omd_claude_cli: 'claude', openai: 'codex' };
 const HARD_FAILURES = ['authorization', 'rate_limit', 'allowance'];
 const FULL_PERCENT = 90;
@@ -183,9 +183,9 @@ export default function activate(api: ModAPI) {
     return next({ ...spawn, model: picked.model, effort });
   });
 
+  const runtime = (route: RouteInfo, models: Model[]) => !route.roles.includes('worker') && route.roles.includes('lead') && models.some(model => model.model === route.model && model.modelProvider === route.provider);
   const skip = (route: RouteInfo, models: Model[], seen: Vitals, worktree = false) => {
-    const runtime = route.roles.includes('lead') && models.some(model => model.model === route.model && model.modelProvider === route.provider);
-    if (!route.roles.includes('worker') && !runtime) return 'not a worker route';
+    if (!route.roles.includes('worker') && !runtime(route, models)) return 'not a worker route';
     if (!route.available) return 'its grant is missing or revoked';
     if (worktree && route.tools.length) return 'limited to read-only tools';
     return health(seen, route.provider, Date.now());
@@ -248,23 +248,29 @@ export default function activate(api: ModAPI) {
     const seen = vitals().value;
     const named = routes().map(route => ({ ...route, displayName: route.name }));
     const skipped: string[] = [];
-    let chosen: RouteInfo | undefined;
+    const passed = new Set<string>();
+    let picked: { route: RouteInfo; model: string } | undefined;
     for (const query of wanted) {
-      const options = matching(named, query);
+      const options = [...matching(named, query).map(route => ({ route, model: route.model })),
+        ...matching(models.filter(model => !model.hidden), query).flatMap(model => named.filter(route => route.provider === model.modelProvider && runtime(route, models)).map(route => ({ route, model: model.model })))]
+        .filter((option, index, all) => all.findIndex(other => other.route.name === option.route.name && other.model === option.model) === index);
       if (!options.length) skipped.push(`${query}: no route matches`);
-      for (const route of options) {
-        const reason = skip(route, models, seen, worktree);
-        if (!reason) { chosen = route; break; }
-        skipped.push(`${route.name}: ${reason}`);
+      for (const option of options) {
+        if (passed.has(option.route.name)) continue;
+        const reason = skip(option.route, models, seen, worktree);
+        if (!reason) { picked = option; break; }
+        passed.add(option.route.name);
+        skipped.push(`${option.route.name}: ${reason}`);
       }
-      if (chosen) break;
+      if (picked) break;
     }
-    if (!chosen) return { status: 'refused', error: `Cannot delegate: ${skipped.join('; ') || 'no worker route is configured'}. Use native spawn_agent, or call delegate_task targets.` };
+    if (!picked) return { status: 'refused', error: `Cannot delegate: ${skipped.join('; ') || 'no worker route is configured'}. Use native spawn_agent, or call delegate_task targets.` };
+    const chosen = picked.route;
     const spawned = api.host.tryCall('agents.spawn', { role, route: chosen.name, prompt: task, workspace: worktree ? 'isolated_worktree' : 'read_only',
-      ...!worktree && !chosen.tools.length ? { tools: READ_TOOLS } : {} });
+      ...picked.model === chosen.model ? {} : { model: picked.model }, ...!worktree && !chosen.tools.length ? { tools: chosen.billing === 'provider_billed' ? [...READ_TOOLS, 'web_search'] : READ_TOOLS } : {} });
     if (!spawned.ok) return { status: 'refused', error: spawned.error };
     const handle = spawned.value.handle;
-    const record: Task = { role, route: chosen.name, provider: chosen.provider, model: chosen.model, isolation: worktree ? 'worktree' : 'shared',
+    const record: Task = { role, route: chosen.name, provider: chosen.provider, model: picked.model, isolation: worktree ? 'worktree' : 'shared',
       ...id ? { request_id: id } : {}, status: 'running', told: false, at: Date.now() };
     const tasks = { ...state.tasks, [handle]: record };
     const evictable = Object.keys(tasks).filter(name => tasks[name].status !== 'running' && !tasks[name].held)
@@ -327,7 +333,8 @@ export default function activate(api: ModAPI) {
     const seen = vitals().value;
     return { targets: routes().map(route => {
       const reason = skip(route, models, seen);
-      return { route: route.name, model: route.model, provider: route.provider, billing: route.billing, usable: !reason, ...reason ? { skipped: reason } : {} };
+      const others = runtime(route, models) ? models.filter(model => !model.hidden && model.modelProvider === route.provider && model.model !== route.model).map(model => model.model) : [];
+      return { route: route.name, model: route.model, ...others.length ? { models: others } : {}, provider: route.provider, billing: route.billing, usable: !reason, ...reason ? { skipped: reason } : {} };
     }) };
   };
 

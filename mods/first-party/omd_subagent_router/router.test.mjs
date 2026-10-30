@@ -131,8 +131,10 @@ const delegate = (input, options) => fire('tool', 'delegate_task', input, option
 
 test('delegate_task start routes the role model to a worker route, scopes the workspace and is idempotent by request_id', () => {
   const started = delegate({ action: 'start', task: 'Map the retry code', role: 'research', request_id: 'r1' }, { settings: { research_model: 'sonnet' } });
-  assert.deepEqual(started.of('agents.spawn'), [{ role: 'research', route: 'sonnet-worker', prompt: 'Map the retry code', workspace: 'read_only', tools: ['exec_command', 'write_stdin', 'web_search'] }]);
+  assert.deepEqual(started.of('agents.spawn'), [{ role: 'research', route: 'sonnet-worker', prompt: 'Map the retry code', workspace: 'read_only', tools: ['exec_command', 'write_stdin'] }]);
   assert.equal(started.value.status, 'running');
+  const billed = delegate({ action: 'start', task: 'Look it up', model: 'gpt-6.1-sol' }, { routes: [{ ...WORKERS[0], billing: 'provider_billed' }] });
+  assert.deepEqual(billed.of('agents.spawn')[0].tools, ['exec_command', 'write_stdin', 'web_search'], 'only a provider-billed route admits hosted web search');
   assert.match(started.value.text, /Its result wakes this thread when it finishes, so end your turn\./);
   assert.ok(!started.ops.includes('agents.wait') && !started.ops.includes('agents.cancel'));
   assert.equal(started.state.tasks.h1.request_id, 'r1');
@@ -169,7 +171,7 @@ test('delegate_task skips unhealthy routes, falls back with a notice and lists t
   const near = { windows, failed: { openai: { at: now - 60_000, category: 'authorization' } } };
   const lead = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored({ windows }) });
   assert.equal(lead.of('agents.spawn')[0].route, 'plan-gpt', 'the lead model is the last resort');
-  assert.match(lead.of('terminal.notice')[0].text, /sonnet-worker: 95% of its usage limit used, so this general task runs on plan-gpt/);
+  assert.match(lead.of('terminal.notice')[0].text, /sonnet-worker: 95% of its usage limit used; claude: 95% of its usage limit used, so this general task runs on plan-gpt/);
   const spare = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored({ windows }), settings: { fallback_model: 'mini' } });
   assert.equal(spare.of('agents.spawn')[0].route, 'reader');
   const same = delegate({ action: 'start', task: 'Go', model: 'gpt' }, { answer: stored({ failed: { openai: { at: now - 60_000, category: 'authorization' } } }), routes: [{ ...WORKERS[0], name: 'a' }, { ...WORKERS[0], name: 'b', provider: 'other' }] });
@@ -177,7 +179,7 @@ test('delegate_task skips unhealthy routes, falls back with a notice and lists t
   assert.match(same.of('terminal.notice')[0].text, /^a: authorization failure 1 min ago, so this general task runs on b/, 'any skipped route is named');
   const none = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored(near) });
   assert.equal(none.value.status, 'refused');
-  assert.match(none.value.error, /^Cannot delegate: sonnet-worker: 95% of its usage limit used; plan-gpt: authorization failure 1 min ago/);
+  assert.match(none.value.error, /^Cannot delegate: sonnet-worker: 95% of its usage limit used; claude: 95% of its usage limit used; plan-gpt: authorization failure 1 min ago/);
   assert.equal(none.of('agents.spawn').length, 0);
   const bare = delegate({ action: 'start', task: 'Go' }, { routes: [WORKERS[3]], answer: { 'app.request': () => ({ data: [], nextCursor: null }) } });
   assert.match(bare.value.error, /^Cannot delegate: gpt-6\.1-sol: no route matches\./);
@@ -311,4 +313,9 @@ test('a lead route on a runtime-registered provider is a delegate target', () =>
     [['claude', true, undefined], ['chatgpt', false, 'not a worker route']]);
   const started = delegate({ action: 'start', task: 'Review the diff', role: 'review', isolation: 'worktree', model: 'opus' }, { routes });
   assert.deepEqual(started.of('agents.spawn'), [{ role: 'review', route: 'claude', prompt: 'Review the diff', workspace: 'isolated_worktree' }]);
+  assert.deepEqual(listed.find(target => target.route === 'claude').models, ['claude-sonnet-5-5']);
+  const leadOnly = routes.filter(route => route.name !== 'sonnet-worker');
+  const sonnet = delegate({ action: 'start', task: 'Read the docs', model: 'claude-sonnet-5-5' }, { routes: leadOnly });
+  assert.deepEqual(sonnet.of('agents.spawn'), [{ role: 'general', route: 'claude', prompt: 'Read the docs', workspace: 'read_only', model: 'claude-sonnet-5-5', tools: ['exec_command', 'write_stdin'] }]);
+  assert.equal(sonnet.value.model, 'claude-sonnet-5-5');
 });

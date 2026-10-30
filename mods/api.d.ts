@@ -395,7 +395,7 @@ export interface HostOperations {
   'contract.status': { arguments: null; result: ContractStatus };
   'contract.restrict': { arguments: { operations?: string[]; scoped?: ContractRestriction[]; reason: string }; result: { restrictions: string[]; scoped_restrictions: ContractRestriction[] } };
   'contract.select': { arguments: { contract: string }; result: { selected: Json; applies: 'next_session' } | Declined };
-  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] } }; result: Agent };
+  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] }; model?: string }; result: Agent };
   'agents.message': { arguments: { handle: string; message: string }; result: { delivered: boolean } };
   'agents.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };
   'agents.result': { arguments: { handle: string; consume?: boolean }; result: AgentResult };

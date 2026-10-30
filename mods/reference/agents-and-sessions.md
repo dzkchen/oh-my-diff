@@ -115,13 +115,16 @@ still match; invalid state fails closed.
 
 ```ts
 agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?, snapshot?, parent_history?,
-              resolution_context?}
+              resolution_context?, model?}
 ```
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
 
 - `route` may also be a lead route of a registered provider whose `mods` is empty or lists the caller; the agent is
   admitted like a cross-provider native child under `worker_limits`, with no grant.
+- `model` picks another model from that provider's runtime catalog on such a lead route (rates and billing stay the
+  route's); outside the catalog it fails with `agent_model_not_in_route_provider_catalog`, and on any other route a
+  `model` other than the route's fails with `agent_model_requires_provider_lead_route`.
 - `evidence` delivers a stored evidence reference to the agent.
 - `snapshot` selects a frozen copy and requires `fs.read`. Its permission is always `read_only`, its result
   identifies the captured candidate, and it cannot be integrated as an edit.

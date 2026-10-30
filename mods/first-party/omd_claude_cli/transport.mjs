@@ -8,7 +8,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, translateRequest, responseEvents, reasoningItem } from './index.ts';
+import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
@@ -201,7 +201,7 @@ export class Capture {
     }
   }
   id(index, kind) {
-    return `${this.message.id}-${kind}-${index}`;
+    return localId(`${this.message.id}-${kind}-${index}`);
   }
   event(event) {
     if (event.type === 'message_start') {

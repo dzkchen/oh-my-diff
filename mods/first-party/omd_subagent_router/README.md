@@ -50,7 +50,9 @@ worktree, or work that outlives the turn.
 | `targets` | Lists routes with their model, provider, health, and why one is skipped |
 
 A task runs on a worker route from `host.json` (a role `worker` route with a grant, or a lead route of a provider
-such as `omd_claude_cli`; either open to this mod) and has only the permissions the host gives it. When it finishes, the result is saved and, about 1.5 s later, one queued prompt
+such as `omd_claude_cli`; either open to this mod) and has only the permissions the host gives it. On a provider's lead
+route it can run any model of that provider's catalog (`model: claude-sonnet-5-5` on the `claude` route); `targets`
+lists those models. When it finishes, the result is saved and, about 1.5 s later, one queued prompt
 wakes the lead with the results of everything that finished in that window (up to 5 KiB inlined; larger results are
 named for `status`), each result as a JSON string followed by a warning that it is untrusted. A result you read with
 `status` or `wait` first removes its pending wake. If the wake can't be queued, a notice says why and it is retried a
