@@ -85771,10 +85771,10 @@ index 0000000000000000000000000000000000000000..47b5aed54312d8fbe060a9dabb1c8ab2
 +}
 diff --git a/codex-rs/ext/omd/src/mods/snapshots.rs b/codex-rs/ext/omd/src/mods/snapshots.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..54207ea4397f685388dc6d447cdacc0a50cea5c3
+index 0000000000000000000000000000000000000000..e1d55a318a5785d928c19be8e874d571492208b1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/snapshots.rs
-@@ -0,0 +1,672 @@
+@@ -0,0 +1,678 @@
 +use super::*;
 +use crate::config::SNAPSHOT_BYTES;
 +use codex_omd::Snapshot;
@@ -86075,9 +86075,12 @@ index 0000000000000000000000000000000000000000..54207ea4397f685388dc6d447cdacc0a
 +    for name in snapshot.files.keys() {
 +        let path =
 +            codex_omd::tree_path(&authority.repository, name).map_err(|error| error.to_string())?;
-+        if !authority.readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
++        if protected.iter().any(|root| path.starts_with(root)) {
 +            return Err("snapshot_permission_denied".into());
 +        }
++    }
++    if !authority.tree_readable(snapshot.files.keys()) {
++        return Err("snapshot_permission_denied".into());
 +    }
 +    Ok(())
 +}
@@ -86097,9 +86100,12 @@ index 0000000000000000000000000000000000000000..54207ea4397f685388dc6d447cdacc0a
 +    for name in &paths {
 +        let path =
 +            codex_omd::tree_path(&authority.repository, name).map_err(|error| error.to_string())?;
-+        if !authority.readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
++        if protected.iter().any(|root| path.starts_with(root)) {
 +            return Err("snapshot_permission_denied".into());
 +        }
++    }
++    if !authority.tree_readable(&paths) {
++        return Err("snapshot_permission_denied".into());
 +    }
 +    let snapshot = Snapshot::capture_tree(&authority.repository, &paths, limit)
 +        .map_err(|error| error.to_string())?;
@@ -86914,10 +86920,10 @@ index 0000000000000000000000000000000000000000..72ef2b3cf3f6352b0910cd8b1a45d70a
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7cf3a7db08
+index 0000000000000000000000000000000000000000..4d6805c78213dc7e4ba05f798593fb21af021cf3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,838 @@
+@@ -0,0 +1,874 @@
 +use codex_file_system::FileSystemSandboxContext;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
@@ -86977,8 +86983,8 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +        approved: &BTreeSet<String>,
 +        limit: usize,
 +    ) -> Result<Option<String>, String> {
-+        codex_omd::hash_tracked(&self.repository, approved, limit, |path| {
-+            self.readable(&self.repository.join(path))
++        codex_omd::hash_tracked(&self.repository, approved, limit, |paths| {
++            self.tree_readable(paths)
 +        })
 +        .map_err(|error| error.to_string())
 +    }
@@ -87065,6 +87071,15 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +        self.access(path, false)
 +    }
 +
++    pub fn tree_readable<'a>(&self, names: impl IntoIterator<Item = &'a String>) -> bool {
++        names
++            .into_iter()
++            .cloned()
++            .collect::<Vec<_>>()
++            .chunks(128)
++            .all(|chunk| self.paths(chunk, false, codex_omd::tree_path).is_ok())
++    }
++
 +    pub fn writable(&self, path: &std::path::Path) -> bool {
 +        self.access(path, true)
 +    }
@@ -87078,7 +87093,9 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +            return false;
 +        };
 +        if !name.is_empty() {
-+            return self.paths(&[name.to_owned()], write).is_ok();
++            return self
++                .paths(&[name.to_owned()], write, codex_omd::workspace_path)
++                .is_ok();
 +        }
 +        let Ok(absolute) = AbsolutePathBuf::from_absolute_path_checked(&self.repository) else {
 +            return false;
@@ -87122,7 +87139,11 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +    ) -> Result<Vec<codex_omd::WorkspaceChange>, String> {
 +        for change in &changes {
 +            if self
-+                .paths(std::slice::from_ref(&change.path), false)
++                .paths(
++                    std::slice::from_ref(&change.path),
++                    false,
++                    codex_omd::workspace_path,
++                )
 +                .is_err()
 +            {
 +                return Err("workspace_change_scope_unavailable".into());
@@ -87137,7 +87158,11 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +        new: &str,
 +        active: impl Fn() -> bool,
 +    ) -> Result<Value, String> {
-+        self.paths(&[old.to_owned(), new.to_owned()], true)?;
++        self.paths(
++            &[old.to_owned(), new.to_owned()],
++            true,
++            codex_omd::workspace_path,
++        )?;
 +        let read = self.call("workspace.read", json!({"paths":[old,new]}), active)?;
 +        let source = read["files"][old]["sha256"]
 +            .as_str()
@@ -87383,7 +87408,12 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +        })
 +    }
 +
-+    fn paths(&self, names: &[String], write: bool) -> Result<Vec<PathBuf>, String> {
++    fn paths(
++        &self,
++        names: &[String],
++        write: bool,
++        resolve: fn(&std::path::Path, &str) -> std::io::Result<PathBuf>,
++    ) -> Result<Vec<PathBuf>, String> {
 +        if names.is_empty()
 +            || names.len() > 128
 +            || names.iter().collect::<BTreeSet<_>>().len() != names.len()
@@ -87399,8 +87429,7 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +        let deny_read = ReadDenyMatcher::try_new_with_context(&self.policy, &context)?;
 +        let mut paths = Vec::with_capacity(names.len());
 +        for name in names {
-+            let path =
-+                codex_omd::workspace_path(&self.repository, name).map_err(|e| e.to_string())?;
++            let path = resolve(&self.repository, name).map_err(|e| e.to_string())?;
 +            let absolute =
 +                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
 +            let uri = PathUri::from_abs_path(&absolute);
@@ -87438,7 +87467,7 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +                    paths: Vec<String>,
 +                }
 +                let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
-+                self.paths(&input.paths, false)?;
++                self.paths(&input.paths, false, codex_omd::workspace_path)?;
 +                let selected = input.paths.into_iter().collect::<BTreeSet<_>>();
 +                let snapshot =
 +                    codex_omd::Snapshot::capture(&self.repository, &selected, 4 * 1024 * 1024)
@@ -87462,6 +87491,7 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +                self.paths(
 +                    &transaction.expected.keys().cloned().collect::<Vec<_>>(),
 +                    true,
++                    codex_omd::workspace_path,
 +                )?;
 +                let result = transaction
 +                    .apply(&self.repository, active)
@@ -87731,7 +87761,7 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +    }
 +
 +    #[test]
-+    fn workspace_identity_is_absent_only_when_capture_exceeds_limit_or_permissions() {
++    fn workspace_identity_is_absent_only_without_permissions() {
 +        let directory = tempfile::tempdir().unwrap();
 +        let root = directory.path().canonicalize().unwrap();
 +        assert!(
@@ -87745,15 +87775,27 @@ index 0000000000000000000000000000000000000000..c4031c0e29894ad49641f6ac4497ce7c
 +        std::fs::write(root.join("a.py"), "source\n").unwrap();
 +        let mut approved = BTreeSet::from(["a.py".to_owned()]);
 +        let readable = authority(root.clone(), FileSystemAccessMode::Read);
-+        assert!(readable.identity(&approved, 1024).unwrap().is_some());
-+        assert_eq!(readable.identity(&approved, 4), Ok(None));
++        let full = readable.identity(&approved, 1024).unwrap();
++        assert!(full.is_some());
++        let past_limit = readable.identity(&approved, 4).unwrap();
++        assert!(past_limit.is_some() && past_limit != full);
++        let chmod = |mode| {
++            std::fs::set_permissions(
++                root.join("a.py"),
++                std::os::unix::fs::PermissionsExt::from_mode(mode),
++            )
++            .unwrap()
++        };
++        chmod(0o000);
 +        assert_eq!(
 +            authority(root.clone(), FileSystemAccessMode::Deny).identity(&approved, 1024),
 +            Ok(None)
 +        );
++        chmod(0o644);
 +        std::os::unix::fs::symlink("a.py", root.join("link")).unwrap();
 +        approved.insert("link".to_owned());
-+        assert!(readable.identity(&approved, 1024).is_err());
++        let linked = readable.identity(&approved, 1024).unwrap();
++        assert!(linked.is_some() && linked != full);
 +    }
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
@@ -138436,10 +138478,10 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c7088e1eb28b18130f254cdc4ad635921a0576eb
+index 0000000000000000000000000000000000000000..9ea32b15aa70dd9f7331697e642595b20a1dce22
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1587 @@
+@@ -0,0 +1,1595 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -139239,6 +139281,9 @@ index 0000000000000000000000000000000000000000..c7088e1eb28b18130f254cdc4ad63592
 +        };
 +        let changed = || raced(format!("source changed during snapshot: {name}"));
 +        let count = if metadata.file_type().is_symlink() {
++            if visit == Visit::Contents {
++                return Err(invalid("snapshot symlink rejected"));
++            }
 +            let (parent, leaf) = open_parent(&root, name)?;
 +            let link = rustix::fs::readlinkat(&parent, leaf.as_os_str(), Vec::new())?;
 +            let count = read(name, &mut link.as_bytes(), SYMLINK)?;
@@ -139549,14 +139594,17 @@ index 0000000000000000000000000000000000000000..c7088e1eb28b18130f254cdc4ad63592
 +    })
 +}
 +
-+/// The `capture_tracked` digest with each submodule's recorded commit, or `None` when a tracked path is not `readable`.
++/// The `capture_tracked` digest with each submodule's recorded commit, or `None` when the tracked paths are not `readable`.
 +pub fn hash_tracked(
 +    root: &Path,
 +    approved_untracked: &BTreeSet<String>,
 +    max_bytes: usize,
-+    readable: impl Fn(&str) -> bool,
++    readable: impl Fn(&BTreeSet<String>) -> bool,
 +) -> io::Result<Option<String>> {
 +    tracked(root, approved_untracked, |paths, submodules| {
++        if !readable(paths) {
++            return Ok(None);
++        }
 +        let mut digest = Snapshot::digest(root, paths, max_bytes)?;
 +        if !submodules.is_empty() {
 +            let mut combined = Sha256::new();
@@ -139566,7 +139614,7 @@ index 0000000000000000000000000000000000000000..c7088e1eb28b18130f254cdc4ad63592
 +            }
 +            digest = format!("{:x}", combined.finalize());
 +        }
-+        Ok(paths.iter().all(|path| readable(path)).then_some(digest))
++        Ok(Some(digest))
 +    })
 +}
 +
@@ -139717,8 +139765,10 @@ index 0000000000000000000000000000000000000000..c7088e1eb28b18130f254cdc4ad63592
 +        assert_eq!(digest, Snapshot::capture(&root, &paths, 64).unwrap().hash());
 +        fs::set_permissions(root.join("b.sh"), fs::Permissions::from_mode(0o644)).unwrap();
 +        assert_ne!(Snapshot::digest(&root, &paths, 64).unwrap(), digest);
-+        let error = Snapshot::digest(&root, &paths, 16).unwrap_err();
-+        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
++        assert_ne!(
++            Snapshot::digest(&root, &paths, 1).unwrap(),
++            Snapshot::digest(&root, &paths, 64).unwrap()
++        );
 +    }
 +
 +    #[test]
