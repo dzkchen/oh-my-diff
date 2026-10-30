@@ -38,9 +38,13 @@ impl Inventory {
             .flatten()
         {
             if entry
-                .metadata()
-                .and_then(|metadata| metadata.modified())
-                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "json")
+                && entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
             {
                 let _ = std::fs::remove_file(entry.path());
             }
@@ -49,6 +53,9 @@ impl Inventory {
     }
 
     pub(super) fn forget_session(&self, thread: &str) {
+        if let Ok(mut working) = self.working.lock() {
+            working.remove(thread);
+        }
         if let Ok(mut records) = self.records.lock() {
             let session = records
                 .keys()
@@ -128,9 +135,24 @@ impl Inventory {
                     reserved.remove(index);
                 }
             }
+            let mut ancestors = BTreeSet::new();
+            for (id, record) in records.iter() {
+                if record["status"] == "running" {
+                    let mut child = id.as_str();
+                    while let Some(parent) = records
+                        .get(child)
+                        .and_then(|record| record["parent"]["thread_id"].as_str())
+                        && ancestors.insert(parent.to_owned())
+                    {
+                        child = parent;
+                    }
+                }
+            }
             let finished = records
                 .iter()
-                .filter(|(_, record)| record["status"] != "running")
+                .filter(|(id, record)| {
+                    record["status"] != "running" && !ancestors.contains(id.as_str())
+                })
                 .map(|(thread, record)| (record["ended_at_ms"].as_u64(), thread.clone()))
                 .collect::<BTreeSet<_>>();
             for (_, thread) in finished
@@ -140,9 +162,7 @@ impl Inventory {
                 records.remove(thread);
             }
             records.insert(thread.to_owned(), record.clone());
-            let snapshot = self.snapshot(&records, thread);
-            drop(records);
-            self.save(snapshot);
+            self.save(self.snapshot(&records, thread));
         }
         record
     }
@@ -152,9 +172,7 @@ impl Inventory {
         let record = records.get_mut(thread)?;
         change(record);
         let record = record.clone();
-        let snapshot = self.snapshot(&records, thread);
-        drop(records);
-        self.save(snapshot);
+        self.save(self.snapshot(&records, thread));
         Some(record)
     }
 
@@ -173,7 +191,10 @@ impl Inventory {
     }
 
     pub(super) fn turn_started(&self, thread: &str) {
-        if let Ok(mut working) = self.working.lock() {
+        if let Ok(records) = self.records.lock()
+            && records.contains_key(thread)
+            && let Ok(mut working) = self.working.lock()
+        {
             working.insert(thread.to_owned());
         }
     }

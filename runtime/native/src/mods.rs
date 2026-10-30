@@ -262,6 +262,7 @@ impl Mods {
         outcome: &str,
         error: Value,
     ) {
+        self.worker_idle(thread_store.level_id(), true);
         if let Some(record) = self.inventory.turn(
             thread_store.level_id(),
             turn_store.level_id(),
@@ -269,6 +270,15 @@ impl Mods {
             error,
         ) {
             inventory::notify(&self.runtime, &self.inventory, "turn", record);
+        }
+    }
+
+    fn worker_idle(&self, thread: &str, idle: bool) {
+        if let Ok(accounts) = self.host.accounts.by_thread.lock()
+            && let Some(account) = accounts.get(thread)
+            && crate::provider_worker(&account.owner)
+        {
+            account.task.set_worker_idle(&account.owner, idle);
         }
     }
 
@@ -1696,6 +1706,7 @@ impl TurnLifecycleContributor for Mods {
     fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             self.inventory.turn_started(input.thread_store.level_id());
+            self.worker_idle(input.thread_store.level_id(), false);
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1909,7 +1920,6 @@ impl ThreadLifecycleContributor<Config> for Mods {
                     &session,
                     &owner,
                     parent_owner,
-                    depth,
                     &input.config.model_provider_id,
                     input.config.model.as_deref().unwrap_or_default(),
                 ),

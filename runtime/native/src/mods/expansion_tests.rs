@@ -4111,7 +4111,7 @@ fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
     let session = &fixture.lead.session;
     let child = ThreadId::new();
     let owner = format!("agent:{child}");
-    host.enroll_cross_provider(child, session, &owner, "lead", 1, "other", "other-new")
+    host.enroll_cross_provider(child, session, &owner, "lead", "other", "other-new")
         .unwrap();
     let account = host.accounts.by_thread.lock().unwrap()[&child.to_string()].clone();
     assert_eq!(
@@ -4139,12 +4139,25 @@ fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
             session,
             &format!("agent:{missing}"),
             "lead",
-            1,
             "missing",
             "m",
         )
         .unwrap_err();
     assert!(error.starts_with("agent_route_unavailable"), "{error}");
+
+    let same_provider_parent = format!("agent:{}", ThreadId::new());
+    for parent in [same_provider_parent.as_str(), account.owner.as_str()] {
+        let grandchild = ThreadId::new();
+        host.enroll_cross_provider(
+            grandchild,
+            session,
+            &format!("agent:{grandchild}"),
+            parent,
+            "other",
+            "other-new",
+        )
+        .unwrap();
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4247,6 +4260,33 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
     inventory.end(&child(0), "completed", None);
     inventory.end(&child(3), "completed", None);
     assert_eq!(attempt(0).await, None, "an ended child is not live");
+}
+
+#[test]
+fn the_agent_inventory_keeps_role_files_and_the_ancestors_of_running_agents() {
+    let directory = tempfile::tempdir().unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
+    for name in ["role.toml", "stale.json"] {
+        std::fs::File::create(directory.path().join(name))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    let inventory = inventory::Inventory::default();
+    inventory.persist_to(directory.path().to_path_buf());
+    assert!(directory.path().join("role.toml").exists());
+    assert!(!directory.path().join("stale.json").exists());
+
+    let model = |parent: &str| json!({"origin": "model", "parent": {"thread_id": parent, "agent_id": null}});
+    inventory.start("child", model("root"));
+    inventory.start("grandchild", model("child"));
+    inventory.end("child", "completed", None);
+    for index in 0..64 {
+        let id = format!("done-{index}");
+        inventory.start(&id, model("root"));
+        inventory.end(&id, "completed", None);
+    }
+    assert_eq!(inventory.root_thread("grandchild"), "root");
 }
 
 #[test]

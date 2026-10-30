@@ -135,6 +135,8 @@ struct Worker {
     status: WorkerStatus,
     objective: Option<String>,
     result: Option<VersionMarker>,
+    closing: bool,
+    idle: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -236,7 +238,7 @@ fn active_workers(state: &State) -> usize {
     state
         .workers
         .values()
-        .filter(|worker| worker.status == WorkerStatus::Active)
+        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle)
         .count()
 }
 
@@ -428,6 +430,8 @@ impl Task {
                             status: WorkerStatus::Active,
                             objective: None,
                             result: None,
+                            closing: false,
+                            idle: false,
                         },
                     );
                 }
@@ -779,9 +783,28 @@ impl Task {
                 status: WorkerStatus::Active,
                 objective: None,
                 result: None,
+                closing: false,
+                idle: false,
             },
         );
         Ok(())
+    }
+
+    pub fn worker_depth(&self, id: &str) -> Option<u32> {
+        self.state
+            .lock()
+            .ok()?
+            .workers
+            .get(id)
+            .map(|worker| worker.depth)
+    }
+
+    pub fn set_worker_idle(&self, id: &str, idle: bool) {
+        if let Ok(mut state) = self.state.lock()
+            && let Some(worker) = state.workers.get_mut(id)
+        {
+            worker.idle = idle;
+        }
     }
 
     /// Admits a model-spawned subagent at `depth` beside `other_running` live children the task does not track as workers.
@@ -859,7 +882,8 @@ impl Task {
             .ok_or_else(|| denied("worker disappeared"))?;
         worker.status = WorkerStatus::Completed;
         worker.result = Some(result);
-        Ok(())
+        let parent = worker.parent.clone();
+        self.close_waiting_parent(&mut state, &parent)
     }
 
     pub fn consume_worker_result(&self, id: &str) -> io::Result<()> {
@@ -927,19 +951,50 @@ impl Task {
             .values()
             .any(|worker| worker.status == WorkerStatus::Active && worker.parent == id)
         {
+            if let Some(worker) = state.workers.get_mut(id) {
+                worker.closing = true;
+            }
             return Err(denied("worker has active descendants"));
         }
         self.record(
             &mut state,
             &serde_json::json!({"event": "worker_stopped", "worker": id}),
         )?;
-        state
+        let worker = state
             .workers
             .get_mut(id)
-            .ok_or_else(|| denied("worker disappeared"))?
-            .status = WorkerStatus::Stopped;
+            .ok_or_else(|| denied("worker disappeared"))?;
+        worker.status = WorkerStatus::Stopped;
+        let parent = worker.parent.clone();
         self.archive_worker(&mut state, id)?;
-        Ok(())
+        self.close_waiting_parent(&mut state, &parent)
+    }
+
+    /// Stops a parent whose earlier finish waited on descendants once its last one ends.
+    fn close_waiting_parent(&self, state: &mut State, id: &str) -> io::Result<()> {
+        if !state
+            .workers
+            .get(id)
+            .is_some_and(|worker| worker.closing && worker.status == WorkerStatus::Active)
+            || state
+                .workers
+                .values()
+                .any(|worker| worker.status == WorkerStatus::Active && worker.parent == id)
+        {
+            return Ok(());
+        }
+        self.record(
+            state,
+            &serde_json::json!({"event": "worker_stopped", "worker": id}),
+        )?;
+        let worker = state
+            .workers
+            .get_mut(id)
+            .ok_or_else(|| denied("worker disappeared"))?;
+        worker.status = WorkerStatus::Stopped;
+        let parent = worker.parent.clone();
+        self.archive_worker(state, id)?;
+        self.close_waiting_parent(state, &parent)
     }
 
     pub fn authorize_route(&self, provider: &str, model: &str) -> io::Result<()> {

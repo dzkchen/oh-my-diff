@@ -425,7 +425,6 @@ impl Host {
         session: &Arc<Session>,
         owner: &str,
         parent: &str,
-        depth: u32,
         provider: &str,
         model: &str,
     ) -> Result<(), String> {
@@ -434,6 +433,10 @@ impl Host {
         })?;
         route.model = model.to_owned();
         let worker = format!("{owner}@{}", ThreadId::new());
+        let (parent, depth) = match session.task.worker_depth(parent) {
+            Some(depth) => (parent, depth.saturating_add(1)),
+            None => ("lead", 1),
+        };
         session
             .task
             .start_worker(

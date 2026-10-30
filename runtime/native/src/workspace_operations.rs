@@ -58,7 +58,7 @@ impl WorkspaceAuthority {
         limit: usize,
     ) -> Result<Option<String>, String> {
         codex_omd::hash_tracked(&self.repository, approved, limit, |path| {
-            self.readable(&self.repository.join(path))
+            self.entry_readable(&self.repository.join(path))
         })
         .map_err(|error| error.to_string())
     }
@@ -147,6 +147,34 @@ impl WorkspaceAuthority {
 
     pub fn writable(&self, path: &std::path::Path) -> bool {
         self.access(path, true)
+    }
+
+    /// A tracked entry the policy lets the session read; unlike `readable`, the entry itself may be a symlink.
+    pub fn entry_readable(&self, path: &std::path::Path) -> bool {
+        let Some(name) = path
+            .strip_prefix(&self.repository)
+            .ok()
+            .and_then(std::path::Path::to_str)
+        else {
+            return false;
+        };
+        let (Ok(_), Ok(absolute)) = (
+            codex_omd::tree_path(&self.repository, name),
+            AbsolutePathBuf::from_absolute_path_checked(path),
+        ) else {
+            return false;
+        };
+        let context = FileSystemSandboxPolicyContext {
+            cwd: &self.context.cwd,
+            workspace_roots: &self.context.workspace_roots,
+            user_home_dir: self.context.user_home_dir.as_ref(),
+            temporary_directories: self.context.temporary_directories.as_deref(),
+        };
+        let uri = PathUri::from_abs_path(&absolute);
+        self.policy.can_read_path(&uri, &context)
+            && ReadDenyMatcher::try_new_with_context(&self.policy, &context).is_ok_and(|matcher| {
+                !matcher.is_some_and(|matcher| matcher.is_read_denied_uri(&uri, &context))
+            })
     }
 
     fn access(&self, path: &std::path::Path, write: bool) -> bool {
@@ -811,7 +839,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_identity_is_absent_only_when_capture_exceeds_limit_or_permissions() {
+    fn workspace_identity_is_absent_only_without_read_permission() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
         assert!(
@@ -825,14 +853,16 @@ mod tests {
         std::fs::write(root.join("a.py"), "source\n").unwrap();
         let mut approved = BTreeSet::from(["a.py".to_owned()]);
         let readable = authority(root.clone(), FileSystemAccessMode::Read);
-        assert!(readable.identity(&approved, 1024).unwrap().is_some());
-        assert_eq!(readable.identity(&approved, 4), Ok(None));
+        let full = readable.identity(&approved, 1024).unwrap();
+        assert!(full.is_some());
+        let past_limit = readable.identity(&approved, 4).unwrap();
+        assert!(past_limit.is_some() && past_limit != full);
         assert_eq!(
             authority(root.clone(), FileSystemAccessMode::Deny).identity(&approved, 1024),
             Ok(None)
         );
         std::os::unix::fs::symlink("a.py", root.join("link")).unwrap();
         approved.insert("link".to_owned());
-        assert!(readable.identity(&approved, 1024).is_err());
+        assert!(readable.identity(&approved, 1024).unwrap().is_some());
     }
 }

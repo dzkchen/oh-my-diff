@@ -298,7 +298,7 @@ pub(super) fn permitted(
     for name in snapshot.files.keys() {
         let path =
             codex_omd::tree_path(&authority.repository, name).map_err(|error| error.to_string())?;
-        if !authority.readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
+        if !authority.entry_readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
             return Err("snapshot_permission_denied".into());
         }
     }
@@ -320,7 +320,7 @@ pub(super) fn capture(
     for name in &paths {
         let path =
             codex_omd::tree_path(&authority.repository, name).map_err(|error| error.to_string())?;
-        if !authority.readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
+        if !authority.entry_readable(&path) || protected.iter().any(|root| path.starts_with(root)) {
             return Err("snapshot_permission_denied".into());
         }
     }

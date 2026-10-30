@@ -307,9 +307,9 @@
       "source": "mods/first-party/omd_subagent_router",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.164.0; OMD 1.1.0; mod API 1.0.0; agent_lifecycle_v1, app_v1, state_scopes_v1, store_v1, ui_controls_v1",
+      "compatibility": "Codex 0.165.0; OMD 1.1.0; mod API 1.0.0; agent_lifecycle_v1, app_v1, autonomous_turns_v1, events_v1, lifecycle_events_v1, state_scopes_v1, store_v1, timers_v1, ui_controls_v1",
       "tested_versions": [
-        "Codex 0.164.0",
+        "Codex 0.165.0",
         "OMD 1.1.0 pre-release (offline checks)",
         "mod API 1.0.0"
       ],

@@ -135,6 +135,7 @@ export default function activate(api: ModAPI) {
   });
 
   api.intercept('input', (event, next) => {
+    if (next.origin.caller !== 'user') return next(event);
     const found = Object.entries(directives(event.text));
     if (!found.length) return next(event);
     const models = catalog();
@@ -193,9 +194,13 @@ export default function activate(api: ModAPI) {
 
   const schedule = (delay = WAKE_MS) => api.host.tryCall('events.schedule', { key: 'wake', delay_ms: delay });
 
-  const retire = (handle: string, outcome: Outcome) => {
-    if (outcome.status === 'completed') api.host.tryCall('agents.result', { handle, consume: true });
-    else api.host.tryCall('agents.cancel', { handle });
+  const retire = (handle: string, outcome: Outcome): Outcome => {
+    if (outcome.status !== 'completed') {
+      api.host.tryCall('agents.cancel', { handle });
+      return outcome;
+    }
+    const consumed = api.host.tryCall('agents.result', { handle, consume: true });
+    return consumed.ok && consumed.value.status === 'completed' ? consumed.value : outcome;
   };
 
   const settle = (handle: string, outcome: Outcome) => {
@@ -204,11 +209,11 @@ export default function activate(api: ModAPI) {
     if (!task || task.status !== 'running' || outcome.status === 'running') return false;
     const done = outcome.status === 'completed';
     const category = done ? undefined : outcome.failure?.category;
+    const final = retire(handle, outcome);
     save({ ...state, tasks: { ...state.tasks, [handle]: { ...task, status: done ? 'completed' : 'failed', ...done
-      ? { text: clip(outcome.text ?? '', TEXT_BYTES), held: task.isolation === 'worktree', ...outcome.candidate_sha256 ? { candidate: outcome.candidate_sha256 } : {}, ...outcome.changed_paths ? { paths: outcome.changed_paths.slice(0, 50) } : {} }
-      : { error: clip(outcome.error ?? 'failed', ERROR_BYTES) } } } });
+      ? { text: clip(final.text ?? '', TEXT_BYTES), held: task.isolation === 'worktree', ...final.candidate_sha256 ? { candidate: final.candidate_sha256 } : {}, ...final.changed_paths ? { paths: final.changed_paths.slice(0, 50) } : {} }
+      : { error: clip(final.error ?? 'failed', ERROR_BYTES) } } } });
     if (category && HARD_FAILURES.includes(category)) remember(value => ({ ...value, failed: { ...value.failed, [task.provider]: { at: Date.now(), category } } }));
-    retire(handle, outcome);
     return true;
   };
 
@@ -279,7 +284,7 @@ export default function activate(api: ModAPI) {
     save({ ...state, tasks });
     if (skipped.length) fallback(`${skipped.join('; ')}, so this ${role} task runs on ${chosen.name}`);
     if (input.mode === 'wait') {
-      const limit = Math.min(120_000, Math.max(1000, typeof input.timeout_ms === 'number' ? input.timeout_ms : 30_000));
+      const limit = Math.min(120_000, Math.max(30_000, typeof input.timeout_ms === 'number' ? input.timeout_ms : 30_000));
       for (let waits = Math.ceil(limit / 30_000); waits-- > 0;) {
         const waited = api.host.tryCall('agents.wait', { handle });
         if (!waited.ok) break;
@@ -344,7 +349,7 @@ export default function activate(api: ModAPI) {
     role: { type: 'string', enum: ['research', 'review', 'worker', 'general'] },
     model: { type: 'string' },
     mode: { type: 'string', enum: ['async', 'wait'] },
-    timeout_ms: { type: 'integer', description: 'Wait mode limit, 1000 to 120000' },
+    timeout_ms: { type: 'integer', description: 'Wait mode limit in 30 s steps, 30000 to 120000' },
     request_id: { type: 'string', maxLength: ID_BYTES },
     isolation: { type: 'string', enum: ['shared', 'worktree'] },
     handle: { type: 'string' },

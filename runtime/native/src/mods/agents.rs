@@ -2351,15 +2351,20 @@ impl Agents {
             ));
         }
         let id = format!("mod-{}-{thread_id}", caller.id);
-        session
-            .task
-            .start_worker(
-                id.clone(),
-                lead.owner.clone(),
-                lead.depth.saturating_add(1),
-                host.worker_limits(session)?,
-            )
-            .map_err(|e| e.to_string())?;
+        super::roles::spawn_capacity_admitted(&core.inventory, lead, &id)?;
+        let started = host.worker_limits(session).and_then(|limits| {
+            session
+                .task
+                .start_worker(
+                    id.clone(),
+                    lead.owner.clone(),
+                    lead.depth.saturating_add(1),
+                    limits,
+                )
+                .map_err(|e| e.to_string())
+        });
+        core.inventory.release_spawn(&id);
+        started?;
         let mut admission = Admission {
             task: session.task.clone(),
             worker: id.clone(),

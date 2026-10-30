@@ -43,7 +43,7 @@ worktree, or work that outlives the turn.
 
 | `action` | What it does |
 | --- | --- |
-| `start` | Runs `task` as a background worker. `role` is `research`, `review`, `worker` or `general`; `model` defaults to the role's setting; `isolation` is `shared` (read-only workspace and tools) or `worktree`; `mode` is `async` (default) or `wait` (up to `timeout_ms`, at most 120 s); a repeated `request_id` (up to 128 characters) returns the existing task whatever the other fields say |
+| `start` | Runs `task` as a background worker. `role` is `research`, `review`, `worker` or `general`; `model` defaults to the role's setting; `isolation` is `shared` (read-only workspace and tools) or `worktree`; `mode` is `async` (default) or `wait` (up to `timeout_ms`, 30 to 120 s in 30 s steps); a repeated `request_id` (up to 128 characters) returns the existing task whatever the other fields say |
 | `status` | Reports a task by `handle`, or lists them all |
 | `cancel` | Stops a task, or discards a finished worktree result |
 | `integrate` | Applies a finished `worktree` task's changes to the workspace; `status` lists its `changed_paths` and `candidate_sha256` |
@@ -62,12 +62,13 @@ A worker keeps going after the turn ends but not after the session. A finished `
 
 ## Routing health
 
-For `delegate_task` and for model-chosen subagents, a target is skipped when its route isn't available, when its
+For `delegate_task` and for subagents the mod routes by directive or setting, a target is skipped when its route isn't available, when its
 provider's latest usage window (from `account/rateLimits/updated`, which Claude sends after a Claude request) is at
 90% or more, or when a task on that provider failed for authorization, rate limit or allowance in the last 15
 minutes. Windows and failures are kept in the mod's user store, so every thread sees them; a window with no reset
 time stops counting after an hour. The task or subagent then runs on `fallback_model`, else the lead's model, with a
 notice naming every skipped route and why. With no usable route left, `delegate_task` refuses and lists them.
+A subagent model the lead picked itself, and models on the built-in OpenAI provider, skip these checks.
 
 ## Settings
 
