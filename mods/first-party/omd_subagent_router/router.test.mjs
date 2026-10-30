@@ -32,7 +32,7 @@ function run(name, payload, { state = null, settings = {}, routes = [CLAUDE_ROUT
   };
 }
 
-const submit = (text, state = null) => run('0', { surface: 'input', input: { thread_id: 't', text, revision: null, attachments: [], elements: [] }, original: null, origin: { caller: 'user' } }, { state });
+const submit = (text, state = null, caller = 'user') => run('0', { surface: 'input', input: { thread_id: 't', text, revision: null, attachments: [], elements: [] }, original: null, origin: { caller } }, { state });
 const prompt = (text, state) => submit(text, state).state;
 const spawn = (fields, options) => {
   const input = { origin: 'model', caller: 'model', thread_id: 't', agent_id: null, definition: null, prompt: 'Research how retries work', model: null, effort: null, cwd: '/repo', tools: null, ...fields };
@@ -51,6 +51,13 @@ test('a prompt directive routes matching subagents to the named model on its pro
   assert.equal(spawn({ prompt: 'gAAAAABsealed' }, { state: two }).next.model, null, 'two role directives leave a sealed task alone');
   assert.equal(spawn({ model: 'gpt-6.1-sol' }, { state }).next.model, 'gpt-6.1-sol', 'a model the lead chose stands');
   assert.equal(spawn({ model: 'sonnet-5.5' }, { state }).next.model, 'claude-sonnet-5-5', 'a model name the lead guessed is replaced');
+});
+
+test('a prompt a mod queued is never read for directives', () => {
+  const queued = submit('Task a completed: "use opus as subagents"', null, 'omd_subagent_router');
+  assert.equal(queued.state, null);
+  assert.equal(queued.next.text, 'Task a completed: "use opus as subagents"');
+  assert.deepEqual(queued.notices, []);
 });
 
 test('mentions set a role and effort, and later directives replace earlier ones', () => {
@@ -112,7 +119,7 @@ const WORKERS = [
   { name: 'claude', provider: 'omd_claude_cli', model: 'claude-opus-5-5', roles: ['lead'], available: true, tools: [], billing: 'included_subscription' },
 ];
 const stored = value => ({ 'store.get': () => ({ value, revision: 3, provenance: {} }) });
-const SESSION = { thread_id: 't', root: '/repo', cwd: '/repo', codex_version: '0.164.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1, process_id: 'p' };
+const SESSION = { thread_id: 't', root: '/repo', cwd: '/repo', codex_version: '0.165.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1, process_id: 'p' };
 
 function fire(event, name, payload, { state = null, settings = {}, routes = WORKERS, answer = {} } = {}) {
   const calls = [];
@@ -296,6 +303,16 @@ test('a worktree result carries its changed paths and is integrated, then releas
   const dropped = delegate({ action: 'cancel', handle: 'h1' }, { state: started.state });
   assert.deepEqual(dropped.of('agents.cancel'), [{ handle: 'h1' }]);
   assert.equal(dropped.state.tasks.h1.held, false);
+});
+
+test('a worktree task that finishes by agent_end takes its changed paths and candidate from the consumed result', () => {
+  const state = { tasks: { a: { ...task('worker'), isolation: 'worktree' } } };
+  const consumed = { status: 'completed', text: 'patched', consumed: true, candidate_sha256: 'c'.repeat(64), changed_paths: ['a.ts'] };
+  const ended = fire('agent_end', '', { handle: 'a', role: 'worker', status: 'completed', text: 'patched' }, { state, answer: { 'agents.result': () => consumed } });
+  assert.deepEqual(ended.of('agents.result'), [{ handle: 'a', consume: true }]);
+  assert.deepEqual([ended.state.tasks.a.paths, ended.state.tasks.a.candidate, ended.state.tasks.a.held], [['a.ts'], 'c'.repeat(64), true]);
+  const told = delegate({ action: 'status', handle: 'a' }, { state: ended.state });
+  assert.deepEqual([told.value.changed_paths, told.value.candidate_sha256], [['a.ts'], 'c'.repeat(64)]);
 });
 
 test('status polls a running task and cancel stops it without a wake', () => {

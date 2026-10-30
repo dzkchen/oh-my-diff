@@ -14,7 +14,7 @@ A model from another provider also needs that provider set up, for example `omd_
 
 ## Use it
 
-Say which model subagents should use, in any prompt:
+Say which model subagents should use, in any prompt you type (queued prompts from mods are ignored):
 
 | You write | Subagents it affects |
 | --- | --- |
@@ -71,6 +71,7 @@ is skipped when its route isn't available, when its provider's latest usage wind
 minutes. Windows and failures are kept in the mod's user store, so every thread sees them; a window with no reset
 time stops counting after an hour. The task or subagent then runs on `fallback_model`, else the lead's model, with a
 notice naming every skipped route and why. With no usable route left, `delegate_task` refuses and lists them.
+A subagent model the lead picked itself, and models on the built-in OpenAI provider, skip these checks.
 
 ## Settings
 

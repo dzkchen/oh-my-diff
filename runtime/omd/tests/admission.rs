@@ -92,6 +92,23 @@ fn depth_and_concurrency_refusals_are_distinct_and_readable() {
 }
 
 #[test]
+fn a_parent_finished_before_its_child_stops_when_the_child_does() {
+    let directory = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), directory.path().join("task")).unwrap();
+    task.start_worker("one".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.start_worker("two".into(), "one".into(), 2, worker())
+        .unwrap();
+    task.finish_worker("one").unwrap();
+    assert!(task.admit_subagent(1, 0).is_err());
+    task.finish_worker("two").unwrap();
+    task.start_worker("three".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.start_worker("four".into(), "lead".into(), 1, worker())
+        .unwrap();
+}
+
+#[test]
 fn unknown_usage_remains_reserved_after_worker_exit() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();

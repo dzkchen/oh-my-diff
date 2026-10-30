@@ -141,6 +141,7 @@ export default function activate(api: ModAPI) {
   });
 
   api.intercept('input', (event, next) => {
+    if (next.origin.caller !== 'user') return next(event);
     const found = directives(event.text);
     if (!found.length) return next(event);
     const models = catalog();

@@ -3,7 +3,7 @@ use codex_omd::peers::now_ms;
 use std::collections::BTreeSet;
 
 const ANSWER_CHARS: usize = 4096;
-const FINISHED_LIMIT: usize = 64;
+pub(super) const FINISHED_LIMIT: usize = 64;
 const SPAWN_RESERVATION_MS: u64 = 30_000;
 
 /// Session-wide agent records; observing one grants no control over it.
@@ -37,10 +37,9 @@ impl Inventory {
             .flatten()
             .flatten()
         {
-            if entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "json")
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if (name.ends_with(".json") || name.starts_with(codex_omd::fsio::STAGING_PREFIX))
                 && entry
                     .metadata()
                     .and_then(|metadata| metadata.modified())
@@ -59,8 +58,12 @@ impl Inventory {
                 .filter(|id| root_of(&records, id) == thread)
                 .cloned()
                 .collect::<Vec<_>>();
+            let mut working = self.working.lock().ok();
             for id in session {
                 records.remove(&id);
+                if let Some(working) = working.as_mut() {
+                    working.remove(&id);
+                }
             }
         }
         if let Some(directory) = self.directory.get() {
@@ -119,9 +122,15 @@ impl Inventory {
             record.extend(fields.clone());
         }
         if let Ok(mut records) = self.records.lock() {
+            let parents = records
+                .values()
+                .chain([&record])
+                .filter_map(|record| record["parent"]["thread_id"].as_str())
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>();
             let finished = records
                 .iter()
-                .filter(|(_, record)| record["status"] != "running")
+                .filter(|(id, record)| record["status"] != "running" && !parents.contains(*id))
                 .map(|(thread, record)| (record["ended_at_ms"].as_u64(), thread.clone()))
                 .collect::<BTreeSet<_>>();
             for (_, thread) in finished
@@ -164,7 +173,10 @@ impl Inventory {
     }
 
     pub(super) fn turn_started(&self, thread: &str) {
-        if let Ok(mut working) = self.working.lock() {
+        if let Ok(records) = self.records.lock()
+            && records.contains_key(thread)
+            && let Ok(mut working) = self.working.lock()
+        {
             working.insert(thread.to_owned());
         }
     }

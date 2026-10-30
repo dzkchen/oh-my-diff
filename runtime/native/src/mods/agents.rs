@@ -698,6 +698,14 @@ impl Drop for SpawnReservation {
     }
 }
 
+struct CapacityReservation<'a>(&'a super::inventory::Inventory, String);
+
+impl Drop for CapacityReservation<'_> {
+    fn drop(&mut self) {
+        self.0.release_spawn(&self.1);
+    }
+}
+
 impl Drop for Admission {
     fn drop(&mut self) {
         if !self.transferred {
@@ -2168,6 +2176,9 @@ impl Agents {
             None
         };
         let thread_id = manager.reserve_thread_id();
+        let id = format!("mod-{}-{thread_id}", caller.id);
+        super::roles::spawn_capacity_admitted(&core.inventory, lead, &id)?;
+        let capacity = CapacityReservation(&core.inventory, id.clone());
         let workspace = if writable || frozen.is_some() {
             std::fs::create_dir_all(&session.scratch).map_err(|e| e.to_string())?;
             if session.scratch.canonicalize().map_err(|e| e.to_string())? != session.scratch {
@@ -2351,16 +2362,19 @@ impl Agents {
                 config.developer_instructions.unwrap_or_default()
             ));
         }
-        let id = format!("mod-{}-{thread_id}", caller.id);
-        session
-            .task
-            .start_worker(
-                id.clone(),
-                lead.owner.clone(),
-                lead.depth.saturating_add(1),
-                host.worker_limits(session)?,
-            )
-            .map_err(|e| e.to_string())?;
+        let started = host.worker_limits(session).and_then(|limits| {
+            session
+                .task
+                .start_worker(
+                    id.clone(),
+                    lead.owner.clone(),
+                    lead.depth.saturating_add(1),
+                    limits,
+                )
+                .map_err(|e| e.to_string())
+        });
+        drop(capacity);
+        started?;
         let mut admission = Admission {
             task: session.task.clone(),
             worker: id.clone(),

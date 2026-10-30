@@ -4263,6 +4263,42 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
 }
 
 #[test]
+fn the_agent_inventory_prunes_only_stale_snapshots_and_staging_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
+    let staging = format!("{}snapshot", codex_omd::fsio::STAGING_PREFIX);
+    for name in ["role.toml", "stale.json", staging.as_str()] {
+        std::fs::File::create(directory.path().join(name))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    inventory::Inventory::default().persist_to(directory.path().to_path_buf());
+    assert!(directory.path().join("role.toml").exists());
+    assert!(!directory.path().join("stale.json").exists());
+    assert!(!directory.path().join(staging).exists());
+}
+
+#[test]
+fn the_agent_inventory_keeps_finished_parents_of_remaining_and_starting_agents() {
+    let inventory = inventory::Inventory::default();
+    let model = |parent: &str| json!({"origin": "model", "parent": {"thread_id": parent, "agent_id": null}});
+    for (parent, child) in [("root", "a"), ("a", "a1"), ("root", "b")] {
+        inventory.start(child, model(parent));
+    }
+    inventory.end("a", "completed", None);
+    inventory.end("b", "completed", None);
+    for index in 0..inventory::FINISHED_LIMIT - 1 {
+        let id = format!("done-{index}");
+        inventory.start(&id, model("root"));
+        inventory.end(&id, "completed", None);
+    }
+    inventory.start("b1", model("b"));
+    assert_eq!(inventory.root_thread("a1"), "root");
+    assert_eq!(inventory.root_thread("b1"), "root");
+}
+
+#[test]
 fn provider_billed_service_routes_are_found_only_for_their_provider_and_mod() {
     let Some(fixture) = fixture(&[]) else {
         return;

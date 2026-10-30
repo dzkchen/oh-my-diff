@@ -136,6 +136,7 @@ struct Worker {
     idle: bool,
     objective: Option<String>,
     result: Option<VersionMarker>,
+    closing: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -430,6 +431,7 @@ impl Task {
                             idle: false,
                             objective: None,
                             result: None,
+                            closing: false,
                         },
                     );
                 }
@@ -779,6 +781,7 @@ impl Task {
                 idle: false,
                 objective: None,
                 result: None,
+                closing: false,
             },
         );
         Ok(())
@@ -874,6 +877,8 @@ impl Task {
             .ok_or_else(|| denied("worker disappeared"))?;
         worker.status = WorkerStatus::Completed;
         worker.result = Some(result);
+        let parent = worker.parent.clone();
+        let _ = self.stop_if_closing(&mut state, &parent);
         Ok(())
     }
 
@@ -930,31 +935,39 @@ impl Task {
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        if !state
-            .workers
-            .get(id)
-            .is_some_and(|worker| worker.status == WorkerStatus::Active)
-        {
-            return Err(denied("unknown or inactive worker"));
-        }
-        if state
-            .workers
-            .values()
-            .any(|worker| worker.status == WorkerStatus::Active && worker.parent == id)
-        {
-            return Err(denied("worker has active descendants"));
-        }
-        self.record(
-            &mut state,
-            &serde_json::json!({"event": "worker_stopped", "worker": id}),
-        )?;
         state
             .workers
             .get_mut(id)
-            .ok_or_else(|| denied("worker disappeared"))?
-            .status = WorkerStatus::Stopped;
-        self.archive_worker(&mut state, id)?;
-        Ok(())
+            .filter(|worker| worker.status == WorkerStatus::Active)
+            .ok_or_else(|| denied("unknown or inactive worker"))?
+            .closing = true;
+        self.stop_if_closing(&mut state, id)
+    }
+
+    fn stop_if_closing(&self, state: &mut State, id: &str) -> io::Result<()> {
+        if !state
+            .workers
+            .get(id)
+            .is_some_and(|worker| worker.closing && worker.status == WorkerStatus::Active)
+            || state
+                .workers
+                .values()
+                .any(|worker| worker.status == WorkerStatus::Active && worker.parent == id)
+        {
+            return Ok(());
+        }
+        self.record(
+            state,
+            &serde_json::json!({"event": "worker_stopped", "worker": id}),
+        )?;
+        let worker = state
+            .workers
+            .get_mut(id)
+            .ok_or_else(|| denied("worker disappeared"))?;
+        worker.status = WorkerStatus::Stopped;
+        let parent = worker.parent.clone();
+        self.archive_worker(state, id)?;
+        self.stop_if_closing(state, &parent)
     }
 
     pub fn authorize_route(&self, provider: &str, model: &str) -> io::Result<()> {

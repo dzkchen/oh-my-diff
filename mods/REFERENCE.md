@@ -1634,8 +1634,8 @@ Multi-agent V2 children behave like this in OMD (V1 sessions keep upstream behav
 - **Forwarding.** A child's approval, permission or MCP elicitation request is reported to the parent's mailbox; only
   the user can answer it. A child may call `request_user_input`: its question is queued in the parent's mailbox and
   read at the parent's next turn (it does not start one), and the TUI shows "Waiting on you in <thread>" so the user
-  can answer meanwhile. The parent's next `send_message` to that child answers the question ("Your parent replied; its
-  message follows." then the message); the user can answer too. The question card stays until the child's turn ends.
+  can answer meanwhile. The parent's next `send_message` or `followup_task` to that child answers the question ("Your
+  parent replied; its message follows." then the message); the user can answer too. The question card stays until the child's turn ends.
 - **Caps.** Every model `spawn_agent` counts against `host.json` `limits.max_depth` (default 2) and
   `limits.concurrent_workers` (default 4) and is refused with `subagent_depth_limit` or
   `subagent_concurrency_limit` ([Host limits](#host-limits)). These apply in addition to
@@ -4624,7 +4624,8 @@ Require `settings_file_v1` to use it.
 `host.json` `limits.max_depth` (default 2) and `limits.concurrent_workers` (default 4) cap a session's subagents: a mod
 worker or model `spawn_agent` past either is refused with `subagent_depth_limit` or `subagent_concurrency_limit`.
 The concurrency limit counts running mod workers (`agents.spawn`), running model children (a child in a turn or not yet
-through its first turn) and children on another provider while they run a turn; idle or ended children don't count.
+through its first turn) and children on another provider while they run a turn; idle or ended children don't count,
+so a child woken by a message can briefly take the count past the cap.
 A provider service process (such as the `omd_claude_cli` relay) needs a free slot to start but holds none once running.
 
 `host.json` may set `mod_limits`:
