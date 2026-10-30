@@ -578,11 +578,11 @@
       "id": "omd_workspace",
       "version": "1.0.0",
       "extension_type": "mod",
-      "capability": "Opt-in tabbed dock beside the chat: numbered tabs for Git changes, a shell and registered panels, with focus, resize and screen-mode keys",
+      "capability": "Opt-in workspace that arranges the chat with Git changes, a shell, your own terminal panels and registered panels: presets, moves, drag, focus, resize and screen-mode keys",
       "source": "mods/first-party/omd_workspace",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; store_v1, exec_v1, terminal_surface_v1, terminal_lists_v1, terminal_tabs_v1, terminal_pty_v1, terminal_focus_v1, terminal_layout_title_v1, settings_file_v1, service_dispatch_v1, lifecycle_events_v1",
+      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; store_v1, exec_v1, terminal_surface_v1, terminal_lists_v1, terminal_tabs_v1, terminal_pty_v1, pty_programs_v1, terminal_focus_v1, terminal_layout_title_v1, terminal_layout_dock_v1, ui_controls_v1, settings_file_v1, service_dispatch_v1, lifecycle_events_v1",
       "tested_versions": [
         "Codex 0.165.0",
         "OMD 1.2.0 pre-release (offline checks)",

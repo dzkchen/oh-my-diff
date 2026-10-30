@@ -175,7 +175,7 @@ pub enum ModLayout {
 
 impl ModLayout {
     fn walk(&self, depth: usize, leaves: &mut Vec<String>) -> bool {
-        if depth > 4 {
+        if depth > 6 {
             return false;
         }
         match self {
@@ -2197,6 +2197,18 @@ impl ModViewPatch {
         let mut candidate = target.clone();
         let mut candidate_claims = claims.clone();
         let mut conflicts = Vec::new();
+        self.sites.retain(|name, _| match name.split_once('/') {
+            Some((owner, _)) if owner != id => {
+                conflicts.push(ModViewConflict {
+                    field: format!("sites.{name}"),
+                    owner: owner.to_owned(),
+                    rejected: id.to_owned(),
+                    origin: origin.to_owned(),
+                });
+                false
+            }
+            _ => true,
+        });
         let mut claim = |field: String| {
             let owner = candidate_claims
                 .entry(field.clone())

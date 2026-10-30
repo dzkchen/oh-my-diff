@@ -174,6 +174,33 @@ fn layout_leaf_titles_are_bounded_visible_text_on_sites_and_the_transcript() {
 }
 
 #[test]
+fn layouts_nest_five_splits_and_no_more() {
+    let nested = |splits: usize| {
+        let mut node = json!({"content": "transcript"});
+        for index in 0..splits {
+            node = json!({"split": "vertical", "children": [node, {"content": format!("site:a/s{index}")}]});
+        }
+        json!({"layout": node})
+    };
+    assert!(view(nested(5)).is_ok());
+    assert!(view(nested(6)).is_err());
+}
+
+#[test]
+fn components_nest_six_deep_and_no_more() {
+    let nested = |depth: usize| {
+        let mut node = json!({"type": "text", "id": "leaf", "label": "Leaf", "text": "x"});
+        for index in 1..depth {
+            node =
+                json!({"type": "box", "id": format!("b{index}"), "label": "B", "children": [node]});
+        }
+        json!({"sites": {"a/x": {"components": [node]}}})
+    };
+    assert!(ModViewPatch::parse(nested(6)).is_ok());
+    assert!(ModViewPatch::parse(nested(7)).is_err());
+}
+
+#[test]
 fn patches_claim_layout_once() {
     let mut target = ModView::default();
     let mut claims = BTreeMap::new();
@@ -259,6 +286,33 @@ fn a_wrap_encloses_a_replacement_composed_after_it() {
     let sidebar = serde_json::to_value(&target.sites["sidebar"]).unwrap();
     assert_eq!(sidebar["mode"], "replace");
     assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
+}
+
+#[test]
+fn only_a_sites_owner_replaces_or_wraps_it() {
+    let mut target = ModView::default();
+    let mut claims = BTreeMap::new();
+    let text =
+        |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
+    let wrap = json!({"mode": "wrap", "components": [{"type": "box", "id": "frame", "label": "Frame",
+        "children": [{"type": "slot"}]}]});
+    let mut compose = |id: &str, site: Value| {
+        ModViewPatch::parse(json!({"sites": {"a/x": site}}))
+            .unwrap()
+            .apply(&mut target, &mut claims, id, "idle")
+            .unwrap()
+    };
+    let refused = |rejected: &str| ModViewConflict {
+        field: "sites.a/x".into(),
+        owner: "a".into(),
+        rejected: rejected.into(),
+        origin: "idle".into(),
+    };
+    assert_eq!(compose("b", text("intruder")), vec![refused("b")]);
+    assert_eq!(compose("c", wrap), vec![refused("c")]);
+    assert!(compose("a", text("own")).is_empty());
+    let site = serde_json::to_value(&target.sites["a/x"]).unwrap();
+    assert_eq!(site["components"][0]["id"], "own");
 }
 
 #[test]

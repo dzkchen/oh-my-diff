@@ -63,7 +63,7 @@
     "events:compaction_end": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.on('compaction_end'"},"decision":"context.compaction"},
     "events:compaction_start": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.on('compaction_start'"},"decision":"context.compaction"},
     "events:completion": {"status":"frozen","consumer":{"path":"mods/examples/frecency_rank/index.ts","snippet":"api.replace('completion'"},"decision":"terminal.completion"},
-    "events:component_event": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"api.on('component_event'"},"decision":"terminal.surface"},
+    "events:component_event": {"status":"frozen","experimental_fields":["content","target","edge"],"reason":"The `dock` kind and its `content`, `target` and `edge` (terminal_layout_dock_v1) were added after 1.0.0.","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"api.on('component_event'"},"decision":"terminal.surface"},
     "events:component_post": {"status":"frozen","consumer":{"path":"mods/examples/client_tag/index.ts","snippet":"api.on('component_post'"},"decision":"terminal.component_modules"},
     "events:composer": {"status":"frozen","consumer":{"path":"mods/examples/ghost_history/index.ts","snippet":"api.on('composer'"},"decision":"terminal.composer_drafts"},
     "events:config_change": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
@@ -2134,7 +2134,7 @@
     },
     {
       "id": "terminal_patch_composition",
-      "rule": "Every mod's terminal patch composes in dependency order. Wrappers contain one slot; exclusive fields (layout, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant and each later claim is reported in `terminal.conflicts` with its field, owner, rejected mod and origin; a patch that breaks the composed view's limits is rejected without leaking any of its fields."
+      "rule": "Every mod's terminal patch composes in dependency order. Wrappers contain one slot; exclusive fields (layout, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant and each later claim is reported in `terminal.conflicts` with its field, owner, rejected mod and origin; only mod `owner` replaces or wraps its `owner/name` site and any other mod's patch for it is refused as a conflict; a patch that breaks the composed view's limits is rejected without leaking any of its fields."
     },
     {
       "id": "render_hook_composition",
