@@ -23248,7 +23248,7 @@ index 5ded792689cdc7fd179540545d9e792a6d057dab..2bc774666a033893892035cba54df962
                      review(&sess, &config, sub.id.clone(), review_request).await;
                      false
 diff --git a/codex-rs/core/src/session/input_queue.rs b/codex-rs/core/src/session/input_queue.rs
-index 21d31dd791dd56850f72b17f869f10b168250c0e..cd83abcf658b08206890eaee74796c1ad9d4b228 100644
+index 21d31dd791dd56850f72b17f869f10b168250c0e..2cdbf76b47a869a812c85096c323965616330c74 100644
 --- a/codex-rs/core/src/session/input_queue.rs
 +++ b/codex-rs/core/src/session/input_queue.rs
 @@ -14,6 +14,9 @@ use serde::Deserialize;
@@ -23270,7 +23270,7 @@ index 21d31dd791dd56850f72b17f869f10b168250c0e..cd83abcf658b08206890eaee74796c1a
  }
 
  pub(crate) struct PendingMailboxCommunication {
-@@ -113,9 +118,31 @@ impl InputQueue {
+@@ -113,9 +118,33 @@ impl InputQueue {
              activity_tx,
              controller: None,
              mailbox_pending_mails: Mutex::new(VecDeque::new()),
@@ -23280,7 +23280,9 @@ index 21d31dd791dd56850f72b17f869f10b168250c0e..cd83abcf658b08206890eaee74796c1a
      }
 
 +    pub(crate) fn arm_completion_wake(&self) -> u64 {
-+        self.completion_wake_generation.fetch_add(1, Ordering::SeqCst) + 1
++        self.completion_wake_generation
++            .fetch_add(1, Ordering::SeqCst)
++            + 1
 +    }
 +
 +    pub(crate) fn settle_completion_wake(&self, generation: u64) -> bool {
@@ -23302,7 +23304,7 @@ index 21d31dd791dd56850f72b17f869f10b168250c0e..cd83abcf658b08206890eaee74796c1a
      pub(crate) fn with_controller(thread_id: ThreadId, control: Arc<dyn AgentControl>) -> Self {
          let updates = control.watch_mailbox(thread_id);
          Self {
-@@ -239,6 +266,7 @@ impl InputQueue {
+@@ -239,6 +268,7 @@ impl InputQueue {
      pub(crate) async fn drain_mailbox(&self) -> Vec<PendingMailboxCommunication> {
          let mut pending = self.mailbox_pending_mails.lock().await;
          self.read_mailbox(&mut pending);
@@ -23421,17 +23423,17 @@ index 95301d6bc3575643fc1349c4f5813f3b9fd7b7b3..889bea5473815f1be9e261290982d2b2
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index aba497125ce18b608ad2ddeadcd4827ee0214cb5..7de001b76cb139d2415088c6e4bf4227a64afd62 100644
+index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6bc6336b4 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -173,6 +173,7 @@ use codex_protocol::request_permissions::RequestPermissionsArgs;
+@@ -172,6 +172,7 @@ use codex_protocol::request_permissions::RequestPermissionProfile;
+ use codex_protocol::request_permissions::RequestPermissionsArgs;
  use codex_protocol::request_permissions::RequestPermissionsEvent;
  use codex_protocol::request_permissions::RequestPermissionsResponse;
- use codex_protocol::request_user_input::RequestUserInputArgs;
 +use codex_protocol::request_user_input::RequestUserInputAnswer;
+ use codex_protocol::request_user_input::RequestUserInputArgs;
  use codex_protocol::request_user_input::RequestUserInputResponse;
  use codex_rmcp_client::ElicitationResponse;
- use codex_rollout::should_persist_response_item;
 @@ -265,6 +266,7 @@ mod mcp_prewarm;
  mod mcp_refresh;
  mod mcp_runtime;
@@ -24296,7 +24298,7 @@ index 48fe180dcb034d0bd94961e94e2ebf12d9a74ed4..d882d5191085381b6bf47b444414bf92
          // Save changed settings first. The manager then installs any new environment list before
          // waking waiting work. The next step cannot read either until we release this lock.
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 182e03e588530491da22d5ea931e98f90372b127..3375a252901c3cdc06b5f57750eefc1846ba0c55 100644
+index 182e03e588530491da22d5ea931e98f90372b127..2104ff2ca7fed1d9b0fa7e118f4a6a869bc6429f 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
 @@ -3,6 +3,8 @@ use crate::agent::LocalAgentControl;
@@ -24778,7 +24780,7 @@ index 182e03e588530491da22d5ea931e98f90372b127..3375a252901c3cdc06b5f57750eefc18
  #[tokio::test]
  async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
      let (sess, tc, _rx) = make_session_and_context_with_rx().await;
-@@ -13587,3 +13882,58 @@ async fn rejected_mcp_refresh_then_corrected_user_config_blocks_ordinary_replace
+@@ -13587,3 +13882,63 @@ async fn rejected_mcp_refresh_then_corrected_user_config_blocks_ordinary_replace
          "rejection must not permit same-name ordinary-auth replacement in this session"
      );
  }
@@ -24814,7 +24816,10 @@ index 182e03e588530491da22d5ea931e98f90372b127..3375a252901c3cdc06b5f57750eefc18
 +                .await
 +        }
 +    });
-+    while !matches!(rx.recv().await.map(|event| event.msg), Ok(EventMsg::RequestUserInput(_))) {}
++    while !matches!(
++        rx.recv().await.map(|event| event.msg),
++        Ok(EventMsg::RequestUserInput(_))
++    ) {}
 +    let message = |author: &str| {
 +        InterAgentCommunication::new(
 +            AgentPath::try_from(author).expect("valid agent path"),
@@ -24825,7 +24830,9 @@ index 182e03e588530491da22d5ea931e98f90372b127..3375a252901c3cdc06b5f57750eefc18
 +        )
 +    };
 +
-+    session.answer_forwarded_question(&message("/root/other")).await;
++    session
++        .answer_forwarded_question(&message("/root/other"))
++        .await;
 +    assert!(!pending.is_finished());
 +    session.answer_forwarded_question(&message("/root")).await;
 +    let answered = pending
@@ -25386,7 +25393,7 @@ index b31eeca5d5a9e20f382f6e4e78c5c5a7c837f64d..953098c4cced3783c84d47156131d085
          FileSystemSandboxContext {
              sandbox_override: SandboxOverride::NoOverride,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..31c7c2b6326968d294e70ac96c430ee53bf83100 100644
+index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..561f1642319d45a16204bbf86ac288c69c9045ac 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -234,7 +234,8 @@ pub(super) async fn handle(
@@ -25557,7 +25564,7 @@ index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..31c7c2b6326968d294e70ac96c430ee5
          let active_turn = active_turn.get_or_insert_with(ActiveTurn::default);
          let previous_options = if has_trigger_turn {
              Default::default()
-@@ -757,6 +899,15 @@ impl Session {
+@@ -757,6 +899,20 @@ impl Session {
          Some(configuration.clone())
      }
 
@@ -25566,18 +25573,23 @@ index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..31c7c2b6326968d294e70ac96c430ee5
 +            return false;
 +        }
 +        let state = self.state.lock().await;
-+        TurnStartKind::Automatic
-+            .permits_mode(state.session_configuration.step_settings.collaboration_mode.mode)
++        TurnStartKind::Automatic.permits_mode(
++            state
++                .session_configuration
++                .step_settings
++                .collaboration_mode
++                .mode,
++        )
 +    }
 +
      async fn should_wake_on_agent_messages(&self) -> bool {
          if !self.features.enabled(Feature::WakeOnAgentMessages)
              || self.is_interrupted()
 diff --git a/codex-rs/core/src/session/turn_input_tests.rs b/codex-rs/core/src/session/turn_input_tests.rs
-index 2dca0905370b5aeb46c27a7acf8cedabc601138a..0c102367b53d93988af94628a0839a69be8221ca 100644
+index 2dca0905370b5aeb46c27a7acf8cedabc601138a..f9e179ada9f6ba1777c9c5e90b5a9be0a7a2eb6a 100644
 --- a/codex-rs/core/src/session/turn_input_tests.rs
 +++ b/codex-rs/core/src/session/turn_input_tests.rs
-@@ -899,6 +899,53 @@ async fn agent_message_wake_reservation_preserves_existing_boundaries(
+@@ -899,6 +899,57 @@ async fn agent_message_wake_reservation_preserves_existing_boundaries(
      );
  }
 
@@ -25585,11 +25597,7 @@ index 2dca0905370b5aeb46c27a7acf8cedabc601138a..0c102367b53d93988af94628a0839a69
 +#[test_case(true, ModeKind::Default, false; "interrupted_parent")]
 +#[test_case(false, ModeKind::Plan, false; "plan_parent")]
 +#[tokio::test]
-+async fn child_results_settle_one_completion_wake(
-+    interrupted: bool,
-+    mode: ModeKind,
-+    wakes: bool,
-+) {
++async fn child_results_settle_one_completion_wake(interrupted: bool, mode: ModeKind, wakes: bool) {
 +    let (session, _turn_context) = make_session_and_context().await;
 +    {
 +        let mut state = session.state.lock().await;
@@ -25624,14 +25632,22 @@ index 2dca0905370b5aeb46c27a7acf8cedabc601138a..0c102367b53d93988af94628a0839a69
 +    assert_eq!(session.reserve_pending_work_turn().await.is_some(), wakes);
 +    assert_eq!(session.input_queue.completion_wake_due(), !wakes);
 +    if wakes {
-+        assert_eq!(session.input_queue.drain_mailbox_input_items().await.0.len(), 2);
++        assert_eq!(
++            session
++                .input_queue
++                .drain_mailbox_input_items()
++                .await
++                .0
++                .len(),
++            2
++        );
 +    }
 +}
 +
  #[tokio::test]
  async fn steer_only_requires_active_turn() {
      let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
-@@ -1138,3 +1185,75 @@ async fn steer_preserves_request_origin(
+@@ -1138,3 +1189,75 @@ async fn steer_preserves_request_origin(
      );
      session.abort_all_tasks(TurnAbortReason::Interrupted).await;
  }
@@ -27625,7 +27641,7 @@ index c607b341ff67d93a861d817cf484028a24cb7286..acaf11c96e3b4687427eb228730e8eea
          let mut output = output;
          output.result.meta = Some(json!({ "provider/custom": { "items": [1, null] } }));
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_spec.rs b/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
-index edc9467b4d02cc023d8961373637116cf8ba6f6f..dab85d7c4165dfa4ce573eb29b0fa507126c0cdc 100644
+index edc9467b4d02cc023d8961373637116cf8ba6f6f..9e5a77b33141225cd928ebfb10ead2e557dbe6af 100644
 --- a/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
 +++ b/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
 @@ -1,5 +1,4 @@
@@ -27671,21 +27687,23 @@ index edc9467b4d02cc023d8961373637116cf8ba6f6f..dab85d7c4165dfa4ce573eb29b0fa507
          .into_iter()
          .map(|model| {
              let default_reasoning_effort = &model.default_reasoning_effort;
-@@ -879,6 +889,9 @@ fn spawn_agent_models_description(
+@@ -879,6 +889,11 @@ fn spawn_agent_models_description(
                  "- `{model_slug}`: {description}{reasoning_efforts_suffix}{service_tiers_suffix}"
              )
          })
-+        .chain(providers.into_iter().map(|(provider, slugs)| {
-+            format!("- {provider}: `{}`", slugs.join("`, `"))
-+        }))
++        .chain(
++            providers
++                .into_iter()
++                .map(|(provider, slugs)| format!("- {provider}: `{}`", slugs.join("`, `"))),
++        )
          .collect::<Vec<_>>()
          .join("\n");
      format!(
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs
-index d74729ef218b40dd244f1497e34439c765bfcdae..9590bca63d08fafb72b68455c822d5ba6b76a73a 100644
+index d74729ef218b40dd244f1497e34439c765bfcdae..153a5b85f4522d6e626f6ed82a2bb3230ac91202 100644
 --- a/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs
 +++ b/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs
-@@ -415,3 +415,35 @@ fn list_agents_tool_status_schema_includes_interrupted() {
+@@ -415,3 +415,40 @@ fn list_agents_tool_status_schema_includes_interrupted() {
          ])
      );
  }
@@ -27698,16 +27716,21 @@ index d74729ef218b40dd244f1497e34439c765bfcdae..9590bca63d08fafb72b68455c822d5ba
 +        .map(ModelPreset::from)
 +        .filter(|preset| preset.show_in_picker)
 +        .collect();
-+    let provider = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-1"]
-+        .into_iter()
-+        .map(|slug| ModelPreset {
-+            id: slug.to_string(),
-+            model: slug.to_string(),
-+            description: "Claude via the Claude CLI · fast".to_string(),
-+            model_provider: Some("omd_claude_cli".to_string()),
-+            model_provider_name: Some("Claude CLI".to_string()),
-+            ..base[0].clone()
-+        });
++    let provider = [
++        "claude-sonnet-5-5",
++        "claude-opus-5-5",
++        "claude-haiku-5-5",
++        "claude-fable-5-1",
++    ]
++    .into_iter()
++    .map(|slug| ModelPreset {
++        id: slug.to_string(),
++        model: slug.to_string(),
++        description: "Claude via the Claude CLI · fast".to_string(),
++        model_provider: Some("omd_claude_cli".to_string()),
++        model_provider_name: Some("Claude CLI".to_string()),
++        ..base[0].clone()
++    });
 +    base.clone().into_iter().chain(provider).collect()
 +}
 +
@@ -70239,10 +70262,10 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..887083a7c084cf29d54357bdeb6259b1585e0963
+index 0000000000000000000000000000000000000000..88a907c0ade59fbe9d6ce987b04d88dfa2d666fe
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2629 @@
+@@ -0,0 +1,2633 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -72851,7 +72874,11 @@ index 0000000000000000000000000000000000000000..887083a7c084cf29d54357bdeb6259b1
 +}
 +
 +fn unchanged_model(request: &Spawn, route: &Route) -> Result<(), String> {
-+    if request.model.as_ref().is_some_and(|model| *model != route.model) {
++    if request
++        .model
++        .as_ref()
++        .is_some_and(|model| *model != route.model)
++    {
 +        return Err("agent_model_requires_provider_lead_route".into());
 +    }
 +    Ok(())
@@ -76870,10 +76897,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..aebd11e2e3d9c32d01f1272f45d9f306cf1761b2
+index 0000000000000000000000000000000000000000..35b6c0a468ebe9b48dbc8760d4f1d7232105a455
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5043 @@
+@@ -0,0 +1,5060 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -79775,7 +79802,8 @@ index 0000000000000000000000000000000000000000..aebd11e2e3d9c32d01f1272f45d9f306
 +    let grants = fixture.core.runtime.lock().unwrap().grants("delegate");
 +    let cancelled = Arc::new(AtomicBool::new(false));
 +    let spawn_model = |route: &'static str, model: Option<&'static str>| {
-+        let (core, lead, grants, cancelled) = (&fixture.core, &fixture.lead, grants.clone(), &cancelled);
++        let (core, lead, grants, cancelled) =
++            (&fixture.core, &fixture.lead, grants.clone(), &cancelled);
 +        async move {
 +            operations::dispatch(
 +                core,
@@ -79822,16 +79850,28 @@ index 0000000000000000000000000000000000000000..aebd11e2e3d9c32d01f1272f45d9f306
 +    fixture
 +        .lead
 +        .host
-+        .enroll(fixture.lead.thread, &fixture.lead.session, "lead", Some(&granted), None)
++        .enroll(
++            fixture.lead.thread,
++            &fixture.lead.session,
++            "lead",
++            Some(&granted),
++            None,
++        )
 +        .unwrap();
 +    assert_eq!(
 +        refused(spawn_model("lead", Some("provider-worker-other")).await),
 +        "agent_model_requires_provider_lead_route",
 +        "the lead alias keeps the lead's model"
 +    );
-+    assert_eq!(refused(spawn("other-mod").await), "provider_not_registered_or_stopped");
++    assert_eq!(
++        refused(spawn("other-mod").await),
++        "provider_not_registered_or_stopped"
++    );
 +    codex_models_manager::runtime_models::set("provider-worker", Vec::new());
-+    assert_eq!(refused(spawn("unregistered").await), "provider_not_registered_or_stopped");
++    assert_eq!(
++        refused(spawn("unregistered").await),
++        "provider_not_registered_or_stopped"
++    );
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -81096,7 +81136,11 @@ index 0000000000000000000000000000000000000000..aebd11e2e3d9c32d01f1272f45d9f306
 +        "an admitted spawn holds its slot until its child starts"
 +    );
 +    inventory.release_spawn("spawn");
-+    assert_eq!(attempt(0).await, None, "a finished spawn call releases its slot");
++    assert_eq!(
++        attempt(0).await,
++        None,
++        "a finished spawn call releases its slot"
++    );
 +    inventory.start(
 +        &child(3),
 +        json!({"origin": "model", "parent": {"thread_id": lead, "agent_id": null}}),
@@ -82191,10 +82235,10 @@ index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..365f2b220b38a9523f375137ffe1c958a65d41cd
+index 0000000000000000000000000000000000000000..8a77f46216d30bb312cd81b54211e1fd8e1f7783
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,365 @@
 +use super::*;
 +use codex_omd::peers::now_ms;
 +use std::collections::BTreeSet;
@@ -82316,8 +82360,11 @@ index 0000000000000000000000000000000000000000..365f2b220b38a9523f375137ffe1c958
 +            if record["origin"] == "model"
 +                && let Some(reserved) = reserved.as_mut()
 +            {
-+                let root = root_of(&records, record["parent"]["thread_id"].as_str().unwrap_or(thread))
-+                    .to_owned();
++                let root = root_of(
++                    &records,
++                    record["parent"]["thread_id"].as_str().unwrap_or(thread),
++                )
++                .to_owned();
 +                if let Some(index) = reserved.iter().position(|(owner, ..)| *owner == root) {
 +                    reserved.remove(index);
 +                }
@@ -82380,7 +82427,10 @@ index 0000000000000000000000000000000000000000..365f2b220b38a9523f375137ffe1c958
 +        counted: impl Fn(&str) -> bool,
 +        admit: impl FnOnce(usize) -> Result<(), String>,
 +    ) -> Result<(), String> {
-+        let mut reserved = self.reserved.lock().map_err(|_| "inventory lock poisoned")?;
++        let mut reserved = self
++            .reserved
++            .lock()
++            .map_err(|_| "inventory lock poisoned")?;
 +        let now = now_ms();
 +        reserved.retain(|(.., at)| now.saturating_sub(*at) < SPAWN_RESERVATION_MS);
 +        let pending = reserved.iter().filter(|(owner, ..)| owner == root).count();
@@ -124497,10 +124547,10 @@ index 0000000000000000000000000000000000000000..a555c242ce131b4382a16a7d798d1091
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4b41669624f1765b819bf766c3b8b655911a2715
+index 0000000000000000000000000000000000000000..100c399823819f399f74cb3a3324f72c600d829a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,398 @@
+@@ -0,0 +1,399 @@
 +use super::*;
 +
 +pub const SETTINGS_FILE_EXTENSIONS: [&str; 3] = ["json", "yaml", "yml"];
@@ -124554,7 +124604,8 @@ index 0000000000000000000000000000000000000000..4b41669624f1765b819bf766c3b8b655
 +                return Err(failure("settings_file_must_be_object"));
 +            };
 +            let values: BTreeMap<String, Value> = object.into_iter().collect();
-+            let mut merged = declared_settings(package.settings_schema.as_ref(), &selection.settings);
++            let mut merged =
++                declared_settings(package.settings_schema.as_ref(), &selection.settings);
 +            merged.extend(values.clone());
 +            validate_settings(package, &merged)?;
 +            Ok(values)

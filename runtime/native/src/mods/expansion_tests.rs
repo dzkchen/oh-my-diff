@@ -2899,7 +2899,8 @@ async fn mod_workers_may_run_on_a_registered_providers_lead_route() {
     let grants = fixture.core.runtime.lock().unwrap().grants("delegate");
     let cancelled = Arc::new(AtomicBool::new(false));
     let spawn_model = |route: &'static str, model: Option<&'static str>| {
-        let (core, lead, grants, cancelled) = (&fixture.core, &fixture.lead, grants.clone(), &cancelled);
+        let (core, lead, grants, cancelled) =
+            (&fixture.core, &fixture.lead, grants.clone(), &cancelled);
         async move {
             operations::dispatch(
                 core,
@@ -2946,16 +2947,28 @@ async fn mod_workers_may_run_on_a_registered_providers_lead_route() {
     fixture
         .lead
         .host
-        .enroll(fixture.lead.thread, &fixture.lead.session, "lead", Some(&granted), None)
+        .enroll(
+            fixture.lead.thread,
+            &fixture.lead.session,
+            "lead",
+            Some(&granted),
+            None,
+        )
         .unwrap();
     assert_eq!(
         refused(spawn_model("lead", Some("provider-worker-other")).await),
         "agent_model_requires_provider_lead_route",
         "the lead alias keeps the lead's model"
     );
-    assert_eq!(refused(spawn("other-mod").await), "provider_not_registered_or_stopped");
+    assert_eq!(
+        refused(spawn("other-mod").await),
+        "provider_not_registered_or_stopped"
+    );
     codex_models_manager::runtime_models::set("provider-worker", Vec::new());
-    assert_eq!(refused(spawn("unregistered").await), "provider_not_registered_or_stopped");
+    assert_eq!(
+        refused(spawn("unregistered").await),
+        "provider_not_registered_or_stopped"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4220,7 +4233,11 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
         "an admitted spawn holds its slot until its child starts"
     );
     inventory.release_spawn("spawn");
-    assert_eq!(attempt(0).await, None, "a finished spawn call releases its slot");
+    assert_eq!(
+        attempt(0).await,
+        None,
+        "a finished spawn call releases its slot"
+    );
     inventory.start(
         &child(3),
         json!({"origin": "model", "parent": {"thread_id": lead, "agent_id": null}}),

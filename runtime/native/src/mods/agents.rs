@@ -2606,7 +2606,11 @@ pub(super) async fn until_cancelled(cancelled: &AtomicBool) {
 }
 
 fn unchanged_model(request: &Spawn, route: &Route) -> Result<(), String> {
-    if request.model.as_ref().is_some_and(|model| *model != route.model) {
+    if request
+        .model
+        .as_ref()
+        .is_some_and(|model| *model != route.model)
+    {
         return Err("agent_model_requires_provider_lead_route".into());
     }
     Ok(())

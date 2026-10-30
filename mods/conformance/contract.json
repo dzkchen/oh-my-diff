@@ -250,7 +250,7 @@
     "operations:workspace.backup": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/semantic.ts","snippet":"api.host.tryCall('workspace.backup'"},"decision":"tool.workspace"},
     "operations:workspace.check_access": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:workspace.fingerprint": {"status":"frozen","consumer":{"path":"mods/first-party/omd_advisor/index.ts","snippet":"api.host.tryCall('workspace.fingerprint'"},"decision":"tool.workspace"},
-    "operations:workspace.integrate": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('workspace.integrate'"},"decision":"coordination.agents"},
+    "operations:workspace.integrate": {"status":"frozen","consumer":{"path":"mods/first-party/omd_subagent_router/index.ts","snippet":"api.host.tryCall('workspace.integrate'"},"decision":"coordination.agents"},
     "operations:workspace.list": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"api.host.call('workspace.list'"},"decision":"tool.workspace"},
     "operations:workspace.read": {"status":"frozen","consumer":{"path":"mods/examples/read_batcher/index.ts","snippet":"api.host.call('workspace.read'"},"decision":"tool.workspace"},
     "operations:workspace.request_rename": {"status":"frozen","consumer":{"path":"mods/examples/workspace/index.ts","snippet":"api.host.call('workspace.request_rename'"},"decision":"tool.workspace"},

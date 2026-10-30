@@ -119,8 +119,11 @@ impl Inventory {
             if record["origin"] == "model"
                 && let Some(reserved) = reserved.as_mut()
             {
-                let root = root_of(&records, record["parent"]["thread_id"].as_str().unwrap_or(thread))
-                    .to_owned();
+                let root = root_of(
+                    &records,
+                    record["parent"]["thread_id"].as_str().unwrap_or(thread),
+                )
+                .to_owned();
                 if let Some(index) = reserved.iter().position(|(owner, ..)| *owner == root) {
                     reserved.remove(index);
                 }
@@ -183,7 +186,10 @@ impl Inventory {
         counted: impl Fn(&str) -> bool,
         admit: impl FnOnce(usize) -> Result<(), String>,
     ) -> Result<(), String> {
-        let mut reserved = self.reserved.lock().map_err(|_| "inventory lock poisoned")?;
+        let mut reserved = self
+            .reserved
+            .lock()
+            .map_err(|_| "inventory lock poisoned")?;
         let now = now_ms();
         reserved.retain(|(.., at)| now.saturating_sub(*at) < SPAWN_RESERVATION_MS);
         let pending = reserved.iter().filter(|(owner, ..)| owner == root).count();

@@ -51,7 +51,8 @@ impl ModStore {
                 return Err(failure("settings_file_must_be_object"));
             };
             let values: BTreeMap<String, Value> = object.into_iter().collect();
-            let mut merged = declared_settings(package.settings_schema.as_ref(), &selection.settings);
+            let mut merged =
+                declared_settings(package.settings_schema.as_ref(), &selection.settings);
             merged.extend(values.clone());
             validate_settings(package, &merged)?;
             Ok(values)
