@@ -11,7 +11,7 @@ type View = {
   root: string; tabs: Tab[]; tab: number; hidden: boolean; find: string | null; pending: boolean; seek: number; notice: string | null;
   parent: Entry[]; entries: Entry[]; truncated: boolean; preview: Preview | null; recent: string[];
 };
-type State = { placed: boolean; view: View | null };
+type State = { placed: boolean; view: View | null; watch?: string };
 type Action = [string, () => string | null];
 
 const SITE = 'omd_files/main';
@@ -484,20 +484,23 @@ export default function activate(api: ModAPI) {
     ranked(v);
     reach(v, v.tab);
   };
-  const start = () => {
-    api.host.tryCall('workspace.watch', { paths: ['.'], key: 'omd_files', debounce_ms: 300 });
+  const start = (fresh: boolean) => {
+    const watch = api.host.tryCall('workspace.watch', { paths: ['.'], key: 'omd_files', debounce_ms: 300 });
+    const id = watch.ok ? watch.value.watch_id : undefined;
     changed(state => {
+      const kept = !fresh && state.placed && id !== undefined && state.watch === id;
+      state.watch = id;
       state.placed = placed();
-      refresh(state);
+      if (!kept) refresh(state);
     });
   };
   const reload = () => changed(state => {
     if (!state.placed) state.placed = placed();
     refresh(state);
   });
-  api.on('start', start);
-  api.on('resume', start);
-  api.on('mods_changed', start);
+  api.on('start', () => start(true));
+  api.on('resume', () => start(true));
+  api.on('mods_changed', () => start(false));
   api.on('turn_end', reload);
   api.on('thread_settings', ({ cwd }) => {
     if (cwd.before !== cwd.after) reload();

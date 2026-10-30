@@ -4,7 +4,7 @@ import type { Change } from './git.ts';
 import { PANELS, SIGNIN, SITE, area, draw, rows, selected } from './view.ts';
 import type { Hunk, Repo } from './view.ts';
 
-type State = { placed: boolean; repo: Repo | null };
+type State = { placed: boolean; repo: Repo | null; watch?: string };
 type Run = { ok: boolean; out: string; err: string; truncated: boolean };
 type Action = [string, () => string | null];
 
@@ -28,6 +28,7 @@ const clip = (text: string) => {
   return kept.join('\n');
 };
 const staged = (change: Change) => change.x !== ' ' && change.x !== '?' && change.y === ' ';
+const fingerprint = (r: Repo) => JSON.stringify([r.head, r.files, r.branches, r.commits, r.stash, r.op]);
 
 export default function activate(api: ModAPI) {
   const load = (): State => ({ placed: false, repo: null, ...(api.state.get() as Partial<State> | null) });
@@ -418,7 +419,7 @@ export default function activate(api: ModAPI) {
 
   const place = () => {
     try {
-      api.services.call('omd.workspace', 'register', { id: 'git', title: 'Git', site: SITE, order: 10 });
+      api.services.call('omd.workspace', 'register', { id: 'git', title: 'Git', site: SITE, order: 10, replaces: 'changes' });
       const shown = api.services.call('omd.workspace', 'panels', null) as { panels?: { id: string }[] };
       return Boolean(shown.panels?.some(panel => panel.id === 'git'));
     } catch (error) {
@@ -426,20 +427,23 @@ export default function activate(api: ModAPI) {
       return false;
     }
   };
-  const start = () => {
-    api.host.tryCall('workspace.watch', { paths: ['.'], key: 'omd_git', debounce_ms: 300, git: true });
+  const start = (fresh: boolean) => {
+    const watch = api.host.tryCall('workspace.watch', { paths: ['.'], key: 'omd_git', debounce_ms: 300, git: true });
+    const id = watch.ok ? watch.value.watch_id : undefined;
     changed(state => {
+      const kept = !fresh && state.placed && id !== undefined && state.watch === id;
+      state.watch = id;
       state.placed = place();
-      if (state.placed) repo(state, cwd(), true);
+      if (state.placed && !kept) repo(state, cwd(), true);
     });
   };
   const reload = () => changed(state => {
     if (!state.placed) state.placed = place();
     if (state.placed) repo(state, cwd(), true);
   });
-  api.on('start', start);
-  api.on('resume', start);
-  api.on('mods_changed', start);
+  api.on('start', () => start(true));
+  api.on('resume', () => start(true));
+  api.on('mods_changed', () => start(false));
   api.on('turn_end', reload);
   api.on('thread_settings', ({ cwd: dir }) => {
     if (dir.before !== dir.after) reload();
@@ -477,11 +481,13 @@ export default function activate(api: ModAPI) {
       if (op !== 'key') return `Git panel: ${r.head.branch || 'HEAD (detached)'} in ${r.top}, ${r.files.length} changed. Open it from the workspace dock (/workspace); ? there lists its keys. Usage: /git refresh`;
       const action = actions(r)[key];
       if (!action) return null;
+      const before = fingerprint(r);
       const notice = action[1]();
       r.notice = notice && cut(summary(notice), NOTICE_BYTES);
       if (wrote) {
         refresh(r);
-        r.echo = Date.now();
+        if (fingerprint(r) !== before) r.echo = Date.now();
+        else delete r.echo;
       }
       return null;
     });

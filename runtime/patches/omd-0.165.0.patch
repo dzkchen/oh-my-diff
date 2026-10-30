@@ -88091,10 +88091,10 @@ index 0000000000000000000000000000000000000000..4d6805c78213dc7e4ba05f798593fb21
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..75f91dda27833fb5abe62759b1e3e64151a6d461
+index 0000000000000000000000000000000000000000..15d8a2cbb1eb62f7cf7989efbc59eeba1d2325e1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch.rs
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,296 @@
 +use codex_file_watcher::DebouncedWatchReceiver;
 +use codex_file_watcher::FileWatcher;
 +use codex_file_watcher::WatchPath;
@@ -88156,7 +88156,15 @@ index 0000000000000000000000000000000000000000..75f91dda27833fb5abe62759b1e3e641
 +        .canonicalize()
 +        .ok()?;
 +    let Ok(common) = std::fs::read_to_string(git.join("commondir")) else {
-+        return (git.join("HEAD").is_file()
++        let submodule = git.ancestors().any(|dir| {
++            dir.ends_with(".git/modules")
++                && dir
++                    .parent()
++                    .and_then(Path::parent)
++                    .is_some_and(|owner| top.starts_with(owner))
++        });
++        return (submodule
++            && git.join("HEAD").is_file()
 +            && git.join("refs").is_dir()
 +            && git.join("objects").is_dir())
 +        .then(|| (git.clone(), git));
@@ -88385,10 +88393,10 @@ index 0000000000000000000000000000000000000000..75f91dda27833fb5abe62759b1e3e641
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4bf5b18acf5f0fa636a4a8de6d6e454b621b2b47
+index 0000000000000000000000000000000000000000..59b432368ba07fac7a3f17616b3df06c77315291
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,472 @@
+@@ -0,0 +1,489 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -88810,6 +88818,23 @@ index 0000000000000000000000000000000000000000..4bf5b18acf5f0fa636a4a8de6d6e454b
 +            .to_string(),
 +        "watch_git_unavailable"
 +    );
++
++    for other in [base.join("private/.git"), base.join("elsewhere/.git/modules/sub")] {
++        for path in [other.join("refs/heads"), other.join("objects")] {
++            std::fs::create_dir_all(path).unwrap();
++        }
++        std::fs::write(other.join("HEAD"), "ref: refs/heads/main\n").unwrap();
++        std::fs::write(sub.join(".git"), format!("gitdir: {}\n", other.display())).unwrap();
++        let (sink, _rx) = channel_sink();
++        assert_eq!(
++            watches
++                .watch("o", "sha", &[".".to_owned()], true, true, None, None, sink)
++                .unwrap_err()
++                .to_string(),
++            "watch_git_unavailable",
++            "{other:?}"
++        );
++    }
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -111342,10 +111367,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5bfde6bdd498545b4dd22b38ac89974c8e097ede
+index 0000000000000000000000000000000000000000..8b4b2ba4f50b8f6fe42cbe82db4f02bb47c4fb66
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6917 @@
+@@ -0,0 +1,6946 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -112226,25 +112251,61 @@ index 0000000000000000000000000000000000000000..5bfde6bdd498545b4dd22b38ac89974c
 +/// How often a waiting `concurrently` checks `active`.
 +const CANCEL_POLL: Duration = Duration::from_millis(10);
 +
-+/// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
-+/// A `terminal` payload's `client.sites` keeps only the receiving mod's own `owner/name` sites; `None` when it has none to filter.
-+fn own_sites(payload: &Value, id: &str) -> Option<Value> {
-+    let sites = payload.get("client")?.get("sites")?.as_object()?;
-+    let own: serde_json::Map<String, Value> = sites
-+        .iter()
-+        .filter(|(name, _)| name.split_once('/').is_some_and(|(owner, _)| owner == id))
-+        .map(|(name, area)| (name.clone(), area.clone()))
-+        .collect();
-+    let mut payload = payload.clone();
-+    let client = payload.get_mut("client")?.as_object_mut()?;
-+    if own.is_empty() {
-+        client.remove("sites");
-+    } else {
-+        client.insert("sites".to_owned(), Value::Object(own));
-+    }
-+    Some(payload)
++/// A `terminal` payload split once per frame into what every mod sees and `client.sites`, of which each mod sees only its own `owner/name` entries.
++struct TerminalPayload {
++    shared: Value,
++    hash: String,
++    sites: Option<serde_json::Map<String, Value>>,
 +}
 +
++impl TerminalPayload {
++    fn new(mut shared: Value) -> Self {
++        let sites = shared
++            .get_mut("client")
++            .and_then(Value::as_object_mut)
++            .filter(|client| client.get("sites").is_some_and(Value::is_object))
++            .and_then(|client| client.remove("sites"))
++            .and_then(|sites| match sites {
++                Value::Object(sites) => Some(sites),
++                _ => None,
++            });
++        let hash = digest(shared.to_string().as_bytes());
++        Self {
++            shared,
++            hash,
++            sites,
++        }
++    }
++
++    fn own(&self, id: &str) -> serde_json::Map<String, Value> {
++        self.sites
++            .iter()
++            .flatten()
++            .filter(|(name, _)| name.split_once('/').is_some_and(|(owner, _)| owner == id))
++            .map(|(name, area)| (name.clone(), area.clone()))
++            .collect()
++    }
++
++    fn key(&self, own: &serde_json::Map<String, Value>) -> String {
++        if own.is_empty() {
++            return self.hash.clone();
++        }
++        let sites = serde_json::to_string(own).unwrap_or_default();
++        format!("{}:{}", self.hash, digest(sites.as_bytes()))
++    }
++
++    fn payload(&self, own: serde_json::Map<String, Value>) -> Value {
++        let mut payload = self.shared.clone();
++        if !own.is_empty()
++            && let Some(client) = payload.get_mut("client").and_then(Value::as_object_mut)
++        {
++            client.insert("sites".to_owned(), Value::Object(own));
++        }
++        payload
++    }
++}
++
++/// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
 +fn concurrently<T: Send, R: Send>(
 +    items: Vec<T>,
 +    active: &dyn Fn() -> bool,
@@ -117419,19 +117480,15 @@ index 0000000000000000000000000000000000000000..5bfde6bdd498545b4dd22b38ac89974c
 +
 +    pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
 +        let thread = state_thread(&payload);
-+        let payload_hash = digest(payload.to_string().as_bytes());
++        let payload = TerminalPayload::new(payload);
 +        let generation = self.generation;
 +        let mut results = Vec::new();
 +        let mut stale = Vec::new();
 +        for id in self.event_ids("terminal") {
-+            let own = own_sites(&payload, &id);
-+            let hash = own.as_ref().map_or_else(
-+                || payload_hash.clone(),
-+                |own| digest(own.to_string().as_bytes()),
-+            );
++            let own = payload.own(&id);
 +            let key = self
 +                .terminal_state_key(&id, thread.as_deref())
-+                .map(|stamp| format!("{stamp}:{hash}"));
++                .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
 +            // A handler that read the clock is rerun once its result is a second old.
 +            if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
 +                && key == cached
@@ -117458,7 +117515,7 @@ index 0000000000000000000000000000000000000000..5bfde6bdd498545b4dd22b38ac89974c
 +                            &invocation.loaded,
 +                            "terminal",
 +                            "",
-+                            own.unwrap_or_else(|| payload.clone()),
++                            payload.payload(own),
 +                            &[],
 +                            active,
 +                            &mut |call| {
@@ -117487,7 +117544,7 @@ index 0000000000000000000000000000000000000000..5bfde6bdd498545b4dd22b38ac89974c
 +                                generation,
 +                                "terminal",
 +                                "",
-+                                own_sites(payload, &id).unwrap_or_else(|| payload.clone()),
++                                payload.payload(payload.own(&id)),
 +                                &active,
 +                            ),
 +                        result => result,
@@ -117515,7 +117572,7 @@ index 0000000000000000000000000000000000000000..5bfde6bdd498545b4dd22b38ac89974c
 +                )
 +            })
 +            .collect();
-+        let origin = payload["event"].as_str().unwrap_or_default().to_owned();
++        let origin = payload.shared["event"].as_str().unwrap_or_default().to_owned();
 +        self.compose_terminal(results, &origin, None)
 +    }
 +
@@ -117561,11 +117618,8 @@ index 0000000000000000000000000000000000000000..5bfde6bdd498545b4dd22b38ac89974c
 +        self.renders.remove(id);
 +        // A command's result stands in for the `terminal` handler for a second, like a clock read.
 +        if matched && let Some(stamp) = stamp {
-+            let own = own_sites(payload, id);
-+            let key = format!(
-+                "{stamp}:{}",
-+                digest(own.as_ref().unwrap_or(payload).to_string().as_bytes())
-+            );
++            let payload = TerminalPayload::new(payload.clone());
++            let key = format!("{stamp}:{}", payload.key(&payload.own(id)));
 +            self.renders
 +                .insert(id.to_owned(), (key, patch, Some(Instant::now())));
 +        }

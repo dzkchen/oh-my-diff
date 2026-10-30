@@ -26,6 +26,7 @@ function run(event, payload, { state = null, name, world = {} } = {}) {
       const argv = args.argv.slice(args.argv.indexOf('color.ui=false') + 1);
       const ok = (stdout = '') => ({ exit_code: 0, stdout, stderr: '' });
       const failed = stderr => ({ exit_code: 1, stdout: '', stderr });
+      if (argv[0] !== '--no-optional-locks' && world.after) world.status = world.after;
       if (argv.includes('grep')) return world.rebasing ? ok('rebase-merge/head-name\n') : world.op ? ok(`${world.op}\n`) : failed('');
       if (argv[1] === 'status') return ok(world.status ?? STATUS);
       if (argv[1] === 'diff') return ok(argv.includes('--cached') ? '' : world.diff ?? DIFF);
@@ -41,7 +42,7 @@ function run(event, payload, { state = null, name, world = {} } = {}) {
       return ok();
     }
     if (operation === 'mods.service') return args.method === 'panels' ? { panels: [{ id: 'git' }] } : { registered: 'git' };
-    if (operation === 'workspace.watch') return { watch_id: 'w1' };
+    if (operation === 'workspace.watch') return { watch_id: world.watch ?? 'w1' };
     if (operation === 'session.info') return { thread_id: 't1', cwd: world.cwd ?? TOP, root: TOP };
     if (operation === 'terminal.prompt') return world.answer === undefined ? { status: 'declined' } : { status: 'accepted', value: world.answer };
     if (operation === 'terminal.pty') return args.action === 'start' ? { session: 'signin', running: true } : args.action === 'read' ? { text: world.exited ? 'Username: u\nfatal: Authentication failed\n' : '', running: !world.exited, exit_code: world.exited ? 128 : null } : { stopped: true };
@@ -256,14 +257,27 @@ test('a push that needs a password reruns in a terminal pane after asking, and R
   assert.ok(!key(state, 'P', { answer: '' }).calls.some(call => call.operation === 'terminal.pty'));
 });
 
-test('a watch event right after the panel’s own write is skipped once, and nothing refreshes while unplaced', () => {
-  const staged = key(started(), 'Space').state;
-  const echo = run('workspace_change', { repository: TOP, source: 'external', call_id: null, changes: [], status: 'observed' }, { state: staged });
+test('a watch event right after the panel’s own change is skipped once, a write that changed nothing skips none, and nothing refreshes while unplaced', () => {
+  const change = { repository: TOP, source: 'external', call_id: null, changes: [], status: 'observed' };
+  const staged = key(started(), 'Space', { after: STATUS.replace('1 .M N...', '1 M. N...') }).state;
+  const echo = run('workspace_change', change, { state: staged });
   assert.deepEqual(gits(echo.calls), []);
-  const next = run('workspace_change', { repository: TOP, source: 'external', call_id: null, changes: [], status: 'observed' }, { state: echo.state });
+  const next = run('workspace_change', change, { state: echo.state });
   assert.ok(gits(next.calls).some(argv => argv.includes('status')));
+  const unchanged = key(started(), 'c', { answer: 'nothing staged' }).state;
+  assert.ok(gits(run('workspace_change', change, { state: unchanged }).calls).some(argv => argv.includes('status')));
   const unplaced = run('workspace_change', { repository: TOP, source: 'tool', call_id: 'c', changes: [], status: 'observed' }, { state: { ...staged, placed: false } });
   assert.deepEqual(unplaced.calls, []);
+});
+
+test('mods_changed re-registers without reloading while the panel’s watch is kept, and reloads once it was replaced', () => {
+  const state = started();
+  const same = run('mods_changed', { active: ['omd_git', 'omd_workspace'] }, { state });
+  assert.ok(same.calls.some(call => call.operation === 'mods.service' && call.arguments.method === 'register'));
+  assert.deepEqual(gits(same.calls), []);
+  const renewed = run('mods_changed', { active: ['omd_git', 'omd_workspace'] }, { state, world: { watch: 'w2' } });
+  assert.ok(gits(renewed.calls).some(argv => argv.includes('status')));
+  assert.ok(gits(run('start', null, { state }).calls).some(argv => argv.includes('status')));
 });
 
 test('a large status and diff stay inside the 64 KiB view patch and the saved state stays small', () => {

@@ -192,8 +192,10 @@ test('a registered panel with tabs nests in the dock and every key and layout li
   assert.ok(stacked.key_contexts.length <= 8 && keysOf(stacked.key_contexts) <= 32);
 });
 
-test('a Git panel replaces the built-in Changes panel unless the panels setting lists it', () => {
-  const state = service('register', { id: 'git', title: 'Git', site: 'omd_git/main', order: 10 }, null).state;
+test('a panel registered to replace a built-in hides it unless the panels setting lists it', () => {
+  assert.deepEqual(service('panels', null, service('register', { id: 'git', title: 'Git', site: 'omd_git/main' }, null).state).value.panels.map(item => item.id), ['changes', 'terminal', 'git']);
+  assert.match(service('register', { id: 'git', title: 'Git', site: 'omd_git/main', replaces: 'snake' }, null).value.error, /^replaces must be a built-in panel/);
+  const state = service('register', { id: 'git', title: 'Git', site: 'omd_git/main', order: 10, replaces: 'changes' }, null).state;
   assert.deepEqual(service('panels', null, state).value.panels.map(item => item.id), ['terminal', 'git']);
   assert.deepEqual(draw(state).layout.children[1].tabs.map(tab => tab.title), ['1 Shell', '2 Git']);
   assert.deepEqual(draw(state, { settings: { panels: 'changes, git' } }).layout.children[1].tabs.map(tab => tab.title), ['1 Changes', '2 Git']);

@@ -7,9 +7,10 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 REVIEWED_IDENTIFIERS = {"claude", "anthropic", "lsp", "git"}
 HOST_WORDS = {"artifact", "auto", "budget", "cli", "code", "compact", "context", "continue", "cursor", "edit", "execution",
-              "files", "fix", "idle", "lines", "model", "mods", "output", "panel", "picker", "plan", "preview", "read", "reading",
+              "fix", "idle", "lines", "model", "mods", "output", "panel", "picker", "plan", "preview", "read", "reading",
               "removal", "source", "subagent", "sync", "theme", "tool", "update", "usage", "view", "workspace"}
 GENERIC_LITERALS = {
+    "files": "generic file-list field and variable name",
     "git": "Git executable used for tracked-path discovery",
     "github_pat_": "GitHub token prefix redacted from mod output",
     "profiles": "upstream Codex config profiles table",
@@ -203,6 +204,8 @@ def runner(root, vocabulary):
         text = path.read_text()
         for token in re.finditer(r"'([^'\n]*)'|\"([^\"\n]*)\"|\b([A-Za-z_][A-Za-z0-9_]*)\b", text):
             name = next(group for group in token.groups() if group is not None)
+            if name in GENERIC_LITERALS:
+                continue
             for identifier in feature(re.sub(r"([a-z])([A-Z])", r"\1_\2", name), vocabulary):
                 findings.append({"path": str(path.relative_to(root)), "line": text.count("\n", 0, token.start()) + 1,
                                  "surface": "runner", "name": name, "feature": identifier})

@@ -878,25 +878,61 @@ const MAX_WORKERS: usize = 8;
 /// How often a waiting `concurrently` checks `active`.
 const CANCEL_POLL: Duration = Duration::from_millis(10);
 
-/// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
-/// A `terminal` payload's `client.sites` keeps only the receiving mod's own `owner/name` sites; `None` when it has none to filter.
-fn own_sites(payload: &Value, id: &str) -> Option<Value> {
-    let sites = payload.get("client")?.get("sites")?.as_object()?;
-    let own: serde_json::Map<String, Value> = sites
-        .iter()
-        .filter(|(name, _)| name.split_once('/').is_some_and(|(owner, _)| owner == id))
-        .map(|(name, area)| (name.clone(), area.clone()))
-        .collect();
-    let mut payload = payload.clone();
-    let client = payload.get_mut("client")?.as_object_mut()?;
-    if own.is_empty() {
-        client.remove("sites");
-    } else {
-        client.insert("sites".to_owned(), Value::Object(own));
-    }
-    Some(payload)
+/// A `terminal` payload split once per frame into what every mod sees and `client.sites`, of which each mod sees only its own `owner/name` entries.
+struct TerminalPayload {
+    shared: Value,
+    hash: String,
+    sites: Option<serde_json::Map<String, Value>>,
 }
 
+impl TerminalPayload {
+    fn new(mut shared: Value) -> Self {
+        let sites = shared
+            .get_mut("client")
+            .and_then(Value::as_object_mut)
+            .filter(|client| client.get("sites").is_some_and(Value::is_object))
+            .and_then(|client| client.remove("sites"))
+            .and_then(|sites| match sites {
+                Value::Object(sites) => Some(sites),
+                _ => None,
+            });
+        let hash = digest(shared.to_string().as_bytes());
+        Self {
+            shared,
+            hash,
+            sites,
+        }
+    }
+
+    fn own(&self, id: &str) -> serde_json::Map<String, Value> {
+        self.sites
+            .iter()
+            .flatten()
+            .filter(|(name, _)| name.split_once('/').is_some_and(|(owner, _)| owner == id))
+            .map(|(name, area)| (name.clone(), area.clone()))
+            .collect()
+    }
+
+    fn key(&self, own: &serde_json::Map<String, Value>) -> String {
+        if own.is_empty() {
+            return self.hash.clone();
+        }
+        let sites = serde_json::to_string(own).unwrap_or_default();
+        format!("{}:{}", self.hash, digest(sites.as_bytes()))
+    }
+
+    fn payload(&self, own: serde_json::Map<String, Value>) -> Value {
+        let mut payload = self.shared.clone();
+        if !own.is_empty()
+            && let Some(client) = payload.get_mut("client").and_then(Value::as_object_mut)
+        {
+            client.insert("sites".to_owned(), Value::Object(own));
+        }
+        payload
+    }
+}
+
+/// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
 fn concurrently<T: Send, R: Send>(
     items: Vec<T>,
     active: &dyn Fn() -> bool,
@@ -6071,19 +6107,15 @@ impl ModHost {
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
         let thread = state_thread(&payload);
-        let payload_hash = digest(payload.to_string().as_bytes());
+        let payload = TerminalPayload::new(payload);
         let generation = self.generation;
         let mut results = Vec::new();
         let mut stale = Vec::new();
         for id in self.event_ids("terminal") {
-            let own = own_sites(&payload, &id);
-            let hash = own.as_ref().map_or_else(
-                || payload_hash.clone(),
-                |own| digest(own.to_string().as_bytes()),
-            );
+            let own = payload.own(&id);
             let key = self
                 .terminal_state_key(&id, thread.as_deref())
-                .map(|stamp| format!("{stamp}:{hash}"));
+                .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
             // A handler that read the clock is rerun once its result is a second old.
             if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
                 && key == cached
@@ -6110,7 +6142,7 @@ impl ModHost {
                             &invocation.loaded,
                             "terminal",
                             "",
-                            own.unwrap_or_else(|| payload.clone()),
+                            payload.payload(own),
                             &[],
                             active,
                             &mut |call| {
@@ -6139,7 +6171,7 @@ impl ModHost {
                                 generation,
                                 "terminal",
                                 "",
-                                own_sites(payload, &id).unwrap_or_else(|| payload.clone()),
+                                payload.payload(payload.own(&id)),
                                 &active,
                             ),
                         result => result,
@@ -6167,7 +6199,7 @@ impl ModHost {
                 )
             })
             .collect();
-        let origin = payload["event"].as_str().unwrap_or_default().to_owned();
+        let origin = payload.shared["event"].as_str().unwrap_or_default().to_owned();
         self.compose_terminal(results, &origin, None)
     }
 
@@ -6213,11 +6245,8 @@ impl ModHost {
         self.renders.remove(id);
         // A command's result stands in for the `terminal` handler for a second, like a clock read.
         if matched && let Some(stamp) = stamp {
-            let own = own_sites(payload, id);
-            let key = format!(
-                "{stamp}:{}",
-                digest(own.as_ref().unwrap_or(payload).to_string().as_bytes())
-            );
+            let payload = TerminalPayload::new(payload.clone());
+            let key = format!("{stamp}:{}", payload.key(&payload.own(id)));
             self.renders
                 .insert(id.to_owned(), (key, patch, Some(Instant::now())));
         }

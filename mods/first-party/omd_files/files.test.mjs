@@ -36,7 +36,7 @@ function run(event, payload, { state = null, name, world = {} } = {}) {
       return { files: Object.fromEntries(args.paths.map(path => [path, stat(path)])) };
     }
     if (operation === 'workspace.read') return { files: Object.fromEntries(args.paths.map(path => [path, files[path] === undefined ? null : { text: files[path], sha256: 'x' }])) };
-    if (operation === 'workspace.watch') return { watch_id: 'w1' };
+    if (operation === 'workspace.watch') return { watch_id: world.watch ?? 'w1' };
     if (operation === 'mods.service') {
       if (args.name === 'omd.frecency') return { paths: ['src/lib/util.ts', 'docs/guide.md'] };
       return args.method === 'panels' ? { panels: [{ id: 'files' }] } : { registered: 'files' };
@@ -128,6 +128,15 @@ test('the thread state lists on start and resume, and draws and acts only for th
   assert.equal(text(columns(moved, { cwd: '/other' })[1]), '▶ other/\n  zeta.md');
   const other = key(state, 'j', { root: '/other', tree: OTHER, files: {} }).state;
   assert.equal(text(columns(other, { cwd: '/other' })[1]), '  other/\n▶ zeta.md');
+});
+
+test('mods_changed re-registers without listing again while the watch is kept, and lists once it was replaced', () => {
+  const state = started();
+  const lists = calls => calls.filter(call => call.operation === 'workspace.list');
+  const same = run('mods_changed', { active: ['omd_files', 'omd_workspace'] }, { state });
+  assert.ok(same.calls.some(call => call.operation === 'mods.service' && call.arguments.method === 'register'));
+  assert.deepEqual(lists(same.calls), []);
+  assert.ok(lists(run('mods_changed', { active: ['omd_files', 'omd_workspace'] }, { state, world: { watch: 'w2' } }).calls).length);
 });
 
 test('the listing refreshes at the end of a turn, and a deleted directory climbs to the nearest parent that exists', () => {

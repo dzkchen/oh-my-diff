@@ -419,6 +419,23 @@ async fn a_git_watch_follows_a_relative_gitfile_without_commondir() {
             .to_string(),
         "watch_git_unavailable"
     );
+
+    for other in [base.join("private/.git"), base.join("elsewhere/.git/modules/sub")] {
+        for path in [other.join("refs/heads"), other.join("objects")] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        std::fs::write(other.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(sub.join(".git"), format!("gitdir: {}\n", other.display())).unwrap();
+        let (sink, _rx) = channel_sink();
+        assert_eq!(
+            watches
+                .watch("o", "sha", &[".".to_owned()], true, true, None, None, sink)
+                .unwrap_err()
+                .to_string(),
+            "watch_git_unavailable",
+            "{other:?}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

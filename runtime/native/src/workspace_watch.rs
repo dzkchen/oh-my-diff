@@ -59,7 +59,15 @@ fn git_dirs(root: &Path) -> Option<(PathBuf, PathBuf)> {
         .canonicalize()
         .ok()?;
     let Ok(common) = std::fs::read_to_string(git.join("commondir")) else {
-        return (git.join("HEAD").is_file()
+        let submodule = git.ancestors().any(|dir| {
+            dir.ends_with(".git/modules")
+                && dir
+                    .parent()
+                    .and_then(Path::parent)
+                    .is_some_and(|owner| top.starts_with(owner))
+        });
+        return (submodule
+            && git.join("HEAD").is_file()
             && git.join("refs").is_dir()
             && git.join("objects").is_dir())
         .then(|| (git.clone(), git));
