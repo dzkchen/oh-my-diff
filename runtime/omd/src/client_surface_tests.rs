@@ -507,6 +507,9 @@ fn remote_actions_cannot_cause_terminal_only_operations() {
         );
     }
     assert!(!needs_terminal("terminal.pty", &json!({"action": "write"})));
+    assert!(awaits_user("terminal.pty", &json!({"action": "start"})));
+    assert!(awaits_user("terminal.open", &json!({"path": "a.rs"})));
+    assert!(!awaits_user("terminal.pty", &json!({"action": "write"})));
 }
 
 #[test]

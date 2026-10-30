@@ -641,6 +641,8 @@ pub enum ModComponent {
         session: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         height: Option<u16>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Image {
         id: String,
@@ -1742,6 +1744,7 @@ impl ModComponent {
                 label,
                 session,
                 height,
+                ..
             } => {
                 identified(id, label, ids)
                     && visible(session, 64)

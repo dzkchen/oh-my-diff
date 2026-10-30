@@ -404,6 +404,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_focus_v1",
     "terminal_layout_title_v1",
     "terminal_raster_packed_v1",
+    "terminal_pty_v2",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",

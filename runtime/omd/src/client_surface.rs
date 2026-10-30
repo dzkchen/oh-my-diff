@@ -106,6 +106,8 @@ pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
             "terminal.selection" | "terminal.copy" | "terminal.panel"
         ))
         || operation == "terminal.prompt"
+        || operation == "terminal.open"
+        || (operation == "terminal.pty" && arguments["action"] == "start")
         || (operation == "app.request"
             && arguments["method"]
                 .as_str()

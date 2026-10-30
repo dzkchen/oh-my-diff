@@ -32313,7 +32313,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd0d541c54 100644
+index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..9003cc02898288db0b577653517400d1c707c3ab 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -32515,7 +32515,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1247,33 +1380,48 @@ impl App {
+@@ -1247,33 +1380,50 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -32561,7 +32561,9 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
 +                crate::mod_ui::render(area, chat_area, frame.buffer, &mod_snapshot);
 +                crate::mod_ui::render_help(area, &mod_snapshot, frame.buffer);
 +                self.chat_widget.note_rendered_width(chat_area.width);
-+                if let Some((x, y)) = chat_widget.cursor_pos(chat_area) {
++                if !crate::mod_ui::holds_keys()
++                    && let Some((x, y)) = chat_widget.cursor_pos(chat_area)
++                {
 +                    frame.set_cursor_style(chat_widget.cursor_style(chat_area));
                      frame.set_cursor_position((x, y));
                  }
@@ -32571,7 +32573,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8c338bd593bb435ce8ba46105b46d3dd
              Ok(rendered_area)
          })
      }
-@@ -1283,6 +1431,7 @@ impl App {
+@@ -1283,6 +1433,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -33027,7 +33029,7 @@ index 1d328eae53536d0899756dde97a2c23329771e76..bc18b805b620cb9450de010ffc823587
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 6687d053b4b506d5a7a36e88dc88d86914189b34..9a6b56c689734ee56934a572d6a7aa8ab17fbda8 100644
+index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8eef56415 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -23,6 +23,9 @@ use codex_app_server_protocol::ThreadGoalStatus;
@@ -33048,7 +33050,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9a6b56c689734ee56934a572d6a7aa8a
                      | AppEvent::StartSide { .. }
                      | AppEvent::ForkCurrentSession { .. }
                      | AppEvent::StartManagedWorktree {
-@@ -447,6 +451,129 @@ impl App {
+@@ -447,6 +451,135 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
@@ -33175,10 +33177,16 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9a6b56c689734ee56934a572d6a7aa8a
 +                self.handle_mod_surface_confirmed(tui, app_server, id, approved)
 +                    .await;
 +            }
++            AppEvent::ModPtyClipboard {
++                binding,
++                session,
++                text,
++                decision,
++            } => self.handle_mod_pty_clipboard(tui, binding, session, text, decision),
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -794,7 +921,10 @@ impl App {
+@@ -794,7 +927,10 @@ impl App {
                          return Ok(AppRunControl::Continue);
                      }
                  };
@@ -33190,7 +33198,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9a6b56c689734ee56934a572d6a7aa8a
                      Ok(reverted) => reverted,
                      Err(err) => {
                      // Validation and unsupported-method errors leave history unchanged. Other
-@@ -887,6 +1017,10 @@ impl App {
+@@ -887,6 +1023,10 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -33201,7 +33209,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9a6b56c689734ee56934a572d6a7aa8a
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -914,6 +1048,14 @@ impl App {
+@@ -914,6 +1054,14 @@ impl App {
              }
              AppEvent::InsertHistoryCell(cell) => {
                  self.insert_history_cell(tui, cell);
@@ -33216,7 +33224,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9a6b56c689734ee56934a572d6a7aa8a
              }
              AppEvent::TurnTipReady { thread_id, turn_id } => {
                  self.turn_tips.ready(thread_id, &turn_id, self.transcript_cells.last());
-@@ -1760,8 +1902,18 @@ impl App {
+@@ -1760,8 +1908,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -33235,7 +33243,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9a6b56c689734ee56934a572d6a7aa8a
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -2562,16 +2714,25 @@ impl App {
+@@ -2562,16 +2720,25 @@ impl App {
              }
              AppEvent::PersistModelSelection { model, effort } => {
                  self.app_event_tx.send(AppEvent::FollowTranscript);
@@ -33271,7 +33279,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9a6b56c689734ee56934a572d6a7aa8a
                      Ok(()) => {
                          let effort_label = effort
                              .as_ref()
-@@ -3116,6 +3277,14 @@ impl App {
+@@ -3116,6 +3283,14 @@ impl App {
                  self.select_agent_thread(tui, app_server, thread_id)
                      .await?;
              }
@@ -33448,7 +33456,7 @@ index 7b53366557dcf7084b4b23501ad7e0611f512009..b935f13d41cf38f163ffdc1fbb97b49b
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39a3d70f20 100644
+index 7c43e1799b268545467d9eb19586e2f9fd55cb19..4b470b170e6237d0b24240ca2bbbd9d16112931e 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -106,8 +106,9 @@ impl App {
@@ -33656,7 +33664,7 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -342,21 +342,28 @@ impl App {
+@@ -342,22 +342,31 @@ impl App {
                  .rendered_selection
                  .borrow_mut()
                  .render(frame.buffer);
@@ -33688,11 +33696,15 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39
                  } else {
                      (&bottom, bottom_area)
                  };
+-            rendered_cursor = foreground.cursor_pos(foreground_area);
 +            crate::mod_ui::render_help(screen, &mod_snapshot, frame.buffer);
-             rendered_cursor = foreground.cursor_pos(foreground_area);
++            rendered_cursor = (dialog.is_some() || !crate::mod_ui::holds_keys())
++                .then(|| foreground.cursor_pos(foreground_area))
++                .flatten();
              if let Some(position) = rendered_cursor {
                  frame.set_cursor_style(foreground.cursor_style(foreground_area));
-@@ -365,12 +372,14 @@ impl App {
+                 frame.set_cursor_position(position);
+@@ -365,12 +374,14 @@ impl App {
              if chat_widget.no_modal_or_popup_active() {
                  frame.transcript_images = view.image_placements();
              }
@@ -35197,7 +35209,7 @@ index fb8babd3d195d18a802ccae87afaafb50041f59f..ce262bbb8e78ae7925106b69f68abe55
                              lines.activity
                          })
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index e2b86c9c1ef01564d7bb72dcdd8e597569140457..5b97fa89ac4309bf3af0a23dce18e5f231dfe1c6 100644
+index e2b86c9c1ef01564d7bb72dcdd8e597569140457..140d4a689125c8657ab73d6b587e4e48e576552f 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -416,6 +416,10 @@ pub(crate) enum AppEvent {
@@ -35211,7 +35223,7 @@ index e2b86c9c1ef01564d7bb72dcdd8e597569140457..5b97fa89ac4309bf3af0a23dce18e5f2
 
      /// Fork the current thread into a transient side conversation.
      StartSide {
-@@ -515,6 +519,54 @@ pub(crate) enum AppEvent {
+@@ -515,6 +519,61 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -35263,10 +35275,17 @@ index e2b86c9c1ef01564d7bb72dcdd8e597569140457..5b97fa89ac4309bf3af0a23dce18e5f2
 +        id: u64,
 +        approved: bool,
 +    },
++    /// A mod terminal's program asked to copy text; `decision` carries the user's answer to the one prompt per pane.
++    ModPtyClipboard {
++        binding: crate::mod_pty::Binding,
++        session: String,
++        text: String,
++        decision: Option<bool>,
++    },
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -666,6 +718,10 @@ pub(crate) enum AppEvent {
+@@ -666,6 +725,10 @@ pub(crate) enum AppEvent {
          nth_user_message: usize,
      },
 
@@ -35277,7 +35296,7 @@ index e2b86c9c1ef01564d7bb72dcdd8e597569140457..5b97fa89ac4309bf3af0a23dce18e5f2
      /// Request to exit the application.
      ///
      /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
-@@ -712,6 +768,14 @@ pub(crate) enum AppEvent {
+@@ -712,6 +775,14 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -98295,10 +98314,10 @@ index 0000000000000000000000000000000000000000..333060130f2fd47f9b6dd447e77affa8
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9c1d1b0dde36891523a877c7db5219af26e870d7
+index 0000000000000000000000000000000000000000..5411012990ab97aaea4ed893796edb432cddaecf
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1613 @@
+@@ -0,0 +1,1615 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -98407,6 +98426,8 @@ index 0000000000000000000000000000000000000000..9c1d1b0dde36891523a877c7db5219af
 +            "terminal.selection" | "terminal.copy" | "terminal.panel"
 +        ))
 +        || operation == "terminal.prompt"
++        || operation == "terminal.open"
++        || (operation == "terminal.pty" && arguments["action"] == "start")
 +        || (operation == "app.request"
 +            && arguments["method"]
 +                .as_str()
@@ -99914,10 +99935,10 @@ index 0000000000000000000000000000000000000000..9c1d1b0dde36891523a877c7db5219af
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f49e17b382d90a7ce2b3d24f7e0ad5e2c8aceb29
+index 0000000000000000000000000000000000000000..918ab1b8c34fdad4533cbf3c6f3d76b431750150
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,723 @@
+@@ -0,0 +1,726 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -100427,6 +100448,9 @@ index 0000000000000000000000000000000000000000..f49e17b382d90a7ce2b3d24f7e0ad5e2
 +        );
 +    }
 +    assert!(!needs_terminal("terminal.pty", &json!({"action": "write"})));
++    assert!(awaits_user("terminal.pty", &json!({"action": "start"})));
++    assert!(awaits_user("terminal.open", &json!({"path": "a.rs"})));
++    assert!(!awaits_user("terminal.pty", &json!({"action": "write"})));
 +}
 +
 +#[test]
@@ -107820,10 +107844,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759b9db13d4
+index 0000000000000000000000000000000000000000..958fe97288671ac2b7209a8d892a8ab766ee161e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6750 @@
+@@ -0,0 +1,6751 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -108230,6 +108254,7 @@ index 0000000000000000000000000000000000000000..23305e9aea03423c3f0c36435779f759
 +    "terminal_focus_v1",
 +    "terminal_layout_title_v1",
 +    "terminal_raster_packed_v1",
++    "terminal_pty_v2",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -118386,7 +118411,7 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..83e535fed2250e8307c6bacfeb0847b5ea4ebe29
+index 0000000000000000000000000000000000000000..541059eebe551415783003c67685153d05077662
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,226 @@
@@ -118511,7 +118536,7 @@ index 0000000000000000000000000000000000000000..83e535fed2250e8307c6bacfeb0847b5
 +    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/79"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/67"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
 +    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/81"},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/82"},{"$ref":"#/$defs/82"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/81"},"packed":{"type":"string"}},"required":["key","rect","packed"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
-+    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/57"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
++    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"},"files":{"$ref":"#/$defs/0"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/57"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"files":{"$ref":"#/$defs/0"}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
 +    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/85"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/94"}},
 +    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/85"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/94"}},
 +    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"omd_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
@@ -126316,10 +126341,10 @@ index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3ab44e547
+index 0000000000000000000000000000000000000000..1f7114bf56a287c93fbece4a9134ec74873d5056
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2476 @@
+@@ -0,0 +1,2479 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 24;
@@ -126963,6 +126988,8 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +        session: String,
 +        #[serde(default, skip_serializing_if = "Option::is_none")]
 +        height: Option<u16>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        autofocus: bool,
 +    },
 +    Image {
 +        id: String,
@@ -128064,6 +128091,7 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +                label,
 +                session,
 +                height,
++                ..
 +            } => {
 +                identified(id, label, ids)
 +                    && visible(session, 64)
@@ -153097,10 +153125,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a514f59cda7
+index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba35d2b97ca
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2244 @@
+@@ -0,0 +1,2404 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -153454,12 +153482,29 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +
 +type PackageControl = codex_omd::package_controls::PackageControl;
 +
++fn unrestricted_pty_program(
++    caller: &str,
++    arguments: &Value,
++) -> Result<(std::path::PathBuf, String, std::path::PathBuf), String> {
++    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
++    let store = paths.store.ok_or("mod store is not configured")?;
++    let access = crate::mod_runtime::os_access(caller).ok_or("capability_denied: os")?;
++    let argv = crate::mod_pty::argv(arguments)?;
++    let program = codex_omd::host::unrestricted_program(&access, &argv[0], &paths.repository)?;
++    let hash = codex_omd::host::program_hash(&program)?;
++    Ok((program, hash, store))
++}
++
 +enum Confirmed {
 +    Package(Box<PackageControl>),
 +    Route(Box<codex_omd::plan_routes::PlanRoute>),
 +    RouteWrite(Box<codex_omd::route_writes::RouteWrite>),
 +    Contract(Option<String>),
-+    Pty(crate::mod_pty::Binding),
++    Pty(
++        crate::mod_pty::Binding,
++        Option<(std::path::PathBuf, String)>,
++    ),
++    Pin(std::path::PathBuf, String),
 +}
 +
 +static CONFIRMED: std::sync::Mutex<std::collections::BTreeMap<u64, Confirmed>> =
@@ -153588,7 +153633,32 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +        "terminal.pty"
 +            if call.arguments["action"] == "start" && call.arguments["sandbox"] == "none" =>
 +        {
-+            None
++            let (program, hash, store) = unrestricted_pty_program(&call.caller, &call.arguments)?;
++            let previous = crate::mod_pty::pinned(&store, &call.caller, &program);
++            if previous.as_deref() == Some(hash.as_str()) {
++                None
++            } else {
++                let name = program
++                    .file_name()
++                    .map_or_else(|| program.to_string_lossy(), |name| name.to_string_lossy());
++                let history = match previous {
++                    Some(previous) => format!(
++                        "It changed since you allowed sha256 {}, which an update of the program does.",
++                        &previous[..previous.len().min(12)]
++                    ),
++                    None => "This is its first run for this mod.".to_owned(),
++                };
++                return Ok(Some((
++                    Some(format!("Run {name} for mod {}?", call.caller)),
++                    format!(
++                        "Mod {} wants to run {} (sha256 {}) in a terminal pane outside the sandbox, with your HOME and your user's permissions. {history} The mod can type into it and read its screen.",
++                        call.caller,
++                        program.display(),
++                        &hash[..12]
++                    ),
++                    Some(Confirmed::Pin(program, hash)),
++                )));
++            }
 +        }
 +        "terminal.pty" if call.arguments["action"] == "start" => {
 +            Some(crate::mod_pty::start_prompt(&call.caller, &call.arguments)?)
@@ -153997,7 +154067,15 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +        &self,
 +        caller: &str,
 +        arguments: &Value,
-+    ) -> Result<(std::process::Command, std::path::PathBuf), String> {
++        pinned: Option<&str>,
++    ) -> Result<
++        (
++            std::process::Command,
++            std::path::PathBuf,
++            Option<std::path::PathBuf>,
++        ),
++        String,
++    > {
 +        let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
 +        if arguments["sandbox"] == "none" {
 +            let access = crate::mod_runtime::os_access(caller).ok_or("capability_denied: os")?;
@@ -154009,18 +154087,24 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +                .join(arguments["cwd"].as_str().unwrap_or("."))
 +                .canonicalize()
 +                .map_err(|_| "pty_cwd_invalid")?;
-+            let argv = crate::mod_pty::argv(arguments)?;
++            let mut argv = crate::mod_pty::argv(arguments)?;
 +            let program =
 +                codex_omd::host::unrestricted_program(&access, &argv[0], &paths.repository)?;
-+            if let Some(expected) = arguments["sha256"].as_str()
-+                && codex_omd::host::program_hash(&program)? != expected
-+            {
++            let store = paths.store.clone().ok_or("mod store is not configured")?;
++            let approved = pinned
++                .map(str::to_owned)
++                .or_else(|| crate::mod_pty::pinned(&store, caller, &program))
++                .ok_or("pty_program_unpinned")?;
++            let hash = codex_omd::host::program_hash(&program)?;
++            if hash != approved || arguments["sha256"].as_str().is_some_and(|pin| pin != hash) {
 +                return Err("pty_program_changed".into());
 +            }
 +            let mut command = codex_omd::host::unrestricted_command(&access, &program, &[])?;
-+            command.args(&argv[1..]).current_dir(cwd);
 +            let home = std::env::var_os("HOME").ok_or("pty_home_unavailable")?;
-+            return Ok((command, home.into()));
++            let scratch = store.join("pty-scratch");
++            let dir = crate::mod_pty::prepare(&scratch, arguments, &mut argv)?;
++            command.args(&argv[1..]).current_dir(cwd);
++            return Ok((command, home.into(), dir));
 +        }
 +        if !arguments["sandbox"].is_null() {
 +            return Err("pty_sandbox_invalid".into());
@@ -154054,6 +154138,7 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +            return Err("pty_program_changed".into());
 +        }
 +        argv[0] = program.to_string_lossy().into_owned();
++        let dir = crate::mod_pty::prepare(&scratch, arguments, &mut argv)?;
 +        let mut command = crate::mod_runtime::sandboxed_command(
 +            &paths,
 +            &policy,
@@ -154061,9 +154146,14 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +            &scratch,
 +            arguments["write"] == true,
 +            loopback,
-+        )?;
++        )
++        .inspect_err(|_| {
++            if let Some(dir) = &dir {
++                let _ = std::fs::remove_dir_all(dir);
++            }
++        })?;
 +        command.current_dir(cwd);
-+        Ok((command, scratch))
++        Ok((command, scratch, dir))
 +    }
 +
 +    pub(super) async fn handle_mod_surface_call(
@@ -154127,15 +154217,19 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +            return;
 +        }
 +        match confirmation(&call) {
-+            Ok(Some((title, prompt, held))) => self.confirm_mod_surface_call(
-+                call,
-+                title,
-+                prompt,
-+                binding.map(Confirmed::Pty).or(held),
-+            ),
++            Ok(Some((title, prompt, held))) => {
++                let held = match (binding, held) {
++                    (Some(binding), Some(Confirmed::Pin(program, hash))) => {
++                        Some(Confirmed::Pty(binding, Some((program, hash))))
++                    }
++                    (Some(binding), _) => Some(Confirmed::Pty(binding, None)),
++                    (None, held) => held,
++                };
++                self.confirm_mod_surface_call(call, title, prompt, held)
++            }
 +            Ok(None) => {
-+                self.run_mod_surface_call(tui, app_server, call, binding.map(Confirmed::Pty))
-+                    .await
++                let held = binding.map(|binding| Confirmed::Pty(binding, None));
++                self.run_mod_surface_call(tui, app_server, call, held).await
 +            }
 +            Err(error) => {
 +                let _ = call.reply.send(Err(error));
@@ -154194,6 +154288,11 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +        held: Option<Confirmed>,
 +    ) {
 +        let caller = call.caller.clone();
++        let allow = if matches!(held, Some(Confirmed::Pty(_, Some(_)))) {
++            "Allow and remember"
++        } else {
++            "Allow once"
++        };
 +        let id = crate::mod_surface::hold(call);
 +        if let Some(held) = held {
 +            CONFIRMED.locked().insert(id, held);
@@ -154211,7 +154310,7 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +        self.chat_widget.show_selection_view(SelectionViewParams {
 +            title: Some(title.unwrap_or_else(|| format!("Confirm request from mod {caller}"))),
 +            subtitle: Some(prompt),
-+            items: vec![item("Allow once", true), item("Decline", false)],
++            items: vec![item(allow, true), item("Decline", false)],
 +            view_id: Some(crate::mod_ui::APPROVAL_VIEW_ID),
 +            on_cancel: Some(Box::new(
 +                move |tx: &crate::app_event_sender::AppEventSender| {
@@ -154241,6 +154340,72 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +            return;
 +        }
 +        self.run_mod_surface_call(tui, app_server, call, held).await;
++    }
++
++    pub(super) fn handle_mod_pty_clipboard(
++        &mut self,
++        tui: &mut tui::Tui,
++        binding: crate::mod_pty::Binding,
++        session: String,
++        text: String,
++        decision: Option<bool>,
++    ) {
++        match crate::mod_pty::clipboard(&binding, &session, decision) {
++            crate::mod_pty::Clipboard::Allowed => {
++                let _ = tui.clipboard.copy(
++                    text.into(),
++                    crate::clipboard_copy::CopyFormat::PlainText,
++                    tui.frame_requester(),
++                );
++            }
++            crate::mod_pty::Clipboard::Ask => {
++                let preview = text.chars().take(200).collect::<String>();
++                let item = |name: &str, allow: bool| {
++                    let (binding, session, text) = (binding.clone(), session.clone(), text.clone());
++                    SelectionItem {
++                        name: name.to_owned(),
++                        actions: vec![Box::new(
++                            move |tx: &crate::app_event_sender::AppEventSender| {
++                                tx.send(AppEvent::ModPtyClipboard {
++                                    binding: binding.clone(),
++                                    session: session.clone(),
++                                    text: text.clone(),
++                                    decision: Some(allow),
++                                });
++                            },
++                        )],
++                        dismiss_on_select: true,
++                        ..Default::default()
++                    }
++                };
++                let declined = (binding.clone(), session.clone());
++                self.chat_widget.show_selection_view(SelectionViewParams {
++                    title: Some(format!(
++                        "Let the terminal of mod {} copy to your clipboard?",
++                        binding.owner()
++                    )),
++                    subtitle: Some(format!(
++                        "The program in pane {session} wants to copy {} bytes:\n{}",
++                        text.len(),
++                        preview.escape_debug()
++                    )),
++                    items: vec![item("Allow for this pane", true), item("Decline", false)],
++                    view_id: Some(crate::mod_ui::APPROVAL_VIEW_ID),
++                    on_cancel: Some(Box::new(
++                        move |tx: &crate::app_event_sender::AppEventSender| {
++                            tx.send(AppEvent::ModPtyClipboard {
++                                binding: declined.0.clone(),
++                                session: declined.1.clone(),
++                                text: String::new(),
++                                decision: Some(false),
++                            });
++                        },
++                    )),
++                    ..SelectionViewParams::picker()
++                });
++            }
++            crate::mod_pty::Clipboard::Asking | crate::mod_pty::Clipboard::Declined => {}
++        }
 +    }
 +
 +    /// A native choice question: the user picks, types an "Other" answer or cancels; the caller only receives the answer.
@@ -154403,11 +154568,11 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +            call.reply_blit(Err(error));
 +            return;
 +        }
-+        let pty = match &held {
-+            Some(Confirmed::Pty(binding)) if crate::mod_pty::current(binding) => {
-+                Some(binding.clone())
++        let (pty, pin) = match &held {
++            Some(Confirmed::Pty(binding, pin)) if crate::mod_pty::current(binding) => {
++                (Some(binding.clone()), pin.clone())
 +            }
-+            _ => None,
++            _ => (None, None),
 +        };
 +        if call.operation == "terminal.pty" && pty.is_none() {
 +            let _ = call.reply.send(Err("pty_context_changed".into()));
@@ -154479,17 +154644,40 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +                let command = (call.context == codex_omd::app_routes::InvocationContext::User)
 +                    .then_some(())
 +                    .ok_or_else(|| "host_operation_user_only: terminal.pty start".to_owned())
-+                    .and_then(|()| self.mod_shell_command(&call.caller, &call.arguments));
++                    .and_then(|()| {
++                        self.mod_shell_command(
++                            &call.caller,
++                            &call.arguments,
++                            pin.as_ref().map(|(_, hash)| hash.as_str()),
++                        )
++                    });
 +                match (command, pty.as_ref()) {
-+                    (Ok((command, home)), Some(binding)) => {
-+                        crate::mod_pty::start(
++                    (Ok((command, home, dir)), Some(binding)) => {
++                        let started = crate::mod_pty::start(
 +                            binding,
 +                            &call.arguments,
 +                            command,
 +                            &home,
++                            dir,
 +                            tui.frame_requester(),
++                            self.app_event_tx.clone(),
 +                        )
-+                        .await
++                        .await;
++                        match (
++                            started,
++                            pin,
++                            crate::omd::mod_paths().and_then(|paths| paths.store),
++                        ) {
++                            (Ok(started), Some((program, hash)), Some(store)) => {
++                                if let Err(error) =
++                                    crate::mod_pty::pin(&store, &call.caller, &program, &hash)
++                                {
++                                    tracing::warn!("terminal program pin not saved: {error}");
++                                }
++                                Ok(started)
++                            }
++                            (started, _, _) => started,
++                        }
 +                    }
 +                    (Err(error), _) => Err(error),
 +                    (_, None) => Err("pty_context_changed".into()),
@@ -161913,14 +162101,19 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e951187974612
+index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d0831797a917
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,1484 @@
 +use crate::omd::LockExt;
++use crate::terminal_hyperlinks::TerminalHyperlink;
++use base64::Engine;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyModifiers;
++use crossterm::event::MouseButton;
++use crossterm::event::MouseEvent;
++use crossterm::event::MouseEventKind;
 +use ratatui::style::Color;
 +use ratatui::style::Modifier;
 +use ratatui::style::Style;
@@ -161929,21 +162122,189 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
++use std::collections::VecDeque;
++use std::io::Write;
++use std::os::unix::fs::OpenOptionsExt;
++use std::os::unix::fs::PermissionsExt;
 +use std::path::Path;
++use std::path::PathBuf;
 +use std::sync::Arc;
 +use std::sync::Mutex;
++use unicode_width::UnicodeWidthStr;
 +
 +const PANES: usize = 16;
 +const WRITE_BYTES: usize = 4096;
 +const SCROLLBACK: usize = 2000;
++const WHEEL_LINES: usize = 3;
++const FILES: usize = 4;
++const FILE_BYTES: usize = 16 * 1024;
++const RESULT_BYTES: usize = 64 * 1024;
++const LINKS: usize = 64;
++const NOTICE_BYTES: usize = 1024;
++const NOTICES_PER_SECOND: u32 = 10;
++const COPY_BYTES: usize = 64 * 1024;
++const NOTICES: usize = 32;
++const REPLY_BYTES: usize = 1024;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Clipboard {
++    Ask,
++    Asking,
++    Allowed,
++    Declined,
++}
++
++struct Link {
++    row: u16,
++    start: u16,
++    end: u16,
++    url: String,
++    text: String,
++}
++
++#[derive(Default)]
++struct Signals {
++    title: Option<String>,
++    bell: bool,
++    notices: Vec<String>,
++    copies: Vec<String>,
++    links: VecDeque<Link>,
++    open: Option<(u16, u16, String)>,
++    window: Option<(std::time::Instant, u32)>,
++    alternate: bool,
++    replies: Vec<u8>,
++}
++
++fn clean(bytes: &[u8], limit: usize) -> String {
++    let text = String::from_utf8_lossy(bytes)
++        .chars()
++        .filter(|c| !c.is_control())
++        .collect::<String>();
++    text[..text.floor_char_boundary(limit)].to_owned()
++}
++
++impl Signals {
++    fn close(&mut self, screen: &vt100::Screen) {
++        let Some((row, column, url)) = self.open.take() else {
++            return;
++        };
++        let (end_row, end_column) = screen.cursor_position();
++        let width = screen.size().1;
++        for line in row..=end_row.max(row) {
++            let start = if line == row { column } else { 0 };
++            let end = if line == end_row { end_column } else { width };
++            let text = screen.contents_between(line, start, line, end);
++            if end <= start || text.trim().is_empty() {
++                continue;
++            }
++            if self.links.len() >= LINKS {
++                self.links.pop_front();
++            }
++            self.links
++                .retain(|link| link.row != line || link.end <= start || link.start >= end);
++            self.links.push_back(Link {
++                row: line,
++                start,
++                end,
++                url: url.clone(),
++                text,
++            });
++        }
++    }
++
++    fn notice(&mut self, parts: &[&[u8]]) {
++        let now = std::time::Instant::now();
++        let window = match self.window {
++            Some((started, count)) if now.duration_since(started).as_secs() < 1 => (started, count),
++            _ => (now, 0),
++        };
++        if window.1 >= NOTICES_PER_SECOND || self.notices.len() >= NOTICES {
++            return;
++        }
++        self.window = Some((window.0, window.1 + 1));
++        self.notices.push(clean(&parts.join(&b';'), NOTICE_BYTES));
++    }
++}
++
++impl vt100::Callbacks for Signals {
++    fn audible_bell(&mut self, _: &mut vt100::Screen) {
++        self.bell = true;
++    }
++
++    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
++        self.title = Some(clean(title, 256));
++    }
++
++    fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, _: &[u8], data: &[u8]) {
++        if data.len() <= COPY_BYTES * 4 / 3 + 4
++            && let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data)
++            && let Ok(text) = String::from_utf8(bytes)
++        {
++            self.copies.push(text);
++        }
++    }
++
++    fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
++        match params {
++            [b"8", _, url @ ..] => {
++                self.close(screen);
++                let url = String::from_utf8_lossy(&url.join(&b';')).into_owned();
++                if let Some(url) = crate::terminal_hyperlinks::web_destination(&url) {
++                    let (row, column) = screen.cursor_position();
++                    self.open = Some((row, column, url));
++                }
++            }
++            [b"9", first, ..] if *first == b"4" => {}
++            [b"9", rest @ ..] if !rest.is_empty() => self.notice(rest),
++            [b"777", b"notify", rest @ ..] if !rest.is_empty() => self.notice(rest),
++            _ => {}
++        }
++    }
++
++    fn unhandled_csi(
++        &mut self,
++        screen: &mut vt100::Screen,
++        first: Option<u8>,
++        second: Option<u8>,
++        params: &[&[u16]],
++        c: char,
++    ) {
++        if first.is_some() || second.is_some() || self.replies.len() >= REPLY_BYTES {
++            return;
++        }
++        let reply = match (params, c) {
++            ([] | [[0]], 'c') => "\x1b[?62;22c".to_owned(),
++            ([[5]], 'n') => "\x1b[0n".to_owned(),
++            ([[6]], 'n') => {
++                let (row, column) = screen.cursor_position();
++                format!("\x1b[{};{}R", row + 1, column + 1)
++            }
++            _ => return,
++        };
++        self.replies.extend_from_slice(reply.as_bytes());
++    }
++}
 +
 +struct Pane {
 +    writer: tokio::sync::mpsc::Sender<Vec<u8>>,
 +    handle: codex_utils_pty::ProcessHandle,
-+    screen: Arc<Mutex<vt100::Parser>>,
++    screen: Arc<Mutex<vt100::Parser<Signals>>>,
 +    exit: Arc<Mutex<Option<i32>>>,
 +    size: (u16, u16),
 +    unrestricted: bool,
++    dir: Option<PathBuf>,
++    component: Option<String>,
++    reported: bool,
++    title: Option<String>,
++    clipboard: Clipboard,
++}
++
++impl Drop for Pane {
++    fn drop(&mut self) {
++        if let Some(dir) = &self.dir {
++            let _ = std::fs::remove_dir_all(dir);
++        }
++    }
 +}
 +
 +#[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -161959,6 +162320,12 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +pub(crate) struct Binding {
 +    owner: String,
 +    scope: Scope,
++}
++
++impl Binding {
++    pub(crate) fn owner(&self) -> &str {
++        &self.owner
++    }
 +}
 +
 +#[derive(Default)]
@@ -162146,15 +162513,180 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        }
 +    ))
 +}
++pub(crate) fn prepare(
++    scratch: &Path,
++    arguments: &Value,
++    argv: &mut [String],
++) -> Result<Option<PathBuf>, String> {
++    let files = match &arguments["files"] {
++        Value::Null => Vec::new(),
++        Value::Object(files) if files.len() <= FILES => files
++            .iter()
++            .map(|(name, text)| {
++                text.as_str()
++                    .filter(|text| valid_file(name) && text.len() <= FILE_BYTES)
++                    .map(|text| (name.clone(), text.to_owned()))
++            })
++            .collect::<Option<Vec<_>>>()
++            .ok_or("pty_files_invalid")?,
++        _ => return Err("pty_files_invalid".into()),
++    };
++    if files.is_empty() && !argv.iter().skip(1).any(|arg| arg.contains("{dir}")) {
++        return Ok(None);
++    }
++    static SWEPT: std::sync::Once = std::sync::Once::new();
++    SWEPT.call_once(|| sweep(&scratch.join("sessions")));
++    let unique = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_nanos();
++    let dir = scratch
++        .join("sessions")
++        .join(format!("{}-{unique}", std::process::id()));
++    let create = || -> std::io::Result<()> {
++        std::fs::create_dir_all(&dir)?;
++        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
++        for (name, text) in &files {
++            let mut file = std::fs::OpenOptions::new()
++                .write(true)
++                .create_new(true)
++                .mode(0o600)
++                .open(dir.join(name))?;
++            file.write_all(text.as_bytes())?;
++        }
++        Ok(())
++    };
++    if let Err(error) = create() {
++        let _ = std::fs::remove_dir_all(&dir);
++        return Err(format!("pty_files_invalid: {error}"));
++    }
++    let path = dir.to_string_lossy();
++    for arg in argv.iter_mut().skip(1) {
++        *arg = arg.replace("{dir}", &path);
++    }
++    Ok(Some(dir))
++}
++
++fn sweep(sessions: &Path) {
++    for entry in std::fs::read_dir(sessions).into_iter().flatten().flatten() {
++        let name = entry.file_name().to_string_lossy().into_owned();
++        let Some(pid) = name
++            .split('-')
++            .next()
++            .and_then(|pid| pid.parse::<libc::pid_t>().ok())
++        else {
++            continue;
++        };
++        // SAFETY: signal 0 only checks whether the process exists.
++        let gone = pid != std::process::id() as libc::pid_t
++            && unsafe { libc::kill(pid, 0) } != 0
++            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
++        if gone {
++            let _ = std::fs::remove_dir_all(entry.path());
++        }
++    }
++}
++
++fn valid_file(name: &str) -> bool {
++    (1..=64).contains(&name.len())
++        && name != "."
++        && name != ".."
++        && name
++            .bytes()
++            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
++}
++
++fn files(dir: Option<&Path>) -> Option<Value> {
++    let entries = std::fs::read_dir(dir?).ok()?;
++    let mut files = serde_json::Map::new();
++    let mut used = 0;
++    for entry in entries.flatten() {
++        let name = entry.file_name().to_string_lossy().into_owned();
++        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
++            continue;
++        };
++        if !valid_file(&name)
++            || !metadata.is_file()
++            || used + metadata.len() as usize > RESULT_BYTES
++        {
++            continue;
++        }
++        let mut bytes = Vec::new();
++        let read = std::fs::OpenOptions::new()
++            .read(true)
++            .custom_flags(libc::O_NOFOLLOW)
++            .open(entry.path())
++            .and_then(|file| {
++                std::io::Read::read_to_end(
++                    &mut std::io::Read::take(file, (RESULT_BYTES - used) as u64),
++                    &mut bytes,
++                )
++            });
++        if read.is_ok() {
++            used += bytes.len();
++            files.insert(
++                name,
++                Value::String(String::from_utf8_lossy(&bytes).into_owned()),
++            );
++        }
++    }
++    Some(Value::Object(files))
++}
++
++fn pins_path(store: &Path) -> PathBuf {
++    store.join("pty-pins.json")
++}
++
++pub(crate) fn pinned(store: &Path, owner: &str, program: &Path) -> Option<String> {
++    let pins: Value = serde_json::from_slice(&std::fs::read(pins_path(store)).ok()?).ok()?;
++    pins["pins"][owner][program.to_string_lossy().as_ref()]
++        .as_str()
++        .map(str::to_owned)
++}
++
++pub(crate) fn pin(store: &Path, owner: &str, program: &Path, hash: &str) -> Result<(), String> {
++    let path = pins_path(store);
++    let mut pins = std::fs::read(&path)
++        .ok()
++        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++        .filter(|pins| pins["pins"].is_object())
++        .unwrap_or_else(|| json!({"pins": {}}));
++    let owners = pins["pins"].as_object_mut().ok_or("pty_pins_invalid")?;
++    let programs = owners.entry(owner.to_owned()).or_insert_with(|| json!({}));
++    if !programs.is_object() {
++        *programs = json!({});
++    }
++    programs[program.to_string_lossy().as_ref()] = Value::String(hash.to_owned());
++    let temporary = path.with_extension("json.tmp");
++    std::fs::write(
++        &temporary,
++        serde_json::to_vec_pretty(&pins).map_err(|error| error.to_string())?,
++    )
++    .and_then(|()| std::fs::rename(&temporary, &path))
++    .map_err(|error| format!("pty_pin_failed: {error}"))
++}
 +
 +pub(crate) async fn start(
 +    binding: &Binding,
 +    arguments: &Value,
 +    command: std::process::Command,
 +    home: &Path,
++    dir: Option<PathBuf>,
 +    frames: crate::tui::FrameRequester,
++    events: crate::app_event_sender::AppEventSender,
 +) -> Result<Value, String> {
-+    let session = session_name(&arguments["session"])?;
++    let remove = |dir: &Option<PathBuf>| {
++        if let Some(dir) = dir {
++            let _ = std::fs::remove_dir_all(dir);
++        }
++    };
++    let session = match session_name(&arguments["session"]) {
++        Ok(session) => session,
++        Err(error) => {
++            remove(&dir);
++            return Err(error);
++        }
++    };
 +    let owner = &binding.owner;
 +    let key = (owner.clone(), session.clone());
 +    let limit = crate::omd::mod_paths()
@@ -162170,9 +162702,16 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +    };
 +    {
 +        let sessions = sessions();
-+        validate(&sessions, binding)?;
-+        if unavailable(&sessions) {
-+            return Err("pty_session_exists_or_limit".into());
++        let refused = validate(&sessions, binding).and_then(|()| {
++            if unavailable(&sessions) {
++                Err("pty_session_exists_or_limit".to_owned())
++            } else {
++                Ok(())
++            }
++        });
++        if let Err(error) = refused {
++            remove(&dir);
++            return Err(error);
 +        }
 +    }
 +    let program = command.get_program().to_string_lossy().into_owned();
@@ -162180,10 +162719,10 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        .get_args()
 +        .map(|arg| arg.to_string_lossy().into_owned())
 +        .collect::<Vec<_>>();
-+    let cwd = command
-+        .get_current_dir()
-+        .ok_or("pty_cwd_invalid")?
-+        .to_path_buf();
++    let Some(cwd) = command.get_current_dir().map(Path::to_path_buf) else {
++        remove(&dir);
++        return Err("pty_cwd_invalid".into());
++    };
 +    let mut environment = std::collections::HashMap::from([
 +        ("TERM".to_owned(), "xterm-256color".to_owned()),
 +        ("HOME".to_owned(), home.to_string_lossy().into_owned()),
@@ -162194,7 +162733,7 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        }
 +    }
 +    let size = codex_utils_pty::TerminalSize { rows: 24, cols: 80 };
-+    let spawned = codex_utils_pty::pty::spawn_process(
++    let spawned = match codex_utils_pty::pty::spawn_process(
 +        &program,
 +        &args,
 +        &cwd,
@@ -162204,32 +162743,74 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        codex_utils_pty::ChildFds::Attached(&[]),
 +    )
 +    .await
-+    .map_err(|error| format!("pty_start_failed: {error}"))?;
-+    let screen = Arc::new(Mutex::new(vt100::Parser::new(
-+        size.rows, size.cols, SCROLLBACK,
++    {
++        Ok(spawned) => spawned,
++        Err(error) => {
++            remove(&dir);
++            return Err(format!("pty_start_failed: {error}"));
++        }
++    };
++    let screen = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
++        size.rows,
++        size.cols,
++        SCROLLBACK,
++        Signals::default(),
 +    )));
 +    let exit = Arc::new(Mutex::new(None));
 +    let (mut output, exited) = (spawned.stdout_rx, spawned.exit_rx);
 +    let (reader, reader_frames) = (screen.clone(), frames.clone());
++    let copied = binding.clone();
++    let copied_session = session.clone();
++    let delivered = key.clone();
++    let replier = spawned.session.writer_sender();
 +    tokio::spawn(async move {
 +        while let Some(bytes) = output.recv().await {
-+            reader.locked().process(&bytes);
++            let (copies, replies) = {
++                let mut parser = reader.locked();
++                parser.process(&bytes);
++                let alternate = parser.screen().alternate_screen();
++                let signals = parser.callbacks_mut();
++                if signals.alternate != alternate {
++                    signals.alternate = alternate;
++                    signals.links.clear();
++                }
++                (
++                    std::mem::take(&mut signals.copies),
++                    std::mem::take(&mut signals.replies),
++                )
++            };
++            if !replies.is_empty() {
++                let _ = replier.try_send(replies);
++            }
++            deliver(&delivered);
++            for text in copies {
++                events.send(crate::app_event::AppEvent::ModPtyClipboard {
++                    binding: copied.clone(),
++                    session: copied_session.clone(),
++                    text,
++                    decision: None,
++                });
++            }
 +            reader_frames.schedule_frame();
 +        }
 +    });
 +    let status = exit.clone();
++    let exited_key = key.clone();
 +    tokio::spawn(async move {
 +        let code = exited.await.unwrap_or(-1);
 +        *status.locked() = Some(code);
++        deliver(&exited_key);
 +        frames.schedule_frame();
 +    });
 +    let mut sessions = sessions();
 +    if let Err(error) = validate(&sessions, binding) {
 +        spawned.session.terminate();
++        remove(&dir);
 +        return Err(error);
 +    }
 +    if unavailable(&sessions) {
 +        spawned.session.terminate();
++        remove(&dir);
 +        return Err("pty_session_exists_or_limit".into());
 +    }
 +    sessions.panes.insert(
@@ -162241,6 +162822,11 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +            exit,
 +            size: (size.rows, size.cols),
 +            unrestricted: arguments["sandbox"] == "none",
++            dir,
++            component: None,
++            reported: false,
++            title: None,
++            clipboard: Clipboard::Ask,
 +        },
 +    );
 +    Ok(json!({"session": session, "running": true}))
@@ -162265,7 +162851,12 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +            let pane = owned(&mut sessions, binding, &session)?;
 +            let text = pane.screen.locked().screen().contents();
 +            let exit_code = *pane.exit.locked();
-+            Ok(json!({"text": text, "running": exit_code.is_none(), "exit_code": exit_code}))
++            let mut result =
++                json!({"text": text, "running": exit_code.is_none(), "exit_code": exit_code});
++            if let Some(files) = files(pane.dir.as_deref()) {
++                result["files"] = files;
++            }
++            Ok(result)
 +        }
 +        Some("stop") => {
 +            owned(&mut sessions, binding, &session)?.handle.terminate();
@@ -162273,6 +162864,75 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +            Ok(json!({"stopped": true}))
 +        }
 +        _ => Err("pty_action_invalid".into()),
++    }
++}
++
++/// Terminal-to-owner signals since the last drain: title, bell, notifications and, once, the exit.
++fn drain(pane: &mut Pane, session: &str) -> Vec<Value> {
++    let Some(component) = pane.component.clone() else {
++        return Vec::new();
++    };
++    let mut events = Vec::new();
++    {
++        let mut parser = pane.screen.locked();
++        let signals = parser.callbacks_mut();
++        if let Some(title) = signals.title.take()
++            && pane.title.as_ref() != Some(&title)
++        {
++            pane.title = Some(title.clone());
++            events.push(json!({"kind": "title", "title": title}));
++        }
++        if std::mem::take(&mut signals.bell) {
++            events.push(json!({"kind": "bell"}));
++        }
++        for text in std::mem::take(&mut signals.notices) {
++            events.push(json!({"kind": "notify", "text": text}));
++        }
++    }
++    if !pane.reported
++        && let Some(code) = *pane.exit.locked()
++    {
++        pane.reported = true;
++        let mut exit = json!({"kind": "exit", "session": session, "exit_code": code});
++        if let Some(files) = files(pane.dir.as_deref()) {
++            exit["files"] = files;
++        }
++        events.push(exit);
++    }
++    for event in &mut events {
++        event["component"] = Value::String(component.clone());
++    }
++    events
++}
++
++fn deliver(key: &(String, String)) {
++    let events = sessions()
++        .panes
++        .get_mut(key)
++        .map(|pane| drain(pane, &key.1))
++        .unwrap_or_default();
++    for event in events {
++        crate::mod_surface::component_event(event);
++    }
++}
++
++/// Moves a pane's clipboard permission from `Ask` to `Asking` for the caller that will prompt.
++pub(crate) fn clipboard(binding: &Binding, session: &str, decision: Option<bool>) -> Clipboard {
++    let mut sessions = sessions();
++    let Ok(pane) = owned(&mut sessions, binding, session) else {
++        return Clipboard::Declined;
++    };
++    let state = pane.clipboard;
++    pane.clipboard = match (decision, state) {
++        (Some(true), _) => Clipboard::Allowed,
++        (Some(false), _) => Clipboard::Declined,
++        (None, Clipboard::Ask) => Clipboard::Asking,
++        (None, state) => state,
++    };
++    if decision.is_some() {
++        pane.clipboard
++    } else {
++        state
 +    }
 +}
 +
@@ -162288,33 +162948,52 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +pub(crate) fn rows(
 +    binding: Option<&Binding>,
 +    session: &str,
++    component: &str,
 +    width: u16,
 +    height: u16,
 +    prefix: &str,
-+) -> Vec<Line<'static>> {
++    focused: bool,
++) -> Vec<(Line<'static>, Vec<TerminalHyperlink>)> {
 +    let mut sessions = sessions();
 +    let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) else {
-+        return vec![Line::from(format!(
-+            "{prefix}[shell {session} is not running]"
-+        ))];
++        return vec![(
++            Line::from(format!("{prefix}[shell {session} is not running]")),
++            Vec::new(),
++        )];
 +    };
 +    let (rows, cols) = (height.max(2), width.max(10));
-+    let mut screen = pane.screen.locked();
++    if pane.component.as_deref() != Some(component) {
++        pane.component = Some(component.to_owned());
++        for event in drain(pane, session) {
++            crate::mod_surface::component_event(event);
++        }
++    }
++    let mut parser = pane.screen.locked();
 +    if pane.size != (rows, cols) {
 +        pane.size = (rows, cols);
-+        screen.screen_mut().set_size(rows, cols);
++        parser.screen_mut().set_size(rows, cols);
 +        let _ = pane
 +            .handle
 +            .resize(codex_utils_pty::TerminalSize { rows, cols });
 +    }
 +    let exited = *pane.exit.locked();
++    let screen = parser.screen();
++    let live = screen.scrollback() == 0;
++    let cursor = (focused && live && exited.is_none() && !screen.hide_cursor())
++        .then(|| screen.cursor_position())
++        .map(|(row, column)| (row, column.min(cols - 1)));
++    let offset = prefix.width();
++    let links = &parser.callbacks().links;
 +    let mut lines = (0..rows)
 +        .map(|row| {
 +            let mut spans = vec![Span::raw(prefix.to_owned())];
 +            for column in 0..cols {
-+                let Some(cell) = screen.screen().cell(row, column) else {
++                let Some(cell) = screen.cell(row, column) else {
 +                    continue;
 +                };
++                if cell.is_wide_continuation() {
++                    continue;
++                }
 +                let mut style = Style::default();
 +                if let Some(foreground) = color(cell.fgcolor()) {
 +                    style = style.fg(foreground);
@@ -162322,11 +163001,19 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +                if let Some(background) = color(cell.bgcolor()) {
 +                    style = style.bg(background);
 +                }
-+                if cell.bold() {
-+                    style = style.add_modifier(Modifier::BOLD);
-+                }
-+                if cell.inverse() {
-+                    style = style.add_modifier(Modifier::REVERSED);
++                for (on, modifier) in [
++                    (cell.bold(), Modifier::BOLD),
++                    (cell.dim(), Modifier::DIM),
++                    (cell.italic(), Modifier::ITALIC),
++                    (cell.underline(), Modifier::UNDERLINED),
++                    (
++                        cell.inverse() != (cursor == Some((row, column))),
++                        Modifier::REVERSED,
++                    ),
++                ] {
++                    if on {
++                        style = style.add_modifier(modifier);
++                    }
 +                }
 +                let text = if cell.has_contents() {
 +                    cell.contents().to_owned()
@@ -162335,38 +163022,216 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +                };
 +                spans.push(Span::styled(text, style));
 +            }
-+            Line::from(spans)
++            let row_links = links
++                .iter()
++                .filter(|link| {
++                    live && link.row == row
++                        && screen.contents_between(row, link.start, row, link.end) == link.text
++                })
++                .map(|link| {
++                    TerminalHyperlink::web(
++                        offset + usize::from(link.start)..offset + usize::from(link.end),
++                        link.url.clone(),
++                    )
++                })
++                .collect();
++            (Line::from(spans), row_links)
 +        })
 +        .collect::<Vec<_>>();
 +    if let Some(code) = exited {
-+        lines.push(Line::from(format!("{prefix}[shell exited with {code}]")));
++        lines.push((
++            Line::from(format!("{prefix}[shell exited with {code}]")),
++            Vec::new(),
++        ));
 +    }
 +    lines
 +}
 +
-+pub(crate) fn key(binding: Option<&Binding>, session: &str, key: KeyEvent) -> bool {
-+    let bytes = match (key.code, key.modifiers) {
-+        (KeyCode::Char(c), KeyModifiers::CONTROL) if c.is_ascii_alphabetic() => {
-+            vec![(c.to_ascii_lowercase() as u8) & 0x1f]
++fn key_bytes(key: KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
++    let (shift, alt, ctrl) = (
++        key.modifiers.contains(KeyModifiers::SHIFT),
++        key.modifiers.contains(KeyModifiers::ALT),
++        key.modifiers.contains(KeyModifiers::CONTROL),
++    );
++    let modifier = 1 + u8::from(shift) + 2 * u8::from(alt) + 4 * u8::from(ctrl);
++    let cursor = |end: char| {
++        if modifier > 1 {
++            format!("\x1b[1;{modifier}{end}")
++        } else if application_cursor {
++            format!("\x1bO{end}")
++        } else {
++            format!("\x1b[{end}")
 +        }
-+        (KeyCode::Char(c), _) => c.to_string().into_bytes(),
-+        (KeyCode::Enter, _) => vec![b'\r'],
-+        (KeyCode::Backspace, _) => vec![0x7f],
-+        (KeyCode::Tab, _) => vec![b'\t'],
-+        (KeyCode::Esc, _) => vec![0x1b],
-+        (KeyCode::Up, _) => b"\x1b[A".to_vec(),
-+        (KeyCode::Down, _) => b"\x1b[B".to_vec(),
-+        (KeyCode::Right, _) => b"\x1b[C".to_vec(),
-+        (KeyCode::Left, _) => b"\x1b[D".to_vec(),
-+        (KeyCode::Home, _) => b"\x1b[H".to_vec(),
-+        (KeyCode::End, _) => b"\x1b[F".to_vec(),
-+        (KeyCode::Delete, _) => b"\x1b[3~".to_vec(),
-+        _ => return false,
 +    };
++    let tilde = |number: u8| {
++        if modifier > 1 {
++            format!("\x1b[{number};{modifier}~")
++        } else {
++            format!("\x1b[{number}~")
++        }
++    };
++    let escaped = |bytes: Vec<u8>| {
++        if alt {
++            [vec![0x1b], bytes].concat()
++        } else {
++            bytes
++        }
++    };
++    let text = match key.code {
++        KeyCode::Up => cursor('A'),
++        KeyCode::Down => cursor('B'),
++        KeyCode::Right => cursor('C'),
++        KeyCode::Left => cursor('D'),
++        KeyCode::Home => cursor('H'),
++        KeyCode::End => cursor('F'),
++        KeyCode::Insert => tilde(2),
++        KeyCode::Delete => tilde(3),
++        KeyCode::PageUp => tilde(5),
++        KeyCode::PageDown => tilde(6),
++        KeyCode::F(number @ 1..=4) => {
++            let end = char::from(b'P' + number - 1);
++            if modifier > 1 {
++                format!("\x1b[1;{modifier}{end}")
++            } else {
++                format!("\x1bO{end}")
++            }
++        }
++        KeyCode::F(number @ 5..=12) => {
++            tilde([15, 17, 18, 19, 20, 21, 23, 24][usize::from(number - 5)])
++        }
++        KeyCode::BackTab => "\x1b[Z".to_owned(),
++        KeyCode::Tab if shift => "\x1b[Z".to_owned(),
++        KeyCode::Tab => return Some(escaped(vec![b'\t'])),
++        KeyCode::Enter => return Some(escaped(vec![b'\r'])),
++        KeyCode::Backspace => return Some(escaped(vec![if ctrl { 0x08 } else { 0x7f }])),
++        KeyCode::Esc => return Some(vec![0x1b]),
++        KeyCode::Char(c) if ctrl => {
++            let byte = match c {
++                'a'..='z' | 'A'..='Z' => (c.to_ascii_lowercase() as u8) & 0x1f,
++                ' ' | '@' | '2' => 0,
++                '[' | '3' => 0x1b,
++                '\\' | '4' => 0x1c,
++                ']' | '5' => 0x1d,
++                '^' | '6' => 0x1e,
++                '_' | '-' | '7' => 0x1f,
++                '?' | '8' => 0x7f,
++                _ => return None,
++            };
++            return Some(escaped(vec![byte]));
++        }
++        KeyCode::Char(c) => return Some(escaped(c.to_string().into_bytes())),
++        _ => return None,
++    };
++    Some(text.into_bytes())
++}
++
++pub(crate) fn key(binding: Option<&Binding>, session: &str, key: KeyEvent) -> bool {
 +    let mut sessions = sessions();
-+    binding
-+        .and_then(|binding| owned(&mut sessions, binding, session).ok())
-+        .is_some_and(|pane| pane.writer.try_send(bytes).is_ok())
++    let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) else {
++        return false;
++    };
++    let mut parser = pane.screen.locked();
++    let Some(bytes) = key_bytes(key, parser.screen().application_cursor()) else {
++        return false;
++    };
++    parser.screen_mut().set_scrollback(0);
++    pane.writer.try_send(bytes).is_ok()
++}
++
++/// Forwards a pointer event at a cell of the pane in the program's mouse encoding; without mouse reporting the wheel scrolls.
++pub(crate) fn mouse(
++    binding: Option<&Binding>,
++    session: &str,
++    event: MouseEvent,
++    column: u16,
++    row: u16,
++) -> bool {
++    let mut sessions = sessions();
++    let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) else {
++        return false;
++    };
++    let mut parser = pane.screen.locked();
++    let screen = parser.screen();
++    let mode = screen.mouse_protocol_mode();
++    let up = event.kind == MouseEventKind::ScrollUp;
++    if mode == vt100::MouseProtocolMode::None {
++        if !matches!(
++            event.kind,
++            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
++        ) {
++            return false;
++        }
++        if screen.alternate_screen() {
++            let arrow = key_bytes(
++                KeyEvent::new(
++                    if up { KeyCode::Up } else { KeyCode::Down },
++                    KeyModifiers::NONE,
++                ),
++                screen.application_cursor(),
++            )
++            .unwrap_or_default();
++            let _ = pane.writer.try_send(arrow.repeat(WHEEL_LINES));
++        } else {
++            let offset = screen.scrollback();
++            parser.screen_mut().set_scrollback(if up {
++                offset + WHEEL_LINES
++            } else {
++                offset.saturating_sub(WHEEL_LINES)
++            });
++        }
++        return true;
++    }
++    let button = |button: MouseButton| match button {
++        MouseButton::Left => 0,
++        MouseButton::Middle => 1,
++        MouseButton::Right => 2,
++    };
++    use vt100::MouseProtocolMode::*;
++    let (code, release) = match event.kind {
++        MouseEventKind::Down(pressed) => (button(pressed), false),
++        MouseEventKind::Up(pressed) if mode != Press => (button(pressed), true),
++        MouseEventKind::Drag(pressed) if matches!(mode, ButtonMotion | AnyMotion) => {
++            (button(pressed) + 32, false)
++        }
++        MouseEventKind::Moved if mode == AnyMotion => (35, false),
++        MouseEventKind::ScrollUp => (64, false),
++        MouseEventKind::ScrollDown => (65, false),
++        MouseEventKind::ScrollLeft => (66, false),
++        MouseEventKind::ScrollRight => (67, false),
++        _ => return true,
++    };
++    let modifiers = 4 * u16::from(event.modifiers.contains(KeyModifiers::SHIFT))
++        + 8 * u16::from(event.modifiers.contains(KeyModifiers::ALT))
++        + 16 * u16::from(event.modifiers.contains(KeyModifiers::CONTROL));
++    let (x, y) = (u32::from(column) + 1, u32::from(row) + 1);
++    let bytes = match screen.mouse_protocol_encoding() {
++        vt100::MouseProtocolEncoding::Sgr => format!(
++            "\x1b[<{};{x};{y}{}",
++            code + modifiers,
++            if release { 'm' } else { 'M' }
++        )
++        .into_bytes(),
++        encoding => {
++            let code = if release { 3 } else { code } + modifiers;
++            let mut bytes = b"\x1b[M".to_vec();
++            for value in [u32::from(code), x, y] {
++                let value = value + 32;
++                match encoding {
++                    vt100::MouseProtocolEncoding::Utf8 => match char::from_u32(value) {
++                        Some(c) if value < 2048 => {
++                            bytes.extend(c.to_string().into_bytes());
++                        }
++                        _ => return true,
++                    },
++                    _ if value <= 255 => bytes.push(value as u8),
++                    _ => return true,
++                }
++            }
++            bytes
++        }
++    };
++    let _ = pane.writer.try_send(bytes);
++    true
 +}
 +
 +pub(crate) fn paste(binding: Option<&Binding>, session: &str, text: &str) {
@@ -162405,6 +163270,141 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +mod tests {
 +    use super::*;
 +
++    fn events() -> crate::app_event_sender::AppEventSender {
++        crate::app_event_sender::AppEventSender::new(tokio::sync::mpsc::unbounded_channel().0)
++    }
++
++    fn encoded(code: KeyCode, modifiers: KeyModifiers, application: bool) -> String {
++        String::from_utf8(key_bytes(KeyEvent::new(code, modifiers), application).unwrap()).unwrap()
++    }
++
++    #[test]
++    fn keys_use_xterm_encodings() {
++        let none = KeyModifiers::NONE;
++        assert_eq!(encoded(KeyCode::Up, none, false), "\x1b[A");
++        assert_eq!(encoded(KeyCode::Up, none, true), "\x1bOA");
++        assert_eq!(
++            encoded(KeyCode::Left, KeyModifiers::CONTROL, true),
++            "\x1b[1;5D"
++        );
++        assert_eq!(
++            encoded(
++                KeyCode::Right,
++                KeyModifiers::SHIFT | KeyModifiers::ALT,
++                false
++            ),
++            "\x1b[1;4C"
++        );
++        assert_eq!(encoded(KeyCode::F(1), none, false), "\x1bOP");
++        assert_eq!(encoded(KeyCode::F(5), none, false), "\x1b[15~");
++        assert_eq!(
++            encoded(KeyCode::F(12), KeyModifiers::SHIFT, false),
++            "\x1b[24;2~"
++        );
++        assert_eq!(encoded(KeyCode::PageUp, none, false), "\x1b[5~");
++        assert_eq!(
++            encoded(KeyCode::PageDown, KeyModifiers::CONTROL, false),
++            "\x1b[6;5~"
++        );
++        assert_eq!(encoded(KeyCode::Insert, none, false), "\x1b[2~");
++        assert_eq!(
++            encoded(KeyCode::BackTab, KeyModifiers::SHIFT, false),
++            "\x1b[Z"
++        );
++        assert_eq!(
++            encoded(KeyCode::Char('x'), KeyModifiers::ALT, false),
++            "\x1bx"
++        );
++        assert_eq!(
++            encoded(KeyCode::Char('c'), KeyModifiers::CONTROL, false),
++            "\x03"
++        );
++        assert_eq!(
++            encoded(KeyCode::Char(' '), KeyModifiers::CONTROL, false),
++            "\0"
++        );
++        assert_eq!(
++            encoded(
++                KeyCode::Char('b'),
++                KeyModifiers::CONTROL | KeyModifiers::ALT,
++                false
++            ),
++            "\x1b\x02"
++        );
++        assert_eq!(encoded(KeyCode::Enter, KeyModifiers::ALT, false), "\x1b\r");
++    }
++
++    #[test]
++    fn osc_signals_reach_the_owner_and_links_follow_their_cells() {
++        let mut parser = vt100::Parser::new_with_callbacks(4, 40, 0, Signals::default());
++        parser.process(b"\x1b]2;repo - lazygit\x07\x07\x1b]9;omd-edit:a.rs:3\x07\x1b]9;4;1;50\x07");
++        parser.process(b"\x1b]52;c;aGVsbG8=\x07see \x1b]8;;https://example.com/x\x07docs\x1b]8;;\x07 \x1b]8;;javascript:alert(1)\x07bad\x1b]8;;\x07");
++        let signals = parser.callbacks();
++        assert_eq!(signals.title.as_deref(), Some("repo - lazygit"));
++        assert!(signals.bell);
++        assert_eq!(signals.notices, ["omd-edit:a.rs:3"]);
++        assert_eq!(signals.copies, ["hello"]);
++        assert_eq!(signals.links.len(), 1);
++        let link = &signals.links[0];
++        assert_eq!((link.row, link.start, link.end), (0, 4, 8));
++        assert_eq!(
++            (link.url.as_str(), link.text.as_str()),
++            ("https://example.com/x", "docs")
++        );
++    }
++
++    #[test]
++    fn device_attribute_status_and_cursor_queries_get_replies() {
++        let mut parser = vt100::Parser::new_with_callbacks(4, 40, 0, Signals::default());
++        parser.process(b"\x1b[c\x1b[0c\x1b[5n\x1b[3;4H\x1b[6n\x1b[>q\x1b[?u\x1b[>0c");
++        assert_eq!(
++            parser.callbacks().replies,
++            b"\x1b[?62;22c\x1b[?62;22c\x1b[0n\x1b[3;4R"
++        );
++    }
++
++    #[test]
++    fn session_directories_carry_files_both_ways_and_pins_round_trip() {
++        let store = tempfile::tempdir().unwrap();
++        let mut argv = vec!["yazi".to_owned(), "--chooser-file={dir}/chosen".to_owned()];
++        let dir = prepare(
++            store.path(),
++            &json!({"files": {"config.yml": "a: 1"}}),
++            &mut argv,
++        )
++        .unwrap()
++        .unwrap();
++        assert_eq!(argv[1], format!("--chooser-file={}/chosen", dir.display()));
++        assert_eq!(
++            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
++            0o700
++        );
++        std::fs::write(dir.join("chosen"), "src/a.rs\n").unwrap();
++        std::fs::write(dir.join("bad name"), "x").unwrap();
++        assert_eq!(
++            files(Some(&dir)).unwrap(),
++            json!({"chosen": "src/a.rs\n", "config.yml": "a: 1"})
++        );
++        for files in [
++            json!({"../x": "a"}),
++            json!({"a": 1}),
++            json!({"a": "x".repeat(FILE_BYTES + 1)}),
++        ] {
++            assert!(prepare(store.path(), &json!({"files": files}), &mut argv.clone()).is_err());
++        }
++        assert!(
++            prepare(store.path(), &json!({}), &mut vec!["sh".to_owned()])
++                .unwrap()
++                .is_none()
++        );
++        let program = Path::new("/opt/homebrew/bin/lazygit");
++        assert_eq!(pinned(store.path(), "m", program), None);
++        pin(store.path(), "m", program, "aa").unwrap();
++        pin(store.path(), "m", program, "bb").unwrap();
++        assert_eq!(pinned(store.path(), "m", program).as_deref(), Some("bb"));
++        assert_eq!(pinned(store.path(), "other", program), None);
++    }
++
 +    #[tokio::test]
 +    #[serial_test::serial]
 +    async fn pty_output_renders_and_sessions_stay_owner_scoped() {
@@ -162442,15 +163442,17 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +            &arguments,
 +            command,
 +            dir.path(),
++            None,
 +            crate::tui::FrameRequester::test_dummy(),
++            events(),
 +        )
 +        .await
 +        .unwrap();
 +        let mut text = String::new();
 +        for _ in 0..100 {
-+            text = rows(Some(&a), "t1", 40, 4, "")
++            text = rows(Some(&a), "t1", "c", 40, 4, "", false)
 +                .iter()
-+                .map(ToString::to_string)
++                .map(|(line, _)| line.to_string())
 +                .collect();
 +            if text.contains("hello pane") {
 +                break;
@@ -162460,9 +163462,9 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        assert!(text.contains("hello pane"));
 +        assert!(call(&other, &json!({"session": "t1", "action": "read"})).is_err());
 +        assert!(
-+            rows(Some(&other), "t1", 40, 4, "")
++            rows(Some(&other), "t1", "c", 40, 4, "", false)
 +                .iter()
-+                .any(|line| line.to_string().contains("not running"))
++                .any(|(line, _)| line.to_string().contains("not running"))
 +        );
 +        assert!(
 +            call(&a, &json!({"session": "t1", "action": "read"})).unwrap()["text"]
@@ -162492,7 +163494,9 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +            &arguments,
 +            command,
 +            dir.path(),
++            None,
 +            crate::tui::FrameRequester::test_dummy(),
++            events(),
 +        )
 +        .await
 +        .unwrap();
@@ -162512,7 +163516,8 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        ));
 +        paste(Some(&a), "t1", "unsafe");
 +        assert!(
-+            rows(Some(&a), "t1", 40, 4, "")[0]
++            rows(Some(&a), "t1", "c", 40, 4, "", false)[0]
++                .0
 +                .to_string()
 +                .contains("not running")
 +        );
@@ -162525,6 +163530,63 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +        assert!(binding("m", Some("a"), &fresh).is_err());
 +        assert!(view_binding("m", Some("a"), 3, fresh.admission, "admitted").is_err());
 +        assert!(sessions().panes.is_empty());
++    }
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn signals_exit_and_clipboard_decisions_reach_the_owner_without_another_draw() {
++        let _restore = test_scope();
++        let owners = BTreeMap::from([("m".to_owned(), "source".to_owned())]);
++        context(1, Some("a".into()));
++        retain(1, "admitted", &owners, &Default::default());
++        let authority = codex_omd::client_surface::Authority {
++            epoch: 1,
++            admission: codex_omd::client_surface::admission(),
++            configuration: "admitted".into(),
++            source: "source".into(),
++        };
++        let a = binding("m", Some("a"), &authority).unwrap();
++        let dir = tempfile::tempdir().unwrap();
++        let mut command = std::process::Command::new("/bin/sh");
++        command
++            .args(["-c", "read line; printf '\\033]2;done\\007'; exit 3"])
++            .current_dir(dir.path());
++        start(
++            &a,
++            &json!({"session": "t1"}),
++            command,
++            dir.path(),
++            None,
++            crate::tui::FrameRequester::test_dummy(),
++            events(),
++        )
++        .await
++        .unwrap();
++        rows(Some(&a), "t1", "c", 40, 4, "", false);
++        assert_eq!(clipboard(&a, "t1", None), Clipboard::Ask);
++        assert_eq!(clipboard(&a, "t1", None), Clipboard::Asking);
++        assert_eq!(clipboard(&a, "t1", Some(false)), Clipboard::Declined);
++        assert_eq!(clipboard(&a, "t1", None), Clipboard::Declined);
++        assert_eq!(clipboard(&a, "other", None), Clipboard::Declined);
++        call(
++            &a,
++            &json!({"session": "t1", "action": "write", "text": "\n"}),
++        )
++        .unwrap();
++        let key = ("m".to_owned(), "t1".to_owned());
++        for _ in 0..100 {
++            let sessions = sessions();
++            let pane = &sessions.panes[&key];
++            if pane.reported && pane.title.is_some() {
++                break;
++            }
++            drop(sessions);
++            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++        }
++        let sessions = sessions();
++        let pane = &sessions.panes[&key];
++        assert!(pane.reported);
++        assert_eq!(pane.title.as_deref(), Some("done"));
 +    }
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
@@ -169034,10 +170096,10 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259027e37f0
+index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983d32d74bf
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5614 @@
+@@ -0,0 +1,5677 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -169140,7 +170202,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        index: usize,
 +    },
 +    Pane,
-+    Terminal(String, Option<crate::mod_pty::Binding>),
++    Terminal(String, Option<crate::mod_pty::Binding>, u16),
 +    Document(Option<codex_omd::ModCommandAction>),
 +}
 +
@@ -169195,6 +170257,9 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    checked: BTreeMap<String, BTreeSet<String>>,
 +    hotkeys: Vec<(String, String)>,
 +    autofocus: Vec<String>,
++    terminals: BTreeSet<String>,
++    /// Focus and region before a terminal took the focus, restored when that terminal unmounts.
++    prior_focus: (Option<String>, Option<String>),
 +    /// Controls that held focus when their overlay's anchor vanished.
 +    parked: BTreeSet<String>,
 +    regions: Vec<Region>,
@@ -169909,6 +170974,8 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    checked: BTreeMap::new(),
 +    hotkeys: Vec::new(),
 +    autofocus: Vec::new(),
++    terminals: BTreeSet::new(),
++    prior_focus: (None, None),
 +    parked: BTreeSet::new(),
 +    regions: Vec::new(),
 +    layers: Vec::new(),
@@ -170262,11 +171329,17 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        | ModComponent::Code { id, .. }
 +        | ModComponent::Document { id, .. }
 +        | ModComponent::Diff { id, .. }
-+        | ModComponent::Terminal { id, .. }
 +        | ModComponent::Image { id, .. }
 +        | ModComponent::Raster { id, .. }
 +        | ModComponent::Module { id, .. } => {
 +            interaction.ids.insert(id.clone());
++        }
++        ModComponent::Terminal { id, autofocus, .. } => {
++            interaction.ids.insert(id.clone());
++            interaction.terminals.insert(id.clone());
++            if *autofocus {
++                interaction.autofocus.push(id.to_owned());
++            }
 +        }
 +        ModComponent::Slot | ModComponent::Native { .. } => {}
 +    }
@@ -170302,6 +171375,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +fn sync_interaction(view: &ModView) {
 +    let mut interaction = INTERACTION.locked();
 +    let previous = std::mem::take(&mut interaction.ids);
++    let terminals = std::mem::take(&mut interaction.terminals);
 +    interaction.hotkeys.clear();
 +    interaction.autofocus.clear();
 +    for site in view.sites.values() {
@@ -170334,12 +171408,15 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +            .collect(),
 +    );
 +    crate::mod_module::retain(&ids);
-+    if interaction
-+        .focused
-+        .as_ref()
-+        .is_some_and(|id| !ids.contains(id))
++    if let Some(id) = interaction.focused.clone()
++        && !ids.contains(&id)
 +    {
 +        interaction.focused = None;
++        if terminals.contains(&id) {
++            let (focused, region) = interaction.prior_focus.clone();
++            interaction.focused = focused.filter(|prior| ids.contains(prior));
++            interaction.focus_region = region;
++        }
 +    }
 +    if interaction.focused.is_none()
 +        && let Some(id) = interaction
@@ -171515,21 +172592,36 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +                label,
 +                session,
 +                height,
++                ..
 +            } => {
 +                let binding = interaction
 +                    .component_owners
 +                    .get(id)
 +                    .and_then(|owner| interaction.pty_bindings.get(owner))
 +                    .cloned();
-+                for line in
-+                    crate::mod_pty::rows(binding.as_ref(), session, width, height.unwrap_or(16), "")
++                let focused = interaction.focused.as_deref() == Some(id.as_str());
++                for (row, (line, links)) in crate::mod_pty::rows(
++                    binding.as_ref(),
++                    session,
++                    id,
++                    width,
++                    height.unwrap_or(16),
++                    "",
++                    focused,
++                )
++                .into_iter()
++                .enumerate()
 +                {
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
-+                        links: Vec::new(),
++                        links,
 +                        line,
-+                        target: Some(ComponentTarget::Terminal(session.clone(), binding.clone())),
++                        target: Some(ComponentTarget::Terminal(
++                            session.clone(),
++                            binding.clone(),
++                            u16::try_from(row).unwrap_or(u16::MAX),
++                        )),
 +                        regions: Vec::new(),
 +                        ..ComponentRow::default()
 +                    });
@@ -171842,6 +172934,16 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +}
 +
 +fn bind_terminals(interaction: &mut Interaction, snapshot: &ModViewSnapshot) {
++    if interaction
++        .focused
++        .as_ref()
++        .is_none_or(|id| !interaction.terminals.contains(id))
++    {
++        interaction.prior_focus = (
++            interaction.focused.clone(),
++            interaction.focus_region.clone(),
++        );
++    }
 +    let thread = snapshot.input["ledger"]["thread_id"].as_str();
 +    interaction.thread = thread.map(str::to_owned);
 +    let epoch = snapshot.input["pty_scope"]["epoch"].as_u64();
@@ -172875,7 +173977,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +                action.with_value(Some(&values)),
 +            ))
 +        }
-+        ComponentTarget::Terminal(_, _) => Some(ModInput::Consumed),
++        ComponentTarget::Terminal(_, _, _) => Some(ModInput::Consumed),
 +        ComponentTarget::Pane => {
 +            let collapsed = interaction.collapsed.entry(id.to_owned()).or_default();
 +            *collapsed = !*collapsed;
@@ -172935,10 +174037,12 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    interaction.component_region.get(id).map(String::as_str) == Some(region)
 +        && interaction.order.iter().any(|ordered| ordered == id)
 +        && !interaction.key_panes.contains(id)
-+        && !matches!(
-+            interaction.targets.get(id),
-+            Some(ComponentTarget::Terminal(_, _)) | None
-+        )
++        && match interaction.targets.get(id) {
++            Some(ComponentTarget::Terminal(_, _, _)) => {
++                interaction.autofocus.iter().any(|auto| auto == id)
++            }
++            target => target.is_some(),
++        }
 +}
 +
 +fn enter_region(interaction: &mut Interaction, name: &str) {
@@ -173432,7 +174536,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    let in_terminal = interaction.focused.as_ref().is_some_and(|focused| {
 +        matches!(
 +            interaction.targets.get(focused),
-+            Some(ComponentTarget::Terminal(_, _))
++            Some(ComponentTarget::Terminal(_, _, _))
 +        )
 +    });
 +    let all_keys = interaction
@@ -173464,7 +174568,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +                interaction.key_panes.contains(focused)
 +                    || matches!(
 +                        interaction.targets.get(focused),
-+                        Some(ComponentTarget::Terminal(_, _))
++                        Some(ComponentTarget::Terminal(_, _, _))
 +                    )
 +            });
 +            match interaction.focus_region.clone() {
@@ -173519,7 +174623,8 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        return Some(ModInput::Consumed);
 +    }
 +    if let Some(focused) = interaction.focused.clone()
-+        && let Some(ComponentTarget::Terminal(session, binding)) = interaction.targets.get(&focused)
++        && let Some(ComponentTarget::Terminal(session, binding, _)) =
++            interaction.targets.get(&focused)
 +    {
 +        if crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key) {
 +            interaction.focused = None;
@@ -173836,7 +174941,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        interaction
 +            .targets
 +            .get(*id)
-+            .is_some_and(|target| !matches!(target, ComponentTarget::Terminal(_, _)))
++            .is_some_and(|target| !matches!(target, ComponentTarget::Terminal(_, _, _)))
 +    };
 +    let next = if forward {
 +        interaction.order[index + 1..].iter().find(reachable)
@@ -173996,7 +175101,8 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        return true;
 +    }
 +    let bounded = &text[..text.floor_char_boundary(PASTE_BYTES)];
-+    if let Some(ComponentTarget::Terminal(session, binding)) = interaction.targets.get(&focused) {
++    if let Some(ComponentTarget::Terminal(session, binding, _)) = interaction.targets.get(&focused)
++    {
 +        crate::mod_pty::paste(binding.as_ref(), session, bounded);
 +        return true;
 +    }
@@ -174203,6 +175309,25 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +                })
 +                .filter(|keys| interaction.key_panes.contains(keys));
 +        }
++        return Some(ModPointer::Consumed);
++    }
++    if let Some(HitBox {
++        area,
++        target: ComponentTarget::Terminal(session, binding, row),
++        ..
++    }) = &hit
++        && crate::mod_pty::mouse(
++            binding.as_ref(),
++            session,
++            event,
++            event.column.saturating_sub(area.x),
++            *row,
++        )
++        && !matches!(
++            event.kind,
++            MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
++        )
++    {
 +        return Some(ModPointer::Consumed);
 +    }
 +    let action = match event.kind {
@@ -174904,10 +176029,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb212d73410330c97a6a7edc1939baf6ce541d06
+index 0000000000000000000000000000000000000000..b0da3201d611b4acb1a080fb0642d2ccc6e9992c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2340 @@
+@@ -0,0 +1,2469 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -177246,6 +178371,135 @@ index 0000000000000000000000000000000000000000..fb212d73410330c97a6a7edc1939baf6
 +    assert!(!holds_keys());
 +    assert!(focus("clock"));
 +    assert!(holds_keys());
++    preview(ModViewSnapshot::default());
++}
++
++#[tokio::test]
++#[serial_test::serial]
++async fn terminals_take_pointer_input_region_focus_and_return_focus_when_closed() {
++    let _scope = crate::mod_pty::test_scope();
++    preview(ModViewSnapshot::default());
++    let owners = BTreeMap::from([("m".to_owned(), "source".to_owned())]);
++    crate::mod_pty::context(1, Some("a".into()));
++    crate::mod_pty::retain(1, "admitted", &owners, &Default::default());
++    let authority = codex_omd::client_surface::Authority {
++        epoch: 1,
++        admission: codex_omd::client_surface::admission(),
++        configuration: "admitted".into(),
++        source: "source".into(),
++    };
++    let binding = crate::mod_pty::binding("m", Some("a"), &authority).unwrap();
++    let dir = tempfile::tempdir().unwrap();
++    let mut command = std::process::Command::new("/bin/sh");
++    command
++        .args(["-c", "printf '\\033[?1000h\\033[?1006hready'; sleep 5"])
++        .current_dir(dir.path());
++    crate::mod_pty::start(
++        &binding,
++        &serde_json::json!({"session": "t1"}),
++        command,
++        dir.path(),
++        None,
++        crate::tui::FrameRequester::test_dummy(),
++        crate::app_event_sender::AppEventSender::new(tokio::sync::mpsc::unbounded_channel().0),
++    )
++    .await
++    .unwrap();
++    let view = |terminal: bool| {
++        let mut sites = serde_json::json!({"m/files": {"components": [{"type": "list", "id": "files", "label": "Files",
++            "rows": [{"value": "a", "label": "a", "spans": [{"text": "a.rs"}]}], "action": {"command": "m:open"}}]}});
++        let children = [
++            serde_json::json!({"content": "site:m/files"}),
++            serde_json::json!({"content": "site:m/term"}),
++        ];
++        sites["m/term"] = if terminal {
++            serde_json::json!({"components": [{"type": "terminal", "id": "term", "label": "Term",
++                "session": "t1", "autofocus": true}]})
++        } else {
++            serde_json::json!({"components": [{"type": "text", "id": "idle", "label": "Idle", "text": "closed"}]})
++        };
++        let mut snapshot = snapshot(serde_json::json!({
++            "layout": {"split": "horizontal", "ratio": [1, 2], "children": [
++                {"split": "vertical", "children": children},
++                {"split": "vertical", "ratio": [5, 1], "children": [{"content": "transcript"}, {"content": "composer"}]}]},
++            "sites": sites,
++            "key_contexts": [{"when": {"focus": "site"}, "owner": "m", "keys": {"2": {"region": 2}}}]
++        }));
++        snapshot.contributors = vec!["m".into()];
++        snapshot.component_owners.insert("term".into(), "m".into());
++        snapshot.input = serde_json::json!({"ledger": {"thread_id": "a"}, "pty_scope": {
++            "epoch": 1, "admission": authority.admission, "configuration": "admitted"}});
++        snapshot
++    };
++    let area = Rect::new(0, 0, 120, 40);
++    let draw = |snapshot: &ModViewSnapshot| {
++        let mut buffer = Buffer::empty(area);
++        render_owned(
++            area,
++            owned_chat_area(area, snapshot, 0),
++            &mut buffer,
++            snapshot,
++        );
++    };
++    let press = |code, modifiers| input(KeyEvent::new(code, modifiers), true);
++    let focus = || {
++        let interaction = INTERACTION.lock().unwrap();
++        (
++            interaction.focused.clone(),
++            interaction.focus_region.clone(),
++        )
++    };
++    let screen = || {
++        crate::mod_pty::call(
++            &binding,
++            &serde_json::json!({"session": "t1", "action": "read"}),
++        )
++        .unwrap()["text"]
++            .as_str()
++            .unwrap()
++            .to_owned()
++    };
++    let without = view(false);
++    preview(without.clone());
++    draw(&without);
++    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
++    assert_eq!(focus(), (Some("files".into()), Some("m/files".into())));
++    draw(&without);
++    let with = view(true);
++    preview(with.clone());
++    draw(&with);
++    assert_eq!(focus().0.as_deref(), Some("files"));
++    for _ in 0..100 {
++        if screen().contains("ready") {
++            break;
++        }
++        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++    }
++    let anchor = INTERACTION.lock().unwrap().anchors["term"];
++    pointer(MouseEvent {
++        kind: MouseEventKind::Down(MouseButton::Left),
++        column: anchor.x + 2,
++        row: anchor.y + 1,
++        modifiers: KeyModifiers::NONE,
++    });
++    assert_eq!(focus(), (Some("term".into()), Some("m/term".into())));
++    let mut text = String::new();
++    for _ in 0..100 {
++        text = screen();
++        if text.contains("[<0;3;2M") {
++            break;
++        }
++        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++    }
++    assert!(text.contains("[<0;3;2M"), "{text}");
++    draw(&with);
++    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
++    assert_eq!(focus(), (None, Some("m/term".into())));
++    press(KeyCode::Char('2'), KeyModifiers::NONE);
++    assert_eq!(focus(), (Some("term".into()), Some("m/term".into())));
++    draw(&with);
++    preview(without.clone());
++    assert_eq!(focus(), (Some("files".into()), Some("m/files".into())));
 +    preview(ModViewSnapshot::default());
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs

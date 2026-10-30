@@ -210,6 +210,29 @@
       "source": "mods/first-party/omd_inspector",
       "version": "1.0.0"
     },
+    "omd_lazygit": {
+      "api": "1.0.0",
+      "capabilities": [
+        "commands",
+        "terminal",
+        "store",
+        "exec",
+        "os",
+        "pty",
+        "composer",
+        "inventory",
+        "services"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "21d810ede0959a19e18bb16bcc65ae5b426544606a06f8d8bf04c6797e3cc6e8",
+        "mod.json": "0cc0d773231997895207e7fc85ec0c1680a1afe95208d3a790318caa3ea8d4ec"
+      },
+      "id": "omd_lazygit",
+      "package_sha256": "17566261d06343e7d8fec3eca9bc23b29679ecdc696fc99639953ce65f870353",
+      "source": "mods/first-party/omd_lazygit",
+      "version": "1.0.0"
+    },
     "omd_logo": {
       "api": "1.0.0",
       "capabilities": [
@@ -691,6 +714,29 @@
       "id": "omd_workspace",
       "package_sha256": "5ddb7ddfff817cf3dccad7a5419e32f32a3325be786734ec0991cc8df90c317c",
       "source": "mods/first-party/omd_workspace",
+      "version": "1.0.0"
+    },
+    "omd_yazi": {
+      "api": "1.0.0",
+      "capabilities": [
+        "commands",
+        "terminal",
+        "store",
+        "exec",
+        "os",
+        "pty",
+        "composer",
+        "inventory",
+        "services"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "a39a8347de3dcf5b782825e853557fb770aa8ca8b25d0086b53e444d2249c19c",
+        "mod.json": "c9366a9d9159c3833f36db6775f82570f739ea79f5067365f8a6368bccec9031"
+      },
+      "id": "omd_yazi",
+      "package_sha256": "9e68a131e4c1c2e317d9ce8ac97a6614d5b9cf80255f77bdd8748d10a1880b93",
+      "source": "mods/first-party/omd_yazi",
       "version": "1.0.0"
     }
   },

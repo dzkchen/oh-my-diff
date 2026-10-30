@@ -541,6 +541,18 @@
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Lays the screen out as a tabbed dock beside the chat through generic layouts, leaf titles, focus regions and key contexts; adds no model tool."
+    },
+    {
+      "path": "mods/first-party/omd_lazygit",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Hosts an unsandboxed lazygit in a PTY terminal component through the generic layout, panel and composer surfaces and routes its edits to the editor or the prompt; adds no model tool; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_yazi",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Hosts an unsandboxed yazi in a PTY terminal component through the generic layout, panel and composer surfaces and turns its chosen files into prompt mentions; adds no model tool; installed inactive in OMD+."
     }
   ],
   "synthetic_fixtures": [

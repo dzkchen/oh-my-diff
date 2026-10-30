@@ -1,0 +1,163 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { callback } from '../../../tests/mod_runner.mjs';
+
+const mod = new URL('./', import.meta.url);
+const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
+const source = readFileSync(new URL('index.ts', mod), 'utf8');
+const defaults = Object.fromEntries(Object.entries(manifest.settings_schema.properties).map(([name, schema]) => [name, schema.default]));
+const SITE = 'omd_lazygit/main';
+const ID = 'omd_lazygit_terminal';
+
+function run(event, payload, { state = null, settings = {}, name, world = {} } = {}) {
+  const calls = [];
+  const host = ({ operation, arguments: args }) => {
+    calls.push({ operation, arguments: args });
+    switch (operation) {
+      case 'session.info': return { thread_id: 't1', root: '/repo', cwd: '/repo/app' };
+      case 'exec.run':
+        if (world.missing) throw new Error('program_not_found: lazygit');
+        if (args.program === '/bin/test') return { exit_code: world.noConfig ? 1 : 0, stdout: '', stderr: '' };
+        return { exit_code: world.noDir ? 1 : 0, stdout: '/home/me/.config/lazygit\n', stderr: '' };
+      case 'terminal.pty':
+        if (args.action === 'start') return world.declined ? { status: 'declined' } : { session: 'lazygit', running: true };
+        if (args.action === 'read') return { text: '', running: !world.ended, exit_code: null };
+        return { stopped: true };
+      case 'mods.service':
+        if (world.noWorkspace) throw new Error('optional_service_unavailable');
+        return args.method === 'register' ? { registered: 'lazygit' } : { removed: true };
+      case 'composer.read': return { text: '', cursor: 0, selection: null, revision: 7, attachments: [], suggestion: null };
+      case 'composer.write': return { applied: true };
+      case 'terminal.open': return { opened: true };
+      case 'terminal.pane': return { applied: true };
+      case 'terminal.notice': return { shown: true };
+      default: throw new Error(`unexpected host operation ${operation}`);
+    }
+  };
+  const request = { source, filename: fileURLToPath(new URL('index.ts', mod)), entrypoint: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: { ...defaults, ...settings }, settings_file: { path: '/store/settings/omd_lazygit.json', status: 'missing', error: null }, event, name, payload, hook_budget_ms: 10000 };
+  const output = callback(request, host);
+  if (output.error) throw new Error(output.error);
+  return { value: output.value, state: output.state ?? state, calls };
+}
+
+const command = (args, options) => run('command', args, { ...options, name: 'lazygit' });
+const emit = (state, payload, options) => run('component_event', { thread_id: 't1', origin: 'user', component: ID, ...payload }, { ...options, state });
+const draw = (state, rows = 40) => run('terminal', { event: 'redraw', ledger: { thread_id: 't1', cwd: '/repo', cost: null }, client: { columns: 120, rows } }, { state }).value;
+const ops = (result, operation) => result.calls.filter(call => call.operation === operation).map(call => call.arguments);
+const notify = (state, text, options) => emit(state, { kind: 'notify', text }, options);
+const running = { running: true, panel: false };
+
+test('a missing lazygit shows the install hint and starts nothing', () => {
+  const result = command('', { world: { missing: true } });
+  assert.match(result.value.display, /Cannot run lazygit \(program_not_found: lazygit\)\. Install it with brew install lazygit \(https:\/\/github\.com\/jesseduffield\/lazygit#installation\)/);
+  assert.deepEqual(ops(result, 'terminal.pty'), []);
+  assert.equal(result.state, null);
+});
+
+test('start runs lazygit unsandboxed in the session directory with the user config and the injected one', () => {
+  const result = command('');
+  assert.deepEqual(ops(result, 'exec.run'), [
+    { program: 'lazygit', argv: ['-cd'], sandbox: 'none', timeout_ms: 5000 },
+    { program: '/bin/test', argv: ['-f', '/home/me/.config/lazygit/config.yml'], timeout_ms: 5000 },
+  ]);
+  const fresh = command('', { world: { noConfig: true } });
+  assert.deepEqual(ops(fresh, 'terminal.pty')[0].argv, ['-p', '/repo/app', '--use-config-file', '{dir}/omd.yml']);
+  const [start] = ops(result, 'terminal.pty');
+  assert.deepEqual({ ...start, files: Object.keys(start.files) }, {
+    action: 'start', session: 'lazygit', program: 'lazygit', cwd: '/repo/app', sandbox: 'none',
+    argv: ['-p', '/repo/app', '--use-config-file', '/home/me/.config/lazygit/config.yml,{dir}/omd.yml'], files: ['omd.yml'],
+  });
+  const { os } = JSON.parse(start.files['omd.yml']);
+  assert.equal(os.editInTerminal, false);
+  for (const key of ['edit', 'editAtLine', 'editAtLineAndWait']) {
+    assert.match(os[key], /^f=\{\{filename\}\}; case "\$f" in \/\*\) ;; \*\) f="\$PWD\/\$f";; esac; printf '\\033\]9;omd-edit:%s:(%s)?\\007' "\$f"( \{\{line\}\})? > \/dev\/tty$/);
+  }
+  assert.equal(os.edit.includes('{{line}}'), false);
+  assert.equal(os.editAtLine.includes('{{line}}'), true);
+  assert.deepEqual(ops(result, 'terminal.pane'), [{ action: 'focus', id: ID }]);
+  assert.deepEqual(result.state, { running: true, panel: false });
+  assert.match(result.value.display, /^lazygit started/);
+});
+
+test('a path argument is the repository, and an unknown config directory leaves the injected file alone', () => {
+  const [relative] = ops(command('../other'), 'terminal.pty');
+  assert.deepEqual([relative.cwd, relative.argv.slice(0, 2)], ['/repo/app/../other', ['-p', '/repo/app/../other']]);
+  const [absolute] = ops(command('/work/repo', { world: { noDir: true } }), 'terminal.pty');
+  assert.deepEqual([absolute.cwd, absolute.argv], ['/work/repo', ['-p', '/work/repo', '--use-config-file', '{dir}/omd.yml']]);
+});
+
+test('a declined start keeps nothing running', () => {
+  const result = command('', { world: { declined: true } });
+  assert.equal(result.value.display, 'lazygit start declined');
+  assert.equal(result.state, null);
+});
+
+test('full placement gives lazygit the screen above a compact chat, and the terminal autofocuses', () => {
+  assert.equal(draw(null), null);
+  const view = draw(running);
+  assert.deepEqual(view.sites[SITE].components, [{ type: 'terminal', id: ID, label: 'lazygit', session: 'lazygit', autofocus: true }]);
+  assert.deepEqual(view.layout, {
+    split: 'vertical', ratio: [87, 13],
+    children: [{ content: `site:${SITE}`, title: '', style: { border: 'none', padding: 0 } }, { split: 'vertical', ratio: [2, 3], children: [{ content: 'transcript' }, { content: 'composer' }] }],
+  });
+  assert.deepEqual(draw(running, 200).layout.ratio, [97, 3]);
+});
+
+test('panel placement registers a workspace panel and draws only its site', () => {
+  const result = command('', { settings: { placement: 'panel' } });
+  assert.deepEqual(ops(result, 'mods.service'), [{ name: 'omd.workspace', method: 'register', input: { id: 'lazygit', title: 'Lazygit', site: SITE } }]);
+  assert.deepEqual(result.state, { running: true, panel: true });
+  const view = draw(result.state);
+  assert.equal(view.layout, undefined);
+  assert.equal(view.sites[SITE].components[0].autofocus, true);
+  const fallback = command('', { settings: { placement: 'panel' }, world: { noWorkspace: true } });
+  assert.deepEqual(fallback.state, { running: true, panel: false });
+});
+
+test('running again only refocuses, and a session that ended starts anew', () => {
+  const again = command('', { state: running });
+  assert.equal(again.value.display, 'lazygit is running');
+  assert.deepEqual(ops(again, 'terminal.pane'), [{ action: 'focus', id: ID }]);
+  assert.deepEqual(ops(again, 'terminal.pty').map(call => call.action), ['read']);
+  const restarted = command('', { state: running, world: { ended: true } });
+  assert.deepEqual(ops(restarted, 'terminal.pty').map(call => call.action), ['read', 'stop', 'start']);
+  assert.match(restarted.value.display, /^lazygit started/);
+});
+
+test('an edit notification opens the file in the editor at its line', () => {
+  const at = notify(running, 'omd-edit:/repo/src/a.ts:12');
+  assert.deepEqual(ops(at, 'terminal.open'), [{ path: 'src/a.ts', editor: true, line: 12 }]);
+  assert.deepEqual(ops(notify(running, 'omd-edit:/repo/src/a.ts:'), 'terminal.open'), [{ path: 'src/a.ts', editor: true }]);
+  assert.deepEqual(ops(notify(running, 'omd-edit:/repo/dir: name:3'), 'terminal.open'), [{ path: 'dir: name', editor: true, line: 3 }]);
+  assert.deepEqual(ops(emit(running, { kind: 'notify', text: 'hello' }), 'terminal.open'), []);
+  const outside = notify(running, 'omd-edit:/etc/passwd:1');
+  assert.deepEqual(ops(outside, 'terminal.open'), []);
+  assert.match(ops(outside, 'terminal.notice')[0].text, /^\/etc\/passwd is outside/);
+  const escaped = notify(running, 'omd-edit:/repo/../etc/passwd:1');
+  assert.deepEqual(ops(escaped, 'terminal.open'), []);
+});
+
+test('with edit set to composer an edit inserts an @path mention at the cursor', () => {
+  const settings = { edit: 'composer' };
+  const plain = notify(running, 'omd-edit:/repo/src/a.ts:12', { settings });
+  assert.deepEqual(ops(plain, 'composer.write'), [{ revision: 7, edit: { kind: 'insert', text: '@src/a.ts ' } }]);
+  assert.deepEqual(ops(plain, 'terminal.open'), []);
+  const spaced = notify(running, 'omd-edit:/repo/my file.ts:', { settings });
+  assert.equal(ops(spaced, 'composer.write')[0].edit.text, '@"my file.ts" ');
+});
+
+test('exit stops the session, unregisters the panel and clears the state', () => {
+  const full = emit(running, { kind: 'exit', session: 'lazygit', exit_code: 0, files: {} });
+  assert.deepEqual(ops(full, 'terminal.pty'), [{ action: 'stop', session: 'lazygit' }]);
+  assert.deepEqual(ops(full, 'mods.service'), []);
+  assert.deepEqual(full.state, { running: false, panel: false });
+  assert.equal(draw(full.state), null);
+  const panel = emit({ running: true, panel: true }, { kind: 'exit', session: 'lazygit', exit_code: 1, files: {} });
+  assert.deepEqual(ops(panel, 'mods.service'), [{ name: 'omd.workspace', method: 'unregister', input: { id: 'lazygit' } }]);
+  assert.deepEqual(panel.state, { running: false, panel: false });
+  assert.deepEqual(ops(panel, 'terminal.notice'), [{ text: 'lazygit exited with 1', kind: 'warning' }]);
+  assert.deepEqual(ops(full, 'terminal.notice'), []);
+  assert.deepEqual(emit(running, { kind: 'exit', component: 'other' }).calls, []);
+});
