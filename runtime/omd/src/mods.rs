@@ -409,6 +409,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_underlay_v1",
     "terminal_chat_area_v1",
     "terminal_colors_v1",
+    "terminal_welcome_hidden_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -6213,6 +6214,7 @@ impl ModHost {
         let mut contributors = Vec::new();
         let mut conflicts = Vec::new();
         let mut diagnostics = Vec::new();
+        let mut hiding_welcome = std::collections::BTreeSet::new();
         for (id, result) in results {
             if let Some(error) = self
                 .loaded
@@ -6267,9 +6269,13 @@ impl ModHost {
                 patch.sites.remove("dialog");
             }
             let before = view::site_component_ids(&view.sites);
+            let hides = patch.welcome.as_ref().is_some_and(|welcome| welcome.hidden);
             match patch.apply(&mut view, &mut claims, &id, origin) {
                 Ok(lost) => {
                     conflicts.extend(lost);
+                    if hides {
+                        hiding_welcome.insert(id.clone());
+                    }
                     component_owners.extend(
                         view::site_component_ids(&view.sites)
                             .into_iter()
@@ -6289,9 +6295,27 @@ impl ModHost {
         if let Some(underlay) = &view.underlay
             && let Some(owner) = claims.get("underlay")
         {
-            component_owners
-                .entry(underlay.raster.clone())
-                .or_insert_with(|| owner.clone());
+            match component_owners.get(&underlay.raster) {
+                Some(drawer) if drawer != owner => {
+                    conflicts.push(ModViewConflict {
+                        field: "underlay".to_owned(),
+                        owner: drawer.clone(),
+                        rejected: owner.clone(),
+                        origin: origin.to_owned(),
+                    });
+                    view.underlay = None;
+                }
+                _ => {
+                    component_owners.insert(underlay.raster.clone(), owner.clone());
+                }
+            }
+        }
+        // Only the underlay's owner hides the welcome: a refused underlay brings it back and a later writer can't undo it.
+        if let Some(welcome) = view.welcome.as_mut() {
+            welcome.hidden = view.underlay.is_some()
+                && claims
+                    .get("underlay")
+                    .is_some_and(|owner| hiding_welcome.contains(owner));
         }
         conflicts.truncate(32);
         ModTerminalView {

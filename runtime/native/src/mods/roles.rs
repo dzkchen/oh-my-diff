@@ -420,6 +420,7 @@ pub(super) fn spawn_capacity_admitted(
     inventory: &super::inventory::Inventory,
     lead: &Lead,
     call_id: &str,
+    hold: super::inventory::SpawnHold,
 ) -> Result<(), String> {
     let tracked_as_workers = lead
         .host
@@ -434,6 +435,7 @@ pub(super) fn spawn_capacity_admitted(
     inventory.reserve_spawn(
         &inventory.root_thread(&lead.thread.to_string()),
         call_id,
+        hold,
         |thread| !tracked_as_workers.contains(thread),
         |live| {
             lead.session

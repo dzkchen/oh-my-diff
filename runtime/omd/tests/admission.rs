@@ -100,8 +100,12 @@ fn a_parent_finished_before_its_child_stops_when_the_child_does() {
     task.start_worker("two".into(), "one".into(), 2, worker())
         .unwrap();
     task.finish_worker("one").unwrap();
-    assert!(task.admit_subagent(1, 0).is_err());
+    task.admit_subagent(1, 0).unwrap();
     task.finish_worker("two").unwrap();
+    assert!(
+        task.finish_worker("one").is_err(),
+        "the parent stopped with its child"
+    );
     task.start_worker("three".into(), "lead".into(), 1, worker())
         .unwrap();
     task.start_worker("four".into(), "lead".into(), 1, worker())

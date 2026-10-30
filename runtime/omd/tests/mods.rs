@@ -1702,16 +1702,45 @@ fn an_underlay_never_takes_a_raster_another_mod_already_draws() {
     let other = package(
         &root,
         "other",
-        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'}}));",
+        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'},welcome:{hidden:true}}));",
         &["terminal"],
     );
     trust(&store, &other, &["terminal"]);
     let view = host(&temp).terminal_view(json!({}), || true);
     assert_eq!(view.component_owners["shared"], "fixture");
     assert_eq!(
+        view.view.welcome.as_ref().map(|welcome| welcome.hidden),
+        Some(false)
+    );
+    assert_eq!(
         view.view.raster_declared("shared"),
         Some((Some(4), Some(2)))
     );
+    assert_eq!(view.view.underlay, None);
+    assert!(
+        view.conflicts
+            .iter()
+            .any(|conflict| conflict.field == "underlay" && conflict.rejected == "other")
+    );
+}
+
+#[test]
+fn a_later_welcome_writer_keeps_the_underlay_owners_hidden_welcome() {
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:true}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let view = host(&temp).terminal_view(json!({}), || true);
+    let welcome = view.view.welcome.unwrap();
+    assert!(welcome.show_while_composing && welcome.hidden);
 }
 
 #[test]

@@ -132,7 +132,11 @@ initial view; real disabled, broken or reloaded publications replace it.
 
 The reserved `welcome` site renders bounded generic components centered in the owned transcript's unused area.
 `welcome: {show_while_composing: true}` keeps the site visible with a draft, including while the slash-command, file
-or mention popup is open; the default shows it only with an empty composer.
+or mention popup is open; the default shows it only with an empty composer. `welcome: {hidden: true}`
+(`terminal_welcome_hidden_v1`, experimental) keeps the welcome area under the same rules, with Codex's own welcome and
+animation off, but draws no `welcome` site there, for a mod that fills the fresh screen another way (an underlay).
+`hidden` takes effect only for the mod that owns the composed underlay, so a later `welcome` writer can't un-hide it
+and a refused underlay brings the usual welcome back.
 
 - Accepted/running and resumed sessions, transcript selection/search, raw output and overlays suppress it.
 - Any history beyond the startup header and notices (a command's output, a rejected submission) hides it until a new
@@ -310,9 +314,10 @@ rows left after the region's other components and gaps. In a row layout each get
   leaf path it was dropped on; for the chat it is the path of the split holding the transcript and composer, or the
   transcript leaf without a composer. `edge` is `left`, `right`, `top` or `bottom` over the outer quarter of the
   target and `center` over its middle, never over the chat. `columns` and `rows` are the size of the area the layout
-  was drawn in. While dragging, the host shades where the pane would land. It changes nothing itself and sends nothing
-  when the drag is cancelled with Esc or ends on the dragged leaf or outside every zone, so the owner republishes its
-  layout.
+  was drawn in. While dragging, the host tints where the pane would land and draws its edge in the accent; cells it
+  can't blend (including ANSI 0–15 backgrounds) keep their colour and get the edge reversed. It changes nothing itself
+  and sends nothing when the drag is cancelled with Esc or ends on the dragged leaf or outside every zone, so the owner
+  republishes its layout.
 
 These go only to the mod whose view supplied the layout.
 
@@ -573,7 +578,8 @@ layout instead of in the sidebar.
 
 `underlay: {raster: KEY}` draws one of the mod's own cell rasters under the whole fullscreen screen, behind the
 conversation, the prompt box and the footer. It is experimental and exclusive: the first mod in composition order
-owns it, and later claims become `terminal.conflicts` entries.
+owns it, and later claims become `terminal.conflicts` entries. A raster key another mod already draws is refused the
+same way: the underlay is dropped and the conflict names that mod.
 
 - The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
   raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a

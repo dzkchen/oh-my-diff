@@ -8,12 +8,14 @@ ROOT = Path(__file__).resolve().parents[1]
 REVIEWED_IDENTIFIERS = {"claude", "anthropic", "lsp", "git"}
 HOST_WORDS = {"artifact", "auto", "budget", "cli", "code", "compact", "context", "continue", "cursor", "edit", "execution",
               "fix", "idle", "lines", "model", "mods", "output", "panel", "picker", "plan", "preview", "read", "reading",
-              "removal", "source", "subagent", "sync", "theme", "tool", "update", "usage", "view", "workspace"}
+              "removal", "source", "subagent", "sync", "tool", "update", "usage", "view", "workspace"}
 GENERIC_LITERALS = {
     "git": "Git executable used for tracked-path discovery",
     "github_pat_": "GitHub token prefix redacted from mod output",
     "profiles": "upstream Codex config profiles table",
     "profiles.json": "credential profile store",
+    "theme.glyphs": "view theme field (glyph overrides)",
+    "theme.syntax": "view theme field (syntax colours)",
 }
 NATIVE_SOURCES = ("runtime/omd/src", "runtime/omd/runner/src", "runtime/native/src")
 RUNNER_SCRIPTS = ("runtime/omd/runner/src/bootstrap.js", "runtime/omd/runner/src/dispatch.js", "runtime/omd/runner/src/step.js")

@@ -577,13 +577,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "75c585b8ee1370e9fd42d8821c876825e8e4be45b14f53e7cd98d3314e3dab07",
-        "mod.json": "e6c4763d7ddd5d20bfb5ce9052bae2835b94b8f07757db5dacb2853a5972b5c0",
-        "scenes.ts": "1a62f7e6fb241ff60eb25d58c279b8297e23057f96cbd4d98736defd6576b526",
+        "index.ts": "7f1c9da40452326a6c6d76db34df396d074029a5f62d04e2efae2ded40b411be",
+        "mod.json": "5869a0ce0d15c4d5673e2eb1f13f8f2870149cc6eba87a89400ff504c7a13835",
+        "scenes.ts": "ab20cb386f4e8db52db80c942aa72acbb1161a2972f83513bb981240a2a832bf",
         "steps.ts": "94f79d6f963178b87a347403dee7a8765351afc19b1c4e4ca39be870cfd73127"
       },
       "id": "omd_theme",
-      "package_sha256": "fac8c241f6865812930db1552bf38fe6179bd617fb28b5a48e2c9a608f09ed18",
+      "package_sha256": "8fbb575ef3aaf1ecbe46b2964a68fec0ff29a6f0dc028776a491d51b8efb5d59",
       "source": "mods/first-party/omd_theme",
       "version": "1.0.0"
     },

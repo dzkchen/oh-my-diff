@@ -2177,7 +2177,12 @@ impl Agents {
         };
         let thread_id = manager.reserve_thread_id();
         let id = format!("mod-{}-{thread_id}", caller.id);
-        super::roles::spawn_capacity_admitted(&core.inventory, lead, &id)?;
+        super::roles::spawn_capacity_admitted(
+            &core.inventory,
+            lead,
+            &id,
+            super::inventory::SpawnHold::Guarded,
+        )?;
         let capacity = CapacityReservation(&core.inventory, id.clone());
         let workspace = if writable || frozen.is_some() {
             std::fs::create_dir_all(&session.scratch).map_err(|e| e.to_string())?;
