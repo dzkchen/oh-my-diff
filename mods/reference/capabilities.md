@@ -90,6 +90,12 @@ needs `exec`.
 - A program is `*`, a bare name resolved on `PATH` outside the repository, or an absolute path.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
+- Every unsandboxed `exec.run`, `process.start` and `terminal.pty` start asks once per mod and binary ("Run NAME for
+  mod ID?") and again when the binary's hash changes, as after an upgrade; a callback outside a command waits for the
+  answer. The three share the pins in `program-pins.json` in the mod store; `omd-mod trust-program STORE MOD_ID PROGRAM`
+  pins a binary ahead of time for headless runs, where an unpinned run fails `program_unconfirmed` naming the resolved
+  path to pass as PROGRAM; MOD_ID must be an active mod whose `os_access` lists it. A declined prompt fails
+  `exec_program_declined` or `process_program_declined`, and a terminal start returns `{status: 'declined'}`.
 - Unsandboxed runs get the user's `HOME`, `USER`, `LOGNAME`, `SHELL`, locale and `SSH_AUTH_SOCK`, so `ssh`-based tools
   reach the user's SSH agent; the full environment is listed under `exec.run` with `sandbox: "none"`.
 

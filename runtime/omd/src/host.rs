@@ -1372,6 +1372,17 @@ impl Host<'_> {
         {
             return Err("exec_program_changed".into());
         }
+        if unrestricted.is_some()
+            && !crate::program_trust::ensure(
+                self.data_root,
+                caller.id,
+                &program,
+                &digest,
+                self.active,
+            )?
+        {
+            return Err("exec_program_declined".into());
+        }
         let cwd = match (input.cwd.as_deref(), unrestricted) {
             (None | Some("") | Some("."), _) => repository.clone(),
             (Some(name), Some(_)) if Path::new(name).is_absolute() || relative(name) => repository

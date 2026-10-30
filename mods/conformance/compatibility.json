@@ -155,6 +155,7 @@
       "terminal_underlay_v1",
       "terminal_chat_area_v1",
       "terminal_colors_v1",
+      "terminal_pty_v2",
       "terminal_welcome_hidden_v1"
     ]
   },

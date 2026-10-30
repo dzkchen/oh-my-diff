@@ -639,6 +639,38 @@
       "support_status": "reviewed_candidate"
     },
     {
+      "id": "omd_lazygit",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in lazygit inside the session, full screen or as a workspace panel; its edits open in your editor or become @path mentions",
+      "source": "mods/first-party/omd_lazygit",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; store_v1, exec_v1, unrestricted_process_v1, state_scopes_v1, service_dispatch_v1, terminal_surface_v1, terminal_layout_title_v1, terminal_pty_v1, pty_programs_v1, terminal_pty_v2, terminal_editor_v1, composer_v2, ui_composition_v1; an installed lazygit on PATH",
+      "tested_versions": [
+        "Codex 0.165.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
+      "id": "omd_yazi",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in yazi file manager inside the session, full screen or as a workspace panel; the files you pick become @path mentions",
+      "source": "mods/first-party/omd_yazi",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; store_v1, exec_v1, unrestricted_process_v1, state_scopes_v1, service_dispatch_v1, terminal_surface_v1, terminal_layout_title_v1, terminal_pty_v1, pty_programs_v1, terminal_pty_v2, composer_v2, ui_composition_v1; an installed yazi on PATH",
+      "tested_versions": [
+        "Codex 0.165.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
       "id": "token_weather",
       "version": "0.2.0",
       "extension_type": "mod",

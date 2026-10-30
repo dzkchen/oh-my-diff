@@ -622,7 +622,7 @@ export default function activate(api: ModAPI) {
     name: 'omd.workspace', version: '1.2.0',
     methods: {
       register: { input: 'object', output: 'object' }, unregister: { input: 'object', output: 'object' }, panels: { input: 'null', output: 'object' },
-      arrange: { input: 'object', output: 'object' }, arrangement: { input: 'object', output: 'object' },
+      arrange: { input: 'object', output: 'object' }, arrangement: { input: 'object', output: 'object' }, mode: { input: 'object', output: 'object' },
     },
   }, {
     register: input => {
@@ -651,6 +651,7 @@ export default function activate(api: ModAPI) {
         if (sitesOf(panel).some((name, index, all) => taken.has(name) || all.indexOf(name) !== index)) return refuse('site in use');
         if (others.length >= REGISTERED) return refuse('too many panels');
         state.registered = others.length < state.registered.length ? state.registered.map(item => item.id === id ? panel : item) : [...others, panel];
+        if (raw.show === true) front(state, id);
         return { registered: id };
       });
     },
@@ -658,9 +659,13 @@ export default function activate(api: ModAPI) {
       const kept = state.registered.filter(panel => panel.id !== obj(input).id);
       const removed = kept.length < state.registered.length;
       state.registered = kept;
+      if (removed && state.mode?.target === obj(input).id) state.mode = null;
       return { removed };
     }),
-    panels: () => ({ panels: panels(load()).map(({ id, title, site: name, tabs, placement }) => ({ id, title, site: name, ...(tabs ? { tabs } : {}), ...(placement ? { placement } : {}) })) as unknown as Json }),
+    panels: () => {
+      const state = load();
+      return { panels: (state.off ? [] : panels(state)).map(({ id, title, site: name, tabs, placement }) => ({ id, title, site: name, ...(tabs ? { tabs } : {}), ...(placement ? { placement } : {}) })) as unknown as Json };
+    },
     arrange: input => changed(state => {
       if (state.arranged?.by === 'user' || (!state.arranged && settled)) return refuse('the user arranged the workspace; /workspace reset hands it back');
       const refused = commit(state, parseNode(obj(input).tree), 'mod');
@@ -671,5 +676,15 @@ export default function activate(api: ModAPI) {
       const name = presetOf(state);
       return { tree: arrangement(state, panels(state)) as Json, by: state.arranged?.by ?? 'settings', ...(name ? { preset: name } : {}) };
     },
+    mode: input => changed(state => {
+      const raw = obj(input);
+      const level = LEVELS.indexOf(raw.level as Level);
+      const target = raw.target ?? 'chat';
+      if (state.off) return refuse('the workspace is off');
+      if (level < 0) return refuse('level must be normal, half or full');
+      if (target !== 'chat' && target !== 'dock' && !panels(state).some(panel => panel.id === target)) return refuse('target must be chat, dock or a shown panel id');
+      state.mode = level === 0 ? null : { target: target as string, level: LEVELS[level] as 'half' | 'full' };
+      return { mode: state.mode as Json };
+    }),
   });
 }

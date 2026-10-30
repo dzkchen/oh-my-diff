@@ -192,6 +192,26 @@ test('a registered panel with tabs nests in the dock and every key and layout li
   assert.ok(stacked.key_contexts.length <= 8 && keysOf(stacked.key_contexts) <= 32);
 });
 
+test('other mods set the screen mode on a shown panel, and unregistering that panel clears it', () => {
+  const state = service('register', { id: 'lazygit', title: 'Lazygit', site: 'omd_lazygit/main', show: true }, null).state;
+  const full = service('mode', { level: 'full', target: 'lazygit' }, state);
+  assert.deepEqual(full.value, { mode: { target: 'lazygit', level: 'full' } });
+  assert.deepEqual(draw(full.state, { rows: 40 }).layout.children.map(node => node.tabs?.map(tab => tab.title) ?? node.children?.length), [['1 Changes', '2 Shell', '3 Lazygit'], 2]);
+  assert.equal(service('mode', { level: 'normal', target: 'lazygit' }, full.state).state.mode, null);
+  assert.equal(service('mode', { level: 'half' }, null).state.mode.target, 'chat');
+  for (const bad of [{ level: 'big', target: 'lazygit' }, { level: 'full', target: 'missing' }, { level: 'full', target: 7 }]) assert.ok(service('mode', bad, state).value.error, JSON.stringify(bad));
+  assert.equal(service('mode', { level: 'full', target: 'lazygit' }, { ...state, off: true }).value.error, 'the workspace is off');
+  assert.equal(service('unregister', { id: 'lazygit' }, full.state).state.mode, null);
+  const other = service('mode', { level: 'full', target: 'changes' }, full.state).state;
+  assert.deepEqual(service('unregister', { id: 'lazygit' }, other).state.mode, { target: 'changes', level: 'full' });
+});
+
+test('while the workspace is off other mods see no panels, and a panel registered then shows once it is on', () => {
+  const off = service('register', { id: 'lazygit', title: 'Lazygit', site: 'omd_lazygit/main' }, command('off', null).state).state;
+  assert.deepEqual(service('panels', null, off).value, { panels: [] });
+  assert.deepEqual(service('panels', null, command('on', off).state).value.panels.map(item => item.id), ['changes', 'terminal', 'lazygit']);
+});
+
 test('a panel registered to replace a built-in hides it unless the panels setting lists it', () => {
   assert.deepEqual(service('panels', null, service('register', { id: 'git', title: 'Git', site: 'omd_git/main' }, null).state).value.panels.map(item => item.id), ['changes', 'terminal', 'git']);
   assert.match(service('register', { id: 'git', title: 'Git', site: 'omd_git/main', replaces: 'snake' }, null).value.error, /^replaces must be a built-in panel/);
@@ -221,6 +241,9 @@ test('other mods register, replace and unregister panels, which join the dock af
   ]) assert.ok(service('register', bad, state).value.error, JSON.stringify(bad));
   assert.deepEqual(service('unregister', { id: 'log' }, state).value, { removed: true });
   assert.deepEqual(service('unregister', { id: 'log' }, service('unregister', { id: 'log' }, state).state).value, { removed: false });
+  const shown = service('register', { id: 'lazygit', title: 'Lazygit', site: 'omd_lazygit/main', show: true }, state).state;
+  assert.equal(shown.recent[0], 'lazygit');
+  assert.notEqual(service('register', { id: 'yazi', title: 'Yazi', site: 'omd_yazi/main' }, shown).state.recent[0], 'yazi');
 });
 
 test('dragged sizes and clicked tabs follow the panels, not their paths', () => {

@@ -260,6 +260,29 @@
       "source": "mods/first-party/omd_inspector",
       "version": "1.0.0"
     },
+    "omd_lazygit": {
+      "api": "1.0.0",
+      "capabilities": [
+        "commands",
+        "terminal",
+        "store",
+        "exec",
+        "os",
+        "pty",
+        "composer",
+        "inventory",
+        "services"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "a724d9039d8aef90f0e699fc8dd464637dcc2dfed8f67ffc5eceeecea047d701",
+        "mod.json": "b889cdb16bf6426aaa53e77eebe2d27fcee3fe80a7e09bdc679b6e11aeaf17ce"
+      },
+      "id": "omd_lazygit",
+      "package_sha256": "1c5f4b4e1cf5e3621d685bd5a1a875f2331da0e82809594ff92d7a202b863e33",
+      "source": "mods/first-party/omd_lazygit",
+      "version": "1.0.0"
+    },
     "omd_logo": {
       "api": "1.0.0",
       "capabilities": [
@@ -785,14 +808,37 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "6859e99c2e1441c21f47a4c6ebdf3ef3b3686b00295e936ae70d5a09d62858c1",
-        "mod.json": "19c9a4ddebbb2e3053cf7e6c9c98cfb7a3736f7b4583b1a7ddcacee539408df0",
+        "index.ts": "e44e29498897cadd11519daa7266d7cbc20db8202d810ed5db3384236e20d3f2",
+        "mod.json": "c93dbafff1dc37aac79648381c847590a5ad5ecd3402071d22b4e1155c243c6f",
         "tree.ts": "bf7fbea96846738c7fad9738cac75182c8dd46a796837f4b175a2f8eb9ce28f6"
       },
       "id": "omd_workspace",
-      "package_sha256": "6a35cbcbf5c053ac9c6909f82af624cde7aa62a2050ce8c7a8a6b8a98fe37d3b",
+      "package_sha256": "55e8d48c6baaa7ff1f3969b0b73ea85f728d598d672ae3cbee758c18213b8c79",
       "source": "mods/first-party/omd_workspace",
       "version": "1.1.0"
+    },
+    "omd_yazi": {
+      "api": "1.0.0",
+      "capabilities": [
+        "commands",
+        "terminal",
+        "store",
+        "exec",
+        "os",
+        "pty",
+        "composer",
+        "inventory",
+        "services"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "234dc57434570170de199a668f36a2cb2c292457a09f618715c1ff662ca91a30",
+        "mod.json": "587d430c66ccabe2e51b558a90d69e072366eb978ca1a49e6bfbd43e77aee6dd"
+      },
+      "id": "omd_yazi",
+      "package_sha256": "2d8e1f854c8fc192c993bbcbddf2837e3387946ac4fb3d559fc9ae31f98ae869",
+      "source": "mods/first-party/omd_yazi",
+      "version": "1.0.0"
     }
   },
   "product": "oh-my-diff-mods-v1",

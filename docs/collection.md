@@ -60,6 +60,8 @@ OMD Core includes only the first three.
 | `omd_subagent_router` | Runs subagents on the model your prompt names ("use sonnet 5.5 as subagents to research") or per-role settings, including another provider's; `delegate_task` runs background workers | The other provider set up, such as `omd_claude_cli` |
 | `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 | `omd_workspace` | Arranges the chat with Git changes, a shell, your own terminal panels and other mods' panels: presets such as a tabbed dock or a corner layout, moves, drag, resize and focus keys; `/workspace` | `git` on your `PATH` for the Changes panel |
+| `omd_lazygit` | Runs lazygit in the session, full screen or as a workspace panel; its edits open in your editor or become `@path` mentions; `/lazygit` | `lazygit` on your `PATH`; runs outside the sandbox after you allow the binary. Experimental |
+| `omd_yazi` | Runs the yazi file manager in the session; the files you pick become `@path` mentions; `/yazi` | `yazi` on your `PATH`; runs outside the sandbox after you allow the binary. Experimental |
 | `omd_git` | A lazygit-style Git panel in the workspace dock: stage files and hunks, branches, commits, stash, push and pull; `/git` | `omd_workspace` turned on and `git` on your `PATH` |
 | `omd_files` | A yazi-style file manager in the workspace dock: Miller columns, tabs, find, frecency jump, previews and file operations; `/files` | `omd_workspace` turned on; `omd_frecency` for the jump list |
 | `omd_theme` | Living scenes drawn in character tiles behind the whole screen, prompt box and menus; `/theme` picks a scene and prints terminal background steps | |

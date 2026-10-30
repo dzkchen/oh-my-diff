@@ -108,17 +108,19 @@ Each mod runs at most `pty_panes_per_mod` terminals at once (4 unless `mod_limit
 
 | Method | Does |
 | --- | --- |
-| `register {id, title, site, tabs?, order?, placement?, replaces?}` | Adds or replaces a panel (see below). |
+| `register {id, title, site, tabs?, order?, placement?, show?, replaces?}` | Adds or replaces a panel (see below); one registered while the workspace is off shows when it is turned on. |
 | `unregister {id}` | Removes a panel. |
-| `panels` | The shown panels in order. |
+| `panels` | The shown panels in order; none while the workspace is off. |
 | `arrange {tree}` | Sets the whole arrangement, unless the user has arranged it (`/workspace reset` hands it back). A tree is `"chat"`, a panel id, `{split: 'horizontal' \| 'vertical', children: [2-4], ratio?}` or `{tabs: [panel ids]}`, with `chat` once and outside tabs. A refused tree returns `{error}` with the reason. |
 | `arrangement {}` | `{tree, by: 'user' \| 'mod' \| 'settings', preset?}`: the arrangement with every shown panel. |
+| `mode {level, target?}` | Sets the screen mode like `/workspace mode`: `level` is `normal`, `half` or `full`, `target` is `chat` (the default), `dock` or a shown panel id. Unregistering the target clears it; returns `{error}` while the workspace is off. |
 
 `register` fields:
 
 - `id`: any id except a built-in or terminal panel's, `chat` or `dock`.
 - `site`: `<mod>/<name>`, drawn by the registering mod.
 - `tabs`: up to 4 `{title, site}` entries, giving the panel its own tab bar.
+- `show: true`: also brings it to the front of its tab group.
 - `placement {beside, edge, share?}`: where it first appears. `beside` is `chat` or a panel id, `edge` is `left`, `right`, `top`, `bottom` or `tab`, and `share` is 5–95 percent.
 - `replaces`: a built-in panel (`changes` or `terminal`) it stands in for; that panel is hidden unless the `panels` setting lists it.
 

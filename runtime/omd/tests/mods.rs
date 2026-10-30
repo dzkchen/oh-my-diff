@@ -2393,6 +2393,26 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
         &["commands", "exec", "fs.write"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let capabilities = ["commands", "exec", "os", "pty"];
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => api.command('open',()=>api.host.call('terminal.pty',{action:'start',session:'s',program:'/bin/echo',sandbox:'none'}))",
+        &capabilities,
+    );
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+    manifest["os_access"] = json!({"programs": ["/bin/echo"]});
+    std::fs::write(
+        path.join("mod.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    trust(&store, &path, &capabilities);
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let (temp, _, _) = fixture(
         "export default (api: any) => api.command('count',()=>{ api.atom<number>('n', 0).set(1); return null; })",
         &["commands", "store"],

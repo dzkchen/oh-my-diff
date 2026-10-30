@@ -413,6 +413,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_underlay_v1",
     "terminal_chat_area_v1",
     "terminal_colors_v1",
+    "terminal_pty_v2",
     "terminal_welcome_hidden_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
@@ -1437,6 +1438,7 @@ fn source_use(
                 && declared("os")
             {
                 used.push("os".to_owned());
+                used.push("exec".to_owned());
             }
             if !used.is_empty()
                 && operation == "exec.run"

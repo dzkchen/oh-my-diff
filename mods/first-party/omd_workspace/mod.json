@@ -10,7 +10,7 @@
   "capabilities": ["terminal", "commands", "store", "exec", "pty", "fs.write", "network", "services", "lifecycle", "inventory"],
   "assets": ["tree.ts"],
   "compatibility": {"required_features": ["package_imports_v1", "package_text_assets_v1", "store_v1", "exec_v1", "terminal_surface_v1", "terminal_lists_v1", "terminal_tabs_v1", "terminal_pty_v1", "pty_programs_v1", "terminal_focus_v1", "terminal_layout_title_v1", "terminal_layout_dock_v1", "ui_controls_v1", "settings_file_v1", "service_dispatch_v1", "lifecycle_events_v1", "mods_changed_v1"]},
-  "services": {"exports": [{"name": "omd.workspace", "version": "1.2.0", "methods": {"register": {"input": "object", "output": "object"}, "unregister": {"input": "object", "output": "object"}, "panels": {"input": "null", "output": "object"}, "arrange": {"input": "object", "output": "object"}, "arrangement": {"input": "object", "output": "object"}}}]},
+  "services": {"exports": [{"name": "omd.workspace", "version": "1.2.0", "methods": {"register": {"input": "object", "output": "object"}, "unregister": {"input": "object", "output": "object"}, "panels": {"input": "null", "output": "object"}, "arrange": {"input": "object", "output": "object"}, "arrangement": {"input": "object", "output": "object"}, "mode": {"input": "object", "output": "object"}}}]},
   "settings_schema": {
     "type": "object",
     "properties": {
