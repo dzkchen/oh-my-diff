@@ -262,6 +262,13 @@ an `image` back to image pixels.
 Spans accept `fg` and `bg` theme colors, `italic` and `underline` (`terminal_style_v1`); `document` keeps span
 styles.
 
+### Code highlighting (`terminal_code_highlight_v1`)
+
+A `code` component with a `language` (a name or file extension such as `rust`, `ts` or `py`) draws its `text`
+in the user's syntax theme. An unknown or missing `language`, or a line over 4 KiB, draws it plain. `start` (a line index,
+default 0) draws from that line while highlighting from the top of `text`, so a scrolled view keeps comments and
+strings that open above it.
+
 ### Component key and paste input (`terminal_input_v1`)
 
 A `pane` or `document` with `keys: true` (`terminal_input_v1`) forwards keys and pastes while focused as
@@ -453,7 +460,7 @@ operations `component_event` hooks make, on either surface), and detaching unmou
 #### `terminal` event `client`
 
 The `terminal` event carries `client: {kind: 'terminal', graphics, pointer, reduced_motion, cell_px, columns,
-rows}`:
+rows, sites?}`:
 
 | Field | Meaning |
 | --- | --- |
@@ -462,12 +469,15 @@ rows}`:
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |
 | `cell_px` | The measured cell size or null. |
 | `columns` and `rows` | The terminal grid. |
+| `sites` | `terminal_site_area_v1`: `{[site]: {columns, rows}}` for each of the receiving mod's own `mod/site` sites the last frame drew as a layout leaf or an overlay, the cells its components got inside the frame's border, padding and title. Absent when the last frame drew none; sites stacked in the sidebar are not listed. |
 | `welcome` | `terminal_welcome_area_v1`: `{columns, rows}` of the blank area a `welcome` site gets this frame (the chat width beside any sidebar or dock, by the unused transcript height), or null when the welcome cannot show. Size welcome content from it; a change renders the view again. |
 | `chat` | `terminal_chat_area_v1`: `{x, y, columns, rows}` of the chat column this frame (the conversation and prompt box, beside any sidebar, dock or layout region), or null before the first fullscreen draw. Place art relative to the conversation with it; a change renders the view again. |
 | `colors` | `terminal_colors_v1`: the colours the terminal shows, `truecolor`, `256` or `16`. |
 
 `client` is null without a terminal client. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`; a burst of changes renders once per render in progress.
+A drawn site's area renders the view again the same way, except when it returns within a second to the area it had
+before the last change, as a view that sizes its own layout from `sites` would cause.
 
 #### `raster` component
 

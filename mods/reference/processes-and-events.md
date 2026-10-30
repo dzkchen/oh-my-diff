@@ -194,7 +194,7 @@ exits, even while a background child keeps the output streams open and more outp
 
 ### `workspace.watch`
 
-`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?, key?}` reports external edits as `workspace_change`
+`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?, key?, git?}` reports external edits as `workspace_change`
 with source `external`.
 
 - At most 16 watches per mod.
@@ -204,6 +204,10 @@ with source `external`.
   mod's watches. Keys require `workspace_watch_key_v1`.
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
+- `git: true` (`workspace_watch_git_v1`) also reports changes to the repository's Git metadata, found from the
+  workspace root upward (linked worktrees, submodules and separate Git directories included): `HEAD`, `index`,
+  `packed-refs` and `refs/…`, as paths `.git/HEAD` and so on with `before` and `after` null. Lock files and objects
+  are left out. Outside a repository the call fails `watch_git_unavailable`.
 
 ### Callback delivery
 

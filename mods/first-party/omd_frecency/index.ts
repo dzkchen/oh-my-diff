@@ -50,8 +50,16 @@ function fuzzy(query: string, path: string): number | null {
   return (typos ? 50 - typos * 10 : 60) + (common(q, name) === q.length ? 10 : 0);
 }
 
-const mentioned = (text: string) => [...new Set([...text.matchAll(/"([^"\n]{1,256})"|(\S{1,256})/g)]
-  .map(match => (match[1] ?? match[2]).replace(/^[(\['"`<]*@?/, '').replace(/^\.\//, '').replace(/[,;:.!?)\]'"`>]+$/, '').replace(/(:\d+)+$/, ''))
+const unquote = (quoted: string) => {
+  try {
+    return JSON.parse(`"${quoted}"`) as string;
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return quoted;
+  }
+};
+const mentioned = (text: string) => [...new Set([...text.matchAll(/@?"((?:[^"\\\n]|\\.){1,256})"|(\S{1,256})/g)]
+  .map(match => (match[1] !== undefined ? unquote(match[1]) : match[2]).replace(/^[(\['"`<]*@?/, '').replace(/^\.\//, '').replace(/[,;:.!?)\]'"`>]+$/, '').replace(/(:\d+)+$/, ''))
   .filter(path => /\/|\.\w{1,10}$/.test(path) && !path.startsWith('/') && !path.split('/').includes('..')))].slice(0, 16);
 
 export default function activate(api: ModAPI) {
@@ -157,6 +165,13 @@ export default function activate(api: ModAPI) {
   api.replace('completion', event => event.kind === 'mention'
     ? { items: rank(event.query, event.candidates.map(candidate => candidate.path)).map(path => ({ path })) }
     : null);
+
+  api.provide({ name: 'omd.frecency', version: '1.0.0', methods: { rank: { input: 'object', output: 'object' } } }, {
+    rank: input => {
+      const query = (input as { query?: unknown } | null)?.query;
+      return { paths: rank(typeof query === 'string' ? query.slice(0, 256) : '', []) };
+    },
+  });
 
   api.intercept('input', (event, next) => {
     const tokens = mentioned(event.text);
