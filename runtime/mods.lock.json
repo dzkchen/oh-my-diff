@@ -564,6 +564,29 @@
       "source": "mods/first-party/omd_subagent_router",
       "version": "1.0.0"
     },
+    "omd_theme": {
+      "api": "1.0.0",
+      "capabilities": [
+        "terminal",
+        "commands",
+        "store",
+        "events",
+        "lifecycle",
+        "builtins",
+        "exec"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "75c585b8ee1370e9fd42d8821c876825e8e4be45b14f53e7cd98d3314e3dab07",
+        "mod.json": "e6c4763d7ddd5d20bfb5ce9052bae2835b94b8f07757db5dacb2853a5972b5c0",
+        "scenes.ts": "1a62f7e6fb241ff60eb25d58c279b8297e23057f96cbd4d98736defd6576b526",
+        "steps.ts": "94f79d6f963178b87a347403dee7a8765351afc19b1c4e4ca39be870cfd73127"
+      },
+      "id": "omd_theme",
+      "package_sha256": "fac8c241f6865812930db1552bf38fe6179bd617fb28b5a48e2c9a608f09ed18",
+      "source": "mods/first-party/omd_theme",
+      "version": "1.0.0"
+    },
     "omd_tool_absorb": {
       "api": "1.0.0",
       "capabilities": [

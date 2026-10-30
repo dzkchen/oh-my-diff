@@ -404,6 +404,10 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_focus_v1",
     "terminal_layout_title_v1",
     "terminal_raster_packed_v1",
+    "terminal_welcome_area_v1",
+    "terminal_underlay_v1",
+    "terminal_chat_area_v1",
+    "terminal_colors_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -6281,6 +6285,13 @@ impl ModHost {
             }
         }
         view.close_wraps();
+        if let Some(underlay) = &view.underlay
+            && let Some(owner) = claims.get("underlay")
+        {
+            component_owners
+                .entry(underlay.raster.clone())
+                .or_insert_with(|| owner.clone());
+        }
         conflicts.truncate(32);
         ModTerminalView {
             layout_owner: view.layout.as_ref().and(claims.remove("layout")),

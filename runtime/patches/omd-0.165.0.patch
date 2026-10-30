@@ -34645,7 +34645,7 @@ index 7b53366557dcf7084b4b23501ad7e0611f512009..b935f13d41cf38f163ffdc1fbb97b49b
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39a3d70f20 100644
+index 7c43e1799b268545467d9eb19586e2f9fd55cb19..11a2f8f8aa96913258c6c30038845abea7fe2c6c 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -106,8 +106,9 @@ impl App {
@@ -34675,8 +34675,8 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39
 -        self.sync_owned_transcript(screen_size.width);
 -        let transcript_width = self.chat_widget.history_wrap_width(screen_size.width);
 +        let mod_snapshot = self.mod_render_snapshot();
-+        let mod_welcome =
-+            crate::mod_ui::welcome_visible(&mod_snapshot, self.mod_welcome_composer(&mod_snapshot));
++        let welcome_composer = self.mod_welcome_composer(&mod_snapshot);
++        let mod_welcome = crate::mod_ui::welcome_visible(&mod_snapshot, welcome_composer);
 +        let screen = Rect::new(
 +            /*x*/ 0,
 +            /*y*/ 0,
@@ -34770,7 +34770,7 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39
                  frame.buffer,
                  &self.transcript_cells,
                  completion_tip,
-@@ -269,45 +270,44 @@ impl App {
+@@ -269,45 +270,60 @@ impl App {
                      ..Default::default()
                  });
              footer_height_changed = !dashboard_visible
@@ -34839,10 +34839,26 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39
 +                    .borrow_mut()
 +                    .cancel_replay();
 +            }
++            let images = view.image_placements();
++            let pictures: Vec<Rect> = images.iter().map(|placement| placement.area).collect();
++            let kept: Vec<Rect> = pictures
++                .iter()
++                .copied()
++                .chain(completion_tip_area)
++                .collect();
++            crate::mod_raster::underlay_glyphs(
++                &mod_snapshot,
++                screen,
++                Rect::new(area.x, area.y, transcript_width, transcript_bottom),
++                &kept,
++                frame.buffer,
++                crate::mod_ui::color_level(),
++                Instant::now(),
++            );
              bottom.render(bottom_area, frame.buffer);
              if let (Some(tip), Some(area)) = (completion_tip, completion_tip_area) {
                  tip.render(area, frame.buffer);
-@@ -320,8 +320,8 @@ impl App {
+@@ -320,8 +336,8 @@ impl App {
              } else {
                  (available > 0).then(|| {
                      Rect::new(
@@ -34853,23 +34869,35 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -342,21 +342,28 @@ impl App {
+@@ -338,39 +354,56 @@ impl App {
+                     .borrow_mut()
+                     .register(area, /*invalidate*/ false);
+             }
++            crate::mod_raster::underlay_tint(
++                &mod_snapshot,
++                screen,
++                &pictures,
++                frame.buffer,
++                crate::mod_ui::color_level(),
++            );
+             chat_widget
                  .rendered_selection
                  .borrow_mut()
                  .render(frame.buffer);
 -            chat_widget.note_rendered_width(screen_size.width);
 +            chat_widget.note_rendered_width(area.width);
 +            crate::mod_ui::render_owned(screen, area, frame.buffer, &mod_snapshot);
++            let welcome = Rect {
++                x: area.x,
++                width: area.width,
++                ..view.remaining_area()
++            };
++            crate::mod_client::note_welcome(
++                welcome_composer.map(|_| (welcome.width, welcome.height)),
++            );
++            crate::mod_client::note_chat(area);
 +            if mod_welcome {
-+                crate::mod_ui::render_welcome(
-+                    Rect {
-+                        x: area.x,
-+                        width: area.width,
-+                        ..view.remaining_area()
-+                    },
-+                    frame.buffer,
-+                    &mod_snapshot,
-+                );
++                crate::mod_ui::render_welcome(welcome, frame.buffer, &mod_snapshot);
 +            }
              let dialog = chat_widget.centered_dialog();
              let (foreground, foreground_area): (&dyn Renderable, Rect) =
@@ -34889,9 +34917,11 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39
              rendered_cursor = foreground.cursor_pos(foreground_area);
              if let Some(position) = rendered_cursor {
                  frame.set_cursor_style(foreground.cursor_style(foreground_area));
-@@ -365,12 +372,14 @@ impl App {
+                 frame.set_cursor_position(position);
+             }
              if chat_widget.no_modal_or_popup_active() {
-                 frame.transcript_images = view.image_placements();
+-                frame.transcript_images = view.image_placements();
++                frame.transcript_images = images;
              }
 +            crate::mod_client::transmit();
          })?;
@@ -43605,10 +43635,10 @@ index e0a4d5286b33ae186952b405f87a42a9b7fbd439..2c9223d860bcc11f01acdcb9f5d2970f
              animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
              effects: Default::default(),
 diff --git a/codex-rs/tui/src/startup_draft_layout.rs b/codex-rs/tui/src/startup_draft_layout.rs
-index da417ce52bc963b1fc5633e7a49e39bb92546951..d543df9ed17e5c29d06075d40d1a458a29fca93f 100644
+index da417ce52bc963b1fc5633e7a49e39bb92546951..e41772705f846c6163ba66ce897c34edf4d627a0 100644
 --- a/codex-rs/tui/src/startup_draft_layout.rs
 +++ b/codex-rs/tui/src/startup_draft_layout.rs
-@@ -64,16 +64,29 @@ impl Renderable for OwnedStartupLayout<'_> {
+@@ -64,16 +64,43 @@ impl Renderable for OwnedStartupLayout<'_> {
          paragraph.render(header, buf);
          let message = match self.pump.session_action {
              StartupDraftSessionAction::New | StartupDraftSessionAction::NewFromCommandCenter => {
@@ -43619,13 +43649,27 @@ index da417ce52bc963b1fc5633e7a49e39bb92546951..d543df9ed17e5c29d06075d40d1a458a
 +                    height: bottom.y.saturating_sub(header.bottom()),
 +                    ..area
 +                };
-+                if snapshot.input["presentation"]["phase"] == "fresh"
-+                    && !self.pump.raw_output_mode
-+                    && crate::mod_ui::welcome_visible(&snapshot, composer)
-+                {
++                let eligible = snapshot.input["presentation"]["phase"] == "fresh"
++                    && !self.pump.raw_output_mode;
++                crate::mod_client::note_welcome(
++                    (eligible && composer.is_some()).then_some((available.width, available.height)),
++                );
++                crate::mod_client::note_chat(area);
++                if eligible && crate::mod_ui::welcome_visible(&snapshot, composer) {
 +                    self.pump.blossom.borrow_mut().cancel_replay();
-+                    crate::mod_ui::render_welcome(available, buf, &snapshot);
++                    let level = crate::mod_ui::color_level();
++                    crate::mod_raster::underlay_glyphs(
++                        &snapshot,
++                        buf.area,
++                        available,
++                        &[],
++                        buf,
++                        level,
++                        std::time::Instant::now(),
++                    );
 +                    self.bottom.render(bottom, buf);
++                    crate::mod_raster::underlay_tint(&snapshot, buf.area, &[], buf, level);
++                    crate::mod_ui::render_welcome(available, buf, &snapshot);
 +                    return;
 +                }
                  let composer = (!self.pump.submission_pending)
@@ -44934,7 +44978,7 @@ index e86668e5ad75e97260a2261257afa3fdf2dea4b2..b64a130d2823f1f7ac26e25c8e858fde
          codex_state::SqliteConfig::new_for_testing(codex_home.path().to_path_buf().abs());
 
 diff --git a/codex-rs/tui/src/terminal_palette.rs b/codex-rs/tui/src/terminal_palette.rs
-index 8364c6b7d75ecf6515c167c3ad5c795f050c1310..9d8b8da2b0c314acd95a6cc97a7ff97729d7a4f4 100644
+index 8364c6b7d75ecf6515c167c3ad5c795f050c1310..b6f2a835eb595ec62ea56f9d129b91b479707006 100644
 --- a/codex-rs/tui/src/terminal_palette.rs
 +++ b/codex-rs/tui/src/terminal_palette.rs
 @@ -77,13 +77,26 @@ fn stdout_color_level_for_terminal(
@@ -44952,7 +44996,7 @@ index 8364c6b7d75ecf6515c167c3ad5c795f050c1310..9d8b8da2b0c314acd95a6cc97a7ff977
 +                    std::cell::RefCell::new(std::collections::HashMap::new());
 +            }
 +            NEAREST.with_borrow_mut(|nearest| {
-+                if nearest.len() >= 4096 {
++                if nearest.len() >= 1 << 16 {
 +                    nearest.clear();
 +                }
 +                *nearest.entry(target).or_insert_with(|| {
@@ -110570,10 +110614,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..88ef3a764cbeda6f48b58b4d1c6a8f1ba4ba285b
+index 0000000000000000000000000000000000000000..b36e3c8c6f6d4e4cd46fc266c6535143a2580b28
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6873 @@
+@@ -0,0 +1,6884 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -110980,6 +111024,10 @@ index 0000000000000000000000000000000000000000..88ef3a764cbeda6f48b58b4d1c6a8f1b
 +    "terminal_focus_v1",
 +    "terminal_layout_title_v1",
 +    "terminal_raster_packed_v1",
++    "terminal_welcome_area_v1",
++    "terminal_underlay_v1",
++    "terminal_chat_area_v1",
++    "terminal_colors_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -116857,6 +116905,13 @@ index 0000000000000000000000000000000000000000..88ef3a764cbeda6f48b58b4d1c6a8f1b
 +            }
 +        }
 +        view.close_wraps();
++        if let Some(underlay) = &view.underlay
++            && let Some(owner) = claims.get("underlay")
++        {
++            component_owners
++                .entry(underlay.raster.clone())
++                .or_insert_with(|| owner.clone());
++        }
 +        conflicts.truncate(32);
 +        ModTerminalView {
 +            layout_owner: view.layout.as_ref().and(claims.remove("layout")),
@@ -129327,10 +129382,10 @@ index 0000000000000000000000000000000000000000..6a9de102d4fef33021f9f5c538ac2266
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3ab44e547
+index 0000000000000000000000000000000000000000..e42160e9e0c6ab163f1b7f9e1a52d23f58585296
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2476 @@
+@@ -0,0 +1,2509 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 24;
@@ -129343,6 +129398,12 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +pub struct ModWelcome {
 +    #[serde(default)]
 +    pub show_while_composing: bool,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct ModUnderlay {
++    pub raster: String,
 +}
 +
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -129390,6 +129451,8 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +    pub surface_styles: BTreeMap<String, ModSurfacePaint>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub inline_sites: Option<ModInlineSites>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub underlay: Option<ModUnderlay>,
 +}
 +
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -129437,6 +129500,8 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +    pub surface_styles: BTreeMap<String, ModSurfacePaint>,
 +    #[serde(default)]
 +    pub inline_sites: Option<ModInlineSites>,
++    #[serde(default)]
++    pub underlay: Option<ModUnderlay>,
 +}
 +
 +#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -130678,6 +130743,12 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +        self.sites
 +            .values()
 +            .find_map(|site| find(&site.components, id))
++            .or_else(|| {
++                self.underlay
++                    .as_ref()
++                    .is_some_and(|underlay| underlay.raster == id)
++                    .then_some((None, None))
++            })
 +    }
 +
 +    pub fn module(&self, id: &str) -> Option<(&str, &Value)> {
@@ -131475,6 +131546,13 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +                "surface_styles",
 +                !valid_surface_styles(&patch.surface_styles),
 +            ),
++            (
++                "underlay",
++                patch
++                    .underlay
++                    .as_ref()
++                    .is_some_and(|underlay| !mod_component_id(&underlay.raster)),
++            ),
 +            ("size", serde_json::to_vec(&patch)?.len() > 262_144),
 +        ]
 +        .into_iter()
@@ -131492,6 +131570,7 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +        self.header = None;
 +        self.footer = None;
 +        self.layout = None;
++        self.underlay = None;
 +        self.status.clear();
 +    }
 +
@@ -131560,6 +131639,9 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +        }
 +        if self.placeholder.is_some() && claim("placeholder".into()) {
 +            candidate.placeholder = self.placeholder;
++        }
++        if self.underlay.is_some() && claim("underlay".into()) {
++            candidate.underlay = self.underlay;
 +        }
 +        candidate.surface_styles.extend(self.surface_styles);
 +        for (name, site) in self.sites {
@@ -131747,6 +131829,12 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +                "surface_styles",
 +                !valid_surface_styles(&view.surface_styles),
 +            ),
++            (
++                "underlay",
++                view.underlay
++                    .as_ref()
++                    .is_some_and(|underlay| !mod_component_id(&underlay.raster)),
++            ),
 +            ("size", serde_json::to_vec(&view)?.len() > 1_048_576),
 +        ]
 +        .into_iter()
@@ -131809,10 +131897,10 @@ index 0000000000000000000000000000000000000000..e484195e6dc820b29c4263b33c9977a3
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f06f03ed1c710028e06fa095ed3756d6a3a2ce4a
+index 0000000000000000000000000000000000000000..f4ffc1f0d59627b10edb8a623f7188a7e3d97cbe
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,343 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -132131,6 +132219,30 @@ index 0000000000000000000000000000000000000000..f06f03ed1c710028e06fa095ed3756d6
 +        matches!(&composed.keys["Enter"].action, ModKeyAction::Command { command, .. } if command == "first:open")
 +    );
 +    assert!(!composed.keys.contains_key("x"));
++}
++
++#[test]
++fn the_underlay_names_a_raster_and_goes_to_its_first_claimant() {
++    assert!(view(json!({"underlay": {"raster": "Scene!"}})).is_err());
++    assert!(view(json!({"underlay": {"raster": "scene", "opacity": 1}})).is_err());
++    let mut target = ModView::default();
++    let mut claims = BTreeMap::new();
++    let mut apply = |id: &str, raster: &str| {
++        ModViewPatch::parse(json!({"underlay": {"raster": raster}}))
++            .unwrap()
++            .apply(&mut target, &mut claims, id, "idle")
++            .unwrap()
++    };
++    assert_eq!(apply("first", "scene"), Vec::new());
++    assert_eq!(apply("second", "other")[0].field, "underlay");
++    assert_eq!(
++        target.underlay,
++        Some(ModUnderlay {
++            raster: "scene".into()
++        })
++    );
++    assert_eq!(target.raster_declared("scene"), Some((None, None)));
++    assert_eq!(target.raster_declared("other"), None);
 +}
 diff --git a/codex-rs/omd/src/owner.rs b/codex-rs/omd/src/owner.rs
 new file mode 100644
@@ -144770,10 +144882,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d3fcd4b04765950cf4da05d518cbf6d2d19726d3
+index 0000000000000000000000000000000000000000..b34618b1b286ce266272251411a32fbb7b4356dd
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4944 @@
+@@ -0,0 +1,4966 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -146466,6 +146578,28 @@ index 0000000000000000000000000000000000000000..d3fcd4b04765950cf4da05d518cbf6d2
 +            "{error}"
 +        );
 +    }
++}
++
++#[test]
++fn an_underlay_never_takes_a_raster_another_mod_already_draws() {
++    let (temp, store, _) = fixture(
++        "export default api => api.on('terminal', () => ({sites:{dialog:{mode:'replace',components:[{type:'raster',id:'shared',label:'Chart',alt:'chart',width:4,height:2}]}}}));",
++        &["terminal"],
++    );
++    let root = temp.path().canonicalize().unwrap();
++    let other = package(
++        &root,
++        "other",
++        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'}}));",
++        &["terminal"],
++    );
++    trust(&store, &other, &["terminal"]);
++    let view = host(&temp).terminal_view(json!({}), || true);
++    assert_eq!(view.component_owners["shared"], "fixture");
++    assert_eq!(
++        view.view.raster_declared("shared"),
++        Some((Some(4), Some(2)))
++    );
 +}
 +
 +#[test]
@@ -156212,10 +156346,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a514f59cda7
+index 0000000000000000000000000000000000000000..f90f2903530317656bd6c51b7ca7ed8895338612
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2244 @@
+@@ -0,0 +1,2254 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -156840,9 +156974,13 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +}
 +
 +fn import_target(arguments: &Value) -> Result<std::path::PathBuf, String> {
-+    std::path::Path::new(arguments["path"].as_str().ok_or("import_path_required")?)
-+        .canonicalize()
-+        .map_err(|error| error.to_string())
++    let path = arguments["path"].as_str().ok_or("import_path_required")?;
++    match (path.strip_prefix("~/"), dirs::home_dir()) {
++        (Some(rest), Some(home)) => home.join(rest),
++        _ => std::path::PathBuf::from(path),
++    }
++    .canonicalize()
++    .map_err(|error| error.to_string())
 +}
 +
 +fn svg(bytes: &[u8]) -> bool {
@@ -158116,6 +158254,12 @@ index 0000000000000000000000000000000000000000..c4ddd24e7bd7c9d224fe7cf130433a51
 +            copy_text(&json!({"text": selected["text"]})).unwrap().len(),
 +            65_277
 +        );
++    }
++
++    #[test]
++    fn imports_resolve_a_home_relative_path() {
++        let home = dirs::home_dir().unwrap().canonicalize().unwrap();
++        assert_eq!(import_target(&json!({"path": "~/"})), Ok(home));
 +    }
 +
 +    #[test]
@@ -161872,10 +162016,10 @@ index 0000000000000000000000000000000000000000..e9b477a576c28bfaf1f484aa9fea5773
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4c27a902fd893c958241a6045ce7058d24571dd0
+index 0000000000000000000000000000000000000000..cea6b8c1c56cc6d5cc1831e0821835a8d7b22422
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,729 @@
+@@ -0,0 +1,751 @@
 +use crate::omd::LockExt;
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
@@ -161960,6 +162104,8 @@ index 0000000000000000000000000000000000000000..4c27a902fd893c958241a6045ce7058d
 +    probed: bool,
 +    shared_memory: bool,
 +    size: (u16, u16),
++    welcome: Option<(u16, u16)>,
++    chat: Option<(u16, u16, u16, u16)>,
 +}
 +
 +impl Facts {
@@ -162035,6 +162181,13 @@ index 0000000000000000000000000000000000000000..4c27a902fd893c958241a6045ce7058d
 +            "cell_px": self.cell.map(|(width, height)| json!({"width": width, "height": height})),
 +            "columns": self.size.0,
 +            "rows": self.size.1,
++            "welcome": self.welcome.map(|(columns, rows)| json!({"columns": columns, "rows": rows})),
++            "chat": self.chat.map(|(x, y, columns, rows)| json!({"x": x, "y": y, "columns": columns, "rows": rows})),
++            "colors": match crate::terminal_palette::effective_stdout_color_level() {
++                crate::terminal_palette::StdoutColorLevel::TrueColor => "truecolor",
++                crate::terminal_palette::StdoutColorLevel::Ansi256 => "256",
++                _ => "16",
++            },
 +        })
 +    }
 +}
@@ -162076,6 +162229,19 @@ index 0000000000000000000000000000000000000000..4c27a902fd893c958241a6045ce7058d
 +        *facts != before
 +    });
 +    if changed {
++        rerender();
++    }
++}
++
++pub(crate) fn note_welcome(area: Option<(u16, u16)>) {
++    if with(|facts| std::mem::replace(&mut facts.welcome, area) != area) {
++        rerender();
++    }
++}
++
++pub(crate) fn note_chat(area: ratatui::layout::Rect) {
++    let area = Some((area.x, area.y, area.width, area.height));
++    if with(|facts| std::mem::replace(&mut facts.chat, area) != area) {
 +        rerender();
 +    }
 +}
@@ -162607,10 +162773,10 @@ index 0000000000000000000000000000000000000000..4c27a902fd893c958241a6045ce7058d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..01cc663fdfa0cba5d9c7aceff7f3ed1ec87a567f
+index 0000000000000000000000000000000000000000..303cb6e7a8678e9c1a0288781d0c0b1c9f5e8771
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,251 @@
 +use super::*;
 +use base64::Engine as _;
 +use crossterm::event::KeyModifiers;
@@ -162768,6 +162934,16 @@ index 0000000000000000000000000000000000000000..01cc663fdfa0cba5d9c7aceff7f3ed1e
 +    let value = facts().value();
 +    assert_eq!(value["pointer"], "none");
 +    assert_eq!(value["cell_px"], json!({"width": 10, "height": 20}));
++    note_welcome(Some((80, 20)));
++    note_chat(ratatui::layout::Rect::new(0, 1, 90, 39));
++    let value = facts().value();
++    assert_eq!(
++        (&value["welcome"], &value["chat"]),
++        (
++            &json!({"columns": 80, "rows": 20}),
++            &json!({"x": 0, "y": 1, "columns": 90, "rows": 39})
++        )
++    );
 +    *FACTS.lock().unwrap() = None;
 +}
 +
@@ -162854,10 +163030,10 @@ index 0000000000000000000000000000000000000000..01cc663fdfa0cba5d9c7aceff7f3ed1e
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..339180bbbdcc606262ac0c628c75609dc79ac89b
+index 0000000000000000000000000000000000000000..767d1f89d26f7a7c7cb221fa413a2a292d47aaff
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,695 @@
+@@ -0,0 +1,699 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -163235,11 +163411,15 @@ index 0000000000000000000000000000000000000000..339180bbbdcc606262ac0c628c75609d
 +        decoded = decode_once(sha256, load)?;
 +        &decoded
 +    };
++    let level = crate::mod_ui::color_level();
 +    let rows = codex_omd::client_surface::half_block(pixels, width, height)
 +        .iter()
 +        .map(|row| {
 +            let mut spans = vec![Span::raw(prefix.to_owned())];
-+            spans.extend(row.iter().map(|cell| crate::mod_raster::span(cell, false)));
++            spans.extend(
++                row.iter()
++                    .map(|cell| crate::mod_raster::span(cell, false, level)),
++            );
 +            Line::from(spans)
 +        })
 +        .collect::<Vec<_>>();
@@ -165644,10 +165824,14 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338180c0da4
+index 0000000000000000000000000000000000000000..969d27160c8feec013be34a2874a9fa6277119dc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,683 @@
++use codex_omd::ModColor;
++use ratatui::buffer::Buffer;
++use ratatui::layout::Rect;
++use ratatui::style::Color;
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
@@ -165663,12 +165847,15 @@ index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338
 +use unicode_width::UnicodeWidthStr;
 +
 +use crate::omd::LockExt;
++use crate::terminal_palette::StdoutColorLevel;
 +pub(crate) use codex_omd::client_surface::BLIT_FRAME as FRAME;
 +use codex_omd::client_surface::Blit as Update;
 +use codex_omd::client_surface::BlitCell as Cell;
 +use codex_omd::client_surface::BlitContent;
 +const RASTERS_PER_MOD: usize = 16;
 +const HIDDEN_RETRY: Duration = Duration::from_millis(250);
++
++type LinesKey = (u64, usize, u16, bool, Option<StdoutColorLevel>, String);
 +
 +struct Raster {
 +    owner: String,
@@ -165685,6 +165872,7 @@ index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338
 +    frames: u64,
 +    shown: u64,
 +    placed: Option<((u32, u32), (u16, u16))>,
++    lines: Option<(LinesKey, Vec<Line<'static>>)>,
 +}
 +
 +impl Raster {
@@ -165704,6 +165892,7 @@ index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338
 +            frames: 0,
 +            shown: 0,
 +            placed: None,
++            lines: None,
 +        }
 +    }
 +
@@ -165718,15 +165907,21 @@ index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338
 +                    self.staged = vec![None; self.cells.len()];
 +                }
 +                let mut cells = cells.into_iter();
++                let mut changed = self.frame.is_some();
 +                for row in rect.y..rect.y + rect.height {
 +                    for column in rect.x..rect.x + rect.width {
-+                        if let Some(cell) = cells.next() {
-+                            self.staged[usize::from(row) * usize::from(self.width)
-+                                + usize::from(column)] = Some(cell);
++                        let at = usize::from(row) * usize::from(self.width) + usize::from(column);
++                        if let Some(cell) = cells.next()
++                            && (self.staged[at].is_some() || self.cells[at] != cell)
++                        {
++                            self.staged[at] = Some(cell);
++                            changed = true;
 +                        }
 +                    }
 +                }
-+                self.dirty.get_or_insert(now);
++                if changed {
++                    self.dirty.get_or_insert(now);
++                }
 +            }
 +            picture @ (BlitContent::Image { .. } | BlitContent::Pixels(_)) => {
 +                if self.dirty.take().is_some() {
@@ -165946,14 +166141,14 @@ index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338
 +    json!({"status": "backpressure", "retry_after_ms": wait.as_millis() as u64})
 +}
 +
-+pub(crate) fn span(cell: &Cell, no_color: bool) -> Span<'static> {
++pub(crate) fn span(cell: &Cell, no_color: bool, level: Option<StdoutColorLevel>) -> Span<'static> {
 +    let mut style = Style::default();
 +    if !no_color {
 +        if let Some(fg) = cell.fg {
-+            style = style.fg(crate::mod_ui::color(fg));
++            style = style.fg(crate::mod_ui::color_at(fg, level));
 +        }
 +        if let Some(bg) = cell.bg {
-+            style = style.bg(crate::mod_ui::color(bg));
++            style = style.bg(crate::mod_ui::color_at(bg, level));
 +        }
 +    }
 +    let symbol = if cell.symbol.is_empty() {
@@ -165961,7 +166156,25 @@ index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338
 +    } else {
 +        &cell.symbol
 +    };
-+    Span::styled(symbol.to_owned(), style)
++    Span::styled(interned(symbol), style)
++}
++
++const INTERNED_LIMIT: usize = 4096;
++
++static INTERNED: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
++
++/// Cell glyphs as shared static text, so cached raster lines clone without copying a string per cell; the table is bounded, then glyphs are owned.
++fn interned(symbol: &str) -> std::borrow::Cow<'static, str> {
++    let mut table = INTERNED.locked();
++    if let Some(found) = table.get(symbol) {
++        return std::borrow::Cow::Borrowed(found);
++    }
++    if table.len() >= INTERNED_LIMIT {
++        return std::borrow::Cow::Owned(symbol.to_owned());
++    }
++    let leaked: &'static str = Box::leak(symbol.to_owned().into_boxed_str());
++    table.insert(leaked);
++    std::borrow::Cow::Borrowed(leaked)
 +}
 +
 +pub(crate) fn pending_delay(key: &str, now: Instant) -> Option<Duration> {
@@ -166049,17 +166262,206 @@ index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338
 +    }
 +    raster.placed = None;
 +    let visible = usize::from(width.min(raster.width).min(size.0));
-+    let rows = raster
++    let key = (
++        raster.frames,
++        visible,
++        size.1,
++        no_color,
++        crate::mod_ui::color_level(),
++        prefix.to_owned(),
++    );
++    if let Some((cached, rows)) = &raster.lines
++        && *cached == key
++    {
++        return (rows.clone(), next);
++    }
++    let rows: Vec<Line<'static>> = raster
 +        .cells
 +        .chunks(usize::from(raster.width))
 +        .take(usize::from(size.1))
 +        .map(|row| {
 +            let mut spans = vec![Span::raw(prefix.to_owned())];
-+            spans.extend(row.iter().take(visible).map(|cell| span(cell, no_color)));
++            spans.extend(
++                row.iter()
++                    .take(visible)
++                    .map(|cell| span(cell, no_color, key.4)),
++            );
 +            Line::from(spans)
 +        })
 +        .collect();
++    raster.lines = Some((key, rows.clone()));
 +    (rows, next)
++}
++
++const UNDERLAY_GUTTER: u16 = 2;
++const UNDERLAY_GLASS: f32 = 0.35;
++const UNDERLAY_MIN_COLUMNS: u16 = 60;
++
++fn underlay_blank(cell: &ratatui::buffer::Cell) -> bool {
++    cell.symbol() == " " && cell.bg == Color::Reset && cell.modifier.is_empty()
++}
++
++/// The underlay raster's cells in screen order, applying its next frame once per draw; None when nothing draws.
++fn underlay_frame<T>(
++    snapshot: &codex_omd::ModViewSnapshot,
++    screen: Rect,
++    level: Option<StdoutColorLevel>,
++    advance: bool,
++    now: Instant,
++    paint: impl FnOnce(&Raster) -> T,
++) -> Option<T> {
++    let id = &snapshot.view.underlay.as_ref()?.raster;
++    let owner = snapshot.component_owners.get(id).map(String::as_str);
++    if !matches!(
++        level,
++        Some(StdoutColorLevel::TrueColor | StdoutColorLevel::Ansi256)
++    ) || screen.width < UNDERLAY_MIN_COLUMNS
++        || screen.is_empty()
++    {
++        return None;
++    }
++    if advance {
++        let size = (screen.width.min(512), screen.height.min(256));
++        track(
++            id,
++            crate::mod_surface::current_thread().as_deref(),
++            owner,
++            size.0,
++            size,
++        );
++    }
++    let mut rasters = rasters();
++    if rasters
++        .get(id)
++        .is_some_and(|raster| Some(raster.owner.as_str()) != owner)
++    {
++        rasters.remove(id);
++    }
++    let raster = rasters.get_mut(id)?;
++    if advance {
++        if let Some(next) = raster.advance(now) {
++            crate::mod_render::schedule_frame(next.saturating_sub(now.elapsed()));
++        }
++        raster.shown = raster.frames;
++    }
++    (raster.frames > 0 && raster.frame.is_none()).then(|| paint(raster))
++}
++
++/// Underlay glyphs, drawn before the bottom pane so its popups clear them: only blank cells of `glyphs` past each row's text and a gutter, never inside `kept`.
++pub(crate) fn underlay_glyphs(
++    snapshot: &codex_omd::ModViewSnapshot,
++    screen: Rect,
++    glyphs: Rect,
++    kept: &[Rect],
++    buffer: &mut Buffer,
++    level: Option<StdoutColorLevel>,
++    now: Instant,
++) {
++    underlay_frame(snapshot, screen, level, true, now, |raster| {
++        let glyphs = glyphs.intersection(screen);
++        for y in glyphs.top()..glyphs.bottom().min(screen.y + raster.height) {
++            let from = (glyphs.left()..glyphs.right())
++                .rev()
++                .find(|x| !underlay_blank(&buffer[(*x, y)]))
++                .map_or(glyphs.left(), |x| x + 1 + UNDERLAY_GUTTER);
++            for x in from..glyphs.right().min(screen.x + raster.width) {
++                let source = &raster.cells[usize::from(y - screen.y) * usize::from(raster.width)
++                    + usize::from(x - screen.x)];
++                if source.symbol.is_empty()
++                    || source.symbol == " "
++                    || kept.iter().any(|area| area.contains((x, y).into()))
++                {
++                    continue;
++                }
++                buffer[(x, y)].set_symbol(&source.symbol).set_fg(
++                    source
++                        .fg
++                        .map_or(Color::Reset, |fg| crate::mod_ui::color_at(fg, level)),
++                );
++            }
++        }
++    });
++}
++
++/// Underlay colour, drawn after the native frame outside `kept`: the raster's background on every default-background cell and, lifted like Codex lifts it, on its raised surface (menus, prompts), where faint glyphs show past each row's text.
++pub(crate) fn underlay_tint(
++    snapshot: &codex_omd::ModViewSnapshot,
++    screen: Rect,
++    kept: &[Rect],
++    buffer: &mut Buffer,
++    level: Option<StdoutColorLevel>,
++) {
++    underlay_frame(snapshot, screen, level, false, Instant::now(), |raster| {
++        let foreground = crate::terminal_palette::default_fg()
++            .map_or(ModColor::Rgb(255, 255, 255), |(r, g, b)| {
++                ModColor::Rgb(r, g, b)
++            });
++        let light = crate::terminal_palette::default_bg().is_some_and(crate::color::is_light);
++        let raised = crate::style::user_message_style().bg;
++        let empty = |cell: &ratatui::buffer::Cell| cell.symbol() == " " && cell.modifier.is_empty();
++        for row in 0..screen.height.min(raster.height) {
++            let y = screen.y + row;
++            let columns = screen.width.min(raster.width);
++            let glass = (0..columns)
++                .rev()
++                .find(|column| {
++                    let cell = &buffer[(screen.x + column, y)];
++                    raised.is_some() && Some(cell.bg) == raised && !empty(cell)
++                })
++                .map_or(0, |column| column + 1 + UNDERLAY_GUTTER);
++            for column in 0..columns {
++                let x = screen.x + column;
++                let source = &raster.cells
++                    [usize::from(row) * usize::from(raster.width) + usize::from(column)];
++                let Some(mut background) = source.bg else {
++                    continue;
++                };
++                if kept.iter().any(|area| area.contains((x, y).into())) {
++                    continue;
++                }
++                let cell = &mut buffer[(x, y)];
++                let lifted = raised.is_some() && Some(cell.bg) == raised;
++                if lifted {
++                    let [r, g, b] = crate::mod_ui::rgb(background);
++                    let (r, g, b) = crate::style::user_message_bg_rgb((r, g, b));
++                    background = ModColor::Rgb(r, g, b);
++                } else if cell.bg != Color::Reset {
++                    continue;
++                }
++                let behind = crate::mod_ui::rgb(background);
++                cell.set_bg(crate::mod_ui::color_at(background, level));
++                if empty(cell) {
++                    if lifted
++                        && column >= glass
++                        && let Some(fg) = source.fg
++                        && !matches!(source.symbol.as_str(), "" | " ")
++                    {
++                        let [r, g, b] = crate::mod_ui::rgb(fg);
++                        let (r, g, b) = crate::color::blend(
++                            (r, g, b),
++                            (behind[0], behind[1], behind[2]),
++                            UNDERLAY_GLASS,
++                        );
++                        cell.set_symbol(&source.symbol)
++                            .set_fg(crate::mod_ui::color_at(ModColor::Rgb(r, g, b), level));
++                    }
++                    continue;
++                }
++                let fg = match cell.fg {
++                    Color::Reset => Some(foreground),
++                    Color::Rgb(r, g, b) if light => Some(ModColor::Rgb(r, g, b)),
++                    Color::Indexed(index) if light => Some(ModColor::Indexed(index)),
++                    _ => None,
++                };
++                if let Some(fg) = fg {
++                    cell.set_fg(crate::mod_ui::color_at(
++                        crate::mod_ui::readable(fg, behind),
++                        level,
++                    ));
++                }
++            }
++        }
++    });
 +}
 +
 +/// A pointer cell on a framed raster in frame pixels, with whether it lies on the picture; `fraction` is the pointer's offset inside the cell, else the cell's centre or half is used.
@@ -166111,10 +166513,10 @@ index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..491fb99d09289a657cfbc1f5a85badaa8f9c4016
+index 0000000000000000000000000000000000000000..38692e1a913ef6c61305cee17847e2acd327480f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,463 @@
+@@ -0,0 +1,596 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -166324,14 +166726,19 @@ index 0000000000000000000000000000000000000000..491fb99d09289a657cfbc1f5a85badaa
 +        "",
 +        now,
 +    );
++    assert_eq!(
++        blit_at("raster-refuse", "owner", cell.clone(), now).expect("unchanged"),
++        json!({"frame": 1, "queued": 0, "frame_ms": 16})
++    );
++    let changed = json!({"rect": cell["rect"], "cells": ["y"]});
 +    for _ in 0..64 {
 +        assert_eq!(
-+            blit_at("raster-refuse", "owner", cell.clone(), now).expect("merged"),
++            blit_at("raster-refuse", "owner", changed.clone(), now).expect("merged"),
 +            json!({"frame": 2, "queued": 1, "frame_ms": 16})
 +        );
 +    }
 +    assert_eq!(
-+        blit_at("raster-refuse", "owner", cell, now + FRAME * 4).expect("hidden"),
++        blit_at("raster-refuse", "owner", changed, now + FRAME * 4).expect("hidden"),
 +        json!({"status": "backpressure", "retry_after_ms": 250}),
 +        "cells merged into a frame left undrawn for four ticks"
 +    );
@@ -166577,6 +166984,134 @@ index 0000000000000000000000000000000000000000..491fb99d09289a657cfbc1f5a85badaa
 +        rasters().get(key).is_none(),
 +        "no raster entry is left behind"
 +    );
++}
++
++#[test]
++#[serial_test::serial]
++fn underlay_tints_default_cells_and_puts_glyphs_past_text_and_faintly_on_raised_glass() {
++    let now = Instant::now();
++    let key = "underlay_scene";
++    let mut snapshot = codex_omd::ModViewSnapshot::default();
++    snapshot.view.underlay = serde_json::from_value(json!({"raster": key})).expect("underlay");
++    snapshot.component_owners.insert(key.into(), "owner".into());
++    let level = Some(StdoutColorLevel::TrueColor);
++    let glyphs = Rect::new(0, 0, 64, 2);
++    let kept = [Rect::new(10, 1, 4, 1)];
++    let narrow = Rect::new(0, 0, 59, 3);
++    let mut buffer = Buffer::empty(narrow);
++    underlay_glyphs(&snapshot, narrow, glyphs, &kept, &mut buffer, level, now);
++    underlay_tint(&snapshot, narrow, &kept, &mut buffer, level);
++    assert_eq!(buffer, Buffer::empty(narrow));
++    let few = Some(StdoutColorLevel::Ansi16);
++    let screen = Rect::new(0, 0, 64, 3);
++    underlay_glyphs(
++        &snapshot,
++        screen,
++        glyphs,
++        &kept,
++        &mut Buffer::empty(screen),
++        level,
++        now,
++    );
++    blit(
++        "owner",
++        Some("owner".into()),
++        Some((64, 3)),
++        &json!({"key": key, "rect": {"x": 0, "y": 0, "width": 64, "height": 3},
++            "packed": packed(&[('x', 0x11_22_33, 0x44_55_66); 64 * 3])}),
++        now,
++        |_, _| unreachable!(),
++    )
++    .expect("queued");
++    let mut plain = Buffer::empty(screen);
++    underlay_glyphs(&snapshot, screen, glyphs, &kept, &mut plain, few, now);
++    underlay_tint(&snapshot, screen, &kept, &mut plain, few);
++    assert_eq!(plain, Buffer::empty(screen));
++    let mut buffer = Buffer::empty(screen);
++    buffer.set_string(0, 0, "hello", Style::default());
++    underlay_glyphs(&snapshot, screen, glyphs, &kept, &mut buffer, level, now);
++    let again = blit(
++        "owner",
++        Some("owner".into()),
++        Some((64, 3)),
++        &json!({"key": key, "rect": {"x": 0, "y": 0, "width": 1, "height": 1},
++            "packed": packed(&[('x', 0x11_22_33, 0x44_55_66)])}),
++        now,
++        |_, _| unreachable!(),
++    )
++    .expect("unchanged");
++    assert_eq!(
++        (again["frame"].clone(), again["queued"].clone()),
++        (json!(1), json!(0))
++    );
++    assert_eq!(
++        pending_delay(key, now),
++        None,
++        "an unchanged cell draws no frame"
++    );
++    buffer.set_string(0, 2, "prompt", Style::default());
++    buffer.set_string(20, 1, "    ", Style::default());
++    buffer[(63, 2)].set_bg(Color::Red);
++    underlay_tint(&snapshot, screen, &kept, &mut buffer, level);
++    let row = |y: u16| (0..64).map(|x| buffer[(x, y)].symbol()).collect::<String>();
++    assert_eq!(row(0), format!("hello  {}", "x".repeat(57)));
++    assert_eq!(
++        row(1),
++        format!(
++            "{}    {}    {}",
++            "x".repeat(10),
++            "x".repeat(6),
++            "x".repeat(40)
++        )
++    );
++    assert_eq!(row(2), format!("prompt{}", " ".repeat(58)));
++    let tinted = Color::Rgb(0x44, 0x55, 0x66);
++    assert_eq!(buffer[(63, 2)].bg, Color::Red);
++    assert!((0..64).all(|x| buffer[(x, 0)].bg == tinted));
++    assert_eq!(buffer[(10, 1)].bg, Color::Reset, "pictures stay untouched");
++    assert!((0..63).all(|x| buffer[(x, 2)].bg == tinted));
++    assert!((0..5).all(|x| buffer[(x, 0)].fg != Color::Reset));
++    assert_eq!(buffer[(5, 0)].fg, Color::Reset);
++    assert_eq!(buffer[(7, 0)].fg, Color::Rgb(0x11, 0x22, 0x33));
++    let colors = crate::terminal_probe::DefaultColors {
++        fg: (230, 230, 230),
++        bg: (10, 10, 10),
++    };
++    let menu = crate::terminal_palette::with_test_default_colors(colors, || {
++        let mut menu = Buffer::empty(screen);
++        let raised = crate::style::user_message_style()
++            .bg
++            .expect("raised surface");
++        menu.set_style(Rect::new(0, 2, 64, 1), Style::default().bg(raised));
++        menu.set_string(0, 2, "menu", Style::default().bg(raised));
++        underlay_tint(&snapshot, screen, &[], &mut menu, level);
++        menu
++    });
++    let lifted = crate::style::user_message_bg_rgb((0x44, 0x55, 0x66));
++    assert_eq!(
++        menu[(0, 2)].bg,
++        crate::mod_ui::color_at(ModColor::Rgb(lifted.0, lifted.1, lifted.2), level)
++    );
++    let glass = (0..64).map(|x| menu[(x, 2)].symbol()).collect::<String>();
++    assert_eq!(glass, format!("menu  {}", "x".repeat(58)));
++    let (r, g, b) = crate::color::blend((0x11, 0x22, 0x33), lifted, 0.35);
++    assert_eq!(menu[(10, 2)].fg, Color::Rgb(r, g, b));
++    let light = crate::terminal_probe::DefaultColors {
++        fg: (20, 20, 20),
++        bg: (240, 240, 240),
++    };
++    let code = crate::terminal_palette::with_test_default_colors(light, || {
++        let mut code = Buffer::empty(screen);
++        code.set_string(0, 0, "fn", Style::default().fg(Color::Rgb(30, 30, 30)));
++        underlay_tint(&snapshot, screen, &[], &mut code, level);
++        code
++    });
++    assert_eq!(
++        code[(0, 0)].fg,
++        Color::Rgb(255, 255, 255),
++        "dark text set for a light terminal stays readable"
++    );
++    retain(&BTreeSet::new());
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
@@ -172149,13 +172684,14 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259027e37f0
+index 0000000000000000000000000000000000000000..c3efbc89720718ac721c87811182b8fcdd6d7a5b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5614 @@
+@@ -0,0 +1,5643 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
++use crate::terminal_palette::StdoutColorLevel;
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
 +use codex_omd::ModBoxBorder;
@@ -173199,14 +173735,23 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    clippy::disallowed_methods,
 +    reason = "The mod theme contract explicitly selects 256-color palette indices"
 +)]
++pub(crate) fn color_at(color: ModColor, level: Option<StdoutColorLevel>) -> Color {
++    match (color, level) {
++        (_, None) => Color::Reset,
++        (ModColor::Indexed(index), Some(_)) => Color::Indexed(index),
++        (ModColor::Rgb(red, green, blue), Some(level)) => {
++            crate::terminal_palette::best_color_for_level((red, green, blue), level)
++        }
++    }
++}
++
++pub(crate) fn color_level() -> Option<StdoutColorLevel> {
++    (!crate::mod_client::facts().no_color)
++        .then(crate::terminal_palette::effective_stdout_color_level)
++}
++
 +pub(crate) fn color(color: ModColor) -> Color {
-+    if crate::mod_client::facts().no_color {
-+        return Color::Reset;
-+    }
-+    match color {
-+        ModColor::Indexed(index) => Color::Indexed(index),
-+        ModColor::Rgb(red, green, blue) => crate::terminal_palette::best_color((red, green, blue)),
-+    }
++    color_at(color, color_level())
 +}
 +
 +fn slot_index(slot: ThemeSlot) -> usize {
@@ -173423,6 +173968,9 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        for component in &site.components {
 +            collect_component(component, &mut interaction);
 +        }
++    }
++    if let Some(underlay) = &view.underlay {
++        interaction.ids.insert(underlay.raster.clone());
 +    }
 +    let ids = interaction.ids.clone();
 +    interaction.input_values.retain(|id, _| ids.contains(id));
@@ -174758,7 +175306,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        .iter()
 +        .skip(scroll)
 +        .take(usize::from(inner.height))
-+        .map(|row| row.line.clone())
++        .map(|row| borrowed(&row.line))
 +        .collect::<Vec<_>>();
 +    Paragraph::new(lines)
 +        .style(style.patch(frame.style()))
@@ -174913,6 +175461,18 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    }
 +}
 +
++fn borrowed<'a>(line: &'a Line<'_>) -> Line<'a> {
++    Line {
++        style: line.style,
++        alignment: line.alignment,
++        spans: line
++            .spans
++            .iter()
++            .map(|span| ratatui::text::Span::styled(span.content.as_ref(), span.style))
++            .collect(),
++    }
++}
++
 +/// Paints only in the transcript's cleared remainder, never over transcript, prompt or modal cells; the caller gates this on native fresh-thread facts.
 +pub(crate) fn render_welcome(available: Rect, buffer: &mut Buffer, snapshot: &ModViewSnapshot) {
 +    let Some(welcome) = site(&snapshot.view, "welcome") else {
@@ -174949,9 +175509,13 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +        width,
 +        height,
 +    );
-+    Paragraph::new(rows.iter().map(|row| row.line.clone()).collect::<Vec<_>>())
-+        .style(panel_style(&snapshot.view))
-+        .render(stage, buffer);
++    Paragraph::new(
++        rows.iter()
++            .map(|row| borrowed(&row.line))
++            .collect::<Vec<_>>(),
++    )
++    .style(panel_style(&snapshot.view))
++    .render(stage, buffer);
 +    mark_links(buffer, stage, &rows);
 +    register_component_targets(stage, rows, 0, &mut interaction);
 +}
@@ -175427,7 +175991,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 +}
 +
-+fn rgb(color: ModColor) -> [u8; 3] {
++pub(crate) fn rgb(color: ModColor) -> [u8; 3] {
 +    let (r, g, b) = match color {
 +        ModColor::Rgb(r, g, b) => (r, g, b),
 +        ModColor::Indexed(index) => crate::terminal_palette::XTERM_COLORS[usize::from(index)],
@@ -175435,7 +175999,7 @@ index 0000000000000000000000000000000000000000..0431b31cc4f084cb2306978965150259
 +    [r, g, b]
 +}
 +
-+fn readable(fg: ModColor, background: [u8; 3]) -> ModColor {
++pub(crate) fn readable(fg: ModColor, background: [u8; 3]) -> ModColor {
 +    if contrast(rgb(fg), background) >= 4.5 {
 +        fg
 +    } else if contrast([255; 3], background) >= contrast([0; 3], background) {

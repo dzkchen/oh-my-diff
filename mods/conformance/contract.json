@@ -311,6 +311,7 @@
     "view_fields:surface_styles": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "view_fields:theme": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"theme:"},"decision":"terminal.view"},
     "view_fields:title": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"title: 'My workspace'"},"decision":"terminal.view"},
+    "view_fields:underlay": {"status":"experimental","reason":"The screen underlay (terminal_underlay_v1) was added after 1.0.0."},
     "view_fields:welcome": {"status":"frozen","consumer":{"path":"mods/first-party/omd_logo/index.ts","snippet":"welcome:"},"decision":"terminal.view"},
     "view_sites:above_composer": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"above_composer:"},"decision":"terminal.view"},
     "view_sites:below_composer": {"status":"frozen","consumer":{"path":"mods/first-party/omd_statusline/index.ts","snippet":"below_composer: site"},"decision":"terminal.view"},

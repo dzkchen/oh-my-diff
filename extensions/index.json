@@ -591,6 +591,22 @@
       "support_status": "reviewed_candidate"
     },
     {
+      "id": "omd_theme",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in /theme panel: animated character-drawn scenes behind the whole screen, prompt box and menus, and terminal background steps",
+      "source": "mods/first-party/omd_theme",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; terminal_underlay_v1, terminal_raster_packed_v1, timers_16ms_v1, terminal_panel_navigation_v1; optional terminal_chat_area_v1, terminal_colors_v1, terminal_welcome_area_v1",
+      "tested_versions": [
+        "Codex 0.165.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
       "id": "token_weather",
       "version": "0.2.0",
       "extension_type": "mod",

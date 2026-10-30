@@ -12,6 +12,12 @@ pub struct ModWelcome {
     pub show_while_composing: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModUnderlay {
+    pub raster: String,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModView {
@@ -57,6 +63,8 @@ pub struct ModView {
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_sites: Option<ModInlineSites>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underlay: Option<ModUnderlay>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -104,6 +112,8 @@ pub struct ModViewPatch {
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
     #[serde(default)]
     pub inline_sites: Option<ModInlineSites>,
+    #[serde(default)]
+    pub underlay: Option<ModUnderlay>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1345,6 +1355,12 @@ impl ModView {
         self.sites
             .values()
             .find_map(|site| find(&site.components, id))
+            .or_else(|| {
+                self.underlay
+                    .as_ref()
+                    .is_some_and(|underlay| underlay.raster == id)
+                    .then_some((None, None))
+            })
     }
 
     pub fn module(&self, id: &str) -> Option<(&str, &Value)> {
@@ -2142,6 +2158,13 @@ impl ModViewPatch {
                 "surface_styles",
                 !valid_surface_styles(&patch.surface_styles),
             ),
+            (
+                "underlay",
+                patch
+                    .underlay
+                    .as_ref()
+                    .is_some_and(|underlay| !mod_component_id(&underlay.raster)),
+            ),
             ("size", serde_json::to_vec(&patch)?.len() > 262_144),
         ]
         .into_iter()
@@ -2159,6 +2182,7 @@ impl ModViewPatch {
         self.header = None;
         self.footer = None;
         self.layout = None;
+        self.underlay = None;
         self.status.clear();
     }
 
@@ -2227,6 +2251,9 @@ impl ModViewPatch {
         }
         if self.placeholder.is_some() && claim("placeholder".into()) {
             candidate.placeholder = self.placeholder;
+        }
+        if self.underlay.is_some() && claim("underlay".into()) {
+            candidate.underlay = self.underlay;
         }
         candidate.surface_styles.extend(self.surface_styles);
         for (name, site) in self.sites {
@@ -2413,6 +2440,12 @@ impl ModView {
             (
                 "surface_styles",
                 !valid_surface_styles(&view.surface_styles),
+            ),
+            (
+                "underlay",
+                view.underlay
+                    .as_ref()
+                    .is_some_and(|underlay| !mod_component_id(&underlay.raster)),
             ),
             ("size", serde_json::to_vec(&view)?.len() > 1_048_576),
         ]
