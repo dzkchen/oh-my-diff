@@ -34674,7 +34674,7 @@ index 7b53366557dcf7084b4b23501ad7e0611f512009..b935f13d41cf38f163ffdc1fbb97b49b
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 7c43e1799b268545467d9eb19586e2f9fd55cb19..5d432512bbf2a5a0ca21b7df9c54558f561ca8b0 100644
+index 7c43e1799b268545467d9eb19586e2f9fd55cb19..2bf0f7f5980a85f9ed52d5a3a98dce2c5fbac8de 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -106,8 +106,9 @@ impl App {
@@ -34898,7 +34898,7 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..5d432512bbf2a5a0ca21b7df9c54558f
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -338,39 +354,61 @@ impl App {
+@@ -338,39 +354,63 @@ impl App {
                      .borrow_mut()
                      .register(area, /*invalidate*/ false);
              }
@@ -34932,6 +34932,8 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..5d432512bbf2a5a0ca21b7df9c54558f
 +            crate::mod_client::note_chat(area);
 +            if mod_welcome {
 +                crate::mod_ui::render_welcome(welcome, frame.buffer, &mod_snapshot);
++            } else {
++                crate::mod_ui::hide_welcome_terminals();
 +            }
              let dialog = chat_widget.centered_dialog();
              let (foreground, foreground_area): (&dyn Renderable, Rect) =
@@ -43669,10 +43671,10 @@ index e0a4d5286b33ae186952b405f87a42a9b7fbd439..2c9223d860bcc11f01acdcb9f5d2970f
              animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
              effects: Default::default(),
 diff --git a/codex-rs/tui/src/startup_draft_layout.rs b/codex-rs/tui/src/startup_draft_layout.rs
-index da417ce52bc963b1fc5633e7a49e39bb92546951..e41772705f846c6163ba66ce897c34edf4d627a0 100644
+index da417ce52bc963b1fc5633e7a49e39bb92546951..b3af39cf7795bfdd01d77648229b4a0e1fb7a07c 100644
 --- a/codex-rs/tui/src/startup_draft_layout.rs
 +++ b/codex-rs/tui/src/startup_draft_layout.rs
-@@ -64,16 +64,43 @@ impl Renderable for OwnedStartupLayout<'_> {
+@@ -64,16 +64,44 @@ impl Renderable for OwnedStartupLayout<'_> {
          paragraph.render(header, buf);
          let message = match self.pump.session_action {
              StartupDraftSessionAction::New | StartupDraftSessionAction::NewFromCommandCenter => {
@@ -43706,6 +43708,7 @@ index da417ce52bc963b1fc5633e7a49e39bb92546951..e41772705f846c6163ba66ce897c34ed
 +                    crate::mod_ui::render_welcome(available, buf, &snapshot);
 +                    return;
 +                }
++                crate::mod_ui::hide_welcome_terminals();
                  let composer = (!self.pump.submission_pending)
 -                    .then(|| self.pump.bottom_pane.empty_state_composer())
 +                    .then_some(composer)
@@ -66984,10 +66987,10 @@ index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd713
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..83de40553994958e222330c051ccf3b4aa195d20
+index 0000000000000000000000000000000000000000..ed9f29b773815a0b1ef79a8f7680e969c3ba3e21
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2615 @@
+@@ -0,0 +1,2620 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -69208,7 +69211,12 @@ index 0000000000000000000000000000000000000000..83de40553994958e222330c051ccf3b4
 +                _ => return Ok(ToolInterception::Continue(None)),
 +            };
 +            if roles::is_spawn(input.tool_name) {
-+                roles::spawn_capacity_admitted(&self.inventory, &lead, input.call_id)?;
++                roles::spawn_capacity_admitted(
++                    &self.inventory,
++                    &lead,
++                    input.call_id,
++                    inventory::SpawnHold::Expiring,
++                )?;
 +            }
 +            let original_tool = input.tool_name.clone();
 +            let scope_agent_id = agent_id(input.thread_store);
@@ -70423,10 +70431,10 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0be5451c3a0a43b7a907254e1aac0d46885f6836
+index 0000000000000000000000000000000000000000..16d566e62cabd5c398c7059f7f6383c6d8a4efce
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2648 @@
+@@ -0,0 +1,2653 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -72606,7 +72614,12 @@ index 0000000000000000000000000000000000000000..0be5451c3a0a43b7a907254e1aac0d46
 +        };
 +        let thread_id = manager.reserve_thread_id();
 +        let id = format!("mod-{}-{thread_id}", caller.id);
-+        super::roles::spawn_capacity_admitted(&core.inventory, lead, &id)?;
++        super::roles::spawn_capacity_admitted(
++            &core.inventory,
++            lead,
++            &id,
++            super::inventory::SpawnHold::Guarded,
++        )?;
 +        let capacity = CapacityReservation(&core.inventory, id.clone());
 +        let workspace = if writable || frozen.is_some() {
 +            std::fs::create_dir_all(&session.scratch).map_err(|e| e.to_string())?;
@@ -82524,10 +82537,10 @@ index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8f40c928956aea78616511f1f716849a9b4952bc
+index 0000000000000000000000000000000000000000..7b1d3bf1228e9c98c1c8e981cd7cc8abfa1a8c29
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,382 @@
 +use super::*;
 +use codex_omd::peers::now_ms;
 +use std::collections::BTreeSet;
@@ -82536,12 +82549,20 @@ index 0000000000000000000000000000000000000000..8f40c928956aea78616511f1f716849a
 +pub(super) const FINISHED_LIMIT: usize = 64;
 +const SPAWN_RESERVATION_MS: u64 = 30_000;
 +
++/// A tool-path reservation expires; a guarded one lasts until its guard releases it, however long setup takes.
++#[derive(Clone, Copy, PartialEq, Eq)]
++pub(super) enum SpawnHold {
++    Expiring,
++    Guarded,
++}
++
 +/// Session-wide agent records; observing one grants no control over it.
 +#[derive(Default)]
 +pub(super) struct Inventory {
 +    records: Mutex<BTreeMap<String, Value>>,
 +    working: Mutex<BTreeSet<String>>,
-+    reserved: Mutex<Vec<(String, String, u64)>>,
++    /// Root, call id and reservation time (`None` while guarded).
++    reserved: Mutex<Vec<(String, String, Option<u64>)>>,
 +    directory: std::sync::OnceLock<std::path::PathBuf>,
 +}
 +
@@ -82716,6 +82737,7 @@ index 0000000000000000000000000000000000000000..8f40c928956aea78616511f1f716849a
 +        &self,
 +        root: &str,
 +        call_id: &str,
++        hold: SpawnHold,
 +        counted: impl Fn(&str) -> bool,
 +        admit: impl FnOnce(usize) -> Result<(), String>,
 +    ) -> Result<(), String> {
@@ -82724,10 +82746,15 @@ index 0000000000000000000000000000000000000000..8f40c928956aea78616511f1f716849a
 +            .lock()
 +            .map_err(|_| "inventory lock poisoned")?;
 +        let now = now_ms();
-+        reserved.retain(|(.., at)| now.saturating_sub(*at) < SPAWN_RESERVATION_MS);
++        reserved
++            .retain(|(.., at)| at.is_none_or(|at| now.saturating_sub(at) < SPAWN_RESERVATION_MS));
 +        let pending = reserved.iter().filter(|(owner, ..)| owner == root).count();
 +        admit(self.live_children(root, counted) + pending)?;
-+        reserved.push((root.to_owned(), call_id.to_owned(), now));
++        reserved.push((
++            root.to_owned(),
++            call_id.to_owned(),
++            (hold == SpawnHold::Expiring).then_some(now),
++        ));
 +        Ok(())
 +    }
 +
@@ -84507,10 +84534,10 @@ index 0000000000000000000000000000000000000000..3a6ec486cc40c8ce442312d9bb228230
 +}
 diff --git a/codex-rs/ext/omd/src/mods/roles.rs b/codex-rs/ext/omd/src/mods/roles.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5a33edfcf10f7038c297782b4b7fc3454338651b
+index 0000000000000000000000000000000000000000..352f8a78345b5bfa48cac72ec530f17cbd436224
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/roles.rs
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,473 @@
 +use super::*;
 +use codex_extension_api::AgentRoleContributor;
 +use codex_extension_api::ContributedAgentRole;
@@ -84933,6 +84960,7 @@ index 0000000000000000000000000000000000000000..5a33edfcf10f7038c297782b4b7fc345
 +    inventory: &super::inventory::Inventory,
 +    lead: &Lead,
 +    call_id: &str,
++    hold: super::inventory::SpawnHold,
 +) -> Result<(), String> {
 +    let tracked_as_workers = lead
 +        .host
@@ -84947,6 +84975,7 @@ index 0000000000000000000000000000000000000000..5a33edfcf10f7038c297782b4b7fc345
 +    inventory.reserve_spawn(
 +        &inventory.root_thread(&lead.thread.to_string()),
 +        call_id,
++        hold,
 +        |thread| !tracked_as_workers.contains(thread),
 +        |live| {
 +            lead.session
@@ -93461,10 +93490,10 @@ index 0000000000000000000000000000000000000000..ad5f898f3b768a805a06d0f816c6082d
 +};
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b4b7dd1566955890d656570d8d0f40a4fab3bdcb
+index 0000000000000000000000000000000000000000..f595364771f62e876282d9393aaaec58c6227498
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1604 @@
+@@ -0,0 +1,1605 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -93705,7 +93734,8 @@ index 0000000000000000000000000000000000000000..b4b7dd1566955890d656570d8d0f40a4
 +    state
 +        .workers
 +        .values()
-+        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle)
++        // A closing worker's own thread has ended; its running descendants count for it.
++        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle && !worker.closing)
 +        .count()
 +}
 +
@@ -111376,10 +111406,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..09a99f66d54e5beeb897d0acf758d8b805ea9ac3
+index 0000000000000000000000000000000000000000..5b5c0b6d551a47058387cd83c548c59181a96566
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6949 @@
+@@ -0,0 +1,6980 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -111795,6 +111825,7 @@ index 0000000000000000000000000000000000000000..09a99f66d54e5beeb897d0acf758d8b8
 +    "terminal_underlay_v1",
 +    "terminal_chat_area_v1",
 +    "terminal_colors_v1",
++    "terminal_welcome_hidden_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -117659,6 +117690,7 @@ index 0000000000000000000000000000000000000000..09a99f66d54e5beeb897d0acf758d8b8
 +        let mut contributors = Vec::new();
 +        let mut conflicts = Vec::new();
 +        let mut diagnostics = Vec::new();
++        let mut hiding_welcome = BTreeMap::new();
 +        for (id, result) in results {
 +            if let Some(error) = self
 +                .loaded
@@ -117713,9 +117745,17 @@ index 0000000000000000000000000000000000000000..09a99f66d54e5beeb897d0acf758d8b8
 +                patch.sites.remove("dialog");
 +            }
 +            let before = view::site_component_ids(&view.sites);
++            let hides = patch
++                .welcome
++                .as_ref()
++                .filter(|welcome| welcome.hidden)
++                .map(|welcome| welcome.show_while_composing);
 +            match patch.apply(&mut view, &mut claims, &id, origin) {
 +                Ok(lost) => {
 +                    conflicts.extend(lost);
++                    if let Some(composing) = hides {
++                        hiding_welcome.insert(id.clone(), composing);
++                    }
 +                    component_owners.extend(
 +                        view::site_component_ids(&view.sites)
 +                            .into_iter()
@@ -117735,9 +117775,30 @@ index 0000000000000000000000000000000000000000..09a99f66d54e5beeb897d0acf758d8b8
 +        if let Some(underlay) = &view.underlay
 +            && let Some(owner) = claims.get("underlay")
 +        {
-+            component_owners
-+                .entry(underlay.raster.clone())
-+                .or_insert_with(|| owner.clone());
++            match component_owners.get(&underlay.raster) {
++                Some(drawer) if drawer != owner => {
++                    conflicts.push(ModViewConflict {
++                        field: "underlay".to_owned(),
++                        owner: drawer.clone(),
++                        rejected: owner.clone(),
++                        origin: origin.to_owned(),
++                    });
++                    view.underlay = None;
++                }
++                _ => {
++                    component_owners.insert(underlay.raster.clone(), owner.clone());
++                }
++            }
++        }
++        // Only the underlay's owner hides the welcome: a refused underlay brings it back and a later writer can't undo it.
++        let hider = view
++            .underlay
++            .as_ref()
++            .and(claims.get("underlay"))
++            .and_then(|owner| hiding_welcome.get(owner).copied());
++        if let Some(welcome) = view.welcome.as_mut() {
++            welcome.hidden = hider.is_some();
++            welcome.show_while_composing |= hider.unwrap_or_default();
 +        }
 +        conflicts.truncate(32);
 +        ModTerminalView {
@@ -130209,10 +130270,10 @@ index 0000000000000000000000000000000000000000..6a9de102d4fef33021f9f5c538ac2266
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d0446c71b4d2e677423028e3c2ae4b71b9ff558a
+index 0000000000000000000000000000000000000000..6131a1f4aa30106ab00149fa7331dff778a11db8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2523 @@
+@@ -0,0 +1,2527 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 24;
@@ -130225,6 +130286,10 @@ index 0000000000000000000000000000000000000000..d0446c71b4d2e677423028e3c2ae4b71
 +pub struct ModWelcome {
 +    #[serde(default)]
 +    pub show_while_composing: bool,
++    /// Keeps the welcome area (Codex's own welcome and animation stay off) but draws no `welcome` site in it;
++    /// effective only from the mod that owns the composed underlay.
++    #[serde(default)]
++    pub hidden: bool,
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -141423,10 +141488,10 @@ index 0000000000000000000000000000000000000000..6531a6ad6f21a8018898d3f6ac1780b6
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..00c3d7a67050a3066f170fc674b66b1a12c1c71d
+index 0000000000000000000000000000000000000000..0929d4c0f873b9e4a519b1babd3b7074608e6dce
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,284 @@
 +use codex_omd::Limits;
 +use codex_omd::Task;
 +use codex_omd::WorkerLimits;
@@ -141529,8 +141594,12 @@ index 0000000000000000000000000000000000000000..00c3d7a67050a3066f170fc674b66b1a
 +    task.start_worker("two".into(), "one".into(), 2, worker())
 +        .unwrap();
 +    task.finish_worker("one").unwrap();
-+    assert!(task.admit_subagent(1, 0).is_err());
++    task.admit_subagent(1, 0).unwrap();
 +    task.finish_worker("two").unwrap();
++    assert!(
++        task.finish_worker("one").is_err(),
++        "the parent stopped with its child"
++    );
 +    task.start_worker("three".into(), "lead".into(), 1, worker())
 +        .unwrap();
 +    task.start_worker("four".into(), "lead".into(), 1, worker())
@@ -145808,10 +145877,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3839fadd164bd0846b46b5a5e782b9ced4a3690c
+index 0000000000000000000000000000000000000000..647f53905fba81f04baeed87041c9d76dbf574bd
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5002 @@
+@@ -0,0 +1,5050 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -147552,16 +147621,64 @@ index 0000000000000000000000000000000000000000..3839fadd164bd0846b46b5a5e782b9ce
 +    let other = package(
 +        &root,
 +        "other",
-+        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'}}));",
++        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'},welcome:{hidden:true}}));",
 +        &["terminal"],
 +    );
 +    trust(&store, &other, &["terminal"]);
 +    let view = host(&temp).terminal_view(json!({}), || true);
 +    assert_eq!(view.component_owners["shared"], "fixture");
 +    assert_eq!(
++        view.view.welcome.as_ref().map(|welcome| welcome.hidden),
++        Some(false)
++    );
++    assert_eq!(
 +        view.view.raster_declared("shared"),
 +        Some((Some(4), Some(2)))
 +    );
++    assert_eq!(view.view.underlay, None);
++    assert!(
++        view.conflicts
++            .iter()
++            .any(|conflict| conflict.field == "underlay" && conflict.rejected == "other")
++    );
++}
++
++#[test]
++fn a_later_welcome_writer_keeps_the_underlay_owners_hidden_welcome() {
++    let (temp, store, _) = fixture(
++        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true}}));",
++        &["terminal"],
++    );
++    let root = temp.path().canonicalize().unwrap();
++    let other = package(
++        &root,
++        "other",
++        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:true}}));",
++        &["terminal"],
++    );
++    trust(&store, &other, &["terminal"]);
++    let view = host(&temp).terminal_view(json!({}), || true);
++    let welcome = view.view.welcome.unwrap();
++    assert!(welcome.show_while_composing && welcome.hidden);
++
++    let (temp, store, _) = fixture(
++        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true,show_while_composing:true}}));",
++        &["terminal"],
++    );
++    let root = temp.path().canonicalize().unwrap();
++    let other = package(
++        &root,
++        "other",
++        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:false}}));",
++        &["terminal"],
++    );
++    trust(&store, &other, &["terminal"]);
++    let welcome = host(&temp)
++        .terminal_view(json!({}), || true)
++        .view
++        .welcome
++        .unwrap();
++    assert!(welcome.show_while_composing && welcome.hidden);
 +}
 +
 +#[test]
@@ -165200,7 +165317,7 @@ index 0000000000000000000000000000000000000000..444a73f47042d6e6a9d8cba4746d0a5c
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c8e69ea70a7e5fb52a18455883326d7def0c36a2
+index 0000000000000000000000000000000000000000..b11fdd4902835bd17bc89f42643b932c70c12324
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
 @@ -0,0 +1,532 @@
@@ -165507,25 +165624,25 @@ index 0000000000000000000000000000000000000000..c8e69ea70a7e5fb52a18455883326d7d
 +    None
 +}
 +
-+fn inside(area: Rect, column: u16, row: u16) -> bool {
-+    column >= area.x && column < area.right() && row >= area.y && row < area.bottom()
-+}
-+
 +fn zone(last: &Placement, source: &str, column: u16, row: u16) -> Option<Zone> {
 +    if last
 +        .regions
 +        .iter()
-+        .any(|region| region.path == source && inside(region.area, column, row))
++        .any(|region| region.path == source && region.area.contains((column, row).into()))
 +    {
 +        return None;
 +    }
 +    let (target, area, centre) = last
 +        .regions
 +        .iter()
-+        .find(|region| region.content.starts_with("site:") && inside(region.area, column, row))
++        .find(|region| {
++            region.content.starts_with("site:") && region.area.contains((column, row).into())
++        })
 +        .map(|region| (region.path.clone(), region.area, true))
 +        .or_else(|| {
-+            let chat = last.chat().filter(|chat| inside(*chat, column, row))?;
++            let chat = last
++                .chat()
++                .filter(|chat| chat.contains((column, row).into()))?;
 +            Some((last.chat_path()?, chat, false))
 +        })?;
 +    let (left, top) = (u32::from(column - area.x), u32::from(row - area.y));
@@ -165632,7 +165749,7 @@ index 0000000000000000000000000000000000000000..c8e69ea70a7e5fb52a18455883326d7d
 +                .find(|region| {
 +                    region.content.starts_with("site:")
 +                        && region.grab_row() == Some(event.row)
-+                        && inside(region.area, event.column, event.row)
++                        && region.area.contains((event.column, event.row).into())
 +                })
 +                .filter(|_| state.drag.is_none())
 +                .map(|region| Dock {
@@ -166656,10 +166773,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d0a2c31e5fb65541049164ab6b457ddce2f0dbe1
+index 0000000000000000000000000000000000000000..9de92f3302e3010db874939911b7913e2e1229d3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,706 @@
+@@ -0,0 +1,713 @@
 +use crate::omd::LockExt;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -166688,6 +166805,8 @@ index 0000000000000000000000000000000000000000..d0a2c31e5fb65541049164ab6b457ddc
 +    screen: Arc<Mutex<vt100::Parser>>,
 +    exit: Arc<Mutex<Option<i32>>>,
 +    drawn: Arc<AtomicBool>,
++    /// Hidden by the last render; rows built during a render don't mark it drawn until that render shows it.
++    hidden: bool,
 +    size: (u16, u16),
 +    unrestricted: bool,
 +}
@@ -166999,6 +167118,7 @@ index 0000000000000000000000000000000000000000..d0a2c31e5fb65541049164ab6b457ddc
 +            screen,
 +            exit,
 +            drawn,
++            hidden: false,
 +            size: (size.rows, size.cols),
 +            unrestricted: arguments["sandbox"] == "none",
 +        },
@@ -167059,7 +167179,9 @@ index 0000000000000000000000000000000000000000..d0a2c31e5fb65541049164ab6b457ddc
 +        ))];
 +    };
 +    let (rows, cols) = (height.max(2), width.max(10));
-+    pane.drawn.store(true, Ordering::Relaxed);
++    if !pane.hidden {
++        pane.drawn.store(true, Ordering::Relaxed);
++    }
 +    let mut screen = pane.screen.locked();
 +    if pane.size != (rows, cols) {
 +        pane.size = (rows, cols);
@@ -167105,10 +167227,12 @@ index 0000000000000000000000000000000000000000..d0a2c31e5fb65541049164ab6b457ddc
 +    lines
 +}
 +
-+pub(crate) fn hide(binding: Option<&Binding>, session: &str) {
++/// Records whether the finished render showed the pane; only a shown pane's output requests frames.
++pub(crate) fn set_shown(binding: Option<&Binding>, session: &str, shown: bool) {
 +    let mut sessions = sessions();
 +    if let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) {
-+        pane.drawn.store(false, Ordering::Relaxed);
++        pane.hidden = !shown;
++        pane.drawn.store(shown, Ordering::Relaxed);
 +    }
 +}
 +
@@ -167368,10 +167492,10 @@ index 0000000000000000000000000000000000000000..d0a2c31e5fb65541049164ab6b457ddc
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..969d27160c8feec013be34a2874a9fa6277119dc
+index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047c0a08931
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,683 @@
+@@ -0,0 +1,691 @@
 +use codex_omd::ModColor;
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Rect;
@@ -167451,12 +167575,20 @@ index 0000000000000000000000000000000000000000..969d27160c8feec013be34a2874a9fa6
 +                    self.staged = vec![None; self.cells.len()];
 +                }
 +                let mut cells = cells.into_iter();
-+                let mut changed = self.frame.is_some();
++                // A pending picture clears the cells when it applies, so cells after it compare against blanks.
++                let after_picture = self.picture.is_some();
++                let mut changed = self.frame.is_some() || after_picture;
++                let blank = Cell::default();
 +                for row in rect.y..rect.y + rect.height {
 +                    for column in rect.x..rect.x + rect.width {
 +                        let at = usize::from(row) * usize::from(self.width) + usize::from(column);
++                        let shown = if after_picture {
++                            &blank
++                        } else {
++                            &self.cells[at]
++                        };
 +                        if let Some(cell) = cells.next()
-+                            && (self.staged[at].is_some() || self.cells[at] != cell)
++                            && (self.staged[at].is_some() || *shown != cell)
 +                        {
 +                            self.staged[at] = Some(cell);
 +                            changed = true;
@@ -168057,10 +168189,10 @@ index 0000000000000000000000000000000000000000..969d27160c8feec013be34a2874a9fa6
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..38692e1a913ef6c61305cee17847e2acd327480f
+index 0000000000000000000000000000000000000000..57e2c7f46b69ef3fb5041a26ec18178a7a844b04
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,596 @@
+@@ -0,0 +1,606 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -168212,6 +168344,16 @@ index 0000000000000000000000000000000000000000..38692e1a913ef6c61305cee17847e2ac
 +    );
 +    assert_eq!(frame_at(key, png, now), Ok(reply(1, 1)));
 +    assert!(rasters().get(key).expect("raster").dirty.is_none());
++    assert_eq!(
++        blit_at(
++            key,
++            "owner",
++            json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": [" "]}),
++            now
++        ),
++        Ok(reply(2, 2)),
++        "cells matching the ones a pending picture clears still draw after it"
++    );
 +    retain(&BTreeSet::new());
 +}
 +
@@ -174233,10 +174375,10 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed99484a6d63d3
+index 0000000000000000000000000000000000000000..3f27743ef193485230f1668b8750ca495645f0bd
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5781 @@
+@@ -0,0 +1,5832 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -174386,6 +174528,8 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +    component_owners: BTreeMap<String, String>,
 +    pty_bindings: BTreeMap<String, crate::mod_pty::Binding>,
 +    terminals: BTreeMap<(String, String), (bool, Option<crate::mod_pty::Binding>)>,
++    /// Shown by the last welcome render; no other render notes them, so a frame without the welcome hides them.
++    welcome_terminals: Vec<(String, Option<crate::mod_pty::Binding>)>,
 +    key_panes: BTreeSet<String>,
 +    all_keys: BTreeSet<String>,
 +    dialog: Option<String>,
@@ -175101,6 +175245,7 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +    component_owners: BTreeMap::new(),
 +    pty_bindings: BTreeMap::new(),
 +    terminals: BTreeMap::new(),
++    welcome_terminals: Vec::new(),
 +    key_panes: BTreeSet::new(),
 +    all_keys: BTreeSet::new(),
 +    dialog: None,
@@ -175775,12 +175920,16 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +    with_cache(|cache| cache.presentation ^ crate::mod_render::epoch()).unwrap_or_default()
 +}
 +
++fn welcome_hidden(view: &ModView) -> bool {
++    view.welcome.as_ref().is_some_and(|welcome| welcome.hidden)
++}
++
 +pub(crate) fn welcome_visible(
 +    snapshot: &ModViewSnapshot,
 +    composer: Option<crate::empty_state_animation::ComposerState>,
 +) -> bool {
 +    use crate::empty_state_animation::ComposerState;
-+    snapshot.view.sites.contains_key("welcome")
++    (snapshot.view.sites.contains_key("welcome") || welcome_hidden(&snapshot.view))
 +        && composer.is_some_and(|state| {
 +            state == ComposerState::Empty
 +                || snapshot
@@ -176926,11 +177075,37 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +    }
 +}
 +
-+fn hide_undrawn_terminals(interaction: &mut Interaction) {
++/// Returns the terminals it showed.
++fn settle_terminals(
++    interaction: &mut Interaction,
++) -> Vec<(String, Option<crate::mod_pty::Binding>)> {
++    let mut shown_terminals = Vec::new();
 +    for ((_, session), (shown, binding)) in std::mem::take(&mut interaction.terminals) {
-+        if !shown {
-+            crate::mod_pty::hide(binding.as_ref(), &session);
++        crate::mod_pty::set_shown(binding.as_ref(), &session, shown);
++        if shown {
++            shown_terminals.push((session, binding));
 +        }
++    }
++    shown_terminals
++}
++
++/// For sites drawn outside the full render, which show all of their rows or none.
++fn settle_drawn_terminals(
++    rows: &[ComponentRow],
++    shown: bool,
++    interaction: &mut Interaction,
++) -> Vec<(String, Option<crate::mod_pty::Binding>)> {
++    for row in rows {
++        note_terminals(row, shown, interaction);
++    }
++    settle_terminals(interaction)
++}
++
++/// For a frame that doesn't draw the welcome.
++pub(crate) fn hide_welcome_terminals() {
++    let shown = std::mem::take(&mut INTERACTION.locked().welcome_terminals);
++    for (session, binding) in shown {
++        crate::mod_pty::set_shown(binding.as_ref(), &session, false);
 +    }
 +}
 +
@@ -177094,12 +177269,11 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +
 +/// Paints only in the transcript's cleared remainder, never over transcript, prompt or modal cells; the caller gates this on native fresh-thread facts.
 +pub(crate) fn render_welcome(available: Rect, buffer: &mut Buffer, snapshot: &ModViewSnapshot) {
-+    let Some(welcome) = site(&snapshot.view, "welcome") else {
-+        return;
++    let Some(welcome) = site(&snapshot.view, "welcome")
++        .filter(|_| !welcome_hidden(&snapshot.view) && !available.is_empty())
++    else {
++        return hide_welcome_terminals();
 +    };
-+    if available.is_empty() {
-+        return;
-+    }
 +    let mut interaction = INTERACTION.locked();
 +    // The startup draft draws the welcome before any full render installs the owners.
 +    interaction.component_owners = snapshot.component_owners.clone();
@@ -177118,7 +177292,9 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +    let width = u16::try_from(width)
 +        .unwrap_or(u16::MAX)
 +        .min(available.width);
-+    if width == 0 || height > available.height {
++    let fits = width != 0 && height <= available.height;
++    interaction.welcome_terminals = settle_drawn_terminals(&rows, fits, &mut interaction);
++    if !fits {
 +        interaction.columns.clear();
 +        return;
 +    }
@@ -177263,7 +177439,7 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +    let mut drawn = BTreeMap::new();
 +    render_overlays(area, snapshot, style, buffer, &mut interaction, &mut drawn);
 +    render_dialog(area, chat, snapshot, style, buffer, &mut interaction);
-+    hide_undrawn_terminals(&mut interaction);
++    settle_terminals(&mut interaction);
 +    highlight_focus(buffer, &interaction);
 +    drawn
 +}
@@ -177858,7 +178034,7 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +        &mut drawn,
 +    );
 +    render_dialog(screen, chat, snapshot, style, buffer, &mut interaction);
-+    hide_undrawn_terminals(&mut interaction);
++    settle_terminals(&mut interaction);
 +    highlight_focus(buffer, &interaction);
 +    drawn
 +}
@@ -177876,29 +178052,46 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +    let tint = if crate::mod_client::facts().no_color {
 +        None
 +    } else {
-+        resolve(accent).zip(crate::terminal_palette::default_bg())
++        resolve(accent)
++            .zip(crate::terminal_palette::default_bg())
++            .map(|tint| {
++                (
++                    tint,
++                    crate::terminal_palette::effective_stdout_color_level(),
++                )
++            })
 +    };
 +    for y in shade.top()..shade.bottom() {
 +        for x in shade.left()..shade.right() {
++            let cell = &mut buffer[(x, y)];
 +            let edge = x == shade.left()
 +                || x + 1 == shade.right()
 +                || y == shade.top()
 +                || y + 1 == shade.bottom();
-+            let cell = &mut buffer[(x, y)];
-+            match tint {
-+                Some((accent_rgb, default_bg)) => {
-+                    let under = resolve(cell.bg).unwrap_or(default_bg);
-+                    cell.set_bg(crate::terminal_palette::best_color(crate::color::blend(
-+                        accent_rgb, under, TINT,
-+                    )));
-+                    if edge {
-+                        cell.set_fg(accent);
-+                    }
++            // The zone stays see-through: a cell it can't blend (no tint, or an ANSI 0–15 background from the
++            // terminal's own palette) keeps its colour and only the outline shows, reversed.
++            let blend = tint.and_then(|((accent_rgb, default_bg), level)| {
++                let under = match cell.bg {
++                    Color::Reset => Some(default_bg),
++                    bg => resolve(bg),
++                }?;
++                Some(crate::terminal_palette::best_color_for_level(
++                    crate::color::blend(accent_rgb, under, TINT),
++                    level,
++                ))
++            });
++            match (blend, edge) {
++                (Some(bg), true) => {
++                    cell.set_bg(bg);
++                    cell.set_fg(accent);
 +                }
-+                None if edge => {
++                (Some(bg), false) => {
++                    cell.set_bg(bg);
++                }
++                (None, true) => {
 +                    cell.modifier.insert(Modifier::REVERSED);
 +                }
-+                None => {}
++                (None, false) => {}
 +            }
 +        }
 +    }
@@ -180020,10 +180213,10 @@ index 0000000000000000000000000000000000000000..45eec20280a7ea257552c2fb50ed9948
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056fa838348
+index 0000000000000000000000000000000000000000..9f178f292257e36d63b98bfe1e5d0c400dfb8867
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,245 @@
 +use super::*;
 +use crate::omd::LockExt;
 +use std::sync::Arc;
@@ -180131,6 +180324,7 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +            rows
 +        }
 +    };
++    settle_drawn_terminals(&rows, true, &mut interaction);
 +    let mut lines = Vec::new();
 +    let mut host_from = usize::MAX;
 +    let rows: Vec<ComponentRow> = rows
@@ -180270,10 +180464,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..90f6993a5d30fdedb24038589cd6b07f8fb8ca9a
+index 0000000000000000000000000000000000000000..f9381c15064dbd3dcd4aa090bad72c21e30c8930
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2562 @@
+@@ -0,0 +1,2603 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -180397,6 +180591,21 @@ index 0000000000000000000000000000000000000000..90f6993a5d30fdedb24038589cd6b07f
 +    let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 2));
 +    render_welcome(Rect::new(0, 0, 20, 0), &mut buffer, &snapshot);
 +    assert!(!rows(&buffer, buffer.area).contains("Create project"));
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn a_hidden_welcome_keeps_the_area_without_drawing_a_site() {
++    use crate::empty_state_animation::ComposerState;
++    let bare = snapshot(serde_json::json!({"welcome":{"hidden":true}}));
++    assert!(welcome_visible(&bare, Some(ComposerState::Empty)));
++    assert!(!welcome_visible(&bare, Some(ComposerState::Draft)));
++    let hidden = snapshot(serde_json::json!({"welcome":{"hidden":true},
++        "sites":{"welcome":{"components":[{"type":"text","id":"mark","label":"Mark","text":"OMD mark"}]}}}));
++    let mut buffer = Buffer::empty(Rect::new(0, 0, 40, 8));
++    render_welcome(buffer.area, &mut buffer, &hidden);
++    assert_eq!(buffer, Buffer::empty(Rect::new(0, 0, 40, 8)));
 +    preview(ModViewSnapshot::default());
 +}
 +
@@ -180988,6 +181197,8 @@ index 0000000000000000000000000000000000000000..90f6993a5d30fdedb24038589cd6b07f
 +        buffer[(3, 2)].set_char('X').set_fg(Color::Red);
 +        buffer[(4, 2)].set_bg(crate::terminal_palette::rgb_color((200, 0, 0)));
 +        buffer[(1, 1)].set_char('+').set_fg(Color::Red);
++        buffer[(5, 2)].set_bg(Color::Indexed(4));
++        buffer[(6, 1)].set_bg(Color::Indexed(4));
 +        shade_dock_zone(Rect::new(1, 1, 6, 3), &mut buffer);
 +        let accent = crate::style::accent_color();
 +        let Color::Rgb(r, g, b) = accent else {
@@ -181004,25 +181215,25 @@ index 0000000000000000000000000000000000000000..90f6993a5d30fdedb24038589cd6b07f
 +        assert_eq!(buffer[(1, 1)].fg, accent);
 +        assert_eq!(buffer[(0, 0)].bg, Color::Reset);
 +        assert_eq!(buffer[(7, 4)].bg, Color::Reset);
++        assert_eq!(buffer[(5, 2)].bg, Color::Indexed(4));
++        assert!(!buffer[(5, 2)].modifier.contains(Modifier::REVERSED));
++        assert_eq!(buffer[(6, 1)].bg, Color::Indexed(4));
++        assert!(buffer[(6, 1)].modifier.contains(Modifier::REVERSED));
 +    });
 +}
 +
 +#[test]
-+fn dock_zone_without_a_known_background_reverses_only_its_outline() {
++fn dock_zone_without_a_known_background_draws_only_its_outline() {
++    assert_eq!(crate::terminal_palette::default_bg(), None);
 +    let mut buffer = Buffer::empty(Rect::new(0, 0, 8, 5));
-+    buffer[(1, 1)].set_char('+').set_fg(Color::Red);
-+    buffer[(3, 2)].set_char('X').set_fg(Color::Red);
++    buffer[(3, 2)].set_char('X').set_bg(Color::Blue);
 +    shade_dock_zone(Rect::new(1, 1, 6, 3), &mut buffer);
-+    assert_eq!(buffer[(1, 1)].symbol(), "+");
-+    assert_eq!(buffer[(1, 1)].fg, Color::Red);
-+    assert_eq!(buffer[(1, 1)].bg, Color::Reset);
-+    assert_eq!(buffer[(1, 1)].modifier, Modifier::REVERSED);
-+    assert_eq!(buffer[(6, 3)].modifier, Modifier::REVERSED);
 +    assert_eq!(buffer[(3, 2)].symbol(), "X");
-+    assert_eq!(buffer[(3, 2)].fg, Color::Red);
-+    assert_eq!(buffer[(3, 2)].bg, Color::Reset);
-+    assert_eq!(buffer[(3, 2)].modifier, Modifier::empty());
-+    assert_eq!(buffer[(0, 0)].modifier, Modifier::empty());
++    assert_eq!(buffer[(3, 2)].bg, Color::Blue);
++    assert!(!buffer[(3, 2)].modifier.contains(Modifier::REVERSED));
++    assert!(buffer[(1, 1)].modifier.contains(Modifier::REVERSED));
++    assert!(buffer[(6, 3)].modifier.contains(Modifier::REVERSED));
++    assert!(!buffer[(0, 0)].modifier.contains(Modifier::REVERSED));
 +}
 +
 +#[test]
@@ -182824,7 +183035,7 @@ index 0000000000000000000000000000000000000000..90f6993a5d30fdedb24038589cd6b07f
 +            frame,
 +            None,
 +        );
-+        hide_undrawn_terminals(interaction);
++        settle_terminals(interaction);
 +    };
 +    let drawn = || crate::mod_pty::test_drawn(&binding, "t1");
 +    assert_eq!(drawn(), Some(true));
@@ -182832,8 +183043,32 @@ index 0000000000000000000000000000000000000000..90f6993a5d30fdedb24038589cd6b07f
 +        draw(components, height, &mut interaction);
 +        assert_eq!(drawn(), Some(false));
 +    }
++    crate::mod_pty::rows(Some(&binding), "t1", 40, 4, "");
++    assert_eq!(drawn(), Some(false));
 +    draw(&flat, 40, &mut interaction);
 +    assert_eq!(drawn(), Some(true));
++    draw(&flat, 6, &mut interaction);
++    let welcome = ModViewSnapshot {
++        view: ModView::parse(serde_json::json!({"sites": {"welcome": {"components": [
++            {"type": "terminal", "id": "term", "label": "Term", "session": "t1", "height": 4}]}}}))
++        .unwrap(),
++        component_owners: interaction.component_owners.clone(),
++        ..snapshot
++    };
++    INTERACTION.locked().pty_bindings = interaction.pty_bindings.clone();
++    let area = Rect::new(0, 0, 40, 10);
++    render_welcome(area, &mut Buffer::empty(area), &welcome);
++    assert_eq!(
++        drawn(),
++        Some(true),
++        "a site drawn outside the full render shows it again"
++    );
++    render_welcome(area, &mut Buffer::empty(area), &ModViewSnapshot::default());
++    assert_eq!(
++        drawn(),
++        Some(false),
++        "a frame without the welcome hides what it showed"
++    );
 +    crate::mod_pty::context(2, None);
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs

@@ -22,13 +22,15 @@
       "package_text_assets_v1",
       "state_scopes_v1",
       "store_v1",
+      "terminal_colors_v1",
       "terminal_panel_navigation_v1",
       "terminal_raster_packed_v1",
-      "terminal_render_sites_v1",
       "terminal_underlay_v1",
+      "terminal_welcome_area_v1",
+      "terminal_welcome_hidden_v1",
       "terminal_welcome_v1",
       "timers_16ms_v1"
     ],
-    "optional_features": ["terminal_chat_area_v1", "terminal_colors_v1", "terminal_copy_v1", "terminal_image_sample_v1", "terminal_welcome_area_v1"]
+    "optional_features": ["terminal_chat_area_v1", "terminal_copy_v1", "terminal_image_sample_v1"]
   }
 }

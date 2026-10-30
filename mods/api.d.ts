@@ -208,7 +208,8 @@ export type TerminalOverlay = {
   offset?: { x: number; y: number }; width: number; height: number; z?: number; clip?: 'screen' | 'anchor'; style?: TerminalFrameStyle;
 };
 export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[]; overlay?: TerminalOverlay };
-export type TerminalWelcome = { show_while_composing?: boolean };
+/** `hidden` (`terminal_welcome_hidden_v1`): keep the welcome area, with Codex's own welcome off, but draw no `welcome` site. Applies only to the mod that owns the composed underlay; otherwise (or if its underlay is refused) it is false. */
+export type TerminalWelcome = { show_while_composing?: boolean; hidden?: boolean };
 /** Host startup selection uses a null thread_id; live acceptance/resume supplies the real thread. */
 export type TerminalPresentation = { thread_id: string | null; phase: 'fresh' | 'started' | 'resumed'; surface?: 'inline' | 'fullscreen' };
 export interface TerminalTheme {

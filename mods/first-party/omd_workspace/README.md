@@ -46,7 +46,7 @@ Pick a preset with `/workspace layout NAME`. `side: left` mirrors each one.
 
 Then rearrange it:
 
-- **Drag** a panel by its title row onto another panel. Dropping on an edge splits beside it; dropping in the centre tabs with it. In a tab group, grab the frame line under the tab bar.
+- **Drag** a panel by its title row onto another panel. Dropping on an edge splits beside it; dropping in the centre tabs with it. In a tab group, grab the frame line under the tab bar. A panel drawn without a title or frame can't be dragged; move it with `/workspace move`.
 - **Move** with `/workspace move PANEL left|right|up|down|tab`, or exchange two panels with `/workspace swap PANEL PANEL`. `PANEL` is a panel's number, title or id; `chat` counts as a panel.
 - **Save** up to 8 arrangements with `/workspace layout save NAME`, then `load NAME` or `delete NAME`.
 

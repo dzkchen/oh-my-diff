@@ -2218,7 +2218,12 @@ impl ToolLifecycleContributor for Mods {
                 _ => return Ok(ToolInterception::Continue(None)),
             };
             if roles::is_spawn(input.tool_name) {
-                roles::spawn_capacity_admitted(&self.inventory, &lead, input.call_id)?;
+                roles::spawn_capacity_admitted(
+                    &self.inventory,
+                    &lead,
+                    input.call_id,
+                    inventory::SpawnHold::Expiring,
+                )?;
             }
             let original_tool = input.tool_name.clone();
             let scope_agent_id = agent_id(input.thread_store);

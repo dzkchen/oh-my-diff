@@ -10,6 +10,10 @@ pub const MOD_TEXT_BYTES: usize = 49_152;
 pub struct ModWelcome {
     #[serde(default)]
     pub show_while_composing: bool,
+    /// Keeps the welcome area (Codex's own welcome and animation stay off) but draws no `welcome` site in it;
+    /// effective only from the mod that owns the composed underlay.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
