@@ -1,38 +1,94 @@
 # omd_statusline
 
-Shows model, context, limits, cost and git state in a configurable status line next to the composer.
+Shows model, context, limits, cost and git state in a configurable status line next to the composer. It's on by
+default in OMD+. OMD Core doesn't include it.
 
 ## Turn it off
 
-It is on by default in OMD+ and replaces Codex's own status row. Turn it off in `/mods`, or run:
+It replaces Codex's own status row. Turn it off in `/mods`, or run:
 
 ```sh
 omd-package mod disable omd_statusline
 ```
 
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn mods on and off.
+
 The native row and `/statusline` return, also if the mod fails. Your `tui.status_line` setting is never changed.
 
 ## Use it
 
-Run `/statusline` to open the editor in the panel where `/config` lives. Its subtitle previews your draft live. The Settings tab holds placement, preset, glyphs, bars and thresholds, with Save and Reset to defaults; the Segments tab puts each segment on a line or hides it, and Order edits the whole layout as text. Up and Down move, Left and Right switch tabs, Space or Enter changes the highlighted item, `/` searches and Esc closes without saving.
+Run `/statusline` to open the editor in the panel where `/config` lives. Its subtitle previews your draft live.
 
-Save keeps the draft and `Esc` discards it. Reset to defaults restores the defaults (`tones`, `github`, `refresh_s` and `scripts` keep their values).
+- The Settings tab holds placement, preset, glyphs, bars and thresholds, with Save and Reset to defaults.
+- The Segments tab puts each segment on a line or hides it, and Order edits the whole layout as text.
+- Up and Down move, Left and Right switch tabs, `Space` or `Enter` changes the highlighted item and `/` searches.
+- Save keeps the draft. `Esc` closes without saving.
+- Reset to defaults restores the defaults (`tones`, `github`, `refresh_s` and `scripts` keep their values).
 
-You can also edit settings in `/mods`, or from a shell (this replaces the mod's saved settings):
+Presets:
+
+- `compact`: `model context limits cost cache git omd`
+- `detailed`: `model effort provider context tokens cache cost limits`, then
+  `git changes pr ci session tools agents plan omd` on a second line
+
+A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLOR`.
+
+### Segments
+
+- `model`, `effort`, `provider`: the model (`requested→served` if they differ), reasoning effort, provider.
+- `context`: usage with a bar. `~` and muted after a compaction, rewind or model switch; compactions as `⟳N`.
+- `tokens`, `cache`: token use and cache state.
+- `cost`: session cost. `~` / `est.` for estimates, `included` for subscriptions, `+?` while some cost is unsettled or
+  unknown. Never an invoice. `omd_usage` (`Alt+a`) breaks it down by request.
+- `limits`: account rate-limit windows with reset countdowns.
+- `git`, `changes`: branch and diff summary.
+- `pr`, `ci`: GitHub pull request and checks.
+- `session`: thread ID and elapsed time.
+- `tools`, `agents`, `plan`: running tools, agents and plan progress.
+- `cwd`: working directory.
+- `omd`: mod counts, or `N failed · /omd` when one failed.
+
+Segments with nothing to show are hidden.
+
+### Pull requests and CI
+
+1. Run `/statusline github`.
+2. Paste a GitHub token with read access. A fine-grained token with Pull requests and Commit statuses read is enough.
+
+Run it again to replace the token. It's sent only to `https://api.github.com`, and the mod never sees it. Without a
+token there's no network request.
+
+It uses your `origin` remote on github.com and the newest pull request whose head is your current branch (forks are
+ignored). It polls every minute while checks are pending, every three minutes otherwise, and backs off after failures.
+`/statusline refresh` forces an update.
+
+### Scripts
+
+Add your own segment with up to four scripts in the `scripts` setting:
+
+```json
+[{"id": "weather", "command": ["sh", "/usr/local/bin/statusline-weather.sh"], "interval_s": 300, "timeout_ms": 1500}]
+```
+
+Then add `script:weather` to a custom layout. Commands run without a shell, so paths must be absolute (`~` and
+`$HOME` are not expanded).
+
+- Your script gets one JSON object on stdin with `schema`, `segment`, `placement`, `viewport`, `now_ms`, `session`,
+  `model`, `context`, `tokens`, `cost`, `limits`, `git`, `github`, `plan`, and the counts `tools_running` and
+  `agents`. Unknown fields are null.
+- The first non-empty stdout line is drawn. Colors, bold, italic, underline and `http(s)` links are kept.
+- It runs sandboxed: no network, private HOME, read-only workspace, 100-5000 ms deadline, 8 KiB output. A hang shows
+  `timed out`; a non-zero exit shows `failed`.
+- Scripts come only from your settings, never from a repository file.
+
+## Settings
+
+Change settings in `/mods` or `/statusline`, or from a shell. The shell form replaces the mod's saved settings:
 
 ```sh
 STORE=~/.local/share/oh-my-diff/stores/full
 omd-mod settings "$STORE" "$STORE/sources/omd_statusline" '{"preset": "detailed"}'
 ```
-
-Presets:
-
-- `compact`: `model context limits cost cache git omd`
-- `detailed`: `model effort provider context tokens cache cost limits`, then `git changes pr ci session tools agents plan omd` on a second line
-
-A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLOR`.
-
-## Settings
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -46,48 +102,14 @@ A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLO
 | `tones` | empty | `segment=tone` overrides: `accent`, `success`, `attention`, `failure`, `muted`, `normal` |
 | `github` | `true` | Pull request and CI segments, once a token is connected |
 | `refresh_s` | `30` | Git refresh interval in seconds (5-3600) |
-| `scripts` | empty | JSON array of your own segments (see Scripts) |
+| `scripts` | empty | JSON array of your own segments (see [Scripts](#scripts)) |
 
-## Segments
-
-- `model`, `effort`, `provider`: the model (`requested→served` if they differ), reasoning effort, provider.
-- `context`: usage with a bar. `~` and muted after a compaction, rewind or model switch; compactions as `⟳N`.
-- `tokens`, `cache`: token use and cache state.
-- `cost`: session cost. `~` / `est.` for estimates, `included` for subscriptions, `+?` while some cost is unsettled or unknown. Never an invoice. `omd_usage` (`Alt+a`) breaks it down by request.
-- `limits`: account rate-limit windows with reset countdowns.
-- `git`, `changes`: branch and diff summary.
-- `pr`, `ci`: GitHub pull request and checks.
-- `session`: thread ID and elapsed time.
-- `tools`, `agents`, `plan`: running tools, agents and plan progress.
-- `cwd`: working directory.
-- `omd`: mod counts, or `N failed · /omd` when one failed.
-
-Segments with nothing to show are hidden.
-
-## Pull requests and CI
-
-1. Run `/statusline github`.
-2. Paste a GitHub token with read access. A fine-grained token with Pull requests and Commit statuses read is enough.
-
-Run it again to replace the token. It's sent only to `https://api.github.com`, and the mod never sees it. Without a token there's no network request.
-
-It uses your `origin` remote on github.com and the newest pull request whose head is your current branch (forks are ignored). It polls every minute while checks are pending, every three minutes otherwise, and backs off after failures. `/statusline refresh` forces an update.
-
-## Scripts
-
-Add your own segment with up to four scripts:
-
-```json
-[{"id": "weather", "command": ["sh", "/Users/me/bin/statusline-weather.sh"], "interval_s": 300, "timeout_ms": 1500}]
-```
-
-Then add `script:weather` to a custom layout.
-
-- Your script gets one JSON object on stdin (session, model, context, tokens, cost, limits, git, github, plan, tools, agents). Unknown fields are null.
-- The first non-empty stdout line is drawn. Colors, bold, italic, underline and `http(s)` links are kept.
-- It runs sandboxed: no network, private HOME, read-only workspace, 100-5000 ms deadline, 8 KiB output. A hang shows `timed out`; a non-zero exit shows `failed`.
-- Scripts come only from your settings, never from a repository file.
-
-## Limits
+## Needs and limits
 
 - Git, scripts and GitHub run on timers, so values can lag by a refresh interval.
+- Pull request and CI segments need a GitHub token and an `origin` remote on github.com.
+
+## More
+
+- [`omd_usage`](../omd_usage/README.md) for the per-request breakdown
+- [Included mods](../../../docs/collection.md)

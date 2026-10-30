@@ -54,7 +54,7 @@ class PullRequestChecks(unittest.TestCase):
                 self.assertTrue(needs_native(["README.md", path]))
         self.assertFalse(needs_native([]))
         self.assertFalse(needs_native([
-            "README.md", "docs/write-a-mod.md", ".github/WORKFLOWS.md",
+            "README.md", "docs/mod-authors/first-mod.md", "docs/contributing/ci.md",
             "mods/first-party/omd_logo/index.ts", "mods/examples/hello/index.ts",
             "plugins/omd-code-execution/plugin.json", "tests/test_package.py",
         ]))

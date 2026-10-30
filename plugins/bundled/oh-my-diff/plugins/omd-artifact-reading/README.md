@@ -1,33 +1,29 @@
-# OMD artifact reading
+# omd-artifact-reading
 
-Read URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cite where each answer came from.
+Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites where each answer came from.
 
-It works with no setup. An optional `mod/` component adds `github://` reads; you trust and enable it separately.
+It works with no setup once you add the plugin. An optional mod component, `omd_github_read`, adds `github://`
+reads.
 
-## Install
+## Turn it on
 
-```sh
-omd-package plugins
-codex plugin add omd-artifact-reading@oh-my-diff
-```
+Add the plugin. [Plugins](../../../../README.md) has the steps to add a plugin and enable a component.
 
-## Use
+## Use it
 
 Ask Codex to use `$omd-artifact-reading:omd-artifact-reading`.
 
-- PDF reading needs Ghostscript (`gs`).
 - Notebooks are read, not run.
 - Fetched content is treated as evidence and can't give instructions.
 
-## GitHub reads (optional)
+### GitHub reads
 
-1. Inspect, trust and enable the component in the mod store of the host you run:
+GitHub reads are optional and need the component.
 
-   ```sh
-   omd-mod plugin-component PLUGIN_ROOT
-   omd-mod inspect COMPONENT_PATH
-   omd-mod trust STORE COMPONENT_PATH INSPECT_SHA256 virtual_reads,exec
-   omd-mod enable STORE COMPONENT_PATH
+1. Enable the component with these capabilities:
+
+   ```text
+   virtual_reads,exec
    ```
 
 2. Add this entry to `services` in the store's `host.json`. Use real canonical paths, digests and your platform's
@@ -56,7 +52,7 @@ Supported paths:
 - `github://OWNER/REPO/pulls/NUMBER`, `/comments`, `/review-comments` and `/files`
 - `github://OWNER/REPO/commits/FULL_40_CHARACTER_SHA` and `/files`
 
-Add `?page=N` to a collection path for more entries. `comments` is the conversation; `review-comments` is inline
+Add `?page=N` to a collection path for more entries. `comments` is the conversation. `review-comments` is inline
 review.
 
 ### Private repositories
@@ -67,20 +63,17 @@ Public reads need no credentials. For a private repository:
    `secret_refs`.
 2. Use a fine-grained read-only token limited to the repositories you need.
 
-Private access hasn't been tested against a real private account.
+## Needs and limits
 
-### Limits
-
-- Each request makes at most three GitHub requests, with an 18-second deadline and no retry.
-- Responses are clipped: text pages to 8 KiB, bodies and patches to 12 KiB.
-- Binary or omitted patches, and PRs over GitHub's 3,000-file limit, can't give complete file contents.
+- PDF reading needs Ghostscript (`gs`).
+- Each GitHub read makes at most three GitHub requests, with an 18-second deadline and no retry.
+- GitHub responses are clipped: text pages to 8 KiB, bodies and patches to 12 KiB.
+- Binary or omitted patches, and pull requests over GitHub's 3,000-file limit, can't give complete file contents.
 - A renamed repository must be reopened by its new name. Redirects aren't followed.
+- Private access hasn't been tested against a real private account.
 
-## Remove
+## More
 
-```sh
-omd-mod disable STORE COMPONENT_PATH
-codex plugin remove omd-artifact-reading@oh-my-diff
-```
-
-GitHub REST references: [pull requests](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10), [issue comments](https://docs.github.com/en/rest/issues/comments?apiVersion=2026-03-10).
+- [Remove a plugin](../../../../README.md#remove-a-plugin)
+- GitHub REST references: [pull requests](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10),
+  [issue comments](https://docs.github.com/en/rest/issues/comments?apiVersion=2026-03-10).

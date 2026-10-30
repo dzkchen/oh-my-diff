@@ -1,10 +1,19 @@
 # omd_mods
 
-Adds `/mods`, a screen to turn mods on or off, change their settings and install new ones.
+Adds `/mods`, a screen to turn mods on or off, change their settings and install new ones. It's on by default in OMD+
+and OMD Core.
 
 ## Turn it off
 
-It is on by default in OMD+ and OMD Core. `/mods` cannot turn itself off or remove itself; use `/omd` or `omd-package mod disable omd_mods`. `/omd` stays available if `/mods` breaks.
+`/mods` and `/omd` can't turn off or remove the mods OMD requires: `omd_mods`, `omd_logo` and `omd_update`. Only the
+command line can, so run:
+
+```sh
+omd-package mod disable omd_mods
+```
+
+`/omd` stays available if `/mods` breaks. [Manage mods](../../../docs/manage-mods.md) covers the other
+ways to turn a mod on or off.
 
 ## Use it
 
@@ -22,8 +31,16 @@ It is on by default in OMD+ and OMD Core. `/mods` cannot turn itself off or remo
 | `/mods reload` | Reload every mod. |
 | `/mods apply` or `/mods cancel` | Confirm or drop a pending action. |
 
-Add from source, in Directory, takes `npm:NAME[@VERSION]`, `git+URL[#REF]`, an absolute folder or a directory id; a
-directory entry installs its newest available version. A mod that is already installed is updated from its own panel instead. Install for picks your user store or this project.
+For example, `/mods enable omd_frecency` turns on `omd_frecency` without opening the panel, after you approve
+its permissions.
+
+Add from source, in Directory, takes `npm:NAME[@VERSION]`, `git+URL#TAG`, an absolute folder or a directory id. A
+directory entry installs its newest available version. A mod that is already installed is updated from its own panel
+instead. Install for picks your user store or this project.
+
+## Settings
+
+It has no settings.
 
 ## Needs and limits
 
@@ -31,3 +48,9 @@ directory entry installs its newest available version. A mod that is already ins
 - Every install is reviewed and starts off.
 - A mod's commands work at once. Its other behavior starts with your next message.
 - On a fresh session it also shows a short getting-started card.
+
+## More
+
+- [Manage mods](../../../docs/manage-mods.md)
+- [Included mods](../../../docs/collection.md)
+- [Packaging](../../reference/packaging.md) in the mod API reference

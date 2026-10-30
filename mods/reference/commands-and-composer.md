@@ -1,15 +1,19 @@
 # Commands, configuration and composer
 
-How mods list, describe and run commands, read and write Codex configuration, and take part in the composer: `@`
-completion, drafts, suggestions, key interception and file mentions. Read it when a mod adds slash commands, wraps
-settings writes or edits what the user is typing.
+Use it when a mod adds or wraps slash commands, reads or writes configuration, removes built-in controls, or takes
+part in the composer: `@` completion, drafts, suggestions, key interception and file mentions. `api.command`
+itself is listed in [SDK helpers](sdk-helpers.md#other-api-members) and its registration limits in
+[Host model](host-model.md#registration-limits).
 
 ## Commands and configuration (`command_config_middleware_v1`)
+
+This section covers command listing, `commands.invoke`, `config.describe`, `config.set` and the command and
+configuration interceptor surfaces.
 
 ### Command listing and description
 
 `commands.list` (`terminal`) returns `{commands: [row]}` for every built-in, service-tier and mod command the
-composer can offer. `commands.describe {command}` returns one row.
+composer can offer. `commands.describe {command}` (experimental) returns one row.
 
 A row is `{command, description, owner, hidden, args_hint, immediate, protected}`:
 
@@ -36,8 +40,8 @@ terminal dispatches with the effective arguments.
 
 ### `config.describe`
 
-`config.describe` (`config`) returns `{rows: [row]}`: each enabled mod's settings as `mods.<id>.<name>` rows, then
-the host-writable Codex keys present in the effective config.
+`config.describe` (`config`, experimental) returns `{rows: [row]}`: each enabled mod's settings as `mods.<id>.<name>`
+rows, then the host-writable Codex keys present in the effective config.
 
 A row is `{key, label, value, source, version, scope, editable, managed, secret, hidden}` plus `type` and `enum`
 for mod settings:
@@ -52,21 +56,22 @@ Secret keys and secret-bearing tables (headers, environment, tokens) show `<reda
 
 ### `config.set`
 
-`config.set {key, value, expected?}` (`config.write`, user contexts) writes an `editable` row:
+`config.set {key, value, expected?}` (`config.write`, user contexts, experimental) writes an `editable` row:
 
-- Codex keys are written after a native confirmation through `config/value/write` with the described layer version.
-- Mod settings are written through the same validation as `settings.write` (another mod's settings after a native
-  confirmation).
+- Codex keys are written after a native confirmation through `config/value/write` with the described layer version,
+  under the [config write rules](app-bridge-and-approvals.md#config-writes).
+- Mod settings are written through the same validation as [`settings.write`](settings.md#settingswrite) (another mod's
+  settings after a native confirmation).
 - `expected` refuses the write (`config_stale`) when the value changed since it was read.
 - A concurrent Codex write fails with the server's version conflict.
 
-Every successful `config.set` and `settings.write` change raises `config_change {key, original, effective, source,
-scope, caller}` for the other mods registered for it.
+Every successful `config.set` and `settings.write` change raises the experimental
+`config_change {key, original, effective, source, scope, caller}` for the other mods registered for it.
 
 ### Command and configuration interceptor surfaces
 
 Four
-[continuation](tools-and-middleware.md#continuation-middleware-continuation_middleware_v1-tool_continuation_v2)
+[continuation](interceptors.md#continuation-middleware-continuation_middleware_v1-tool_continuation_v2)
 surfaces wrap these:
 
 - `command_list` (`commands`) and `config_list` (`config`) compose rows without host operations: hide, relabel
@@ -83,33 +88,45 @@ surfaces wrap these:
 Interceptors of these surfaces skip their own mod's calls like every other surface, which bounds recursion through
 `commands.invoke` and `settings.write`.
 
-## Codex configuration (`codex_config_v1`)
+## Built-in controls
 
-A manifest's `codex_config` turns on Codex features the package depends on, for every lead thread the session
-starts, resumes or forks while the package is active: `{"codex_config": {"tools.update_plan.enabled": true}}`.
+`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}, features: {remove}})`, registered during
+activation, removes slash commands, collaboration modes, native surfaces and Codex features from the next idle boundary
+until the mod is disabled, unloaded or fails. Controls belong to the directory OMD was launched in and cover every
+thread of that session, including threads in its worktrees.
 
-- Keys come from a closed host allowlist (`tools.update_plan.enabled`, `tool_output_token_limit.raise`) and must be `true`.
-- `tool_output_token_limit.raise` sets the thread's `tool_output_token_limit` to at least 65,536 tokens (about 256 KiB),
-  keeping a larger configured value. `exec_command` and `write_stdin` still default to 10,000 tokens unless the call
-  sets a larger `max_output_tokens`, which a `tool` interceptor can do. It makes no output smaller or safer: the
-  package must budget model-visible outputs itself, or every long output reaches the model whole.
-- The package must list `codex_config_v1` in `required_features`.
-- Anything else fails inspection with `invalid_codex_config`.
+- `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
+  items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
+  and the row still draws when other mods publish `status` segments.
+- `features: {remove: ['prevent_idle_sleep']}` (`builtins_features_v1`) takes Codex features out of the session:
+  they read as off everywhere, whatever `config.toml` or `-c` sets, and they leave `/experimental`, the app-server's
+  experimental feature list, `codex features list` and tips. Removing `code_mode` also removes `code_mode_only`.
+  Nothing is written to `config.toml`; disabling the mod brings back the rows and the saved values. A feature that
+  managed requirements pin on stays on. Keys must be Codex feature keys (`invalid_builtins` otherwise).
+- `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed.
+- A disabled mode is absent from `collaborationMode/list`. A thread that requests or still holds one is reported in
+  the default mode and runs its next turn there with that mode's instructions cleared and a warning (a `warning`
+  notification for app-server clients), including the turn at whose boundary the mod loads.
+- Tools limited to collaboration modes lose the disabled ones and are not offered when none remain.
 
-The host recomputes the keys whenever it reloads the active packages (at the next turn boundary after a change), so
-a package enabled mid-session applies to lead threads started after that reload; threads that already exist keep
-their configuration. It overrides an explicit `false` in the user's config for those threads and writes nothing to
-`config.toml`.
+### `builtins.invoke` and `api.builtins`
 
-Install, update and trust previews and `omd-mod status` list a package's `codex_config` with its other authority.
+`builtins.invoke {action}` (experimental) runs a key action from user contexts. It is refused (`builtins_view_active`)
+while a dialog, popup, overlay or focused mod component would take the key, and `list.*` and the permission-mode actions
+are never invoked (`keymap_action_refused`).
+
+`api.builtins({keys, commands: {replace}})` overlays key bindings (never `approval.*`) and routes a built-in
+command to a mod command; the slash popup lists the built-in with that command's description and arguments.
 
 ## Composer completion (`completion_v1`)
 
+This section covers `@` mention, command argument and token completion.
+
 ### `@` mention completion
 
-`replace('completion')` receives each `@` mention query with up to 200 upstream candidates and returns
-`{items: [{path}]}` in the order to show. Paths must be workspace-relative. Without an owner upstream ranking is
-used; stale results are dropped.
+`replace('completion')` receives each `@` mention query with up to 200 upstream candidates by default
+(`completion_items` in [Host limits](limits.md#host-limits)) and returns `{items: [{path}]}` in the order to show. Paths
+must be workspace-relative. Without an owner upstream ranking is used; stale results are dropped.
 
 ### Command argument completion
 
@@ -136,6 +153,9 @@ selected `insert` and advances past a separator so the accepted token does not i
 two mods register the same trigger, the first loaded mod keeps it and the other gets a status notice.
 
 ## Composer drafts and suggestions (`composer_v2`)
+
+This section covers `composer.read`, `composer.write`, `composer.suggest`, the `composer` event, the `composer_edit`
+and `composer_key` interceptors, and submitted drafts.
 
 ### `composer.read`
 
@@ -187,13 +207,14 @@ The `composer` event (capability `composer`) reports two kinds of payload:
 
 ### `composer_edit` interceptor
 
-`api.intercept('composer_edit', …)` sees every mod write and native fill before it reaches the draft: `{source:
-'mod' | 'paste' | 'history' | 'completion', caller, revision, edit}`. Handlers may change only `edit.text` or
-answer `{deny}`, which leaves the draft unchanged and tells the user. They run while the terminal applies the edit,
-so they get no host operations. The whole chain, including any wait for a runtime busy with another callback, gets
-50 ms; when that runs out a native fill applies unmodified with a status notice and a mod write is refused with
-`mod_runtime_busy`. While a required interceptor selects `composer_edit`, a native fill is refused the same way. A policy or redaction
-interceptor must therefore be `required`: a busy optional one lets a paste or fill through unmodified.
+`api.intercept('composer_edit', …)` sees every mod write and native fill before it reaches the draft:
+`{source: 'mod' | 'paste' | 'history' | 'completion', caller, revision, edit}`. Handlers may change only `edit.text` or
+answer `{deny}`, which leaves the draft unchanged and tells the user. They run while the terminal applies the edit, so
+they get no host operations. The whole chain, including any wait for a runtime busy with another callback, gets 50 ms;
+when that runs out a native fill applies unmodified with a status notice and a mod write is refused with
+`mod_runtime_busy`. While a required interceptor selects `composer_edit`, a native fill is refused the same way. A
+policy or redaction interceptor must therefore be `required`: a busy optional one lets a paste or fill through
+unmodified.
 
 ### `composer_key` interceptor
 
@@ -214,31 +235,18 @@ Handlers may set `key` to another character or to a key name valid in view `keyb
   shows.
 - Use `match` on `key` so other keystrokes never start a callback.
 
-### `component_change` interceptor
-
-`api.intercept('component_change', …)` (capability `terminal`, `ui_controls_v1`) runs before a user's focus or
-scroll change is reported, and only for the mod that owns the component being left or entered: `{kind: 'focus', id,
-from, to, origin: 'user'}` or `{kind: 'scroll', id, from, to, origin}`.
-
-Handlers answer:
-
-- `{deny}` to keep the previous focus or offset;
-- `{focus: id}` to move focus to another of their own components (or `null` to release it);
-- `{scroll: n}` to clamp the offset.
-
-They run while the terminal handles the gesture, so they get no host operations. The whole chain, including any wait
-for a runtime busy with another callback, gets 50 ms; when that runs out the change applies unchanged.
-
 ### Submitted drafts and `prompt_expanded`
 
 The `input` interceptors also receive the submitted draft's `revision`, `attachments` (`{kind, source}`) and
 placeholder `elements` (`{kind: 'paste' | 'mention' | 'skill' | 'image', start?, end?, name?, source}`).
 
-After skills and mentions are expanded, `prompt_expanded` (capability `middleware`) lists them by name, path and
-SHA-256 only (`{kind: 'skill' | 'mention' | 'paste' | 'image', …}`), never their content, and the `prompt` event's
-`effective` is the text the model receives.
+After skills and mentions are expanded, the experimental `prompt_expanded` event (capability `middleware`) lists them by
+name, path and SHA-256 only (`{kind: 'skill' | 'mention' | 'paste' | 'image', …}`), never their content, and the
+`prompt` event's `effective` is the text the model receives.
 
 ## `@` file mentions (`mention_read_v1`)
+
+This section covers what the host reads for an `@` mention, the read checks and limits, and the `mention` interceptor.
 
 ### What the host reads
 

@@ -1,17 +1,21 @@
 # omd_source_knowledge
 
-Lets the agent keep notes about a repository for later tasks. A fact points at exact lines of a file and is checked
-against the file each time it's reused. The agent can also keep a copy of a small structured result from the current
-thread, such as a test report, as evidence, and propose lessons from that evidence. A lesson is used only after you
-approve it.
+Lets the agent keep notes about a repository for later tasks, each checked against the file it points at before it's
+reused. It's off by default in OMD+. OMD Core doesn't include it.
+
+A fact points at exact lines of a file and is checked against the file each time it's reused. The agent can also keep
+a copy of a small structured result from the current thread, such as a test report, as evidence, and propose lessons
+from that evidence. A lesson is used only after you approve it.
 
 ## Turn it on
 
-It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
+Turn it on in `/mods`, or run:
 
 ```sh
 omd-package mod enable omd_source_knowledge
 ```
+
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn mods on and off.
 
 ## Use it
 
@@ -30,14 +34,14 @@ invalid and left out when its file is gone, is no longer a small text file, is n
 when those lines are now blank, start or end with whitespace, or look like a credential. Lessons whose evidence was
 removed are left out too.
 
-Every call names the repository. Each call that adds, approves or removes notes also names the revision it expects; if the
-notes changed first, it is refused with `knowledge_revision_stale` and nothing is written. Reuse and `inspect` can
+Every call names the repository. Each call that adds, approves or removes notes also names the revision it expects. If
+the notes changed first, it's refused with `knowledge_revision_stale` and nothing is written. Reuse and `inspect` can
 move the revision too, when they record a fact that changed.
 
-## Approve and remove
+### Approve and remove
 
-Three commands each take one line of JSON with no spaces outside quoted text. Ask the agent to run `inspect` for
-the repository name and current revision.
+Three commands each take one line of JSON with no spaces outside quoted text. Ask the agent to run `inspect` for the
+repository name and current revision.
 
 ```text
 /omd_source_knowledge:approve_lesson {"repository_identity":"my-app","expected_revision":7,"lesson_id":"flaky-retry","action":{"actor":"me","reason":"seen twice"}}
@@ -49,6 +53,10 @@ the repository name and current revision.
 - `forget` removes one `fact`, `evidence` record or `lesson`. Lessons that cite forgotten evidence go back to
   proposed, so approve them again if the evidence comes back.
 - `discard` removes everything kept for the repository.
+
+## Settings
+
+It has no settings.
 
 ## Needs and limits
 
@@ -64,3 +72,7 @@ the repository name and current revision.
 - The repository and task names are whatever the agent passes; OMD doesn't verify them. The actor and reason of an
   approval are stored as typed, and the mod can't confirm who ran the command. Only the current notes are kept, with
   no history of approvals or removals.
+
+## More
+
+- [Included mods](../../../docs/collection.md)

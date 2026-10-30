@@ -1,7 +1,9 @@
 # Authoring
 
-The commands and tools for writing a mod: scaffolding, checks, tests, watch-and-reload, JSX, multi-file packages and
-diagnostics. For packaging and publishing, see [Packaging, publishing and offline scenarios](packaging.md).
+Use it when you look up an author command, the TypeScript test helpers, the `mod.test.json` format, JSX
+compilation, multi-file packages, diagnostics or the cost report. For the step-by-step author loop, see
+[Write your first mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/first-mod.md). For packaging and publishing, see
+[Packaging](packaging.md).
 
 ## Author commands
 
@@ -26,9 +28,18 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 
 - The `omd-mod` binary is part of the OMD engine. Set `OMD_MOD_BIN` only when a development build is not already on
   `PATH`.
-- Set `OMD_MOD_NODE` to the supported Node 24.x executable, 24.18 or later.
+- Set `OMD_MOD_NODE` to the supported Node 24.x executable, 24.18 or later. [Support](https://github.com/dzkchen/oh-my-diff/blob/main/docs/support.md) lists
+  the supported versions.
 - pnpm is the package manager. The repository also publishes equivalent `mise run mods:*` tasks without making pnpm a
   mise tool.
+
+## Generated declarations
+
+A store also generates declarations for the running host:
+
+- `active-host.d.ts` describes the running host.
+- `installed-contracts.d.ts` describes the service contracts available to consumers.
+- `tool-types.d.ts` appears once a session has listed its tools ([Typed tool declarations](#typed-tool-declarations)).
 
 ## Typed tool declarations
 
@@ -66,15 +77,19 @@ The declarations are as current as the last turn that built the thread's tools:
 ```ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import type { TerminalView } from '@oh-my-diff/mod-api';
 import { advance, clock, environment, find, invoke, key, mount, packages, pointer, runScenario, storeMock, tiers, waitUntil } from '@oh-my-diff/mod-api/testing';
 
 test('panel opens', () => {
   const trace = runScenario('.', clock(1000), environment({ MODE: 'ci' }), storeMock({ get: [null] }), packages('../policy'), tiers({ append: ['policy'] }), {
     steps: [mount('panel'), key('panel', 'F2', { expect: { action: { command: 'panel:open', args: '' }, result: 'opened' } })],
   });
-  assert.ok(find(trace.steps[0].value, 'open'));
+  assert.ok(find(trace.steps[0].value as TerminalView, 'open'));
 });
 ```
+
+A step's `value` is typed as `Json | undefined`, so cast it to `TerminalView` before passing it to `find` or `text`.
+For a walkthrough, see [Test a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/test-a-mod.md).
 
 ### Scenario fields
 
@@ -86,7 +101,7 @@ test('panel opens', () => {
 | `hostOperations({op: [{result} \| {error}]})` | Mocked host operation replies |
 | `storeMock({get, put, delete})` | Ordered `store.*` replies, `null` for a missing key |
 | `packages(...paths)` | Extra packages (a policy package, a user package), trusted in that order before the project |
-| `tiers({prepend, append})` | Mod IDs run as [administrator-managed](safety.md#administrator-policy-and-managed-deployment) packages in that tier, so a test sees the composed order and the managed guard rule; an `intercept` step's trace shows the order |
+| `tiers({prepend, append})` | Mod IDs run as [administrator-managed](administrator-policy.md) packages in that tier, so a test sees the composed order and the managed guard rule; an `intercept` step's trace shows the order |
 
 - `scenario(...parts)` merges parts: queues and packages append, settings and tiers merge, and the last value of any
   other field wins.
@@ -104,19 +119,19 @@ Mock operation names, arguments and results derive from `HostOperations`.
 - An explicit queue for a timer or environment operation replaces its virtual implementation; exhausted queues never
   fall back to simulated behavior.
 
-**Required replies must be consumed.** Unexpected calls, argument mismatches and unused required replies fail the
+Required replies must be consumed. Unexpected calls, argument mismatches and unused required replies fail the
 scenario. Unexpected-call and argument-mismatch failures remain scenario failures even when the mod catches the
 operation error.
 
-Validation:
+### Mock validation
 
-- Every normal mock validates request and result shapes. Shared pure validators additionally check store keys,
+- Every normal mock validates request and result shapes. Shared pure validators also check store keys,
   values and revision syntax, environment inputs and timer inputs.
 - Malformed result fixtures fail before the scenario runs unless explicitly marked unsafe.
 - Authority, declarations, persistence, revision conflicts, quotas, filesystem resolution and process/network state
   require real-host boundary tests; a valid mock cannot prove those behaviors.
 
-Negative tests:
+### Negative tests
 
 - `unsafeHostOperations({op: [{result, unsafe: {result: true}}]})` deliberately bypasses result validation.
   `unsafe.arguments` separately bypasses request validation. Neither grants runtime authority, and unknown operations
@@ -132,6 +147,8 @@ Negative tests:
   client's event), `component(mod, module, {instance, props, columns, rows, events})` (steps an `api.component` module).
 - Clients: `attach(name, {renderer})`, `detach(id)`.
 - Interceptors: `intercept(surface, payload, {core: [coreValue(v) | coreError(e)]})`.
+
+Step options:
 
 - The last argument takes `expect`, `expectError` and `cancelled`.
 - Interactions and `mount` also take `payload`, the `terminal` event input (default `{event: 'draw', ledger: null}`).
@@ -154,7 +171,124 @@ Mounting and interacting run the mod's `terminal` event and callbacks on fixture
 and how it reacts, not how a terminal or an attached client draws or delivers it. A supported-client claim needs the
 client conformance harness (`scripts/client_acceptance.py`) or a real terminal check.
 
+## Offline scenarios
+
+A `mod.test.json` file uses schema 1 and runs a mod with no external work.
+[Test a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/test-a-mod.md) shows a complete file and maps each field and step to its TypeScript
+helper.
+
+### Scenario file fields
+
+| Field | Meaning |
+| --- | --- |
+| `virtual_time_ms` | Fixes `Date.now()` and zero-argument `new Date()` inside every callback |
+| `host_operations` | An ordered result/error queue for each approved host operation |
+| `settings` | A map from mod ID to that mod's explicit settings; the author commands apply it through `omd-mod settings` before the run, so configured behavior is testable offline |
+| `packages` | Additional trusted packages, enabling provider/consumer and conflict fixtures without shared globals or ambient authority |
+| `tiers` | Maps loaded mod IDs to `prepend` or `append` and runs them as administrator-managed packages in that tier for the scenario only, so a test sees the managed interceptor order and that its answers can't skip a managed required guard |
+| `environment` | Nonsecret names mapped to string values (see [Offline environment](#offline-environment)) |
+
+- Any unmocked call fails before external work, and every result records `paid_requests: 0`.
+- `expect` is deep equality of the step's whole value, not a subset (`offline_expectation_failed`). A render `intercept`
+  result includes `trace[].location` (`index.ts:75:7`), so an exact expectation breaks when lines move: test
+  interceptors in a `*.test.ts` file ([TypeScript tests](#typescript-tests)).
+- A store-level `omd-mod test STORE SCENARIO` uses the store's own settings instead of `settings`.
+- A mod that fails to activate reports its retained cause, so a missing service provider, denied capability or source
+  error names itself instead of only asking for a reload.
+
+### What steps can do
+
+Every step has a `type`:
+
+| `type` | Meaning |
+| --- | --- |
+| `invoke` | Calls one mod's tool, command or hook by `mod`, `event` and `name` with `payload` |
+| `event` | Dispatches `event` with `payload` to every mod that handles it |
+| `tool_outcome`, `agent` | Dispatches a `tool_result` or `agent` lifecycle event |
+| `advance_time` | Moves virtual time forward by `ms`, running due timers |
+| `wait_until` | Repeats a `check` step as time advances until it equals `until` |
+| `reload`, `status` | Reloads the mods at a safe boundary; returns the host's status |
+| `state` | Returns (or with `value`, first writes) a mod's persisted `api.state` |
+| `tool_exposure` | Returns the tool names the mods expose for a `payload` ledger |
+| `terminal_mount`, `terminal_interact` | Draws a mod's terminal view; sends it a `key` or a `component` interaction |
+| `component` | Steps one `api.component` module instance |
+| `client_attach`, `client_detach` | Adds or removes an external client |
+| `intercept` | Runs an interceptor chain for `surface`, answering `next` from `core` |
+
+Steps can:
+
+- advance virtual time;
+- invoke tools or commands;
+- dispatch ordinary events, interceptor chains (an `intercept` step answers `next` from its `core` replies), tool
+  outcomes and agent lifecycle;
+- reload at a safe boundary;
+- mount a terminal view, and interact with a mounted key or component ID. Component interaction activates buttons,
+  inputs, and selectors with an optional `value`; copy actions return without touching the system clipboard.
+
+A step can carry `expect`, `expect_error`, or `cancelled`, and `thread_id` to run in that thread when its payload names
+none. Thread-scoped state, timers and component events follow it; the `THREAD` argument of `omd-mod test` binds every
+step and takes precedence. In a TypeScript test, pass `threadId` in a step's options.
+
+### Offline environment
+
+`environment` maps nonsecret names to string values (4096 bytes at most) that `environment.read` answers in place of a
+`host_operations` queue, so a scenario never reads the host's environment.
+
+- An unlisted name is `{set: false}`.
+- A secret-like name (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `AWS_*`, ...) fails the scenario with
+  `offline_environment_secret_name`.
+
+### `state` step
+
+```text
+{"type": "state", "mod": ID, "value"?: VALUE, "thread_id"?: ID}
+```
+
+Returns that mod's persisted `api.state` from the scenario's store, so `expect` can check it after any step. With
+`value` it first writes that state (the mod needs `store`, and the usual state limits apply), seeding a test without a
+setup command.
+
+### `component` step
+
+```text
+{"type": "component", "mod": ID, "module": NAME, "instance"?: NAME, "props"?: VALUE, "columns"?: 80, "rows"?: 0, "events"?: [...]}
+```
+
+Steps one instance of the mod's `api.component` module at the scenario's virtual time, delivering the `key` and
+`pointer` events and every due tick, and returns `{tree, post, next_ms}`.
+
+- The instance mounts on its first step and keeps its state until the scenario ends, so `advance_time` steps drive
+  `every` ticks.
+- The module gets no host authority and its tree is validated as for a terminal.
+- `omd-mod test` and `mod_host_check --scenarios` run it like any other step.
+
+### `wait_until` step
+
+```text
+{"type": "wait_until", "check": STEP, "until": VALUE, "every_ms": 1000, "max_ms": N}
+```
+
+Runs `check`, and while its value differs from `until` advances virtual time by `every_ms` and checks again (at most
+256 checks). It returns `{waited_ms, value}` or fails with `offline_wait_timeout` at `max_ms`.
+
+### Pointer and client steps
+
+- A `terminal_interact` `key` runs the view's `keybindings` entry, else the first `key_contexts` binding for that key
+  (offline steps have no focus).
+- `terminal_interact` also takes `pointer: {column, row, half?, action, button?}` with `component`. The mounting mod
+  receives `component_event {kind: 'pointer'}` with `origin: 'user'`, only for a `box`, `image` or `raster` mounted
+  with `pointer: true` (`offline_terminal_component_not_pointer`). Adding `client: ID` delivers it as that attached
+  client's event (`client`, no `origin`).
+- `client_attach {name, renderer?, viewport?, focused?}` adds an external client as `client-1`, `client-2`, ... and
+  `client_detach {id}` removes it (`offline_client_not_attached`).
+- A mounted `terminal` payload carries the roster as `clients` unless it sets its own.
+
+These steps run the mod's callbacks on fixture data; they are not terminal or client rendering evidence.
+
 ## Watch and reload
+
+The author loop with `watch` is shown step by step in
+[Run and debug a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/run-and-debug.md).
 
 ### Interactive watch
 
@@ -196,7 +330,8 @@ Neither starts a provider request.
 
 ## JSX/TSX
 
-Writing terminal components as JSX is optional and author-side only.
+Writing terminal components as JSX is optional and author-side only. For an example, see
+[Write terminal components in JSX](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/jsx.md).
 
 ### Entry point compilation
 
@@ -239,9 +374,7 @@ as props.
   `jsx_unsupported_element`; children on a kind that takes none fail with `jsx_children_unsupported`.
 - Fragments are not supported.
 
-## Diagnostics and source maps
-
-### Multi-file packages
+## Multi-file packages
 
 A package spans several files by importing its declared assets with relative specifiers:
 `import { draw } from './draw.ts'`, `'./lib/util.mjs'`, or a `'./table.json'` default export.
@@ -252,6 +385,10 @@ A package spans several files by importing its declared assets with relative spe
   scripts passed to `exec.run`) do not.
 - Declare the required features `package_text_assets_v1` for assets and `package_imports_v1` for relative imports;
   `mod_host_check.py --static` fails a package that omits them.
+
+## Diagnostics and source maps
+
+Where a callback failed and what the source uses.
 
 ### Stacks and source maps
 
@@ -278,8 +415,10 @@ Diagnostics explain how to narrow or explicitly approve authority, but tooling c
 
 ## Cost report
 
-`omd-mod-author cost DIR` installs the package alone in a scratch store and measures it in the real host, `--runs`
-times (1-100, default 10), each run starting as a launch does: no warm runners and no inspection shared from an earlier host.
+Experimental (added after 1.0.0).
+
+`omd-mod-author cost DIR` installs the package alone in a scratch store and measures it in the real host, `--runs` times
+(1-100, default 10), each run starting as a launch does: no warm runners and no inspection shared from an earlier host.
 Name one of the package's commands, with an optional JSON payload, to time its callbacks too.
 
 | Field | Meaning |
@@ -290,10 +429,8 @@ Name one of the package's commands, with an optional JSON payload, to time its c
 | `runners` | Runners the package keeps after the last run, idle spares excluded |
 | `runner_peak_footprint_bytes` | Sum of those runners' peak physical memory |
 
-Each timing reports `first`, `p50` and `p95` in milliseconds. `first` includes the cold code cache (`<store>/cache/code`, safe to delete) and, for a newly
-written engine, the operating system's first-launch check, so compare `p50` between versions of a package. The numbers
-are host-side and exclude the terminal's draw. The scratch store has no Git checkout or session thread, so a command
-that writes `checkout` or `thread` state fails there, and a package that requires another fails activation.
-
-A runner loads ICU data on its first `Intl` or `localeCompare` use, about 5 ms; compare ASCII ids and versions with
-plain string and digit comparisons on hot paths.
+Each timing reports `first`, `p50` and `p95` in milliseconds. `first` includes the cold code cache
+(`<store>/cache/code`, safe to delete) and, for a newly written engine, the operating system's first-launch check, so
+compare `p50` between versions of a package. The numbers are host-side and exclude the terminal's draw. The scratch
+store has no Git checkout or session thread, so a command that writes `checkout` or `thread` state fails there, and a
+package that requires another fails activation.

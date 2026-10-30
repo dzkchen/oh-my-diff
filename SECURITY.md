@@ -1,11 +1,11 @@
 # Security
 
-How to report a security problem in OMD.
+How to report a security problem in OMD, which versions get fixes and what's in scope.
 
 ## Report a vulnerability
 
-Use [GitHub's private reporting form](https://github.com/dzkchen/oh-my-diff/security/advisories/new). Please don't
-open a public issue.
+Use [GitHub's private reporting form](https://github.com/dzkchen/oh-my-diff/security/advisories/new). Don't open a
+public issue.
 
 Include:
 
@@ -13,12 +13,12 @@ Include:
 - steps to reproduce
 - what an attacker could do
 
-OMD is a one-person project, so replies are best effort. Fixes ship as a patch release, with a public advisory once you
-can update.
+Fixes ship as a patch release, with a public advisory once you can update.
 
 ## Supported versions
 
-Only the latest release gets security fixes. Run `omd update` to get it.
+Which releases get security fixes, and how quickly replies come, is in
+[Support](docs/support.md#fixes-and-security-support).
 
 ## What's in scope
 
@@ -34,5 +34,5 @@ Where else to report:
 
 ## What isn't a vulnerability
 
-A mod you allow to run outside the sandbox can do anything your user account can. That's by design, so only turn
-on mods you trust.
+A mod you allow outside the sandbox can do what your user account can, by design. What mods can do and how grants
+work is in [Trust and permissions](docs/trust-and-permissions.md).

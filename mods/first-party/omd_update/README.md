@@ -1,14 +1,17 @@
 # omd_update
 
-Tells you when a newer Oh My Diff release is out and lets you control how OMD updates.
+Tells you when a newer Oh My Diff release is out and lets you control how OMD updates. It's on by default in OMD+
+and OMD Core.
 
 ## Turn it off
 
-It is on by default in OMD+ and OMD Core, and `/mods` keeps it on. To turn it off, run:
+`/mods` keeps it on, so turn it off from a shell:
 
 ```sh
 omd-package mod disable omd_update
 ```
+
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn mods on and off.
 
 ## Use it
 
@@ -17,12 +20,13 @@ omd-package mod disable omd_update
 | `/update` | Show the installed and newest versions and the release notes. Change the update settings. |
 | **Update now** (in `/update`) | Queue the update for the next start. |
 | `omd update` | Install the newest release from a shell. |
+| `omd update rollback` | Undo the last update from a shell. |
 
 A fresh session mentions a newer release once a day until you pick **Remind me in a week** or **Skip this version**.
 
 ## Settings
 
-Also available from `omd update` in a shell. See [Update](../../../docs/install.md#update).
+Change these in `/update`, or with `omd update` in a shell (see the [install guide](../../../docs/install.md)).
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -30,7 +34,7 @@ Also available from `omd update` in a shell. See [Update](../../../docs/install.
 | `auto` | `off` | Install updates automatically (`on` or `off`). |
 | `channel` | `stable` | `stable`, `prerelease` or `nightly`. |
 | `cadence` | `daily` | Check `daily` or `weekly`. |
-| `pin` | empty | Stay on an exact version. |
+| `pin` | empty | Stay on an exact version. Empty follows the channel. |
 
 ## Needs and limits
 
@@ -39,3 +43,8 @@ Also available from `omd update` in a shell. See [Update](../../../docs/install.
 - An update that fails once isn't retried automatically.
 - Nightly is opt-in. Stable and prerelease never offer it.
 - `--no-alt-screen` sessions show no welcome notice. `/update` still works.
+
+## More
+
+- [Included mods](../../../docs/collection.md)
+- The [install guide](../../../docs/install.md), which covers `omd update`

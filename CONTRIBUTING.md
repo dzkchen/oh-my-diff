@@ -1,25 +1,30 @@
 # Contributing
 
-How to send a change to OMD. One person maintains it and, after release, expects to focus mainly on critical fixes, so
-small, focused changes fit best. For anything large, open an issue first.
+How to send a change to OMD: where it belongs, how to set up and check it, and how to open the pull request. One
+person maintains OMD and, after release, expects to focus mainly on critical fixes, so small, focused changes fit
+best. For anything large, open an issue first.
 
 ## Where your change belongs
 
-- **A new feature:** write it as a mod, plugin, skill or hook. It doesn't have to live in this repository. Start
-  with [Write your first mod](docs/write-a-mod.md).
-- **Something a mod can't do yet:** open a
+- A new feature: write it as a mod, plugin, skill or hook. It doesn't have to be in this repository. Start with
+  [Write your first mod](docs/mod-authors/first-mod.md).
+- Something a mod can't do yet: open a
   [mod or API request](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml). The patched Codex
   code in `runtime/` only gets general building blocks that many mods can use, never a single feature.
-- **A bug or docs fix:** send a pull request.
+- A bug or docs fix: send a pull request.
+- A security problem: report it privately as described in [SECURITY.md](SECURITY.md).
 
 ## Find your way around
 
-- `runtime/`: the Codex patch, the OMD host crates and the release locks.
-- `mods/`: the published SDK at its top level (the `.d.ts` types, `author/` tooling, `REFERENCE.md` and `reference/`
-  docs), checked data in `conformance/`, and packages in `first-party/`, `examples/` and `ports/`.
-- `plugins/`, `extensions/`: bundled plugins and the curated package index.
-- `scripts/`, `tests/`, `install.sh`: build, install and check tooling. `docs/`: user and author guides.
-- `release/`: the changelog source and its `git-cliff` config. `docker/`: the Linux build container.
+| Path | Contains |
+| --- | --- |
+| `runtime/` | The Codex patch, the OMD host crates and the release locks ([runtime/README.md](runtime/README.md)) |
+| `mods/` | The published SDK at its top level (the `.d.ts` types, `author/` tooling, `REFERENCE.md` and `reference/` docs), checked data in `conformance/`, and packages in `first-party/`, `examples/` and `ports/` |
+| `plugins/`, `extensions/` | Bundled plugins and the curated directory |
+| `scripts/`, `tests/`, `install.sh` | Build, install and check tooling |
+| `docs/` | User, author and contributor guides |
+| `release/` | The changelog source and its `git-cliff` config |
+| `docker/` | The Linux build container |
 
 ## Set up
 
@@ -32,86 +37,48 @@ mise install
 pnpm --dir mods install
 ```
 
+Use `pnpm`, never `npm` or `npx`. Tool versions come from `mise.toml`. To build without a Mac, use the
+[Linux container](docs/contributing/runtime.md#build-on-linux).
+
 ## Check your change
 
 Run only the checks for what you changed:
 
 | You changed | Run |
 | --- | --- |
-| A mod or the SDK | `mise run mods:check`, then a related test file: `mise exec -- node --test PATH` (tests live in `tests/` and beside the code; see [tests/README.md](tests/README.md)). Tests that run mods start the installed `omd-runner` beside `omd-mod`, or the one in `OMD_TEST_RUNNER` |
-| The patched Codex code (`runtime/`) | See [Change the patched Codex code](#change-the-patched-codex-code) |
+| A mod or the SDK | `mise run mods:check`, then a related test file with `mise exec -- node --test PATH` |
+| The patched Codex code (`runtime/`) | The steps in [Change the patched Codex code](docs/contributing/runtime.md) |
 | A Python script or the installer | `python3 -m unittest tests.test_NAME` |
 | Docs or the changelog | `mise run release:check` |
 
-Add a test only for behavior nothing else covers. The full suite runs nightly on GitHub, not on each change.
+Tests are in `tests/` and beside the code. [tests/README.md](tests/README.md) explains how they're found and which
+runner runs each kind. Tests that run mods start the installed `omd-runner` beside `omd-mod`, or the one in
+`OMD_TEST_RUNNER`.
 
-### Change the patched Codex code
-
-You also need [rustup](https://rustup.rs); the scratch tree's `rust-toolchain.toml` installs the pinned Rust (see
-`upstream.lock.json`) on first use. A first test build takes a few minutes and a target needs 15–20 GB.
-
-Edit Rust in a scratch copy of upstream Codex at the pinned version, never `runtime/` itself, then save it back.
-`NAME` is any label for your scratch tree:
-
-```sh
-python3 .github/scripts/build.py setup NAME                                  # prints the scratch tree path
-python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER # cargo in the tree; LOG is a log file path
-python3 .github/scripts/build.py sync NAME                                   # writes runtime/ and crate notices back, checks it replays
-python3 .github/scripts/build.py locks                                       # regenerates the source locks
-```
-
-- **Crates:** `runtime/omd` is `codex-omd`, `runtime/omd/runner` is `codex-omd-runner` (the `omd-runner` binary that
-  runs mods on embedded V8) and `runtime/native` is `codex-omd-extension`. Rust tests sit beside the code in
-  `*_tests.rs` files. Always run cargo through `build.py cargo`: it sets the target, and for `test` it builds
-  `omd-runner` and links it beside the test binaries, where hosts look for it.
-- **Layout:** the tree is `/private/tmp/omd-bNAME/codex` and its target `/private/tmp/omd-bNAME/target`; `OMD_WORK_ROOT`
-  replaces `/private/tmp`. The pinned upstream source, without the patch, is the tree's `normalized<version>` tag
-  (`git -C TREE diff normalized1640 -- codex-rs/PATH`).
-- **Crate notices:** `sync` regenerates `runtime/crate-notices.txt` with `scripts/crate_notices.py TREE`; the patch sync
-  check in CI fails when it is stale.
-- **Mods:** the tree's `mods/` links to your checkout, so mod edits are ordinary edits there. Run `build.py locks` after
-  changing `mods/first-party/` or `plugins/` and commit the result.
-- **V8:** `omd-runner` and `codex-cli` link a V8 prebuilt: fetch it once with `python3 .github/scripts/build.py v8 NAME`.
-  A host started from the target finds `omd-runner` beside itself, so build both (`-p codex-cli -p codex-omd-runner`).
-- **Check:** the regression test for your fix, the crate's tests (`cargo NAME LOG nextest run --locked -p CRATE`),
-  `cargo NAME LOG clippy --locked -p CRATE --tests`, `rustfmt` on the files you changed and `mise run native:ownership`.
-  `sync` must report `"tree_parity": true`; `setup` and `sync` on a fresh `NAME` must leave `git diff` unchanged.
-  `runtime/release.lock.json` is rebuilt from signed binaries at release time, so a native change leaves it as is.
-
-### Linux container
-
-`docker/Dockerfile` gives a Debian environment with the pinned Rust, Node, Python and pnpm, for building and testing
-without a Mac. OMD itself supports only Apple Silicon macOS, and the mod host runs mods only there.
-
-```sh
-docker build -f docker/Dockerfile -t oh-my-diff .
-docker run --rm -it -v omd-work:/home/omd/work oh-my-diff   # then the build.py commands above
-```
-
-The work root is `/home/omd/work`, kept in the `omd-work` volume; rebuild the image after changing the checkout.
-The binaries build and the Python, `mods:check` and most `mods:test` checks pass there. Tests that start a mod
-runner or the authority broker fail by design.
+Add a test only for behavior nothing else covers. A pull request runs a subset of checks, and the full suite runs
+nightly on GitHub. [How CI checks a change](docs/contributing/ci.md) says what runs when.
 
 ## Open a pull request
 
 1. Branch from `main`.
 2. Title it with a [Conventional Commits](https://www.conventionalcommits.org) prefix. With a squash merge or a merge
-   commit the title is the pull request's one changelog line and the branch's own commits aren't listed; a rebase
+   commit, the title is the pull request's one changelog line and the branch's own commits aren't listed. A rebase
    merge lists each commit, so give each one a prefix too. Merged branches are kept.
-3. Say what changed and how you checked it.
+3. Fill in the [pull request template](.github/pull_request_template.md): what changed and how you checked it.
 
-| Prefix | Changelog |
+| Prefix | Changelog section |
 | --- | --- |
 | `feat` | New |
 | `fix` | Fixed |
 | `test`, `build`, `ci`, `chore` | Not listed |
 | Anything else | Changed |
 
-Don't commit secrets, credentials or personal paths.
+Write no code comments except one line on genuinely abstract code. Don't commit secrets, credentials or personal
+paths.
 
 ## Releases
 
-The maintainer cuts releases; the process is in [.github/WORKFLOWS.md](.github/WORKFLOWS.md).
+The maintainer cuts releases. The runbook is [Cut a release](docs/contributing/release.md).
 
 ## License
 

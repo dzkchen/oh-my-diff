@@ -1,8 +1,16 @@
 # History and compaction
 
-How a mod sees and changes conversation history: the bounded view of each model request, store-time redaction,
-durable transcript rewriting and compaction interception. Use this page when a mod edits what the model sees, what
-is stored, or how and when the thread compacts.
+Use it when a mod edits what the model sees, what is stored, or how and when the thread compacts. It covers the
+bounded view of each model request, store-time redaction, durable transcript rewriting and compaction interception.
+
+| Mechanism | Capability | What it changes |
+| --- | --- | --- |
+| [Model-bound history](#model-bound-history-history_v1) | `history` | One model request; the transcript is unchanged |
+| [Store-time history rewriting](#store-time-history-rewriting-history_persist_v1) | `history_persist` | Text written to the rollout and the prompt-recall file |
+| [Durable transcript rewriting](#durable-transcript-rewriting-history_rewrite_v1) | `history_write` (experimental) | The persisted transcript |
+| [Compaction interception](#compaction-interception-compaction_intercept_v1) | `compaction` | How and when the thread compacts (experimental) |
+
+Capabilities are listed in [Capabilities](capabilities.md).
 
 ## Model-bound history (`history_v1`)
 
@@ -46,37 +54,40 @@ text}`.
 
 `kind` is one of:
 
-- a response item type:
-  - `message`
-  - `agent_message`
-  - `reasoning` (summary and raw text)
-  - `function_call`
-  - `custom_tool_call`
-  - `local_shell_call` (each command word and environment value)
-  - `tool_search_call` (each string in its arguments)
-  - `function_call_output`
-  - `custom_tool_call_output`
-  - `tool_search_output` (tool descriptions)
-  - `web_search_call` (queries, URLs, patterns)
-  - `image_generation_call` (the revised prompt)
-- a text kept beside an item: `delivered_message`, `sender_user_messages`;
-- an event copy:
-  - `event:user_message`
-  - `event:agent_message` (also a turn's last agent message)
-  - `event:reasoning`
-  - `event:plan`
-  - `event:goal` (a thread goal's objective)
-  - `event:command_execution` (command words, input and output)
-  - `event:function_call_output`
-  - `event:mcp_tool_call` (each argument string, result text, structured content string and error)
-  - `event:dynamic_tool_call`
-  - `event:file_change` (added and deleted file contents, diffs, stdout and stderr)
-  - `event:web_search` (query, action and result strings)
-  - `event:review` (custom instructions, hint, findings and explanation)
-  - `event:image_generation`
-  - `event:hook_prompt` or `event:collab_agent_tool_call` (the prompt);
-- `inter_agent_communication`, `compacted` (a compaction summary and its replacement history) or `prompt_history`
-  (a prompt-recall entry).
+| `kind` | Group | Text it covers |
+| --- | --- | --- |
+| `message` | response item |  |
+| `agent_message` | response item |  |
+| `reasoning` | response item | summary and raw text |
+| `function_call` | response item |  |
+| `custom_tool_call` | response item |  |
+| `local_shell_call` | response item | each command word and environment value |
+| `tool_search_call` | response item | each string in its arguments |
+| `function_call_output` | response item |  |
+| `custom_tool_call_output` | response item |  |
+| `tool_search_output` | response item | tool descriptions |
+| `web_search_call` | response item | queries, URLs, patterns |
+| `image_generation_call` | response item | the revised prompt |
+| `delivered_message` | text kept beside an item |  |
+| `sender_user_messages` | text kept beside an item |  |
+| `event:user_message` | event copy |  |
+| `event:agent_message` | event copy | also a turn's last agent message |
+| `event:reasoning` | event copy |  |
+| `event:plan` | event copy |  |
+| `event:goal` | event copy | a thread goal's objective |
+| `event:command_execution` | event copy | command words, input and output |
+| `event:function_call_output` | event copy |  |
+| `event:mcp_tool_call` | event copy | each argument string, result text, structured content string and error |
+| `event:dynamic_tool_call` | event copy |  |
+| `event:file_change` | event copy | added and deleted file contents, diffs, stdout and stderr |
+| `event:web_search` | event copy | query, action and result strings |
+| `event:review` | event copy | custom instructions, hint, findings and explanation |
+| `event:image_generation` | event copy |  |
+| `event:hook_prompt` | event copy | the prompt |
+| `event:collab_agent_tool_call` | event copy | the prompt |
+| `inter_agent_communication` |  |  |
+| `compacted` |  | a compaction summary and its replacement history |
+| `prompt_history` |  | a prompt-recall entry |
 
 ### `history_persist` returns and batching
 
@@ -103,7 +114,7 @@ Not offered:
 - images and other binary payloads
 - encrypted content
 - extension-owned items (standalone web search, image generation and sleep)
-- sub-agent activity
+- subagent activity
 - realtime transcripts
 
 ### `history_persist` failures
@@ -113,6 +124,8 @@ Not offered:
   required history_persist interceptor failed]` instead (a withheld prompt-recall entry is not written).
 
 ## Durable transcript rewriting (`history_rewrite_v1`)
+
+Experimental: the `history_write` capability is experimental.
 
 A mod with the `history_write` authority grant changes the persisted transcript itself through `app.request
 thread/rewrite {threadId, expectedRevision?, edits?, undo?}`, on the current thread or a thread it started.
@@ -187,6 +200,8 @@ An interrupted rewrite, including a record torn by a crash, is rolled forward or
 
 ## Compaction interception (`compaction_intercept_v1`)
 
+Experimental: the `compaction` interceptor is experimental.
+
 `api.intercept('compaction', (input, next) => …)` (capability `compaction`) sees every compaction of the lead
 thread once: manual `/compact` and automatic pre-turn, mid-turn and post-turn compaction, through local
 summarization (`implementation: 'local'`), provider compaction (`'remote'`) or a token-budget reset (`'budget'`).
@@ -234,7 +249,8 @@ the new history.
 
 ### Compaction summarizers and results
 
-A custom summarizer calls `model.fork` (the conversation on its own route) or `model.complete` and answers
+A custom summarizer calls [`model.fork`](model-calls.md#modelfork) (the conversation on its own route) or
+[`model.complete`](model-calls.md#modelcomplete) and answers
 `{summary}`.
 
 Interrupting the turn cancels a waiting chain. The installed result persists as the normal compaction checkpoint,
@@ -242,3 +258,10 @@ so resume reads it.
 
 `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `deferred` or `failed`), `by` and
 `provider_call`.
+
+### Evidence across compaction
+
+Completed-turn packets retain bounded original visible records across a host-observed compaction, tagging each
+segment's records with its history revision. Compaction summaries do not replace those records. An unobserved
+history reset or interrupted compaction still rejects evidence explicitly. The extension decides how to select and
+summarize a truncated packet.

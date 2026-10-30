@@ -15,6 +15,7 @@
   "plugins/omd-artifact-reading/scripts/read_artifact.py",
   "plugins/omd-artifact-reading/skills/omd-artifact-reading/SKILL.md",
   "plugins/omd-code-execution/.codex-plugin/plugin.json",
+  "plugins/omd-code-execution/README.md",
   "plugins/omd-code-execution/kernels/bun.mjs",
   "plugins/omd-code-execution/kernels/python.py",
   "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md",

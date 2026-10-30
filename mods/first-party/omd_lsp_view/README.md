@@ -1,15 +1,19 @@
 # omd_lsp_view
 
-Look up hover text, definitions, references, symbols, errors, code actions and formatting from your language servers, in a popup or a card above the prompt.
+Looks up hover text, definitions, references, symbols, errors, code actions and formatting from your language servers,
+in a popup or a card above the prompt. It's off by default in OMD+. OMD Core doesn't include it.
 
 ## Turn it on
 
-It comes with OMD+ but starts off. Turn it on in `/mods` after [`omd_lsp_sync`](../omd_lsp_sync/README.md), which runs the language servers and needs one on your `PATH`:
+It uses the language servers that [`omd_lsp_sync`](../omd_lsp_sync/README.md) runs, so turn that on first, with a
+server on your `PATH`. Then turn on `omd_lsp_view` in `/mods`, or run:
 
 ```sh
 omd-package mod enable omd_lsp_sync
 omd-package mod enable omd_lsp_view
 ```
+
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it
 
@@ -27,11 +31,16 @@ Lines and columns start at 1. `PATH` is relative to the repository.
 | `/lsp workspace QUERY` | Search symbols across running servers. |
 | `/lsp open PATH:LINE` | Show the lines around a position, with that file's errors. Starts its server if needed. |
 | `/lsp editor PATH:LINE` | Open the position in the editor command set as `editor` in `host.json`. |
-| `/lsp pane` | Pin the results above the prompt, or pop them out again. Alt+l focuses the pinned results. |
+| `/lsp pane` | Pin the results above the prompt, or pop them out again. `Alt+l` focuses the pinned results. |
 | `/lsp back` or `/lsp close` | Go back to the results, or close the view. |
-| `/lsp servers` | Show or hide a card of running servers, their open files and current errors. A server running without the workspace index (large repositories) shows `degraded: ` and the reason. |
+| `/lsp servers` | Show or hide a card of running servers, their open files and current errors. A server running without the workspace index (large repositories) shows `degraded:` and the reason. |
 
-Enter on a location shows the lines around it, with Open in editor and Back.
+For example, `/lsp references src/app.ts:12:8` lists every use of the symbol at line 12, column 8. Enter on a location
+shows the lines around it, with Open in editor and Back.
+
+## Settings
+
+It has no settings.
 
 ## Needs and limits
 
@@ -40,4 +49,10 @@ Enter on a location shows the lines around it, with Open in editor and Back.
 - A missing server, an unsupported request or a stale file returns the reason.
 - Code actions that run server commands are listed but refused.
 
-Credit: based on the editor code intelligence in [neoism](https://github.com/parkers0405/neoism) by Parker Settle and the Neoism contributors (MIT); reimplemented, no code copied.
+## More
+
+- [Included mods](../../../docs/collection.md)
+- [Terminal UI](../../reference/terminal-ui.md) in the mod API reference
+
+Credit: based on the editor code intelligence in [neoism](https://github.com/parkers0405/neoism) by Parker Settle and
+the Neoism contributors (MIT); reimplemented, no code copied.

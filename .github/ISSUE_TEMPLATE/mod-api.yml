@@ -12,7 +12,7 @@ body:
     id: gap
     attributes:
       label: What the current API cannot do
-      description: The operation, event or terminal surface you tried in the API reference, and where it falls short.
+      description: The operation, event or terminal surface you tried in the [API reference](https://github.com/dzkchen/oh-my-diff/blob/main/mods/reference/README.md), and where it falls short.
     validations:
       required: true
   - type: textarea

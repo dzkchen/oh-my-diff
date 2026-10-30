@@ -1,32 +1,21 @@
-# OMD anchored edit
+# omd-anchored-edit
 
-Edit files by line anchors. Each line shows as `LINE#HASH|content`, and an edit cites the anchors it changes. If a
+Edits files by line anchors. Each line shows as `LINE#HASH|content`, and an edit cites the anchors it changes. If a
 cited line has changed, the edit is rejected and nothing is written.
 
-The plugin adds guidance. The tools come from a `mod/` component that you trust and enable separately.
+The plugin adds guidance for the model. The tools come from its mod component, `omd_anchored_edit`.
 
-## Install
+## Turn it on
 
-```sh
-omd-package plugins
-codex plugin add omd-anchored-edit@oh-my-diff
+Add the plugin, then enable its component with these capabilities:
+
+```text
+tools,fs.read,fs.write,exec
 ```
 
-## Enable the component
+[Plugins](../../../../README.md) has the steps to add a plugin and enable a component.
 
-Adding the plugin doesn't enable the tools. Use the mod store of the host you run:
-
-```sh
-omd-mod plugin-component PLUGIN_ROOT
-omd-mod inspect COMPONENT_PATH
-omd-mod trust STORE COMPONENT_PATH INSPECT_SHA256 tools,fs.read,fs.write,exec
-omd-mod enable STORE COMPONENT_PATH
-```
-
-`plugin-component` prints the component path. `trust` takes the digest that `inspect` prints. For the store, see
-[manage mods](../../../../../docs/manage-mods.md).
-
-## Use
+## Use it
 
 The component adds three tools:
 
@@ -36,20 +25,16 @@ The component adds three tools:
 
 If the component is off, the normal patch tool still works.
 
-## Limits
+## Needs and limits
 
 - A call handles up to 96 KB of files.
 - An edit too large for the host's callback budget returns `edit_too_large` or `files_too_large` and writes
   nothing. Use the normal patch tool instead.
 - Multi-file edits aren't crash-safe.
 
-## Remove
+## More
 
-```sh
-omd-mod disable STORE COMPONENT_PATH
-codex plugin remove omd-anchored-edit@oh-my-diff
-```
-
-## Credit
-
-Reimplemented from [`@d3ara1n/pi-hashline-edit`](https://pi.dev/packages/@d3ara1n/pi-hashline-edit) and [`pi-hashline-edit-pro`](https://pi.dev/packages/pi-hashline-edit-pro) (MIT). See `THIRD_PARTY_NOTICES.md`.
+- [Remove a plugin](../../../../README.md#remove-a-plugin)
+- Credit: reimplemented from [`@d3ara1n/pi-hashline-edit`](https://pi.dev/packages/@d3ara1n/pi-hashline-edit) and
+  [`pi-hashline-edit-pro`](https://pi.dev/packages/pi-hashline-edit-pro) (MIT). See
+  [`THIRD_PARTY_NOTICES.md`](../../../../../THIRD_PARTY_NOTICES.md).

@@ -1,70 +1,82 @@
-# Install and manage mods
+# Manage mods
 
-For the mods that ship with OMD+, see [Included mods](collection.md).
+How to find, install, turn on and off, update and remove mods. For what ships with OMD+, see the
+[included mods](collection.md). For what a mod is allowed to do, see [trust and permissions](trust-and-permissions.md).
+
+## Find a mod
+
+In `codex`, type `/mods`. The All tab lists installed mods and, under Available, mods from the curated directory
+that you can install. The Directory tab has Add from source, for npm, Git and folder sources.
+
+From a shell:
+
+```sh
+omd mods catalog QUERY       # search the curated directory
+omd mods inspect REFERENCE   # preview a mod without installing it
+```
+
+The curated directory has the OMD+ mods and three ports of Claude Code mods (`burn_meter`, `token_weather` and
+`blast_radius`). The [included mods](collection.md) page describes each one.
 
 ## Install a mod
 
-In `codex`: `/mods`, then pick one under Available in All, or Add from source in Directory. From a shell:
+In `/mods`, pick a mod under Available, or use Add from source. From a shell, `omd install` takes a reference:
 
 ```sh
 omd install some_mod                                        # curated directory
 omd install npm:@author/some-mod@1.2.3                      # npm
 omd install 'git+https://github.com/author/repo#v1.2.3:mod' # Git tag and folder
 omd install ./my-mod                                        # local folder
-omd mods enable some_mod                                    # installing doesn't turn it on
 ```
 
-Each step shows the source, license and permissions and asks first. The mod runs from your next message.
+Each install shows the source, license and permissions and asks first. Installing doesn't turn the mod on.
 
-Curated mods are pinned to a commit and hash; OMD refuses a changed download (`package_integrity_failure`) or an
-unsupported API (`incompatible_api`). The curated directory also lists three Claude Code ports from
-[`mods/ports`](../mods/ports): `burn_meter`, `token_weather` and `blast_radius`.
+Curated mods are pinned to a commit and hash. OMD refuses a download that changed (`package_integrity_failure`) or a
+mod built for another API version (`incompatible_api`).
 
-## See and change mods
+To install for the current project instead of for you, add `--scope project` (the default is `--scope user`).
+
+## Turn a mod on or off
+
+In `codex`, use `/mods`. If `/mods` is broken, `/omd` has an on/off switch for each mod.
+
+From a shell there are two commands:
+
+| Command | What it does |
+| --- | --- |
+| `omd mods enable ID`, `omd mods disable ID` | Finds the installed mod by id, shows its permissions and asks first |
+| `omd-package mod enable ID`, `omd-package mod disable ID` | Changes the trusted selection of a mod your profile installed, without asking. It reloads the mods and puts the previous state back if the mod fails to load |
+
+The mod READMEs use `omd-package mod` for first-party mods, for example:
 
 ```sh
-omd mods list                  # installed, and whether on
-omd mods catalog QUERY         # search the directory
-omd mods inspect REFERENCE     # preview without installing
-omd mods update some_mod       # also: disable, remove, rollback
+omd-package mod enable omd_usage
 ```
 
-Settings live in `/mods`. `--scope project` installs for the current project instead of for you (`--scope user`, the default).
+For a mod you installed with `omd install`, use `omd mods enable ID`. A change applies at your next message.
+`omd mods list` shows which mods are installed and on.
 
-## When a mod misbehaves
+Turning a mod off keeps its data.
 
-Works from any shell, even if `codex` won't start:
+## Change a mod's settings
+
+Open `/mods` in `codex` and pick the mod. Each mod's README in [`mods/first-party`](../mods/first-party) lists its
+settings.
+
+## Update, roll back or remove a mod
 
 ```sh
-omd mods disable some_mod               # off, data kept
-omd-package mod disable omd_usage       # an OMD+ mod
-omd mods quarantine some_mod "reason"   # off, and block this version
-omd-package activate direct             # no mods at all; back with: omd-package activate full (or platform)
+omd mods update some_mod     # newest version, after showing what changes
+omd mods rollback some_mod   # the previous version
+omd mods remove some_mod     # uninstall; cache, state and local sources are kept
 ```
 
-In `codex`, `/omd` has an on/off switch per mod, even when `/mods` is broken.
+A mod installed from a folder runs from that folder. After any edit to the folder, the mod stops until you review it
+again with `omd mods update ID`. To freeze a version, install a Git tag or a package instead.
 
-Lower-level repair on the store (`~/.local/share/oh-my-diff/stores/full`, or `.../platform` for OMD Core):
+## Next steps
 
-```sh
-omd-mod selection-status STORE         # what's selected, without running mods
-omd-mod package-disable STORE ID       # an installed mod off
-omd-mod disable STORE PATH             # a folder-trusted mod (by source folder) off
-omd-mod package-enable STORE ID        # back on, data kept
-```
-
-A mod whose source changed must be trusted again.
-
-## Safety
-
-You approve a mod's permissions when you turn it on. A mod allowed to run programs outside the sandbox, use the
-network or approve actions really can. Only turn on mods you trust.
-
-## More
-
-- **Preview a plugin update:** `omd-mod plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE_DIR` compares
-  files without changing anything; apply with `/plugins` or `codex plugin add`.
-- **Organizations:** policy files and an OS-separated credential broker (both need `sudo`):
-  [policy](../mods/reference/safety.md#administrator-policy-and-managed-deployment),
-  [protected authority](../mods/reference/safety.md#protected-authority-macos). Run `omd-package broker uninstall` before
-  uninstalling OMD.
+- If a mod breaks `codex`, see [troubleshooting](troubleshooting.md).
+- For every subcommand, see [commands](commands.md).
+- For organizations, the [administrator policy](../mods/reference/administrator-policy.md)
+  controls which mods may run.
