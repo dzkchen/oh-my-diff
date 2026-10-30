@@ -1200,7 +1200,7 @@ impl ModStore {
                 .find(|m| m.path == path)
                 .map(|m| (m.settings.clone(), m.required))
                 .unwrap_or_default();
-            super::validate_settings(&package, &settings)?;
+            super::validate_stored_settings(&package, &settings)?;
             config.mods.retain(|m| m.path != path);
             trusted.insert(path.clone());
             config.mods.push(ModSelection {
@@ -1268,7 +1268,7 @@ impl ModStore {
                     return Err(failure("broker_import_selection_changed"));
                 }
                 super::check_secret_environment(&manifest, &selection.secret_environment)?;
-                super::validate_settings(&manifest, &selection.settings)?;
+                super::validate_stored_settings(&manifest, &selection.settings)?;
                 Ok::<_, std::io::Error>(())
             })();
             match eligible {

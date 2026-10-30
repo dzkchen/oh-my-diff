@@ -819,7 +819,8 @@ Reactive state gives a mod typed handles on `api.state` keys and a way to react 
 `agents.spawn` accepts a host-authorized route and a `workspace` of `read_only` or `isolated_worktree`. A writable
 child receives a captured, isolated worktree under the native task scratch area; its parent repository is never its
 working directory. A `read_only` child may list `tools` from `exec_command`, `write_stdin`
-and `web_search`; any other name fails with `read_only_tool_surface_invalid`.
+and `web_search`; any other name fails with `read_only_tool_surface_invalid`. Only a `provider_billed` route admits
+`web_search`: other routes refuse hosted tool declarations at the child's first request.
 
 `agents.wait` and `agents.result` return a host-attested thread reference and SHA256 of the final text. A mod
 should validate that text against its declared result schema and source-reference rules before calling
@@ -969,6 +970,8 @@ its settled charge counts as a subscription list-equivalent, not a task charge, 
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](#model-requests-and-streams-model_turn_interception_v1)).
 - `agents.spawn.route` names a worker route or a registered provider.
+- It may also name a lead route of a registered provider (its model is in that provider's runtime catalog) whose `mods`
+  is empty or lists the caller; the agent is admitted like a cross-provider native child, with no grant.
 - Worker routes require a grant file whose hash, repository (or one of its `repositories`), provider, model and URL
   are rechecked on every request.
 - `routes.add {mod}` (capability `packages`, user only) asks the user, then adds the worker route `plan-MODEL-MOD`
@@ -1556,11 +1559,16 @@ still match; invalid state fails closed.
 
 ```ts
 agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?, snapshot?, parent_history?,
-              resolution_context?}
+              resolution_context?, model?}
 ```
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
 
+- `route` may also be a lead route of a registered provider whose `mods` is empty or lists the caller; the agent is
+  admitted like a cross-provider native child under `worker_limits`, with no grant.
+- `model` picks another model from that provider's runtime catalog on such a lead route (rates and billing stay the
+  route's); outside the catalog it fails with `agent_model_not_in_route_provider_catalog`, and on any other route a
+  `model` other than the route's fails with `agent_model_requires_provider_lead_route`.
 - `evidence` delivers a stored evidence reference to the agent.
 - `snapshot` selects a frozen copy and requires `fs.read`. Its permission is always `read_only`, its result
   identifies the captured candidate, and it cannot be integrated as an edit.
@@ -1663,8 +1671,12 @@ or answer `{deny}`.
   identity or outcome.
 - A `cwd` or `tools` change on a configured role is refused (`agent_spawn_override_requires_definition`): express
   it as a definition.
-- The host re-checks route admission, worker limits and the parent's permission profile after the transform. Nested
-  tool and model calls of the child go through interception and admission as usual.
+- After the transform the host validates the model and effort, and the child keeps the parent's permission profile.
+  Nested tool and model calls of the child go through interception and admission as usual.
+- A `model` that a provider registered (the spawn tool's model list names its provider) runs the child on that
+  provider. It needs a lead route there (`agent_route_unavailable` otherwise); the child is then admitted as a
+  worker on that route under `worker_limits` and accounted at the route's rates; if admission fails, every request of
+  the child is refused. Opaque reasoning and compaction items from the parent's history are not sent to it.
 - With `agent_spawn` interceptors registered, native spawn calls reach them instead of `tool` interceptors.
 
 #### `agents.inventory`
@@ -1675,6 +1687,7 @@ or answer `{deny}`.
 - the parent thread and agent;
 - the owner mod, definition and source digest;
 - role;
+- provider, model and billing basis, once known;
 - status (`running`, `completed`, `failed`, `cancelled`);
 - start and end time, and duration;
 - turn count;
@@ -2704,8 +2717,10 @@ thread resumed after its provider is gone continues on the configured provider.
 efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, default `provider`). It needs a running `providers.register` registration whose
 grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
 or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
-(shell, freeform `apply_patch`, tool search). Picking one switches the thread to that provider from the next turn;
-history carries over except reasoning another provider produced. A compaction checkpoint only another provider can
+(shell, freeform `apply_patch`, tool search, multi-agent v2). Picking one switches the thread to that provider from the
+next turn; history carries over except reasoning another provider produced. Codex sends an item id only in
+`prefix_rest` form, so a provider gives its items ids without `_` unless every provider accepts them, and marks
+plaintext function arguments with `encrypted_function_args: []`. A compaction checkpoint only another provider can
 read is first rewritten as a plaintext summary by that provider (one request on its account); if that fails, the turn
 shows a warning and runs without the summary.
 
@@ -4589,6 +4604,10 @@ Require `settings_file_v1` to use it.
 
 ### Host limits
 
+`host.json` `limits.max_depth` (default 2) and `limits.concurrent_workers` (default 4) cap a session's subagents: a mod
+worker or model `spawn_agent` past either is refused with `subagent_depth_limit` or `subagent_concurrency_limit`.
+Running mod workers and model children count; a child between turns or ended does not.
+
 `host.json` may set `mod_limits`:
 
 | Limit | Default | Maximum |
@@ -4796,7 +4815,9 @@ Anything else (`task.*`, `contract.*`, other `routes.*`, `evidence.*`, `workspac
 #### Settings defaults
 
 Callbacks receive explicit settings over each `settings_schema` property's `default`; give every property a
-default.
+default. With `additionalProperties: false`, a stored setting the package no longer declares is ignored and dropped
+at the next settings write or update, so a release can remove a setting; a write naming an undeclared setting is
+still refused (`unknown_setting`).
 
 A property may also carry a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
 instead of the raw name, and `choices: "routes"` on a string property without `enum`: `packages.list` then fills its

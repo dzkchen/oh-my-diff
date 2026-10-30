@@ -51,7 +51,8 @@ impl ModStore {
                 return Err(failure("settings_file_must_be_object"));
             };
             let values: BTreeMap<String, Value> = object.into_iter().collect();
-            let mut merged = selection.settings.clone();
+            let mut merged =
+                declared_settings(package.settings_schema.as_ref(), &selection.settings);
             merged.extend(values.clone());
             validate_settings(package, &merged)?;
             Ok(values)
@@ -107,7 +108,7 @@ impl ModStore {
         if hash != selection.sha256 {
             return Err(failure("source_changed: inspect and trust the new digest"));
         }
-        let mut settings = selection.settings.clone();
+        let mut settings = declared_settings(package.settings_schema.as_ref(), &selection.settings);
         change(&mut settings);
         validate_settings(&package, &settings)?;
         if settings == selection.settings {

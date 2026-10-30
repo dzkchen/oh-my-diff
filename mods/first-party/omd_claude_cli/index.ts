@@ -1,7 +1,6 @@
 import type { Json, ModAPI, ProviderModel } from '../../api.d.ts';
 
 const service = 'claude_cli';
-const delegate = 'mod_omd_claude_cli_ask_claude';
 const provider = 'omd_claude_cli';
 const loginWindow = 30 * 60_000;
 // Oldest tested CLI; newer 2.x keep the transport, and each request rechecks auth, billing, model and window.
@@ -77,6 +76,13 @@ function toolName(namespace: string, name: string): string {
 }
 
 // The CLI drops replayed thinking from its history input, so reasoning items carry only the visible summary.
+// Codex sends an item id only in `prefix_rest` form, so local ids keep Claude's ids away from other providers.
+export function localId(id: string): string {
+  return id.replaceAll('_', '-');
+}
+
+const SEALED = new Set(['collaboration/spawn_agent', 'collaboration/send_message', 'collaboration/followup_task']);
+
 export function reasoningItem(block: Row, id: string): Row {
   return { type: 'reasoning', id, summary: block.thinking ? [{ type: 'summary_text', text: block.thinking }] : [] };
 }
@@ -96,7 +102,7 @@ export function translateRequest(request: Row, model: string | undefined): Row {
       for (const child of spec.tools ?? []) addTool(child, scope(spec));
       return;
     }
-    if (spec.type === 'web_search' || spec.name === delegate) return;
+    if (spec.type === 'web_search') return;
     if (!['function', 'custom', 'tool_search'].includes(spec.type)) throw new Error('unsupported_host_tool');
     const kind = spec.type === 'tool_search' ? 'search' : spec.type;
     const name = kind === 'search' ? 'tool_search' : toolName(namespace, spec.name);
@@ -158,6 +164,10 @@ export function translateRequest(request: Row, model: string | undefined): Row {
       messages.push({ role: 'user', content: textual.has(item.call_id)
         ? [{ type: 'text', text: `[result of ${item.call_id}]` }, ...(typeof output === 'string' ? blocks(output) : output)]
         : [{ type: 'tool_result', tool_use_id: item.call_id, content: output, is_error: item.is_error === true }] });
+    } else if (item.type === 'agent_message') {
+      const parts = (item.content ?? []).map((part: Row) => part.type === 'input_text' ? part.text
+        : `[This message was sealed by the sender's provider and cannot be read here; infer your task from the conversation and your name, ${item.recipient}.]`);
+      messages.push({ role: 'user', content: [{ type: 'text', text: `Message from ${item.author} to ${item.recipient}:\n${parts.join('\n')}` }] });
     } else if (item.type === 'web_search_call') {
       assistant().push({ type: 'text', text: `[searched the web ${JSON.stringify(item.action ?? {})}]` });
     } else if (item.type === 'image_generation_call') {
@@ -214,20 +224,21 @@ export function responseEvents(assistant: Row, admission: Row, model: string,
   const inputTokens = usage.input_tokens + cacheRead + cacheWrite;
   const id = typeof assistant.id === 'string' ? assistant.id : 'claude-native';
   const events: Row[] = streamed ? [] : [{ type: 'response.created', response: { id } }];
+  const item = localId(id);
   const content = Array.isArray(assistant.content) ? assistant.content.filter(Boolean) : [];
   if (!streamed) {
     for (const [index, block] of content.entries()) {
       if (block.type === 'thinking' || block.type === 'redacted_thinking') {
-        events.push({ type: 'response.output_item.done', item: reasoningItem(block, `${id}-reasoning-${index}`) });
+        events.push({ type: 'response.output_item.done', item: reasoningItem(block, `${item}-reasoning-${index}`) });
       }
     }
     const output = content.filter(block => block.type === 'text').map(block => block.text).join('');
     if (output) {
-      const item = { type: 'message', id: `${id}-text`, role: 'assistant',
-                     content: [{ type: 'output_text', text: output }] };
-      events.push({ type: 'response.output_item.added', item: { ...item, content: [] } });
+      const message = { type: 'message', id: `${item}-text`, role: 'assistant',
+                        content: [{ type: 'output_text', text: output }] };
+      events.push({ type: 'response.output_item.added', item: { ...message, content: [] } });
       events.push({ type: 'response.output_text.delta', delta: output });
-      events.push({ type: 'response.output_item.done', item });
+      events.push({ type: 'response.output_item.done', item: message });
     }
   }
   for (const block of content) {
@@ -235,16 +246,17 @@ export function responseEvents(assistant: Row, admission: Row, model: string,
     if (typeof block.name !== 'string' || !block.name.startsWith('mcp__omd__')) throw new Error('unknown_native_tool');
     const tool = reverse[block.name.slice('mcp__omd__'.length)];
     if (!tool) throw new Error('tool_outside_host_inventory');
-    const item = tool.kind === 'search'
-      ? { type: 'tool_search_call', id: block.id, call_id: block.id, execution: 'client', arguments: block.input }
+    const call = tool.kind === 'search'
+      ? { type: 'tool_search_call', id: localId(block.id), call_id: block.id, execution: 'client', arguments: block.input }
       : tool.kind === 'custom'
-        ? { type: 'custom_tool_call', id: block.id, call_id: block.id, namespace: tool.namespace,
+        ? { type: 'custom_tool_call', id: localId(block.id), call_id: block.id, namespace: tool.namespace,
             name: tool.name, input: block.input?.input }
-        : { type: 'function_call', id: block.id, call_id: block.id, namespace: tool.namespace,
-            name: tool.name, arguments: JSON.stringify(block.input) };
-    if (tool.kind === 'custom' && typeof item.input !== 'string') throw new Error('invalid_custom_tool_input');
-    events.push({ type: 'response.output_item.added', item });
-    events.push({ type: 'response.output_item.done', item });
+        : { type: 'function_call', id: localId(block.id), call_id: block.id, namespace: tool.namespace,
+            name: tool.name, arguments: JSON.stringify(block.input),
+            ...SEALED.has(`${tool.namespace}/${tool.name}`) ? { encrypted_function_args: [] } : {} };
+    if (tool.kind === 'custom' && typeof call.input !== 'string') throw new Error('invalid_custom_tool_input');
+    events.push({ type: 'response.output_item.added', item: call });
+    events.push({ type: 'response.output_item.done', item: call });
   }
   const creation = usage.cache_creation;
   const ttl = creation?.ephemeral_5m_input_tokens > 0 ? 300 : creation?.ephemeral_1h_input_tokens > 0 ? 3600 : null;
@@ -419,34 +431,4 @@ export default function activate(api: ModAPI): void {
         : ['Accounts: none; run /claude login [api] [NAME]'],
       `Models: ${published === true ? `${(models as Row[]).length} published to /model${wrong ? ', unusable until the CLI is updated' : ''}` : 'none published'}`].join('\n') };
   }, { description: 'Sign in to Claude accounts (login [api] [NAME] | remove NAME | code CODE) or show their status', args_hint: '[login [api] [NAME] | remove NAME | code CODE]' });
-  if (api.settings.ask_claude !== true) return;
-  api.tool({ name: 'ask_claude', description: 'Delegate a question or bounded task to Claude through the OMD Claude route and wait for its answer. Read-only by default; write mode edits an isolated worktree and integrates only within your own write permissions. Use for a second opinion, review or a self-contained task; handle simple work yourself.',
-    parameters: { type: 'object', properties: {
-      prompt: { type: 'string', maxLength: 8192 },
-      mode: { type: 'string', enum: ['read', 'write'] },
-      isolated: { type: 'boolean', description: 'Start Claude without this conversation history.' } },
-    required: ['prompt'], additionalProperties: false } }, (input): Json => {
-    const value = input as Row;
-    if (!plain(value) || typeof value.prompt !== 'string' || !value.prompt.trim()) return { status: 'invalid', reason: 'prompt_required' };
-    if (new TextEncoder().encode(value.prompt).length > 8192) return { status: 'invalid', reason: 'prompt_over_8192_bytes' };
-    if (!ensure()) return { status: 'unavailable', reason: 'claude_not_set_up; run /claude login' };
-    const write = value.mode === 'write';
-    const spawned = api.host.tryCall('agents.spawn', { role: 'claude delegate', route: service, prompt: value.prompt,
-      parent_history: value.isolated !== true,
-      ...(write ? { workspace: 'isolated_worktree' } : { workspace: 'read_only', tools: ['exec_command', 'write_stdin'] }) });
-    if (!spawned.ok) return { status: 'denied', reason: spawned.error };
-    const handle = spawned.value.handle;
-    const wait = () => api.host.tryCall('agents.wait', { handle, consume: true });
-    let result = wait();
-    for (let waits = 1; waits < 27 && result.ok && result.value.status === 'running'; waits++) result = wait();
-    if (!result.ok || result.value.status !== 'completed') {
-      api.host.tryCall('agents.cancel', { handle });
-      return { status: 'incomplete', reason: result.ok ? (result.value.status === 'failed' ? result.value.error : 'timeout') : result.error };
-    }
-    const answer = { status: 'completed', text: result.value.text, evidence: result.value.evidence };
-    if (!write || !result.value.changed_paths?.length) return answer;
-    const integrated = api.host.tryCall('workspace.integrate', { handle });
-    return { ...answer, changed_paths: result.value.changed_paths,
-      integration: integrated.ok ? integrated.value : { status: 'refused', reason: integrated.error } } as Json;
-  });
 }

@@ -977,7 +977,7 @@ fn selection_verdict(
         return Err(failure(format!("capability_denied: {}", package.id)));
     }
     check_secret_environment(package, &selection.secret_environment)?;
-    validate_settings(package, &selection.settings)?;
+    validate_stored_settings(package, &selection.settings)?;
     Ok(managed.filter(|_| !administered).and_then(|policy| {
         policy.refusal(
             &package.id,
@@ -2461,8 +2461,33 @@ pub fn effective_settings(
         .flatten()
         .filter_map(|(name, definition)| Some((name.clone(), definition.get("default")?.clone())))
         .collect();
-    effective.extend(settings.clone());
+    effective.extend(declared_settings(schema, settings));
     effective
+}
+
+/// A closed schema drops stored keys a newer package no longer declares.
+fn declared_settings(
+    schema: Option<&Value>,
+    settings: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    let properties = schema
+        .filter(|schema| schema.get("additionalProperties") == Some(&json!(false)))
+        .and_then(|schema| schema["properties"].as_object());
+    settings
+        .iter()
+        .filter(|(name, _)| properties.is_none_or(|properties| properties.contains_key(*name)))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
+fn validate_stored_settings(
+    package: &ModPackage,
+    settings: &BTreeMap<String, Value>,
+) -> Result<()> {
+    validate_settings(
+        package,
+        &declared_settings(package.settings_schema.as_ref(), settings),
+    )
 }
 
 pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {

@@ -81,8 +81,10 @@ thread resumed after its provider is gone continues on the configured provider.
 efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, default `provider`). It needs a running `providers.register` registration whose
 grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
 or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
-(shell, freeform `apply_patch`, tool search). Picking one switches the thread to that provider from the next turn;
-history carries over except reasoning another provider produced. A compaction checkpoint only another provider can
+(shell, freeform `apply_patch`, tool search, multi-agent v2). Picking one switches the thread to that provider from the
+next turn; history carries over except reasoning another provider produced. Codex sends an item id only in
+`prefix_rest` form, so a provider gives its items ids without `_` unless every provider accepts them, and marks
+plaintext function arguments with `encrypted_function_args: []`. A compaction checkpoint only another provider can
 read is first rewritten as a plaintext summary by that provider (one request on its account); if that fails, the turn
 shows a warning and runs without the summary.
 

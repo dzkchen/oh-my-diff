@@ -115,11 +115,16 @@ still match; invalid state fails closed.
 
 ```ts
 agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?, snapshot?, parent_history?,
-              resolution_context?}
+              resolution_context?, model?}
 ```
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
 
+- `route` may also be a lead route of a registered provider whose `mods` is empty or lists the caller; the agent is
+  admitted like a cross-provider native child under `worker_limits`, with no grant.
+- `model` picks another model from that provider's runtime catalog on such a lead route (rates and billing stay the
+  route's); outside the catalog it fails with `agent_model_not_in_route_provider_catalog`, and on any other route a
+  `model` other than the route's fails with `agent_model_requires_provider_lead_route`.
 - `evidence` delivers a stored evidence reference to the agent.
 - `snapshot` selects a frozen copy and requires `fs.read`. Its permission is always `read_only`, its result
   identifies the captured candidate, and it cannot be integrated as an edit.
@@ -222,8 +227,12 @@ or answer `{deny}`.
   identity or outcome.
 - A `cwd` or `tools` change on a configured role is refused (`agent_spawn_override_requires_definition`): express
   it as a definition.
-- The host re-checks route admission, worker limits and the parent's permission profile after the transform. Nested
-  tool and model calls of the child go through interception and admission as usual.
+- After the transform the host validates the model and effort, and the child keeps the parent's permission profile.
+  Nested tool and model calls of the child go through interception and admission as usual.
+- A `model` that a provider registered (the spawn tool's model list names its provider) runs the child on that
+  provider. It needs a lead route there (`agent_route_unavailable` otherwise); the child is then admitted as a
+  worker on that route under `worker_limits` and accounted at the route's rates; if admission fails, every request of
+  the child is refused. Opaque reasoning and compaction items from the parent's history are not sent to it.
 - With `agent_spawn` interceptors registered, native spawn calls reach them instead of `tool` interceptors.
 
 ### `agents.inventory`
@@ -234,6 +243,7 @@ or answer `{deny}`.
 - the parent thread and agent;
 - the owner mod, definition and source digest;
 - role;
+- provider, model and billing basis, once known;
 - status (`running`, `completed`, `failed`, `cancelled`);
 - start and end time, and duration;
 - turn count;

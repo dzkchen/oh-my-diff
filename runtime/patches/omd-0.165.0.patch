@@ -19764,10 +19764,37 @@ index 7a96817c9ed504719f79940bcf3af1c5a9995c41..3767af2fa72fe86bc79fc3ca89301d32
        "additionalProperties": false,
        "properties": {
 diff --git a/codex-rs/core/src/agent/child_config.rs b/codex-rs/core/src/agent/child_config.rs
-index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..1e0edf2a933b85d565b2ab45ba73282a938ce73c 100644
+index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..0264c5fbc435701f32a8e9058d7cc65dd8467ea6 100644
 --- a/codex-rs/core/src/agent/child_config.rs
 +++ b/codex-rs/core/src/agent/child_config.rs
-@@ -60,6 +60,7 @@ pub(crate) async fn prepare_agent_spawn_config(
+@@ -20,6 +20,26 @@ use codex_protocol::protocol::MultiAgentVersion;
+
+ pub(crate) const MAX_SPAWN_AGENT_MODEL_OVERRIDES: usize = 5;
+
++pub(crate) fn spawn_agent_model_overrides(
++    models: &[ModelPreset],
++    multi_agent_version: MultiAgentVersion,
++) -> impl Iterator<Item = &ModelPreset> {
++    let visible = move |model: &&ModelPreset| {
++        model.show_in_picker && model_supports_multi_agent_backend(model, multi_agent_version)
++    };
++    models
++        .iter()
++        .filter(|model| model.model_provider.is_none())
++        .filter(visible)
++        .take(MAX_SPAWN_AGENT_MODEL_OVERRIDES)
++        .chain(
++            models
++                .iter()
++                .filter(|model| model.model_provider.is_some())
++                .filter(visible),
++        )
++}
++
+ pub(crate) fn model_supports_multi_agent_backend(
+     model: &ModelPreset,
+     multi_agent_version: MultiAgentVersion,
+@@ -60,6 +80,7 @@ pub(crate) async fn prepare_agent_spawn_config(
      if options.version == SpawnConfigVersion::V1 && options.full_history_fork {
          reject_full_fork_agent_type_override(options.role_name)?;
      }
@@ -19775,7 +19802,7 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..1e0edf2a933b85d565b2ab45ba73282a
      apply_requested_spawn_agent_model_overrides(
          session,
          step_context,
-@@ -83,6 +84,9 @@ pub(crate) async fn prepare_agent_spawn_config(
+@@ -83,6 +104,9 @@ pub(crate) async fn prepare_agent_spawn_config(
      }
      apply_spawn_agent_service_tier(session, &mut config).await?;
      apply_spawn_agent_runtime_overrides(&mut config, turn)?;
@@ -19785,7 +19812,7 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..1e0edf2a933b85d565b2ab45ba73282a
 
      // Remember an applied configured default so cold reload reapplies its restrictions.
      let role_name = options
-@@ -100,6 +104,34 @@ pub(crate) async fn prepare_agent_spawn_config(
+@@ -100,6 +124,34 @@ pub(crate) async fn prepare_agent_spawn_config(
      Ok(PreparedSpawnConfig { config, role_name })
  }
 
@@ -19820,8 +19847,100 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..1e0edf2a933b85d565b2ab45ba73282a
  /// Builds the base config snapshot for a newly spawned sub-agent.
  ///
  /// The returned config starts from the parent's effective config and then refreshes the
+@@ -222,11 +274,32 @@ async fn apply_requested_spawn_agent_model_overrides(
+             .models_manager
+             .list_models(RefreshStrategy::Offline, config.http_client_factory())
+             .await;
+-        let selected_model_name = find_spawn_agent_model_name(
+-            &available_models,
+-            requested_model,
+-            turn.multi_agent_version,
+-        )?;
++        let selected_model =
++            find_spawn_agent_model(&available_models, requested_model, turn.multi_agent_version)?;
++        let selected_model_name = selected_model.model.clone();
++        let id = selected_model
++            .model_provider
++            .clone()
++            .unwrap_or_else(|| config.configured_model_provider_id.clone());
++        if id != config.model_provider_id {
++            let mut provider = crate::session::switchable_model_provider(config, &id)
++                .ok_or_else(|| {
++                    format!(
++                        "spawn_agent model `{selected_model_name}` needs provider `{id}`, which is not available"
++                    )
++                })?;
++            provider.supports_websockets &= config.model_provider.supports_websockets;
++            if id != config.configured_model_provider_id {
++                config
++                    .web_search_mode
++                    .set(codex_protocol::config_types::WebSearchMode::Disabled)
++                    .map_err(|err| {
++                        format!("spawn_agent model `{selected_model_name}` cannot run without the required web search: {err}")
++                    })?;
++            }
++            config.model_provider_id = id;
++            config.model_provider = provider;
++        }
+         let selected_model_info = session
+             .services
+             .models_manager
+@@ -323,25 +396,27 @@ async fn apply_spawn_agent_role(
+     )
+ }
+
+-fn find_spawn_agent_model_name(
+-    available_models: &[ModelPreset],
++fn find_spawn_agent_model<'a>(
++    available_models: &'a [ModelPreset],
+     requested_model: &str,
+     multi_agent_version: MultiAgentVersion,
+-) -> Result<String, String> {
++) -> Result<&'a ModelPreset, String> {
+     available_models
+         .iter()
+         .find(|model| {
+             model.model == requested_model
+                 && model_supports_multi_agent_backend(model, multi_agent_version)
+         })
+-        .map(|model| model.model.clone())
+         .ok_or_else(|| {
+-            let available = available_models
+-                .iter()
+-                .filter(|model| model.show_in_picker)
+-                .filter(|model| model_supports_multi_agent_backend(model, multi_agent_version))
+-                .take(MAX_SPAWN_AGENT_MODEL_OVERRIDES)
+-                .map(|model| model.model.as_str())
++            let available = spawn_agent_model_overrides(available_models, multi_agent_version)
++                .map(|model| match &model.model_provider {
++                    Some(provider) => format!(
++                        "{} ({})",
++                        model.model,
++                        model.model_provider_name.as_deref().unwrap_or(provider)
++                    ),
++                    None => model.model.clone(),
++                })
+                 .collect::<Vec<_>>()
+                 .join(", ");
+             format!(
+diff --git a/codex-rs/core/src/agent/control/completion.rs b/codex-rs/core/src/agent/control/completion.rs
+index 587f4cdaebffca42c2d19451e8ba0e8db18c6598..b2aa8b7a22e8cc529838b6cd0738da6617d874a1 100644
+--- a/codex-rs/core/src/agent/control/completion.rs
++++ b/codex-rs/core/src/agent/control/completion.rs
+@@ -140,6 +140,11 @@ impl LocalAgentControl {
+             debug!("failed to notify parent thread {parent_thread_id}: {err}");
+             return;
+         }
++        if let Ok(state) = self.runtime.upgrade()
++            && let Ok(parent) = state.get_thread(parent_thread_id).await
++        {
++            parent.session.schedule_completion_wake();
++        }
+         if let Some(message) = trace_message {
+             trace.record_agent_result_interaction(
+                 outcome.turn_id.as_str(),
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 22cd725605272a5e4e3b475c8ad2fb2835df0203..782c63d36265fe283b9bcd6b3cc92109417020d7 100644
+index 22cd725605272a5e4e3b475c8ad2fb2835df0203..e8411c5db85ef3c4ea9bcb0259533b0764a77ce2 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -445,6 +445,13 @@ impl LocalAgentControl {
@@ -19847,6 +19966,63 @@ index 22cd725605272a5e4e3b475c8ad2fb2835df0203..782c63d36265fe283b9bcd6b3cc92109
              config
                  .permissions
                  .set_permission_profile_from_session_snapshot(runtime_permission_profile)
+@@ -469,15 +476,21 @@ impl LocalAgentControl {
+             config.model = Some(model);
+         }
+         if config.model_provider_id != stored_model_provider {
+-            config.model_provider = config
+-                .model_providers
+-                .get(&stored_model_provider)
+-                .cloned()
+-                .ok_or_else(|| {
+-                    CodexErr::InvalidRequest(format!(
+-                        "Model provider `{stored_model_provider}` not found"
+-                    ))
+-                })?;
++            config.model_provider =
++                crate::session::switchable_model_provider(&config, &stored_model_provider)
++                    .ok_or_else(|| {
++                        CodexErr::InvalidRequest(format!(
++                            "Model provider `{stored_model_provider}` not found"
++                        ))
++                    })?;
++            if stored_model_provider != config.configured_model_provider_id {
++                config
++                    .web_search_mode
++                    .set(codex_protocol::config_types::WebSearchMode::Disabled)
++                    .map_err(|err| {
++                        CodexErr::InvalidRequest(format!("web_search_mode is invalid: {err}"))
++                    })?;
++            }
+             config.model_provider_id = stored_model_provider;
+         }
+         let parent_thread_id = owner_thread_id
+@@ -1113,7 +1126,9 @@ impl LocalAgentControl {
+             (MultiAgentVersion::Disabled | MultiAgentVersion::V1, _)
+             | (MultiAgentVersion::V2, _) => (None, None),
+         };
+-        let parent_history_mode = parent_thread.config_snapshot().await.history_mode;
++        let parent_snapshot = parent_thread.config_snapshot().await;
++        let parent_history_mode = parent_snapshot.history_mode;
++        let cross_provider = parent_snapshot.model_provider_id != config.model_provider_id;
+         // `record_conversation_items` only queues persistence writes asynchronously.
+         // Flush before snapshotting store history for a fork.
+         parent_thread.ensure_rollout_materialized().await;
+@@ -1174,6 +1189,14 @@ impl LocalAgentControl {
+             forked_rollout_items = items;
+         }
+         let retain_forked_item = |envelope: &mut ResponseItemEnvelope, replaced: &mut bool| {
++            if cross_provider
++                && matches!(
++                    envelope.item,
++                    ResponseItem::Reasoning { .. } | ResponseItem::Compaction { .. }
++                )
++            {
++                return false;
++            }
+             if multi_agent_version == MultiAgentVersion::V2
+                 && (preserve_fork_prefix
+                     || matches!(&envelope.item, ResponseItem::Message { role, .. } if role == "user" || role == "assistant"))
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
 index 59027230a4639ae0b5725ffdbdc54fd47bc4478d..0594036e3dc8bada1a1479d983a3f854717d765e 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
@@ -21448,7 +21624,7 @@ index dc57ca9216fcede9ddf2b8a08144c98b6006db80..52cf4306f428f2aaf54482cfc8685e35
      candidate.normalize_dependencies();
      candidate
 diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
-index 38832d1f163e16764c6e0a71f0605acd42c1e490..993e772877faf1102f38db530859ca75b3470ddd 100644
+index 38832d1f163e16764c6e0a71f0605acd42c1e490..0406272caab84826ebcf365058445a22ec0097db 100644
 --- a/codex-rs/core/src/config/mod.rs
 +++ b/codex-rs/core/src/config/mod.rs
 @@ -350,6 +350,10 @@ pub struct Permissions {
@@ -21471,7 +21647,17 @@ index 38832d1f163e16764c6e0a71f0605acd42c1e490..993e772877faf1102f38db530859ca75
              windows_sandbox_mode: None,
              windows_sandbox_type: SandboxType::None,
          })
-@@ -1222,6 +1228,7 @@ pub struct CodeModeConfig {
+@@ -673,6 +679,9 @@ pub struct Config {
+     /// Info needed to make an API request to the model.
+     pub model_provider: ModelProviderInfo,
+
++    /// Provider this configuration selected, kept when a session switches to a runtime provider.
++    pub configured_model_provider_id: String,
++
+     /// Deprecated: `friendly` and `pragmatic` no longer select a style.
+     pub personality: Option<Personality>,
+
+@@ -1222,6 +1231,7 @@ pub struct CodeModeConfig {
      pub direct_only_tool_namespaces: Vec<String>,
      /// Keep code mode fail-closed when the standalone host is unavailable.
      pub disable_in_process_fallback: bool,
@@ -21479,7 +21665,7 @@ index 38832d1f163e16764c6e0a71f0605acd42c1e490..993e772877faf1102f38db530859ca75
  }
 
  impl Default for CodeModeConfig {
-@@ -1233,6 +1240,7 @@ impl Default for CodeModeConfig {
+@@ -1233,6 +1243,7 @@ impl Default for CodeModeConfig {
              excluded_tool_namespaces: Vec::new(),
              direct_only_tool_namespaces: Vec::new(),
              disable_in_process_fallback: false,
@@ -21487,7 +21673,7 @@ index 38832d1f163e16764c6e0a71f0605acd42c1e490..993e772877faf1102f38db530859ca75
          }
      }
  }
-@@ -2831,6 +2839,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
+@@ -2831,6 +2842,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
          disable_in_process_fallback: host
              .and_then(|config| config.disable_in_process_fallback)
              .unwrap_or_default(),
@@ -21497,7 +21683,7 @@ index 38832d1f163e16764c6e0a71f0605acd42c1e490..993e772877faf1102f38db530859ca75
      }
  }
 
-@@ -3983,6 +3994,7 @@ impl Config {
+@@ -3983,6 +3997,7 @@ impl Config {
 
          let mut model_providers =
              merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
@@ -21505,7 +21691,34 @@ index 38832d1f163e16764c6e0a71f0605acd42c1e490..993e772877faf1102f38db530859ca75
                  .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
 
          if let Some(provider) = model_providers.get_mut(GCP_PROVIDER_ID)
-@@ -4507,6 +4519,8 @@ impl Config {
+@@ -4004,8 +4019,17 @@ impl Config {
+
+         let model_provider_id = config_layer_stack.required_model_provider().map(str::to_string)
+             .or(model_provider)
+-            .or(cfg.model_provider)
++            .or(cfg.model_provider.clone())
+             .unwrap_or_else(|| "openai".to_string());
++        // A resumed or forked thread may start on a runtime provider; the configured one stays the session's own.
++        let configured_model_provider_id =
++            if codex_model_provider_info::runtime_provider(&model_provider_id).is_some() {
++                config_layer_stack.required_model_provider().map(str::to_string)
++                    .or(cfg.model_provider.clone())
++                    .unwrap_or_else(|| "openai".to_string())
++            } else {
++                model_provider_id.clone()
++            };
+         let model_provider = model_providers
+             .get(&model_provider_id)
+             .ok_or_else(|| {
+@@ -4493,6 +4517,7 @@ impl Config {
+                 .model_post_turn_compact_threshold_percent
+                 .unwrap_or_default(),
+             async_compaction_threshold_percent,
++            configured_model_provider_id,
+             model_provider_id,
+             model_provider,
+             cwd: resolved_cwd,
+@@ -4507,6 +4532,8 @@ impl Config {
                  network,
                  allow_login_shell,
                  shell_environment_policy,
@@ -21527,6 +21740,47 @@ index a57a5d5aa9e25b5028e65b2a8850c145405eeea4..1afce5931d9b102d4d9f8291ecf7aadd
              }
          }
          let features = ManagedFeatures::from_configured(
+diff --git a/codex-rs/core/src/context/world_state/model_catalog.rs b/codex-rs/core/src/context/world_state/model_catalog.rs
+index 700a05f9673e2055d3c8abec98678a6f758b46f1..349bfc1300c00f09159a685f0e718afdfbd8fcfd 100644
+--- a/codex-rs/core/src/context/world_state/model_catalog.rs
++++ b/codex-rs/core/src/context/world_state/model_catalog.rs
+@@ -7,8 +7,7 @@ use super::SectionTransition;
+ use super::WorldStateHash;
+ use super::WorldStateSection;
+ use super::WorldStateUpdate;
+-use crate::agent::child_config::MAX_SPAWN_AGENT_MODEL_OVERRIDES;
+-use crate::agent::child_config::model_supports_multi_agent_backend;
++use crate::agent::child_config::spawn_agent_model_overrides;
+ use crate::context::ContextualUserFragment;
+ use crate::context::environment_context::push_xml_escaped_text;
+ use codex_protocol::models::ContentItem;
+@@ -34,12 +33,8 @@ pub(crate) struct ModelCatalogState {
+ impl ModelCatalogState {
+     pub(crate) fn new(models: &[ModelPreset], multi_agent_version: MultiAgentVersion) -> Self {
+         let mut catalog = String::new();
+-        let mut models = models
+-            .iter()
+-            .filter(|model| model.show_in_picker)
+-            .filter(|model| model_supports_multi_agent_backend(model, multi_agent_version))
+-            .take(MAX_SPAWN_AGENT_MODEL_OVERRIDES)
+-            .collect::<Vec<_>>();
++        let mut models =
++            spawn_agent_model_overrides(models, multi_agent_version).collect::<Vec<_>>();
+         // Stabilize the selected choices independently of their picker ordering.
+         models.sort_by(|left, right| left.model.cmp(&right.model));
+         if models.is_empty() {
+@@ -66,6 +61,11 @@ impl ModelCatalogState {
+                 }
+                 line.push('.');
+             }
++            if let Some(provider) = &model.model_provider {
++                line.push_str(" Provider: ");
++                line.push_str(model.model_provider_name.as_deref().unwrap_or(provider));
++                line.push('.');
++            }
+             if !model.service_tiers.is_empty() {
+                 line.push_str(" Service tiers: ");
+                 for (index, tier) in model.service_tiers.iter().enumerate() {
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
 index f39be3fb41fee1371036f393d5d1f62057225b60..09207670d42c6c775b213d4a9099c320558187c3 100644
 --- a/codex-rs/core/src/context_manager/history.rs
@@ -22599,7 +22853,7 @@ index 08a99f81dc219661c71fc6d2d0c10caa4bd2cc7e..85d77ca3b41c847bc789e66d18ad5a1d
                      warn!("failed to refresh {description} config: {err}");
                  }
 diff --git a/codex-rs/core/src/session/environment.rs b/codex-rs/core/src/session/environment.rs
-index 09dd1c68d179fd5e4301991eb1b98501f2d3962c..e600dca139f631e0daa2c8a20e2525be162c3176 100644
+index 09dd1c68d179fd5e4301991eb1b98501f2d3962c..8e8aa372a72c32e03dc3235d096490e0d9fefc7d 100644
 --- a/codex-rs/core/src/session/environment.rs
 +++ b/codex-rs/core/src/session/environment.rs
 @@ -14,6 +14,7 @@ use codex_protocol::protocol::EnvironmentConfig;
@@ -22610,7 +22864,29 @@ index 09dd1c68d179fd5e4301991eb1b98501f2d3962c..e600dca139f631e0daa2c8a20e2525be
 
  use crate::config::ConstraintError;
  use crate::config::ConstraintResult;
-@@ -28,6 +29,8 @@ use crate::session::session::SessionSettingsUpdate;
+@@ -24,10 +25,30 @@ use crate::session::session::Session;
+ use crate::session::session::SessionConfiguration;
+ use crate::session::session::SessionSettingsUpdate;
+
++pub(crate) fn switchable_model_provider(
++    config: &crate::config::Config,
++    id: &str,
++) -> Option<codex_model_provider_info::ModelProviderInfo> {
++    config
++        .config_layer_stack
++        .required_model_provider()
++        .is_none_or(|required| required == id)
++        .then(|| {
++            config
++                .model_providers
++                .get(id)
++                .cloned()
++                .or_else(|| codex_model_provider_info::runtime_provider(id))
++        })
++        .flatten()
++}
++
+ /// Defaults for environments that inherit their configuration from the running turn.
  #[derive(Clone)]
  pub(crate) struct ThreadEnvironmentDefaults {
      pub(crate) common: EnvironmentConfig,
@@ -22619,7 +22895,7 @@ index 09dd1c68d179fd5e4301991eb1b98501f2d3962c..e600dca139f631e0daa2c8a20e2525be
      // Chosen once when the session starts; it does not apply to remote environments.
      local_windows_sandbox_type: SandboxType,
  }
-@@ -36,10 +39,16 @@ impl ThreadEnvironmentDefaults {
+@@ -36,10 +57,16 @@ impl ThreadEnvironmentDefaults {
      pub(crate) fn new(common: EnvironmentConfig, local_windows_sandbox_type: SandboxType) -> Self {
          Self {
              common,
@@ -22636,7 +22912,7 @@ index 09dd1c68d179fd5e4301991eb1b98501f2d3962c..e600dca139f631e0daa2c8a20e2525be
      pub(crate) fn for_selection(&self, selection: &TurnEnvironmentSelection) -> EnvironmentConfig {
          let mut config = self.common.clone();
          config.workspace_roots = selection.workspace_roots.clone();
-@@ -182,7 +191,47 @@ impl Session {
+@@ -182,7 +209,37 @@ impl Session {
              ensure_configs_stay_owner_provided(current_environments, &environments.environments)?;
          }
 
@@ -22646,24 +22922,14 @@ index 09dd1c68d179fd5e4301991eb1b98501f2d3962c..e600dca139f631e0daa2c8a20e2525be
 +            && *id != current.original_config_do_not_use.model_provider_id
 +        {
 +            let config = &current.original_config_do_not_use;
-+            let provider = config
-+                .config_layer_stack
-+                .required_model_provider()
-+                .is_none_or(|required| required == id.as_str())
-+                .then(|| {
-+                    config
-+                        .model_providers
-+                        .get(id)
-+                        .cloned()
-+                        .or_else(|| codex_model_provider_info::runtime_provider(id))
-+                })
-+                .flatten()
-+                .ok_or_else(|| ConstraintError::InvalidValue {
++            let provider = switchable_model_provider(config, id).ok_or_else(|| {
++                ConstraintError::InvalidValue {
 +                    field_name: "model_provider",
 +                    candidate: id.clone(),
 +                    allowed: "the configured and registered providers".to_string(),
 +                    requirement_source: codex_config::RequirementSource::Unknown,
-+                })?;
++                }
++            })?;
 +            let mut provider = provider;
 +            // A session that turned websockets off keeps them off across providers.
 +            provider.supports_websockets &= config.model_provider.supports_websockets;
@@ -22950,10 +23216,18 @@ index 7e46b02e35ac4c0fba07e1a02805a8e0f3e056d2..0b1c1d00595881321256c66376d650d8
 +    assert!(session.active_turn.lock().await.is_none());
 +}
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 5ded792689cdc7fd179540545d9e792a6d057dab..faef0694369b99a66b824c5ac6c810f2f401fd34 100644
+index 5ded792689cdc7fd179540545d9e792a6d057dab..2bc774666a033893892035cba54df962ad687ea1 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
-@@ -315,7 +315,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
+@@ -85,6 +85,7 @@ pub async fn inter_agent_communication(
+     communication: crate::PendingAgentMessage,
+     start_options: codex_protocol::turn_input::TurnStartOptions,
+ ) {
++    sess.answer_forwarded_question(&communication).await;
+     let trigger_turn = communication.trigger_turn;
+     sess.input_queue
+         .enqueue_mailbox_communication(communication, start_options)
+@@ -315,7 +316,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
          .unified_exec_manager
          .terminate_all_processes()
          .await;
@@ -22962,7 +23236,7 @@ index 5ded792689cdc7fd179540545d9e792a6d057dab..faef0694369b99a66b824c5ac6c810f2
          sess.services.local_agent_runtime.record_shutdown_failure(
              AgentTreeShutdownFailure::operation_failed(
                  "session_shutdown",
-@@ -721,6 +721,10 @@ pub(super) async fn submission_loop(
+@@ -721,6 +722,10 @@ pub(super) async fn submission_loop(
                      false
                  }
                  Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
@@ -22973,6 +23247,71 @@ index 5ded792689cdc7fd179540545d9e792a6d057dab..faef0694369b99a66b824c5ac6c810f2
                  Op::Review { review_request } => {
                      review(&sess, &config, sub.id.clone(), review_request).await;
                      false
+diff --git a/codex-rs/core/src/session/input_queue.rs b/codex-rs/core/src/session/input_queue.rs
+index 21d31dd791dd56850f72b17f869f10b168250c0e..2cdbf76b47a869a812c85096c323965616330c74 100644
+--- a/codex-rs/core/src/session/input_queue.rs
++++ b/codex-rs/core/src/session/input_queue.rs
+@@ -14,6 +14,9 @@ use serde::Deserialize;
+ use serde::Serialize;
+ use std::collections::VecDeque;
+ use std::sync::Arc;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::AtomicU64;
++use std::sync::atomic::Ordering;
+ use tokio::sync::Mutex;
+ use tokio::sync::watch;
+ use tokio_util::sync::CancellationToken;
+@@ -98,6 +101,8 @@ pub(crate) struct InputQueue {
+     activity_tx: watch::Sender<InputQueueActivity>,
+     controller: Option<(ThreadId, Arc<dyn AgentControl>, watch::Receiver<bool>)>,
+     mailbox_pending_mails: Mutex<VecDeque<PendingMailboxCommunication>>,
++    completion_wake_generation: AtomicU64,
++    completion_wake_due: AtomicBool,
+ }
+
+ pub(crate) struct PendingMailboxCommunication {
+@@ -113,9 +118,33 @@ impl InputQueue {
+             activity_tx,
+             controller: None,
+             mailbox_pending_mails: Mutex::new(VecDeque::new()),
++            completion_wake_generation: AtomicU64::new(0),
++            completion_wake_due: AtomicBool::new(false),
+         }
+     }
+
++    pub(crate) fn arm_completion_wake(&self) -> u64 {
++        self.completion_wake_generation
++            .fetch_add(1, Ordering::SeqCst)
++            + 1
++    }
++
++    pub(crate) fn settle_completion_wake(&self, generation: u64) -> bool {
++        let settled = self.completion_wake_generation.load(Ordering::SeqCst) == generation;
++        if settled {
++            self.completion_wake_due.store(true, Ordering::SeqCst);
++        }
++        settled
++    }
++
++    pub(crate) fn completion_wake_due(&self) -> bool {
++        self.completion_wake_due.load(Ordering::SeqCst)
++    }
++
++    pub(crate) fn clear_completion_wake(&self) {
++        self.completion_wake_due.store(false, Ordering::SeqCst);
++    }
++
+     pub(crate) fn with_controller(thread_id: ThreadId, control: Arc<dyn AgentControl>) -> Self {
+         let updates = control.watch_mailbox(thread_id);
+         Self {
+@@ -239,6 +268,7 @@ impl InputQueue {
+     pub(crate) async fn drain_mailbox(&self) -> Vec<PendingMailboxCommunication> {
+         let mut pending = self.mailbox_pending_mails.lock().await;
+         self.read_mailbox(&mut pending);
++        self.clear_completion_wake();
+         pending.drain(..).collect()
+     }
+
 diff --git a/codex-rs/core/src/session/mcp.rs b/codex-rs/core/src/session/mcp.rs
 index 95301d6bc3575643fc1349c4f5813f3b9fd7b7b3..889bea5473815f1be9e261290982d2b21ab3cf07 100644
 --- a/codex-rs/core/src/session/mcp.rs
@@ -23084,10 +23423,18 @@ index 95301d6bc3575643fc1349c4f5813f3b9fd7b7b3..889bea5473815f1be9e261290982d2b2
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a77cf7c5c 100644
+index aba497125ce18b608ad2ddeadcd4827ee0214cb5..41a1e3d542f63db08155d5189a7ed7b6bc6336b4 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -265,6 +265,7 @@ mod mcp_prewarm;
+@@ -172,6 +172,7 @@ use codex_protocol::request_permissions::RequestPermissionProfile;
+ use codex_protocol::request_permissions::RequestPermissionsArgs;
+ use codex_protocol::request_permissions::RequestPermissionsEvent;
+ use codex_protocol::request_permissions::RequestPermissionsResponse;
++use codex_protocol::request_user_input::RequestUserInputAnswer;
+ use codex_protocol::request_user_input::RequestUserInputArgs;
+ use codex_protocol::request_user_input::RequestUserInputResponse;
+ use codex_rmcp_client::ElicitationResponse;
+@@ -265,6 +266,7 @@ mod mcp_prewarm;
  mod mcp_refresh;
  mod mcp_runtime;
  pub(crate) mod multi_agents;
@@ -23095,7 +23442,19 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
  mod plugin_selection;
  mod realtime_history;
  mod retained_context;
-@@ -563,7 +564,55 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
+@@ -287,6 +289,7 @@ mod turn_suspension;
+ mod world_state;
+ use self::code_mode_warning::unsupported_code_mode_warning;
+ pub(crate) use self::environment::ThreadEnvironmentDefaults;
++pub(crate) use self::environment::switchable_model_provider;
+ #[cfg(test)]
+ use self::handlers::submission_dispatch_span;
+ use self::handlers::submission_loop;
+@@ -560,10 +563,59 @@ pub(crate) fn resolve_multi_agent_version(
+
+ pub(crate) const INITIAL_SUBMIT_ID: &str = "";
+ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
++const FORWARDED_REQUEST_BYTES: usize = 400;
  const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
  const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
 
@@ -23151,7 +23510,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
      /// Spawn and initialize a new session.
      /// Hide the concrete startup future from callers while keeping initialization lazy.
      #[inline(never)]
-@@ -1184,6 +1233,22 @@ impl SessionIo {
+@@ -1184,6 +1236,22 @@ impl SessionIo {
          Ok(())
      }
 
@@ -23174,7 +23533,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
      pub(crate) async fn next_event(&self) -> CodexResult<Event> {
          let event = self
              .rx_event
-@@ -1565,6 +1630,99 @@ impl Session {
+@@ -1565,6 +1633,99 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -23274,7 +23633,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage(state.server_reasoning_included())
-@@ -2053,6 +2211,20 @@ impl Session {
+@@ -2053,6 +2214,20 @@ impl Session {
              if !should_commit(&state.session_configuration, &updated) {
                  return Ok(None);
              }
@@ -23295,7 +23654,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
 
              let credential_masking_warning = updated
                  .original_config_do_not_use
-@@ -2075,6 +2247,11 @@ impl Session {
+@@ -2075,6 +2250,11 @@ impl Session {
              let root_service_tier_changed = updated.parent_thread_id.is_none()
                  && state.session_configuration.step_settings.service_tier
                      != updated.step_settings.service_tier;
@@ -23307,7 +23666,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
              let mcp_inputs_changed = self.mcp_inputs_differ(&state.session_configuration, &updated);
              if mcp_inputs_changed {
                  self.mark_mcp_runtime_dirty();
-@@ -2164,6 +2341,27 @@ impl Session {
+@@ -2164,6 +2344,27 @@ impl Session {
          self.resume_config_snapshot().await.0
      }
 
@@ -23335,7 +23694,164 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
      pub(crate) async fn resume_config_snapshot(&self) -> (ThreadConfigSnapshot, Option<String>) {
          let configuration = self.state.lock().await.session_configuration.clone();
          let selected_service_tier = configuration.step_settings.service_tier.clone();
-@@ -3745,6 +3943,10 @@ impl Session {
+@@ -2556,6 +2757,8 @@ impl Session {
+         self.send_event_raw(event).await;
+         self.maybe_notify_parent_of_terminal_turn(turn_context, &legacy_source)
+             .await;
++        self.maybe_forward_pending_request_to_parent(turn_context, &legacy_source)
++            .await;
+         self.maybe_mirror_event_text_to_realtime(&legacy_source)
+             .await;
+         self.maybe_clear_realtime_handoff_for_event(&legacy_source)
+@@ -2574,6 +2777,134 @@ impl Session {
+         }
+     }
+
++    async fn maybe_forward_pending_request_to_parent(
++        &self,
++        turn_context: &TurnContext,
++        msg: &EventMsg,
++    ) {
++        let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++            parent_thread_id,
++            agent_path: Some(agent_path),
++            ..
++        }) = &turn_context.session_source
++        else {
++            return;
++        };
++        let clip = |text: String| match text.floor_char_boundary(FORWARDED_REQUEST_BYTES) {
++            cut if cut < text.len() => format!("{}…", &text[..cut]),
++            _ => text,
++        };
++        let request = match msg {
++            EventMsg::ExecApprovalRequest(event) => {
++                clip(format!("approve running `{}`", event.command.join(" ")))
++            }
++            EventMsg::ApplyPatchApprovalRequest(event) => {
++                format!("approve changes to {} file(s)", event.changes.len())
++            }
++            EventMsg::RequestPermissions(_) => "grant additional permissions".to_string(),
++            EventMsg::ElicitationRequest(event) => {
++                format!("answer a request from the MCP server {}", event.server_name)
++            }
++            EventMsg::RequestUserInput(event) => {
++                let questions = event
++                    .questions
++                    .iter()
++                    .map(|question| question.question.as_str())
++                    .collect::<Vec<_>>()
++                    .join(" / ");
++                let message = format!(
++                    "{agent_path} asks: {}\n\nYour next send_message to {agent_path} answers it; the user can answer it too.",
++                    clip(questions)
++                );
++                return self
++                    .forward_to_parent(turn_context, *parent_thread_id, message)
++                    .await;
++            }
++            _ => return,
++        };
++        let message = format!(
++            "{agent_path} is waiting for the user to {request}. The user sees the request; only the user can answer it."
++        );
++        self.forward_to_parent(turn_context, *parent_thread_id, message)
++            .await;
++    }
++
++    async fn forward_to_parent(
++        &self,
++        turn_context: &TurnContext,
++        parent_thread_id: ThreadId,
++        message: String,
++    ) {
++        let Ok(resume_config) = crate::agent::child_config::build_agent_resume_config(turn_context)
++        else {
++            return;
++        };
++        if let Err(err) = self
++            .services
++            .agent_control
++            .send(crate::agent::api::SendRequest {
++                caller: self.thread_id,
++                target: crate::agent::api::AgentTarget::Id(parent_thread_id),
++                resume_config,
++                input: crate::agent::api::AgentInput::Message {
++                    message: crate::agent::types::AgentMessage::Plaintext(message),
++                    mode: crate::agent::types::MessageDeliveryMode::QueueOnly,
++                },
++                start_options: TurnStartOptions::default(),
++            })
++            .await
++        {
++            debug!("failed to forward a pending request to {parent_thread_id}: {err}");
++        }
++    }
++
++    pub(crate) async fn answer_forwarded_question(
++        &self,
++        communication: &codex_protocol::protocol::InterAgentCommunication,
++    ) {
++        let parent = match &self.state.lock().await.session_configuration.session_source {
++            SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++                agent_path: Some(path),
++                ..
++            }) => path
++                .as_str()
++                .rsplit_once('/')
++                .and_then(|(parent, _)| codex_protocol::AgentPath::try_from(parent).ok()),
++            _ => None,
++        };
++        if parent.as_ref() != Some(&communication.author) {
++            return;
++        }
++        let pending = match self.active_turn.lock().await.as_mut() {
++            Some(active) => active.turn_state.lock().await.take_any_pending_user_input(),
++            None => None,
++        };
++        let Some((sender, question_ids)) = pending else {
++            return;
++        };
++        let answer = "Your parent replied; its message follows.".to_string();
++        let response = RequestUserInputResponse {
++            answers: question_ids
++                .into_iter()
++                .map(|id| {
++                    (
++                        id,
++                        RequestUserInputAnswer {
++                            answers: vec![answer.clone()],
++                        },
++                    )
++                })
++                .collect(),
++        };
++        let acceptance_order = self.reserve_user_input_order().await;
++        sender
++            .send(AcceptedUserInputResponse {
++                response,
++                acceptance_order,
++            })
++            .ok();
++    }
++
+     /// Forwards terminal turn events from spawned MultiAgentV2 children to their direct parent.
+     async fn maybe_notify_parent_of_terminal_turn(
+         &self,
+@@ -3345,7 +3676,11 @@ impl Session {
+             match active.as_mut() {
+                 Some(at) => {
+                     let mut ts = at.turn_state.lock().await;
+-                    ts.insert_pending_user_input(sub_id, tx_response)
++                    ts.insert_pending_user_input(
++                        sub_id,
++                        tx_response,
++                        args.questions.iter().map(|q| q.id.clone()).collect(),
++                    )
+                 }
+                 None => None,
+             }
+@@ -3745,6 +4080,10 @@ impl Session {
          let policy: codex_utils_output_truncation::TruncationPolicy =
              model_info.truncation_policy.into();
          for envelope in &mut items {
@@ -23346,7 +23862,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
              if matches!(
                  envelope.item,
                  ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
-@@ -4037,6 +4239,7 @@ impl Session {
+@@ -4037,6 +4376,7 @@ impl Session {
          let inherited_environments = inherited_environments.unwrap_or_else(|| environments.clone());
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -23354,7 +23870,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -4044,6 +4247,27 @@ impl Session {
+@@ -4044,6 +4384,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -23382,7 +23898,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4371,10 +4595,19 @@ impl Session {
+@@ -4371,10 +4732,19 @@ impl Session {
                  ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
              )
          }) {
@@ -23406,7 +23922,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
          }
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
-@@ -4600,6 +4833,10 @@ impl Session {
+@@ -4600,6 +4970,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -23417,7 +23933,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4609,6 +4846,7 @@ impl Session {
+@@ -4609,6 +4983,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -23425,7 +23941,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
                  })
                  .await
              {
-@@ -4697,6 +4935,10 @@ impl Session {
+@@ -4697,6 +5072,10 @@ impl Session {
                  }
              }
          }
@@ -23436,7 +23952,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4706,6 +4948,7 @@ impl Session {
+@@ -4706,6 +5085,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -23444,7 +23960,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
                  })
                  .await
              {
-@@ -4901,7 +5144,7 @@ impl Session {
+@@ -4901,7 +5281,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -23453,7 +23969,7 @@ index aba497125ce18b608ad2ddeadcd4827ee0214cb5..514eca111d5563ea182c82d7b0f0060a
          {
              error!("failed to record rollout items: {e:#}");
              return false;
-@@ -4911,7 +5154,12 @@ impl Session {
+@@ -4911,7 +5291,12 @@ impl Session {
 
      pub(crate) async fn clone_history(&self) -> ContextManager {
          let state = self.state.lock().await;
@@ -23782,7 +24298,7 @@ index 48fe180dcb034d0bd94961e94e2ebf12d9a74ed4..d882d5191085381b6bf47b444414bf92
          // Save changed settings first. The manager then installs any new environment list before
          // waking waiting work. The next step cannot read either until we release this lock.
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 182e03e588530491da22d5ea931e98f90372b127..267bf78acb37840d937c6af1c32d45e6465f599a 100644
+index 182e03e588530491da22d5ea931e98f90372b127..2104ff2ca7fed1d9b0fa7e118f4a6a869bc6429f 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
 @@ -3,6 +3,8 @@ use crate::agent::LocalAgentControl;
@@ -24264,6 +24780,70 @@ index 182e03e588530491da22d5ea931e98f90372b127..267bf78acb37840d937c6af1c32d45e6
  #[tokio::test]
  async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
      let (sess, tc, _rx) = make_session_and_context_with_rx().await;
+@@ -13587,3 +13882,63 @@ async fn rejected_mcp_refresh_then_corrected_user_config_blocks_ordinary_replace
+         "rejection must not permit same-name ordinary-auth replacement in this session"
+     );
+ }
++
++#[tokio::test]
++async fn a_parent_message_answers_its_childs_pending_question() {
++    let (session, turn_context, rx) = make_session_and_context_with_rx().await;
++    session
++        .state
++        .lock()
++        .await
++        .session_configuration
++        .session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++        parent_thread_id: ThreadId::new(),
++        depth: 1,
++        agent_path: Some(AgentPath::try_from("/root/worker").expect("valid agent path")),
++        agent_nickname: None,
++        agent_role: None,
++    });
++    *session.active_turn.lock().await = Some(ActiveTurn::default());
++    let args: codex_protocol::request_user_input::RequestUserInputArgs =
++        serde_json::from_value(serde_json::json!({
++            "questions": [{"id": "port", "header": "Port", "question": "Which port?"}],
++            "isBlocking": false,
++        }))
++        .expect("valid request_user_input args");
++    let pending = tokio::spawn({
++        let session = Arc::clone(&session);
++        let turn_context = Arc::clone(&turn_context);
++        async move {
++            session
++                .request_user_input(turn_context.as_ref(), "call-1".to_string(), args)
++                .await
++        }
++    });
++    while !matches!(
++        rx.recv().await.map(|event| event.msg),
++        Ok(EventMsg::RequestUserInput(_))
++    ) {}
++    let message = |author: &str| {
++        InterAgentCommunication::new(
++            AgentPath::try_from(author).expect("valid agent path"),
++            AgentPath::try_from("/root/worker").expect("valid agent path"),
++            Vec::new(),
++            "use 8080".to_string(),
++            /*trigger_turn*/ false,
++        )
++    };
++
++    session
++        .answer_forwarded_question(&message("/root/other"))
++        .await;
++    assert!(!pending.is_finished());
++    session.answer_forwarded_question(&message("/root")).await;
++    let answered = pending
++        .await
++        .expect("request task")
++        .expect("question answered");
++    assert_eq!(
++        answered.response.answers["port"].answers,
++        vec!["Your parent replied; its message follows.".to_string()]
++    );
++}
 diff --git a/codex-rs/core/src/session/thread_settings.rs b/codex-rs/core/src/session/thread_settings.rs
 index f07d921dc23efd0ce66e875636b6c60d809108b9..95c2a762dc8c2a6ea4e8def708e4daf60e2bff04 100644
 --- a/codex-rs/core/src/session/thread_settings.rs
@@ -24813,7 +25393,7 @@ index b31eeca5d5a9e20f382f6e4e78c5c5a7c837f64d..953098c4cced3783c84d47156131d085
          FileSystemSandboxContext {
              sandbox_override: SandboxOverride::NoOverride,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..10e1182c1657b542e78e1d18e158639289418594 100644
+index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..561f1642319d45a16204bbf86ac288c69c9045ac 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -234,7 +234,8 @@ pub(super) async fn handle(
@@ -24972,11 +25552,102 @@ index 8935c1c3109b1a0f555d27c72ec0ccbfc61f9e8f..10e1182c1657b542e78e1d18e1586392
  #[tracing::instrument(
      name = "codex.turn_input",
      level = "trace",
+@@ -707,9 +847,11 @@ impl Session {
+         if !has_trigger_turn
+             && !self.has_outstanding_durable_sleep()
+             && !self.should_wake_on_agent_messages().await
++            && !self.completion_wake_due().await
+         {
+             return None;
+         }
++        self.input_queue.clear_completion_wake();
+         let active_turn = active_turn.get_or_insert_with(ActiveTurn::default);
+         let previous_options = if has_trigger_turn {
+             Default::default()
+@@ -757,6 +899,20 @@ impl Session {
+         Some(configuration.clone())
+     }
+
++    async fn completion_wake_due(&self) -> bool {
++        if !self.input_queue.completion_wake_due() || self.is_interrupted() {
++            return false;
++        }
++        let state = self.state.lock().await;
++        TurnStartKind::Automatic.permits_mode(
++            state
++                .session_configuration
++                .step_settings
++                .collaboration_mode
++                .mode,
++        )
++    }
++
+     async fn should_wake_on_agent_messages(&self) -> bool {
+         if !self.features.enabled(Feature::WakeOnAgentMessages)
+             || self.is_interrupted()
 diff --git a/codex-rs/core/src/session/turn_input_tests.rs b/codex-rs/core/src/session/turn_input_tests.rs
-index 2dca0905370b5aeb46c27a7acf8cedabc601138a..350fe9a38d76c3f61bddade0d7a5d48f1dac8a35 100644
+index 2dca0905370b5aeb46c27a7acf8cedabc601138a..f9e179ada9f6ba1777c9c5e90b5a9be0a7a2eb6a 100644
 --- a/codex-rs/core/src/session/turn_input_tests.rs
 +++ b/codex-rs/core/src/session/turn_input_tests.rs
-@@ -1138,3 +1138,75 @@ async fn steer_preserves_request_origin(
+@@ -899,6 +899,57 @@ async fn agent_message_wake_reservation_preserves_existing_boundaries(
+     );
+ }
+
++#[test_case(false, ModeKind::Default, true; "idle_parent")]
++#[test_case(true, ModeKind::Default, false; "interrupted_parent")]
++#[test_case(false, ModeKind::Plan, false; "plan_parent")]
++#[tokio::test]
++async fn child_results_settle_one_completion_wake(interrupted: bool, mode: ModeKind, wakes: bool) {
++    let (session, _turn_context) = make_session_and_context().await;
++    {
++        let mut state = session.state.lock().await;
++        state.session_configuration.session_source =
++            SessionSource::SubAgent(SubAgentSource::Review);
++        Arc::make_mut(&mut state.session_configuration.step_settings)
++            .collaboration_mode
++            .mode = mode;
++    }
++    if interrupted {
++        session.mark_interrupted();
++    }
++    let mut cohort = Vec::new();
++    for worker in ["/root/a", "/root/b"] {
++        let communication = InterAgentCommunication::new(
++            AgentPath::try_from(worker).expect("valid worker path"),
++            AgentPath::root(),
++            Vec::new(),
++            format!("{worker} done"),
++            /*trigger_turn*/ false,
++        );
++        session
++            .input_queue
++            .enqueue_mailbox_communication(communication.clone().into(), Default::default())
++            .await;
++        cohort.push(session.input_queue.arm_completion_wake());
++    }
++
++    assert!(!session.input_queue.settle_completion_wake(cohort[0]));
++    assert!(session.reserve_pending_work_turn().await.is_none());
++    assert!(session.input_queue.settle_completion_wake(cohort[1]));
++    assert_eq!(session.reserve_pending_work_turn().await.is_some(), wakes);
++    assert_eq!(session.input_queue.completion_wake_due(), !wakes);
++    if wakes {
++        assert_eq!(
++            session
++                .input_queue
++                .drain_mailbox_input_items()
++                .await
++                .0
++                .len(),
++            2
++        );
++    }
++}
++
+ #[tokio::test]
+ async fn steer_only_requires_active_turn() {
+     let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
+@@ -1138,3 +1189,75 @@ async fn steer_preserves_request_origin(
      );
      session.abort_all_tasks(TurnAbortReason::Interrupted).await;
  }
@@ -25051,6 +25722,64 @@ index 2dca0905370b5aeb46c27a7acf8cedabc601138a..350fe9a38d76c3f61bddade0d7a5d48f
 +        kept.thread_settings.collaboration_mode,
 +        Some(requested(ModeKind::Default))
 +    );
++}
+diff --git a/codex-rs/core/src/session_prefix.rs b/codex-rs/core/src/session_prefix.rs
+index cfbc04e9b205550cdcdc59f05ccf982c12f48786..07dc93b5f7a25f00f9d73f8c42455337d236a540 100644
+--- a/codex-rs/core/src/session_prefix.rs
++++ b/codex-rs/core/src/session_prefix.rs
+@@ -10,6 +10,7 @@ const COMPLETION_MESSAGE_MAX_TOKENS: usize = 1_000;
+ const COMPLETION_MESSAGE_ENVELOPE_TOKEN_RESERVE: usize = 100;
+ const ERROR_MAX_TOKENS: usize =
+     COMPLETION_MESSAGE_MAX_TOKENS - COMPLETION_MESSAGE_ENVELOPE_TOKEN_RESERVE;
++const COMPLETION_INLINE_BYTES: usize = 16 * 1024;
+ const ERROR_NEXT_ACTION: &str = "This agent's turn failed. If you still need this agent, use the available collaboration tools to give it another task.";
+ const GUARDIAN_NEXT_ACTION: &str = "Tell the user this agent stopped after repeated Guardian denials. Do not resume this agent or retry its blocked work until the user explicitly confirms that it should continue.";
+
+@@ -23,6 +24,15 @@ pub(crate) fn format_inter_agent_completion_message(
+     status: &AgentStatus,
+ ) -> Option<String> {
+     let payload = match status {
++        AgentStatus::Completed(Some(message)) if message.len() > COMPLETION_INLINE_BYTES => {
++            let cut = message.floor_char_boundary(COMPLETION_INLINE_BYTES);
++            format!(
++                "{}\n\n[Result truncated to {cut} of {} bytes. Call list_agents with path_prefix \"{}\" for the full result.]",
++                &message[..cut],
++                message.len(),
++                sender.as_str()
++            )
++        }
+         AgentStatus::Completed(Some(message)) => message.clone(),
+         AgentStatus::Completed(None) => String::new(),
+         AgentStatus::Errored(error) => {
+diff --git a/codex-rs/core/src/session_prefix_tests.rs b/codex-rs/core/src/session_prefix_tests.rs
+index 227f0aa54a5e49917358a69fd190e95b56030bc6..4b05963a7a30802d7e6244085260824e3bf7aa70 100644
+--- a/codex-rs/core/src/session_prefix_tests.rs
++++ b/codex-rs/core/src/session_prefix_tests.rs
+@@ -2,6 +2,7 @@ use codex_protocol::AgentPath;
+ use codex_protocol::protocol::AgentStatus;
+ use codex_utils_output_truncation::approx_token_count;
+
++use super::COMPLETION_INLINE_BYTES;
+ use super::COMPLETION_MESSAGE_MAX_TOKENS;
+ use super::ERROR_NEXT_ACTION;
+ use super::GUARDIAN_NEXT_ACTION;
+@@ -32,3 +33,17 @@ fn guardian_interruption_message_stays_below_manual_review_threshold() {
+     assert!(approx_token_count(&message) < COMPLETION_MESSAGE_MAX_TOKENS);
+     assert!(message.contains(GUARDIAN_NEXT_ACTION));
+ }
++
++#[test]
++fn a_long_result_is_inlined_up_to_the_budget_with_a_status_pointer() {
++    let message = format_inter_agent_completion_message(
++        AgentPath::root(),
++        AgentPath::try_from("/root/worker").expect("valid agent path"),
++        &AgentStatus::Completed(Some("é".repeat(COMPLETION_INLINE_BYTES))),
++    )
++    .expect("completed status should produce a completion message");
++
++    assert!(message.len() < COMPLETION_INLINE_BYTES + 512);
++    assert!(message.contains(&format!("of {} bytes", 2 * COMPLETION_INLINE_BYTES)));
++    assert!(message.contains("path_prefix \"/root/worker\""));
 +}
 diff --git a/codex-rs/core/src/shell_snapshot_sandbox_tests.rs b/codex-rs/core/src/shell_snapshot_sandbox_tests.rs
 index 312b802b95ead65a52bfbe0255e4724d63f2cfbd..40b37d96137844d1b4d5b147ec4447bbe28d137b 100644
@@ -25177,11 +25906,60 @@ index 5d3defeefee1a2dcfcc1add69f3e5434342531df..2410a131d89f99665f896724bb40704a
      });
 
      assert_eq!(
+diff --git a/codex-rs/core/src/state/turn.rs b/codex-rs/core/src/state/turn.rs
+index 0fe0fea1bb119ba993113ac55dd52916bab64f28..ea5355a01e6da100d539d7c3d5d7852966ef1b07 100644
+--- a/codex-rs/core/src/state/turn.rs
++++ b/codex-rs/core/src/state/turn.rs
+@@ -90,7 +90,7 @@ pub(crate) struct RunningTask {
+ pub(crate) struct TurnState {
+     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
+     pending_request_permissions: HashMap<String, PendingRequestPermissions>,
+-    pending_user_input: HashMap<String, oneshot::Sender<AcceptedUserInputResponse>>,
++    pending_user_input: HashMap<String, (oneshot::Sender<AcceptedUserInputResponse>, Vec<String>)>,
+     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
+     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
+     pub(crate) pending_input: TurnInputQueue,
+@@ -163,15 +163,25 @@ impl TurnState {
+         &mut self,
+         key: String,
+         tx: oneshot::Sender<AcceptedUserInputResponse>,
++        question_ids: Vec<String>,
+     ) -> Option<oneshot::Sender<AcceptedUserInputResponse>> {
+-        self.pending_user_input.insert(key, tx)
++        self.pending_user_input
++            .insert(key, (tx, question_ids))
++            .map(|(tx, _)| tx)
+     }
+
+     pub(crate) fn remove_pending_user_input(
+         &mut self,
+         key: &str,
+     ) -> Option<oneshot::Sender<AcceptedUserInputResponse>> {
+-        self.pending_user_input.remove(key)
++        self.pending_user_input.remove(key).map(|(tx, _)| tx)
++    }
++
++    pub(crate) fn take_any_pending_user_input(
++        &mut self,
++    ) -> Option<(oneshot::Sender<AcceptedUserInputResponse>, Vec<String>)> {
++        let key = self.pending_user_input.keys().next()?.clone();
++        self.pending_user_input.remove(&key)
+     }
+
+     pub(crate) fn insert_pending_elicitation(
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 639a09ddd0a5d4dcc352548561a85ed36d787370..bddf9c3ab9db0c6265fb3b3c30193984a284fc9e 100644
+index 639a09ddd0a5d4dcc352548561a85ed36d787370..0c34b5b73bf0b39ce2189d8e7b1155864683081a 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -325,13 +325,13 @@ impl Session {
+@@ -71,6 +71,7 @@ pub(crate) use user_shell::execute_user_shell_command;
+
+ pub(crate) const GRACEFULL_INTERRUPTION_TIMEOUT_MS: u64 = 100;
+ const TASK_COMPACT_METRIC: &str = "codex.task.compact";
++const COMPLETION_WAKE_WINDOW: Duration = Duration::from_millis(500);
+ static ACTIVE_TURNS: Gauge = Gauge::new("core.turns.active");
+
+ pub(crate) type SessionTaskResult = CodexResult<Option<String>>;
+@@ -325,13 +326,13 @@ impl Session {
          let cancellation_token = CancellationToken::new();
          let done = Arc::new(Notify::new());
 
@@ -25198,7 +25976,7 @@ index 639a09ddd0a5d4dcc352548561a85ed36d787370..bddf9c3ab9db0c6265fb3b3c30193984
          };
          turn_state.lock().await.token_usage_at_turn_start = token_usage_at_turn_start.clone();
          self.input_queue
-@@ -439,6 +439,15 @@ impl Session {
+@@ -439,6 +440,15 @@ impl Session {
          turn.task = Some(running_task);
      }
 
@@ -25214,7 +25992,36 @@ index 639a09ddd0a5d4dcc352548561a85ed36d787370..bddf9c3ab9db0c6265fb3b3c30193984
      /// Returns whether an extension has marked this thread as durably asleep.
      pub(crate) fn has_outstanding_durable_sleep(&self) -> bool {
          self.services
-@@ -657,6 +666,13 @@ impl Session {
+@@ -447,6 +457,20 @@ impl Session {
+             .is_some()
+     }
+
++    pub(crate) fn schedule_completion_wake(self: &Arc<Self>) {
++        let generation = self.input_queue.arm_completion_wake();
++        let session = Arc::downgrade(self);
++        tokio::spawn(async move {
++            tokio::time::sleep(COMPLETION_WAKE_WINDOW).await;
++            if let Some(session) = session.upgrade()
++                && session.input_queue.has_pending_mailbox_items().await
++                && session.input_queue.settle_completion_wake(generation)
++            {
++                session.maybe_start_turn_for_pending_work().await;
++            }
++        });
++    }
++
+     /// Starts a regular turn when the session is idle and pending work is waiting.
+     ///
+     /// Mail can request a new task with `trigger_turn`, wake durable sleep, or wake a root with
+@@ -472,6 +496,7 @@ impl Session {
+         sub_id: String,
+     ) {
+         if !self.input_queue.has_pending_mailbox_items().await {
++            self.input_queue.clear_completion_wake();
+             return;
+         }
+
+@@ -657,6 +682,13 @@ impl Session {
          turn_context: Arc<TurnContext>,
          task_result: SessionTaskResult,
      ) {
@@ -25228,7 +26035,7 @@ index 639a09ddd0a5d4dcc352548561a85ed36d787370..bddf9c3ab9db0c6265fb3b3c30193984
          let (last_agent_message, abort_reason) = match task_result {
              Ok(last_agent_message) => (last_agent_message, None),
              Err(err) if matches!(err.details(), CodexErrorDetails::TurnAborted) => {
-@@ -688,6 +704,10 @@ impl Session {
+@@ -688,6 +720,10 @@ impl Session {
          let turn_state = {
              let mut active = self.active_turn.lock().await;
              active.as_mut().and_then(|active_turn| {
@@ -26833,10 +27640,159 @@ index c607b341ff67d93a861d817cf484028a24cb7286..acaf11c96e3b4687427eb228730e8eea
          };
          let mut output = output;
          output.result.meta = Some(json!({ "provider/custom": { "items": [1, null] } }));
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_spec.rs b/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
+index edc9467b4d02cc023d8961373637116cf8ba6f6f..9e5a77b33141225cd928ebfb10ead2e557dbe6af 100644
+--- a/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
++++ b/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
+@@ -1,5 +1,4 @@
+-use crate::agent::child_config::MAX_SPAWN_AGENT_MODEL_OVERRIDES;
+-use crate::agent::child_config::model_supports_multi_agent_backend;
++use crate::agent::child_config::spawn_agent_model_overrides;
+ use codex_protocol::openai_models::ModelPreset;
+ use codex_protocol::protocol::MultiAgentVersion;
+ use codex_tools::JsonSchema;
+@@ -823,17 +822,28 @@ fn spawn_agent_models_description(
+     models: &[ModelPreset],
+     multi_agent_version: MultiAgentVersion,
+ ) -> String {
+-    let visible_models: Vec<&ModelPreset> = models
+-        .iter()
+-        .filter(|model| model.show_in_picker)
+-        .filter(|model| model_supports_multi_agent_backend(model, multi_agent_version))
+-        .take(MAX_SPAWN_AGENT_MODEL_OVERRIDES)
+-        .collect();
++    let visible_models: Vec<&ModelPreset> =
++        spawn_agent_model_overrides(models, multi_agent_version).collect();
+     if visible_models.is_empty() {
+         return "No picker-visible model overrides are currently loaded.".to_string();
+     }
+
+-    let model_descriptions = visible_models
++    let (base_models, provider_models): (Vec<&ModelPreset>, Vec<&ModelPreset>) = visible_models
++        .into_iter()
++        .partition(|model| model.model_provider.is_none());
++    let mut providers: Vec<(&str, Vec<&str>)> = Vec::new();
++    for model in provider_models {
++        let provider = model
++            .model_provider_name
++            .as_deref()
++            .or(model.model_provider.as_deref())
++            .unwrap_or_default();
++        match providers.iter_mut().find(|(name, _)| *name == provider) {
++            Some((_, slugs)) => slugs.push(&model.model),
++            None => providers.push((provider, vec![&model.model])),
++        }
++    }
++    let model_descriptions = base_models
+         .into_iter()
+         .map(|model| {
+             let default_reasoning_effort = &model.default_reasoning_effort;
+@@ -879,6 +889,11 @@ fn spawn_agent_models_description(
+                 "- `{model_slug}`: {description}{reasoning_efforts_suffix}{service_tiers_suffix}"
+             )
+         })
++        .chain(
++            providers
++                .into_iter()
++                .map(|(provider, slugs)| format!("- {provider}: `{}`", slugs.join("`, `"))),
++        )
+         .collect::<Vec<_>>()
+         .join("\n");
+     format!(
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs
+index d74729ef218b40dd244f1497e34439c765bfcdae..153a5b85f4522d6e626f6ed82a2bb3230ac91202 100644
+--- a/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs
++++ b/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs
+@@ -415,3 +415,40 @@ fn list_agents_tool_status_schema_includes_interrupted() {
+         ])
+     );
+ }
++
++fn provider_presets() -> Vec<ModelPreset> {
++    let base: Vec<ModelPreset> = codex_models_manager::bundled_models_response()
++        .expect("bundled models")
++        .models
++        .into_iter()
++        .map(ModelPreset::from)
++        .filter(|preset| preset.show_in_picker)
++        .collect();
++    let provider = [
++        "claude-sonnet-5-5",
++        "claude-opus-5-5",
++        "claude-haiku-5-5",
++        "claude-fable-5-1",
++    ]
++    .into_iter()
++    .map(|slug| ModelPreset {
++        id: slug.to_string(),
++        model: slug.to_string(),
++        description: "Claude via the Claude CLI · fast".to_string(),
++        model_provider: Some("omd_claude_cli".to_string()),
++        model_provider_name: Some("Claude CLI".to_string()),
++        ..base[0].clone()
++    });
++    base.clone().into_iter().chain(provider).collect()
++}
++
++#[test]
++fn spawn_model_list_names_provider_models_by_slug_only() {
++    let description = spawn_agent_models_description(&provider_presets(), MultiAgentVersion::V2);
++
++    assert!(description.contains(
++        "- Claude CLI: `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`"
++    ));
++    assert!(!description.contains("Claude via the Claude CLI"));
++    assert!(!description.contains("Provider:"));
++}
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
-index 9582a977e096bdd07fd8874d79a3cbbd3edbdb6c..861d9b8123c7d50ddaca9de5ffd9f4c72f8f0d69 100644
+index 9582a977e096bdd07fd8874d79a3cbbd3edbdb6c..45b4ff4b1a646e85265696b77511261f5bf1c983 100644
 --- a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
 +++ b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
+@@ -3101,7 +3101,7 @@ async fn multi_agent_v2_wait_agent_clamps_timeout_below_configured_min() {
+         result,
+         crate::tools::handlers::multi_agents_v2::wait::WaitAgentResult {
+             message:
+-                "Wait timed out.\n\nRequested timeout of 1ms was clamped to the minimum of 50ms."
++                "Wait timed out. Agents keep running; their results wake this thread, so end your turn instead of waiting again.\n\nRequested timeout of 1ms was clamped to the minimum of 50ms."
+                     .to_string(),
+             timed_out: true,
+         }
+@@ -3137,7 +3137,7 @@ async fn multi_agent_v2_wait_agent_accepts_explicit_timeout_at_configured_min()
+     assert_eq!(
+         result,
+         crate::tools::handlers::multi_agents_v2::wait::WaitAgentResult {
+-            message: "Wait timed out.".to_string(),
++            message: "Wait timed out. Agents keep running; their results wake this thread, so end your turn instead of waiting again.".to_string(),
+             timed_out: true,
+         }
+     );
+@@ -3192,7 +3192,7 @@ async fn multi_agent_v2_wait_agent_uses_configured_default_timeout() {
+     assert_eq!(
+         result,
+         crate::tools::handlers::multi_agents_v2::wait::WaitAgentResult {
+-            message: "Wait timed out.".to_string(),
++            message: "Wait timed out. Agents keep running; their results wake this thread, so end your turn instead of waiting again.".to_string(),
+             timed_out: true,
+         }
+     );
+@@ -3232,7 +3232,7 @@ async fn multi_agent_v2_wait_agent_allows_zero_configured_timeout() {
+     assert_eq!(
+         result,
+         crate::tools::handlers::multi_agents_v2::wait::WaitAgentResult {
+-            message: "Wait timed out.".to_string(),
++            message: "Wait timed out. Agents keep running; their results wake this thread, so end your turn instead of waiting again.".to_string(),
+             timed_out: true,
+         }
+     );
+@@ -3297,7 +3297,7 @@ async fn multi_agent_v2_wait_agent_accepts_explicit_timeout_at_configured_max()
+     assert_eq!(
+         result,
+         crate::tools::handlers::multi_agents_v2::wait::WaitAgentResult {
+-            message: "Wait timed out.".to_string(),
++            message: "Wait timed out. Agents keep running; their results wake this thread, so end your turn instead of waiting again.".to_string(),
+             timed_out: true,
+         }
+     );
 @@ -4729,3 +4729,80 @@ async fn build_agent_resume_config_clears_base_instructions() {
          .expect("approval policy set");
      assert_eq!(config, expected);
@@ -26918,6 +27874,21 @@ index 9582a977e096bdd07fd8874d79a3cbbd3edbdb6c..861d9b8123c7d50ddaca9de5ffd9f4c7
 +    assert_eq!(snapshot.reasoning_effort, Some(ReasoningEffort::Low));
 +    assert_eq!(snapshot.cwd(), &workspace);
 +}
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs b/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs
+index 83458d1891c70773e56371ae2f29c012b1098cce..1693c3f8958c7cb8f5fdfb52f16c82c602b78ea7 100644
+--- a/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs
++++ b/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs
+@@ -159,7 +159,9 @@ impl WaitAgentResult {
+         let message = match outcome {
+             WaitOutcome::MailboxActivity => "Wait completed.",
+             WaitOutcome::Steered => "Wait interrupted by new input.",
+-            WaitOutcome::TimedOut => "Wait timed out.",
++            WaitOutcome::TimedOut => {
++                "Wait timed out. Agents keep running; their results wake this thread, so end your turn instead of waiting again."
++            }
+         };
+         let message = match requested_timeout_ms {
+             Some(requested_timeout_ms) if requested_timeout_ms < timeout_ms => format!(
 diff --git a/codex-rs/core/src/tools/handlers/request_permissions.rs b/codex-rs/core/src/tools/handlers/request_permissions.rs
 index 32830f516c5147e252e1125bec5742ac6e08d158..04b4b72e6ea7e54c9c1dbe851efc302245865bd7 100644
 --- a/codex-rs/core/src/tools/handlers/request_permissions.rs
@@ -26978,10 +27949,36 @@ index 271c12f30df0f64cc377eb3fa3885840103f48d5..5ecfbd21e041a89e5b8ddc1c9bb8b9ce
  async fn maybe_persist_disabled_install_request(
      session: &crate::session::session::Session,
 diff --git a/codex-rs/core/src/tools/handlers/request_user_input.rs b/codex-rs/core/src/tools/handlers/request_user_input.rs
-index d55eca02970f649c9dbedb655fa85b3bed35a2d1..bb1d51ffb7559d3f0d93182490011dd32aa2ebfa 100644
+index d55eca02970f649c9dbedb655fa85b3bed35a2d1..4395305271c8d064871315344d26deef31857ca2 100644
 --- a/codex-rs/core/src/tools/handlers/request_user_input.rs
 +++ b/codex-rs/core/src/tools/handlers/request_user_input.rs
-@@ -153,6 +153,17 @@ impl RequestUserInputHandler {
+@@ -17,6 +17,8 @@ use codex_history::RetainedContextEvent;
+ use codex_history::VerifiedAnswer;
+ use codex_history::VerifiedQuestionAnswer;
+ use codex_protocol::config_types::ModeKind;
++use codex_protocol::protocol::SessionSource;
++use codex_protocol::protocol::SubAgentSource;
+ use codex_protocol::request_user_input::RequestUserInputArgs;
+ use codex_tools::ToolName;
+ use codex_tools::ToolSpec;
+@@ -64,7 +66,15 @@ impl RequestUserInputHandler {
+             }
+         };
+
+-        if turn.session_source.is_non_root_agent() {
++        if turn.session_source.is_non_root_agent()
++            && !matches!(
++                turn.session_source,
++                SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++                    agent_path: Some(_),
++                    ..
++                })
++            )
++        {
+             return Err(FunctionCallError::RespondToModel(
+                 "request_user_input can only be used by the root thread".to_string(),
+             ));
+@@ -153,6 +163,17 @@ impl RequestUserInputHandler {
  }
 
  impl CoreToolRuntime for RequestUserInputHandler {
@@ -29861,6 +30858,28 @@ index d7ce6b5af9aa1325a966d485706e25556e472257..430426cfdc9d476e7df204839e21fbc8
  #[derive(Clone, Copy, PartialEq, Eq)]
  enum CompactionFailurePoint {
      PreTurn,
+diff --git a/codex-rs/core/tests/suite/subagent_notifications.rs b/codex-rs/core/tests/suite/subagent_notifications.rs
+index c37557affacd0612d3daf1706e09115f58d513e7..62fe8bdae48e69752cb433a05111e8e373506a1a 100644
+--- a/codex-rs/core/tests/suite/subagent_notifications.rs
++++ b/codex-rs/core/tests/suite/subagent_notifications.rs
+@@ -3252,8 +3252,7 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn(
+     let root_result_request = mount_sse_once_match(
+         &server,
+         |request: &wiremock::Request| {
+-            body_contains(request, READ_RESULT_PROMPT)
+-                && body_contains(request, "Sender: /root/worker")
++            body_contains(request, "Sender: /root/worker")
+                 && body_contains(request, "peer follow-up finished")
+         },
+         sse(vec![
+@@ -3269,7 +3268,6 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn(
+         .into_iter()
+         .find(|request| {
+             request.body_json()["client_metadata"]["thread_id"] == json!(root_thread_id)
+-                && request.body_contains_text(READ_RESULT_PROMPT)
+                 && request.body_contains_text("peer follow-up finished")
+         })
+         .expect("root result request");
 diff --git a/codex-rs/core/tests/windows_sandbox.rs b/codex-rs/core/tests/windows_sandbox.rs
 index cf7f6a8799a664d74dd800ccfd3788f7adffd133..7b335f1c06d3f9b7eef0c3670e0e296ffd853ceb 100644
 --- a/codex-rs/core/tests/windows_sandbox.rs
@@ -29918,8 +30937,51 @@ index ee497de6895073054de1aa5e45eedcaab7f79435..d569294da756cba17c9c2b99dec63e3e
  Use a protected transport or TLS proxy for remote access; authentication is checked at connection time and these flags do not apply to stdio, remote registration, or forwarding.
 
  App-server clients can supply the raw token through `environment/add.authBearerToken` or `auth_bearer_token` in an `environments.toml` URL entry; omission preserves unauthenticated behavior.
+diff --git a/codex-rs/exec-server/src/fs_sandbox.rs b/codex-rs/exec-server/src/fs_sandbox.rs
+index 63eefde6ee8caf9f52f2cdb0c4c03622c32a311a..1781e5e33b32dd687c49bf54987105bff08c2d30 100644
+--- a/codex-rs/exec-server/src/fs_sandbox.rs
++++ b/codex-rs/exec-server/src/fs_sandbox.rs
+@@ -150,7 +150,7 @@ impl FileSystemSandboxRunner {
+         workspace_roots: &[AbsolutePathBuf],
+         sandbox_context: &FileSystemSandboxContext,
+     ) -> Result<SandboxExecRequest, JSONRPCErrorError> {
+-        let helper = &self.runtime_paths.codex_self_exe;
++        let helper = &self.runtime_paths.launch_exe();
+         let sandbox_manager = SandboxManager::for_file_system_helpers()
+             .with_linux_sandbox_pid_namespace(self.runtime_paths.linux_sandbox_pid_namespace);
+         #[cfg(target_os = "macos")]
+@@ -843,6 +843,29 @@ mod tests {
+         );
+     }
+
++    #[cfg(target_os = "macos")]
++    #[test]
++    fn sandbox_exec_request_launches_the_helper_behind_an_install_symlink() {
++        let codex_self_exe = std::env::current_exe()
++            .expect("current exe")
++            .canonicalize()
++            .expect("canonical exe");
++        let bin = tempfile::tempdir().expect("bin directory");
++        let link = bin.path().join("codex");
++        std::os::unix::fs::symlink(&codex_self_exe, &link).expect("install link");
++        let runtime_paths = ExecServerRuntimeOptions::new(link.clone(), /*codex_linux_sandbox_exe*/ None)
++            .expect("runtime paths");
++        let cwd = AbsolutePathBuf::from_absolute_path(std::env::temp_dir().as_path())
++            .expect("absolute cwd");
++        let policy = restricted_policy(Vec::new());
++        let request = FileSystemSandboxRunner::new(runtime_paths)
++            .sandbox_command(&sandbox_context_with_cwd(&policy, PathUri::from_abs_path(&cwd)))
++            .expect("sandbox command");
++
++        assert!(request.command.contains(&codex_self_exe.display().to_string()));
++        assert!(!request.command.contains(&link.display().to_string()));
++    }
++
+     /// Tilde patterns stay home-relative when Windows sandbox commands start at another cwd.
+     #[test]
+     fn windows_cwd_relative_denial_binding_keeps_tilde_patterns_home_relative() {
 diff --git a/codex-rs/exec-server/src/process_sandbox.rs b/codex-rs/exec-server/src/process_sandbox.rs
-index 488b7c97f249ffd71a69def81a88f902246858f7..2ceb9e79548ac4f721a00e6ef5867ce9249cbb7f 100644
+index 488b7c97f249ffd71a69def81a88f902246858f7..2ce59199a3908e57c28fbb684ed48d446480ea0d 100644
 --- a/codex-rs/exec-server/src/process_sandbox.rs
 +++ b/codex-rs/exec-server/src/process_sandbox.rs
 @@ -135,8 +135,9 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
@@ -29933,6 +30995,73 @@ index 488b7c97f249ffd71a69def81a88f902246858f7..2ceb9e79548ac4f721a00e6ef5867ce9
      #[cfg(target_os = "windows")]
      let network_proxy = if params.sandbox.is_none() {
          // Shared Windows ingress selects a route from the sandbox token's SID. Native launches
+@@ -273,11 +274,7 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
+             helper_args.push(arg0.clone());
+             helper_args.extend(params.argv.iter().cloned());
+             (
+-                runtime_paths
+-                    .codex_self_exe
+-                    .as_path()
+-                    .as_os_str()
+-                    .to_owned(),
++                runtime_paths.launch_exe().as_path().as_os_str().to_owned(),
+                 helper_args,
+             )
+         },
+diff --git a/codex-rs/exec-server/src/process_sandbox_tests.rs b/codex-rs/exec-server/src/process_sandbox_tests.rs
+index d0cd73545e44b42bdc3c3fd6d7979f557eb3a9af..87877e77e601b357a2f07d5bcff9b3574e97528d 100644
+--- a/codex-rs/exec-server/src/process_sandbox_tests.rs
++++ b/codex-rs/exec-server/src/process_sandbox_tests.rs
+@@ -190,9 +190,15 @@ async fn sandbox_request_routes_custom_arg0_to_inner_helper() {
+         .try_into()
+         .expect("absolute cwd");
+     let cwd_uri = PathUri::from_abs_path(&cwd);
+-    let self_exe = std::env::current_exe().expect("current executable");
++    let self_exe = std::env::current_exe()
++        .expect("current executable")
++        .canonicalize()
++        .expect("canonical executable");
++    let bin = tempfile::tempdir().expect("bin directory");
++    let link = bin.path().join("codex");
++    std::os::unix::fs::symlink(&self_exe, &link).expect("install link");
+     let runtime_paths =
+-        ExecServerRuntimeOptions::new(self_exe.clone(), Some(self_exe)).expect("runtime paths");
++        ExecServerRuntimeOptions::new(link, Some(self_exe.clone())).expect("runtime paths");
+     let sandbox = FileSystemSandboxContext::from_permission_profile(
+         PermissionProfile::workspace_write(),
+         cwd_uri.clone(),
+@@ -243,6 +249,8 @@ async fn sandbox_request_routes_custom_arg0_to_inner_helper() {
+     assert_eq!(prepared.arg0, Some(CODEX_LINUX_SANDBOX_ARG0.to_string()));
+     #[cfg(target_os = "macos")]
+     assert_eq!(prepared.arg0, None);
++    #[cfg(target_os = "macos")]
++    assert_eq!(prepared.command[helper_mode - 1], self_exe.display().to_string());
+ }
+
+ #[cfg(target_os = "macos")]
+diff --git a/codex-rs/exec-server/src/runtime_options.rs b/codex-rs/exec-server/src/runtime_options.rs
+index e3146c6e57d1a218a05ccd6eb0e296d92c208ee7..20cc89fb28e4cd1e5da7ea01441b1ae3274c9d5b 100644
+--- a/codex-rs/exec-server/src/runtime_options.rs
++++ b/codex-rs/exec-server/src/runtime_options.rs
+@@ -53,6 +53,18 @@ impl ExecServerRuntimeOptions {
+         })
+     }
+
++    /// The Codex executable to launch now; Seatbelt cannot exec through an install symlink.
++    pub fn launch_exe(&self) -> AbsolutePathBuf {
++        #[cfg(target_os = "macos")]
++        if let Some(path) = std::fs::canonicalize(self.codex_self_exe.as_path())
++            .ok()
++            .and_then(|path| AbsolutePathBuf::from_absolute_path(path).ok())
++        {
++            return path;
++        }
++        self.codex_self_exe.clone()
++    }
++
+     /// Applies the PID namespace policy chosen by trusted executor provisioning.
+     pub fn with_linux_sandbox_pid_namespace(mut self, mode: LinuxSandboxPidNamespace) -> Self {
+         self.linux_sandbox_pid_namespace = mode;
 diff --git a/codex-rs/exec-server/src/server/transport.rs b/codex-rs/exec-server/src/server/transport.rs
 index 4bb1d1f1209de73a2a6deba69b6cc6c47edd37a0..998a368a734fca3d7a757fcb7af3c41a45fa9838 100644
 --- a/codex-rs/exec-server/src/server/transport.rs
@@ -34230,6 +35359,45 @@ index a68938e517dc3505efb907e5f8e19fbcf437fa34..10a573645a34d772a250fb97c79e116c
 +    }
 +    Ok(())
 +}
+diff --git a/codex-rs/tui/src/app/pending_interactive_replay.rs b/codex-rs/tui/src/app/pending_interactive_replay.rs
+index cdbc8512fabe55cb509146dc9a3193d4b77086bf..009aa4bdc1420b87efe48ab6b3db855a27897c7e 100644
+--- a/codex-rs/tui/src/app/pending_interactive_replay.rs
++++ b/codex-rs/tui/src/app/pending_interactive_replay.rs
+@@ -948,13 +948,13 @@ mod tests {
+     #[test]
+     fn thread_event_store_reports_pending_thread_approvals() {
+         let mut store = ThreadEventStore::new(/*capacity*/ 8);
+-        assert_eq!(store.has_pending_thread_approvals(), false);
++        assert_eq!(store.waits_on_user(), false);
+
+         store.push_request(exec_approval_request(
+             "call-1", /*approval_id*/ None, "turn-1",
+         ));
+
+-        assert_eq!(store.has_pending_thread_approvals(), true);
++        assert_eq!(store.waits_on_user(), true);
+
+         store.note_outbound_op(&Op::ExecApproval {
+             id: "call-1".to_string(),
+@@ -962,15 +962,15 @@ mod tests {
+             decision: CommandExecutionApprovalDecision::Accept,
+         });
+
+-        assert_eq!(store.has_pending_thread_approvals(), false);
++        assert_eq!(store.waits_on_user(), false);
+     }
+
+     #[test]
+-    fn request_user_input_does_not_count_as_pending_thread_approval() {
++    fn a_pending_question_waits_on_the_user() {
+         let mut store = ThreadEventStore::new(/*capacity*/ 8);
+         store.push_request(request_user_input_request("call-1", "turn-1"));
+
+-        assert_eq!(store.has_pending_thread_approvals(), false);
++        assert_eq!(store.waits_on_user(), true);
+     }
+
+     #[test]
 diff --git a/codex-rs/tui/src/app/reconnect.rs b/codex-rs/tui/src/app/reconnect.rs
 index 3713be11af4017267c4965ffa90b707810263ba7..6586276bb6b91983a6e23c3015440e7e62cf259d 100644
 --- a/codex-rs/tui/src/app/reconnect.rs
@@ -34455,7 +35623,7 @@ index a0efb33101b4f3b5a31d15e10815cbf8064cb890..9da84f630f519bc499212994799af0db
          startup_pending_protected_request: false,
          account_email_request_id: None,
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index ae4532818adc69f40e3f628954ba4ede697df809..aa638cabdb6147dbc9c23a7de5de37e41f3e8a00 100644
+index ae4532818adc69f40e3f628954ba4ede697df809..830c0399d77a20ea950db455a6207f18b4e4606a 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
 @@ -135,6 +135,7 @@ use codex_utils_absolute_path::test_support::PathExt;
@@ -34526,6 +35694,24 @@ index ae4532818adc69f40e3f628954ba4ede697df809..aa638cabdb6147dbc9c23a7de5de37e4
      app_server.shutdown().await.expect("shutdown app server");
  }
 
+@@ -5533,7 +5569,7 @@ async fn side_parent_status_prioritizes_input_over_approval() -> Result<()> {
+             .store
+             .lock()
+             .await
+-            .has_pending_thread_approvals()
++            .waits_on_user()
+     );
+
+     app.enqueue_thread_notification(
+@@ -5560,7 +5596,7 @@ async fn side_parent_status_prioritizes_input_over_approval() -> Result<()> {
+             .store
+             .lock()
+             .await
+-            .has_pending_thread_approvals()
++            .waits_on_user()
+     );
+     assert_snapshot!(
+         format!("{input_footer}\n{approval_footer}\n{cleared_footer}"),
 @@ -6386,6 +6422,7 @@ async fn ctrl_l_clears_owned_history_and_preserves_the_draft() -> Result<()> {
  async fn make_test_app() -> Box<App> {
      let (mut chat_widget, app_event_tx, _rx, _op_rx) =
@@ -35072,8 +36258,91 @@ index 2c6adf43c188ed0346ca387d2beab10befe73b30..72f46fa451ff469f55794493b9f3848c
      );
      // The source remains available to terminal scrollback in both presentation modes.
      for mode in [HistoryRenderMode::Rich, HistoryRenderMode::Raw] {
+diff --git a/codex-rs/tui/src/app/thread_event_buffer_tests.rs b/codex-rs/tui/src/app/thread_event_buffer_tests.rs
+index ec7e1e066b51ec373656cc29de6bf073bc928983..d5f62399570ad8a902edab380beccf001e40a918 100644
+--- a/codex-rs/tui/src/app/thread_event_buffer_tests.rs
++++ b/codex-rs/tui/src/app/thread_event_buffer_tests.rs
+@@ -119,7 +119,7 @@ fn thread_event_store_coalesces_only_adjacent_matching_agent_message_deltas() {
+                 .expect("delta should serialize"),
+         ]
+     );
+-    assert!(store.has_pending_thread_approvals());
++    assert!(store.waits_on_user());
+
+     let remaining = MAX_COALESCED_AGENT_MESSAGE_DELTA_BYTES - "after approval".len();
+     let exact_limit = "é".repeat(remaining / "é".len());
+@@ -149,7 +149,7 @@ fn thread_event_store_coalesces_only_adjacent_matching_agent_message_deltas() {
+             serde_json::to_value(delta("turn-2", "item-2", "🙂")).expect("delta should serialize"),
+         ]
+     );
+-    assert!(!store.has_pending_thread_approvals());
++    assert!(!store.waits_on_user());
+
+     let mut store = ThreadEventStore::new(/*capacity*/ THREAD_EVENT_CHANNEL_CAPACITY);
+     store.push_request(exec_approval_request(
+@@ -179,7 +179,7 @@ fn thread_event_store_coalesces_only_adjacent_matching_agent_message_deltas() {
+             })
+             .collect::<Vec<_>>()
+     );
+-    assert!(!store.has_pending_thread_approvals());
++    assert!(!store.waits_on_user());
+
+     let mut store = ThreadEventStore::new(/*capacity*/ 4);
+     store.push_notification(turn_started_notification(thread_id, "turn-oversized"));
+@@ -197,7 +197,7 @@ fn thread_event_store_coalesces_only_adjacent_matching_agent_message_deltas() {
+     store.push_notification_ref(&delta("turn-oversized", "item-oversized", &oversized));
+
+     assert_eq!(snapshot_events(&store), expected_events);
+-    assert!(store.has_pending_thread_approvals());
++    assert!(store.waits_on_user());
+     assert_eq!(store.buffered_agent_message_delta_bytes, "retained".len());
+
+     store.push_notification(delta("turn-oversized", "item-oversized", " text"));
+@@ -217,5 +217,5 @@ fn thread_event_store_coalesces_only_adjacent_matching_agent_message_deltas() {
+                 .expect("delta should serialize"),
+         ]
+     );
+-    assert!(store.has_pending_thread_approvals());
++    assert!(store.waits_on_user());
+ }
+diff --git a/codex-rs/tui/src/app/thread_events.rs b/codex-rs/tui/src/app/thread_events.rs
+index d7ef85824678159353739370a601239aca64b005..2b8d3eaf4b6a7e54b8dffa6524588debd1fed3fd 100644
+--- a/codex-rs/tui/src/app/thread_events.rs
++++ b/codex-rs/tui/src/app/thread_events.rs
+@@ -501,9 +501,12 @@ impl ThreadEventStore {
+         PendingInteractiveReplayState::op_can_change_state(op)
+     }
+
+-    pub(super) fn has_pending_thread_approvals(&self) -> bool {
++    pub(super) fn waits_on_user(&self) -> bool {
+         self.pending_interactive_replay
+             .has_pending_thread_approvals()
++            || self
++                .pending_interactive_replay
++                .has_pending_thread_user_input()
+     }
+
+     pub(super) fn side_parent_pending_status(&self) -> Option<SideParentStatus> {
+@@ -940,7 +943,7 @@ mod tests {
+         }
+
+         assert_eq!(store.buffer.len(), 2);
+-        assert!(store.has_pending_thread_approvals());
++        assert!(store.waits_on_user());
+         assert_eq!(store.active_turn_id(), Some("turn-1"));
+     }
+
+@@ -965,7 +968,7 @@ mod tests {
+
+         let snapshot = store.snapshot();
+         assert!(snapshot.events.is_empty());
+-        assert_eq!(store.has_pending_thread_approvals(), false);
++        assert_eq!(store.waits_on_user(), false);
+     }
+
+     #[test]
 diff --git a/codex-rs/tui/src/app/thread_routing.rs b/codex-rs/tui/src/app/thread_routing.rs
-index 07a986931b2ecb254c6bb9458a1087fd29fdc52b..2c8dbc468a6b0654f90710e843736cc998b67179 100644
+index 07a986931b2ecb254c6bb9458a1087fd29fdc52b..45fd4e8fe85c1f3af4775a6401a712febb4a51c9 100644
 --- a/codex-rs/tui/src/app/thread_routing.rs
 +++ b/codex-rs/tui/src/app/thread_routing.rs
 @@ -421,6 +421,7 @@ impl App {
@@ -35099,6 +36368,15 @@ index 07a986931b2ecb254c6bb9458a1087fd29fdc52b..2c8dbc468a6b0654f90710e843736cc9
              if let Err(err) =
                  codex_message_history::append_entry(&text, thread_id, &history_config).await
              {
+@@ -951,7 +960,7 @@ impl App {
+             }
+
+             let store = store.lock().await;
+-            if store.has_pending_thread_approvals() {
++            if store.waits_on_user() {
+                 pending_thread_ids.push(thread_id);
+             }
+         }
 diff --git a/codex-rs/tui/src/app/thread_settings.rs b/codex-rs/tui/src/app/thread_settings.rs
 index 6ad9d672b5862afad7f0d5dcf6b1bc497f6e33d6..01c09a90d8641e7f279505f96a7ba9692cfbc276 100644
 --- a/codex-rs/tui/src/app/thread_settings.rs
@@ -37156,6 +38434,41 @@ index c07712b272f4a9a8b69eb637e2c7eaa697194956..8418a3cecbcf635cc196bea840432db2
      /// Accumulate a newline or tab into the burst instead of invoking a shortcut.
      /// A held first character is promoted into the buffer before the control character.
      ///
+diff --git a/codex-rs/tui/src/bottom_pane/pending_thread_approvals.rs b/codex-rs/tui/src/bottom_pane/pending_thread_approvals.rs
+index 2ff9e6cdbb5ad193e6db290f07d7e1d049c7a5b1..b7ba4f3e58779e2a8df7f1e7bee60bd2f86cc755 100644
+--- a/codex-rs/tui/src/bottom_pane/pending_thread_approvals.rs
++++ b/codex-rs/tui/src/bottom_pane/pending_thread_approvals.rs
+@@ -45,7 +45,7 @@ impl PendingThreadApprovals {
+         let mut lines = Vec::new();
+         for thread in self.threads.iter().take(3) {
+             let wrapped = adaptive_wrap_lines(
+-                std::iter::once(Line::from(format!("Approval needed in {thread}"))),
++                std::iter::once(Line::from(format!("Waiting on you in {thread}"))),
+                 RtOptions::new(width as usize)
+                     .initial_indent(Line::from(vec!["  ".into(), "!".red().bold(), " ".into()]))
+                     .subsequent_indent(Line::from("    ")),
+@@ -119,7 +119,7 @@ mod tests {
+         assert_snapshot!(
+             snapshot_rows(&widget, /*width*/ 40).replace(' ', "."),
+             @r"
+-        ..!.Approval.needed.in.Robie.[explorer].
++        ..!.Waiting.on.you.in.Robie.[explorer]..
+         ..../subagents.to.switch.threads........
+         "
+         );
+@@ -138,9 +138,9 @@ mod tests {
+         assert_snapshot!(
+             snapshot_rows(&widget, /*width*/ 44).replace(' ', "."),
+             @r"
+-        ..!.Approval.needed.in.Main.[default].......
+-        ..!.Approval.needed.in.Robie.[explorer].....
+-        ..!.Approval.needed.in.Inspector............
++        ..!.Waiting.on.you.in.Main.[default]........
++        ..!.Waiting.on.you.in.Robie.[explorer]......
++        ..!.Waiting.on.you.in.Inspector.............
+         ............................................
+         ..../subagents.to.switch.threads............
+         "
 diff --git a/codex-rs/tui/src/bottom_pane/request_user_input/render.rs b/codex-rs/tui/src/bottom_pane/request_user_input/render.rs
 index fb95a97014dd9a6090d41de481d2f82fb8e741a7..e1a7846e062d89a9e0af26ca547c627b724b2535 100644
 --- a/codex-rs/tui/src/bottom_pane/request_user_input/render.rs
@@ -41686,7 +42999,7 @@ index d799c52dd3b20b961160beb3a1f543d83eb52f9f..f56cffc99450a6f51d04c0c9a561a4b5
  {
      boxed_future!(creation_attaches_to_original_task_and_survives_service_restart_scenario()).await
 diff --git a/codex-rs/tui/src/multi_agents.rs b/codex-rs/tui/src/multi_agents.rs
-index 8210270580275555ff25d2ba9d14d37418e66317..854627d07995ed20e35721662d5da3a50b119746 100644
+index 8210270580275555ff25d2ba9d14d37418e66317..dd9072299823a11892d644775d426ae632af07bc 100644
 --- a/codex-rs/tui/src/multi_agents.rs
 +++ b/codex-rs/tui/src/multi_agents.rs
 @@ -5,6 +5,7 @@
@@ -41749,7 +43062,67 @@ index 8210270580275555ff25d2ba9d14d37418e66317..854627d07995ed20e35721662d5da3a5
  }
 
  pub(crate) fn sub_agent_activity_display(item: &ThreadItem) -> Option<SubAgentActivityDisplay> {
-@@ -742,6 +765,17 @@ mod tests {
+@@ -308,15 +331,27 @@ pub(crate) fn sub_agent_activity_display(item: &ThreadItem) -> Option<SubAgentAc
+
+ pub(crate) fn sub_agent_activity_history_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
+     let ThreadItem::SubAgentActivity {
+-        kind, agent_path, ..
++        kind,
++        agent_path,
++        model,
++        reasoning_effort,
++        ..
+     } = item
+     else {
+         return None;
+     };
+-    Some(collab_event(
+-        sub_agent_activity_title(*kind, agent_path),
+-        Vec::new(),
+-    ))
++    let mut title = sub_agent_activity_title(*kind, agent_path);
++    if *kind == SubAgentActivityKind::Started
++        && let Some(model) = model
++    {
++        title
++            .spans
++            .extend(spawn_request_spans(Some(&SpawnRequestSummary {
++                model: model.clone(),
++                reasoning_effort: reasoning_effort.clone().unwrap_or_default(),
++            })));
++    }
++    Some(collab_event(title, Vec::new()))
+ }
+
+ fn sub_agent_activity_title(kind: SubAgentActivityKind, agent_path: &str) -> Line<'static> {
+@@ -678,6 +713,26 @@ mod tests {
+     use ratatui::style::Modifier;
+     use std::collections::HashMap;
+
++    #[test]
++    fn started_sub_agent_activity_names_its_model_and_effort() {
++        let item = ThreadItem::SubAgentActivity {
++            model: Some("claude-sonnet-5-5".to_string()),
++            reasoning_effort: Some(ReasoningEffortConfig::High),
++            id: "activity-1".to_string(),
++            kind: SubAgentActivityKind::Started,
++            agent_thread_id: ThreadId::new().to_string(),
++            agent_path: "/root/research".to_string(),
++        };
++
++        let lines = sub_agent_activity_history_cell(&item)
++            .expect("a started activity renders")
++            .display_lines(80);
++        assert_eq!(
++            lines[0].to_string(),
++            "• Started `/root/research` (claude-sonnet-5-5 high)"
++        );
++    }
++
+     #[test]
+     fn interacted_sub_agent_activity_does_not_change_liveness() {
+         let item = ThreadItem::SubAgentActivity {
+@@ -742,6 +797,17 @@ mod tests {
              |thread_id| metadata_for(thread_id, robie_id, bob_id),
          )
          .expect("spawn item renders");
@@ -41767,7 +43140,7 @@ index 8210270580275555ff25d2ba9d14d37418e66317..854627d07995ed20e35721662d5da3a5
 
          let send = tool_call_history_cell(
              &ThreadItem::CollabAgentToolCall {
-@@ -975,7 +1009,7 @@ mod tests {
+@@ -975,7 +1041,7 @@ mod tests {
          }
      }
 
@@ -42611,10 +43984,10 @@ index b12b8312f242592c4411202fbf100a43f1264a1a..904641a449566c8036583edd7cfcf021
      };
      let _ = DRAFT.try_with(|draft| {
 diff --git a/codex-rs/tui/src/status/card.rs b/codex-rs/tui/src/status/card.rs
-index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..0faa9b0b23b16476991d80d21e844e069d08b7f1 100644
+index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..aeb058c0f11ac292886c6d809014aea40e10e9b1 100644
 --- a/codex-rs/tui/src/status/card.rs
 +++ b/codex-rs/tui/src/status/card.rs
-@@ -52,6 +52,33 @@ use std::sync::RwLock;
+@@ -52,6 +52,62 @@ use std::sync::RwLock;
 
  const CHATGPT_USAGE_URL: &str = "https://chatgpt.com/settings/usage";
 
@@ -42645,10 +44018,69 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..0faa9b0b23b16476991d80d21e844e06
 +    }
 +}
 +
++pub(super) fn subagent_summary(agent: &serde_json::Value) -> String {
++    let usage = &agent["usage"];
++    let tokens =
++        |key: &str| super::helpers::format_tokens_compact(usage[key].as_i64().unwrap_or_default());
++    let cost = match (usage["basis"].as_str(), usage["microusd"].as_u64()) {
++        _ if agent["billing"] == "included_subscription" => "included".to_string(),
++        (Some("settled"), Some(microusd)) => format!("${:.2}", microusd as f64 / 1_000_000.0),
++        (Some("partial"), Some(microusd)) => {
++            format!("${:.2} + unpriced", microusd as f64 / 1_000_000.0)
++        }
++        _ => "unpriced".to_string(),
++    };
++    let role = agent["role"].as_str().unwrap_or("agent");
++    let model = match (agent["model"].as_str(), agent["provider"].as_str()) {
++        (Some(model), Some(provider)) => format!("{model} ({provider})"),
++        (Some(model), None) => model.to_string(),
++        _ => "inherited model".to_string(),
++    };
++    let status = match agent["status"].as_str().unwrap_or("running") {
++        "running" if agent["last_turn"]["outcome"] == "completed" => "idle",
++        status => status,
++    };
++    format!(
++        "{role} · {model} · {} in / {} out · {cost} · {status}",
++        tokens("input_tokens"),
++        tokens("output_tokens")
++    )
++}
++
  #[derive(Debug, Clone)]
  struct StatusContextWindowData {
      percent_remaining: i64,
-@@ -754,6 +781,11 @@ impl StatusHistoryCell {
+@@ -137,6 +193,7 @@ struct StatusHistoryCell {
+     thread_name: Option<String>,
+     session_id: Option<String>,
+     forked_from: Option<String>,
++    subagents: Vec<String>,
+     token_usage: StatusTokenUsageData,
+     rate_limit_state: Arc<RwLock<StatusRateLimitState>>,
+     thread_usage: StatusThreadUsage,
+@@ -352,6 +409,13 @@ impl StatusHistoryCell {
+         let show_chatgpt_usage_link = requires_openai_auth;
+         let account = compose_account_display(account_display);
+         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
++        let subagents = session_id
++            .as_deref()
++            .map(crate::omd::session_agents)
++            .unwrap_or_default()
++            .iter()
++            .map(subagent_summary)
++            .collect();
+         let forked_from = forked_from.map(|id| id.to_string());
+         let default_usage = TokenUsage::default();
+         let (context_usage, context_window) = match token_info {
+@@ -395,6 +459,7 @@ impl StatusHistoryCell {
+             thread_name,
+             session_id,
+             forked_from,
++            subagents,
+             token_usage,
+             agents_summary,
+             rate_limit_state,
+@@ -754,6 +819,11 @@ impl StatusHistoryCell {
              .map(str::to_string)
              .collect();
          let mut seen: BTreeSet<String> = labels.iter().cloned().collect();
@@ -42660,7 +44092,17 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..0faa9b0b23b16476991d80d21e844e06
          let thread_name = self.thread_name.as_deref().filter(|name| !name.is_empty());
          #[expect(clippy::expect_used)]
          let rate_limit_state = self
-@@ -831,6 +863,18 @@ impl StatusHistoryCell {
+@@ -785,6 +855,9 @@ impl StatusHistoryCell {
+         if self.collaboration_mode.is_some() {
+             push_label(&mut labels, &mut seen, "Collaboration mode");
+         }
++        if !self.subagents.is_empty() {
++            push_label(&mut labels, &mut seen, "Agents");
++        }
+         push_label(&mut labels, &mut seen, "Token usage");
+         if self.token_usage.context_window.is_some() {
+             push_label(&mut labels, &mut seen, "Context window");
+@@ -831,6 +904,18 @@ impl StatusHistoryCell {
          lines.push(formatter.line("Directory", vec![Span::from(directory_value)]));
          lines.push(formatter.line("Permissions", vec![Span::from(self.permissions.clone())]));
          lines.push(formatter.line("Agents.md", vec![Span::from(agents_summary)]));
@@ -42679,6 +44121,21 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..0faa9b0b23b16476991d80d21e844e06
 
          if let Some(account_value) = account_value {
              lines.push(formatter.line("Account", vec![Span::from(account_value)]));
+@@ -850,6 +935,14 @@ impl StatusHistoryCell {
+         {
+             lines.push(formatter.line("Forked from", vec![Span::from(forked_from.clone())]));
+         }
++        for (index, agent) in self.subagents.iter().enumerate() {
++            let spans = vec![Span::from(agent.clone())];
++            lines.push(if index == 0 {
++                formatter.line("Agents", spans)
++            } else {
++                formatter.continuation(spans)
++            });
++        }
+
+         lines.push(Line::from(Vec::<Span<'static>>::new()));
+         // Hide token usage only for ChatGPT subscribers
 diff --git a/codex-rs/tui/src/status/rate_limits.rs b/codex-rs/tui/src/status/rate_limits.rs
 index c22868b62115a73827250f8b30b1f193474a4098..2a0befaeabc9bdeb604aeb1578a28c70f2ccf686 100644
 --- a/codex-rs/tui/src/status/rate_limits.rs
@@ -43139,7 +44596,7 @@ index 51fbff67df9be7df543655806c3cca767288756c..9fd92807b787785819b60cdca417672b
    Visit https://chatgpt.com/settings/usage for up-to-date
    information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/tests.rs b/codex-rs/tui/src/status/tests.rs
-index bb76a2964ead5cea2cf98b0504880848048653d5..1884809ca57b724ff673bc0c6ea575fe60b267fe 100644
+index bb76a2964ead5cea2cf98b0504880848048653d5..a1d8583e78f8d87b0aaf4f5eae780f7158822748 100644
 --- a/codex-rs/tui/src/status/tests.rs
 +++ b/codex-rs/tui/src/status/tests.rs
 @@ -81,6 +81,7 @@ fn stale_monthly_limit_marks_fresh_rolling_snapshot_stale() {
@@ -43278,6 +44735,36 @@ index bb76a2964ead5cea2cf98b0504880848048653d5..1884809ca57b724ff673bc0c6ea575fe
      };
      let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
      let now = captured_at + ChronoDuration::minutes(20);
+@@ -2389,3 +2406,29 @@ fn reset_timestamps_follow_clock_preference() {
+     00:00 on 22 Sep
+     ");
+ }
++
++#[test]
++fn subagent_rows_name_model_tokens_and_cost_basis() {
++    let agent = |billing: &str, basis: &str| {
++        serde_json::json!({"role": "researcher", "model": "claude-sonnet-5-5", "provider": "omd_claude_cli",
++            "billing": billing, "status": "completed",
++            "usage": {"input_tokens": 12_400, "output_tokens": 900, "microusd": 41_000, "basis": basis}})
++    };
++    assert_eq!(
++        super::card::subagent_summary(&agent("included_subscription", "settled")),
++        "researcher · claude-sonnet-5-5 (omd_claude_cli) · 12.4K in / 900 out · included · completed"
++    );
++    assert_eq!(
++        super::card::subagent_summary(&agent("provider_billed", "partial")),
++        "researcher · claude-sonnet-5-5 (omd_claude_cli) · 12.4K in / 900 out · $0.04 + unpriced · completed"
++    );
++    assert_eq!(
++        super::card::subagent_summary(&serde_json::json!({"role": "worker", "usage": {}})),
++        "worker · inherited model · 0 in / 0 out · unpriced · running"
++    );
++    assert_eq!(
++        super::card::subagent_summary(&serde_json::json!({"role": "worker", "status": "running",
++            "last_turn": {"outcome": "completed"}, "usage": {}})),
++        "worker · inherited model · 0 in / 0 out · unpriced · idle"
++    );
++}
 diff --git a/codex-rs/tui/src/status_indicator_widget.rs b/codex-rs/tui/src/status_indicator_widget.rs
 index 3cb54b2cf73b665e2606e99b827e06973e695ac1..e328e146d698deed8e50555c6c599fb23a3af74a 100644
 --- a/codex-rs/tui/src/status_indicator_widget.rs
@@ -52758,12 +54245,13 @@ index 0000000000000000000000000000000000000000..f6f77a995f3a06e516b465f0efc01d11
 +}
 diff --git a/codex-rs/core/tests/suite/provider_switch.rs b/codex-rs/core/tests/suite/provider_switch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c24da6d0d
+index 0000000000000000000000000000000000000000..6a37810a8f7fdd9993acff87e48fbbdde86b2cac
 --- /dev/null
 +++ b/codex-rs/core/tests/suite/provider_switch.rs
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,483 @@
 +use anyhow::Result;
 +use codex_core::TurnInputRequest;
++use codex_features::Feature;
 +use codex_history::RolloutItem;
 +use codex_login::CodexAuth;
 +use codex_model_provider_info::ModelProviderInfo;
@@ -52774,6 +54262,7 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +use core_test_support::responses::ev_assistant_message;
 +use core_test_support::responses::ev_completed;
 +use core_test_support::responses::ev_function_call;
++use core_test_support::responses::ev_function_call_with_namespace;
 +use core_test_support::responses::ev_reasoning_item;
 +use core_test_support::responses::mount_response_sequence;
 +use core_test_support::responses::mount_sse_sequence;
@@ -52790,7 +54279,16 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +use std::time::Duration;
 +use wiremock::MockServer;
 +
-+fn runtime_provider(id: &str, slug: &str, server: &MockServer) {
++struct RuntimeProvider(String);
++
++impl Drop for RuntimeProvider {
++    fn drop(&mut self) {
++        codex_models_manager::runtime_models::set(&self.0, Vec::new());
++        codex_model_provider_info::set_runtime_provider(&self.0, None);
++    }
++}
++
++fn runtime_provider(id: &str, slug: &str, server: &MockServer) -> RuntimeProvider {
 +    codex_model_provider_info::set_runtime_provider(
 +        id,
 +        Some(ModelProviderInfo {
@@ -52804,6 +54302,7 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +    let mut model = codex_models_manager::model_info::model_info_from_slug(slug);
 +    model.used_fallback_model_metadata = false;
 +    codex_models_manager::runtime_models::set(id, vec![model]);
++    RuntimeProvider(id.to_string())
 +}
 +
 +fn reply(id: &str, text: &str) -> String {
@@ -52860,7 +54359,7 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +    let startup_log =
 +        mount_sse_sequence(&startup, vec![reply("a1", "FIRST"), reply("a3", "THIRD")]).await;
 +    let other_log = mount_sse_sequence(&other, vec![reply("b2", "SECOND")]).await;
-+    runtime_provider("switch_carry", "switch-carry-model", &other);
++    let _provider = runtime_provider("switch_carry", "switch-carry-model", &other);
 +    let test = test_codex().build(&startup).await?;
 +    let startup_provider = test.config.model_provider_id.clone();
 +    let startup_model = test.session_configured.model.clone();
@@ -52919,7 +54418,7 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +    mount_sse_sequence(&startup, vec![reply("a1", "FIRST")]).await;
 +    let other_log =
 +        mount_sse_sequence(&other, vec![reply("b2", "SECOND"), reply("b3", "SUMMARY")]).await;
-+    runtime_provider("switch_compact", "switch-compact-model", &other);
++    let _provider = runtime_provider("switch_compact", "switch-compact-model", &other);
 +    let test = test_codex().build(&startup).await?;
 +
 +    turn(&test, "turn one").await?;
@@ -52959,7 +54458,7 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +        ],
 +    )
 +    .await;
-+    runtime_provider("switch_mid", "switch-mid-model", &other);
++    let _provider = runtime_provider("switch_mid", "switch-mid-model", &other);
 +    let test = test_codex().build(&startup).await?;
 +
 +    test.codex
@@ -53008,7 +54507,7 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +    )
 +    .await;
 +    let other_log = mount_sse_sequence(&other, vec![reply("b1", "SECOND")]).await;
-+    runtime_provider("switch_summary", "switch-summary-model", &other);
++    let _provider = runtime_provider("switch_summary", "switch-summary-model", &other);
 +    let test = test_codex()
 +        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
 +        .build(&startup)
@@ -53060,7 +54559,7 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +    .await;
 +    let other_log =
 +        mount_sse_sequence(&other, vec![reply("b1", "SECOND"), reply("b2", "THIRD")]).await;
-+    runtime_provider("carry_failure", "carry-failure-model", &other);
++    let _provider = runtime_provider("carry_failure", "carry-failure-model", &other);
 +    let test = test_codex()
 +        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
 +        .build(&startup)
@@ -53081,6 +54580,156 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +    assert_eq!(other_requests.len(), 2);
 +    assert!(mentions(&other_requests[0].input(), "turn two"));
 +    assert!(!mentions(&other_requests[0].input(), "OPENAI_ONLY_SUMMARY"));
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn spawned_agent_runs_on_the_provider_that_registered_its_model() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let startup = start_mock_server().await;
++    let other = start_mock_server().await;
++    let spawn = sse(vec![
++        ev_reasoning_item("a2-reasoning", &["SPAWNING"], &[]),
++        ev_function_call_with_namespace(
++            "spawn-1",
++            "collaboration",
++            "spawn_agent",
++            &json!({"task_name": "researcher", "message": "CHILD_TASK", "fork_turns": "all",
++                "model": "spawn-other-model"})
++            .to_string(),
++        ),
++        ev_completed("a2"),
++    ]);
++    let startup_log = mount_sse_sequence(
++        &startup,
++        vec![reply("a1", "FIRST"), spawn, reply("a3", "SPAWNED")],
++    )
++    .await;
++    let other_log = mount_sse_sequence(&other, vec![reply("b1", "CHILD_DONE")]).await;
++    let _provider = runtime_provider("spawn_other", "spawn-other-model", &other);
++    let test = test_codex()
++        .with_config(|config| {
++            for feature in [Feature::Collab, Feature::MultiAgentV2] {
++                config
++                    .features
++                    .enable(feature)
++                    .expect("test config should allow feature update");
++            }
++        })
++        .build(&startup)
++        .await?;
++
++    turn(&test, "turn one").await?;
++    turn(&test, "spawn a researcher").await?;
++    for _ in 0..200 {
++        if !other_log.requests().is_empty() {
++            break;
++        }
++        tokio::time::sleep(Duration::from_millis(25)).await;
++    }
++
++    let child = other_log.requests();
++    assert_eq!(child.len(), 1);
++    assert_eq!(child[0].body_json()["model"], "spawn-other-model");
++    let hosted_search = |body: Value| {
++        body["tools"]
++            .to_string()
++            .contains("\"type\":\"web_search\"")
++    };
++    assert!(hosted_search(startup_log.requests()[0].body_json()));
++    assert!(!hosted_search(child[0].body_json()));
++    let input = child[0].input();
++    assert!(mentions(&input, "CHILD_TASK") && mentions(&input, "turn one"));
++    assert_eq!(reasoning_summaries(&input), Vec::<String>::new());
++    assert!(
++        startup_log
++            .requests()
++            .iter()
++            .all(|request| request.body_json()["model"] != "spawn-other-model")
++    );
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn spawned_base_model_agent_returns_to_the_configured_provider() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let startup = start_mock_server().await;
++    let other = start_mock_server().await;
++    let _provider = runtime_provider("spawn_home", "spawn-home-model", &other);
++    let test = test_codex()
++        .with_config(|config| {
++            for feature in [Feature::Collab, Feature::MultiAgentV2] {
++                config
++                    .features
++                    .enable(feature)
++                    .expect("test config should allow feature update");
++            }
++        })
++        .build(&startup)
++        .await?;
++    let startup_model = test.session_configured.model.clone();
++    let spawn = sse(vec![
++        ev_function_call_with_namespace(
++            "spawn-1",
++            "collaboration",
++            "spawn_agent",
++            &json!({"task_name": "researcher", "message": "CHILD_TASK", "fork_turns": "all",
++                "model": startup_model})
++            .to_string(),
++        ),
++        ev_completed("b1"),
++    ]);
++    let other_log = mount_sse_sequence(&other, vec![spawn, reply("b2", "SPAWNED")]).await;
++    let startup_log = mount_sse_sequence(&startup, vec![reply("a1", "CHILD_DONE")]).await;
++
++    switch(&test, "spawn_home", "spawn-home-model").await?;
++    turn(&test, "spawn a researcher").await?;
++    for _ in 0..200 {
++        if !startup_log.requests().is_empty() {
++            break;
++        }
++        tokio::time::sleep(Duration::from_millis(25)).await;
++    }
++
++    let child = startup_log.requests();
++    assert_eq!(child.len(), 1);
++    assert_eq!(child[0].body_json()["model"], startup_model.as_str());
++    assert!(
++        child[0].body_json()["tools"]
++            .to_string()
++            .contains("\"type\":\"web_search\"")
++    );
++    assert!(mentions(&child[0].input(), "CHILD_TASK"));
++    assert!(
++        other_log
++            .requests()
++            .iter()
++            .all(|request| request.body_json()["model"] == "spawn-home-model")
++    );
++    Ok(())
++}
++
++#[tokio::test]
++async fn a_thread_started_on_a_runtime_provider_keeps_the_configured_provider() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = start_mock_server().await;
++    let _provider = runtime_provider("resume_runtime", "resume-runtime-model", &server);
++    let home = tempfile::TempDir::new()?;
++    let config = codex_core::config::ConfigBuilder::default()
++        .codex_home(home.path().to_path_buf())
++        .harness_overrides(codex_core::config::ConfigOverrides {
++            model_provider: Some("resume_runtime".to_string()),
++            ..Default::default()
++        })
++        .build()
++        .await?;
++    assert_eq!(
++        (
++            config.model_provider_id.as_str(),
++            config.configured_model_provider_id.as_str()
++        ),
++        ("resume_runtime", "openai")
++    );
 +    Ok(())
 +}
 diff --git a/codex-rs/exec/src/omd_surface.rs b/codex-rs/exec/src/omd_surface.rs
@@ -53391,10 +55040,10 @@ index 0000000000000000000000000000000000000000..849d5c204dad866d56258a136ce8e440
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..33f5e1a1998871f700bafca76c9bb8714703251b
+index 0000000000000000000000000000000000000000..87d2dd64e9dfbad869b703c3341eea1b4ad38b67
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2348 @@
+@@ -0,0 +1,2366 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -53653,9 +55302,16 @@ index 0000000000000000000000000000000000000000..33f5e1a1998871f700bafca76c9bb871
 +    dispatcher: Mutex<Option<ModDispatcher>>,
 +    notifier: Mutex<Option<ModNotifier>>,
 +    requests: Arc<Mutex<RequestState>>,
++    refused: Mutex<BTreeMap<String, String>>,
 +}
 +
 +impl Accounts {
++    pub(crate) fn refuse(&self, thread: &str, reason: String) {
++        if let Ok(mut refused) = self.refused.lock() {
++            refused.insert(thread.to_owned(), reason);
++        }
++    }
++
 +    #[cfg(test)]
 +    pub(crate) fn mod_installation(&self) -> (usize, usize, usize) {
 +        let runtime = self.runtime.lock().unwrap();
@@ -53769,6 +55425,9 @@ index 0000000000000000000000000000000000000000..33f5e1a1998871f700bafca76c9bb871
 +    }
 +
 +    pub fn forget_thread(&self, thread: &str) {
++        if let Ok(mut refused) = self.refused.lock() {
++            refused.remove(thread);
++        }
 +        if let Ok(mut state) = self.requests.lock() {
 +            state.retries.remove(thread);
 +            state.fingerprints.remove(thread);
@@ -54638,6 +56297,14 @@ index 0000000000000000000000000000000000000000..33f5e1a1998871f700bafca76c9bb871
 +        else {
 +            return Ok(None);
 +        };
++        if let Some(reason) = self
++            .refused
++            .lock()
++            .map_err(|_| denied("refusal lock poisoned"))?
++            .get(&thread)
++        {
++            return Err(denied(reason));
++        }
 +        let Some(account) = self
 +            .by_thread
 +            .lock()
@@ -55745,10 +57412,10 @@ index 0000000000000000000000000000000000000000..33f5e1a1998871f700bafca76c9bb871
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..109875e14f35a2df76d66c2e8b79c4fe869528a3
+index 0000000000000000000000000000000000000000..eba78f68f26af276b1ed4025b9a99be0a3f0506c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1360 @@
+@@ -0,0 +1,1371 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -56098,6 +57765,17 @@ index 0000000000000000000000000000000000000000..109875e14f35a2df76d66c2e8b79c4fe
 +        credential: None,
 +        url: String::new(),
 +    }
++}
++
++#[test]
++fn a_refused_account_sends_nothing() {
++    let (_root, accounts, _task, mut request, body) = setup();
++    accounts.refuse("child", "agent_route_unavailable: m".into());
++    let refused = accounts
++        .before_send(&mut request, Some(&body))
++        .err()
++        .unwrap();
++    assert!(format!("{refused:?}").contains("agent_route_unavailable: m"));
 +}
 +
 +#[test]
@@ -61804,10 +63482,10 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..25609f0d0c90b4b50fcf1615178bef578a26a9a0
+index 0000000000000000000000000000000000000000..1b06e09b088d25d6b7166ffa82d5e969b0e2c101
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,715 @@
+@@ -0,0 +1,775 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -62051,6 +63729,19 @@ index 0000000000000000000000000000000000000000..25609f0d0c90b4b50fcf1615178bef57
 +    }
 +}
 +
++fn provider_worker(owner: &str) -> bool {
++    owner.starts_with("agent:") && owner.contains('@')
++}
++
++fn cross_provider_child(
++    parent_owner: &str,
++    parent_provider: &str,
++    provider: &str,
++    configured_provider: &str,
++) -> bool {
++    provider_worker(parent_owner) || parent_provider != provider && provider != configured_provider
++}
++
 +fn lead_candidate(route: &Route, provider: &str) -> bool {
 +    route.roles.contains(&config::RouteRole::Lead)
 +        && (route.provider == provider || route.credential.is_some())
@@ -62202,6 +63893,53 @@ index 0000000000000000000000000000000000000000..25609f0d0c90b4b50fcf1615178bef57
 +                    && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
 +            })
 +            .cloned()
++    }
++
++    fn provider_lead_route(&self, provider: &str, model: &str) -> Option<Route> {
++        let (routing, _) = self.route_config();
++        let mut routes = routing.routes.iter().filter(|route| {
++            route.roles.contains(&config::RouteRole::Lead) && route.provider == provider
++        });
++        routes
++            .clone()
++            .find(|route| route.model == model)
++            .or_else(|| routes.next())
++            .cloned()
++    }
++
++    fn enroll_cross_provider(
++        &self,
++        thread: ThreadId,
++        session: &Arc<Session>,
++        owner: &str,
++        parent: &str,
++        depth: u32,
++        provider: &str,
++        model: &str,
++    ) -> Result<(), String> {
++        let mut route = self.provider_lead_route(provider, model).ok_or_else(|| {
++            format!("agent_route_unavailable: {model} has no lead route on provider {provider}")
++        })?;
++        route.model = model.to_owned();
++        let worker = format!("{owner}@{}", ThreadId::new());
++        session
++            .task
++            .start_worker(
++                worker.clone(),
++                parent.to_owned(),
++                depth,
++                self.worker_limits(session)?,
++            )
++            .map_err(|error| format!("agent_admission_refused: {error}"))?;
++        let enrolled = session
++            .task
++            .authorize_worker_route(&worker, &route.provider, &route.model)
++            .map_err(|error| error.to_string())
++            .and_then(|()| self.enroll(thread, session, &worker, Some(&route), None));
++        if enrolled.is_err() {
++            let _ = session.task.finish_worker(&worker);
++        }
++        enrolled
 +    }
 +
 +    fn protected_paths(&self) -> Vec<PathBuf> {
@@ -65094,10 +66832,10 @@ index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd713
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f327655b93ff1
+index 0000000000000000000000000000000000000000..978ecaa8807f72477d99256a52264220a9ca8363
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2533 @@
+@@ -0,0 +1,2606 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -65580,6 +67318,10 @@ index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f3276
 +        .accounts
 +        .install_mod_dispatcher(dispatcher);
 +    intercept::install_notifier(&extension.core);
++    extension
++        .core
++        .inventory
++        .persist_to(extension.core.host.root.join("agents"));
 +    registry.config_contributor(extension.clone());
 +    registry.prompt_contributor(extension.clone());
 +    registry.thread_lifecycle_contributor(extension.clone());
@@ -66791,6 +68533,7 @@ index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f3276
 +
 +    fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
++            self.inventory.turn_started(input.thread_store.level_id());
 +            let Some(lead) = input
 +                .thread_store
 +                .get::<Lead>()
@@ -66948,6 +68691,15 @@ index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f3276
 +            });
 +            let Some((owner, depth)) = thread_owner(&input, thread, parent_session.is_some())
 +            else {
++                if parent.is_some()
++                    && codex_model_provider_info::runtime_provider(&input.config.model_provider_id)
++                        .is_some()
++                {
++                    host.accounts.refuse(
++                        &thread.to_string(),
++                        "agent_parent_unavailable: a subagent on a registered provider runs only beside its parent session".into(),
++                    );
++                }
 +                return;
 +            };
 +            let session = match parent_session {
@@ -66973,15 +68725,61 @@ index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f3276
 +            let route = (owner == "lead")
 +                .then(|| host.lead_route(input.config))
 +                .flatten();
-+            if let Err(error) =
-+                host.enroll(thread, &session, &owner, route.as_ref(), Some(input.config))
-+            {
++            let parent_account = parent.and_then(|parent| {
++                host.accounts
++                    .by_thread
++                    .lock()
++                    .ok()?
++                    .get(&parent.to_string())
++                    .map(|account| (account.owner.clone(), account.provider.clone()))
++            });
++            let cross_provider = parent_account.as_ref().filter(|(owner, provider)| {
++                crate::cross_provider_child(
++                    owner,
++                    provider,
++                    &input.config.model_provider_id,
++                    &input.config.configured_model_provider_id,
++                )
++            });
++            let enrolled = match cross_provider {
++                Some((parent_owner, _)) => host.enroll_cross_provider(
++                    thread,
++                    &session,
++                    &owner,
++                    parent_owner,
++                    depth,
++                    &input.config.model_provider_id,
++                    input.config.model.as_deref().unwrap_or_default(),
++                ),
++                None => host.enroll(thread, &session, &owner, route.as_ref(), Some(input.config)),
++            };
++            if let Err(error) = enrolled {
 +                self.views.diagnostic(
 +                    &self.host,
 +                    "session",
 +                    Some(format!("OMD ledger enrollment failed: {error}")),
 +                );
++                if cross_provider.is_some() {
++                    host.accounts.refuse(&thread.to_string(), error);
++                }
 +                return;
++            }
++            if owner != "lead"
++                && let Some((provider, model, billing)) =
++                    host.accounts.by_thread.lock().ok().and_then(|accounts| {
++                        let account = accounts.get(&thread.to_string())?;
++                        Some((
++                            account.provider.clone(),
++                            account.model.clone(),
++                            account
++                                .rates
++                                .is_some()
++                                .then(|| crate::accounting::billing(account.rates.as_ref())),
++                        ))
++                    })
++            {
++                self.inventory
++                    .describe(&thread.to_string(), &provider, &model, billing);
 +            }
 +            if owner == "lead" {
 +                let runtime = self.runtime.clone();
@@ -67128,8 +68926,11 @@ index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f3276
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
 +                return;
 +            };
-+            if let Ok(mut accounts) = self.host.accounts.by_thread.lock() {
-+                accounts.remove(&lead.thread.to_string());
++            if let Ok(mut accounts) = self.host.accounts.by_thread.lock()
++                && let Some(account) = accounts.remove(&lead.thread.to_string())
++                && crate::provider_worker(&account.owner)
++            {
++                let _ = account.task.finish_worker(&account.owner);
 +            }
 +            self.host.accounts.forget_thread(&lead.thread.to_string());
 +            expansion::release_thread(self, lead.thread);
@@ -67141,6 +68942,7 @@ index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f3276
 +                return;
 +            }
 +            self.expansion.forget_inventory(lead.thread);
++            self.inventory.forget_session(&lead.thread.to_string());
 +            self.agents.cleanup_session(&lead.session).await;
 +            self.agents.cleanup_snapshots(lead.thread);
 +            self.services.cleanup_session(&lead.session).await;
@@ -67242,6 +69044,9 @@ index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f3276
 +                codex_tools::ToolPayload::Custom { input } => (true, input),
 +                _ => return Ok(ToolInterception::Continue(None)),
 +            };
++            if roles::is_spawn(input.tool_name) {
++                roles::spawn_capacity_admitted(&self.inventory, &lead, input.call_id)?;
++            }
 +            let original_tool = input.tool_name.clone();
 +            let scope_agent_id = agent_id(input.thread_store);
 +            let raw_arguments = raw.chars().take(65_536).collect::<String>();
@@ -67257,6 +69062,9 @@ index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f3276
 +                    .agent_spawn
 +                    .lock()
 +                    .is_ok_and(|intercepts| intercepts.is_some());
++            if !spawn && roles::is_spawn(input.tool_name) {
++                roles::spawn_route_admitted(&lead, arguments["model"].as_str())?;
++            }
 +            let surface = if spawn { "agent_spawn" } else { "tool" };
 +            let payload = if spawn {
 +                self.spawn_payload(&lead, &arguments, &lead.host.repository)
@@ -67514,6 +69322,9 @@ index 0000000000000000000000000000000000000000..fb21e1b44382e54168252b383d5f3276
 +
 +    fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
 +        Box::pin(async move {
++            if roles::is_spawn(input.tool_name) {
++                self.inventory.release_spawn(input.call_id);
++            }
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
 +                return;
 +            };
@@ -68451,10 +70262,10 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e191be0a80fee07cebbd13dceae5d227fe145db4
+index 0000000000000000000000000000000000000000..88a907c0ade59fbe9d6ce987b04d88dfa2d666fe
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2580 @@
+@@ -0,0 +1,2633 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -69231,6 +71042,8 @@ index 0000000000000000000000000000000000000000..e191be0a80fee07cebbd13dceae5d227
 +    resolution_context: Option<ResolutionContext>,
 +    #[serde(default)]
 +    parent_history: bool,
++    #[serde(default)]
++    model: Option<String>,
 +}
 +
 +#[derive(Deserialize)]
@@ -70169,7 +71982,38 @@ index 0000000000000000000000000000000000000000..e191be0a80fee07cebbd13dceae5d227
 +            {
 +                return Err("worker_route_authority_exceeded".into());
 +            }
-+            return Ok((route.clone(), true));
++            let runtime = codex_models_manager::runtime_models::find(&route.model)
++                .is_some_and(|(provider, _)| provider == route.provider);
++            unchanged_model(request, route)?;
++            return Ok((route.clone(), !runtime));
++        }
++        let provider_lead = routing
++            .route(&request.route, config::RouteRole::Lead, None)
++            .filter(|route| {
++                !route.roles.contains(&config::RouteRole::Worker)
++                    && (route.mods.is_empty() || route.mods.iter().any(|id| id == caller.id))
++                    && codex_models_manager::runtime_models::find(&route.model)
++                        .is_some_and(|(provider, _)| provider == route.provider)
++            });
++        if let Some(route) = provider_lead {
++            let mut route = route.clone();
++            if let Some(model) = request.model.take() {
++                let info = codex_models_manager::runtime_models::find(&model)
++                    .filter(|(provider, _)| *provider == route.provider)
++                    .map(|(_, info)| info)
++                    .ok_or("agent_model_not_in_route_provider_catalog")?;
++                if !info
++                    .supported_reasoning_levels
++                    .iter()
++                    .any(|level| level.effort == route.reasoning_effort)
++                    && let Some(effort) = info.default_reasoning_level
++                {
++                    route.reasoning_effort = effort;
++                }
++                route.model = model;
++            }
++            restrict_tools(&route, request, writable)?;
++            return Ok((route, false));
 +        }
 +        let Some(route) = routing.route(&request.route, config::RouteRole::Worker, Some(caller.id))
 +        else {
@@ -70177,6 +72021,7 @@ index 0000000000000000000000000000000000000000..e191be0a80fee07cebbd13dceae5d227
 +                .services
 +                .route(caller.id, caller.generation, &request.route)
 +                .await?;
++            unchanged_model(request, &route)?;
 +            return Ok((route, false));
 +        };
 +        let grant = route.grant.as_ref().ok_or("worker_route_requires_grant")?;
@@ -70191,17 +72036,8 @@ index 0000000000000000000000000000000000000000..e191be0a80fee07cebbd13dceae5d227
 +        ) {
 +            return Err("worker_grant_missing_changed_or_revoked".into());
 +        }
-+        if !route.tools.is_empty() {
-+            if writable
-+                || request
-+                    .tools
-+                    .as_ref()
-+                    .is_some_and(|tools| tools.iter().any(|tool| !route.tools.contains(tool)))
-+            {
-+                return Err("worker_route_authority_exceeded".into());
-+            }
-+            request.tools = Some(request.tools.take().unwrap_or_else(|| route.tools.clone()));
-+        }
++        unchanged_model(request, route)?;
++        restrict_tools(route, request, writable)?;
 +        Ok((route.clone(), true))
 +    }
 +
@@ -70894,7 +72730,8 @@ index 0000000000000000000000000000000000000000..e191be0a80fee07cebbd13dceae5d227
 +            &thread_id.to_string(),
 +            json!({"agent_id": id, "origin": "mod", "owner": caller.id,
 +                "parent": {"thread_id": lead.thread.to_string(), "agent_id": parent_agent},
-+                "role": start_role, "route": request.route,
++                "role": start_role, "route": request.route, "provider": route.provider, "model": route.model,
++                "billing": crate::accounting::billing(Some(&route.rates)),
 +                "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
 +                    "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
 +        );
@@ -71034,6 +72871,33 @@ index 0000000000000000000000000000000000000000..e191be0a80fee07cebbd13dceae5d227
 +    while !cancelled.load(Ordering::Acquire) {
 +        tokio::time::sleep(Duration::from_millis(50)).await;
 +    }
++}
++
++fn unchanged_model(request: &Spawn, route: &Route) -> Result<(), String> {
++    if request
++        .model
++        .as_ref()
++        .is_some_and(|model| *model != route.model)
++    {
++        return Err("agent_model_requires_provider_lead_route".into());
++    }
++    Ok(())
++}
++
++fn restrict_tools(route: &Route, request: &mut Spawn, writable: bool) -> Result<(), String> {
++    if route.tools.is_empty() {
++        return Ok(());
++    }
++    if writable
++        || request
++            .tools
++            .as_ref()
++            .is_some_and(|tools| tools.iter().any(|tool| !route.tools.contains(tool)))
++    {
++        return Err("worker_route_authority_exceeded".into());
++    }
++    request.tools = Some(request.tools.take().unwrap_or_else(|| route.tools.clone()));
++    Ok(())
 +}
 diff --git a/codex-rs/ext/omd/src/mods/autonomy.rs b/codex-rs/ext/omd/src/mods/autonomy.rs
 new file mode 100644
@@ -75033,10 +76897,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d57edddb5a3b8e60122e9cfca565e002ceb60326
+index 0000000000000000000000000000000000000000..35b6c0a468ebe9b48dbc8760d4f1d7232105a455
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4763 @@
+@@ -0,0 +1,5060 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -77903,6 +79767,114 @@ index 0000000000000000000000000000000000000000..d57edddb5a3b8e60122e9cfca565e002
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++async fn mod_workers_may_run_on_a_registered_providers_lead_route() {
++    let Some(fixture) = fixture(&[Package {
++        id: "delegate",
++        capabilities: &["agents"],
++        manifest: Value::Null,
++        source: "export default function () {}\n",
++    }]) else {
++        return;
++    };
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    let models = ["provider-worker-model", "provider-worker-other"]
++        .map(codex_models_manager::model_info::model_info_from_slug);
++    codex_models_manager::runtime_models::set("provider-worker", models.to_vec());
++    let route = |name: &str, model: &str, mods: Value| {
++        json!({"name": name, "roles": ["lead"], "provider": "provider-worker", "model": model,
++            "mods": mods, "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
++            "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
++            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
++            "input_token_ceiling": 1000, "included_subscription": true}})
++    };
++    std::fs::write(
++        fixture.lead.host.root.join("host.json"),
++        json!({"routes": [
++            route("open", "provider-worker-model", json!([])),
++            route("granted", "provider-worker-model", json!(["delegate"])),
++            route("other-mod", "provider-worker-model", json!(["someone-else"])),
++            route("unregistered", "not-a-runtime-model", json!([])),
++        ], "worker_limits": {"requests": 5, "seconds": 60, "exposure_microusd": 0}})
++        .to_string(),
++    )
++    .unwrap();
++    let grants = fixture.core.runtime.lock().unwrap().grants("delegate");
++    let cancelled = Arc::new(AtomicBool::new(false));
++    let spawn_model = |route: &'static str, model: Option<&'static str>| {
++        let (core, lead, grants, cancelled) =
++            (&fixture.core, &fixture.lead, grants.clone(), &cancelled);
++        async move {
++            operations::dispatch(
++                core,
++                lead,
++                Caller {
++                    id: "delegate",
++                    source: "",
++                    grants,
++                    generation: 0,
++                    origin: Origin::Event,
++                    record_changes: false,
++                },
++                None,
++                ModHostCall {
++                    operation: "agents.spawn".into(),
++                    arguments: json!({"role": "r", "route": route, "prompt": "x", "model": model}),
++                },
++                cancelled,
++            )
++            .await
++        }
++    };
++    let spawn = |route: &'static str| spawn_model(route, None);
++    let refused = |result: Result<Value, String>| result.err().unwrap_or_default();
++    assert_eq!(
++        refused(spawn("open").await),
++        "native_thread_manager_stopped",
++        "a registered provider's open lead route is admitted up to thread start"
++    );
++    assert_eq!(
++        refused(spawn_model("open", Some("provider-worker-other")).await),
++        "native_thread_manager_stopped",
++        "another model from the route provider's runtime catalog is admitted on its lead route"
++    );
++    assert_eq!(
++        refused(spawn_model("open", Some("gpt-5.5")).await),
++        "agent_model_not_in_route_provider_catalog"
++    );
++    let (routing, _) = fixture.lead.host.route_config();
++    let granted = routing
++        .route("granted", crate::config::RouteRole::Lead, None)
++        .unwrap()
++        .clone();
++    fixture
++        .lead
++        .host
++        .enroll(
++            fixture.lead.thread,
++            &fixture.lead.session,
++            "lead",
++            Some(&granted),
++            None,
++        )
++        .unwrap();
++    assert_eq!(
++        refused(spawn_model("lead", Some("provider-worker-other")).await),
++        "agent_model_requires_provider_lead_route",
++        "the lead alias keeps the lead's model"
++    );
++    assert_eq!(
++        refused(spawn("other-mod").await),
++        "provider_not_registered_or_stopped"
++    );
++    codex_models_manager::runtime_models::set("provider-worker", Vec::new());
++    assert_eq!(
++        refused(spawn("unregistered").await),
++        "provider_not_registered_or_stopped"
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
 +async fn read_only_spawns_reject_tools_the_pinned_codex_lacks() {
 +    let Some(fixture) = fixture(&[Package {
 +        id: "delegate",
@@ -78992,6 +80964,195 @@ index 0000000000000000000000000000000000000000..d57edddb5a3b8e60122e9cfca565e002
 +}
 +
 +#[test]
++fn a_child_back_on_the_configured_provider_is_an_ordinary_child() {
++    assert!(crate::cross_provider_child(
++        "lead", "openai", "claude", "openai"
++    ));
++    assert!(!crate::cross_provider_child(
++        "lead", "claude", "openai", "openai"
++    ));
++    assert!(!crate::cross_provider_child(
++        "lead", "openai", "openai", "openai"
++    ));
++    assert!(crate::cross_provider_child(
++        "agent:a@b",
++        "claude",
++        "openai",
++        "openai"
++    ));
++}
++
++#[test]
++fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let host = &fixture.lead.host;
++    let route = |name: &str, model: &str| {
++        json!({"name": name, "roles": ["lead"], "provider": "other", "model": model,
++            "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
++            "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
++            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
++            "input_token_ceiling": 1000, "included_subscription": true}})
++    };
++    std::fs::write(
++        host.root.join("host.json"),
++        json!({"routes": [route("other", "other-default"), route("other-fast", "other-fast")],
++            "worker_limits": {"requests": 5, "seconds": 60, "exposure_microusd": 0}})
++        .to_string(),
++    )
++    .unwrap();
++    assert_eq!(host.route_config().1, None);
++    let name = |model: &str| {
++        host.provider_lead_route("other", model)
++            .map(|route| route.name)
++    };
++    assert_eq!(name("other-fast").as_deref(), Some("other-fast"));
++    assert_eq!(name("other-new").as_deref(), Some("other"));
++    assert!(host.provider_lead_route("missing", "m").is_none());
++
++    let session = &fixture.lead.session;
++    let child = ThreadId::new();
++    let owner = format!("agent:{child}");
++    host.enroll_cross_provider(child, session, &owner, "lead", 1, "other", "other-new")
++        .unwrap();
++    let account = host.accounts.by_thread.lock().unwrap()[&child.to_string()].clone();
++    assert_eq!(
++        (account.provider.as_str(), account.model.as_str()),
++        ("other", "other-new")
++    );
++    assert_eq!(account.route.as_deref(), Some("other"));
++    assert!(account.rates.is_some());
++    assert!(crate::provider_worker(&account.owner));
++    session
++        .task
++        .admit(&account.owner, "other", "other-new", 0)
++        .unwrap();
++    assert!(
++        session
++            .task
++            .admit(&account.owner, "other", "other-fast", 0)
++            .is_err()
++    );
++
++    let missing = ThreadId::new();
++    let error = host
++        .enroll_cross_provider(
++            missing,
++            session,
++            &format!("agent:{missing}"),
++            "lead",
++            1,
++            "missing",
++            "m",
++        )
++        .unwrap_err();
++    assert!(error.starts_with("agent_route_unavailable"), "{error}");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let mods = mods(&fixture.core);
++    let inventory = &fixture.core.inventory;
++    let lead = fixture.lead.thread.to_string();
++    static SPAWN: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("spawn_agent"));
++    let session_store = ExtensionData::new("session".to_owned());
++    let attempt = |depth: u32| {
++        let store = ExtensionData::new(lead.clone());
++        store.insert(Lead {
++            depth,
++            ..fixture.lead.clone()
++        });
++        let mods = &mods;
++        let session_store = &session_store;
++        async move {
++            let payload = codex_tools::ToolPayload::Function {
++                arguments: r#"{"message":"go"}"#.to_owned(),
++            };
++            mods.intercept_tool(ToolStartInput {
++                session_store,
++                thread_store: &store,
++                turn_store: &ExtensionData::new("turn".to_owned()),
++                turn_id: "turn",
++                root_turn_id: None,
++                call_id: "spawn",
++                originating_item_id: None,
++                tool_name: &SPAWN,
++                mcp_tool: None,
++                permissions: Box::pin(async { None }),
++                payload: &payload,
++                conversation_history: Arc::new(NoHistory),
++                source: codex_extension_api::ToolCallSource::Direct,
++            })
++            .await
++            .err()
++        }
++    };
++    assert_eq!(attempt(0).await, None);
++    assert_eq!(attempt(1).await, None);
++    assert_eq!(
++        attempt(2).await.as_deref(),
++        Some("subagent_depth_limit: depth 3 exceeds limits.max_depth 2")
++    );
++
++    let child = |index: u32| format!("child-{index}");
++    for index in 0..3 {
++        inventory.start(
++            &child(index),
++            json!({"origin": "model", "parent": {"thread_id": lead, "agent_id": null}}),
++        );
++    }
++    fixture
++        .lead
++        .session
++        .task
++        .start_worker(
++            "mod-worker".into(),
++            "lead".into(),
++            1,
++            codex_omd::WorkerLimits {
++                requests: 1,
++                seconds: 1,
++                exposure_microusd: 0,
++            },
++        )
++        .unwrap();
++    assert_eq!(
++        attempt(0).await.as_deref(),
++        Some("subagent_concurrency_limit: 4 running of limits.concurrent_workers 4")
++    );
++    inventory.turn(&child(0), "turn", "completed", Value::Null);
++    assert_eq!(
++        attempt(0).await,
++        None,
++        "a child that finished its turn is idle"
++    );
++    assert!(
++        attempt(0).await.is_some(),
++        "an admitted spawn holds its slot until its child starts"
++    );
++    inventory.release_spawn("spawn");
++    assert_eq!(
++        attempt(0).await,
++        None,
++        "a finished spawn call releases its slot"
++    );
++    inventory.start(
++        &child(3),
++        json!({"origin": "model", "parent": {"thread_id": lead, "agent_id": null}}),
++    );
++    inventory.turn_started(&child(0));
++    assert!(attempt(0).await.is_some(), "a child running again counts");
++    inventory.end(&child(0), "completed", None);
++    inventory.end(&child(3), "completed", None);
++    assert_eq!(attempt(0).await, None, "an ended child is not live");
++}
++
++#[test]
 +fn provider_billed_service_routes_are_found_only_for_their_provider_and_mod() {
 +    let Some(fixture) = fixture(&[]) else {
 +        return;
@@ -80074,24 +82235,116 @@ index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c700415283
+index 0000000000000000000000000000000000000000..8a77f46216d30bb312cd81b54211e1fd8e1f7783
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,365 @@
 +use super::*;
 +use codex_omd::peers::now_ms;
 +use std::collections::BTreeSet;
 +
 +const ANSWER_CHARS: usize = 4096;
 +const FINISHED_LIMIT: usize = 64;
++const SPAWN_RESERVATION_MS: u64 = 30_000;
 +
 +/// Session-wide agent records; observing one grants no control over it.
 +#[derive(Default)]
 +pub(super) struct Inventory {
 +    records: Mutex<BTreeMap<String, Value>>,
++    working: Mutex<BTreeSet<String>>,
++    reserved: Mutex<Vec<(String, String, u64)>>,
++    directory: std::sync::OnceLock<std::path::PathBuf>,
++}
++
++fn root_of<'a>(records: &'a BTreeMap<String, Value>, thread: &'a str) -> &'a str {
++    let mut root = thread;
++    for _ in 0..16 {
++        match records
++            .get(root)
++            .and_then(|record| record["parent"]["thread_id"].as_str())
++        {
++            Some(parent) => root = parent,
++            None => break,
++        }
++    }
++    root
 +}
 +
 +impl Inventory {
++    pub(super) fn persist_to(&self, directory: std::path::PathBuf) {
++        let day = std::time::Duration::from_secs(86_400);
++        for entry in std::fs::read_dir(&directory)
++            .into_iter()
++            .flatten()
++            .flatten()
++        {
++            if entry
++                .metadata()
++                .and_then(|metadata| metadata.modified())
++                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
++            {
++                let _ = std::fs::remove_file(entry.path());
++            }
++        }
++        let _ = self.directory.set(directory);
++    }
++
++    pub(super) fn forget_session(&self, thread: &str) {
++        if let Ok(mut records) = self.records.lock() {
++            let session = records
++                .keys()
++                .filter(|id| root_of(&records, id) == thread)
++                .cloned()
++                .collect::<Vec<_>>();
++            for id in session {
++                records.remove(&id);
++            }
++        }
++        if let Some(directory) = self.directory.get() {
++            let _ = std::fs::remove_file(directory.join(format!("{thread}.json")));
++        }
++    }
++
++    fn snapshot(
++        &self,
++        records: &BTreeMap<String, Value>,
++        thread: &str,
++    ) -> Option<(String, Vec<Value>)> {
++        self.directory.get()?;
++        let root = root_of(records, thread);
++        if root == thread {
++            return None;
++        }
++        let agents = records
++            .iter()
++            .filter(|(id, _)| id.as_str() != root && root_of(records, id) == root)
++            .map(|(_, record)| {
++                let mut record = record.clone();
++                record["answer"] = Value::Null;
++                if record["last_turn"].is_object() {
++                    record["last_turn"]["answer"] = Value::Null;
++                }
++                record
++            })
++            .collect();
++        Some((root.to_owned(), agents))
++    }
++
++    fn save(&self, snapshot: Option<(String, Vec<Value>)>) {
++        let (Some(directory), Some((root, agents))) = (self.directory.get(), snapshot) else {
++            return;
++        };
++        if let Ok(bytes) = serde_json::to_vec(&agents)
++            && std::fs::create_dir_all(directory).is_ok()
++        {
++            let _ = codex_omd::fsio::write_bytes(
++                &directory.join(format!("{root}.json")),
++                &bytes,
++                codex_omd::fsio::Durability::Volatile,
++            );
++        }
++    }
++
 +    pub(super) fn start(&self, thread: &str, fields: Value) -> Value {
 +        let mut record = json!({"agent_id": null, "thread_id": thread,
 +            "parent": {"thread_id": null, "agent_id": null}, "origin": "native", "owner": null,
@@ -80102,7 +82355,20 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +        if let (Some(record), Some(fields)) = (record.as_object_mut(), fields.as_object()) {
 +            record.extend(fields.clone());
 +        }
++        let mut reserved = self.reserved.lock().ok();
 +        if let Ok(mut records) = self.records.lock() {
++            if record["origin"] == "model"
++                && let Some(reserved) = reserved.as_mut()
++            {
++                let root = root_of(
++                    &records,
++                    record["parent"]["thread_id"].as_str().unwrap_or(thread),
++                )
++                .to_owned();
++                if let Some(index) = reserved.iter().position(|(owner, ..)| *owner == root) {
++                    reserved.remove(index);
++                }
++            }
 +            let finished = records
 +                .iter()
 +                .filter(|(_, record)| record["status"] != "running")
@@ -80115,6 +82381,9 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +                records.remove(thread);
 +            }
 +            records.insert(thread.to_owned(), record.clone());
++            let snapshot = self.snapshot(&records, thread);
++            drop(records);
++            self.save(snapshot);
 +        }
 +        record
 +    }
@@ -80123,7 +82392,74 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +        let mut records = self.records.lock().ok()?;
 +        let record = records.get_mut(thread)?;
 +        change(record);
-+        Some(record.clone())
++        let record = record.clone();
++        let snapshot = self.snapshot(&records, thread);
++        drop(records);
++        self.save(snapshot);
++        Some(record)
++    }
++
++    pub(super) fn describe(
++        &self,
++        thread: &str,
++        provider: &str,
++        model: &str,
++        billing: Option<&str>,
++    ) {
++        self.update(thread, |record| {
++            record["provider"] = json!(provider);
++            record["model"] = json!(model);
++            record["billing"] = json!(billing);
++        });
++    }
++
++    pub(super) fn turn_started(&self, thread: &str) {
++        if let Ok(mut working) = self.working.lock() {
++            working.insert(thread.to_owned());
++        }
++    }
++
++    /// Admits a model spawn against live children plus spawns admitted but not yet started.
++    pub(super) fn reserve_spawn(
++        &self,
++        root: &str,
++        call_id: &str,
++        counted: impl Fn(&str) -> bool,
++        admit: impl FnOnce(usize) -> Result<(), String>,
++    ) -> Result<(), String> {
++        let mut reserved = self
++            .reserved
++            .lock()
++            .map_err(|_| "inventory lock poisoned")?;
++        let now = now_ms();
++        reserved.retain(|(.., at)| now.saturating_sub(*at) < SPAWN_RESERVATION_MS);
++        let pending = reserved.iter().filter(|(owner, ..)| owner == root).count();
++        admit(self.live_children(root, counted) + pending)?;
++        reserved.push((root.to_owned(), call_id.to_owned(), now));
++        Ok(())
++    }
++
++    pub(super) fn release_spawn(&self, call_id: &str) {
++        if let Ok(mut reserved) = self.reserved.lock() {
++            reserved.retain(|(_, call, _)| call != call_id);
++        }
++    }
++
++    /// Model-spawned children of `root`'s session that are running a turn or have not yet finished their first.
++    pub(super) fn live_children(&self, root: &str, counted: impl Fn(&str) -> bool) -> usize {
++        let (Ok(records), Ok(working)) = (self.records.lock(), self.working.lock()) else {
++            return 0;
++        };
++        records
++            .iter()
++            .filter(|(thread, record)| {
++                record["origin"] == "model"
++                    && record["status"] == "running"
++                    && (record["last_turn"].is_null() || working.contains(thread.as_str()))
++                    && root_of(&records, thread) == root
++                    && counted(thread)
++            })
++            .count()
 +    }
 +
 +    pub(super) fn contains(&self, thread: &str) -> bool {
@@ -80145,6 +82481,9 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +        outcome: &str,
 +        error: Value,
 +    ) -> Option<Value> {
++        if let Ok(mut working) = self.working.lock() {
++            working.remove(thread);
++        }
 +        self.update(thread, |record| {
 +            record["turns"] = json!(record["turns"].as_u64().unwrap_or(0) + 1);
 +            record["last_turn"] = json!({"turn_id": turn_id, "outcome": outcome, "at_ms": now_ms(),
@@ -80201,6 +82540,9 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +    }
 +
 +    pub(super) fn end(&self, thread: &str, status: &str, reason: Option<String>) -> Option<Value> {
++        if let Ok(mut working) = self.working.lock() {
++            working.remove(thread);
++        }
 +        self.update(thread, |record| {
 +            if record["status"] != "running" {
 +                return;
@@ -80220,17 +82562,7 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +        let Ok(records) = self.records.lock() else {
 +            return thread.to_owned();
 +        };
-+        let mut root = thread;
-+        for _ in 0..16 {
-+            match records
-+                .get(root)
-+                .and_then(|record| record["parent"]["thread_id"].as_str())
-+            {
-+                Some(parent) => root = parent,
-+                None => break,
-+            }
-+        }
-+        root.to_owned()
++        root_of(&records, thread).to_owned()
 +    }
 +
 +    pub(super) fn list(&self) -> Vec<Value> {
@@ -81883,10 +84215,10 @@ index 0000000000000000000000000000000000000000..3a6ec486cc40c8ce442312d9bb228230
 +}
 diff --git a/codex-rs/ext/omd/src/mods/roles.rs b/codex-rs/ext/omd/src/mods/roles.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d9862c2d373581af18e23ae25f9381a235262e8e
+index 0000000000000000000000000000000000000000..5a33edfcf10f7038c297782b4b7fc3454338651b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/roles.rs
-@@ -0,0 +1,416 @@
+@@ -0,0 +1,471 @@
 +use super::*;
 +use codex_extension_api::AgentRoleContributor;
 +use codex_extension_api::ContributedAgentRole;
@@ -82194,6 +84526,7 @@ index 0000000000000000000000000000000000000000..d9862c2d373581af18e23ae25f9381a2
 +                value => arguments[key] = value.clone(),
 +            }
 +        }
++        spawn_route_admitted(lead, arguments["model"].as_str())?;
 +        let definition = effective["definition"].as_str();
 +        if let Some(name) = definition.filter(|name| name.contains('/'))
 +            && self.definition(name).is_none()
@@ -82303,12 +84636,66 @@ index 0000000000000000000000000000000000000000..d9862c2d373581af18e23ae25f9381a2
 +        }
 +    }
 +}
++
++pub(super) fn spawn_capacity_admitted(
++    inventory: &super::inventory::Inventory,
++    lead: &Lead,
++    call_id: &str,
++) -> Result<(), String> {
++    let tracked_as_workers = lead
++        .host
++        .accounts
++        .by_thread
++        .lock()
++        .map_err(|_| "account lock poisoned")?
++        .iter()
++        .filter(|(_, account)| crate::provider_worker(&account.owner))
++        .map(|(thread, _)| thread.clone())
++        .collect::<std::collections::BTreeSet<_>>();
++    inventory.reserve_spawn(
++        &inventory.root_thread(&lead.thread.to_string()),
++        call_id,
++        |thread| !tracked_as_workers.contains(thread),
++        |live| {
++            lead.session
++                .task
++                .admit_subagent(lead.depth.saturating_add(1), live)
++                .map_err(|error| error.to_string())
++        },
++    )
++}
++
++pub(super) fn spawn_route_admitted(lead: &Lead, model: Option<&str>) -> Result<(), String> {
++    let Some((provider, _)) = model.and_then(codex_models_manager::runtime_models::find) else {
++        return Ok(());
++    };
++    let parent = lead
++        .host
++        .accounts
++        .by_thread
++        .lock()
++        .map_err(|_| "account lock poisoned")?
++        .get(&lead.thread.to_string())
++        .map(|account| account.provider.clone());
++    if parent.as_deref() == Some(provider.as_str())
++        || lead
++            .host
++            .provider_lead_route(&provider, model.unwrap_or_default())
++            .is_some()
++    {
++        return Ok(());
++    }
++    Err(format!(
++        "agent_route_unavailable: {} has no lead route on provider {provider}",
++        model.unwrap_or_default()
++    ))
++}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4f0752668ba895963036b8f0cc5655925698cee3
+index 0000000000000000000000000000000000000000..47b5aed54312d8fbe060a9dabb1c8ab219ddada5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1072 @@
+@@ -0,0 +1,1073 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -82595,6 +84982,7 @@ index 0000000000000000000000000000000000000000..4f0752668ba895963036b8f0cc565592
 +            info.truncation_policy =
 +                codex_protocol::openai_models::TruncationPolicyConfig::tokens(10_000);
 +            info.supports_search_tool = true;
++            info.multi_agent_version = Some(codex_protocol::protocol::MultiAgentVersion::V2);
 +            info.used_fallback_model_metadata = false;
 +            models.push(info);
 +        }
@@ -90314,10 +92702,10 @@ index 0000000000000000000000000000000000000000..ad5f898f3b768a805a06d0f816c6082d
 +};
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..754348a375809f9ce94b8ee5160e98dea34fc89f
+index 0000000000000000000000000000000000000000..e1e196efe3191529be9b3e5b4eac9343cdeaa4f9
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1539 @@
+@@ -0,0 +1,1576 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -90532,6 +92920,32 @@ index 0000000000000000000000000000000000000000..754348a375809f9ce94b8ee5160e98de
 +
 +fn denied(message: &str) -> io::Error {
 +    io::Error::other(message)
++}
++
++fn check_depth(depth: u32, max_depth: u32) -> io::Result<()> {
++    if depth > max_depth {
++        return Err(io::Error::other(format!(
++            "subagent_depth_limit: depth {depth} exceeds limits.max_depth {max_depth}"
++        )));
++    }
++    Ok(())
++}
++
++fn check_concurrency(running: usize, cap: u32) -> io::Result<()> {
++    if running >= cap as usize {
++        return Err(io::Error::other(format!(
++            "subagent_concurrency_limit: {running} running of limits.concurrent_workers {cap}"
++        )));
++    }
++    Ok(())
++}
++
++fn active_workers(state: &State) -> usize {
++    state
++        .workers
++        .values()
++        .filter(|worker| worker.status == WorkerStatus::Active)
++        .count()
 +}
 +
 +fn unix_millis() -> io::Result<u128> {
@@ -91042,23 +93456,20 @@ index 0000000000000000000000000000000000000000..754348a375809f9ce94b8ee5160e98de
 +            })
 +        };
 +        let ceiling = self.limits();
++        check_depth(depth, ceiling.max_depth)?;
++        if !valid_parent {
++            return Err(denied("invalid worker parent"));
++        }
 +        if limits.requests == 0
 +            || limits.seconds == 0
 +            || depth == 0
-+            || depth > ceiling.max_depth
-+            || !valid_parent
 +            || limits.requests > ceiling.requests
 +            || limits.seconds > ceiling.seconds
 +            || limits.exposure_microusd > ceiling.exposure_microusd
-+            || state
-+                .workers
-+                .values()
-+                .filter(|worker| worker.status == WorkerStatus::Active)
-+                .count()
-+                >= ceiling.concurrent_workers as usize
 +        {
-+            return Err(denied("worker limits exceed task ceiling or capacity"));
++            return Err(denied("worker limits exceed task ceiling"));
 +        }
++        check_concurrency(active_workers(&state), ceiling.concurrent_workers)?;
 +        self.record(
 +            &mut state,
 +            &serde_json::json!({"event": "worker_started", "worker": id, "parent": parent, "depth": depth, "limits": limits}),
@@ -91079,6 +93490,20 @@ index 0000000000000000000000000000000000000000..754348a375809f9ce94b8ee5160e98de
 +            },
 +        );
 +        Ok(())
++    }
++
++    /// Admits a model-spawned subagent at `depth` beside `other_running` live children the task does not track as workers.
++    pub fn admit_subagent(&self, depth: u32, other_running: usize) -> io::Result<()> {
++        let state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        let ceiling = self.limits();
++        check_depth(depth, ceiling.max_depth)?;
++        check_concurrency(
++            active_workers(&state).saturating_add(other_running),
++            ceiling.concurrent_workers,
++        )
 +    }
 +
 +    pub fn claim_worker_objective(&self, id: &str, objective: &str) -> io::Result<()> {
@@ -107922,10 +110347,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9101333ce8458303826253e088cf50c2b6e9fb80
+index 0000000000000000000000000000000000000000..88ef3a764cbeda6f48b58b4d1c6a8f1ba4ba285b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6848 @@
+@@ -0,0 +1,6873 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -108905,7 +111330,7 @@ index 0000000000000000000000000000000000000000..9101333ce8458303826253e088cf50c2
 +        return Err(failure(format!("capability_denied: {}", package.id)));
 +    }
 +    check_secret_environment(package, &selection.secret_environment)?;
-+    validate_settings(package, &selection.settings)?;
++    validate_stored_settings(package, &selection.settings)?;
 +    Ok(managed.filter(|_| !administered).and_then(|policy| {
 +        policy.refusal(
 +            &package.id,
@@ -110389,8 +112814,33 @@ index 0000000000000000000000000000000000000000..9101333ce8458303826253e088cf50c2
 +        .flatten()
 +        .filter_map(|(name, definition)| Some((name.clone(), definition.get("default")?.clone())))
 +        .collect();
-+    effective.extend(settings.clone());
++    effective.extend(declared_settings(schema, settings));
 +    effective
++}
++
++/// A closed schema drops stored keys a newer package no longer declares.
++fn declared_settings(
++    schema: Option<&Value>,
++    settings: &BTreeMap<String, Value>,
++) -> BTreeMap<String, Value> {
++    let properties = schema
++        .filter(|schema| schema.get("additionalProperties") == Some(&json!(false)))
++        .and_then(|schema| schema["properties"].as_object());
++    settings
++        .iter()
++        .filter(|(name, _)| properties.is_none_or(|properties| properties.contains_key(*name)))
++        .map(|(name, value)| (name.clone(), value.clone()))
++        .collect()
++}
++
++fn validate_stored_settings(
++    package: &ModPackage,
++    settings: &BTreeMap<String, Value>,
++) -> Result<()> {
++    validate_settings(
++        package,
++        &declared_settings(package.settings_schema.as_ref(), settings),
++    )
 +}
 +
 +pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
@@ -118623,7 +121073,7 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..83e535fed2250e8307c6bacfeb0847b5ea4ebe29
+index 0000000000000000000000000000000000000000..62b48f4aa97caebd292c051e42c119562ee41060
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,226 @@
@@ -118670,13 +121120,13 @@ index 0000000000000000000000000000000000000000..83e535fed2250e8307c6bacfeb0847b5
 +    "contract.status": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"none"},{"const":"active"},{"const":"unavailable"}]},"active":{"anyOf":[{"type":"null"},{"type":"object","properties":{"schema":{"const":2},"id":{"type":"string"},"version":{"type":"number"},"description":{"type":"string"},"assurance":{"type":"string"},"gates":{"type":"object","properties":{"complete":{"$ref":"#/$defs/20"},"integrate":{"$ref":"#/$defs/20"}},"required":[]},"restrict":{"type":"array","items":{"type":"string"}}},"required":["schema","id","version","description","assurance","gates"]}]},"provenance":{},"receipts":{"$ref":"#/$defs/42"},"finding_ledger":{"type":"object","properties":{},"required":[],"additionalProperties":{"type":"object","properties":{"finding":{"$ref":"#/$defs/39"},"reported_candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"reported_producer":{"$ref":"#/$defs/38"},"report_receipt_index":{"type":"number"},"resolution":{"anyOf":[{"type":"null"},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"producer":{"$ref":"#/$defs/38"},"receipt_index":{"type":"number"}},"required":["candidate_sha256","producer","receipt_index"]}]}},"required":["finding","reported_candidate_sha256","acceptance_sha256","reported_producer","report_receipt_index","resolution"]}},"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/46"}},"required":["status","active","provenance","receipts","finding_ledger","restrictions","scoped_restrictions"]}},
 +    "contract.restrict": {"arguments":{"type":"object","properties":{"operations":{"type":"array","items":{"type":"string"}},"scoped":{"$ref":"#/$defs/46"},"reason":{"type":"string"}},"required":["reason"]},"result":{"type":"object","properties":{"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/46"}},"required":["restrictions","scoped_restrictions"]}},
 +    "contract.select": {"arguments":{"type":"object","properties":{"contract":{"type":"string"}},"required":["contract"]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"selected":{},"applies":{"const":"next_session"}},"required":["selected","applies"]}]}},
-+    "agents.spawn": {"arguments":{"type":"object","properties":{"role":{"type":"string"},"route":{"type":"string"},"prompt":{"type":"string"},"definition":{"type":"string"},"workspace":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"tools":{"type":"array","items":{"type":"string"}},"evidence":{"$ref":"#/$defs/1"},"snapshot":{"$ref":"#/$defs/1"},"parent_history":{"anyOf":[{"const":false},{"const":true}]},"resolution_context":{"type":"object","properties":{"acceptance_sha256":{"type":"string"},"findings":{"type":"array","items":{"type":"string"}}},"required":["acceptance_sha256","findings"]}},"required":["prompt"]},"result":{"type":"object","properties":{"handle":{"type":"string"},"route":{"type":"string"},"permissions":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"parent_history":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/30"}]}},"required":["handle","route","permissions"]}},
++    "agents.spawn": {"arguments":{"type":"object","properties":{"role":{"type":"string"},"route":{"type":"string"},"prompt":{"type":"string"},"definition":{"type":"string"},"workspace":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"tools":{"type":"array","items":{"type":"string"}},"evidence":{"$ref":"#/$defs/1"},"snapshot":{"$ref":"#/$defs/1"},"parent_history":{"anyOf":[{"const":false},{"const":true}]},"resolution_context":{"type":"object","properties":{"acceptance_sha256":{"type":"string"},"findings":{"type":"array","items":{"type":"string"}}},"required":["acceptance_sha256","findings"]},"model":{"type":"string"}},"required":["prompt"]},"result":{"type":"object","properties":{"handle":{"type":"string"},"route":{"type":"string"},"permissions":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"parent_history":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/30"}]}},"required":["handle","route","permissions"]}},
 +    "agents.message": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"message":{"type":"string"}},"required":["handle","message"]},"result":{"type":"object","properties":{"delivered":{"type":"boolean"}},"required":["delivered"]}},
 +    "agents.cancel": {"arguments":{"type":"object","properties":{"handle":{"type":"string"}},"required":["handle"]},"result":{"$ref":"#/$defs/47"}},
 +    "agents.result": {"arguments":{"$ref":"#/$defs/48"},"result":{"$ref":"#/$defs/55"}},
 +    "agents.wait": {"arguments":{"$ref":"#/$defs/48"},"result":{"$ref":"#/$defs/55"}},
 +    "agents.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"handle":{"type":"string"},"finished":{"type":"boolean"},"consumed":{"type":"boolean"}},"required":["handle","finished","consumed"]}}},
-+    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/52"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
++    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"billing":{"anyOf":[{"type":"null"},{"const":"included_subscription"},{"const":"explicit_paid_api_grant"},{"const":"provider_billed"}]},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/52"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
 +    "peers.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"package":{"type":"string"}},"required":[]}]},"result":{"type":"object","properties":{"session":{"type":"string"},"peers":{"type":"array","items":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"},"repository":{"type":"string"},"same_project":{"type":"boolean"}},"required":["session","package","repository","same_project"]}}},"required":["session","peers"]}},
 +    "peers.send": {"arguments":{"type":"object","properties":{"to":{"type":"string"},"package":{"type":"string"},"data":{},"correlation":{"type":"string"},"ttl_ms":{"type":"number"}},"required":["to","data"]},"result":{"type":"object","properties":{"id":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"closed"},{"const":"expired"},{"const":"queued"},{"const":"delivered"},{"const":"refused"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"at_ms":{"type":"number"},"by":{"type":"object","properties":{"session":{"type":"string"},"package":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["session","package"]},"correlation":{"anyOf":[{"type":"null"},{"type":"string"}]},"to":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"}},"required":["session","package"]}},"required":["id","status"]}},
 +    "power.hold": {"arguments":{"type":"object","properties":{"reason":{"type":"string"},"lid_closed":{"anyOf":[{"const":false},{"const":true}]},"max_duration_ms":{"type":"number"},"lease":{"type":"string"}},"required":["reason","max_duration_ms"]},"result":{"type":"object","properties":{"lease":{"type":"string"},"lid_closed":{"type":"boolean"}},"required":["lease","lid_closed"]}},
@@ -119145,10 +121595,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e61f45652ba16d79e405839d8df4f694d0b7caff
+index 0000000000000000000000000000000000000000..a555c242ce131b4382a16a7d798d1091870bcff6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2935 @@
+@@ -0,0 +1,2946 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -119737,7 +122187,14 @@ index 0000000000000000000000000000000000000000..e61f45652ba16d79e405839d8df4f694
 +                    .settings
 +                    .get(&resolved.package.id)
 +                    .cloned()
-+                    .or_else(|| previous.map(|locked| selected_settings(&config, locked)))
++                    .or_else(|| {
++                        previous.map(|locked| {
++                            declared_settings(
++                                resolved.package.settings_schema.as_ref(),
++                                &selected_settings(&config, locked),
++                            )
++                        })
++                    })
 +                    .unwrap_or_default();
 +                validate_settings(&resolved.package, &settings)?;
 +                resolved.locked.settings = settings;
@@ -120152,7 +122609,7 @@ index 0000000000000000000000000000000000000000..e61f45652ba16d79e405839d8df4f694
 +        {
 +            return Err(failure("capability_denied"));
 +        }
-+        super::validate_settings(&manifest, &selection.settings)?;
++        super::validate_stored_settings(&manifest, &selection.settings)?;
 +        selection.enabled = true;
 +        store::refuse_second_copy(&config, &path, &scope, &manifest.id)?;
 +        config.revision = config
@@ -120279,11 +122736,15 @@ index 0000000000000000000000000000000000000000..e61f45652ba16d79e405839d8df4f694
 +            .ok_or_else(|| failure("package_not_installed"))?;
 +        let current_path = current.path.clone();
 +        previous.path = previous.cache_path.clone();
-+        previous.settings = selected_settings(&self.configuration()?, &current);
++        let package = store::package(&previous.path)?.0;
++        previous.settings = declared_settings(
++            package.settings_schema.as_ref(),
++            &selected_settings(&self.configuration()?, &current),
++        );
 +        previous.enabled = current.enabled
 +            && same_approval(&previous, &current)
 +            && previous.state_version == current.state_version;
-+        validate_settings(&store::package(&previous.path)?.0, &previous.settings)?;
++        validate_settings(&package, &previous.settings)?;
 +        let history = lock.history.entry(id.to_owned()).or_default();
 +        history.pop();
 +        history.push(current);
@@ -122086,10 +124547,10 @@ index 0000000000000000000000000000000000000000..e61f45652ba16d79e405839d8df4f694
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6b08a1559fdecbdb111d3896693901cbdcb4a2c0
+index 0000000000000000000000000000000000000000..100c399823819f399f74cb3a3324f72c600d829a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,398 @@
+@@ -0,0 +1,399 @@
 +use super::*;
 +
 +pub const SETTINGS_FILE_EXTENSIONS: [&str; 3] = ["json", "yaml", "yml"];
@@ -122143,7 +124604,8 @@ index 0000000000000000000000000000000000000000..6b08a1559fdecbdb111d3896693901cb
 +                return Err(failure("settings_file_must_be_object"));
 +            };
 +            let values: BTreeMap<String, Value> = object.into_iter().collect();
-+            let mut merged = selection.settings.clone();
++            let mut merged =
++                declared_settings(package.settings_schema.as_ref(), &selection.settings);
 +            merged.extend(values.clone());
 +            validate_settings(package, &merged)?;
 +            Ok(values)
@@ -122199,7 +124661,7 @@ index 0000000000000000000000000000000000000000..6b08a1559fdecbdb111d3896693901cb
 +        if hash != selection.sha256 {
 +            return Err(failure("source_changed: inspect and trust the new digest"));
 +        }
-+        let mut settings = selection.settings.clone();
++        let mut settings = declared_settings(package.settings_schema.as_ref(), &selection.settings);
 +        change(&mut settings);
 +        validate_settings(&package, &settings)?;
 +        if settings == selection.settings {
@@ -125089,7 +127551,7 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9f759dc33333b1273743e7c33b16edfe16bb5fdd
+index 0000000000000000000000000000000000000000..6a9de102d4fef33021f9f5c538ac226619935546
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
 @@ -0,0 +1,1547 @@
@@ -126295,7 +128757,7 @@ index 0000000000000000000000000000000000000000..9f759dc33333b1273743e7c33b16edfe
 +                .find(|m| m.path == path)
 +                .map(|m| (m.settings.clone(), m.required))
 +                .unwrap_or_default();
-+            super::validate_settings(&package, &settings)?;
++            super::validate_stored_settings(&package, &settings)?;
 +            config.mods.retain(|m| m.path != path);
 +            trusted.insert(path.clone());
 +            config.mods.push(ModSelection {
@@ -126363,7 +128825,7 @@ index 0000000000000000000000000000000000000000..9f759dc33333b1273743e7c33b16edfe
 +                    return Err(failure("broker_import_selection_changed"));
 +                }
 +                super::check_secret_environment(&manifest, &selection.secret_environment)?;
-+                super::validate_settings(&manifest, &selection.settings)?;
++                super::validate_stored_settings(&manifest, &selection.settings)?;
 +                Ok::<_, std::io::Error>(())
 +            })();
 +            match eligible {
@@ -137723,10 +140185,10 @@ index 0000000000000000000000000000000000000000..6531a6ad6f21a8018898d3f6ac1780b6
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..82a3e90714e6a805e3f4c83b4910e1819fef45a8
+index 0000000000000000000000000000000000000000..35d7cb97a90f8b22618bf0eeee1db5d38a1427e8
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,260 @@
 +use codex_omd::Limits;
 +use codex_omd::Task;
 +use codex_omd::WorkerLimits;
@@ -137787,6 +140249,34 @@ index 0000000000000000000000000000000000000000..82a3e90714e6a805e3f4c83b4910e181
 +            .is_err()
 +    );
 +    assert!(task.admit("one", "openai", "selected-model", 0).is_err());
++}
++
++#[test]
++fn depth_and_concurrency_refusals_are_distinct_and_readable() {
++    let directory = tempfile::tempdir().unwrap();
++    let task = Task::create(limits(), directory.path().join("task")).unwrap();
++    let refusal = |result: std::io::Result<()>| result.unwrap_err().to_string();
++    task.start_worker("one".into(), "lead".into(), 1, worker())
++        .unwrap();
++    task.start_worker("two".into(), "lead".into(), 1, worker())
++        .unwrap();
++    let full = "subagent_concurrency_limit: 2 running of limits.concurrent_workers 2";
++    assert_eq!(
++        refusal(task.start_worker("three".into(), "lead".into(), 1, worker())),
++        full
++    );
++    assert_eq!(refusal(task.admit_subagent(1, 0)), full);
++    assert_eq!(
++        refusal(task.start_worker("deep".into(), "one".into(), 3, worker())),
++        "subagent_depth_limit: depth 3 exceeds limits.max_depth 2"
++    );
++    task.finish_worker("one").unwrap();
++    task.admit_subagent(2, 0).unwrap();
++    assert_eq!(refusal(task.admit_subagent(1, 1)), full);
++    assert_eq!(
++        refusal(task.admit_subagent(3, 0)),
++        "subagent_depth_limit: depth 3 exceeds limits.max_depth 2"
++    );
 +}
 +
 +#[test]
@@ -142029,10 +144519,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a986fc2989f8e4d5bcd09fbba8ecd81959d3b684
+index 0000000000000000000000000000000000000000..d3fcd4b04765950cf4da05d518cbf6d2d19726d3
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4897 @@
+@@ -0,0 +1,4944 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -145472,6 +147962,53 @@ index 0000000000000000000000000000000000000000..a986fc2989f8e4d5bcd09fbba8ecd819
 +    assert_eq!(runtime.status()["mods"][0]["error"], Value::Null);
 +    std::fs::remove_file(file("json")).unwrap();
 +    assert_eq!(read(&mut runtime)[1]["status"], "missing");
++}
++
++#[test]
++fn settings_a_newer_package_no_longer_declares_are_dropped() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
++    let path = package(
++        &root,
++        "fixture",
++        "export default api => api.command('read', () => JSON.stringify(api.settings))",
++        &["commands"],
++    );
++    let manifest = path.join("mod.json");
++    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
++    let schema = |old: bool| {
++        let mut properties = json!({"mode":{"type":"string","default":"a"}});
++        if old {
++            properties["old"] = json!({"type":"boolean","default":false});
++        }
++        json!({"type":"object","properties":properties,"additionalProperties":false})
++    };
++    value["settings_schema"] = schema(true);
++    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
++    trust(&store, &path, &["commands"]);
++    codex_omd::write_settings(&store, "fixture", &json!({"old":true,"mode":"b"})).unwrap();
++    value["settings_schema"] = schema(false);
++    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
++    trust(&store, &path, &["commands"]);
++
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    assert_eq!(
++        runtime
++            .invoke("fixture", generation, "command", "read", Value::Null)
++            .unwrap(),
++        json!(r#"{"mode":"b"}"#)
++    );
++    assert!(codex_omd::write_settings(&store, "fixture", &json!({"other":1})).is_err());
++    assert_eq!(
++        codex_omd::write_settings(&store, "fixture", &json!({"mode":"a"})).unwrap(),
++        json!({"settings":{"mode":"a"}})
++    );
++    assert_eq!(
++        store.configuration().unwrap().mods[0].settings,
++        std::collections::BTreeMap::from([("mode".to_string(), json!("a"))])
++    );
 +}
 +
 +#[test]
@@ -177699,10 +180236,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3be14e177460ae159e00bd7e98e94fbf12b42622
+index 0000000000000000000000000000000000000000..1b77209aae1266637ff173e261fd3e6e7615fe86
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,761 @@
+@@ -0,0 +1,776 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -178229,6 +180766,21 @@ index 0000000000000000000000000000000000000000..3be14e177460ae159e00bd7e98e94fbf
 +    };
 +    snapshot.evidence = Some(session);
 +    Ok(snapshot)
++}
++
++pub(crate) fn session_agents(thread: &str) -> Vec<Value> {
++    let Some(root) = store_root() else {
++        return Vec::new();
++    };
++    let mut agents: Vec<Value> = bounded_read(
++        &root.join("agents").join(format!("{thread}.json")),
++        1_048_576,
++    )
++    .ok()
++    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
++    .unwrap_or_default();
++    agents.sort_by_key(|agent| agent["started_at_ms"].as_u64());
++    agents
 +}
 +
 +fn bounded_read(path: &Path, limit: usize) -> Result<Vec<u8>, String> {

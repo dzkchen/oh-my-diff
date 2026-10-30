@@ -774,6 +774,8 @@ struct Spawn {
     resolution_context: Option<ResolutionContext>,
     #[serde(default)]
     parent_history: bool,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1712,7 +1714,38 @@ impl Agents {
             {
                 return Err("worker_route_authority_exceeded".into());
             }
-            return Ok((route.clone(), true));
+            let runtime = codex_models_manager::runtime_models::find(&route.model)
+                .is_some_and(|(provider, _)| provider == route.provider);
+            unchanged_model(request, route)?;
+            return Ok((route.clone(), !runtime));
+        }
+        let provider_lead = routing
+            .route(&request.route, config::RouteRole::Lead, None)
+            .filter(|route| {
+                !route.roles.contains(&config::RouteRole::Worker)
+                    && (route.mods.is_empty() || route.mods.iter().any(|id| id == caller.id))
+                    && codex_models_manager::runtime_models::find(&route.model)
+                        .is_some_and(|(provider, _)| provider == route.provider)
+            });
+        if let Some(route) = provider_lead {
+            let mut route = route.clone();
+            if let Some(model) = request.model.take() {
+                let info = codex_models_manager::runtime_models::find(&model)
+                    .filter(|(provider, _)| *provider == route.provider)
+                    .map(|(_, info)| info)
+                    .ok_or("agent_model_not_in_route_provider_catalog")?;
+                if !info
+                    .supported_reasoning_levels
+                    .iter()
+                    .any(|level| level.effort == route.reasoning_effort)
+                    && let Some(effort) = info.default_reasoning_level
+                {
+                    route.reasoning_effort = effort;
+                }
+                route.model = model;
+            }
+            restrict_tools(&route, request, writable)?;
+            return Ok((route, false));
         }
         let Some(route) = routing.route(&request.route, config::RouteRole::Worker, Some(caller.id))
         else {
@@ -1720,6 +1753,7 @@ impl Agents {
                 .services
                 .route(caller.id, caller.generation, &request.route)
                 .await?;
+            unchanged_model(request, &route)?;
             return Ok((route, false));
         };
         let grant = route.grant.as_ref().ok_or("worker_route_requires_grant")?;
@@ -1734,17 +1768,8 @@ impl Agents {
         ) {
             return Err("worker_grant_missing_changed_or_revoked".into());
         }
-        if !route.tools.is_empty() {
-            if writable
-                || request
-                    .tools
-                    .as_ref()
-                    .is_some_and(|tools| tools.iter().any(|tool| !route.tools.contains(tool)))
-            {
-                return Err("worker_route_authority_exceeded".into());
-            }
-            request.tools = Some(request.tools.take().unwrap_or_else(|| route.tools.clone()));
-        }
+        unchanged_model(request, route)?;
+        restrict_tools(route, request, writable)?;
         Ok((route.clone(), true))
     }
 
@@ -2437,7 +2462,8 @@ impl Agents {
             &thread_id.to_string(),
             json!({"agent_id": id, "origin": "mod", "owner": caller.id,
                 "parent": {"thread_id": lead.thread.to_string(), "agent_id": parent_agent},
-                "role": start_role, "route": request.route,
+                "role": start_role, "route": request.route, "provider": route.provider, "model": route.model,
+                "billing": crate::accounting::billing(Some(&route.rates)),
                 "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
                     "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
         );
@@ -2577,4 +2603,31 @@ pub(super) async fn until_cancelled(cancelled: &AtomicBool) {
     while !cancelled.load(Ordering::Acquire) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+fn unchanged_model(request: &Spawn, route: &Route) -> Result<(), String> {
+    if request
+        .model
+        .as_ref()
+        .is_some_and(|model| *model != route.model)
+    {
+        return Err("agent_model_requires_provider_lead_route".into());
+    }
+    Ok(())
+}
+
+fn restrict_tools(route: &Route, request: &mut Spawn, writable: bool) -> Result<(), String> {
+    if route.tools.is_empty() {
+        return Ok(());
+    }
+    if writable
+        || request
+            .tools
+            .as_ref()
+            .is_some_and(|tools| tools.iter().any(|tool| !route.tools.contains(tool)))
+    {
+        return Err("worker_route_authority_exceeded".into());
+    }
+    request.tools = Some(request.tools.take().unwrap_or_else(|| route.tools.clone()));
+    Ok(())
 }

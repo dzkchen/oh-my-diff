@@ -37,6 +37,8 @@ its settled charge counts as a subscription list-equivalent, not a task charge, 
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](#model-requests-and-streams-model_turn_interception_v1)).
 - `agents.spawn.route` names a worker route or a registered provider.
+- It may also name a lead route of a registered provider (its model is in that provider's runtime catalog) whose `mods`
+  is empty or lists the caller; the agent is admitted like a cross-provider native child, with no grant.
 - Worker routes require a grant file whose hash, repository (or one of its `repositories`), provider, model and URL
   are rechecked on every request.
 - `routes.add {mod}` (capability `packages`, user only) asks the user, then adds the worker route `plan-MODEL-MOD`

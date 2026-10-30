@@ -3440,6 +3440,53 @@ fn settings_file_overrides_saved_settings_and_an_invalid_file_is_skipped_whole()
 }
 
 #[test]
+fn settings_a_newer_package_no_longer_declares_are_dropped() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => api.command('read', () => JSON.stringify(api.settings))",
+        &["commands"],
+    );
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    let schema = |old: bool| {
+        let mut properties = json!({"mode":{"type":"string","default":"a"}});
+        if old {
+            properties["old"] = json!({"type":"boolean","default":false});
+        }
+        json!({"type":"object","properties":properties,"additionalProperties":false})
+    };
+    value["settings_schema"] = schema(true);
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+    codex_omd::write_settings(&store, "fixture", &json!({"old":true,"mode":"b"})).unwrap();
+    value["settings_schema"] = schema(false);
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    assert_eq!(
+        runtime
+            .invoke("fixture", generation, "command", "read", Value::Null)
+            .unwrap(),
+        json!(r#"{"mode":"b"}"#)
+    );
+    assert!(codex_omd::write_settings(&store, "fixture", &json!({"other":1})).is_err());
+    assert_eq!(
+        codex_omd::write_settings(&store, "fixture", &json!({"mode":"a"})).unwrap(),
+        json!({"settings":{"mode":"a"}})
+    );
+    assert_eq!(
+        store.configuration().unwrap().mods[0].settings,
+        std::collections::BTreeMap::from([("mode".to_string(), json!("a"))])
+    );
+}
+
+#[test]
 fn terminal_identity_reports_profile_mode_and_mod_counts() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

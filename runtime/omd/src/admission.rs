@@ -214,6 +214,32 @@ fn denied(message: &str) -> io::Error {
     io::Error::other(message)
 }
 
+fn check_depth(depth: u32, max_depth: u32) -> io::Result<()> {
+    if depth > max_depth {
+        return Err(io::Error::other(format!(
+            "subagent_depth_limit: depth {depth} exceeds limits.max_depth {max_depth}"
+        )));
+    }
+    Ok(())
+}
+
+fn check_concurrency(running: usize, cap: u32) -> io::Result<()> {
+    if running >= cap as usize {
+        return Err(io::Error::other(format!(
+            "subagent_concurrency_limit: {running} running of limits.concurrent_workers {cap}"
+        )));
+    }
+    Ok(())
+}
+
+fn active_workers(state: &State) -> usize {
+    state
+        .workers
+        .values()
+        .filter(|worker| worker.status == WorkerStatus::Active)
+        .count()
+}
+
 fn unix_millis() -> io::Result<u128> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -722,23 +748,20 @@ impl Task {
             })
         };
         let ceiling = self.limits();
+        check_depth(depth, ceiling.max_depth)?;
+        if !valid_parent {
+            return Err(denied("invalid worker parent"));
+        }
         if limits.requests == 0
             || limits.seconds == 0
             || depth == 0
-            || depth > ceiling.max_depth
-            || !valid_parent
             || limits.requests > ceiling.requests
             || limits.seconds > ceiling.seconds
             || limits.exposure_microusd > ceiling.exposure_microusd
-            || state
-                .workers
-                .values()
-                .filter(|worker| worker.status == WorkerStatus::Active)
-                .count()
-                >= ceiling.concurrent_workers as usize
         {
-            return Err(denied("worker limits exceed task ceiling or capacity"));
+            return Err(denied("worker limits exceed task ceiling"));
         }
+        check_concurrency(active_workers(&state), ceiling.concurrent_workers)?;
         self.record(
             &mut state,
             &serde_json::json!({"event": "worker_started", "worker": id, "parent": parent, "depth": depth, "limits": limits}),
@@ -759,6 +782,20 @@ impl Task {
             },
         );
         Ok(())
+    }
+
+    /// Admits a model-spawned subagent at `depth` beside `other_running` live children the task does not track as workers.
+    pub fn admit_subagent(&self, depth: u32, other_running: usize) -> io::Result<()> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        let ceiling = self.limits();
+        check_depth(depth, ceiling.max_depth)?;
+        check_concurrency(
+            active_workers(&state).saturating_add(other_running),
+            ceiling.concurrent_workers,
+        )
     }
 
     pub fn claim_worker_objective(&self, id: &str, objective: &str) -> io::Result<()> {

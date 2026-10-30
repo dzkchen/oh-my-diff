@@ -115,6 +115,7 @@ export type Agent = { handle: string; route: string; permissions: 'read_only' | 
 export type AgentDefinition = { name: string; description: string; instructions: string; route?: string; effort?: ReasoningEffort; tools?: string[]; offer?: boolean };
 export type AgentRecord = { agent_id: string | null; thread_id: string; parent: { thread_id: string | null; agent_id: string | null }; origin: 'model' | 'mod' | 'native';
   owner: string | null; definition: { name: string; owner: string; source_sha256: string } | null; role: string | null; route?: string;
+  provider?: string; model?: string; billing?: 'included_subscription' | 'explicit_paid_api_grant' | 'provider_billed' | null;
   status: 'running' | 'completed' | 'failed' | 'cancelled'; started_at_ms: number; ended_at_ms: number | null; duration_ms: number | null; turns: number;
   last_turn: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; at_ms: number; answer: string | null; error: AgentFailure | null } | null; answer: string | null;
   usage: { requests: number | null; input_tokens: number; output_tokens: number; cached_tokens: number; microusd: number | null; basis: 'unknown' | 'settled' | 'partial'; source: 'accounting' | 'engine' | null }; reason: string | null };
@@ -394,7 +395,7 @@ export interface HostOperations {
   'contract.status': { arguments: null; result: ContractStatus };
   'contract.restrict': { arguments: { operations?: string[]; scoped?: ContractRestriction[]; reason: string }; result: { restrictions: string[]; scoped_restrictions: ContractRestriction[] } };
   'contract.select': { arguments: { contract: string }; result: { selected: Json; applies: 'next_session' } | Declined };
-  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] } }; result: Agent };
+  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] }; model?: string }; result: Agent };
   'agents.message': { arguments: { handle: string; message: string }; result: { delivered: boolean } };
   'agents.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };
   'agents.result': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
