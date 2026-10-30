@@ -6199,7 +6199,10 @@ impl ModHost {
                 )
             })
             .collect();
-        let origin = payload.shared["event"].as_str().unwrap_or_default().to_owned();
+        let origin = payload.shared["event"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         self.compose_terminal(results, &origin, None)
     }
 

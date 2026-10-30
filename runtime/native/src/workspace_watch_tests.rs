@@ -420,7 +420,10 @@ async fn a_git_watch_follows_a_relative_gitfile_without_commondir() {
         "watch_git_unavailable"
     );
 
-    for other in [base.join("private/.git"), base.join("elsewhere/.git/modules/sub")] {
+    for other in [
+        base.join("private/.git"),
+        base.join("elsewhere/.git/modules/sub"),
+    ] {
         for path in [other.join("refs/heads"), other.join("objects")] {
             std::fs::create_dir_all(path).unwrap();
         }

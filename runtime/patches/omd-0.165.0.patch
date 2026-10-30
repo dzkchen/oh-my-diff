@@ -88393,10 +88393,10 @@ index 0000000000000000000000000000000000000000..15d8a2cbb1eb62f7cf7989efbc59eeba
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..59b432368ba07fac7a3f17616b3df06c77315291
+index 0000000000000000000000000000000000000000..07d05e61847dace1e2b9f28ef39ff4ff1986b45f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,489 @@
+@@ -0,0 +1,492 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -88819,7 +88819,10 @@ index 0000000000000000000000000000000000000000..59b432368ba07fac7a3f17616b3df06c
 +        "watch_git_unavailable"
 +    );
 +
-+    for other in [base.join("private/.git"), base.join("elsewhere/.git/modules/sub")] {
++    for other in [
++        base.join("private/.git"),
++        base.join("elsewhere/.git/modules/sub"),
++    ] {
 +        for path in [other.join("refs/heads"), other.join("objects")] {
 +            std::fs::create_dir_all(path).unwrap();
 +        }
@@ -111367,10 +111370,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8b4b2ba4f50b8f6fe42cbe82db4f02bb47c4fb66
+index 0000000000000000000000000000000000000000..09a99f66d54e5beeb897d0acf758d8b805ea9ac3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6946 @@
+@@ -0,0 +1,6949 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -117572,7 +117575,10 @@ index 0000000000000000000000000000000000000000..8b4b2ba4f50b8f6fe42cbe82db4f02bb
 +                )
 +            })
 +            .collect();
-+        let origin = payload.shared["event"].as_str().unwrap_or_default().to_owned();
++        let origin = payload.shared["event"]
++            .as_str()
++            .unwrap_or_default()
++            .to_owned();
 +        self.compose_terminal(results, &origin, None)
 +    }
 +
