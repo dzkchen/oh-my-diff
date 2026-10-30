@@ -59,6 +59,10 @@ rich children inside buttons (a button uses its typed `text`), audio, telemetry 
   returns pages of up to 64 KiB instead of 16 KiB, and a `tool` replacement the model cannot take (over 64 KiB and
   longer than the original, which for a retried call is the latest attempt's output) is dropped with a diagnostic
   after the chain instead of being refused inside it. Either way the original output stands.
+- `exec.run` children now start in their own session without a controlling terminal: a program that prompted on
+  `/dev/tty` (git credentials, ssh passphrases, `sudo`) fails instead of drawing over the TUI and waiting. Pass input
+  through `stdin` or the program's non-interactive flags. Runs with `sandbox: "none"` also receive `SSH_AUTH_SOCK`,
+  so programs under an `os` grant can sign in through the user's SSH agent.
 
 ## Contents
 
@@ -271,6 +275,8 @@ needs `exec`.
 - A program is `*`, a bare name resolved on `PATH` outside the repository, or an absolute path.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
+- Unsandboxed runs get the user's `HOME`, `USER`, `LOGNAME`, `SHELL`, locale and `SSH_AUTH_SOCK`, so `ssh`-based tools
+  reach the user's SSH agent; other variables come only from declared `exec_environment` names.
 
 #### `approves` manifest field
 
@@ -526,6 +532,8 @@ write?, network?, unix_sockets?, guards?, required_access?, exclusive_workspace?
 - Commands, buttons and keybindings run `exec.run` without network; `network: "loopback"` there fails with
   `exec_network_unavailable_in_commands`.
 - Without `write` the repository is read-only. With `network: "loopback"` only local binding is allowed.
+- The command starts in its own session without a controlling terminal, so a program that would prompt on
+  `/dev/tty` (git credentials, ssh passphrases) fails instead of drawing over the TUI.
 - Cancellation kills the process group and returns `exec_cancelled`.
 
 #### `exec.run` limits
@@ -563,9 +571,10 @@ With the `os` grant, `sandbox: "none"` runs a program listed in `os_access` with
 - `cwd` may be absolute.
 - A program reached through a symlink outside the repository runs as the link, so a version-manager shim such as
   `node` from mise or Volta runs the version it manages.
-- The environment is cleared and then holds `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale, a private
-  `TMPDIR`, `TERM=dumb`, the declared `exec_environment` names and `env`. No host credential or Codex variable is
-  passed and no secrets API exists.
+- The environment is cleared and then holds `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale,
+  `SSH_AUTH_SOCK` (so `ssh` and `git` over SSH can use the user's SSH agent), a private `TMPDIR`, `TERM=dumb`, the
+  declared `exec_environment` names and `env`. No other host credential or Codex variable is passed and no secrets
+  API exists.
 - Limits, timeouts, cancellation and process-group teardown are unchanged.
 - `network`, `unix_sockets`, `guards`, `required_access` and `snapshot` need the sandbox.
 
@@ -1947,6 +1956,9 @@ Observe-only events (capability `lifecycle` unless noted), all for the lead thre
   thread's working directory, workspace roots or model settings change.
 - `worktree {phase: 'created' | 'removed', path, owner: 'agent' | 'tui'}` for isolated agent worktrees and
   worktrees the terminal creates or removes.
+- `mods_changed {active}` (`mods_changed_v1`) with the ids of the active mods, once when a process first loads its
+  mods and again after a reload adds or removes one, so a mod can prune data kept for mods that are gone; native
+  mods reload at the next turn or surface call, so a mod turned off in `/mods` is reported then.
 - `elicitation_result {server, request_id, action, content, by}` (capability `approvals`) after an MCP elicitation
   is answered; password and write-only fields are `[redacted]`, and `content` is the string `[redacted]` when the
   host no longer holds the request's schema.
@@ -2626,7 +2638,7 @@ exits, even while a background child keeps the output streams open and more outp
 
 #### `workspace.watch`
 
-`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?, key?}` reports external edits as `workspace_change`
+`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?, key?, git?}` reports external edits as `workspace_change`
 with source `external`.
 
 - At most 16 watches per mod.
@@ -2636,6 +2648,10 @@ with source `external`.
   mod's watches. Keys require `workspace_watch_key_v1`.
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
+- `git: true` (`workspace_watch_git_v1`) also reports changes to the repository's Git metadata, found from the
+  workspace root upward (linked worktrees, submodules and separate Git directories included): `HEAD`, `index`,
+  `packed-refs` and `refs/…`, as paths `.git/HEAD` and so on with `before` and `after` null. Lock files and objects
+  are left out. Outside a repository the call fails `watch_git_unavailable`.
 
 #### Callback delivery
 
@@ -3606,6 +3622,13 @@ an `image` back to image pixels.
 Spans accept `fg` and `bg` theme colors, `italic` and `underline` (`terminal_style_v1`); `document` keeps span
 styles.
 
+#### Code highlighting (`terminal_code_highlight_v1`)
+
+A `code` component with a `language` (a name or file extension such as `rust`, `ts` or `py`) draws its `text`
+in the user's syntax theme. An unknown or missing `language`, or a line over 4 KiB, draws it plain. `start` (a line index,
+default 0) draws from that line while highlighting from the top of `text`, so a scrolled view keeps comments and
+strings that open above it.
+
 #### Component key and paste input (`terminal_input_v1`)
 
 A `pane` or `document` with `keys: true` (`terminal_input_v1`) forwards keys and pastes while focused as
@@ -3798,7 +3821,7 @@ operations `component_event` hooks make, on either surface), and detaching unmou
 ##### `terminal` event `client`
 
 The `terminal` event carries `client: {kind: 'terminal', graphics, pointer, reduced_motion, cell_px, columns,
-rows}`:
+rows, sites?}`:
 
 | Field | Meaning |
 | --- | --- |
@@ -3807,12 +3830,15 @@ rows}`:
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |
 | `cell_px` | The measured cell size or null. |
 | `columns` and `rows` | The terminal grid. |
+| `sites` | `terminal_site_area_v1`: `{[site]: {columns, rows}}` for each of the receiving mod's own `mod/site` sites the last frame drew as a layout leaf or an overlay, the cells its components got inside the frame's border, padding and title. Absent when the last frame drew none; sites stacked in the sidebar are not listed. |
 | `welcome` | `terminal_welcome_area_v1`: `{columns, rows}` of the blank area a `welcome` site gets this frame (the chat width beside any sidebar or dock, by the unused transcript height), or null when the welcome cannot show. Size welcome content from it; a change renders the view again. |
 | `chat` | `terminal_chat_area_v1`: `{x, y, columns, rows}` of the chat column this frame (the conversation and prompt box, beside any sidebar, dock or layout region), or null before the first fullscreen draw. Place art relative to the conversation with it; a change renders the view again. |
 | `colors` | `terminal_colors_v1`: the colours the terminal shows, `truecolor`, `256` or `16`. |
 
 `client` is null without a terminal client. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`; a burst of changes renders once per render in progress.
+A drawn site's area renders the view again the same way, except when it returns within a second to the area it had
+before the last change, as a view that sizes its own layout from `sites` would cause.
 
 ##### `raster` component
 

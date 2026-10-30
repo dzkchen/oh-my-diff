@@ -326,8 +326,15 @@ async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending
             let Some(lead) = core.expansion.thread(thread) else {
                 return;
             };
-            let changes =
+            let (git, paths): (Vec<String>, Vec<String>) = paths
+                .into_iter()
+                .partition(|path| path.starts_with(".git/"));
+            let mut changes =
                 super::activity::external_changes(core, &lead, &paths, include_ignored).await;
+            changes.extend(
+                git.into_iter()
+                    .map(|path| json!({"path": path, "before": null, "after": null})),
+            );
             if changes.is_empty() {
                 return;
             }
@@ -451,6 +458,8 @@ pub(in crate::mods) fn watch(
         include_ignored: bool,
         #[serde(default)]
         key: Option<String>,
+        #[serde(default)]
+        git: bool,
     }
     fn recursive() -> bool {
         true
@@ -514,6 +523,7 @@ pub(in crate::mods) fn watch(
             caller.source,
             &input.paths,
             input.recursive,
+            input.git,
             input.debounce_ms,
             input.key.as_deref().map(|key| (key, shape.as_str())),
             sink,

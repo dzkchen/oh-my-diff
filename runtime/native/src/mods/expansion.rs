@@ -65,6 +65,7 @@ type Timers = BTreeMap<(String, String, String), (String, u64, tokio::task::Join
 
 #[derive(Default)]
 pub(super) struct State {
+    active: Mutex<Option<Vec<String>>>,
     recording: AtomicBool,
     tool_output: AtomicBool,
     approval: AtomicBool,
@@ -243,6 +244,19 @@ impl State {
             }),
             Ordering::Release,
         );
+        let mut active: Vec<String> = runtime.owners().into_iter().map(|(id, _)| id).collect();
+        active.sort();
+        if let Ok(mut previous) = self.active.lock()
+            && previous
+                .replace(active.clone())
+                .is_none_or(|previous| previous != active)
+        {
+            broadcast(
+                self,
+                "mods_changed",
+                serde_json::json!({ "active": active }),
+            );
+        }
         let recording = runtime.uses_operation("turns.activity");
         self.recording.swap(recording, Ordering::AcqRel) && !recording
     }

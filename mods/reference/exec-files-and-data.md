@@ -36,6 +36,8 @@ write?, network?, unix_sockets?, guards?, required_access?, exclusive_workspace?
 - Commands, buttons and keybindings run `exec.run` without network; `network: "loopback"` there fails with
   `exec_network_unavailable_in_commands`.
 - Without `write` the repository is read-only. With `network: "loopback"` only local binding is allowed.
+- The command starts in its own session without a controlling terminal, so a program that would prompt on
+  `/dev/tty` (git credentials, ssh passphrases) fails instead of drawing over the TUI.
 - Cancellation kills the process group and returns `exec_cancelled`.
 
 ### `exec.run` limits
@@ -73,9 +75,10 @@ With the `os` grant, `sandbox: "none"` runs a program listed in `os_access` with
 - `cwd` may be absolute.
 - A program reached through a symlink outside the repository runs as the link, so a version-manager shim such as
   `node` from mise or Volta runs the version it manages.
-- The environment is cleared and then holds `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale, a private
-  `TMPDIR`, `TERM=dumb`, the declared `exec_environment` names and `env`. No host credential or Codex variable is
-  passed and no secrets API exists.
+- The environment is cleared and then holds `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale,
+  `SSH_AUTH_SOCK` (so `ssh` and `git` over SSH can use the user's SSH agent), a private `TMPDIR`, `TERM=dumb`, the
+  declared `exec_environment` names and `env`. No other host credential or Codex variable is passed and no secrets
+  API exists.
 - Limits, timeouts, cancellation and process-group teardown are unchanged.
 - `network`, `unix_sockets`, `guards`, `required_access` and `snapshot` need the sandbox.
 

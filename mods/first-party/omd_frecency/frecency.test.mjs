@@ -151,6 +151,13 @@ test('a branch without commits of its own, or the default branch, ranks by plain
   assert.deepEqual(main.logs.map(argv => argv.includes('--not')), [false]);
 });
 
+test('quoted mentions keep spaces and escapes', () => {
+  const text = 'see @"src/a b.ts", @"docs/say \\"hi\\".md" and @plain/c.ts';
+  const queued = run('intercept', { surface: 'input', input: { text, attachments: 0 }, origin: { caller: 'user' } },
+    call => ({ result: { text: call.arguments.input.text }, trace: [] }), '0').state;
+  assert.deepEqual(queued, ['src/a b.ts', 'docs/say "hi".md', 'plain/c.ts']);
+});
+
 test('names with tabs, newlines and spaces parse from NUL-separated Git output, limited to the session folder', () => {
   const status = branch('a1', 'main') + modified('sub/ta\tb.ts') + '2 R. N... 100644 100644 100644 0000000 0000000 R100 sub/new name.ts\0sub/old.ts\0' + '? top.ts\0';
   const { host, logs } = repository(null, status, { prefix: 'sub/', log: () => commits(['nl\nc.ts', 'ta\tb.ts'], []) });
@@ -187,4 +194,10 @@ test('recent commits skip empty ones and huge ones, and a commit cut by a trunca
     assert.deepEqual(mention(host, '', ['src/other.ts', 'cut.ts', 'src/feature.ts']), expected);
     assert.ok(logs.length <= 2);
   }
+});
+
+test('omd.frecency rank serves the same ranking to other mods, by use and Git alone for an empty query', () => {
+  const { host } = repository({ tick: 4, files: { 'src/used.ts': [3, 4] } }, branch() + modified('src/dirty.ts'));
+  assert.deepEqual(run('service', { query: '' }, host, 'omd.frecency.rank').value, { paths: ['src/dirty.ts', 'src/used.ts'] });
+  assert.deepEqual(run('service', { query: 'dirty' }, host, 'omd.frecency.rank').value.paths[0], 'src/dirty.ts');
 });

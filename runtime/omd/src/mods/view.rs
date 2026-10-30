@@ -581,6 +581,8 @@ pub enum ModComponent {
         text: String,
         #[serde(default)]
         language: Option<String>,
+        #[serde(default)]
+        start: usize,
     },
     Pane {
         id: String,

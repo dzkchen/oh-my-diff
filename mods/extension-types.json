@@ -549,6 +549,18 @@
       "why_mod": "Lays the screen out as a tabbed dock beside the chat through generic layouts, leaf titles, focus regions and key contexts; adds no model tool."
     },
     {
+      "path": "mods/first-party/omd_git",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Draws a Git panel into a workspace dock site with its own key contexts and runs git under a single-program os grant; adds no model tool."
+    },
+    {
+      "path": "mods/first-party/omd_files",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Draws a file manager into a workspace dock site from workspace reads, watches and previews; adds no model tool."
+    },
+    {
       "path": "mods/first-party/omd_theme",
       "extension_type": "mod",
       "role": "bundled",

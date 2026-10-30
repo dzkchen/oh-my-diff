@@ -142,31 +142,34 @@ test('keys show or focus panels by number, move between regions, resize and chan
 });
 
 test('stack mode keys focus panels by site and keep screen mode and tab keys per panel', () => {
-  const state = service('register', { id: 'git', title: 'Git', site: 'omd_git/a', tabs: [{ title: 'A', site: 'omd_git/a' }, { title: 'B', site: 'omd_git/b' }] }, null).state;
+  const state = service('register', { id: 'log', title: 'Git', site: 'omd_git/a', tabs: [{ title: 'A', site: 'omd_git/a' }, { title: 'B', site: 'omd_git/b' }] }, null).state;
   const contexts = draw(state, { settings: stack }).key_contexts;
   const general = contexts.at(-1);
   const own = contexts.slice(0, -1);
   assert.deepEqual(general.keys['3'], { action: { region: 'omd_git/a' }, label: 'Focus Git' });
-  assert.deepEqual(draw({ ...state, tabs: { git: 1 } }, { settings: stack }).key_contexts.at(-1).keys['3'].action, { region: 'omd_git/b' });
+  assert.deepEqual(draw({ ...state, tabs: { log: 1 } }, { settings: stack }).key_contexts.at(-1).keys['3'].action, { region: 'omd_git/b' });
   assert.equal(general.keys['['], undefined);
   assert.deepEqual(own.map(context => context.when.focus), [[CHANGES], [SHELL], ['omd_git/a', 'omd_git/b']]);
   assert.deepEqual(own[0].keys['+'].action, { command: 'workspace', args: 'mode next changes' });
-  assert.deepEqual(own[2].keys['{'].action, { command: 'workspace', args: 'tab previous git' });
+  assert.deepEqual(own[2].keys['{'].action, { command: 'workspace', args: 'tab previous log' });
   const [changes] = draw(state, { settings: { ...stack, key_mode_next: 'Ctrl+n' } }).key_contexts;
   assert.deepEqual(Object.keys(changes.keys), ['Ctrl+n', '_']);
 });
 
 test('a registered panel with tabs nests in the dock and every key and layout limit holds with six panels', () => {
   let state = null;
-  for (const id of ['git', 'files', 'agents', 'notes']) state = register(state, id, 2);
+  for (const id of ['vcs', 'files', 'agents', 'notes']) state = register(state, id, 2);
   const { key_contexts: contexts, layout } = draw(state);
   const titles = layout.children[1].tabs.map(tab => tab.title);
-  assert.deepEqual(titles, ['1 Changes', '2 Shell', '3 git', '4 files', '5 agents', '6 notes']);
-  assert.deepEqual(layout.children[1].tabs[2].node, { tabs: [{ title: 't0', node: leaf('git/t0', '3 git') }, { title: 't1', node: leaf('git/t1', '3 git') }], active: 0 });
+  assert.deepEqual(titles, ['1 Changes', '2 Shell', '3 vcs', '4 files', '5 agents', '6 notes']);
+  assert.deepEqual(layout.children[1].tabs[2].node, { tabs: [{ title: 't0', node: leaf('vcs/t0', '3 vcs') }, { title: 't1', node: leaf('vcs/t1', '3 vcs') }], active: 0 });
   assert.ok(cells(layout) <= 12 && depth(layout) <= 6);
+  const pruned = run('mods_changed', { active: ['omd_workspace', 'vcs', 'agents'] }, { state }).state;
+  assert.deepEqual(pruned.registered.map(panel => panel.id), ['vcs', 'agents']);
+  assert.deepEqual(draw(pruned).layout.children[1].tabs.map(tab => tab.title), ['1 Changes', '2 Shell', '3 vcs', '4 agents']);
 
   for (const id of ['a', 'b', 'c', 'd', 'e']) state = register(state, id, 1);
-  const six = draw(state, { settings: { panels: 'a, b, c, d, e, terminal, git' } });
+  const six = draw(state, { settings: { panels: 'a, b, c, d, e, terminal, vcs' } });
   assert.equal(six.layout.children[1].tabs.length, 6);
   assert.ok(cells(six.layout) <= 12 && depth(six.layout) <= 6);
   assert.ok(six.key_contexts.length <= 8 && keysOf(six.key_contexts) <= 32);
@@ -183,35 +186,45 @@ test('a registered panel with tabs nests in the dock and every key and layout li
   const capped = draw(state, { settings: { panels: 'x, y, z, w' } }).layout.children[1].tabs;
   assert.deepEqual(capped.map(tab => tab.title), ['1 x', '2 y', '3 w']);
 
-  const stacked = draw(state, { settings: { layout: 'stack', panels: 'git files agents changes terminal' } });
+  const stacked = draw(state, { settings: { layout: 'stack', panels: 'vcs files agents changes terminal' } });
   assert.equal(stacked.layout.children[1].children.length, 4);
   assert.ok(cells(stacked.layout) <= 12 && depth(stacked.layout) <= 6);
   assert.ok(stacked.key_contexts.length <= 8 && keysOf(stacked.key_contexts) <= 32);
 });
 
+test('a panel registered to replace a built-in hides it unless the panels setting lists it', () => {
+  assert.deepEqual(service('panels', null, service('register', { id: 'git', title: 'Git', site: 'omd_git/main' }, null).state).value.panels.map(item => item.id), ['changes', 'terminal', 'git']);
+  assert.match(service('register', { id: 'git', title: 'Git', site: 'omd_git/main', replaces: 'snake' }, null).value.error, /^replaces must be a built-in panel/);
+  const state = service('register', { id: 'git', title: 'Git', site: 'omd_git/main', order: 10, replaces: 'changes' }, null).state;
+  assert.deepEqual(service('panels', null, state).value.panels.map(item => item.id), ['terminal', 'git']);
+  assert.deepEqual(draw(state).layout.children[1].tabs.map(tab => tab.title), ['1 Shell', '2 Git']);
+  assert.deepEqual(draw(state, { settings: { panels: 'changes, git' } }).layout.children[1].tabs.map(tab => tab.title), ['1 Changes', '2 Git']);
+  assert.equal(run('turn_end', { turn_id: 'x', outcome: 'completed' }, { state }).calls.length, 0);
+});
+
 test('other mods register, replace and unregister panels, which join the dock after the built-ins by order', () => {
-  const panel = { id: 'git', title: 'Git', site: 'omd_git/status', order: 500 };
+  const panel = { id: 'log', title: 'Git', site: 'omd_git/status', order: 500 };
   let state = service('register', panel, null).state;
   state = service('register', { id: 'files', title: 'Files', site: 'omd_files/tree', order: 5 }, state).state;
-  assert.deepEqual(service('panels', null, state).value.panels.map(item => item.id), ['changes', 'terminal', 'files', 'git']);
+  assert.deepEqual(service('panels', null, state).value.panels.map(item => item.id), ['changes', 'terminal', 'files', 'log']);
   assert.deepEqual(draw(state).layout.children[1].tabs.map(tab => [tab.title, tab.node.content]),
     [['1 Changes', 'site:omd_workspace/changes'], ['2 Shell', 'site:omd_workspace/terminal'], ['3 Files', 'site:omd_files/tree'], ['4 Git', 'site:omd_git/status']]);
   state = service('register', { ...panel, title: 'Git 2', order: 1 }, state).state;
   assert.deepEqual(service('panels', null, state).value.panels.map(item => [item.id, item.title]),
-    [['changes', 'Changes'], ['terminal', 'Shell'], ['git', 'Git 2'], ['files', 'Files']]);
-  assert.deepEqual(draw(state, { settings: { panels: 'git,git,missing' } }).layout.children[1], dock(0, [['1 Git 2', 'omd_git/status']]));
+    [['changes', 'Changes'], ['terminal', 'Shell'], ['log', 'Git 2'], ['files', 'Files']]);
+  assert.deepEqual(draw(state, { settings: { panels: 'log,log,missing' } }).layout.children[1], dock(0, [['1 Git 2', 'omd_git/status']]));
   for (const bad of [
     { ...panel, id: 'terminal' }, { ...panel, id: 'dock' }, { ...panel, id: 'Bad Id' }, { ...panel, site: 'nomod' }, { ...panel, title: '' },
     { ...panel, title: 'x'.repeat(31) }, { ...panel, title: 'a\u001b[31m' }, { ...panel, id: 'other', site: 'x/y', tabs: [{ title: 't\n', site: 'x/y' }] },
     { ...panel, id: 'other', site: 'omd_workspace/changes' }, { ...panel, id: 'other', tabs: [] },
     { ...panel, id: 'other', site: 'x/y', tabs: [{ title: 't', site: 'x/y' }, { title: 'u', site: 'x/y' }] },
   ]) assert.ok(service('register', bad, state).value.error, JSON.stringify(bad));
-  assert.deepEqual(service('unregister', { id: 'git' }, state).value, { removed: true });
-  assert.deepEqual(service('unregister', { id: 'git' }, service('unregister', { id: 'git' }, state).state).value, { removed: false });
+  assert.deepEqual(service('unregister', { id: 'log' }, state).value, { removed: true });
+  assert.deepEqual(service('unregister', { id: 'log' }, service('unregister', { id: 'log' }, state).state).value, { removed: false });
 });
 
 test('dragged sizes and clicked tabs follow the panels, not their paths', () => {
-  let state = service('register', { id: 'git', title: 'Git', site: 'omd_git/a', tabs: [{ title: 'Status', site: 'omd_git/a' }, { title: 'Log', site: 'omd_git/b' }] }, null).state;
+  let state = service('register', { id: 'log', title: 'Git', site: 'omd_git/a', tabs: [{ title: 'Status', site: 'omd_git/a' }, { title: 'Log', site: 'omd_git/b' }] }, null).state;
   state = emit(state, { kind: 'resize', component: 'r', ratio: [80, 20] }).state;
   state = emit(state, { kind: 'select', component: 'r.1', index: 2 }).state;
   state = emit(state, { kind: 'select', component: 'r.1.2', index: 1 }).state;
@@ -219,9 +232,9 @@ test('dragged sizes and clicked tabs follow the panels, not their paths', () => 
   assert.deepEqual(layout.ratio, [80, 20]);
   assert.equal(layout.children[1].active, 2);
   assert.equal(layout.children[1].tabs[2].node.active, 1);
-  const reordered = draw(state, { settings: { panels: 'git, changes, terminal' } }).layout;
+  const reordered = draw(state, { settings: { panels: 'log, changes, terminal' } }).layout;
   assert.deepEqual([reordered.ratio, reordered.children[1].active, reordered.children[1].tabs[0].node.active], [[80, 20], 0, 1]);
-  assert.deepEqual(emit(state, { kind: 'select', component: 'r.1', index: 9 }).state.recent, ['git']);
+  assert.deepEqual(emit(state, { kind: 'select', component: 'r.1', index: 9 }).state.recent, ['log']);
   const left = emit(null, { kind: 'resize', component: 'r', ratio: [30, 70] }, { settings: { side: 'left' } }).state;
   assert.deepEqual([draw(left, { settings: { side: 'left' } }).layout.ratio, draw(left).layout.ratio], [[30, 70], [67, 33]]);
   assert.equal(emit({ mode: { target: 'chat', level: 'half' } }, { kind: 'resize', component: 'r', ratio: [10, 90] }).state.ratios, undefined);
@@ -229,7 +242,7 @@ test('dragged sizes and clicked tabs follow the panels, not their paths', () => 
   let stacked = emit(state, { kind: 'resize', component: 'r.1', ratio: [20, 30, 50] }, { settings: stack }).state;
   stacked = emit(stacked, { kind: 'select', component: 'r.1.2', index: 0 }, { settings: stack }).state;
   assert.deepEqual(draw(stacked, { settings: stack }).layout.children[1].ratio, [20, 30, 50]);
-  assert.equal(stacked.tabs.git, 0);
+  assert.equal(stacked.tabs.log, 0);
   const reset = command('reset', stacked).state;
   assert.deepEqual([reset.arranged, reset.ratios, reset.tabs, reset.recent, reset.mode], [null, {}, {}, [], null]);
 });
@@ -251,18 +264,18 @@ test('grow and shrink resize the panels beside the chat in steps, leave a screen
 });
 
 test('tab commands show panels in tabs and cycle a tabbed panel', () => {
-  let state = service('register', { id: 'git', title: 'Git', site: 'omd_git/a', tabs: [{ title: 'A', site: 'omd_git/a' }, { title: 'B', site: 'omd_git/b' }] }, null).state;
-  assert.deepEqual(command('tab 3', state).state.recent, ['git']);
-  assert.deepEqual(command('tab previous', state).state.recent, ['git']);
+  let state = service('register', { id: 'log', title: 'Git', site: 'omd_git/a', tabs: [{ title: 'A', site: 'omd_git/a' }, { title: 'B', site: 'omd_git/b' }] }, null).state;
+  assert.deepEqual(command('tab 3', state).state.recent, ['log']);
+  assert.deepEqual(command('tab previous', state).state.recent, ['log']);
   assert.equal(command('tab next', command('tab 3', state).state).state.recent[0], 'changes');
   assert.match(command('tab 4', state).value.display, /^Usage: \/workspace tab 1-3/);
-  state = command('tab previous git', state).state;
-  assert.equal(state.tabs.git, 1);
-  assert.equal(command('tab next git', state).state.tabs.git, 0);
+  state = command('tab previous log', state).state;
+  assert.equal(state.tabs.log, 1);
+  assert.equal(command('tab next log', state).state.tabs.log, 0);
   assert.match(command('tab next changes', state).value.display, /^Usage: \/workspace tab next\|previous PANEL/);
   assert.equal(command('tab next', state, { settings: stack }).value.display, 'No panels are in tabs');
-  const two = { arrangement: { split: 'horizontal', children: ['chat', { tabs: ['changes', 'terminal'] }, { tabs: ['git', 'files'] }] } };
-  const groups = register(register(null, 'git'), 'files');
+  const two = { arrangement: { split: 'horizontal', children: ['chat', { tabs: ['changes', 'terminal'] }, { tabs: ['vcs', 'files'] }] } };
+  const groups = register(register(null, 'vcs'), 'files');
   const focused = draw({ ...groups, recent: ['files'] }, { settings: two }).key_contexts.find(context => context.when.focus.includes(CHANGES));
   assert.deepEqual([focused.keys['['].action, focused.keys[']'].action], [{ command: 'workspace', args: 'tab 2' }, { command: 'workspace', args: 'tab 2' }]);
 });
@@ -404,8 +417,8 @@ test('presets arrange the chat and panels, mirror for the left side and stack wh
   assert.deepEqual(draw(null, { columns: 83, settings: { layout: 'corner' } }).layout, { ...corner, split: 'vertical' });
   assert.deepEqual(draw(null, { settings: { layout: 'columns' } }).layout, { split: 'horizontal', children: [chat, leaf(CHANGES, '1 Changes'), leaf(SHELL, '2 Shell')] });
   assert.deepEqual(draw(null, { settings: { layout: 'grid' } }).layout, { split: 'vertical', children: [{ split: 'horizontal', children: [chat, leaf(CHANGES, '1 Changes')] }, leaf(SHELL, '2 Shell')] });
-  const three = register(null, 'git');
-  assert.deepEqual(draw(three, { settings: { layout: 'corner' } }).layout.children[1], dock(0, [['2 Shell', SHELL], ['3 git', 'git/main']]));
+  const three = register(null, 'vcs');
+  assert.deepEqual(draw(three, { settings: { layout: 'corner' } }).layout.children[1], dock(0, [['2 Shell', SHELL], ['3 vcs', 'vcs/main']]));
   const grid = draw(register(three, 'files'), { columns: 83, settings: { layout: 'grid' } }).layout;
   assert.deepEqual([grid.split, grid.children[0].split, grid.children[1].split], ['vertical', 'vertical', 'horizontal']);
   let six = null;
@@ -478,21 +491,21 @@ test('the arrangement setting replaces the preset, and an invalid tree is ignore
 });
 
 test('other mods place their panels and arrange the workspace until the user changes it', () => {
-  const git = { id: 'git', title: 'Git', site: 'omd_git/main' };
+  const git = { id: 'log', title: 'Git', site: 'omd_git/main' };
   let state = service('register', { ...git, placement: { beside: 'chat', edge: 'bottom', share: 30 } }, null).state;
   assert.deepEqual(draw(state).layout, { split: 'horizontal', ratio: [67, 33], children: [{ split: 'vertical', ratio: [70, 30], children: [chat, leaf('omd_git/main', '3 Git')] }, dock()] });
-  for (const placement of [{ beside: 'chat', edge: 'middle' }, { beside: 'git', edge: 'left' }, { beside: 'chat', edge: 'top', share: 99 }, { edge: 'top' }]) {
+  for (const placement of [{ beside: 'chat', edge: 'middle' }, { beside: 'log', edge: 'left' }, { beside: 'chat', edge: 'top', share: 99 }, { edge: 'top' }]) {
     assert.ok(service('register', { ...git, placement }, state).value.error, JSON.stringify(placement));
   }
   assert.deepEqual(service('panels', null, state).value.panels.at(-1).placement, { beside: 'chat', edge: 'bottom', share: 30 });
   const lost = service('register', { id: 'files', title: 'Files', site: 'omd_files/main', placement: { beside: 'nobody', edge: 'left' } }, state).state;
   assert.deepEqual(draw(lost).layout.children[1].tabs.map(tab => tab.title), ['1 Changes', '2 Shell', '4 Files']);
 
-  const tree = { split: 'horizontal', children: [{ split: 'vertical', children: ['chat', 'git'] }, 'terminal'] };
+  const tree = { split: 'horizontal', children: [{ split: 'vertical', children: ['chat', 'log'] }, 'terminal'] };
   const arranged = service('arrange', { tree }, state);
   assert.deepEqual(arranged.value, { arranged: true });
-  assert.deepEqual(service('arrangement', {}, arranged.state).value, { tree: { split: 'horizontal', children: [{ split: 'vertical', children: ['chat', 'git'] }, 'terminal', 'changes'] }, by: 'mod' });
-  assert.match(service('arrange', { tree: { split: 'horizontal', children: ['terminal', 'git'] } }, state).value.error, /needs "chat" once/);
+  assert.deepEqual(service('arrangement', {}, arranged.state).value, { tree: { split: 'horizontal', children: [{ split: 'vertical', children: ['chat', 'log'] }, 'terminal', 'changes'] }, by: 'mod' });
+  assert.match(service('arrange', { tree: { split: 'horizontal', children: ['terminal', 'log'] } }, state).value.error, /needs "chat" once/);
   const user = command('move changes up', arranged.state).state;
   assert.equal(user.arranged.by, 'user');
   assert.match(service('arrange', { tree }, user).value.error, /^the user arranged the workspace/);

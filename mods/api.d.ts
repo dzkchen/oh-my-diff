@@ -179,7 +179,7 @@ export type TerminalComponent =
   | ({ type: 'multiselect'; id: string; label: string; value?: string[]; options: TerminalSelectOption[]; action: TerminalCommandAction } & TerminalControl)
   | ({ type: 'list'; id: string; label: string; rows: TerminalListRow[]; selected?: string; height?: number; action: TerminalCommandAction } & TerminalControl)
   | { type: 'markdown'; id: string; label: string; text: string }
-  | { type: 'code'; id: string; label: string; text: string; language?: string }
+  | { type: 'code'; id: string; label: string; text: string; language?: string; start?: number }
   | ({ type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; keys?: boolean | 'all'; children?: TerminalComponent[] } & TerminalBoxProps)
   | { type: 'dialog'; id: string; label: string; title: string; children?: TerminalComponent[]; style?: TerminalFrameStyle }
   | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction; keys?: boolean | 'all' }
@@ -220,6 +220,8 @@ export interface TerminalTheme {
 export type TerminalClient = {
   kind: 'terminal'; graphics: 'kitty' | 'iip' | 'cells' | 'text'; pointer: 'half_cell' | 'cell' | 'none'; reduced_motion: boolean;
   cell_px: { width: number; height: number } | null; columns: number; rows: number;
+  /** Needs `terminal_site_area_v1`: the content area the last frame gave each of this mod's own `mod/site` layout leaves and overlays. */
+  sites?: Record<string, { columns: number; rows: number }>;
   /** `terminal_welcome_area_v1`: the blank area a `welcome` site gets this frame, null when the welcome cannot show. */
   welcome?: { columns: number; rows: number } | null;
   /** `terminal_chat_area_v1`: the chat column's cells, beside any sidebar, dock or layout region; null before the first fullscreen draw. */
@@ -438,8 +440,8 @@ export interface HostOperations {
   /** Requires app_respond_v1: answers a pending server request this mod subscribes to; approvals and elicitations only decline or cancel, permissions grant nothing. */
   'app.respond': { arguments: { request_id: Json; result: Json }; result: { resolved: true } };
   'app.routes': { arguments: null; result: AppRoute[] };
-  /** A `key` (1-64 bytes, needs `workspace_watch_key_v1`) keeps or replaces the mod's watch with that key in this OMD process. */
-  'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean; key?: string }; result: { watch_id: string } };
+  /** A `key` (1-64 bytes, needs `workspace_watch_key_v1`) keeps or replaces the mod's watch with that key in this OMD process. `git: true` (needs `workspace_watch_git_v1`) also reports `.git/HEAD`, `.git/index`, `.git/packed-refs` and `.git/refs/…` changes. */
+  'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean; key?: string; git?: boolean }; result: { watch_id: string } };
   'workspace.unwatch': { arguments: { watch_id: string } | { key: string }; result: { stopped: boolean } };
   /** New channels fail with channel_sequence_limit at 256 counters per publisher or 4096 process-wide. */
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
@@ -568,6 +570,7 @@ export interface Events {
   thread_settings: { input: { cwd: { before: string; after: string }; roots: { added: string[]; removed: string[] }; model: { before: string | null; after: string | null };
     effort: { before: ReasoningEffort | null; after: ReasoningEffort | null }; provider: { before: string; after: string } }; output: void };
   worktree: { input: { phase: 'created' | 'removed'; path: string; owner: 'agent' | 'tui' }; output: void };
+  mods_changed: { input: { active: string[] }; output: void };
   elicitation_result: { input: { server: string; request_id: string; action: 'accept' | 'decline' | 'cancel'; content: Json; by: string | null }; output: void };
   composer: { input: { kind: 'change'; revision: number; attachments_revision: number; origin: string } | { kind: 'suggestion'; id: string; status: 'accepted' | 'dismissed' | 'cleared'; reason?: string }; output: void };
   prompt_expanded: { input: { turn_id: string; items: ({ kind: 'skill'; name: string; source: string; sha256: string } | { kind: 'mention'; name: string; source: string }

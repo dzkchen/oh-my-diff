@@ -344,6 +344,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "tool_batch_success_v1",
     "code_mode_values_v1",
     "workspace_watch_key_v1",
+    "workspace_watch_git_v1",
     "terminal_surface_v1",
     "credentials_v1",
     "completion_v1",
@@ -392,6 +393,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "compaction_intercept_v1",
     "composer_v2",
     "lifecycle_events_v1",
+    "mods_changed_v1",
     "user_submissions_v1",
     "terminal_raster_v1",
     "svg_assets_v1",
@@ -405,6 +407,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_layout_title_v1",
     "terminal_layout_dock_v1",
     "terminal_raster_packed_v1",
+    "terminal_site_area_v1",
+    "terminal_code_highlight_v1",
     "terminal_welcome_area_v1",
     "terminal_underlay_v1",
     "terminal_chat_area_v1",
@@ -644,7 +648,7 @@ pub fn capability_phrase(capability: &str) -> &str {
         "pty" => "run interactive terminal programs",
         "history" => "edit the conversation history",
         "outputs" => "change tool output",
-        "os" => "run listed programs unsandboxed with your account's full access",
+        "os" => "run listed programs unsandboxed with your account's full access and SSH agent",
         "approve" => "approve tool calls for you",
         "approve.override" => "approve commands your own rules forbid",
         "http" => "send web requests to the sites it lists",
@@ -667,7 +671,7 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     let granted = |name: &str| capabilities.iter().any(|c| c == name);
     let mut exposure = Vec::new();
     if granted("os") {
-        exposure.push("os: listed programs run unsandboxed as your account; they can read every file your account can read (including secret files such as ~/.ssh, ~/.codex/auth.json and browser profiles), change mod stores and control files, use the network as os_access allows and start processes OMD does not supervise. OMD sanitizes their environment and supervises, cancels and limits the processes it starts, but cannot undo their side effects. Only the OS-separated broker protects grants, credentials and evidence anchors from them.");
+        exposure.push("os: listed programs run unsandboxed as your account; they can read every file your account can read (including secret files such as ~/.ssh, ~/.codex/auth.json and browser profiles), change mod stores and control files, use the network as os_access allows, sign in through your SSH agent (SSH_AUTH_SOCK) and start processes OMD does not supervise. OMD sanitizes their environment and supervises, cancels and limits the processes it starts, but cannot undo their side effects. Only the OS-separated broker protects grants, credentials and evidence anchors from them.");
     }
     if granted("approve") {
         exposure.push("approve: this mod may approve exec, patch, MCP and network requests inside its approves scope without asking you; managed-policy and host denials still apply and any error asks you.");
@@ -784,6 +788,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("instructions_loaded", "lifecycle"),
     ("thread_settings", "lifecycle"),
     ("worktree", "lifecycle"),
+    ("mods_changed", "lifecycle"),
     ("elicitation_result", "approvals"),
     ("composer", "composer"),
     ("prompt_expanded", "middleware"),
@@ -873,6 +878,60 @@ fn timed_out(error: &str) -> bool {
 const MAX_WORKERS: usize = 8;
 /// How often a waiting `concurrently` checks `active`.
 const CANCEL_POLL: Duration = Duration::from_millis(10);
+
+/// A `terminal` payload split once per frame into what every mod sees and `client.sites`, of which each mod sees only its own `owner/name` entries.
+struct TerminalPayload {
+    shared: Value,
+    hash: String,
+    sites: Option<serde_json::Map<String, Value>>,
+}
+
+impl TerminalPayload {
+    fn new(mut shared: Value) -> Self {
+        let sites = shared
+            .get_mut("client")
+            .and_then(Value::as_object_mut)
+            .filter(|client| client.get("sites").is_some_and(Value::is_object))
+            .and_then(|client| client.remove("sites"))
+            .and_then(|sites| match sites {
+                Value::Object(sites) => Some(sites),
+                _ => None,
+            });
+        let hash = digest(shared.to_string().as_bytes());
+        Self {
+            shared,
+            hash,
+            sites,
+        }
+    }
+
+    fn own(&self, id: &str) -> serde_json::Map<String, Value> {
+        self.sites
+            .iter()
+            .flatten()
+            .filter(|(name, _)| name.split_once('/').is_some_and(|(owner, _)| owner == id))
+            .map(|(name, area)| (name.clone(), area.clone()))
+            .collect()
+    }
+
+    fn key(&self, own: &serde_json::Map<String, Value>) -> String {
+        if own.is_empty() {
+            return self.hash.clone();
+        }
+        let sites = serde_json::to_string(own).unwrap_or_default();
+        format!("{}:{}", self.hash, digest(sites.as_bytes()))
+    }
+
+    fn payload(&self, own: serde_json::Map<String, Value>) -> Value {
+        let mut payload = self.shared.clone();
+        if !own.is_empty()
+            && let Some(client) = payload.get_mut("client").and_then(Value::as_object_mut)
+        {
+            client.insert("sites".to_owned(), Value::Object(own));
+        }
+        payload
+    }
+}
 
 /// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
 fn concurrently<T: Send, R: Send>(
@@ -6049,14 +6108,15 @@ impl ModHost {
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
         let thread = state_thread(&payload);
-        let payload_hash = digest(payload.to_string().as_bytes());
+        let payload = TerminalPayload::new(payload);
         let generation = self.generation;
         let mut results = Vec::new();
         let mut stale = Vec::new();
         for id in self.event_ids("terminal") {
+            let own = payload.own(&id);
             let key = self
                 .terminal_state_key(&id, thread.as_deref())
-                .map(|stamp| format!("{stamp}:{payload_hash}"));
+                .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
             // A handler that read the clock is rerun once its result is a second old.
             if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
                 && key == cached
@@ -6066,12 +6126,12 @@ impl ModHost {
                 continue;
             }
             let begun = self.begin(&id, generation, &active, thread.as_deref());
-            stale.push((results.len(), key, begun));
+            stale.push((results.len(), key, begun, own));
             results.push((id, None));
         }
         // Terminal handlers make no host calls, so their runners work in parallel.
         let payload = &payload;
-        let replies = concurrently(stale, &active, |(index, key, begun), active| {
+        let replies = concurrently(stale, &active, |(index, key, begun, own), active| {
             let reply = begun.and_then(|mut invocation| {
                 if invocation.migrate {
                     invocation.loaded.state =
@@ -6083,7 +6143,7 @@ impl ModHost {
                             &invocation.loaded,
                             "terminal",
                             "",
-                            payload.clone(),
+                            payload.payload(own),
                             &[],
                             active,
                             &mut |call| {
@@ -6112,7 +6172,7 @@ impl ModHost {
                                 generation,
                                 "terminal",
                                 "",
-                                payload.clone(),
+                                payload.payload(payload.own(&id)),
                                 &active,
                             ),
                         result => result,
@@ -6140,7 +6200,10 @@ impl ModHost {
                 )
             })
             .collect();
-        let origin = payload["event"].as_str().unwrap_or_default().to_owned();
+        let origin = payload.shared["event"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         self.compose_terminal(results, &origin, None)
     }
 
@@ -6186,7 +6249,8 @@ impl ModHost {
         self.renders.remove(id);
         // A command's result stands in for the `terminal` handler for a second, like a clock read.
         if matched && let Some(stamp) = stamp {
-            let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
+            let payload = TerminalPayload::new(payload.clone());
+            let key = format!("{stamp}:{}", payload.key(&payload.own(id)));
             self.renders
                 .insert(id.to_owned(), (key, patch, Some(Instant::now())));
         }
