@@ -104,7 +104,7 @@ Each mod runs at most `pty_panes_per_mod` terminals at once (4 unless `mod_limit
 
 ## Service
 
-`omd.workspace` 1.1.0:
+`omd.workspace` 1.2.0:
 
 | Method | Does |
 | --- | --- |
@@ -113,6 +113,7 @@ Each mod runs at most `pty_panes_per_mod` terminals at once (4 unless `mod_limit
 | `panels` | The shown panels in order. |
 | `arrange {tree}` | Sets the whole arrangement, unless the user has arranged it (`/workspace reset` hands it back). A tree is `"chat"`, a panel id, `{split: 'horizontal' \| 'vertical', children: [2-4], ratio?}` or `{tabs: [panel ids]}`, with `chat` once and outside tabs. A refused tree returns `{error}` with the reason. |
 | `arrangement {}` | `{tree, by: 'user' \| 'mod' \| 'settings', preset?}`: the arrangement with every shown panel. |
+| `mode {level, target?}` | Sets the screen mode like `/workspace mode`: `level` is `normal`, `half` or `full`, `target` is `chat` (the default), `dock` or a shown panel id. Unregistering the target clears it; returns `{error}` while the workspace is off. |
 
 `register` fields:
 

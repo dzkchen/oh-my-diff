@@ -27,7 +27,7 @@ Without a `path`, yazi starts where it last ended in this thread, if that is ins
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `placement` | `panel` | `full`: yazi takes the screen above a compact chat. `panel`: a Yazi tab of the `omd_workspace` dock, which must be on, else `full`; in a thread where yazi isn't running the tab says how to start it |
+| `placement` | `panel` | `full`: yazi takes the screen above a compact chat, through the workspace's full screen mode while `omd_workspace` is on. `panel`: a Yazi tab of the `omd_workspace` dock, which must be on, else `full`; in a thread where yazi isn't running the tab says how to start it |
 
 ## Needs and limits
 

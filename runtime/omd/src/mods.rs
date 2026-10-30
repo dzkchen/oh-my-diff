@@ -1378,6 +1378,7 @@ fn source_use(
                 && declared("os")
             {
                 used.push("os".to_owned());
+                used.push("exec".to_owned());
             }
             if !used.is_empty()
                 && operation == "exec.run"

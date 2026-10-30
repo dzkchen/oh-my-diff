@@ -57,18 +57,25 @@ export default function activate(api: ModAPI) {
     });
     if (!started.ok) return { display: started.error.includes('program_unavailable') ? `Cannot run yazi. ${HINT}` : `yazi did not start: ${started.error}` };
     if (!('running' in started.value)) return { display: 'yazi start declined' };
+    const full = api.settings.placement === 'full';
     let panel = false;
-    if (api.settings.placement === 'panel') {
-      try { panel = !api.services.call<{ error?: string }>('omd.workspace', 'register', { id: PANEL, title: 'Yazi', site: SITE, show: true }).error; } catch {}
-    }
+    try {
+      panel = !api.services.call<{ error?: string }>('omd.workspace', 'register', { id: PANEL, title: 'Yazi', site: SITE, show: true }).error
+        && (!full || !api.services.call<{ error?: string }>('omd.workspace', 'mode', { level: 'full', target: PANEL }).error);
+      if (full && !panel) api.services.call('omd.workspace', 'unregister', { id: PANEL });
+    } catch {}
     api.state.set({ running: true, panel, dir: remembered });
     api.host.tryCall('terminal.pane', { action: 'focus', id: ID });
-    return { display: panel ? 'yazi started in its workspace tab' : 'yazi started (Ctrl+] leaves it)' };
+    return { display: panel && !full ? 'yazi started in its workspace tab' : 'yazi started (Ctrl+] leaves it)' };
   }, { description: 'Run yazi in this session and mention the files you pick; --stop closes it', args_hint: '[path|--stop]' });
+
+  const docked = () => {
+    try { return api.services.call<{ panels: { id: string }[] }>('omd.workspace', 'panels', null).panels.some(item => item.id === PANEL); } catch { return false; }
+  };
 
   api.on('terminal', ({ client }): TerminalPatch | null => {
     const { running, panel } = load();
-    if (!running) return api.settings.placement === 'panel' ? { sites: { [SITE]: { components: [{ type: 'text', id: `${ID}_idle`, label: 'yazi', text: IDLE }] } } } : null;
+    if (!running) return api.settings.placement === 'panel' && docked() ? { sites: { [SITE]: { components: [{ type: 'text', id: `${ID}_idle`, label: 'yazi', text: IDLE }] } } } : null;
     const sites = { [SITE]: { components: [{ type: 'terminal' as const, id: ID, label: 'yazi', session: SESSION, autofocus: true }] } };
     if (panel) return { sites };
     const chat = Math.min(99, Math.max(1, Math.round(500 / (client?.rows ?? 40))));

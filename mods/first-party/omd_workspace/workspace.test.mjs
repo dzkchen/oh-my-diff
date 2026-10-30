@@ -189,6 +189,20 @@ test('a registered panel with tabs nests in the dock and every key and layout li
   assert.ok(stacked.key_contexts.length <= 8 && keysOf(stacked.key_contexts) <= 32);
 });
 
+test('other mods set the screen mode on a shown panel, and unregistering that panel clears it', () => {
+  const state = service('register', { id: 'lazygit', title: 'Lazygit', site: 'omd_lazygit/main', show: true }, null).state;
+  const full = service('mode', { level: 'full', target: 'lazygit' }, state);
+  assert.deepEqual(full.value, { mode: { target: 'lazygit', level: 'full' } });
+  assert.deepEqual(draw(full.state, { rows: 40 }).layout.children.map(node => node.tabs?.map(tab => tab.title) ?? node.children?.length), [['1 Changes', '2 Shell', '3 Lazygit'], 2]);
+  assert.equal(service('mode', { level: 'normal', target: 'lazygit' }, full.state).state.mode, null);
+  assert.equal(service('mode', { level: 'half' }, null).state.mode.target, 'chat');
+  for (const bad of [{ level: 'big', target: 'lazygit' }, { level: 'full', target: 'missing' }, { level: 'full', target: 7 }]) assert.ok(service('mode', bad, state).value.error, JSON.stringify(bad));
+  assert.equal(service('mode', { level: 'full', target: 'lazygit' }, { ...state, off: true }).value.error, 'the workspace is off');
+  assert.equal(service('unregister', { id: 'lazygit' }, full.state).state.mode, null);
+  const other = service('mode', { level: 'full', target: 'changes' }, full.state).state;
+  assert.deepEqual(service('unregister', { id: 'lazygit' }, other).state.mode, { target: 'changes', level: 'full' });
+});
+
 test('other mods register, replace and unregister panels, which join the dock after the built-ins by order', () => {
   const panel = { id: 'git', title: 'Git', site: 'omd_git/status', order: 500 };
   let state = service('register', panel, null).state;

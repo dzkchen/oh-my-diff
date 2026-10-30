@@ -26,6 +26,8 @@ function run(event, payload, { state = null, settings = {}, name, world = {} } =
         return { stopped: true };
       case 'mods.service':
         if (world.noWorkspace) throw new Error('optional_service_unavailable');
+        if (args.method === 'panels') return { panels: world.docked ? [{ id: 'yazi' }] : [] };
+        if (args.method === 'mode') return world.off ? { error: 'the workspace is off' } : { mode: args.input };
         return args.method === 'register' ? { registered: 'yazi' } : { removed: true };
       case 'composer.read': return { text: '', cursor: 0, selection: null, revision: 7, attachments: [], suggestion: null };
       case 'composer.write': return { applied: true };
@@ -41,7 +43,7 @@ function run(event, payload, { state = null, settings = {}, name, world = {} } =
 
 const command = (args, options) => run('command', args, { ...options, name: 'yazi' });
 const exit = (state, files) => run('component_event', { thread_id: 't1', origin: 'user', component: ID, kind: 'exit', session: 'yazi', exit_code: 0, files }, { state });
-const draw = (state, rows = 40, settings = {}) => run('terminal', { event: 'redraw', ledger: { thread_id: 't1', cwd: '/repo', cost: null }, client: { columns: 120, rows } }, { state, settings }).value;
+const draw = (state, rows = 40, settings = {}, world = {}) => run('terminal', { event: 'redraw', ledger: { thread_id: 't1', cwd: '/repo', cost: null }, client: { columns: 120, rows } }, { state, settings, world }).value;
 const ops = (result, operation) => result.calls.filter(call => call.operation === operation).map(call => call.arguments);
 const running = { running: true, panel: false, dir: null };
 const idle = { running: false, panel: false, dir: null };
@@ -60,7 +62,7 @@ test('start runs yazi unsandboxed with the chooser and cwd files in the session 
     argv: ['/repo/app', '--chooser-file={dir}/chosen', '--cwd-file={dir}/cwd'], files: { chosen: '', cwd: '' },
   }]);
   assert.deepEqual(ops(result, 'terminal.pane'), [{ action: 'focus', id: ID }]);
-  assert.deepEqual(result.state, { running: true, panel: false, dir: null });
+  assert.deepEqual(result.state, { running: true, panel: true, dir: null });
   assert.equal(command('', { world: { declined: true } }).state, null);
 });
 
@@ -81,7 +83,9 @@ test('panel is the default placement; it registers a workspace panel shown in th
   assert.equal(draw(panel.state).layout, undefined);
   assert.deepEqual(command('', { settings: { placement: 'panel' }, world: { noWorkspace: true } }).state.panel, false);
   assert.equal(draw(null), null);
-  assert.deepEqual(draw(null, 40, { placement: 'panel' }).sites[SITE].components.map(item => item.type), ['text']);
+  assert.deepEqual(draw(null, 40, { placement: 'panel' }, { docked: true }).sites[SITE].components.map(item => item.type), ['text']);
+  assert.equal(draw(null, 40, { placement: 'panel' }), null);
+  assert.equal(draw(null, 40, { placement: 'panel' }, { noWorkspace: true }), null);
   const view = draw(running);
   assert.deepEqual(view.sites[SITE].components, [{ type: 'terminal', id: ID, label: 'yazi', session: 'yazi', autofocus: true }]);
   assert.equal(view.layout.children[0].content, `site:${SITE}`);
@@ -118,4 +122,18 @@ test('exit unregisters a workspace panel', () => {
   const panel = exit({ running: true, panel: true, dir: null }, {});
   assert.deepEqual(ops(panel, 'mods.service'), [{ name: 'omd.workspace', method: 'unregister', input: { id: 'yazi' } }]);
   assert.deepEqual(panel.state, { running: false, panel: false, dir: null });
+});
+
+test('full placement asks the workspace for its full screen mode, and falls back to its own layout when the workspace is off', () => {
+  const docked = command('');
+  assert.deepEqual(ops(docked, 'mods.service'), [
+    { name: 'omd.workspace', method: 'register', input: { id: 'yazi', title: 'Yazi', site: SITE, show: true } },
+    { name: 'omd.workspace', method: 'mode', input: { level: 'full', target: 'yazi' } },
+  ]);
+  assert.deepEqual(docked.state, { running: true, panel: true, dir: null });
+  assert.equal(docked.value.display, 'yazi started (Ctrl+] leaves it)');
+  assert.equal(draw(docked.state).layout, undefined);
+  const off = command('', { world: { off: true } });
+  assert.deepEqual(ops(off, 'mods.service').map(call => call.method), ['register', 'mode', 'unregister']);
+  assert.deepEqual(off.state, { running: true, panel: false, dir: null });
 });

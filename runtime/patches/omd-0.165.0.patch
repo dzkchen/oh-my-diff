@@ -34249,7 +34249,7 @@ index 1d328eae53536d0899756dde97a2c23329771e76..bc18b805b620cb9450de010ffc823587
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8eef56415 100644
+index 6687d053b4b506d5a7a36e88dc88d86914189b34..27ea0065f6a4b578159b66ae4d25c566283c59d4 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -23,6 +23,9 @@ use codex_app_server_protocol::ThreadGoalStatus;
@@ -34270,7 +34270,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8
                      | AppEvent::StartSide { .. }
                      | AppEvent::ForkCurrentSession { .. }
                      | AppEvent::StartManagedWorktree {
-@@ -447,6 +451,135 @@ impl App {
+@@ -447,6 +451,139 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
@@ -34357,7 +34357,11 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8
 +                });
 +            }
 +            AppEvent::OmdModsReloaded { result } => match result {
-+                Ok(()) => self.chat_widget.add_info_message("Mods reloaded.".to_string(), None),
++                Ok(()) => {
++                    std::thread::spawn(crate::mod_runtime::rerender);
++                    self.chat_widget
++                        .add_info_message("Mods reloaded.".to_string(), None);
++                }
 +                Err(error) => self
 +                    .chat_widget
 +                    .add_error_message(format!("Mod reload failed: {error}")),
@@ -34406,7 +34410,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -794,7 +927,10 @@ impl App {
+@@ -794,7 +931,10 @@ impl App {
                          return Ok(AppRunControl::Continue);
                      }
                  };
@@ -34418,7 +34422,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8
                      Ok(reverted) => reverted,
                      Err(err) => {
                      // Validation and unsupported-method errors leave history unchanged. Other
-@@ -887,6 +1023,10 @@ impl App {
+@@ -887,6 +1027,10 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -34429,7 +34433,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -914,6 +1054,14 @@ impl App {
+@@ -914,6 +1058,14 @@ impl App {
              }
              AppEvent::InsertHistoryCell(cell) => {
                  self.insert_history_cell(tui, cell);
@@ -34444,7 +34448,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8
              }
              AppEvent::TurnTipReady { thread_id, turn_id } => {
                  self.turn_tips.ready(thread_id, &turn_id, self.transcript_cells.last());
-@@ -1760,8 +1908,18 @@ impl App {
+@@ -1760,8 +1912,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -34463,7 +34467,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -2562,16 +2720,25 @@ impl App {
+@@ -2562,16 +2724,25 @@ impl App {
              }
              AppEvent::PersistModelSelection { model, effort } => {
                  self.app_event_tx.send(AppEvent::FollowTranscript);
@@ -34499,7 +34503,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..fadf12b79fd5c4e2be794471cbf8a2a8
                      Ok(()) => {
                          let effort_label = effort
                              .as_ref()
-@@ -3116,6 +3283,14 @@ impl App {
+@@ -3116,6 +3287,14 @@ impl App {
                  self.select_agent_thread(tui, app_server, thread_id)
                      .await?;
              }
@@ -110746,10 +110750,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab7c868238a08909c5e69bb397a4b39aa7b8afc7
+index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90148acbef
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6886 @@
+@@ -0,0 +1,6887 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -112130,6 +112134,7 @@ index 0000000000000000000000000000000000000000..ab7c868238a08909c5e69bb397a4b39a
 +                && declared("os")
 +            {
 +                used.push("os".to_owned());
++                used.push("exec".to_owned());
 +            }
 +            if !used.is_empty()
 +                && operation == "exec.run"
@@ -145236,10 +145241,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b34618b1b286ce266272251411a32fbb7b4356dd
+index 0000000000000000000000000000000000000000..1c985d2bd294f3d0d0254046a78d6168450544fb
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4966 @@
+@@ -0,0 +1,4986 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -147550,6 +147555,26 @@ index 0000000000000000000000000000000000000000..b34618b1b286ce266272251411a32fbb
 +        "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env',write:true}))",
 +        &["commands", "exec", "fs.write"],
 +    );
++    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
++    let capabilities = ["commands", "exec", "os", "pty"];
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
++    let path = package(
++        &root,
++        "fixture",
++        "export default api => api.command('open',()=>api.host.call('terminal.pty',{action:'start',session:'s',program:'/bin/echo',sandbox:'none'}))",
++        &capabilities,
++    );
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
++    manifest["os_access"] = json!({"programs": ["/bin/echo"]});
++    std::fs::write(
++        path.join("mod.json"),
++        serde_json::to_vec(&manifest).unwrap(),
++    )
++    .unwrap();
++    trust(&store, &path, &capabilities);
 +    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
 +    let (temp, _, _) = fixture(
 +        "export default (api: any) => api.command('count',()=>{ api.atom<number>('n', 0).set(1); return null; })",
@@ -156700,10 +156725,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a268b26dcaf7a8d0ed2e97958d83be5e94157c01
+index 0000000000000000000000000000000000000000..3c7ca4e8504867793d4da326d518550b74952ead
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2430 @@
+@@ -0,0 +1,2432 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -157654,7 +157679,7 @@ index 0000000000000000000000000000000000000000..a268b26dcaf7a8d0ed2e97958d83be5e
 +            let mut argv = crate::mod_pty::argv(arguments)?;
 +            let program =
 +                codex_omd::host::unrestricted_program(&access, &argv[0], &paths.repository)?;
-+            let store = paths.store.clone().ok_or("mod store is not configured")?;
++            let store = paths.store.ok_or("mod store is not configured")?;
 +            let pin = pin
 +                .filter(|pin| pin.program == program)
 +                .ok_or("pty_program_unpinned")?;
@@ -157881,7 +157906,9 @@ index 0000000000000000000000000000000000000000..a268b26dcaf7a8d0ed2e97958d83be5e
 +        held: Option<Confirmed>,
 +    ) {
 +        let caller = call.caller.clone();
-+        let allow = if matches!(held, Some(Confirmed::Pty(_, Some(_)))) {
++        let allow = if matches!(held, Some(Confirmed::Pty(_, Some(_))))
++            || call.operation == codex_omd::program_trust::OPERATION
++        {
 +            "Allow and remember"
 +        } else {
 +            "Allow once"
@@ -166159,10 +166186,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..096f56550e9237f36d3774f9d2ec19f1ba236324
+index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d65ce5040
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,1667 @@
+@@ -0,0 +1,1669 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use base64::Engine;
@@ -167555,7 +167582,7 @@ index 0000000000000000000000000000000000000000..096f56550e9237f36d3774f9d2ec19f1
 +            );
 +        }
 +        assert!(
-+            prepare(store.path(), true, &json!({}), &mut vec!["sh".to_owned()])
++            prepare(store.path(), true, &json!({}), &mut ["sh".to_owned()])
 +                .unwrap()
 +                .is_none()
 +        );
@@ -167745,12 +167772,14 @@ index 0000000000000000000000000000000000000000..096f56550e9237f36d3774f9d2ec19f1
 +        .unwrap();
 +        let key = ("m".to_owned(), "t1".to_owned());
 +        for _ in 0..100 {
-+            let sessions = sessions();
-+            let pane = &sessions.panes[&key];
-+            if pane.reported && pane.title.is_some() {
++            let ready = {
++                let sessions = sessions();
++                let pane = &sessions.panes[&key];
++                pane.reported && pane.title.is_some()
++            };
++            if ready {
 +                break;
 +            }
-+            drop(sessions);
 +            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 +        }
 +        let sessions = sessions();
@@ -172475,10 +172504,10 @@ index 0000000000000000000000000000000000000000..71346dfa32218d7ee142400fb2ad5307
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..335bc174209c8d45c4010d09324cd0044d10b2e9
+index 0000000000000000000000000000000000000000..6fc3b7adea94189bdd701f9d84c6f50c17d9eab7
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1173 @@
+@@ -0,0 +1,1174 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -172509,7 +172538,8 @@ index 0000000000000000000000000000000000000000..335bc174209c8d45c4010d09324cd004
 +        let admitted = call.validity.clone();
 +        let current = crate::mod_runtime::context_unchanged().1;
 +        let thread = call.thread.clone();
-+        let host = call.caller == codex_omd::broker::HOST_CALLER;
++        let host = call.caller == codex_omd::broker::HOST_CALLER
++            || call.operation == codex_omd::program_trust::OPERATION;
 +        call.validity = codex_omd::client_surface::Validity(std::sync::Arc::new(move || {
 +            (admitted.0)() && current() && (host || thread == current_thread())
 +        }));
@@ -173654,10 +173684,10 @@ index 0000000000000000000000000000000000000000..335bc174209c8d45c4010d09324cd004
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e7e0afc4c
+index 0000000000000000000000000000000000000000..010703e1cda8c601ee75f9c257a5faf5f4ceb8be
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,1042 @@
+@@ -0,0 +1,1063 @@
 +use super::*;
 +use crate::test_support::PathBufExt;
 +use codex_omd::app_routes::InvocationContext;
@@ -174265,6 +174295,27 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +        !(queued.validity.0)(),
 +        "held composer calls cannot cross threads"
 +    );
++    let (reply, _answer) = std::sync::mpsc::sync_channel(1);
++    surface
++        .submit(SurfaceCall {
++            validity: codex_omd::client_surface::Validity(Arc::new(|| true)),
++            caller: "m".into(),
++            operation: codex_omd::program_trust::OPERATION.into(),
++            arguments: json!({"program": "/bin/echo", "sha256": "aa"}),
++            context: codex_omd::app_routes::InvocationContext::Event,
++            remote: false,
++            thread: None,
++            authority: None,
++            confirm: None,
++            reply,
++            lifetime: Default::default(),
++            depth: 0,
++        })
++        .unwrap();
++    let AppEvent::ModSurfaceCall(queued, _) = receiver.try_recv().unwrap() else {
++        panic!("program trust prompts from any thread reach the dialog");
++    };
++    assert!((queued.validity.0)());
 +    with(|state| state.thread = None);
 +
 +    struct ChangedSource(PathBuf, PathBuf);
@@ -180796,7 +180847,7 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2dc6ea7cb1d638d2f9980eca4a479cfae5a19d90
+index 0000000000000000000000000000000000000000..ade6d9be23a19584342b93190107e4e0fa5244e0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
 @@ -0,0 +1,2609 @@
@@ -183210,7 +183261,7 @@ index 0000000000000000000000000000000000000000..2dc6ea7cb1d638d2f9980eca4a479cfa
 +        buffer
 +            .content
 +            .iter()
-+            .map(|cell| cell.symbol())
++            .map(ratatui::buffer::Cell::symbol)
 +            .collect::<String>()
 +    };
 +    let press = |code, modifiers| input(KeyEvent::new(code, modifiers), true);

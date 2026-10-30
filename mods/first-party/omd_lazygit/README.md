@@ -27,7 +27,7 @@ Pressing `e` (edit) on a file or folder in lazygit hands it back to OMD, which d
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `placement` | `panel` | `full`: lazygit takes the screen above a compact chat. `panel`: a Lazygit tab of the `omd_workspace` dock, which must be on, else `full`; in a thread where lazygit isn't running the tab says how to start it |
+| `placement` | `panel` | `full`: lazygit takes the screen above a compact chat, through the workspace's full screen mode while `omd_workspace` is on. `panel`: a Lazygit tab of the `omd_workspace` dock, which must be on, else `full`; in a thread where lazygit isn't running the tab says how to start it |
 | `edit` | `editor` | `editor`: open the file at its line in the `editor` argv of `host.json`, after a confirmation. `composer`: insert `@path` at the prompt's cursor |
 
 ## Needs and limits

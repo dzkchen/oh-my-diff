@@ -59,7 +59,7 @@ export default function activate(api: ModAPI) {
     const { cwd } = api.session();
     const path = given.startsWith('/') ? given : given ? `${cwd}/${given}` : cwd;
     const dir = api.host.tryCall('exec.run', { program: 'lazygit', argv: ['-cd'], sandbox: 'none', timeout_ms: 5000 });
-    if (!dir.ok) return { display: dir.error.startsWith('exec_program_declined') ? 'lazygit start declined' : `Cannot run lazygit (${dir.error}). ${HINT}` };
+    if (!dir.ok) return { display: dir.error.startsWith('exec_program_declined') ? 'lazygit start declined' : dir.error.includes('program_unavailable') ? `Cannot run lazygit. ${HINT}` : `lazygit did not start: ${dir.error}` };
     const config = dir.value.exit_code === 0 && dir.value.stdout.trim() ? `${dir.value.stdout.trim()}/config.yml` : null;
     const exists = config ? api.host.tryCall('exec.run', { program: '/bin/test', argv: ['-f', config], timeout_ms: 5000 }) : null;
     const mine = exists?.ok && exists.value.exit_code === 0 ? `${config},` : '';
@@ -69,18 +69,25 @@ export default function activate(api: ModAPI) {
     });
     if (!started.ok) return { display: started.error.includes('program_unavailable') ? `Cannot run lazygit. ${HINT}` : `lazygit did not start: ${started.error}` };
     if (!('running' in started.value)) return { display: 'lazygit start declined' };
+    const full = settings.placement === 'full';
     let panel = false;
-    if (settings.placement === 'panel') {
-      try { panel = !api.services.call<{ error?: string }>('omd.workspace', 'register', { id: PANEL, title: 'Lazygit', site: SITE, show: true }).error; } catch {}
-    }
+    try {
+      panel = !api.services.call<{ error?: string }>('omd.workspace', 'register', { id: PANEL, title: 'Lazygit', site: SITE, show: true }).error
+        && (!full || !api.services.call<{ error?: string }>('omd.workspace', 'mode', { level: 'full', target: PANEL }).error);
+      if (full && !panel) api.services.call('omd.workspace', 'unregister', { id: PANEL });
+    } catch {}
     api.state.set({ running: true, panel });
     api.host.tryCall('terminal.pane', { action: 'focus', id: ID });
-    return { display: panel ? 'lazygit started in its workspace tab' : 'lazygit started (Ctrl+] leaves it)' };
+    return { display: panel && !full ? 'lazygit started in its workspace tab' : 'lazygit started (Ctrl+] leaves it)' };
   }, { description: 'Run lazygit in this session; --stop closes it', args_hint: '[path|--stop]' });
+
+  const docked = () => {
+    try { return api.services.call<{ panels: { id: string }[] }>('omd.workspace', 'panels', null).panels.some(item => item.id === PANEL); } catch { return false; }
+  };
 
   api.on('terminal', ({ client }): TerminalPatch | null => {
     const { running, panel } = load();
-    if (!running) return settings.placement === 'panel' ? { sites: { [SITE]: { components: [{ type: 'text', id: `${ID}_idle`, label: 'lazygit', text: IDLE }] } } } : null;
+    if (!running) return settings.placement === 'panel' && docked() ? { sites: { [SITE]: { components: [{ type: 'text', id: `${ID}_idle`, label: 'lazygit', text: IDLE }] } } } : null;
     const sites = { [SITE]: { components: [{ type: 'terminal' as const, id: ID, label: 'lazygit', session: SESSION, autofocus: true }] } };
     if (panel) return { sites };
     const chat = Math.min(99, Math.max(1, Math.round(500 / (client?.rows ?? 40))));

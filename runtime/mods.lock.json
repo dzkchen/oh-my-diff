@@ -221,11 +221,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "3caf5563bdedbfa0148d2088bfa0c707add6e82b9249b7a5322af2073c8ebda6",
-        "mod.json": "3e8a1867a93440453a732356660cc07a2ba4dd99f6f1e6cce8286b8a9614ce10"
+        "index.ts": "23cbd0ea1d91f1ac9c06f9ea0ba08b2944c73aeb5365f88fa6515cb1fb26bda3",
+        "mod.json": "b889cdb16bf6426aaa53e77eebe2d27fcee3fe80a7e09bdc679b6e11aeaf17ce"
       },
       "id": "omd_lazygit",
-      "package_sha256": "59e068586ada99a698547961e1179348e4e58e253157116bda0dde8d58199a58",
+      "package_sha256": "359572d9d6dd3d02eb6e467f36237ca9f4eaa9058c2e70656412a0a92ac698d9",
       "source": "mods/first-party/omd_lazygit",
       "version": "1.0.0"
     },
@@ -754,12 +754,12 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "e6afea6e25885f0d6bb2d9547a8137cf657b9dd91f7489f0c6be054a5f95d720",
-        "mod.json": "822c3a338fafeb6acd6dffcd58e8424ca82e2f38d979863db9376488edb39d6b",
+        "index.ts": "197d118107308d7c12f35690909fc2a943ca9b6fa1a03b73177c79d9795f7998",
+        "mod.json": "3cc1760d50f22e844e1bd6674442549a5febcbd8096ecaee6795860463c3af49",
         "tree.ts": "bf7fbea96846738c7fad9738cac75182c8dd46a796837f4b175a2f8eb9ce28f6"
       },
       "id": "omd_workspace",
-      "package_sha256": "4602fc7fbd2233c9ece86b6e826ac20446c45a27f7d0769f187b3e2afdad125c",
+      "package_sha256": "96d0a440af59d220ee88901528f063a97d0c4bac20a51811fd52dc3927f42cd7",
       "source": "mods/first-party/omd_workspace",
       "version": "1.0.0"
     },
@@ -778,11 +778,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "720e0888b4c2217ecf82c7d758bdb10efbd5b6b065ce1c1f8cdfd00370ffcdf9",
-        "mod.json": "d1e8cad1b0763d4e0660508146432d594a2fbeec6cb7b0df670519caad0f1976"
+        "index.ts": "d7b50779e0d82372920e33f454e57b11e23c059e360f7e19ed4f22af6abc47b4",
+        "mod.json": "587d430c66ccabe2e51b558a90d69e072366eb978ca1a49e6bfbd43e77aee6dd"
       },
       "id": "omd_yazi",
-      "package_sha256": "407bdc52451a40cee69409aee6601afeef2ad9314d1d9da239c8babaf7f958f9",
+      "package_sha256": "c0f5f24bcd3f62db07bf7dbfeebac9615670c2a978054e1032c6c04c30732c52",
       "source": "mods/first-party/omd_yazi",
       "version": "1.0.0"
     }
