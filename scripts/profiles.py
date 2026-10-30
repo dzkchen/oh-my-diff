@@ -262,11 +262,13 @@ def selected_text(record):
         root, installer = shlex.quote(update["root"]), f"OMD_PYTHON={shlex.quote(update['python'])} sh {shlex.quote(update['installer'])}"
         request = shlex.quote(str(Path(store) / "data/user/omd_update/store.json"))
         # The marker precedes the journal check and an update journals before reading markers, so each sees the other.
+        # While another session is open, a staged release is announced once; ready.json newer than announced, or an announcement over an hour old, re-arms it.
         marker = f"{root}/sessions/$$"
-        lines += [f"mkdir -p {root}/sessions",
-                  f'for m in {root}/sessions/*; do [ -e "$m" ] && ! kill -0 "${{m##*/}}" 2>/dev/null && rm -f "$m"; done',
+        ready = f'{{ [ -e {root}/update/ready.json ] && {{ [ -z "$busy" ] || [ {root}/update/ready.json -nt {root}/update/announced ] || [ -n "$(find {root}/update/announced -mmin +60 2>/dev/null)" ]; }}; }}'
+        lines += [f"mkdir -p {root}/sessions", "busy=",
+                  f'for m in {root}/sessions/*; do [ -e "$m" ] && {{ kill -0 "${{m##*/}}" 2>/dev/null && busy=1 || rm -f "$m"; }}; done',
                   f": > {marker}",
-                  f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/ready.json ] || [ -e {root}/update/journal.json ] || [ {request} -nt {root}/update/seen ]; }}; then',
+                  f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ {ready} || [ -e {root}/update/journal.json ] || [ {request} -nt {root}/update/seen ]; }}; then',
                   f"  {installer} launch --root {root} --session $$",
                   f'  OH_MY_DIFF_UPDATED=1 exec {root}/current/bin/codex "$@"',
                   "fi",

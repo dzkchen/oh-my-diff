@@ -25,6 +25,25 @@ class BuildProvenanceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'overrides'):
                 provenance.inputs(tree, ['build', '--locked', '--release'], environment)
 
+    def test_only_sccache_may_wrap_nightly_builds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary)
+            environment = {'CARGO_HOME': str(tree / 'cargo-home')}
+            self.assertEqual(provenance.cargo_configs(tree, {**environment, 'RUSTC_WRAPPER': 'sccache'}), {})
+            self.assertEqual(provenance.cargo_configs(tree, {**environment, 'RUSTC_WRAPPER': 'sccache', 'OMD_RELEASE_VERSION': ''}), {})
+            for refused in ({'RUSTC_WRAPPER': 'ccache'}, {'RUSTC_WRAPPER': '/tmp/sccache'},
+                            {'RUSTC_WRAPPER': 'sccache', 'OMD_RELEASE_VERSION': '1.2.0'},
+                            {'RUSTC_WRAPPER': 'sccache', 'RUSTC_WORKSPACE_WRAPPER': 'sccache'},
+                            {'RUSTC_WRAPPER': 'sccache', 'CARGO_BUILD_RUSTC_WRAPPER': 'sccache'},
+                            {'OMD_SCCACHE': '1', 'RUSTC_WORKSPACE_WRAPPER': 'sccache'}):
+                with self.subTest(environment=refused), self.assertRaisesRegex(ValueError, 'overrides'):
+                    provenance.cargo_configs(tree, {**environment, **refused})
+            config = tree / '.cargo/config.toml'
+            config.parent.mkdir()
+            config.write_text('[build]\nrustc-wrapper = "sccache"\n')
+            with self.assertRaisesRegex(ValueError, 'overrides'):
+                provenance.cargo_configs(tree, {**environment, 'RUSTC_WRAPPER': 'sccache'})
+
     def test_build_record_binds_inputs_unsigned_and_signed_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

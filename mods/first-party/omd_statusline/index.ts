@@ -24,6 +24,7 @@ export default function activate(api: ModAPI) {
   };
   // A settings change reaches the session's host only at its next turn, so drawing follows the editor's last apply while this host still runs with settings that apply superseded.
   const effective = (data: Data): Settings => data.pending?.from.includes(JSON.stringify(config)) ? data.pending.to : config;
+  const shows = (ids: string[], data: Data) => configured.scripts.length > 0 || layout(effective(data), configured.scripts.map(script => script.id)).some(line => line.some(id => ids.includes(id)));
   const update = (change: (data: Data) => void) => {
     const data = saved();
     const before = JSON.stringify(data);
@@ -41,12 +42,12 @@ export default function activate(api: ModAPI) {
         : parseGit(key, run.value.stdout);
     });
   };
-  const gitSoon = api.time.after('git_soon', 1000, refreshGit);
+  const gitSoon = api.time.after('git_soon', 2000, refreshGit);
 
   const pollGithub = (force = false) => {
     const now = Date.now();
     const data = saved();
-    const key = config.github ? githubKey(data.git) : null;
+    const key = config.github && shows(['pr', 'ci'], data) ? githubKey(data.git) : null;
     if (!key || !data.git?.remote || !data.git.branch) {
       if (data.github.status !== 'idle') update(next => { next.github = { ...EMPTY.github }; });
       return;
@@ -258,7 +259,8 @@ export default function activate(api: ModAPI) {
     const sent = object(data);
     if (publisher === 'omd_statusline' && 'pending' in sent) {
       const pending = object(sent.pending);
-      return update(next => { next.pending = Array.isArray(pending.from) ? { from: pending.from.filter((item: unknown) => typeof item === 'string').slice(-8), to: settings(object(pending.to)), turns: 0 } : null; });
+      update(next => { next.pending = Array.isArray(pending.from) ? { from: pending.from.filter((item: unknown) => typeof item === 'string').slice(-8), to: settings(object(pending.to)), turns: 0 } : null; });
+      return pollGithub(true);
     }
     arm(true);
     refresh(true);

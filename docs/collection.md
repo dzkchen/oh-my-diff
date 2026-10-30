@@ -57,6 +57,7 @@ OMD Core includes only the first three.
 | `omd_mini` | `omd mini`: a scrollback-first session with a short prompt and one status segment; `/omd_mini:switch` | A terminal |
 | `omd_cursor` | Cursor models in `/model`, using your Cursor account; `/cursor` | A Cursor account, Node 22.18+ and `pnpm`; not yet verified on a live account |
 | `omd_tool_absorb` | Runs a read the model repeats in one response once, and reuses unchanged file reads in code mode; `/absorb` | |
+| `omd_subagent_router` | Runs subagents on the model your prompt names ("use sonnet 5.5 as subagents to research") or per-role settings, including another provider's; `delegate_task` runs background workers | The other provider set up, such as `omd_claude_cli` |
 | `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 | `omd_workspace` | A tabbed dock beside the chat: numbered tabs for Git changes, a shell and other mods' panels, with resize and focus keys; `/workspace` | `git` on your `PATH` for the Changes panel |
 | `omd_theme` | Living scenes drawn in character tiles behind the whole screen, prompt box and menus; `/theme` picks a scene and prints terminal background steps | |

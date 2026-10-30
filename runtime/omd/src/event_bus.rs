@@ -129,20 +129,26 @@ impl EventBus {
         if correlation.as_ref().is_some_and(|c| c.len() > 256) {
             return Err(io::Error::other("channel_correlation_too_large"));
         }
-        let queued = self
-            .subscribers
+        if self
+            .sequences
             .values()
-            .flat_map(|subscriber| {
-                subscriber
-                    .queue
-                    .iter()
-                    .map(|(event, _)| event.publisher.as_str())
-            })
-            .collect::<BTreeSet<_>>();
-        self.sequences.retain(|publisher, sequences| {
-            now.duration_since(sequences.used) < CHANNEL_PUBLISHER_IDLE
-                || queued.contains(publisher.as_str())
-        });
+            .any(|sequences| now.duration_since(sequences.used) >= CHANNEL_PUBLISHER_IDLE)
+        {
+            let queued = self
+                .subscribers
+                .values()
+                .flat_map(|subscriber| {
+                    subscriber
+                        .queue
+                        .iter()
+                        .map(|(event, _)| event.publisher.as_str())
+                })
+                .collect::<BTreeSet<_>>();
+            self.sequences.retain(|publisher, sequences| {
+                now.duration_since(sequences.used) < CHANNEL_PUBLISHER_IDLE
+                    || queued.contains(publisher.as_str())
+            });
+        }
         let current = self.sequences.get(publisher);
         if !current.is_some_and(|sequences| sequences.channels.contains_key(name))
             && (current.is_some_and(|sequences| sequences.channels.len() >= CHANNELS_PER_PUBLISHER)

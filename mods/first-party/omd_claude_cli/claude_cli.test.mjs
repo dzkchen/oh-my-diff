@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { chmod, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeSync, constants, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -41,6 +42,8 @@ test('Claude mod translates host requests and replays host tool results', () => 
   { upstream_requests: 1 }, model, first.reverse, false, 0.042);
   assert.equal(response.find(event => event.type === 'response.output_item.done' &&
     event.item.type === 'custom_tool_call').item.input, '*** Begin Patch');
+  assert.deepEqual(response.filter(event => event.type === 'response.output_item.done').map(event => [event.item.id, event.item.call_id]),
+    [['msg-1-text', undefined], ['call-2', 'call_2']]);
   assert.equal(response.at(-1).response.usage.input_tokens, 16);
   assert.equal(response.at(-1).response.usage.omd_subscription_charge, 'unknown');
   assert.equal(response.at(-1).response.model, 'claude-opus-5-5-20261001');
@@ -55,6 +58,12 @@ test('Claude mod translates host requests and replays host tool results', () => 
   assert.deepEqual(prototypeTools.manifest.map(tool => tool.name), names);
   const returned = responseEvents({ id: 'names', model, usage: { input_tokens: 1, output_tokens: 1 }, content: names.map((name, index) => ({ type: 'tool_use', id: `name-${index}`, name: `mcp__omd__${name}`, input: {} })) }, {}, model, prototypeTools.reverse);
   assert.deepEqual(returned.filter(event => event.type === 'response.output_item.done').map(event => event.item.name), names);
+  const collaboration = translateRequest({ ...prompt, tools: [{ type: 'namespace', name: 'collaboration', tools: [{ type: 'function', name: 'spawn_agent' }] },
+    { type: 'function', name: 'exec_command' }] }, model);
+  const calls = responseEvents({ id: 'calls', model, usage: { input_tokens: 1, output_tokens: 1 }, content: [
+    { type: 'tool_use', id: 'spawn', name: 'mcp__omd__collaboration__spawn_agent', input: { message: 'plain' } },
+    { type: 'tool_use', id: 'exec', name: 'mcp__omd__exec_command', input: {} }] }, {}, model, collaboration.reverse);
+  assert.deepEqual(calls.filter(event => event.type === 'response.output_item.done').map(event => event.item.encrypted_function_args), [[], undefined]);
 });
 
 test('history from another provider carries over: opaque reasoning dropped, hosted calls kept as text', () => {
@@ -63,9 +72,11 @@ test('history from another provider carries over: opaque reasoning dropped, host
     { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'opaque' },
     { type: 'web_search_call', id: 'ws_1', status: 'completed', action: { type: 'search', query: 'codex docs' } },
     { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Found them.' }] },
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Summarize.' }] }] }, model);
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Summarize.' }] },
+    { type: 'agent_message', author: '/root', recipient: '/root/docs', content: [{ type: 'input_text', text: 'Read README.md.' }, { type: 'encrypted_content', encrypted_content: 'gAAAA' }] }] }, model);
   assert.deepEqual(carried.frames.map(frame => frame.message.content.map(block => block.text)), [
-    ['Find the docs.'], ['[searched the web {"type":"search","query":"codex docs"}]', 'Found them.'], ['Summarize.']]);
+    ['Find the docs.'], ['[searched the web {"type":"search","query":"codex docs"}]', 'Found them.'], ['Summarize.',
+    'Message from /root to /root/docs:\nRead README.md.\n[This message was sealed by the sender\'s provider and cannot be read here; infer your task from the conversation and your name, /root/docs.]']]);
 });
 
 async function fakeCli(script) {
@@ -161,6 +172,57 @@ test('one upstream request is admitted and a second is refused', async () => {
     assert.equal(relay.denied, 1);
   } finally {
     relay.abort();
+    await new Promise(resolve => upstream.close(resolve));
+  }
+});
+
+test('the relay decodes compressed request bodies, and refuses bad ones without spending its admission', async () => {
+  const seen = [];
+  const upstream = createServer((incoming, response) => {
+    const chunks = [];
+    incoming.on('data', chunk => chunks.push(chunk));
+    incoming.on('end', () => {
+      seen.push({ encoding: incoming.headers['content-encoding'], body: Buffer.concat(chunks).toString('utf8') });
+      response.writeHead(200, { 'content-type': 'text/event-stream' }).end('event: ping\ndata: {"type":"ping"}\n\n');
+    });
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const json = JSON.stringify({ model, messages: [] });
+  const post = (relay, body, encoding) => new Promise((resolve, reject) => {
+    const outgoing = request(new URL(`${relay.url}/v1/messages`), { method: 'POST',
+      headers: { authorization: 'Bearer fixture', ...encoding ? { 'content-encoding': encoding } : {} } }, response => {
+      response.resume(); response.on('end', () => resolve(response.statusCode));
+    });
+    outgoing.on('error', reject);
+    outgoing.end(body);
+  });
+  const fresh = async () => {
+    const relay = new Relay(`http://127.0.0.1:${upstream.address().port}`, () => {}, () => {}, { model });
+    await relay.listen();
+    return relay;
+  };
+  try {
+    for (const [encoding, compress] of [['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]]) {
+      const relay = await fresh();
+      try {
+        assert.equal(await post(relay, compress(json), encoding), 200, encoding);
+        const last = seen.at(-1);
+        assert.equal(last.encoding, undefined);
+        assert.deepEqual(JSON.parse(last.body), { model, messages: [] });
+      } finally { relay.abort(); }
+    }
+    const relay = await fresh();
+    try {
+      assert.equal(await post(relay, Buffer.from(json), 'zstd'), 415);
+      assert.equal(await post(relay, deflateSync(Buffer.alloc(65 * 1024 * 1024)), 'deflate'), 413);
+      assert.equal(await post(relay, Buffer.from('not compressed'), 'gzip'), 400);
+      assert.equal(relay.denied, 0);
+      const before = seen.length;
+      assert.equal(await post(relay, Buffer.from(json)), 200, 'the admission is still unspent');
+      assert.equal(seen.length, before + 1);
+    } finally { relay.abort(); }
+  } finally {
+    upstream.closeAllConnections();
     await new Promise(resolve => upstream.close(resolve));
   }
 });

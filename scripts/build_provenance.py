@@ -12,8 +12,12 @@ OVERRIDES = ("RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_T
              "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
 
 
+def cached_build(environment):
+    return environment.get("RUSTC_WRAPPER") == "sccache" and not environment.get("OMD_RELEASE_VERSION")
+
+
 def cargo_configs(tree, environment):
-    if any(environment.get(key) for key in OVERRIDES):
+    if any(environment.get(key) for key in OVERRIDES if key != "RUSTC_WRAPPER" or not cached_build(environment)):
         raise ValueError("build provenance refuses compiler or target overrides")
     paths = [parent / ".cargo" / name
              for parent in (tree / "codex-rs", *(tree / "codex-rs").parents)
@@ -69,6 +73,7 @@ def inputs(tree, arguments, environment):
     compiler = support.output(["rustc", "-vV"], cwd=tree / "codex-rs", env=environment)
     if f"release: {expected['rust_toolchain']}" not in compiler or f"host: {expected['target']}" not in compiler:
         raise ValueError("build provenance compiler or target differs")
+    wrapper = {"name": "sccache", "version": support.output(["sccache", "--version"], env=environment)} if cached_build(environment) else None
     variables = {key: value for key, value in environment.items()
                  if key.startswith(("CARGO_PROFILE_", "CARGO_TARGET_", "CARGO_BUILD_", "CARGO_ENCODED_RUSTFLAGS", "RUST", "CC", "CXX", "AR_", "CFLAGS", "CXXFLAGS"))
                  and key != "CARGO_TARGET_DIR"}
@@ -78,7 +83,7 @@ def inputs(tree, arguments, environment):
     return {**expected, "configuration": {"cargo_arguments": list(arguments), "environment": variables,
                                          "environment_sha256": hashlib.sha256(json.dumps(
                                              dict(environment), sort_keys=True).encode()).hexdigest(),
-                                         "cargo_configs": config, "compiler": compiler}}
+                                         "cargo_configs": config, "compiler": compiler, "rustc_wrapper": wrapper}}
 
 
 def hashes(directory):
