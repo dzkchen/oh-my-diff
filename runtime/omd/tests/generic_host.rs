@@ -1835,6 +1835,37 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
 }
 
 #[test]
+fn exec_children_lead_their_own_session_without_the_terminal() {
+    let _exec = exec_slot();
+    let (_temp, _repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["exec", "os"]);
+    let access = codex_omd::ModOsAccess {
+        programs: strings(&["sh"]),
+        network: true,
+    };
+    let granted = Caller {
+        os_access: Some(&access),
+        ..caller(&capabilities, &[], Origin::Tool)
+    };
+    let stat = host
+        .call(
+            &granted,
+            "exec.run",
+            json!({"program": "sh", "argv": ["-c", "ps -o stat= -p $$"], "sandbox": "none"}),
+        )
+        .unwrap();
+    assert!(stat["stdout"].as_str().unwrap().contains('s'), "{stat}");
+}
+
+#[test]
 fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let _exec = exec_slot();
     let (temp, repository, data, authority) = setup();

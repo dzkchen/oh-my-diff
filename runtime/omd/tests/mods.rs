@@ -1273,6 +1273,42 @@ fn startup_terminal_preview_rejects_native_task_operations_at_host_boundary() {
 }
 
 #[test]
+fn terminal_client_sites_reach_only_the_mod_that_owns_them() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    for id in ["alpha", "beta", "gamma"] {
+        let path = package(
+            &root,
+            id,
+            "export default api => api.on('terminal', ({ client }) => ({status: [client.columns + '|' + (Object.entries(client.sites ?? {}).map(([name, area]) => `${name}=${area.columns}x${area.rows}`).join(',') || 'none')]}))",
+            &["terminal"],
+        );
+        trust(&store, &path, &["terminal"]);
+    }
+    let mut runtime = host(&temp);
+    let client = json!({"kind": "terminal", "columns": 120, "rows": 40, "sites": {
+        "alpha/git": {"columns": 50, "rows": 30},
+        "alpha/files": {"columns": 20, "rows": 9},
+        "beta/panel": {"columns": 70, "rows": 30},
+        "alphabet/x": {"columns": 1, "rows": 1},
+    }});
+    let terminal = runtime.terminal_view(json!({"event": "draw", "client": client}), || true);
+    let mut seen = terminal.view.status.clone();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            "120|alpha/files=20x9,alpha/git=50x30",
+            "120|beta/panel=70x30",
+            "120|none",
+        ],
+        "{:?}",
+        terminal.diagnostics
+    );
+}
+
+#[test]
 fn terminal_components_compose_in_dependency_order_and_observers_contribute_status() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -1702,16 +1738,64 @@ fn an_underlay_never_takes_a_raster_another_mod_already_draws() {
     let other = package(
         &root,
         "other",
-        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'}}));",
+        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'},welcome:{hidden:true}}));",
         &["terminal"],
     );
     trust(&store, &other, &["terminal"]);
     let view = host(&temp).terminal_view(json!({}), || true);
     assert_eq!(view.component_owners["shared"], "fixture");
     assert_eq!(
+        view.view.welcome.as_ref().map(|welcome| welcome.hidden),
+        Some(false)
+    );
+    assert_eq!(
         view.view.raster_declared("shared"),
         Some((Some(4), Some(2)))
     );
+    assert_eq!(view.view.underlay, None);
+    assert!(
+        view.conflicts
+            .iter()
+            .any(|conflict| conflict.field == "underlay" && conflict.rejected == "other")
+    );
+}
+
+#[test]
+fn a_later_welcome_writer_keeps_the_underlay_owners_hidden_welcome() {
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:true}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let view = host(&temp).terminal_view(json!({}), || true);
+    let welcome = view.view.welcome.unwrap();
+    assert!(welcome.show_while_composing && welcome.hidden);
+
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true,show_while_composing:true}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:false}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let welcome = host(&temp)
+        .terminal_view(json!({}), || true)
+        .view
+        .welcome
+        .unwrap();
+    assert!(welcome.show_while_composing && welcome.hidden);
 }
 
 #[test]

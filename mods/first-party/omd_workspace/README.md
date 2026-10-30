@@ -46,7 +46,7 @@ Pick a preset with `/workspace layout NAME`. `side: left` mirrors each one.
 
 Then rearrange it:
 
-- **Drag** a panel by its title row onto another panel. Dropping on an edge splits beside it; dropping in the centre tabs with it. In a tab group, grab the frame line under the tab bar.
+- **Drag** a panel by its title row onto another panel. Dropping on an edge splits beside it; dropping in the centre tabs with it. In a tab group, grab the frame line under the tab bar. A panel drawn without a title or frame can't be dragged; move it with `/workspace move`.
 - **Move** with `/workspace move PANEL left|right|up|down|tab`, or exchange two panels with `/workspace swap PANEL PANEL`. `PANEL` is a panel's number, title or id; `chat` counts as a panel.
 - **Save** up to 8 arrangements with `/workspace layout save NAME`, then `load NAME` or `delete NAME`.
 
@@ -95,7 +95,7 @@ Screen modes enlarge one panel for a while:
 
 ## Panels
 
-- **Changes:** `git status` of the current directory, refreshed when a turn ends, when the list gets focus and on `/workspace refresh`. Select a file for its diff against `HEAD` (an untracked file shows as all added).
+- **Changes:** `git status` of the current directory, refreshed when a turn ends, when the list gets focus and on `/workspace refresh`. Select a file for its diff against `HEAD` (an untracked file shows as all added). A panel registered with `replaces: 'changes'` (such as [`omd_git`](../omd_git/README.md)'s Git tab) hides it unless `panels` lists `changes`.
 - **Shell:** focusing it focuses its `Start shell` button; Enter (or a click) starts the shell after you confirm. If the shell has ended, Enter brings the button back. It runs in the session sandbox, read-only and without network unless `shell_write` and `shell_network` say otherwise; the confirmation names what it may do. With `shell_write`, `git commit` works.
 - **Your terminals:** each `terminals` entry is a panel that runs its program the same way, sandboxed with a scratch `HOME`, for example a game (`node demo/snake.mjs`) or a sandboxed `lazygit`. `/workspace start ID` or its button starts it.
 - **Other mods:** see [Service](#service).
@@ -108,7 +108,7 @@ Each mod runs at most `pty_panes_per_mod` terminals at once (4 unless `mod_limit
 
 | Method | Does |
 | --- | --- |
-| `register {id, title, site, tabs?, order?, placement?, show?}` | Adds or replaces a panel (see below); one registered while the workspace is off shows when it is turned on. |
+| `register {id, title, site, tabs?, order?, placement?, show?, replaces?}` | Adds or replaces a panel (see below); one registered while the workspace is off shows when it is turned on. |
 | `unregister {id}` | Removes a panel. |
 | `panels` | The shown panels in order; none while the workspace is off. |
 | `arrange {tree}` | Sets the whole arrangement, unless the user has arranged it (`/workspace reset` hands it back). A tree is `"chat"`, a panel id, `{split: 'horizontal' \| 'vertical', children: [2-4], ratio?}` or `{tabs: [panel ids]}`, with `chat` once and outside tabs. A refused tree returns `{error}` with the reason. |
@@ -122,8 +122,9 @@ Each mod runs at most `pty_panes_per_mod` terminals at once (4 unless `mod_limit
 - `tabs`: up to 4 `{title, site}` entries, giving the panel its own tab bar.
 - `show: true`: also brings it to the front of its tab group.
 - `placement {beside, edge, share?}`: where it first appears. `beside` is `chat` or a panel id, `edge` is `left`, `right`, `top`, `bottom` or `tab`, and `share` is 5–95 percent.
+- `replaces`: a built-in panel (`changes` or `terminal`) it stands in for; that panel is hidden unless the `panels` setting lists it.
 
-A registration persists until `unregister`, so a mod can register again on every start. Titles are at most 30 bytes (tab titles 32) without control characters; the workspace only places panels, the registering mod draws them. Panels missing from an arrangement join it by their placement, else the first tab group, else beside the last panel; panels that are gone are left out.
+A registration persists until `unregister` or until its owner (the `<mod>` of its site) is turned off, so a mod you turned off leaves no tab behind; registering again on every `start` is harmless. Titles are at most 30 bytes (tab titles 32) without control characters; the workspace only places panels, the registering mod draws them. Panels missing from an arrangement join it by their placement, else the first tab group, else beside the last panel; panels that are gone are left out.
 
 ## Commands
 

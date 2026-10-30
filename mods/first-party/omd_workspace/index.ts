@@ -5,7 +5,7 @@ import type { Edge, Failure, Group, Node } from './tree.ts';
 type Tab = { title: string; site: string };
 type Place = { beside: string; edge: Edge; share?: number };
 type Run = { argv: string[]; write: boolean; network: boolean };
-type Panel = { id: string; title: string; site: string; tabs?: Tab[]; order?: number; placement?: Place; run?: Run };
+type Panel = { id: string; title: string; site: string; tabs?: Tab[]; order?: number; placement?: Place; replaces?: string; run?: Run };
 type Preset = typeof PRESETS[number];
 type Arranged = { by: 'user' | 'mod'; preset?: Preset; tree?: Node };
 type File = { path: string; code: string };
@@ -153,7 +153,9 @@ export default function activate(api: ModAPI) {
   const shadowed = (state: State, hidden: boolean) => state.registered.filter(panel => commands.some(command => command.id === panel.id) === hidden);
   const presetOf = (state: State): Preset | null => (state.arranged ? state.arranged.preset ?? null : settled ? null : layoutSetting);
   const panels = (state: State): Panel[] => {
-    const known = [...BUILTIN, ...commands, ...shadowed(state, false).sort((a, b) => (a.order ?? 100) - (b.order ?? 100))];
+    const replaced = new Set(shadowed(state, false).flatMap(panel => (panel.replaces && !order.includes(panel.replaces) ? [panel.replaces] : [])));
+    const builtin = BUILTIN.filter(panel => !replaced.has(panel.id));
+    const known = [...builtin, ...commands, ...shadowed(state, false).sort((a, b) => (a.order ?? 100) - (b.order ?? 100))];
     const wanted = order.length ? [...new Set(order)].flatMap(id => known.filter(panel => panel.id === id)) : known;
     let cells = 0;
     const fits = (panel: Panel) => {
@@ -414,6 +416,10 @@ export default function activate(api: ModAPI) {
     ];
   };
 
+  api.on('mods_changed', ({ active }) => changed(state => {
+    state.registered = state.registered.filter(panel => active.includes(panel.site.split('/')[0]));
+  }));
+
   api.on('terminal', ({ ledger, client }): TerminalPatch | null => {
     const state = load();
     if (state.off) return null;
@@ -636,7 +642,9 @@ export default function activate(api: ModAPI) {
         return refuse('placement needs beside ("chat" or a panel id), edge (left, right, top, bottom or tab) and an optional share from 5 to 95');
       }
       const placement = raw.placement === undefined ? {} : { placement: { beside: spot.beside as string, edge: spot.edge as Edge, ...(share === undefined ? {} : { share: Math.round(share as number) }) } };
-      const panel: Panel = { id, title, site: where, ...(tabs ? { tabs: tabs as Tab[] } : {}), ...(typeof raw.order === 'number' && Number.isFinite(raw.order) ? { order: raw.order } : {}), ...placement };
+      if (raw.replaces !== undefined && !BUILTIN.some(panel => panel.id === raw.replaces)) return refuse(`replaces must be a built-in panel: ${BUILTIN.map(panel => panel.id).join(' or ')}`);
+      const replaces = raw.replaces === undefined ? {} : { replaces: raw.replaces as string };
+      const panel: Panel = { id, title, site: where, ...(tabs ? { tabs: tabs as Tab[] } : {}), ...(typeof raw.order === 'number' && Number.isFinite(raw.order) ? { order: raw.order } : {}), ...placement, ...replaces };
       return changed(state => {
         const others = state.registered.filter(item => item.id !== id);
         const taken = new Set([...BUILTIN, ...commands, ...others].flatMap(sitesOf));

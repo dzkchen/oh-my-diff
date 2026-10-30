@@ -33510,7 +33510,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..6a27d802a84615816a6188297b48d548222649f0 100644
+index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..26b331026072faba7ac77a0f8ebf0f1be02fa602 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -33736,7 +33736,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..6a27d802a84615816a6188297b48d548
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1247,33 +1390,51 @@ impl App {
+@@ -1247,33 +1390,56 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -33780,7 +33780,12 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..6a27d802a84615816a6188297b48d548
 -                    frame.set_cursor_style(chat_widget.cursor_style(area));
 +                let chat_area = crate::mod_ui::chat_area(area, &mod_snapshot, header_rows);
 +                chat_widget.render(chat_area, frame.buffer);
-+                crate::mod_ui::render(area, chat_area, frame.buffer, &mod_snapshot);
++                crate::mod_client::record_sites(crate::mod_ui::render(
++                    area,
++                    chat_area,
++                    frame.buffer,
++                    &mod_snapshot,
++                ));
 +                crate::mod_ui::render_help(area, &mod_snapshot, frame.buffer);
 +                self.chat_widget.note_rendered_width(chat_area.width);
 +                if !(mod_overlays_allowed && crate::mod_ui::holds_keys())
@@ -33795,7 +33800,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..6a27d802a84615816a6188297b48d548
              Ok(rendered_area)
          })
      }
-@@ -1283,6 +1444,7 @@ impl App {
+@@ -1283,6 +1449,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -34682,7 +34687,7 @@ index 7b53366557dcf7084b4b23501ad7e0611f512009..b935f13d41cf38f163ffdc1fbb97b49b
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 7c43e1799b268545467d9eb19586e2f9fd55cb19..95dded6ba6f62676e5e029c609554271ec3d227d 100644
+index 7c43e1799b268545467d9eb19586e2f9fd55cb19..1d3708e1ab9023b6da69e19985a36ac97893ea73 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -106,8 +106,9 @@ impl App {
@@ -34906,7 +34911,7 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..95dded6ba6f62676e5e029c609554271
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -338,39 +354,58 @@ impl App {
+@@ -338,39 +354,65 @@ impl App {
                      .borrow_mut()
                      .register(area, /*invalidate*/ false);
              }
@@ -34923,7 +34928,12 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..95dded6ba6f62676e5e029c609554271
                  .render(frame.buffer);
 -            chat_widget.note_rendered_width(screen_size.width);
 +            chat_widget.note_rendered_width(area.width);
-+            crate::mod_ui::render_owned(screen, area, frame.buffer, &mod_snapshot);
++            crate::mod_client::record_sites(crate::mod_ui::render_owned(
++                screen,
++                area,
++                frame.buffer,
++                &mod_snapshot,
++            ));
 +            let welcome = Rect {
 +                x: area.x,
 +                width: area.width,
@@ -34935,6 +34945,8 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..95dded6ba6f62676e5e029c609554271
 +            crate::mod_client::note_chat(area);
 +            if mod_welcome {
 +                crate::mod_ui::render_welcome(welcome, frame.buffer, &mod_snapshot);
++            } else {
++                crate::mod_ui::hide_welcome_terminals();
 +            }
              let dialog = chat_widget.centered_dialog();
              let (foreground, foreground_area): (&dyn Renderable, Rect) =
@@ -43689,10 +43701,10 @@ index e0a4d5286b33ae186952b405f87a42a9b7fbd439..2c9223d860bcc11f01acdcb9f5d2970f
              animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
              effects: Default::default(),
 diff --git a/codex-rs/tui/src/startup_draft_layout.rs b/codex-rs/tui/src/startup_draft_layout.rs
-index da417ce52bc963b1fc5633e7a49e39bb92546951..e41772705f846c6163ba66ce897c34edf4d627a0 100644
+index da417ce52bc963b1fc5633e7a49e39bb92546951..b3af39cf7795bfdd01d77648229b4a0e1fb7a07c 100644
 --- a/codex-rs/tui/src/startup_draft_layout.rs
 +++ b/codex-rs/tui/src/startup_draft_layout.rs
-@@ -64,16 +64,43 @@ impl Renderable for OwnedStartupLayout<'_> {
+@@ -64,16 +64,44 @@ impl Renderable for OwnedStartupLayout<'_> {
          paragraph.render(header, buf);
          let message = match self.pump.session_action {
              StartupDraftSessionAction::New | StartupDraftSessionAction::NewFromCommandCenter => {
@@ -43726,6 +43738,7 @@ index da417ce52bc963b1fc5633e7a49e39bb92546951..e41772705f846c6163ba66ce897c34ed
 +                    crate::mod_ui::render_welcome(available, buf, &snapshot);
 +                    return;
 +                }
++                crate::mod_ui::hide_welcome_terminals();
                  let composer = (!self.pump.submission_pending)
 -                    .then(|| self.pump.bottom_pane.empty_state_composer())
 +                    .then_some(composer)
@@ -63365,10 +63378,10 @@ index 0000000000000000000000000000000000000000..0da48a149b9a0f9273b9d3bcb84f5e18
 +}
 diff --git a/codex-rs/ext/omd/src/generic_host.rs b/codex-rs/ext/omd/src/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..012e5887f683575267c8a0ca938bf1f6a3715425
+index 0000000000000000000000000000000000000000..69b65d04b36d84fc52262b3c43ae027db69eb34e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/generic_host.rs
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,297 @@
 +use crate::workspace_operations::WorkspaceAuthority;
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
@@ -63577,6 +63590,7 @@ index 0000000000000000000000000000000000000000..012e5887f683575267c8a0ca938bf1f6
 +    "instructions_loaded",
 +    "thread_settings",
 +    "worktree",
++    "mods_changed",
 +    "elicitation_result",
 +];
 +
@@ -67127,10 +67141,10 @@ index 0000000000000000000000000000000000000000..252d5d7afd1bf085a73c07cea74d0ca1
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..83de40553994958e222330c051ccf3b4aa195d20
+index 0000000000000000000000000000000000000000..ed9f29b773815a0b1ef79a8f7680e969c3ba3e21
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2615 @@
+@@ -0,0 +1,2620 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -69351,7 +69365,12 @@ index 0000000000000000000000000000000000000000..83de40553994958e222330c051ccf3b4
 +                _ => return Ok(ToolInterception::Continue(None)),
 +            };
 +            if roles::is_spawn(input.tool_name) {
-+                roles::spawn_capacity_admitted(&self.inventory, &lead, input.call_id)?;
++                roles::spawn_capacity_admitted(
++                    &self.inventory,
++                    &lead,
++                    input.call_id,
++                    inventory::SpawnHold::Expiring,
++                )?;
 +            }
 +            let original_tool = input.tool_name.clone();
 +            let scope_agent_id = agent_id(input.thread_store);
@@ -70566,10 +70585,10 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0be5451c3a0a43b7a907254e1aac0d46885f6836
+index 0000000000000000000000000000000000000000..16d566e62cabd5c398c7059f7f6383c6d8a4efce
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2648 @@
+@@ -0,0 +1,2653 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -72749,7 +72768,12 @@ index 0000000000000000000000000000000000000000..0be5451c3a0a43b7a907254e1aac0d46
 +        };
 +        let thread_id = manager.reserve_thread_id();
 +        let id = format!("mod-{}-{thread_id}", caller.id);
-+        super::roles::spawn_capacity_admitted(&core.inventory, lead, &id)?;
++        super::roles::spawn_capacity_admitted(
++            &core.inventory,
++            lead,
++            &id,
++            super::inventory::SpawnHold::Guarded,
++        )?;
 +        let capacity = CapacityReservation(&core.inventory, id.clone());
 +        let workspace = if writable || frozen.is_some() {
 +            std::fs::create_dir_all(&session.scratch).map_err(|e| e.to_string())?;
@@ -74237,10 +74261,10 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..260a0a05ae88c14ca8f4975d621042cd9d9081ce
+index 0000000000000000000000000000000000000000..7e4c3e528a928395b1c720da24eecac46b16caf3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,840 @@
+@@ -0,0 +1,854 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -74308,6 +74332,7 @@ index 0000000000000000000000000000000000000000..260a0a05ae88c14ca8f4975d621042cd
 +
 +#[derive(Default)]
 +pub(super) struct State {
++    active: Mutex<Option<Vec<String>>>,
 +    recording: AtomicBool,
 +    tool_output: AtomicBool,
 +    approval: AtomicBool,
@@ -74486,6 +74511,19 @@ index 0000000000000000000000000000000000000000..260a0a05ae88c14ca8f4975d621042cd
 +            }),
 +            Ordering::Release,
 +        );
++        let mut active: Vec<String> = runtime.owners().into_iter().map(|(id, _)| id).collect();
++        active.sort();
++        if let Ok(mut previous) = self.active.lock()
++            && previous
++                .replace(active.clone())
++                .is_none_or(|previous| previous != active)
++        {
++            broadcast(
++                self,
++                "mods_changed",
++                serde_json::json!({ "active": active }),
++            );
++        }
 +        let recording = runtime.uses_operation("turns.activity");
 +        self.recording.swap(recording, Ordering::AcqRel) && !recording
 +    }
@@ -75083,10 +75121,10 @@ index 0000000000000000000000000000000000000000..260a0a05ae88c14ca8f4975d621042cd
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/mods/expansion/activity.rs b/codex-rs/ext/omd/src/mods/expansion/activity.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..35b2beb143ae890fcaf9b4ead30d7fb7f3324a67
+index 0000000000000000000000000000000000000000..32076fb11fa90f75dbd1c43c75ad1e1297a66979
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/activity.rs
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,377 @@
 +use super::*;
 +use codex_omd::turn_activity::ActivityRecord;
 +use codex_omd::turn_activity::TurnActivityLog;
@@ -75316,6 +75354,8 @@ index 0000000000000000000000000000000000000000..35b2beb143ae890fcaf9b4ead30d7fb7
 +    });
 +}
 +
++pub(in crate::mods) const MAX_CHANGES: usize = 128;
++
 +pub(in crate::mods) fn visible_paths(
 +    root: &std::path::Path,
 +    paths: Vec<String>,
@@ -75327,7 +75367,7 @@ index 0000000000000000000000000000000000000000..35b2beb143ae890fcaf9b4ead30d7fb7
 +        .into_iter()
 +        .filter(|path| include_ignored || !filter.ignored(root, path))
 +        .filter(|path| readable(&root.join(path)))
-+        .take(128)
++        .take(MAX_CHANGES)
 +        .collect()
 +}
 +
@@ -75783,10 +75823,10 @@ index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a1705295830007
+index 0000000000000000000000000000000000000000..272409f24771bd72f8ec13a725bc07e9f438e99c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,723 @@
+@@ -0,0 +1,741 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -76115,8 +76155,23 @@ index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a17052
 +            let Some(lead) = core.expansion.thread(thread) else {
 +                return;
 +            };
-+            let changes =
-+                super::activity::external_changes(core, &lead, &paths, include_ignored).await;
++            let (git, paths): (Vec<String>, Vec<String>) = paths
++                .into_iter()
++                .partition(|path| path.starts_with(".git/"));
++            let mut changes: Vec<Value> = git
++                .into_iter()
++                .take(super::activity::MAX_CHANGES)
++                .map(|path| json!({"path": path, "before": null, "after": null}))
++                .collect();
++            if !paths.is_empty() {
++                let room = super::activity::MAX_CHANGES - changes.len();
++                changes.extend(
++                    super::activity::external_changes(core, &lead, &paths, include_ignored)
++                        .await
++                        .into_iter()
++                        .take(room),
++                );
++            }
 +            if changes.is_empty() {
 +                return;
 +            }
@@ -76240,6 +76295,8 @@ index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a17052
 +        include_ignored: bool,
 +        #[serde(default)]
 +        key: Option<String>,
++        #[serde(default)]
++        git: bool,
 +    }
 +    fn recursive() -> bool {
 +        true
@@ -76303,6 +76360,7 @@ index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a17052
 +            caller.source,
 +            &input.paths,
 +            input.recursive,
++            input.git,
 +            input.debounce_ms,
 +            input.key.as_deref().map(|key| (key, shape.as_str())),
 +            sink,
@@ -77216,10 +77274,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..154761c3f665de17c69e6aa5658884c90b4d15bc
+index 0000000000000000000000000000000000000000..96276dffd74b10c065e813e5e3ad7c4901491b4e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5109 @@
+@@ -0,0 +1,5144 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -78855,6 +78913,7 @@ index 0000000000000000000000000000000000000000..154761c3f665de17c69e6aa5658884c9
 +    };
 +    let core = &fixture.core;
 +    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
++    assert!(!delivery::deliver(core).await);
 +    for data in [json!(1), json!({"n": 2})] {
 +        let delivered = delivery::publish(
 +            core,
@@ -81924,6 +81983,40 @@ index 0000000000000000000000000000000000000000..154761c3f665de17c69e6aa5658884c9
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++async fn mods_changed_reports_the_first_active_set_and_each_change() {
++    let Some(fixture) = fixture(&[Package {
++        id: "observer",
++        capabilities: &["lifecycle", "store"],
++        manifest: Value::Null,
++        source: "export default function (api) {\n  api.on('mods_changed', e => api.state.set([...(api.state.get() ?? []), e]));\n}\n",
++    }]) else {
++        return;
++    };
++    let core = &fixture.core;
++    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
++    {
++        let runtime = core.runtime.lock().unwrap();
++        core.expansion.refresh(&runtime);
++        *core.expansion.active.lock().unwrap() = Some(vec!["gone".to_owned()]);
++        core.expansion.refresh(&runtime);
++        core.expansion.refresh(&runtime);
++    }
++    assert!(!delivery::deliver(core).await);
++    let log = core
++        .runtime
++        .lock()
++        .unwrap()
++        .state("observer")
++        .cloned()
++        .unwrap();
++    assert_eq!(
++        log,
++        json!([{"active": ["observer"]}, {"active": ["observer"]}]),
++        "the first load and the change from [\"gone\"] are reported, unchanged refreshes are not"
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
 +async fn timer_invocation_rechecks_source_and_incarnation_at_generation_capture() {
 +    let Some(fixture) = fixture(&[Package {
 +        id: "observer",
@@ -82603,10 +82696,10 @@ index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8f40c928956aea78616511f1f716849a9b4952bc
+index 0000000000000000000000000000000000000000..7b1d3bf1228e9c98c1c8e981cd7cc8abfa1a8c29
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,382 @@
 +use super::*;
 +use codex_omd::peers::now_ms;
 +use std::collections::BTreeSet;
@@ -82615,12 +82708,20 @@ index 0000000000000000000000000000000000000000..8f40c928956aea78616511f1f716849a
 +pub(super) const FINISHED_LIMIT: usize = 64;
 +const SPAWN_RESERVATION_MS: u64 = 30_000;
 +
++/// A tool-path reservation expires; a guarded one lasts until its guard releases it, however long setup takes.
++#[derive(Clone, Copy, PartialEq, Eq)]
++pub(super) enum SpawnHold {
++    Expiring,
++    Guarded,
++}
++
 +/// Session-wide agent records; observing one grants no control over it.
 +#[derive(Default)]
 +pub(super) struct Inventory {
 +    records: Mutex<BTreeMap<String, Value>>,
 +    working: Mutex<BTreeSet<String>>,
-+    reserved: Mutex<Vec<(String, String, u64)>>,
++    /// Root, call id and reservation time (`None` while guarded).
++    reserved: Mutex<Vec<(String, String, Option<u64>)>>,
 +    directory: std::sync::OnceLock<std::path::PathBuf>,
 +}
 +
@@ -82795,6 +82896,7 @@ index 0000000000000000000000000000000000000000..8f40c928956aea78616511f1f716849a
 +        &self,
 +        root: &str,
 +        call_id: &str,
++        hold: SpawnHold,
 +        counted: impl Fn(&str) -> bool,
 +        admit: impl FnOnce(usize) -> Result<(), String>,
 +    ) -> Result<(), String> {
@@ -82803,10 +82905,15 @@ index 0000000000000000000000000000000000000000..8f40c928956aea78616511f1f716849a
 +            .lock()
 +            .map_err(|_| "inventory lock poisoned")?;
 +        let now = now_ms();
-+        reserved.retain(|(.., at)| now.saturating_sub(*at) < SPAWN_RESERVATION_MS);
++        reserved
++            .retain(|(.., at)| at.is_none_or(|at| now.saturating_sub(at) < SPAWN_RESERVATION_MS));
 +        let pending = reserved.iter().filter(|(owner, ..)| owner == root).count();
 +        admit(self.live_children(root, counted) + pending)?;
-+        reserved.push((root.to_owned(), call_id.to_owned(), now));
++        reserved.push((
++            root.to_owned(),
++            call_id.to_owned(),
++            (hold == SpawnHold::Expiring).then_some(now),
++        ));
 +        Ok(())
 +    }
 +
@@ -84657,10 +84764,10 @@ index 0000000000000000000000000000000000000000..3a6ec486cc40c8ce442312d9bb228230
 +}
 diff --git a/codex-rs/ext/omd/src/mods/roles.rs b/codex-rs/ext/omd/src/mods/roles.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5a33edfcf10f7038c297782b4b7fc3454338651b
+index 0000000000000000000000000000000000000000..352f8a78345b5bfa48cac72ec530f17cbd436224
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/roles.rs
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,473 @@
 +use super::*;
 +use codex_extension_api::AgentRoleContributor;
 +use codex_extension_api::ContributedAgentRole;
@@ -85083,6 +85190,7 @@ index 0000000000000000000000000000000000000000..5a33edfcf10f7038c297782b4b7fc345
 +    inventory: &super::inventory::Inventory,
 +    lead: &Lead,
 +    call_id: &str,
++    hold: super::inventory::SpawnHold,
 +) -> Result<(), String> {
 +    let tracked_as_workers = lead
 +        .host
@@ -85097,6 +85205,7 @@ index 0000000000000000000000000000000000000000..5a33edfcf10f7038c297782b4b7fc345
 +    inventory.reserve_spawn(
 +        &inventory.root_thread(&lead.thread.to_string()),
 +        call_id,
++        hold,
 +        |thread| !tracked_as_workers.contains(thread),
 +        |live| {
 +            lead.session
@@ -88246,10 +88355,10 @@ index 0000000000000000000000000000000000000000..4d6805c78213dc7e4ba05f798593fb21
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb4eb622e3
+index 0000000000000000000000000000000000000000..347e272d3eafbc406ee51cda7932c2fcd3a28b53
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch.rs
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,296 @@
 +use codex_file_watcher::DebouncedWatchReceiver;
 +use codex_file_watcher::FileWatcher;
 +use codex_file_watcher::WatchPath;
@@ -88295,6 +88404,57 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +        return None;
 +    }
 +    relative.to_str().map(str::to_owned)
++}
++
++const WORKTREE_GIT_FILES: [&str; 2] = ["HEAD", "index"];
++
++fn git_dirs(root: &Path) -> Option<(PathBuf, PathBuf)> {
++    let top = root.ancestors().find(|dir| dir.join(".git").exists())?;
++    let dot = top.join(".git").canonicalize().ok()?;
++    if dot.is_dir() {
++        return Some((dot.clone(), dot));
++    }
++    let text = std::fs::read_to_string(&dot).ok()?;
++    let git = top
++        .join(text.strip_prefix("gitdir:")?.trim())
++        .canonicalize()
++        .ok()?;
++    let Ok(common) = std::fs::read_to_string(git.join("commondir")) else {
++        let submodule = git.ancestors().any(|dir| {
++            dir.ends_with(".git/modules")
++                && dir
++                    .parent()
++                    .and_then(Path::parent)
++                    .is_some_and(|owner| top.starts_with(owner))
++        });
++        return (submodule
++            && git.join("HEAD").is_file()
++            && git.join("refs").is_dir()
++            && git.join("objects").is_dir())
++        .then(|| (git.clone(), git));
++    };
++    let common = git.join(common.trim()).canonicalize().ok()?;
++    let backlink = std::fs::read_to_string(git.join("gitdir")).ok()?;
++    (git.parent() == Some(common.join("worktrees").as_path())
++        && git.join(backlink.trim()).canonicalize().ok()? == dot)
++        .then_some((git, common))
++}
++
++fn git_change(dirs: &(PathBuf, PathBuf), path: &Path) -> Option<String> {
++    let own = path
++        .strip_prefix(&dirs.0)
++        .ok()
++        .and_then(Path::to_str)
++        .filter(|name| WORKTREE_GIT_FILES.contains(name));
++    let shared = || {
++        path.strip_prefix(&dirs.1)
++            .ok()
++            .and_then(Path::to_str)
++            .filter(|name| *name == "packed-refs" || name.starts_with("refs/"))
++    };
++    own.or_else(shared)
++        .filter(|name| !name.ends_with(".lock"))
++        .map(|name| format!(".git/{name}"))
 +}
 +
 +fn keyed(watches: &BTreeMap<(String, String), Watch>, owner: &str, key: &str) -> Option<String> {
@@ -88358,6 +88518,7 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +        source: &str,
 +        paths: &[String],
 +        recursive: bool,
++        git: bool,
 +        debounce_ms: Option<u64>,
 +        key: Option<(&str, &str)>,
 +        sink: ChangeSink,
@@ -88373,6 +88534,11 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +            .iter()
 +            .map(|path| self.resolve(path))
 +            .collect::<io::Result<Vec<_>>>()?;
++        let dirs = if git {
++            Some(git_dirs(&self.root).ok_or_else(|| io::Error::other("watch_git_unavailable"))?)
++        } else {
++            None
++        };
 +        let mut watches = self
 +            .watches
 +            .lock()
@@ -88403,26 +88569,41 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +            format!("w{}", *next)
 +        };
 +        let (subscriber, receiver) = self.watcher.add_subscriber();
-+        let registration = subscriber.register_paths(
-+            resolved
-+                .iter()
-+                .map(|path| WatchPath {
-+                    path: path.clone(),
-+                    recursive,
-+                })
-+                .collect(),
-+        );
++        let mut targets: Vec<WatchPath> = resolved
++            .iter()
++            .map(|path| WatchPath {
++                path: path.clone(),
++                recursive,
++            })
++            .collect();
++        if let Some((git, common)) = &dirs {
++            for (path, recursive) in [(git, false), (common, false), (&common.join("refs"), true)] {
++                if !targets.iter().any(|target| target.path == *path) {
++                    targets.push(WatchPath {
++                        path: path.clone(),
++                        recursive,
++                    });
++                }
++            }
++        }
++        let registration = subscriber.register_paths(targets);
 +        let mut receiver = DebouncedWatchReceiver::new(receiver, Duration::from_millis(debounce));
 +        let (root, protected, watch_id) = (self.root.clone(), self.protected.clone(), id.clone());
 +        let task = tokio::spawn(async move {
 +            let _subscriber = subscriber;
 +            while let Some(event) = receiver.recv().await {
-+                let changed: Vec<String> = event
++                let mut changed: Vec<String> = event
 +                    .paths
 +                    .iter()
 +                    .filter(|path| !protected.iter().any(|p| path.starts_with(p)))
-+                    .filter_map(|path| relative(&root, path))
++                    .filter_map(|path| {
++                        dirs.as_ref()
++                            .and_then(|dirs| git_change(dirs, path))
++                            .or_else(|| relative(&root, path))
++                    })
 +                    .collect();
++                changed.sort();
++                changed.dedup();
 +                if !changed.is_empty() {
 +                    sink(&watch_id, changed);
 +                }
@@ -88476,10 +88657,10 @@ index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986f4e611fe
+index 0000000000000000000000000000000000000000..07d05e61847dace1e2b9f28ef39ff4ff1986b45f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,492 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -88516,7 +88697,16 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    let (dir, watches) = fixture();
 +    let (sink, rx) = channel_sink();
 +    let (id, _) = watches
-+        .watch("m", "sha", &["src".to_owned()], true, Some(50), None, sink)
++        .watch(
++            "m",
++            "sha",
++            &["src".to_owned()],
++            true,
++            false,
++            Some(50),
++            None,
++            sink,
++        )
 +        .unwrap();
 +    tokio::time::sleep(Duration::from_millis(300)).await;
 +    let file = dir.path().join("src/a.txt");
@@ -88548,7 +88738,16 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +        let (sink, _rx) = channel_sink();
 +        assert!(
 +            watches
-+                .watch("m", "sha", &[path.to_owned()], false, None, None, sink)
++                .watch(
++                    "m",
++                    "sha",
++                    &[path.to_owned()],
++                    false,
++                    false,
++                    None,
++                    None,
++                    sink
++                )
 +                .is_err(),
 +            "{path}"
 +        );
@@ -88556,13 +88755,22 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    let (sink, _rx) = channel_sink();
 +    assert!(
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, Some(10), None, sink)
++            .watch(
++                "m",
++                "sha",
++                &["src".to_owned()],
++                false,
++                false,
++                Some(10),
++                None,
++                sink
++            )
 +            .is_err()
 +    );
 +    let (sink, _rx) = channel_sink();
 +    assert!(
 +        watches
-+            .watch("m", "sha", &[], false, None, None, sink)
++            .watch("m", "sha", &[], false, false, None, None, sink)
 +            .is_err()
 +    );
 +}
@@ -88573,7 +88781,16 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    for _ in 0..codex_omd::mod_limits::ModLimits::default().watches_per_mod {
 +        let (sink, _rx) = channel_sink();
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, None, None, sink)
++            .watch(
++                "m",
++                "sha",
++                &["src".to_owned()],
++                false,
++                false,
++                None,
++                None,
++                sink,
++            )
 +            .unwrap();
 +    }
 +    let (sink, _rx) = channel_sink();
@@ -88584,6 +88801,7 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +                "sha",
 +                &["src".to_owned()],
 +                false,
++                false,
 +                None,
 +                None,
 +                sink.clone()
@@ -88592,7 +88810,16 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    );
 +    assert!(
 +        watches
-+            .watch("other", "sha", &["src".to_owned()], false, None, None, sink)
++            .watch(
++                "other",
++                "sha",
++                &["src".to_owned()],
++                false,
++                false,
++                None,
++                None,
++                sink
++            )
 +            .is_ok()
 +    );
 +    watches.retain_sources(&BTreeMap::from([("other".to_owned(), "sha".to_owned())]));
@@ -88607,7 +88834,16 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    let (_dir, watches) = fixture();
 +    let watch = |key: Option<(&str, &str)>| {
 +        let (sink, _rx) = channel_sink();
-+        watches.watch("m", "sha", &["src".to_owned()], false, None, key, sink)
++        watches.watch(
++            "m",
++            "sha",
++            &["src".to_owned()],
++            false,
++            false,
++            None,
++            key,
++            sink,
++        )
 +    };
 +    let (first, replaced) = watch(Some(("k", "a"))).unwrap();
 +    assert_eq!(replaced, None);
@@ -88622,6 +88858,300 @@ index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986
 +    assert!(!watches.unwatch_key("other", "k"));
 +    assert!(watches.unwatch_key("m", "k"));
 +    assert!(!watches.unwatch("m", &second));
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_git_watch_reports_head_index_and_refs_but_not_objects_or_locks() {
++    let (dir, watches) = fixture();
++    let git = dir.path().join(".git");
++    std::fs::create_dir_all(git.join("refs/heads")).unwrap();
++    std::fs::create_dir_all(git.join("objects/ab")).unwrap();
++    let (sink, rx) = channel_sink();
++    watches
++        .watch(
++            "m",
++            "sha",
++            &["src".to_owned()],
++            true,
++            true,
++            Some(50),
++            None,
++            sink,
++        )
++        .unwrap();
++    tokio::time::sleep(Duration::from_millis(300)).await;
++    let seen = tokio::task::spawn_blocking(move || {
++        let mut seen = std::collections::BTreeSet::new();
++        for round in 0..20 {
++            std::fs::write(git.join("objects/ab/cd"), round.to_string()).unwrap();
++            std::fs::write(git.join("index.lock"), round.to_string()).unwrap();
++            std::fs::write(git.join("HEAD"), format!("ref: refs/heads/b{round}\n")).unwrap();
++            std::fs::write(git.join("refs/heads/main"), round.to_string()).unwrap();
++            while let Ok((_, paths)) = rx.recv_timeout(Duration::from_millis(500)) {
++                seen.extend(paths);
++            }
++            if seen.contains(".git/HEAD") && seen.contains(".git/refs/heads/main") {
++                break;
++            }
++        }
++        seen
++    })
++    .await
++    .unwrap();
++    assert!(
++        seen.contains(".git/HEAD") && seen.contains(".git/refs/heads/main"),
++        "{seen:?}"
++    );
++    assert!(
++        seen.iter()
++            .all(|path| !path.contains("objects") && !path.ends_with(".lock")),
++        "{seen:?}"
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_git_watch_needs_a_repository() {
++    let dir = tempfile::tempdir().unwrap();
++    let watches = WorkspaceWatches::new(
++        Arc::new(FileWatcher::new().unwrap()),
++        dir.path().to_path_buf(),
++        Vec::new(),
++        Default::default(),
++    )
++    .unwrap();
++    let (sink, _rx) = channel_sink();
++    let error = watches
++        .watch("m", "sha", &[".".to_owned()], true, true, None, None, sink)
++        .unwrap_err();
++    assert_eq!(error.to_string(), "watch_git_unavailable");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_worktree_git_watch_reports_its_own_head_and_shared_refs_only() {
++    let dir = tempfile::tempdir().unwrap();
++    let base = dir.path().canonicalize().unwrap();
++    let (main, tree) = (base.join("main/.git"), base.join("tree"));
++    let own = main.join("worktrees/tree");
++    for path in [main.join("refs/heads"), own.clone(), tree.clone()] {
++        std::fs::create_dir_all(path).unwrap();
++    }
++    std::fs::write(own.join("commondir"), "../..\n").unwrap();
++    std::fs::write(
++        own.join("gitdir"),
++        format!("{}\n", tree.join(".git").display()),
++    )
++    .unwrap();
++    std::fs::write(tree.join(".git"), format!("gitdir: {}\n", own.display())).unwrap();
++    let watches = WorkspaceWatches::new(
++        Arc::new(FileWatcher::new().unwrap()),
++        tree.clone(),
++        Vec::new(),
++        Default::default(),
++    )
++    .unwrap();
++    let (sink, rx) = channel_sink();
++    watches
++        .watch(
++            "m",
++            "sha",
++            &[".".to_owned()],
++            true,
++            true,
++            Some(50),
++            None,
++            sink,
++        )
++        .unwrap();
++    tokio::time::sleep(Duration::from_millis(300)).await;
++    let seen = tokio::task::spawn_blocking(move || {
++        let mut seen = std::collections::BTreeSet::new();
++        for round in 0..20 {
++            std::fs::write(main.join("HEAD"), round.to_string()).unwrap();
++            std::fs::write(own.join("HEAD"), round.to_string()).unwrap();
++            std::fs::write(main.join("refs/heads/x"), round.to_string()).unwrap();
++            while let Ok((_, paths)) = rx.recv_timeout(Duration::from_millis(500)) {
++                seen.extend(paths);
++            }
++            if seen.contains(".git/HEAD") && seen.contains(".git/refs/heads/x") {
++                break;
++            }
++        }
++        seen
++    })
++    .await
++    .unwrap();
++    assert_eq!(
++        seen,
++        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
++        "{seen:?}"
++    );
++
++    std::fs::write(
++        tree.join(".git"),
++        format!("gitdir: {}\n", base.join("main/.git").display()),
++    )
++    .unwrap();
++    let (sink, _rx) = channel_sink();
++    assert_eq!(
++        watches
++            .watch("n", "sha", &[".".to_owned()], true, true, None, None, sink)
++            .unwrap_err()
++            .to_string(),
++        "watch_git_unavailable"
++    );
++}
++
++fn git_events(
++    rx: mpsc::Receiver<(String, Vec<String>)>,
++    write: impl Fn(usize) + Send + 'static,
++    wanted: &'static [&'static str],
++) -> tokio::task::JoinHandle<std::collections::BTreeSet<String>> {
++    tokio::task::spawn_blocking(move || {
++        let mut seen = std::collections::BTreeSet::new();
++        for round in 0..20 {
++            write(round);
++            while let Ok((_, paths)) = rx.recv_timeout(Duration::from_millis(500)) {
++                seen.extend(paths);
++            }
++            if wanted.iter().all(|path| seen.contains(*path)) {
++                break;
++            }
++        }
++        seen
++    })
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_git_watch_follows_a_relative_gitfile_without_commondir() {
++    let dir = tempfile::tempdir().unwrap();
++    let base = dir.path().canonicalize().unwrap();
++    let (modules, sub) = (base.join("super/.git/modules/sub"), base.join("super/sub"));
++    for path in [
++        modules.join("refs/heads"),
++        modules.join("objects"),
++        sub.clone(),
++    ] {
++        std::fs::create_dir_all(path).unwrap();
++    }
++    std::fs::write(modules.join("HEAD"), "ref: refs/heads/main\n").unwrap();
++    std::fs::write(sub.join(".git"), "gitdir: ../.git/modules/sub\n").unwrap();
++    let watches = WorkspaceWatches::new(
++        Arc::new(FileWatcher::new().unwrap()),
++        sub.clone(),
++        Vec::new(),
++        Default::default(),
++    )
++    .unwrap();
++    let (sink, rx) = channel_sink();
++    watches
++        .watch(
++            "m",
++            "sha",
++            &[".".to_owned()],
++            true,
++            true,
++            Some(50),
++            None,
++            sink,
++        )
++        .unwrap();
++    tokio::time::sleep(Duration::from_millis(300)).await;
++    let written = modules.clone();
++    let seen = git_events(
++        rx,
++        move |round| {
++            std::fs::write(written.join("HEAD"), format!("ref: refs/heads/b{round}\n")).unwrap();
++            std::fs::write(written.join("refs/heads/x"), round.to_string()).unwrap();
++        },
++        &[".git/HEAD", ".git/refs/heads/x"],
++    )
++    .await
++    .unwrap();
++    assert_eq!(
++        seen,
++        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
++        "{seen:?}"
++    );
++
++    std::fs::remove_dir_all(modules.join("objects")).unwrap();
++    let (sink, _rx) = channel_sink();
++    assert_eq!(
++        watches
++            .watch("n", "sha", &[".".to_owned()], true, true, None, None, sink)
++            .unwrap_err()
++            .to_string(),
++        "watch_git_unavailable"
++    );
++
++    for other in [
++        base.join("private/.git"),
++        base.join("elsewhere/.git/modules/sub"),
++    ] {
++        for path in [other.join("refs/heads"), other.join("objects")] {
++            std::fs::create_dir_all(path).unwrap();
++        }
++        std::fs::write(other.join("HEAD"), "ref: refs/heads/main\n").unwrap();
++        std::fs::write(sub.join(".git"), format!("gitdir: {}\n", other.display())).unwrap();
++        let (sink, _rx) = channel_sink();
++        assert_eq!(
++            watches
++                .watch("o", "sha", &[".".to_owned()], true, true, None, None, sink)
++                .unwrap_err()
++                .to_string(),
++            "watch_git_unavailable",
++            "{other:?}"
++        );
++    }
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_git_watch_resolves_relative_worktree_links_from_the_git_directory() {
++    let dir = tempfile::tempdir().unwrap();
++    let base = dir.path().canonicalize().unwrap();
++    let (main, tree) = (base.join("main/.git"), base.join("tree"));
++    let own = main.join("worktrees/tree");
++    for path in [main.join("refs/heads"), own.clone(), tree.clone()] {
++        std::fs::create_dir_all(path).unwrap();
++    }
++    std::fs::write(own.join("commondir"), "../..\n").unwrap();
++    std::fs::write(own.join("gitdir"), "../../../../tree/.git\n").unwrap();
++    std::fs::write(tree.join(".git"), "gitdir: ../main/.git/worktrees/tree\n").unwrap();
++    let watches = WorkspaceWatches::new(
++        Arc::new(FileWatcher::new().unwrap()),
++        tree.clone(),
++        Vec::new(),
++        Default::default(),
++    )
++    .unwrap();
++    let (sink, rx) = channel_sink();
++    watches
++        .watch(
++            "m",
++            "sha",
++            &[".".to_owned()],
++            true,
++            true,
++            Some(50),
++            None,
++            sink,
++        )
++        .unwrap();
++    tokio::time::sleep(Duration::from_millis(300)).await;
++    let seen = git_events(
++        rx,
++        move |round| {
++            std::fs::write(own.join("HEAD"), round.to_string()).unwrap();
++            std::fs::write(main.join("refs/heads/x"), round.to_string()).unwrap();
++        },
++        &[".git/HEAD", ".git/refs/heads/x"],
++    )
++    .await
++    .unwrap();
++    assert_eq!(
++        seen,
++        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
++        "{seen:?}"
++    );
 +}
 diff --git a/codex-rs/ext/omd/tests/omd_mod_cli.rs b/codex-rs/ext/omd/tests/omd_mod_cli.rs
 new file mode 100644
@@ -93190,10 +93720,10 @@ index 0000000000000000000000000000000000000000..ad5f898f3b768a805a06d0f816c6082d
 +};
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b4b7dd1566955890d656570d8d0f40a4fab3bdcb
+index 0000000000000000000000000000000000000000..f595364771f62e876282d9393aaaec58c6227498
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1604 @@
+@@ -0,0 +1,1605 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -93434,7 +93964,8 @@ index 0000000000000000000000000000000000000000..b4b7dd1566955890d656570d8d0f40a4
 +    state
 +        .workers
 +        .values()
-+        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle)
++        // A closing worker's own thread has ended; its running descendants count for it.
++        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle && !worker.closing)
 +        .count()
 +}
 +
@@ -107021,10 +107552,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c95154ce2
+index 0000000000000000000000000000000000000000..b122dc38f1dd633efc9a3f01ad9d617a4b155645
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1837 @@
+@@ -0,0 +1,2079 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -107046,7 +107577,6 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +use std::path::Path;
 +use std::path::PathBuf;
 +use std::process::Command;
-+use std::process::Stdio;
 +use std::sync::Arc;
 +use std::sync::LazyLock;
 +use std::sync::Mutex;
@@ -107482,16 +108012,233 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +    }
 +}
 +
-+struct Child(std::process::Child);
++struct Child {
++    pid: libc::pid_t,
++    status: Option<std::process::ExitStatus>,
++    stdin: Option<fs::File>,
++    stdout: Option<fs::File>,
++    stderr: Option<fs::File>,
++}
++
++impl Child {
++    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
++        use std::os::unix::process::ExitStatusExt;
++        if self.status.is_none() {
++            let mut status = 0;
++            match unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) } {
++                0 => {}
++                -1 => {
++                    let error = std::io::Error::last_os_error();
++                    if error.kind() != std::io::ErrorKind::Interrupted {
++                        return Err(error);
++                    }
++                }
++                _ => self.status = Some(std::process::ExitStatus::from_raw(status)),
++            }
++        }
++        Ok(self.status)
++    }
++
++    fn kill(&mut self) {
++        if let Some(pid) = rustix::process::Pid::from_raw(self.pid) {
++            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
++            if self.status.is_none() {
++                let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
++            }
++        }
++        while matches!(self.try_wait(), Ok(None)) {
++            std::thread::sleep(Duration::from_millis(1));
++        }
++    }
++}
 +
 +impl Drop for Child {
 +    fn drop(&mut self) {
-+        if let Some(pid) = rustix::process::Pid::from_raw(self.0.id() as i32) {
-+            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-+        }
-+        let _ = self.0.kill();
-+        let _ = self.0.wait();
++        self.kill();
 +    }
++}
++
++/// Starts `command` as the leader of a new session without a controlling terminal; its environment must already be cleared and set in full.
++/// On macOS `POSIX_SPAWN_SETSID` does this without forking the multithreaded host, which a `pre_exec` hook would make std do.
++#[cfg(target_os = "macos")]
++fn spawn_session(command: &Command, stdin: bool) -> std::io::Result<Child> {
++    use std::ffi::CString;
++    use std::os::fd::AsRawFd;
++    use std::os::fd::FromRawFd;
++    use std::os::fd::OwnedFd;
++    use std::os::unix::ffi::OsStrExt;
++    const POSIX_SPAWN_SETSID: libc::c_int = 0x0400;
++    unsafe extern "C" {
++        fn posix_spawn_file_actions_addchdir_np(
++            actions: *mut libc::posix_spawn_file_actions_t,
++            path: *const libc::c_char,
++        ) -> libc::c_int;
++    }
++    let text = |bytes: &[u8]| {
++        CString::new(bytes).map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))
++    };
++    let check = |code: libc::c_int| match code {
++        0 => Ok(()),
++        code => Err(std::io::Error::from_raw_os_error(code)),
++    };
++    let pipe = || -> std::io::Result<(OwnedFd, OwnedFd)> {
++        let mut fds = [0; 2];
++        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
++            return Err(std::io::Error::last_os_error());
++        }
++        let ends = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
++        for end in [&ends.0, &ends.1] {
++            if unsafe { libc::fcntl(end.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
++                return Err(std::io::Error::last_os_error());
++            }
++        }
++        Ok(ends)
++    };
++    let program = text(command.get_program().as_bytes())?;
++    let argv = std::iter::once(command.get_program())
++        .chain(command.get_args())
++        .map(|argument| text(argument.as_bytes()))
++        .collect::<std::io::Result<Vec<_>>>()?;
++    let envp = command
++        .get_envs()
++        .filter_map(|(name, value)| {
++            value.map(|value| text(&[name.as_bytes(), b"=", value.as_bytes()].concat()))
++        })
++        .collect::<std::io::Result<Vec<_>>>()?;
++    let cwd = command
++        .get_current_dir()
++        .map(|cwd| text(cwd.as_os_str().as_bytes()))
++        .transpose()?;
++    let null = text(b"/dev/null")?;
++    let input = stdin.then(pipe).transpose()?;
++    let (stdout, stderr) = (pipe()?, pipe()?);
++    let pointers = |values: &[CString]| {
++        values
++            .iter()
++            .map(|value| value.as_ptr().cast_mut())
++            .chain(std::iter::once(std::ptr::null_mut()))
++            .collect::<Vec<_>>()
++    };
++    let (argv_pointers, envp_pointers) = (pointers(&argv), pointers(&envp));
++    let mut pid = 0;
++    unsafe {
++        let mut attributes: libc::posix_spawnattr_t = std::ptr::null_mut();
++        let mut actions: libc::posix_spawn_file_actions_t = std::ptr::null_mut();
++        check(libc::posix_spawnattr_init(&mut attributes))?;
++        check(libc::posix_spawn_file_actions_init(&mut actions))?;
++        let spawned = (|| {
++            let mut empty: libc::sigset_t = std::mem::zeroed();
++            let mut pipe_signal: libc::sigset_t = std::mem::zeroed();
++            libc::sigemptyset(&mut empty);
++            libc::sigemptyset(&mut pipe_signal);
++            libc::sigaddset(&mut pipe_signal, libc::SIGPIPE);
++            check(libc::posix_spawnattr_setsigmask(&mut attributes, &empty))?;
++            check(libc::posix_spawnattr_setsigdefault(
++                &mut attributes,
++                &pipe_signal,
++            ))?;
++            check(libc::posix_spawnattr_setflags(
++                &mut attributes,
++                (POSIX_SPAWN_SETSID
++                    | libc::POSIX_SPAWN_SETSIGMASK
++                    | libc::POSIX_SPAWN_SETSIGDEF
++                    | libc::POSIX_SPAWN_CLOEXEC_DEFAULT) as libc::c_short,
++            ))?;
++            match &input {
++                Some((read, _)) => check(libc::posix_spawn_file_actions_adddup2(
++                    &mut actions,
++                    read.as_raw_fd(),
++                    0,
++                ))?,
++                None => check(libc::posix_spawn_file_actions_addopen(
++                    &mut actions,
++                    0,
++                    null.as_ptr(),
++                    libc::O_RDONLY,
++                    0,
++                ))?,
++            }
++            check(libc::posix_spawn_file_actions_adddup2(
++                &mut actions,
++                stdout.1.as_raw_fd(),
++                1,
++            ))?;
++            check(libc::posix_spawn_file_actions_adddup2(
++                &mut actions,
++                stderr.1.as_raw_fd(),
++                2,
++            ))?;
++            if let Some(cwd) = &cwd {
++                check(posix_spawn_file_actions_addchdir_np(
++                    &mut actions,
++                    cwd.as_ptr(),
++                ))?;
++            }
++            check(libc::posix_spawnp(
++                &mut pid,
++                program.as_ptr(),
++                &actions,
++                &attributes,
++                argv_pointers.as_ptr(),
++                envp_pointers.as_ptr(),
++            ))
++        })();
++        libc::posix_spawn_file_actions_destroy(&mut actions);
++        libc::posix_spawnattr_destroy(&mut attributes);
++        spawned?;
++    }
++    Ok(Child {
++        pid,
++        status: None,
++        stdin: input.map(|(_, write)| fs::File::from(write)),
++        stdout: Some(fs::File::from(stdout.0)),
++        stderr: Some(fs::File::from(stderr.0)),
++    })
++}
++
++#[cfg(not(target_os = "macos"))]
++fn spawn_session(command: &Command, stdin: bool) -> std::io::Result<Child> {
++    use std::os::fd::OwnedFd;
++    use std::os::unix::process::CommandExt;
++    use std::process::Stdio;
++    let mut session = Command::new(command.get_program());
++    session.args(command.get_args()).env_clear();
++    for (name, value) in command.get_envs() {
++        if let Some(value) = value {
++            session.env(name, value);
++        }
++    }
++    if let Some(cwd) = command.get_current_dir() {
++        session.current_dir(cwd);
++    }
++    unsafe {
++        session.pre_exec(|| {
++            rustix::process::setsid()
++                .map(drop)
++                .map_err(std::io::Error::from)
++        });
++    }
++    let mut child = session
++        .stdin(if stdin { Stdio::piped() } else { Stdio::null() })
++        .stdout(Stdio::piped())
++        .stderr(Stdio::piped())
++        .spawn()?;
++    Ok(Child {
++        pid: child.id() as libc::pid_t,
++        status: None,
++        stdin: child
++            .stdin
++            .take()
++            .map(|pipe| fs::File::from(OwnedFd::from(pipe))),
++        stdout: child
++            .stdout
++            .take()
++            .map(|pipe| fs::File::from(OwnedFd::from(pipe))),
++        stderr: child
++            .stderr
++            .take()
++            .map(|pipe| fs::File::from(OwnedFd::from(pipe))),
++    })
 +}
 +
 +struct Scratch(PathBuf);
@@ -107573,6 +108320,17 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +    program: &Path,
 +    exec_environment: &[String],
 +) -> Result<Command, String> {
++    unrestricted_command_from(access, program, exec_environment, |name| {
++        std::env::var_os(name)
++    })
++}
++
++fn unrestricted_command_from(
++    access: &crate::ModOsAccess,
++    program: &Path,
++    exec_environment: &[String],
++    environment: impl Fn(&str) -> Option<std::ffi::OsString>,
++) -> Result<Command, String> {
 +    let mut command = if access.network {
 +        Command::new(program)
 +    } else if !cfg!(target_os = "macos") {
@@ -107589,14 +108347,21 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +    };
 +    command
 +        .env_clear()
-+        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
++        .env("PATH", environment("PATH").unwrap_or_default());
 +    for name in [
-+        "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
++        "HOME",
++        "USER",
++        "LOGNAME",
++        "SHELL",
++        "LANG",
++        "LC_ALL",
++        "LC_CTYPE",
++        "SSH_AUTH_SOCK",
 +    ]
 +    .into_iter()
 +    .chain(exec_environment.iter().map(String::as_str))
 +    {
-+        if let Some(value) = std::env::var_os(name) {
++        if let Some(value) = environment(name) {
 +            command.env(name, value);
 +        }
 +    }
@@ -108305,29 +109070,15 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +                command
 +            }
 +        };
-+        {
-+            use std::os::unix::process::CommandExt;
-+            command.process_group(0);
-+        }
 +        command
 +            .current_dir(&cwd)
 +            .env("TMPDIR", &scratch.0)
-+            .env("TERM", "dumb")
-+            .stdin(if input.stdin.is_some() {
-+                Stdio::piped()
-+            } else {
-+                Stdio::null()
-+            })
-+            .stdout(Stdio::piped())
-+            .stderr(Stdio::piped());
++            .env("TERM", "dumb");
 +        command.envs(&input.env);
 +        let started = Instant::now();
-+        let mut child = Child(
-+            command
-+                .spawn()
-+                .map_err(|error| format!("exec_spawn_failed: {error}"))?,
-+        );
-+        if let (Some(bytes), Some(mut pipe)) = (input.stdin.as_ref(), child.0.stdin.take()) {
++        let mut child = spawn_session(&command, input.stdin.is_some())
++            .map_err(|error| format!("exec_spawn_failed: {error}"))?;
++        if let (Some(bytes), Some(mut pipe)) = (input.stdin.as_ref(), child.stdin.take()) {
 +            let bytes = bytes.clone().into_bytes();
 +            std::thread::spawn(move || {
 +                let _ = pipe.write_all(&bytes);
@@ -108354,7 +109105,6 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +        };
 +        let stdout = bounded(
 +            child
-+                .0
 +                .stdout
 +                .take()
 +                .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
@@ -108362,7 +109112,6 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +        );
 +        let stderr = bounded(
 +            child
-+                .0
 +                .stderr
 +                .take()
 +                .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
@@ -108370,7 +109119,7 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +        );
 +        let mut timed_out = false;
 +        let status = loop {
-+            if let Some(status) = child.0.try_wait().map_err(|error| error.to_string())? {
++            if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
 +                break Some(status);
 +            }
 +            if !(self.active)() {
@@ -108379,16 +109128,12 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +            }
 +            if started.elapsed() >= timeout {
 +                timed_out = true;
-+                if let Some(pid) = rustix::process::Pid::from_raw(child.0.id() as i32) {
-+                    let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-+                }
-+                let _ = child.0.kill();
-+                let _ = child.0.wait();
++                child.kill();
 +                break None;
 +            }
 +            std::thread::sleep(Duration::from_millis(5));
 +        };
-+        if let Some(pid) = rustix::process::Pid::from_raw(child.0.id() as i32) {
++        if let Some(pid) = rustix::process::Pid::from_raw(child.pid) {
 +            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
 +        }
 +        while !(stdout.0.is_finished() && stderr.0.is_finished()) {
@@ -108815,6 +109560,34 @@ index 0000000000000000000000000000000000000000..ec9842a2eec21cc44654b7a04c3c5c0c
 +#[cfg(test)]
 +mod installation_tests {
 +    use super::*;
++
++    #[test]
++    fn unrestricted_commands_pass_the_ssh_agent_and_declared_names_only() {
++        let access = crate::ModOsAccess {
++            programs: vec!["env".to_owned()],
++            network: true,
++        };
++        let command = unrestricted_command_from(
++            &access,
++            Path::new("/usr/bin/env"),
++            &["EXTRA".to_owned()],
++            |name| {
++                matches!(name, "PATH" | "SSH_AUTH_SOCK" | "EXTRA" | "OPENAI_API_KEY")
++                    .then(|| format!("/{name}").into())
++            },
++        )
++        .unwrap();
++        let environment = command
++            .get_envs()
++            .map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned)))
++            .collect::<BTreeMap<_, _>>();
++        assert_eq!(
++            environment,
++            ["EXTRA", "PATH", "SSH_AUTH_SOCK"]
++                .map(|name| (name.into(), Some(format!("/{name}").into())))
++                .into()
++        );
++    }
 +
 +    #[test]
 +    fn singleton_rejects_replacement_and_stale_teardown() {
@@ -110911,10 +111684,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90148acbef
+index 0000000000000000000000000000000000000000..bc778bf8766237c7860d93930e31e7ecbf39ac56
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6887 @@
+@@ -0,0 +1,6982 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -111261,6 +112034,7 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +    "tool_batch_success_v1",
 +    "code_mode_values_v1",
 +    "workspace_watch_key_v1",
++    "workspace_watch_git_v1",
 +    "terminal_surface_v1",
 +    "credentials_v1",
 +    "completion_v1",
@@ -111309,6 +112083,7 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +    "compaction_intercept_v1",
 +    "composer_v2",
 +    "lifecycle_events_v1",
++    "mods_changed_v1",
 +    "user_submissions_v1",
 +    "terminal_raster_v1",
 +    "svg_assets_v1",
@@ -111322,11 +112097,14 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +    "terminal_layout_title_v1",
 +    "terminal_layout_dock_v1",
 +    "terminal_raster_packed_v1",
++    "terminal_site_area_v1",
++    "terminal_code_highlight_v1",
 +    "terminal_welcome_area_v1",
 +    "terminal_underlay_v1",
 +    "terminal_chat_area_v1",
 +    "terminal_colors_v1",
 +    "terminal_pty_v2",
++    "terminal_welcome_hidden_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -111561,7 +112339,7 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +        "pty" => "run interactive terminal programs",
 +        "history" => "edit the conversation history",
 +        "outputs" => "change tool output",
-+        "os" => "run listed programs unsandboxed with your account's full access",
++        "os" => "run listed programs unsandboxed with your account's full access and SSH agent",
 +        "approve" => "approve tool calls for you",
 +        "approve.override" => "approve commands your own rules forbid",
 +        "http" => "send web requests to the sites it lists",
@@ -111584,7 +112362,7 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +    let granted = |name: &str| capabilities.iter().any(|c| c == name);
 +    let mut exposure = Vec::new();
 +    if granted("os") {
-+        exposure.push("os: listed programs run unsandboxed as your account; they can read every file your account can read (including secret files such as ~/.ssh, ~/.codex/auth.json and browser profiles), change mod stores and control files, use the network as os_access allows and start processes OMD does not supervise. OMD sanitizes their environment and supervises, cancels and limits the processes it starts, but cannot undo their side effects. Only the OS-separated broker protects grants, credentials and evidence anchors from them.");
++        exposure.push("os: listed programs run unsandboxed as your account; they can read every file your account can read (including secret files such as ~/.ssh, ~/.codex/auth.json and browser profiles), change mod stores and control files, use the network as os_access allows, sign in through your SSH agent (SSH_AUTH_SOCK) and start processes OMD does not supervise. OMD sanitizes their environment and supervises, cancels and limits the processes it starts, but cannot undo their side effects. Only the OS-separated broker protects grants, credentials and evidence anchors from them.");
 +    }
 +    if granted("approve") {
 +        exposure.push("approve: this mod may approve exec, patch, MCP and network requests inside its approves scope without asking you; managed-policy and host denials still apply and any error asks you.");
@@ -111701,6 +112479,7 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +    ("instructions_loaded", "lifecycle"),
 +    ("thread_settings", "lifecycle"),
 +    ("worktree", "lifecycle"),
++    ("mods_changed", "lifecycle"),
 +    ("elicitation_result", "approvals"),
 +    ("composer", "composer"),
 +    ("prompt_expanded", "middleware"),
@@ -111790,6 +112569,60 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +const MAX_WORKERS: usize = 8;
 +/// How often a waiting `concurrently` checks `active`.
 +const CANCEL_POLL: Duration = Duration::from_millis(10);
++
++/// A `terminal` payload split once per frame into what every mod sees and `client.sites`, of which each mod sees only its own `owner/name` entries.
++struct TerminalPayload {
++    shared: Value,
++    hash: String,
++    sites: Option<serde_json::Map<String, Value>>,
++}
++
++impl TerminalPayload {
++    fn new(mut shared: Value) -> Self {
++        let sites = shared
++            .get_mut("client")
++            .and_then(Value::as_object_mut)
++            .filter(|client| client.get("sites").is_some_and(Value::is_object))
++            .and_then(|client| client.remove("sites"))
++            .and_then(|sites| match sites {
++                Value::Object(sites) => Some(sites),
++                _ => None,
++            });
++        let hash = digest(shared.to_string().as_bytes());
++        Self {
++            shared,
++            hash,
++            sites,
++        }
++    }
++
++    fn own(&self, id: &str) -> serde_json::Map<String, Value> {
++        self.sites
++            .iter()
++            .flatten()
++            .filter(|(name, _)| name.split_once('/').is_some_and(|(owner, _)| owner == id))
++            .map(|(name, area)| (name.clone(), area.clone()))
++            .collect()
++    }
++
++    fn key(&self, own: &serde_json::Map<String, Value>) -> String {
++        if own.is_empty() {
++            return self.hash.clone();
++        }
++        let sites = serde_json::to_string(own).unwrap_or_default();
++        format!("{}:{}", self.hash, digest(sites.as_bytes()))
++    }
++
++    fn payload(&self, own: serde_json::Map<String, Value>) -> Value {
++        let mut payload = self.shared.clone();
++        if !own.is_empty()
++            && let Some(client) = payload.get_mut("client").and_then(Value::as_object_mut)
++        {
++            client.insert("sites".to_owned(), Value::Object(own));
++        }
++        payload
++    }
++}
 +
 +/// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
 +fn concurrently<T: Send, R: Send>(
@@ -116967,14 +117800,15 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +
 +    pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
 +        let thread = state_thread(&payload);
-+        let payload_hash = digest(payload.to_string().as_bytes());
++        let payload = TerminalPayload::new(payload);
 +        let generation = self.generation;
 +        let mut results = Vec::new();
 +        let mut stale = Vec::new();
 +        for id in self.event_ids("terminal") {
++            let own = payload.own(&id);
 +            let key = self
 +                .terminal_state_key(&id, thread.as_deref())
-+                .map(|stamp| format!("{stamp}:{payload_hash}"));
++                .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
 +            // A handler that read the clock is rerun once its result is a second old.
 +            if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
 +                && key == cached
@@ -116984,12 +117818,12 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +                continue;
 +            }
 +            let begun = self.begin(&id, generation, &active, thread.as_deref());
-+            stale.push((results.len(), key, begun));
++            stale.push((results.len(), key, begun, own));
 +            results.push((id, None));
 +        }
 +        // Terminal handlers make no host calls, so their runners work in parallel.
 +        let payload = &payload;
-+        let replies = concurrently(stale, &active, |(index, key, begun), active| {
++        let replies = concurrently(stale, &active, |(index, key, begun, own), active| {
 +            let reply = begun.and_then(|mut invocation| {
 +                if invocation.migrate {
 +                    invocation.loaded.state =
@@ -117001,7 +117835,7 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +                            &invocation.loaded,
 +                            "terminal",
 +                            "",
-+                            payload.clone(),
++                            payload.payload(own),
 +                            &[],
 +                            active,
 +                            &mut |call| {
@@ -117030,7 +117864,7 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +                                generation,
 +                                "terminal",
 +                                "",
-+                                payload.clone(),
++                                payload.payload(payload.own(&id)),
 +                                &active,
 +                            ),
 +                        result => result,
@@ -117058,7 +117892,10 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +                )
 +            })
 +            .collect();
-+        let origin = payload["event"].as_str().unwrap_or_default().to_owned();
++        let origin = payload.shared["event"]
++            .as_str()
++            .unwrap_or_default()
++            .to_owned();
 +        self.compose_terminal(results, &origin, None)
 +    }
 +
@@ -117104,7 +117941,8 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +        self.renders.remove(id);
 +        // A command's result stands in for the `terminal` handler for a second, like a clock read.
 +        if matched && let Some(stamp) = stamp {
-+            let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
++            let payload = TerminalPayload::new(payload.clone());
++            let key = format!("{stamp}:{}", payload.key(&payload.own(id)));
 +            self.renders
 +                .insert(id.to_owned(), (key, patch, Some(Instant::now())));
 +        }
@@ -117132,6 +117970,7 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +        let mut contributors = Vec::new();
 +        let mut conflicts = Vec::new();
 +        let mut diagnostics = Vec::new();
++        let mut hiding_welcome = BTreeMap::new();
 +        for (id, result) in results {
 +            if let Some(error) = self
 +                .loaded
@@ -117186,9 +118025,17 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +                patch.sites.remove("dialog");
 +            }
 +            let before = view::site_component_ids(&view.sites);
++            let hides = patch
++                .welcome
++                .as_ref()
++                .filter(|welcome| welcome.hidden)
++                .map(|welcome| welcome.show_while_composing);
 +            match patch.apply(&mut view, &mut claims, &id, origin) {
 +                Ok(lost) => {
 +                    conflicts.extend(lost);
++                    if let Some(composing) = hides {
++                        hiding_welcome.insert(id.clone(), composing);
++                    }
 +                    component_owners.extend(
 +                        view::site_component_ids(&view.sites)
 +                            .into_iter()
@@ -117208,9 +118055,30 @@ index 0000000000000000000000000000000000000000..60a35bc9235980b02b54860a9ac57b90
 +        if let Some(underlay) = &view.underlay
 +            && let Some(owner) = claims.get("underlay")
 +        {
-+            component_owners
-+                .entry(underlay.raster.clone())
-+                .or_insert_with(|| owner.clone());
++            match component_owners.get(&underlay.raster) {
++                Some(drawer) if drawer != owner => {
++                    conflicts.push(ModViewConflict {
++                        field: "underlay".to_owned(),
++                        owner: drawer.clone(),
++                        rejected: owner.clone(),
++                        origin: origin.to_owned(),
++                    });
++                    view.underlay = None;
++                }
++                _ => {
++                    component_owners.insert(underlay.raster.clone(), owner.clone());
++                }
++            }
++        }
++        // Only the underlay's owner hides the welcome: a refused underlay brings it back and a later writer can't undo it.
++        let hider = view
++            .underlay
++            .as_ref()
++            .and(claims.get("underlay"))
++            .and_then(|owner| hiding_welcome.get(owner).copied());
++        if let Some(welcome) = view.welcome.as_mut() {
++            welcome.hidden = hider.is_some();
++            welcome.show_while_composing |= hider.unwrap_or_default();
 +        }
 +        conflicts.truncate(32);
 +        ModTerminalView {
@@ -121651,7 +122519,7 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..edf0400209cad428819cb365cd7b7ae688ce75ab
+index 0000000000000000000000000000000000000000..f8e562f69ac855384a2ee07a5fd205a0ff606a5a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,226 @@
@@ -121727,7 +122595,7 @@ index 0000000000000000000000000000000000000000..edf0400209cad428819cb365cd7b7ae6
 +    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/34"}]}},
 +    "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},
 +    "app.routes": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"class":{"anyOf":[{"const":"input"},{"const":"network"},{"const":"history"},{"const":"context"},{"const":"tools"},{"const":"commands"},{"const":"lifecycle"},{"const":"interception"},{"const":"compaction"},{"const":"middleware"},{"const":"services"},{"const":"virtual_reads"},{"const":"terminal"},{"const":"exec"},{"const":"fs.read"},{"const":"fs.write"},{"const":"unix_sockets"},{"const":"model"},{"const":"agents"},{"const":"store"},{"const":"sessions"},{"const":"sessions_tools"},{"const":"contracts"},{"const":"builtins"},{"const":"threads"},{"const":"config"},{"const":"config.write"},{"const":"inventory"},{"const":"account"},{"const":"packages"},{"const":"approvals"},{"const":"events"},{"const":"credentials"},{"const":"composer"},{"const":"pty"},{"const":"outputs"},{"const":"os"},{"const":"approve"},{"const":"approve.override"},{"const":"request_policy"},{"const":"peers"},{"const":"power"},{"const":"autonomous"},{"const":"history_write"},{"const":"history_persist"},{"const":"fs.external"},{"const":"http"},{"const":"mcp"},{"const":"policy"}]},"contexts":{"type":"array","items":{"anyOf":[{"const":"event"},{"const":"user"}]}},"confirm":{"type":"boolean"}},"required":["method","class","contexts","confirm"]}}},
-+    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"}},"required":["paths"]},"result":{"$ref":"#/$defs/61"}},
++    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"},"git":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/61"}},
 +    "workspace.unwatch": {"arguments":{"anyOf":[{"$ref":"#/$defs/61"},{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}]},"result":{"$ref":"#/$defs/59"}},
 +    "events.publish": {"arguments":{"type":"object","properties":{"channel":{"type":"string"},"data":{},"correlation":{"type":"string"}},"required":["channel","data"]},"result":{"type":"object","properties":{"delivered":{"type":"number"},"dropped":{"type":"number"}},"required":["delivered","dropped"]}},
 +    "events.schedule": {"arguments":{"$ref":"#/$defs/62"},"result":{"$ref":"#/$defs/62"}},
@@ -129682,10 +130550,10 @@ index 0000000000000000000000000000000000000000..6a9de102d4fef33021f9f5c538ac2266
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a8e92db09a4af3d0a5ee90d912405d026399de3d
+index 0000000000000000000000000000000000000000..916c0abb105c37f87735a0cd3ec416bcfbb4178e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2524 @@
+@@ -0,0 +1,2530 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 24;
@@ -129698,6 +130566,10 @@ index 0000000000000000000000000000000000000000..a8e92db09a4af3d0a5ee90d912405d02
 +pub struct ModWelcome {
 +    #[serde(default)]
 +    pub show_while_composing: bool,
++    /// Keeps the welcome area (Codex's own welcome and animation stay off) but draws no `welcome` site in it;
++    /// effective only from the mod that owns the composed underlay.
++    #[serde(default)]
++    pub hidden: bool,
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -130265,6 +131137,8 @@ index 0000000000000000000000000000000000000000..a8e92db09a4af3d0a5ee90d912405d02
 +        text: String,
 +        #[serde(default)]
 +        language: Option<String>,
++        #[serde(default)]
++        start: usize,
 +    },
 +    Pane {
 +        id: String,
@@ -141094,10 +141968,10 @@ index 0000000000000000000000000000000000000000..6531a6ad6f21a8018898d3f6ac1780b6
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..00c3d7a67050a3066f170fc674b66b1a12c1c71d
+index 0000000000000000000000000000000000000000..0929d4c0f873b9e4a519b1babd3b7074608e6dce
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,284 @@
 +use codex_omd::Limits;
 +use codex_omd::Task;
 +use codex_omd::WorkerLimits;
@@ -141200,8 +142074,12 @@ index 0000000000000000000000000000000000000000..00c3d7a67050a3066f170fc674b66b1a
 +    task.start_worker("two".into(), "one".into(), 2, worker())
 +        .unwrap();
 +    task.finish_worker("one").unwrap();
-+    assert!(task.admit_subagent(1, 0).is_err());
++    task.admit_subagent(1, 0).unwrap();
 +    task.finish_worker("two").unwrap();
++    assert!(
++        task.finish_worker("one").is_err(),
++        "the parent stopped with its child"
++    );
 +    task.start_worker("three".into(), "lead".into(), 1, worker())
 +        .unwrap();
 +    task.start_worker("four".into(), "lead".into(), 1, worker())
@@ -141736,10 +142614,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0394c9c607fb3f54522eb17da63d1024a6dcac9b
+index 0000000000000000000000000000000000000000..f7d2a5a0e7cd96091377162f6aa7875811c4e31f
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2105 @@
+@@ -0,0 +1,2136 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -143574,6 +144452,37 @@ index 0000000000000000000000000000000000000000..0394c9c607fb3f54522eb17da63d1024
 +        format!("os_access_denied: {}", planted.display())
 +    );
 +    assert_eq!(listed.unwrap(), planted);
++}
++
++#[test]
++fn exec_children_lead_their_own_session_without_the_terminal() {
++    let _exec = exec_slot();
++    let (_temp, _repository, data, authority) = setup();
++    let active = || true;
++    let host = Host {
++        authority: &authority,
++        data_root: &data,
++        environment: None,
++        active: &active,
++        record_changes: false,
++    };
++    let capabilities = strings(&["exec", "os"]);
++    let access = codex_omd::ModOsAccess {
++        programs: strings(&["sh"]),
++        network: true,
++    };
++    let granted = Caller {
++        os_access: Some(&access),
++        ..caller(&capabilities, &[], Origin::Tool)
++    };
++    let stat = host
++        .call(
++            &granted,
++            "exec.run",
++            json!({"program": "sh", "argv": ["-c", "ps -o stat= -p $$"], "sandbox": "none"}),
++        )
++        .unwrap();
++    assert!(stat["stdout"].as_str().unwrap().contains('s'), "{stat}");
 +}
 +
 +#[test]
@@ -145456,10 +146365,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1c985d2bd294f3d0d0254046a78d6168450544fb
+index 0000000000000000000000000000000000000000..c881089e59c85a2afc2761b9ef3c564260e1c6ef
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4986 @@
+@@ -0,0 +1,5070 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -146735,6 +147644,42 @@ index 0000000000000000000000000000000000000000..1c985d2bd294f3d0d0254046a78d6168
 +}
 +
 +#[test]
++fn terminal_client_sites_reach_only_the_mod_that_owns_them() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
++    for id in ["alpha", "beta", "gamma"] {
++        let path = package(
++            &root,
++            id,
++            "export default api => api.on('terminal', ({ client }) => ({status: [client.columns + '|' + (Object.entries(client.sites ?? {}).map(([name, area]) => `${name}=${area.columns}x${area.rows}`).join(',') || 'none')]}))",
++            &["terminal"],
++        );
++        trust(&store, &path, &["terminal"]);
++    }
++    let mut runtime = host(&temp);
++    let client = json!({"kind": "terminal", "columns": 120, "rows": 40, "sites": {
++        "alpha/git": {"columns": 50, "rows": 30},
++        "alpha/files": {"columns": 20, "rows": 9},
++        "beta/panel": {"columns": 70, "rows": 30},
++        "alphabet/x": {"columns": 1, "rows": 1},
++    }});
++    let terminal = runtime.terminal_view(json!({"event": "draw", "client": client}), || true);
++    let mut seen = terminal.view.status.clone();
++    seen.sort();
++    assert_eq!(
++        seen,
++        [
++            "120|alpha/files=20x9,alpha/git=50x30",
++            "120|beta/panel=70x30",
++            "120|none",
++        ],
++        "{:?}",
++        terminal.diagnostics
++    );
++}
++
++#[test]
 +fn terminal_components_compose_in_dependency_order_and_observers_contribute_status() {
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
@@ -147164,16 +148109,64 @@ index 0000000000000000000000000000000000000000..1c985d2bd294f3d0d0254046a78d6168
 +    let other = package(
 +        &root,
 +        "other",
-+        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'}}));",
++        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'},welcome:{hidden:true}}));",
 +        &["terminal"],
 +    );
 +    trust(&store, &other, &["terminal"]);
 +    let view = host(&temp).terminal_view(json!({}), || true);
 +    assert_eq!(view.component_owners["shared"], "fixture");
 +    assert_eq!(
++        view.view.welcome.as_ref().map(|welcome| welcome.hidden),
++        Some(false)
++    );
++    assert_eq!(
 +        view.view.raster_declared("shared"),
 +        Some((Some(4), Some(2)))
 +    );
++    assert_eq!(view.view.underlay, None);
++    assert!(
++        view.conflicts
++            .iter()
++            .any(|conflict| conflict.field == "underlay" && conflict.rejected == "other")
++    );
++}
++
++#[test]
++fn a_later_welcome_writer_keeps_the_underlay_owners_hidden_welcome() {
++    let (temp, store, _) = fixture(
++        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true}}));",
++        &["terminal"],
++    );
++    let root = temp.path().canonicalize().unwrap();
++    let other = package(
++        &root,
++        "other",
++        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:true}}));",
++        &["terminal"],
++    );
++    trust(&store, &other, &["terminal"]);
++    let view = host(&temp).terminal_view(json!({}), || true);
++    let welcome = view.view.welcome.unwrap();
++    assert!(welcome.show_while_composing && welcome.hidden);
++
++    let (temp, store, _) = fixture(
++        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true,show_while_composing:true}}));",
++        &["terminal"],
++    );
++    let root = temp.path().canonicalize().unwrap();
++    let other = package(
++        &root,
++        "other",
++        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:false}}));",
++        &["terminal"],
++    );
++    trust(&store, &other, &["terminal"]);
++    let welcome = host(&temp)
++        .terminal_view(json!({}), || true)
++        .view
++        .welcome
++        .unwrap();
++    assert!(welcome.show_while_composing && welcome.hidden);
 +}
 +
 +#[test]
@@ -162782,10 +163775,10 @@ index 0000000000000000000000000000000000000000..e9b477a576c28bfaf1f484aa9fea5773
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cea6b8c1c56cc6d5cc1831e0821835a8d7b22422
+index 0000000000000000000000000000000000000000..f6865e6d7577a9ce4a4302bbbeeb0ca4445be4f5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,751 @@
+@@ -0,0 +1,797 @@
 +use crate::omd::LockExt;
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
@@ -162979,7 +163972,52 @@ index 0000000000000000000000000000000000000000..cea6b8c1c56cc6d5cc1831e0821835a8
 +}
 +
 +pub(crate) fn value() -> Value {
-+    facts().value()
++    let mut value = facts().value();
++    let sites = SITES.locked();
++    if !sites.drawn.is_empty() {
++        value["sites"] = sites
++            .drawn
++            .iter()
++            .map(|(name, (columns, rows))| {
++                (name.clone(), json!({"columns": columns, "rows": rows}))
++            })
++            .collect::<serde_json::Map<_, _>>()
++            .into();
++    }
++    value
++}
++
++type SiteAreas = BTreeMap<String, (u16, u16)>;
++
++#[derive(Default)]
++struct Sites {
++    drawn: SiteAreas,
++    before: Option<(SiteAreas, std::time::Instant)>,
++}
++
++static SITES: Mutex<Sites> = Mutex::new(Sites {
++    drawn: BTreeMap::new(),
++    before: None,
++});
++
++/// Called after each mod draw with each drawn `owner/name` site's content area; a change renders again unless the areas flip back within a second, which only a view sizing its own layout from them does.
++pub(crate) fn record_sites(drawn: SiteAreas) {
++    if note_sites(drawn) {
++        rerender();
++    }
++}
++
++fn note_sites(drawn: SiteAreas) -> bool {
++    let mut sites = SITES.locked();
++    if sites.drawn == drawn {
++        return false;
++    }
++    let flipped = sites.before.as_ref().is_some_and(|(before, at)| {
++        *before == drawn && at.elapsed() < std::time::Duration::from_secs(1)
++    });
++    let previous = std::mem::replace(&mut sites.drawn, drawn);
++    sites.before = Some((previous, std::time::Instant::now()));
++    !flipped
 +}
 +
 +/// Called before each draw; measures cell pixels again only when the grid size changes.
@@ -162991,6 +164029,7 @@ index 0000000000000000000000000000000000000000..cea6b8c1c56cc6d5cc1831e0821835a8
 +        if facts.size != (columns, rows) {
 +            facts.measure();
 +            facts.size = (columns, rows);
++            SITES.locked().before = None;
 +        }
 +        *facts != before
 +    });
@@ -163539,10 +164578,10 @@ index 0000000000000000000000000000000000000000..cea6b8c1c56cc6d5cc1831e0821835a8
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..303cb6e7a8678e9c1a0288781d0c0b1c9f5e8771
+index 0000000000000000000000000000000000000000..da3a9bd5094c5c0dcd6e6cfe8c73ca2cd9f930e2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,270 @@
 +use super::*;
 +use base64::Engine as _;
 +use crossterm::event::KeyModifiers;
@@ -163793,6 +164832,25 @@ index 0000000000000000000000000000000000000000..303cb6e7a8678e9c1a0288781d0c0b1c
 +        libc::shm_unlink(c_name.as_ptr());
 +    }
 +    assert_eq!(read, bytes);
++}
++
++#[test]
++#[serial_test::serial]
++fn drawn_site_areas_join_the_client_and_a_flip_back_renders_once() {
++    let files = |columns| BTreeMap::from([("demo/files".to_owned(), (columns, 20))]);
++    assert!(note_sites(files(40)));
++    assert_eq!(
++        value()["sites"],
++        json!({"demo/files": {"columns": 40, "rows": 20}})
++    );
++    assert!(!note_sites(files(40)));
++    assert!(note_sites(files(30)));
++    assert!(!note_sites(files(40)), "a view that flips its own layout");
++    let (columns, rows) = facts().size;
++    update(true, columns.wrapping_add(1), rows, false);
++    assert!(note_sites(files(30)), "a resize renders again");
++    assert!(note_sites(BTreeMap::new()));
++    assert!(value().get("sites").is_none());
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
@@ -164939,7 +165997,7 @@ index 0000000000000000000000000000000000000000..444a73f47042d6e6a9d8cba4746d0a5c
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c8e69ea70a7e5fb52a18455883326d7def0c36a2
+index 0000000000000000000000000000000000000000..b11fdd4902835bd17bc89f42643b932c70c12324
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
 @@ -0,0 +1,532 @@
@@ -165246,25 +166304,25 @@ index 0000000000000000000000000000000000000000..c8e69ea70a7e5fb52a18455883326d7d
 +    None
 +}
 +
-+fn inside(area: Rect, column: u16, row: u16) -> bool {
-+    column >= area.x && column < area.right() && row >= area.y && row < area.bottom()
-+}
-+
 +fn zone(last: &Placement, source: &str, column: u16, row: u16) -> Option<Zone> {
 +    if last
 +        .regions
 +        .iter()
-+        .any(|region| region.path == source && inside(region.area, column, row))
++        .any(|region| region.path == source && region.area.contains((column, row).into()))
 +    {
 +        return None;
 +    }
 +    let (target, area, centre) = last
 +        .regions
 +        .iter()
-+        .find(|region| region.content.starts_with("site:") && inside(region.area, column, row))
++        .find(|region| {
++            region.content.starts_with("site:") && region.area.contains((column, row).into())
++        })
 +        .map(|region| (region.path.clone(), region.area, true))
 +        .or_else(|| {
-+            let chat = last.chat().filter(|chat| inside(*chat, column, row))?;
++            let chat = last
++                .chat()
++                .filter(|chat| chat.contains((column, row).into()))?;
 +            Some((last.chat_path()?, chat, false))
 +        })?;
 +    let (left, top) = (u32::from(column - area.x), u32::from(row - area.y));
@@ -165371,7 +166429,7 @@ index 0000000000000000000000000000000000000000..c8e69ea70a7e5fb52a18455883326d7d
 +                .find(|region| {
 +                    region.content.starts_with("site:")
 +                        && region.grab_row() == Some(event.row)
-+                        && inside(region.area, event.column, event.row)
++                        && region.area.contains((event.column, event.row).into())
 +                })
 +                .filter(|_| state.drag.is_none())
 +                .map(|region| Dock {
@@ -166395,10 +167453,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8c8a256e9912e6e10a66c8605fe58a322b463534
+index 0000000000000000000000000000000000000000..f23d7edecc3371a1b654e82da3da92d66e966816
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,1862 @@
+@@ -0,0 +1,1879 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use crate::terminal_palette::StdoutColorLevel;
@@ -166592,6 +167650,8 @@ index 0000000000000000000000000000000000000000..8c8a256e9912e6e10a66c8605fe58a32
 +    screen: Arc<Mutex<vt100::Parser<Signals>>>,
 +    exit: Arc<Mutex<Option<i32>>>,
 +    drawn: Arc<AtomicBool>,
++    /// Hidden by the last render; rows built during a render don't mark it drawn until that render shows it.
++    hidden: bool,
 +    size: (u16, u16),
 +    unrestricted: bool,
 +    dir: Option<SessionDir>,
@@ -167084,6 +168144,16 @@ index 0000000000000000000000000000000000000000..8c8a256e9912e6e10a66c8605fe58a32
 +    if crate::terminal_palette::effective_stdout_color_level() == StdoutColorLevel::TrueColor {
 +        environment.insert("COLORTERM".to_owned(), "truecolor".to_owned());
 +    }
++    for (name, value) in command.get_envs() {
++        if name == "SSH_AUTH_SOCK"
++            && let Some(value) = value
++        {
++            environment.insert(
++                "SSH_AUTH_SOCK".to_owned(),
++                value.to_string_lossy().into_owned(),
++            );
++        }
++    }
 +    let size = codex_utils_pty::TerminalSize { rows: 24, cols: 80 };
 +    let spawned = match codex_utils_pty::pty::spawn_process(
 +        &program,
@@ -167177,6 +168247,7 @@ index 0000000000000000000000000000000000000000..8c8a256e9912e6e10a66c8605fe58a32
 +            screen,
 +            exit,
 +            drawn,
++            hidden: false,
 +            size: (size.rows, size.cols),
 +            unrestricted,
 +            dir,
@@ -167342,7 +168413,9 @@ index 0000000000000000000000000000000000000000..8c8a256e9912e6e10a66c8605fe58a32
 +        )];
 +    };
 +    let (rows, cols) = (height.max(2), width.max(10));
-+    pane.drawn.store(true, Ordering::Relaxed);
++    if !pane.hidden {
++        pane.drawn.store(true, Ordering::Relaxed);
++    }
 +    if pane.component.as_deref() != Some(component) {
 +        pane.component = Some(component.to_owned());
 +        for event in drain(pane, session) {
@@ -167515,10 +168588,12 @@ index 0000000000000000000000000000000000000000..8c8a256e9912e6e10a66c8605fe58a32
 +    Some(text.into_bytes())
 +}
 +
-+pub(crate) fn hide(binding: Option<&Binding>, session: &str) {
++/// Records whether the finished render showed the pane; only a shown pane's output requests frames.
++pub(crate) fn set_shown(binding: Option<&Binding>, session: &str, shown: bool) {
 +    let mut sessions = sessions();
 +    if let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) {
-+        pane.drawn.store(false, Ordering::Relaxed);
++        pane.hidden = !shown;
++        pane.drawn.store(shown, Ordering::Relaxed);
 +    }
 +}
 +
@@ -168263,10 +169338,10 @@ index 0000000000000000000000000000000000000000..8c8a256e9912e6e10a66c8605fe58a32
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..969d27160c8feec013be34a2874a9fa6277119dc
+index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047c0a08931
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,683 @@
+@@ -0,0 +1,691 @@
 +use codex_omd::ModColor;
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Rect;
@@ -168346,12 +169421,20 @@ index 0000000000000000000000000000000000000000..969d27160c8feec013be34a2874a9fa6
 +                    self.staged = vec![None; self.cells.len()];
 +                }
 +                let mut cells = cells.into_iter();
-+                let mut changed = self.frame.is_some();
++                // A pending picture clears the cells when it applies, so cells after it compare against blanks.
++                let after_picture = self.picture.is_some();
++                let mut changed = self.frame.is_some() || after_picture;
++                let blank = Cell::default();
 +                for row in rect.y..rect.y + rect.height {
 +                    for column in rect.x..rect.x + rect.width {
 +                        let at = usize::from(row) * usize::from(self.width) + usize::from(column);
++                        let shown = if after_picture {
++                            &blank
++                        } else {
++                            &self.cells[at]
++                        };
 +                        if let Some(cell) = cells.next()
-+                            && (self.staged[at].is_some() || self.cells[at] != cell)
++                            && (self.staged[at].is_some() || *shown != cell)
 +                        {
 +                            self.staged[at] = Some(cell);
 +                            changed = true;
@@ -168952,10 +170035,10 @@ index 0000000000000000000000000000000000000000..969d27160c8feec013be34a2874a9fa6
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..38692e1a913ef6c61305cee17847e2acd327480f
+index 0000000000000000000000000000000000000000..57e2c7f46b69ef3fb5041a26ec18178a7a844b04
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,596 @@
+@@ -0,0 +1,606 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -169107,6 +170190,16 @@ index 0000000000000000000000000000000000000000..38692e1a913ef6c61305cee17847e2ac
 +    );
 +    assert_eq!(frame_at(key, png, now), Ok(reply(1, 1)));
 +    assert!(rasters().get(key).expect("raster").dirty.is_none());
++    assert_eq!(
++        blit_at(
++            key,
++            "owner",
++            json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": [" "]}),
++            now
++        ),
++        Ok(reply(2, 2)),
++        "cells matching the ones a pending picture clears still draw after it"
++    );
 +    retain(&BTreeSet::new());
 +}
 +
@@ -175155,10 +176248,10 @@ index 0000000000000000000000000000000000000000..010703e1cda8c601ee75f9c257a5faf5
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f9e0331d3
+index 0000000000000000000000000000000000000000..08b1e3022c51981cf7678041728641e30f7641bd
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5835 @@
+@@ -0,0 +1,5924 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -175308,6 +176401,8 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    component_owners: BTreeMap<String, String>,
 +    pty_bindings: BTreeMap<String, crate::mod_pty::Binding>,
 +    terminal_draws: BTreeMap<(String, String), (bool, Option<crate::mod_pty::Binding>)>,
++    /// Shown by the last welcome render; no other render notes them, so a frame without the welcome hides them.
++    welcome_terminals: Vec<(String, Option<crate::mod_pty::Binding>)>,
 +    key_panes: BTreeSet<String>,
 +    all_keys: BTreeSet<String>,
 +    dialog: Option<String>,
@@ -176028,6 +177123,7 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    component_owners: BTreeMap::new(),
 +    pty_bindings: BTreeMap::new(),
 +    terminal_draws: BTreeMap::new(),
++    welcome_terminals: Vec::new(),
 +    key_panes: BTreeSet::new(),
 +    all_keys: BTreeSet::new(),
 +    dialog: None,
@@ -176089,12 +177185,21 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +        .sum()
 +}
 +
-+/// The most recently drawn markdown renders, so a draw re-parses only changed or resized text.
 +fn markdown_lines(text: &str, width: u16) -> Arc<[HyperlinkLine]> {
++    rendered_lines(text, width, None)
++}
++
++fn code_lines(text: &str, language: &str) -> Arc<[HyperlinkLine]> {
++    rendered_lines(text, 0, Some(language))
++}
++
++/// The most recently drawn markdown and code renders, so a draw re-parses only changed or resized text.
++fn rendered_lines(text: &str, width: u16, language: Option<&str>) -> Arc<[HyperlinkLine]> {
 +    use std::hash::Hash;
 +    use std::hash::Hasher;
 +    let mut hasher = std::collections::hash_map::DefaultHasher::new();
 +    text.hash(&mut hasher);
++    language.hash(&mut hasher);
 +    let key = (
 +        hasher.finish(),
 +        width,
@@ -176112,14 +177217,31 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +            return lines;
 +        }
 +    }
-+    let lines: Arc<[HyperlinkLine]> = crate::markdown::render_markdown_agent_with_list_spacing(
-+        text,
-+        Some(usize::from(width)),
-+        None,
-+        None,
-+        crate::markdown_render::ListSpacing::AfterMultiline,
-+    )
-+    .into();
++    let lines: Arc<[HyperlinkLine]> = match language {
++        Some(language) => {
++            match (!language.is_empty())
++                .then(|| crate::render::highlight::highlight_code_to_styled_spans(text, language))
++                .flatten()
++            {
++                Some(lines) => lines
++                    .into_iter()
++                    .map(|spans| HyperlinkLine::from(Line::from(spans)))
++                    .collect(),
++                None => text
++                    .lines()
++                    .map(|line| HyperlinkLine::from(Line::from(line.to_owned()).cyan()))
++                    .collect(),
++            }
++        }
++        None => crate::markdown::render_markdown_agent_with_list_spacing(
++            text,
++            Some(usize::from(width)),
++            None,
++            None,
++            crate::markdown_render::ListSpacing::AfterMultiline,
++        )
++        .into(),
++    };
 +    let mut cache = MARKDOWN.locked();
 +    cache.retain(|(cached, _, _)| *cached != key);
 +    cache.push((key, markdown_weight(&lines), Arc::clone(&lines)));
@@ -176690,12 +177812,16 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    with_cache(|cache| cache.presentation ^ crate::mod_render::epoch()).unwrap_or_default()
 +}
 +
++fn welcome_hidden(view: &ModView) -> bool {
++    view.welcome.as_ref().is_some_and(|welcome| welcome.hidden)
++}
++
 +pub(crate) fn welcome_visible(
 +    snapshot: &ModViewSnapshot,
 +    composer: Option<crate::empty_state_animation::ComposerState>,
 +) -> bool {
 +    use crate::empty_state_animation::ComposerState;
-+    snapshot.view.sites.contains_key("welcome")
++    (snapshot.view.sites.contains_key("welcome") || welcome_hidden(&snapshot.view))
 +        && composer.is_some_and(|state| {
 +            state == ComposerState::Empty
 +                || snapshot
@@ -176897,10 +178023,12 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +                }
 +            }
 +            ModComponent::Line { .. } => 1,
-+            ModComponent::Text { text, .. }
-+            | ModComponent::Markdown { text, .. }
-+            | ModComponent::Code { text, .. } => {
++            ModComponent::Text { text, .. } | ModComponent::Markdown { text, .. } => {
 +                u16::try_from(text.lines().count().max(1)).unwrap_or(u16::MAX)
++            }
++            ModComponent::Code { text, start, .. } => {
++                u16::try_from(text.lines().count().saturating_sub(*start).max(1))
++                    .unwrap_or(u16::MAX)
 +            }
 +            ModComponent::Button { .. }
 +            | ModComponent::Input { .. }
@@ -177414,6 +178542,7 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +                label,
 +                text,
 +                language,
++                start,
 +            } => {
 +                if let Some(language) = language {
 +                    rows.push(ComponentRow {
@@ -177426,12 +178555,15 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +                        ..ComponentRow::default()
 +                    });
 +                }
-+                for line in text.lines() {
++                for line in code_lines(text, language.as_deref().unwrap_or_default())
++                    .iter()
++                    .skip(*start)
++                {
 +                    rows.push(ComponentRow {
 +                        id: None,
 +                        label: None,
 +                        links: Vec::new(),
-+                        line: Line::from(line.to_owned()).cyan(),
++                        line: line.line.clone(),
 +                        target: None,
 +                        regions: Vec::new(),
 +                        ..ComponentRow::default()
@@ -177807,9 +178939,9 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    interaction: &mut Interaction,
 +    frame: Frame,
 +    title: Option<Line<'static>>,
-+) {
++) -> Option<Rect> {
 +    if area.is_empty() {
-+        return;
++        return None;
 +    }
 +    let inner = frame.draw(area, title, buffer);
 +    let rows = stack(components, inner.width.max(1), &frame, interaction);
@@ -177829,6 +178961,7 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +        .render(inner, buffer);
 +    mark_links(buffer, inner, &rows[scroll.min(rows.len())..]);
 +    register_component_targets(inner, rows, scroll, interaction);
++    Some(inner)
 +}
 +
 +fn note_terminals(row: &ComponentRow, shown: bool, interaction: &mut Interaction) {
@@ -177850,11 +178983,37 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    }
 +}
 +
-+fn hide_undrawn_terminals(interaction: &mut Interaction) {
++/// Returns the terminals it showed.
++fn settle_terminals(
++    interaction: &mut Interaction,
++) -> Vec<(String, Option<crate::mod_pty::Binding>)> {
++    let mut shown_terminals = Vec::new();
 +    for ((_, session), (shown, binding)) in std::mem::take(&mut interaction.terminal_draws) {
-+        if !shown {
-+            crate::mod_pty::hide(binding.as_ref(), &session);
++        crate::mod_pty::set_shown(binding.as_ref(), &session, shown);
++        if shown {
++            shown_terminals.push((session, binding));
 +        }
++    }
++    shown_terminals
++}
++
++/// For sites drawn outside the full render, which show all of their rows or none.
++fn settle_drawn_terminals(
++    rows: &[ComponentRow],
++    shown: bool,
++    interaction: &mut Interaction,
++) -> Vec<(String, Option<crate::mod_pty::Binding>)> {
++    for row in rows {
++        note_terminals(row, shown, interaction);
++    }
++    settle_terminals(interaction)
++}
++
++/// For a frame that doesn't draw the welcome.
++pub(crate) fn hide_welcome_terminals() {
++    let shown = std::mem::take(&mut INTERACTION.locked().welcome_terminals);
++    for (session, binding) in shown {
++        crate::mod_pty::set_shown(binding.as_ref(), &session, false);
 +    }
 +}
 +
@@ -178018,12 +179177,11 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +
 +/// Paints only in the transcript's cleared remainder, never over transcript, prompt or modal cells; the caller gates this on native fresh-thread facts.
 +pub(crate) fn render_welcome(available: Rect, buffer: &mut Buffer, snapshot: &ModViewSnapshot) {
-+    let Some(welcome) = site(&snapshot.view, "welcome") else {
-+        return;
++    let Some(welcome) = site(&snapshot.view, "welcome")
++        .filter(|_| !welcome_hidden(&snapshot.view) && !available.is_empty())
++    else {
++        return hide_welcome_terminals();
 +    };
-+    if available.is_empty() {
-+        return;
-+    }
 +    let mut interaction = INTERACTION.locked();
 +    // The startup draft draws the welcome before any full render installs the owners.
 +    interaction.component_owners = snapshot.component_owners.clone();
@@ -178042,7 +179200,9 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    let width = u16::try_from(width)
 +        .unwrap_or(u16::MAX)
 +        .min(available.width);
-+    if width == 0 || height > available.height {
++    let fits = width != 0 && height <= available.height;
++    interaction.welcome_terminals = settle_drawn_terminals(&rows, fits, &mut interaction);
++    if !fits {
 +        interaction.columns.clear();
 +        return;
 +    }
@@ -178090,7 +179250,13 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +        .collect();
 +}
 +
-+pub(crate) fn render(area: Rect, chat: Rect, buffer: &mut Buffer, snapshot: &ModViewSnapshot) {
++/// Returns the content area of each `owner/name` site it drew, for `mod_client::record_sites`.
++pub(crate) fn render(
++    area: Rect,
++    chat: Rect,
++    buffer: &mut Buffer,
++    snapshot: &ModViewSnapshot,
++) -> BTreeMap<String, (u16, u16)> {
 +    let style = panel_style(&snapshot.view);
 +    let mut interaction = INTERACTION.locked();
 +    begin_regions(&mut interaction, snapshot, Vec::new(), Vec::new());
@@ -178188,10 +179354,12 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +                .render(Rect { height, ..column }, buffer);
 +        }
 +    }
-+    render_overlays(area, snapshot, style, buffer, &mut interaction);
++    let mut drawn = BTreeMap::new();
++    render_overlays(area, snapshot, style, buffer, &mut interaction, &mut drawn);
 +    render_dialog(area, chat, snapshot, style, buffer, &mut interaction);
-+    hide_undrawn_terminals(&mut interaction);
++    settle_terminals(&mut interaction);
 +    highlight_focus(buffer, &mut interaction);
++    drawn
 +}
 +
 +fn highlight_focus(buffer: &mut Buffer, interaction: &mut Interaction) {
@@ -178284,16 +179452,17 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    style: Style,
 +    buffer: &mut Buffer,
 +    interaction: &mut Interaction,
++    drawn: &mut BTreeMap<String, (u16, u16)>,
 +) {
 +    let mut overlays = snapshot
 +        .view
 +        .sites
-+        .values()
-+        .filter_map(|site| site.overlay.as_ref().map(|overlay| (overlay, site)))
-+        .filter(|(_, site)| !site.components.is_empty())
++        .iter()
++        .filter_map(|(name, site)| site.overlay.as_ref().map(|overlay| (overlay, name, site)))
++        .filter(|(_, _, site)| !site.components.is_empty())
 +        .collect::<Vec<_>>();
-+    overlays.sort_by_key(|(overlay, _)| overlay.z);
-+    for (index, (overlay, site)) in overlays.into_iter().enumerate() {
++    overlays.sort_by_key(|(overlay, _, _)| overlay.z);
++    for (index, (overlay, name, site)) in overlays.into_iter().enumerate() {
 +        let ids = codex_omd::component_ids_of(&site.components);
 +        let Some(area) = overlay_area(screen, overlay, &interaction.anchors) else {
 +            if let Some(held) = interaction
@@ -178320,7 +179489,7 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +        interaction.layers.push((area, interaction.layer));
 +        Clear.render(area, buffer);
 +        let theme = &snapshot.view.theme;
-+        render_site(
++        if let Some(inner) = render_site(
 +            area,
 +            &site.components,
 +            style,
@@ -178333,7 +179502,9 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +                false,
 +            ),
 +            None,
-+        );
++        ) {
++            drawn.insert(name.clone(), (inner.width, inner.height));
++        }
 +    }
 +    interaction.layer = 0;
 +}
@@ -178671,10 +179842,9 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    chat: Rect,
 +    buffer: &mut Buffer,
 +    snapshot: &ModViewSnapshot,
-+) {
++) -> BTreeMap<String, (u16, u16)> {
 +    let Some(placement) = placement(screen, snapshot) else {
-+        render(screen, chat, buffer, snapshot);
-+        return;
++        return render(screen, chat, buffer, snapshot);
 +    };
 +    let style = panel_style(&snapshot.view);
 +    let mut interaction = INTERACTION.locked();
@@ -178702,6 +179872,7 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    interaction.component_owners = snapshot.component_owners.clone();
 +    bind_terminals(&mut interaction, snapshot);
 +    footer::register_footer(&mut interaction);
++    let mut drawn = BTreeMap::new();
 +    for region in &placement.regions {
 +        let Some(name) = region.content.strip_prefix("site:") else {
 +            continue;
@@ -178720,7 +179891,7 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +        );
 +        let margin = frame.margin;
 +        let bordered = frame.border.is_some();
-+        render_site(
++        if let Some(inner) = render_site(
 +            region.area,
 +            &components,
 +            style,
@@ -178731,7 +179902,10 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +                Some("") => None,
 +                title => Some(Line::from(title.unwrap_or(name).to_owned())),
 +            },
-+        );
++        ) && name.contains('/')
++        {
++            drawn.insert(name.to_owned(), (inner.width, inner.height));
++        }
 +        if focused && region.style.and_then(|style| style.focus).is_none() {
 +            accent_edges(
 +                region
@@ -178784,10 +179958,18 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +    {
 +        interaction.focused = region_control(&interaction, &region);
 +    }
-+    render_overlays(screen, snapshot, style, buffer, &mut interaction);
++    render_overlays(
++        screen,
++        snapshot,
++        style,
++        buffer,
++        &mut interaction,
++        &mut drawn,
++    );
 +    render_dialog(screen, chat, snapshot, style, buffer, &mut interaction);
-+    hide_undrawn_terminals(&mut interaction);
++    settle_terminals(&mut interaction);
 +    highlight_focus(buffer, &mut interaction);
++    drawn
 +}
 +
 +fn shade_dock_zone(shade: Rect, buffer: &mut Buffer) {
@@ -180996,10 +182178,10 @@ index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056fa838348
+index 0000000000000000000000000000000000000000..9f178f292257e36d63b98bfe1e5d0c400dfb8867
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,245 @@
 +use super::*;
 +use crate::omd::LockExt;
 +use std::sync::Arc;
@@ -181107,6 +182289,7 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +            rows
 +        }
 +    };
++    settle_drawn_terminals(&rows, true, &mut interaction);
 +    let mut lines = Vec::new();
 +    let mut host_from = usize::MAX;
 +    let rows: Vec<ComponentRow> = rows
@@ -181246,10 +182429,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3b44ea1dba08b2165315fdd0b57016b36dda1256
+index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845a60ef595
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2636 @@
+@@ -0,0 +1,2782 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -181373,6 +182556,21 @@ index 0000000000000000000000000000000000000000..3b44ea1dba08b2165315fdd0b57016b3
 +    let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 2));
 +    render_welcome(Rect::new(0, 0, 20, 0), &mut buffer, &snapshot);
 +    assert!(!rows(&buffer, buffer.area).contains("Create project"));
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn a_hidden_welcome_keeps_the_area_without_drawing_a_site() {
++    use crate::empty_state_animation::ComposerState;
++    let bare = snapshot(serde_json::json!({"welcome":{"hidden":true}}));
++    assert!(welcome_visible(&bare, Some(ComposerState::Empty)));
++    assert!(!welcome_visible(&bare, Some(ComposerState::Draft)));
++    let hidden = snapshot(serde_json::json!({"welcome":{"hidden":true},
++        "sites":{"welcome":{"components":[{"type":"text","id":"mark","label":"Mark","text":"OMD mark"}]}}}));
++    let mut buffer = Buffer::empty(Rect::new(0, 0, 40, 8));
++    render_welcome(buffer.area, &mut buffer, &hidden);
++    assert_eq!(buffer, Buffer::empty(Rect::new(0, 0, 40, 8)));
 +    preview(ModViewSnapshot::default());
 +}
 +
@@ -181965,6 +183163,7 @@ index 0000000000000000000000000000000000000000..3b44ea1dba08b2165315fdd0b57016b3
 +        buffer[(4, 2)].set_bg(crate::terminal_palette::rgb_color((200, 0, 0)));
 +        buffer[(5, 2)].set_char('Y').set_bg(Color::Blue);
 +        buffer[(1, 1)].set_char('+').set_fg(Color::Red);
++        buffer[(6, 1)].set_bg(Color::Indexed(4));
 +        shade_dock_zone(Rect::new(1, 1, 6, 3), &mut buffer);
 +        let accent = crate::style::accent_color();
 +        let Color::Rgb(r, g, b) = accent else {
@@ -181994,6 +183193,9 @@ index 0000000000000000000000000000000000000000..3b44ea1dba08b2165315fdd0b57016b3
 +        );
 +        assert_eq!(buffer[(0, 0)].bg, Color::Reset);
 +        assert_eq!(buffer[(7, 4)].bg, Color::Reset);
++        assert!(!buffer[(5, 2)].modifier.contains(Modifier::REVERSED));
++        assert_eq!(buffer[(6, 1)].bg, Color::Indexed(4));
++        assert!(buffer[(6, 1)].modifier.contains(Modifier::REVERSED));
 +    });
 +}
 +
@@ -182636,6 +183838,68 @@ index 0000000000000000000000000000000000000000..3b44ea1dba08b2165315fdd0b57016b3
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
 +        .len();
 +    assert!(cached < 20, "{cached} entries");
++}
++
++#[test]
++#[serial_test::serial]
++fn code_highlights_known_languages_and_keeps_plain_cyan_otherwise() {
++    let colors = |language: &str| {
++        let mut colors = Vec::new();
++        for line in code_lines("fn main() {\n    let x = \"a\"; // b\n}", language).iter() {
++            for span in &line.line.spans {
++                if !colors.contains(&span.style.fg) {
++                    colors.push(span.style.fg);
++                }
++            }
++        }
++        colors.len()
++    };
++    assert!(colors("rust") > 2, "{} colors", colors("rust"));
++    let text = "/* open\n still comment */\nfn main() {}";
++    let full = code_lines(text, "rust");
++    let snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++        {"type":"code","id":"src","label":"Source","text":text,"language":"rust","start":1}
++    ]}},"sidebar_width":40}));
++    let area = Rect::new(0, 0, 80, 24);
++    sync_interaction(&snapshot.view);
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &snapshot);
++    let rows = (0..area.height)
++        .map(|y| {
++            (0..area.width)
++                .map(|x| buffer[(x, y)].symbol().to_owned())
++                .collect::<String>()
++        })
++        .collect::<Vec<_>>();
++    assert!(!rows.iter().any(|row| row.contains("/* open")));
++    let y = rows
++        .iter()
++        .position(|row| row.contains("still comment"))
++        .expect("comment row");
++    let x = rows[y].find("still").expect("comment column");
++    let x = u16::try_from(rows[y][..x].chars().count()).expect("column");
++    let comment = full[1]
++        .line
++        .spans
++        .iter()
++        .find(|span| span.content.contains("still"))
++        .expect("span");
++    assert_eq!(
++        buffer[(x, u16::try_from(y).expect("row"))].fg,
++        comment.style.fg.expect("comment color")
++    );
++    for language in ["", "no-such-language"] {
++        let lines = code_lines("a\nb", language);
++        assert_eq!(lines.len(), 2);
++        assert!(lines.iter().all(|line| {
++            line.line.style.fg == Some(Color::Cyan)
++                || line
++                    .line
++                    .spans
++                    .iter()
++                    .all(|span| span.style.fg == Some(Color::Cyan))
++        }));
++    }
 +}
 +
 +#[test]
@@ -183505,6 +184769,47 @@ index 0000000000000000000000000000000000000000..3b44ea1dba08b2165315fdd0b57016b3
 +
 +#[test]
 +#[serial_test::serial]
++fn drawn_layout_leaves_and_overlays_report_their_content_area() {
++    preview(ModViewSnapshot::default());
++    let snapshot = snapshot(serde_json::json!({
++        "layout": {"split": "horizontal", "ratio": [2, 1], "children": [
++            {"split": "vertical", "ratio": [5, 1], "children": [{"content": "transcript"}, {"content": "composer"}]},
++            {"tabs": [{"title": "Files", "node": {"content": "site:demo/files"}},
++                      {"title": "Git", "node": {"content": "site:demo/git"}}], "active": 0}]},
++        "sites": {
++            "demo/files": {"components": [{"type": "text", "id": "files", "label": "Files", "text": "a"}]},
++            "demo/git": {"components": [{"type": "text", "id": "git", "label": "Git", "text": "b"}]},
++            "demo/pop": {"overlay": {"anchor": "top_left", "width": 12, "height": 4},
++                "components": [{"type": "text", "id": "pop", "label": "Pop", "text": "p"}]}}
++    }));
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 120, 40);
++    let files = placement(area, &snapshot)
++        .unwrap()
++        .regions
++        .into_iter()
++        .find(|region| region.content == "site:demo/files")
++        .unwrap()
++        .area;
++    let mut buffer = Buffer::empty(area);
++    let drawn = render_owned(
++        area,
++        owned_chat_area(area, &snapshot, 0),
++        &mut buffer,
++        &snapshot,
++    );
++    assert_eq!(
++        drawn,
++        BTreeMap::from([
++            ("demo/files".to_owned(), (files.width - 4, files.height - 2)),
++            ("demo/pop".to_owned(), (12, 4)),
++        ])
++    );
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
 +fn layout_leaf_titles_replace_site_names_and_focus_stays_in_tabs_across_tab_switches() {
 +    preview(ModViewSnapshot::default());
 +    let view = |active: usize| {
@@ -183858,7 +185163,7 @@ index 0000000000000000000000000000000000000000..3b44ea1dba08b2165315fdd0b57016b3
 +            frame,
 +            None,
 +        );
-+        hide_undrawn_terminals(interaction);
++        settle_terminals(interaction);
 +    };
 +    let drawn = || crate::mod_pty::test_drawn(&binding, "t1");
 +    assert_eq!(drawn(), Some(true));
@@ -183866,8 +185171,32 @@ index 0000000000000000000000000000000000000000..3b44ea1dba08b2165315fdd0b57016b3
 +        draw(components, height, &mut interaction);
 +        assert_eq!(drawn(), Some(false));
 +    }
++    crate::mod_pty::rows(Some(&binding), "t1", "term", 40, 4, "", false);
++    assert_eq!(drawn(), Some(false));
 +    draw(&flat, 40, &mut interaction);
 +    assert_eq!(drawn(), Some(true));
++    draw(&flat, 6, &mut interaction);
++    let welcome = ModViewSnapshot {
++        view: ModView::parse(serde_json::json!({"sites": {"welcome": {"components": [
++            {"type": "terminal", "id": "term", "label": "Term", "session": "t1", "height": 4}]}}}))
++        .unwrap(),
++        component_owners: interaction.component_owners.clone(),
++        ..snapshot
++    };
++    INTERACTION.locked().pty_bindings = interaction.pty_bindings.clone();
++    let area = Rect::new(0, 0, 40, 10);
++    render_welcome(area, &mut Buffer::empty(area), &welcome);
++    assert_eq!(
++        drawn(),
++        Some(true),
++        "a site drawn outside the full render shows it again"
++    );
++    render_welcome(area, &mut Buffer::empty(area), &ModViewSnapshot::default());
++    assert_eq!(
++        drawn(),
++        Some(false),
++        "a frame without the welcome hides what it showed"
++    );
 +    crate::mod_pty::context(2, None);
 +}
 +

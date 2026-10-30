@@ -447,7 +447,8 @@ export function pack(frame: Canvas, rect: Rect): string {
   return base64(new Uint8Array(view.buffer));
 }
 
-export function changed(previous: Canvas, next: Canvas): Rect[] {
+/** Changed cells as bands of adjacent rows up to `limit` cells; the host drops the unchanged cells a band repeats. */
+export function changed(previous: Canvas, next: Canvas, limit = Infinity): Rect[] {
   const out: Rect[] = [];
   for (let y = 0; y < next.height; y++) {
     let left = -1, right = -1;
@@ -457,7 +458,16 @@ export function changed(previous: Canvas, next: Canvas): Rect[] {
       if (left < 0) left = x;
       right = x;
     }
-    if (left >= 0) out.push({ x: left, y, width: right - left + 1, height: 1 });
+    if (left < 0) continue;
+    const last = out.at(-1);
+    if (last && last.y + last.height === y) {
+      const x = Math.min(last.x, left), end = Math.max(last.x + last.width, right + 1);
+      if ((end - x) * (last.height + 1) <= limit) {
+        Object.assign(last, { x, width: end - x, height: last.height + 1 });
+        continue;
+      }
+    }
+    out.push({ x: left, y, width: right - left + 1, height: 1 });
   }
   return out;
 }

@@ -8,12 +8,17 @@ ROOT = Path(__file__).resolve().parents[1]
 REVIEWED_IDENTIFIERS = {"claude", "anthropic", "lsp", "git"}
 HOST_WORDS = {"artifact", "auto", "budget", "cli", "code", "compact", "context", "continue", "cursor", "edit", "execution",
               "fix", "idle", "lines", "model", "mods", "output", "panel", "picker", "plan", "preview", "read", "reading",
-              "removal", "source", "subagent", "sync", "theme", "tool", "update", "usage", "view", "workspace"}
+              "removal", "source", "subagent", "sync", "tool", "update", "usage", "view", "workspace"}
 GENERIC_LITERALS = {
+    "files": "generic file-list field and variable name",
     "git": "Git executable used for tracked-path discovery",
     "github_pat_": "GitHub token prefix redacted from mod output",
     "profiles": "upstream Codex config profiles table",
     "profiles.json": "credential profile store",
+    "theme.glyphs": "view theme field (glyph overrides)",
+    "theme.syntax": "view theme field (syntax colours)",
+    "watch_git_unavailable": "error of the generic workspace.watch Git metadata option",
+    "workspace_watch_git_v1": "host feature of the generic workspace.watch Git metadata option",
 }
 NATIVE_SOURCES = ("runtime/omd/src", "runtime/omd/runner/src", "runtime/native/src")
 RUNNER_SCRIPTS = ("runtime/omd/runner/src/bootstrap.js", "runtime/omd/runner/src/dispatch.js", "runtime/omd/runner/src/step.js")
@@ -96,6 +101,8 @@ def inspect(root):
             raise ValueError(f"native_surface_missing:{surface}")
         for token in re.finditer(r'"([^"\n]+)"', match.group(1)):
             name = token.group(1)
+            if name in GENERIC_LITERALS:
+                continue
             for identifier in feature(name, vocabulary):
                 offset = match.start(1) + token.start()
                 findings.append({"path": str(source.relative_to(root)), "line": text.count("\n", 0, offset) + 1,
@@ -199,6 +206,8 @@ def runner(root, vocabulary):
         text = path.read_text()
         for token in re.finditer(r"'([^'\n]*)'|\"([^\"\n]*)\"|\b([A-Za-z_][A-Za-z0-9_]*)\b", text):
             name = next(group for group in token.groups() if group is not None)
+            if name in GENERIC_LITERALS:
+                continue
             for identifier in feature(re.sub(r"([a-z])([A-Z])", r"\1_\2", name), vocabulary):
                 findings.append({"path": str(path.relative_to(root)), "line": text.count("\n", 0, token.start()) + 1,
                                  "surface": "runner", "name": name, "feature": identifier})

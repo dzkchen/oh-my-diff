@@ -19,7 +19,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
@@ -455,16 +454,233 @@ impl Drop for Running {
     }
 }
 
-struct Child(std::process::Child);
+struct Child {
+    pid: libc::pid_t,
+    status: Option<std::process::ExitStatus>,
+    stdin: Option<fs::File>,
+    stdout: Option<fs::File>,
+    stderr: Option<fs::File>,
+}
+
+impl Child {
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        use std::os::unix::process::ExitStatusExt;
+        if self.status.is_none() {
+            let mut status = 0;
+            match unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) } {
+                0 => {}
+                -1 => {
+                    let error = std::io::Error::last_os_error();
+                    if error.kind() != std::io::ErrorKind::Interrupted {
+                        return Err(error);
+                    }
+                }
+                _ => self.status = Some(std::process::ExitStatus::from_raw(status)),
+            }
+        }
+        Ok(self.status)
+    }
+
+    fn kill(&mut self) {
+        if let Some(pid) = rustix::process::Pid::from_raw(self.pid) {
+            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+            if self.status.is_none() {
+                let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+            }
+        }
+        while matches!(self.try_wait(), Ok(None)) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
 
 impl Drop for Child {
     fn drop(&mut self) {
-        if let Some(pid) = rustix::process::Pid::from_raw(self.0.id() as i32) {
-            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-        }
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        self.kill();
     }
+}
+
+/// Starts `command` as the leader of a new session without a controlling terminal; its environment must already be cleared and set in full.
+/// On macOS `POSIX_SPAWN_SETSID` does this without forking the multithreaded host, which a `pre_exec` hook would make std do.
+#[cfg(target_os = "macos")]
+fn spawn_session(command: &Command, stdin: bool) -> std::io::Result<Child> {
+    use std::ffi::CString;
+    use std::os::fd::AsRawFd;
+    use std::os::fd::FromRawFd;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::ffi::OsStrExt;
+    const POSIX_SPAWN_SETSID: libc::c_int = 0x0400;
+    unsafe extern "C" {
+        fn posix_spawn_file_actions_addchdir_np(
+            actions: *mut libc::posix_spawn_file_actions_t,
+            path: *const libc::c_char,
+        ) -> libc::c_int;
+    }
+    let text = |bytes: &[u8]| {
+        CString::new(bytes).map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))
+    };
+    let check = |code: libc::c_int| match code {
+        0 => Ok(()),
+        code => Err(std::io::Error::from_raw_os_error(code)),
+    };
+    let pipe = || -> std::io::Result<(OwnedFd, OwnedFd)> {
+        let mut fds = [0; 2];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let ends = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        for end in [&ends.0, &ends.1] {
+            if unsafe { libc::fcntl(end.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        Ok(ends)
+    };
+    let program = text(command.get_program().as_bytes())?;
+    let argv = std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .map(|argument| text(argument.as_bytes()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let envp = command
+        .get_envs()
+        .filter_map(|(name, value)| {
+            value.map(|value| text(&[name.as_bytes(), b"=", value.as_bytes()].concat()))
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let cwd = command
+        .get_current_dir()
+        .map(|cwd| text(cwd.as_os_str().as_bytes()))
+        .transpose()?;
+    let null = text(b"/dev/null")?;
+    let input = stdin.then(pipe).transpose()?;
+    let (stdout, stderr) = (pipe()?, pipe()?);
+    let pointers = |values: &[CString]| {
+        values
+            .iter()
+            .map(|value| value.as_ptr().cast_mut())
+            .chain(std::iter::once(std::ptr::null_mut()))
+            .collect::<Vec<_>>()
+    };
+    let (argv_pointers, envp_pointers) = (pointers(&argv), pointers(&envp));
+    let mut pid = 0;
+    unsafe {
+        let mut attributes: libc::posix_spawnattr_t = std::ptr::null_mut();
+        let mut actions: libc::posix_spawn_file_actions_t = std::ptr::null_mut();
+        check(libc::posix_spawnattr_init(&mut attributes))?;
+        check(libc::posix_spawn_file_actions_init(&mut actions))?;
+        let spawned = (|| {
+            let mut empty: libc::sigset_t = std::mem::zeroed();
+            let mut pipe_signal: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut empty);
+            libc::sigemptyset(&mut pipe_signal);
+            libc::sigaddset(&mut pipe_signal, libc::SIGPIPE);
+            check(libc::posix_spawnattr_setsigmask(&mut attributes, &empty))?;
+            check(libc::posix_spawnattr_setsigdefault(
+                &mut attributes,
+                &pipe_signal,
+            ))?;
+            check(libc::posix_spawnattr_setflags(
+                &mut attributes,
+                (POSIX_SPAWN_SETSID
+                    | libc::POSIX_SPAWN_SETSIGMASK
+                    | libc::POSIX_SPAWN_SETSIGDEF
+                    | libc::POSIX_SPAWN_CLOEXEC_DEFAULT) as libc::c_short,
+            ))?;
+            match &input {
+                Some((read, _)) => check(libc::posix_spawn_file_actions_adddup2(
+                    &mut actions,
+                    read.as_raw_fd(),
+                    0,
+                ))?,
+                None => check(libc::posix_spawn_file_actions_addopen(
+                    &mut actions,
+                    0,
+                    null.as_ptr(),
+                    libc::O_RDONLY,
+                    0,
+                ))?,
+            }
+            check(libc::posix_spawn_file_actions_adddup2(
+                &mut actions,
+                stdout.1.as_raw_fd(),
+                1,
+            ))?;
+            check(libc::posix_spawn_file_actions_adddup2(
+                &mut actions,
+                stderr.1.as_raw_fd(),
+                2,
+            ))?;
+            if let Some(cwd) = &cwd {
+                check(posix_spawn_file_actions_addchdir_np(
+                    &mut actions,
+                    cwd.as_ptr(),
+                ))?;
+            }
+            check(libc::posix_spawnp(
+                &mut pid,
+                program.as_ptr(),
+                &actions,
+                &attributes,
+                argv_pointers.as_ptr(),
+                envp_pointers.as_ptr(),
+            ))
+        })();
+        libc::posix_spawn_file_actions_destroy(&mut actions);
+        libc::posix_spawnattr_destroy(&mut attributes);
+        spawned?;
+    }
+    Ok(Child {
+        pid,
+        status: None,
+        stdin: input.map(|(_, write)| fs::File::from(write)),
+        stdout: Some(fs::File::from(stdout.0)),
+        stderr: Some(fs::File::from(stderr.0)),
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_session(command: &Command, stdin: bool) -> std::io::Result<Child> {
+    use std::os::fd::OwnedFd;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let mut session = Command::new(command.get_program());
+    session.args(command.get_args()).env_clear();
+    for (name, value) in command.get_envs() {
+        if let Some(value) = value {
+            session.env(name, value);
+        }
+    }
+    if let Some(cwd) = command.get_current_dir() {
+        session.current_dir(cwd);
+    }
+    unsafe {
+        session.pre_exec(|| {
+            rustix::process::setsid()
+                .map(drop)
+                .map_err(std::io::Error::from)
+        });
+    }
+    let mut child = session
+        .stdin(if stdin { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    Ok(Child {
+        pid: child.id() as libc::pid_t,
+        status: None,
+        stdin: child
+            .stdin
+            .take()
+            .map(|pipe| fs::File::from(OwnedFd::from(pipe))),
+        stdout: child
+            .stdout
+            .take()
+            .map(|pipe| fs::File::from(OwnedFd::from(pipe))),
+        stderr: child
+            .stderr
+            .take()
+            .map(|pipe| fs::File::from(OwnedFd::from(pipe))),
+    })
 }
 
 struct Scratch(PathBuf);
@@ -546,6 +762,17 @@ pub fn unrestricted_command(
     program: &Path,
     exec_environment: &[String],
 ) -> Result<Command, String> {
+    unrestricted_command_from(access, program, exec_environment, |name| {
+        std::env::var_os(name)
+    })
+}
+
+fn unrestricted_command_from(
+    access: &crate::ModOsAccess,
+    program: &Path,
+    exec_environment: &[String],
+    environment: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<Command, String> {
     let mut command = if access.network {
         Command::new(program)
     } else if !cfg!(target_os = "macos") {
@@ -562,14 +789,21 @@ pub fn unrestricted_command(
     };
     command
         .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
+        .env("PATH", environment("PATH").unwrap_or_default());
     for name in [
-        "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "SSH_AUTH_SOCK",
     ]
     .into_iter()
     .chain(exec_environment.iter().map(String::as_str))
     {
-        if let Some(value) = std::env::var_os(name) {
+        if let Some(value) = environment(name) {
             command.env(name, value);
         }
     }
@@ -1278,29 +1512,15 @@ impl Host<'_> {
                 command
             }
         };
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
         command
             .current_dir(&cwd)
             .env("TMPDIR", &scratch.0)
-            .env("TERM", "dumb")
-            .stdin(if input.stdin.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .env("TERM", "dumb");
         command.envs(&input.env);
         let started = Instant::now();
-        let mut child = Child(
-            command
-                .spawn()
-                .map_err(|error| format!("exec_spawn_failed: {error}"))?,
-        );
-        if let (Some(bytes), Some(mut pipe)) = (input.stdin.as_ref(), child.0.stdin.take()) {
+        let mut child = spawn_session(&command, input.stdin.is_some())
+            .map_err(|error| format!("exec_spawn_failed: {error}"))?;
+        if let (Some(bytes), Some(mut pipe)) = (input.stdin.as_ref(), child.stdin.take()) {
             let bytes = bytes.clone().into_bytes();
             std::thread::spawn(move || {
                 let _ = pipe.write_all(&bytes);
@@ -1327,7 +1547,6 @@ impl Host<'_> {
         };
         let stdout = bounded(
             child
-                .0
                 .stdout
                 .take()
                 .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
@@ -1335,7 +1554,6 @@ impl Host<'_> {
         );
         let stderr = bounded(
             child
-                .0
                 .stderr
                 .take()
                 .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
@@ -1343,7 +1561,7 @@ impl Host<'_> {
         );
         let mut timed_out = false;
         let status = loop {
-            if let Some(status) = child.0.try_wait().map_err(|error| error.to_string())? {
+            if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
                 break Some(status);
             }
             if !(self.active)() {
@@ -1352,16 +1570,12 @@ impl Host<'_> {
             }
             if started.elapsed() >= timeout {
                 timed_out = true;
-                if let Some(pid) = rustix::process::Pid::from_raw(child.0.id() as i32) {
-                    let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-                }
-                let _ = child.0.kill();
-                let _ = child.0.wait();
+                child.kill();
                 break None;
             }
             std::thread::sleep(Duration::from_millis(5));
         };
-        if let Some(pid) = rustix::process::Pid::from_raw(child.0.id() as i32) {
+        if let Some(pid) = rustix::process::Pid::from_raw(child.pid) {
             let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
         }
         while !(stdout.0.is_finished() && stderr.0.is_finished()) {
@@ -1788,6 +2002,34 @@ impl Host<'_> {
 #[cfg(test)]
 mod installation_tests {
     use super::*;
+
+    #[test]
+    fn unrestricted_commands_pass_the_ssh_agent_and_declared_names_only() {
+        let access = crate::ModOsAccess {
+            programs: vec!["env".to_owned()],
+            network: true,
+        };
+        let command = unrestricted_command_from(
+            &access,
+            Path::new("/usr/bin/env"),
+            &["EXTRA".to_owned()],
+            |name| {
+                matches!(name, "PATH" | "SSH_AUTH_SOCK" | "EXTRA" | "OPENAI_API_KEY")
+                    .then(|| format!("/{name}").into())
+            },
+        )
+        .unwrap();
+        let environment = command
+            .get_envs()
+            .map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned)))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            environment,
+            ["EXTRA", "PATH", "SSH_AUTH_SOCK"]
+                .map(|name| (name.into(), Some(format!("/{name}").into())))
+                .into()
+        );
+    }
 
     #[test]
     fn singleton_rejects_replacement_and_stale_teardown() {

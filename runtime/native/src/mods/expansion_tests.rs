@@ -1633,6 +1633,7 @@ async fn channel_events_reach_subscribers_in_order() {
     };
     let core = &fixture.core;
     *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    assert!(!delivery::deliver(core).await);
     for data in [json!(1), json!({"n": 2})] {
         let delivered = delivery::publish(
             core,
@@ -4699,6 +4700,40 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         json!({"phase": "created", "path": "/scratch/agent", "owner": "agent"})
     );
     assert_eq!(log[6]["roots"]["added"], json!(["/extra"]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mods_changed_reports_the_first_active_set_and_each_change() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["lifecycle", "store"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.on('mods_changed', e => api.state.set([...(api.state.get() ?? []), e]));\n}\n",
+    }]) else {
+        return;
+    };
+    let core = &fixture.core;
+    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    {
+        let runtime = core.runtime.lock().unwrap();
+        core.expansion.refresh(&runtime);
+        *core.expansion.active.lock().unwrap() = Some(vec!["gone".to_owned()]);
+        core.expansion.refresh(&runtime);
+        core.expansion.refresh(&runtime);
+    }
+    assert!(!delivery::deliver(core).await);
+    let log = core
+        .runtime
+        .lock()
+        .unwrap()
+        .state("observer")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        log,
+        json!([{"active": ["observer"]}, {"active": ["observer"]}]),
+        "the first load and the change from [\"gone\"] are reported, unchanged refreshes are not"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

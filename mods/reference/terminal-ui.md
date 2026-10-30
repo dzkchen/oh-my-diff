@@ -132,7 +132,11 @@ initial view; real disabled, broken or reloaded publications replace it.
 
 The reserved `welcome` site renders bounded generic components centered in the owned transcript's unused area.
 `welcome: {show_while_composing: true}` keeps the site visible with a draft, including while the slash-command, file
-or mention popup is open; the default shows it only with an empty composer.
+or mention popup is open; the default shows it only with an empty composer. `welcome: {hidden: true}`
+(`terminal_welcome_hidden_v1`, experimental) keeps the welcome area under the same rules, with Codex's own welcome and
+animation off, but draws no `welcome` site there, for a mod that fills the fresh screen another way (an underlay).
+`hidden` takes effect only for the mod that owns the composed underlay, so a later `welcome` writer can't un-hide it,
+not even by turning `show_while_composing` off, and a refused underlay brings the usual welcome back.
 
 - Accepted/running and resumed sessions, transcript selection/search, raw output and overlays suppress it.
 - Any history beyond the startup header and notices (a command's output, a rejected submission) hides it until a new
@@ -262,6 +266,13 @@ an `image` back to image pixels.
 Spans accept `fg` and `bg` theme colors, `italic` and `underline` (`terminal_style_v1`); `document` keeps span
 styles.
 
+### Code highlighting (`terminal_code_highlight_v1`)
+
+A `code` component with a `language` (a name or file extension such as `rust`, `ts` or `py`) draws its `text`
+in the user's syntax theme. An unknown or missing `language`, or a line over 4 KiB, draws it plain. `start` (a line index,
+default 0) draws from that line while highlighting from the top of `text`, so a scrolled view keeps comments and
+strings that open above it.
+
 ### Component key and paste input (`terminal_input_v1`)
 
 A `pane` or `document` with `keys: true` (`terminal_input_v1`) forwards keys and pastes while focused as
@@ -310,9 +321,10 @@ rows left after the region's other components and gaps. In a row layout each get
   leaf path it was dropped on; for the chat it is the path of the split holding the transcript and composer, or the
   transcript leaf without a composer. `edge` is `left`, `right`, `top` or `bottom` over the outer quarter of the
   target and `center` over its middle, never over the chat. `columns` and `rows` are the size of the area the layout
-  was drawn in. While dragging, the host shades where the pane would land. It changes nothing itself and sends nothing
-  when the drag is cancelled with Esc or ends on the dragged leaf or outside every zone, so the owner republishes its
-  layout.
+  was drawn in. While dragging, the host tints where the pane would land and draws its edge in the accent; cells it
+  can't blend (including ANSI 0–15 backgrounds) keep their colour and get the edge reversed. It changes nothing itself
+  and sends nothing when the drag is cancelled with Esc or ends on the dragged leaf or outside every zone, so the owner
+  republishes its layout.
 
 These go only to the mod whose view supplied the layout.
 
@@ -453,7 +465,7 @@ operations `component_event` hooks make, on either surface), and detaching unmou
 #### `terminal` event `client`
 
 The `terminal` event carries `client: {kind: 'terminal', graphics, pointer, reduced_motion, cell_px, columns,
-rows}`:
+rows, sites?}`:
 
 | Field | Meaning |
 | --- | --- |
@@ -462,12 +474,15 @@ rows}`:
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |
 | `cell_px` | The measured cell size or null. |
 | `columns` and `rows` | The terminal grid. |
+| `sites` | `terminal_site_area_v1`: `{[site]: {columns, rows}}` for each of the receiving mod's own `mod/site` sites the last frame drew as a layout leaf or an overlay, the cells its components got inside the frame's border, padding and title. Absent when the last frame drew none; sites stacked in the sidebar are not listed. |
 | `welcome` | `terminal_welcome_area_v1`: `{columns, rows}` of the blank area a `welcome` site gets this frame (the chat width beside any sidebar or dock, by the unused transcript height), or null when the welcome cannot show. Size welcome content from it; a change renders the view again. |
 | `chat` | `terminal_chat_area_v1`: `{x, y, columns, rows}` of the chat column this frame (the conversation and prompt box, beside any sidebar, dock or layout region), or null before the first fullscreen draw. Place art relative to the conversation with it; a change renders the view again. |
 | `colors` | `terminal_colors_v1`: the colours the terminal shows, `truecolor`, `256` or `16`. |
 
 `client` is null without a terminal client. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`; a burst of changes renders once per render in progress.
+A drawn site's area renders the view again the same way, except when it returns within a second to the area it had
+before the last change, as a view that sizes its own layout from `sites` would cause.
 
 #### `raster` component
 
@@ -573,7 +588,8 @@ layout instead of in the sidebar.
 
 `underlay: {raster: KEY}` draws one of the mod's own cell rasters under the whole fullscreen screen, behind the
 conversation, the prompt box and the footer. It is experimental and exclusive: the first mod in composition order
-owns it, and later claims become `terminal.conflicts` entries.
+owns it, and later claims become `terminal.conflicts` entries. A raster key another mod already draws is refused the
+same way: the underlay is dropped and the conflict names that mod.
 
 - The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
   raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a

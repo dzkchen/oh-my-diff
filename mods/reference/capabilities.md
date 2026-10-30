@@ -96,6 +96,8 @@ needs `exec`.
   pins a binary ahead of time for headless runs, where an unpinned run fails `program_unconfirmed` naming the resolved
   path to pass as PROGRAM; MOD_ID must be an active mod whose `os_access` lists it. A declined prompt fails
   `exec_program_declined` or `process_program_declined`, and a terminal start returns `{status: 'declined'}`.
+- Unsandboxed runs get the user's `HOME`, `USER`, `LOGNAME`, `SHELL`, locale and `SSH_AUTH_SOCK`, so `ssh`-based tools
+  reach the user's SSH agent; the full environment is listed under `exec.run` with `sandbox: "none"`.
 
 ### `approves` manifest field
 

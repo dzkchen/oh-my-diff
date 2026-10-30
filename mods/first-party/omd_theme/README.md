@@ -63,6 +63,8 @@ Typed forms: `/theme lagoon`, `/theme off`, `/theme image ~/Pictures/sky.png`, `
 - Capabilities: `terminal` (scene raster, panel, clipboard), `commands`, `store` (your choices, shared by your
   sessions), `events` (frame timer), `lifecycle` (pauses during turns), `builtins` (takes over `/theme`) and `exec`
   (reads `TERM_PROGRAM`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR` and `WEZTERM_EXECUTABLE`).
-- Needs the screen underlay (`terminal_underlay_v1`). Animation runs eight frames a second while the session is idle
-  and sends only the changed part of each row; a still or paused scene redraws nothing.
+- Needs the screen underlay (`terminal_underlay_v1`), the terminal colours (`terminal_colors_v1`) and the welcome
+  area and its hiding (`terminal_welcome_area_v1`, `terminal_welcome_hidden_v1`: the scene replaces the welcome while
+  it owns the underlay); the chat column (`terminal_chat_area_v1`) is optional. Animation runs eight frames a second
+  while the session is idle and sends only the changed cells; a still or paused scene redraws nothing.
 - A change made in one session reaches other running sessions at their next new session.
