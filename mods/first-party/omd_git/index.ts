@@ -218,7 +218,8 @@ export default function activate(api: ModAPI) {
     const run = git(r.top, argv, REMOTE_MS);
     if (run.ok || !REJECTED.test(run.err)) return remote(r, argv, 'Pushed', run);
     // Forcing a branch that is only behind would drop others' commits.
-    const [ahead = 0, behind = 0] = upstream ? git(r.top, [...READ, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).out.trim().split(/\s+/).map(Number) : [];
+    if (!upstream) return `origin already has a different ${branch}: pull it with git pull origin ${branch}, or push under another name`;
+    const [ahead = 0, behind = 0] = git(r.top, [...READ, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).out.trim().split(/\s+/).map(Number);
     if (!ahead || !behind) return `The remote ${branch} has commits you haven't pulled: pull first (p)`;
     if (!confirm('Force push', `${branch} and its upstream have diverged (↑${ahead} ↓${behind}), as after an amend or reword. Force push with lease? The ${behind} remote ${behind === 1 ? 'commit is' : 'commits are'} dropped.`)) return summary(run.err);
     return remote(r, ['push', '--force-with-lease', ...argv.slice(1)], 'Force pushed');
@@ -256,6 +257,7 @@ export default function activate(api: ModAPI) {
     const panel = (index: number) => () => {
       r.panel = (index + PANELS.length) % PANELS.length;
       r.hunks = null;
+      list(r, r.panel);
       view(r);
       return null;
     };
@@ -321,7 +323,9 @@ export default function activate(api: ModAPI) {
       }],
       a: ['Stage or unstage everything', () => {
         if (!r.files.length) return 'Nothing to stage';
-        const all = git(r.top, [...READ, 'diff', '--quiet']).ok && !git(r.top, [...READ, 'ls-files', '--others', '--exclude-standard']).out;
+        const all = r.more
+          ? git(r.top, [...READ, 'diff', '--quiet']).ok && !git(r.top, [...READ, 'ls-files', '--others', '--exclude-standard', '--directory', '--no-empty-directory']).out
+          : r.files.every(staged);
         return result(git(r.top, all ? ['reset', '-q'] : ['add', '-A']), all ? 'Unstaged everything' : 'Staged everything');
       }],
       d: ['Discard the file’s changes', () => {
@@ -444,7 +448,9 @@ export default function activate(api: ModAPI) {
   const reload = (always: boolean) => changed(state => {
     const placed = state.placed;
     if (!placed) state.placed = place();
-    if (state.placed && (always || !placed || state.watch === undefined)) repo(state, cwd(), true);
+    const top = state.repo?.top;
+    const watched = state.watch !== undefined && top !== undefined && `${api.session().root}/`.startsWith(`${top}/`);
+    if (state.placed && (always || !placed || !watched)) repo(state, cwd(), true);
   });
   api.on('start', () => start(true));
   api.on('resume', () => start(true));

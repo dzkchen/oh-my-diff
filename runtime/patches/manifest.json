@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.165.0.patch",
-    "sha256": "3a9cc5f1221c0bd1a662e3eb4ab21f858400c968ccb6c7fd5b8f8e0d0af590bd"
+    "sha256": "08cbef0284d96ba050bbe28fbcfbc0d9fd9e2828db14085a4be2580bd67689a3"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1119,7 +1119,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion/activity.rs": {
       "before": null,
-      "after": "cf33faffd397313671f7b08a2fe2b2d002b54197b7e6bf1a4629e0c86f99da98"
+      "after": "91bff6295552dfa01f892b2578833d18da7ba25e8038e945b547378ed728456d"
     },
     "codex-rs/ext/omd/src/mods/expansion/approvals.rs": {
       "before": null,
@@ -1127,7 +1127,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion/delivery.rs": {
       "before": null,
-      "after": "1da093e1fd1748413361d715ab3c669fb088f6cb94975bbf0a77bff7702dd592"
+      "after": "41fbf714a13658f10cad81e4087b293f2b5a637b5dbace4e23a57cce7bc0e6c8"
     },
     "codex-rs/ext/omd/src/mods/expansion/tool_batch.rs": {
       "before": null,

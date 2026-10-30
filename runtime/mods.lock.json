@@ -208,12 +208,12 @@
       "extension_type": "mod",
       "files": {
         "git.ts": "1b5bea96a307beb81c63a57280165ae75f9f632a6afc83f31037f5ff363bc6ca",
-        "index.ts": "f8c2edb95e73f2e76f14740b34672093f711a53d8691d265785de64e65fea368",
+        "index.ts": "7f7b21d114325771537ad7318b5b20843fe31345ee8d50daeaf7b5071ef061ac",
         "mod.json": "dcaf1a1e0a7391a6c1ffc2e7bdb333710dda2d2b27db31f6b4fac2714b4ac16b",
         "view.ts": "1ee1c4a7f1c26a8af4983053703b12306bd57f7e5163abd7c1b6a54ca9f7e95c"
       },
       "id": "omd_git",
-      "package_sha256": "f850b8d88bdfa28aff91cf6dcbaf2a0d8bac158f9052b27e1e89c5c54c2001ca",
+      "package_sha256": "0f1cbab1055ab409592e889c73b4ddfa4dd26852374c016f20e45aed408b3cfe",
       "source": "mods/first-party/omd_git",
       "version": "1.0.0"
     },

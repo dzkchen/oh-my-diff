@@ -238,6 +238,7 @@ test('images go to a raster through a timer, from a private temporary file', () 
   assert.deepEqual(image.calls.find(call => call.operation === 'events.publish').arguments, { channel: 'blit', data: 'src/logo.png' });
   assert.equal(columns(image.state)[2].type, 'raster');
   const timer = run('timer', { key: 'blit' }, { state: image.state, world: { stdout: 'AAAA\n' } });
+  assert.doesNotMatch(ran(timer.calls)[0].argv[1], /omd-files-preview/);
   assert.deepEqual(timer.calls.find(call => call.operation === 'terminal.blit').arguments, { key: 'omd_files_image', image: { media_type: 'image/jpeg', base64: 'AAAA' } });
 });
 

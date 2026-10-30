@@ -50,7 +50,7 @@ Open the Git tab in the dock (its number, or `[` / `]`), and the keys below appl
 | `j` / `k` | everywhere | Next / previous item; the main view follows |
 | `J` / `K` | everywhere | Scroll the main view |
 | `R` | everywhere | Refresh, and look for a repository again |
-| `P` / `p` | everywhere | Push / pull, after you confirm (a branch without an upstream is pushed to `origin` and tracked; a detached HEAD isn't pushed). When the remote rejects the push and the branch has diverged from its upstream, as after an amend or reword, it offers `push --force-with-lease`; a branch that is only behind is told to pull first |
+| `P` / `p` | everywhere | Push / pull, after you confirm (a branch without an upstream is pushed to `origin` and tracked; a detached HEAD isn't pushed). When the remote rejects the push and the branch has diverged from its upstream, as after an amend or reword, it offers `push --force-with-lease`; a branch that is only behind, or new here while `origin` has its name, is told to pull first |
 | `m` | everywhere | Continue or abort the rebase, merge, cherry-pick or revert in progress (shown in Status) |
 | `@` | everywhere | Add the selection to the prompt: an `@` mention for a file, the hunk as a diff block, or a branch, commit or stash reference |
 | `Space` | Files | Stage or unstage the file (a staged rename with its old path); on a conflicted file, mark it resolved after you confirm |
@@ -74,7 +74,7 @@ Amending or rewording an older commit rebases onto it with `--autostash`, and is
 
 ## Refresh
 
-The panel reloads when you act in it, when the session's directory changes and when files or the repository's Git metadata (HEAD, index, refs) change on disk, a `workspace.watch` rather than polling, so a commit, checkout or fetch made in another terminal shows at once. A file edit reloads only the status; branches, commits and stashes reload when HEAD or a ref changes. Without the watch it also reloads when a turn ends. It doesn't reload while its tab isn't in the dock, and the watch event caused by your own action in the panel is skipped, as the panel has already reloaded.
+The panel reloads when you act in it, when the session's directory changes and when files or the repository's Git metadata (HEAD, index, refs) change on disk, a `workspace.watch` rather than polling, so a commit, checkout or fetch made in another terminal shows at once. A file edit reloads only the status; branches, commits and stashes reload when HEAD or a ref changes. Without the watch, or in a repository other than the workspace's, it also reloads when a turn ends. It doesn't reload while its tab isn't in the dock, and the watch event caused by your own action in the panel is skipped, as the panel has already reloaded.
 
 ## Needs and limits
 

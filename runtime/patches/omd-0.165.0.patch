@@ -74967,10 +74967,10 @@ index 0000000000000000000000000000000000000000..7e4c3e528a928395b1c720da24eecac4
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/mods/expansion/activity.rs b/codex-rs/ext/omd/src/mods/expansion/activity.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..35b2beb143ae890fcaf9b4ead30d7fb7f3324a67
+index 0000000000000000000000000000000000000000..32076fb11fa90f75dbd1c43c75ad1e1297a66979
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/activity.rs
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,377 @@
 +use super::*;
 +use codex_omd::turn_activity::ActivityRecord;
 +use codex_omd::turn_activity::TurnActivityLog;
@@ -75200,6 +75200,8 @@ index 0000000000000000000000000000000000000000..35b2beb143ae890fcaf9b4ead30d7fb7
 +    });
 +}
 +
++pub(in crate::mods) const MAX_CHANGES: usize = 128;
++
 +pub(in crate::mods) fn visible_paths(
 +    root: &std::path::Path,
 +    paths: Vec<String>,
@@ -75211,7 +75213,7 @@ index 0000000000000000000000000000000000000000..35b2beb143ae890fcaf9b4ead30d7fb7
 +        .into_iter()
 +        .filter(|path| include_ignored || !filter.ignored(root, path))
 +        .filter(|path| readable(&root.join(path)))
-+        .take(128)
++        .take(MAX_CHANGES)
 +        .collect()
 +}
 +
@@ -75667,10 +75669,10 @@ index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..eda1c165b0e4321fed400cf63d39c7dd5e879af5
+index 0000000000000000000000000000000000000000..272409f24771bd72f8ec13a725bc07e9f438e99c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,738 @@
+@@ -0,0 +1,741 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -76002,17 +76004,20 @@ index 0000000000000000000000000000000000000000..eda1c165b0e4321fed400cf63d39c7dd
 +            let (git, paths): (Vec<String>, Vec<String>) = paths
 +                .into_iter()
 +                .partition(|path| path.starts_with(".git/"));
-+            let mut changes = if paths.is_empty() {
-+                Vec::new()
-+            } else {
-+                super::activity::external_changes(core, &lead, &paths, include_ignored).await
-+            };
-+            let room = 128_usize.saturating_sub(changes.len());
-+            changes.extend(
-+                git.into_iter()
-+                    .take(room)
-+                    .map(|path| json!({"path": path, "before": null, "after": null})),
-+            );
++            let mut changes: Vec<Value> = git
++                .into_iter()
++                .take(super::activity::MAX_CHANGES)
++                .map(|path| json!({"path": path, "before": null, "after": null}))
++                .collect();
++            if !paths.is_empty() {
++                let room = super::activity::MAX_CHANGES - changes.len();
++                changes.extend(
++                    super::activity::external_changes(core, &lead, &paths, include_ignored)
++                        .await
++                        .into_iter()
++                        .take(room),
++                );
++            }
 +            if changes.is_empty() {
 +                return;
 +            }

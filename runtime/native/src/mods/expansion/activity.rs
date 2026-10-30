@@ -227,6 +227,8 @@ pub(in crate::mods) fn output_replaced(
     });
 }
 
+pub(in crate::mods) const MAX_CHANGES: usize = 128;
+
 pub(in crate::mods) fn visible_paths(
     root: &std::path::Path,
     paths: Vec<String>,
@@ -238,7 +240,7 @@ pub(in crate::mods) fn visible_paths(
         .into_iter()
         .filter(|path| include_ignored || !filter.ignored(root, path))
         .filter(|path| readable(&root.join(path)))
-        .take(128)
+        .take(MAX_CHANGES)
         .collect()
 }
 

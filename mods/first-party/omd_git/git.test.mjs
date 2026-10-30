@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { callback } from '../../../tests/mod_runner.mjs';
-import { parseStatus, summary } from './git.ts';
+import { cut, mention, parseStatus, summary } from './git.ts';
 
 const mod = new URL('./', import.meta.url);
 const read = name => readFileSync(new URL(name, mod), 'utf8');
@@ -28,7 +28,7 @@ function run(event, payload, { state = null, name, world = {} } = {}) {
       const failed = stderr => ({ exit_code: 1, stdout: '', stderr });
       if (argv[0] !== '--no-optional-locks' && world.after) world.status = world.after;
       if (argv.includes('grep')) return world.rebasing ? ok('rebase-merge/head-name\n') : world.op ? ok(`${world.op}\n`) : failed('');
-      if (argv[1] === 'status') return ok(world.status ?? STATUS);
+      if (argv[1] === 'status') return { ...ok(world.status ?? STATUS), stdout_preview_truncated: Boolean(world.truncated) };
       if (argv[1] === 'diff' && argv.includes('--quiet')) return world.unstaged ? failed('') : ok();
       if (argv[1] === 'ls-files') return ok(world.untracked ?? '');
       if (argv[1] === 'rev-list' && argv.includes('--left-right')) return ok(world.counts ?? '0\t0\n');
@@ -84,6 +84,9 @@ test('porcelain v2 renames and unmerged records keep paths with spaces and unico
     { path: 'conflict – ü.ts', kind: 'u', x: 'U', y: 'U' },
     { path: 'plain.ts', kind: '1', x: ' ', y: 'M' },
   ]);
+  assert.equal(cut('line\r\n', 100), 'line?');
+  assert.equal(cut('crlf\r', 100), 'crlf');
+  assert.deepEqual([mention('src/a b.ts'), mention('src/a.ts')], ['@"src/a b.ts" ', '@src/a.ts ']);
   assert.equal(summary('hint: try again\nerror: failed\nfatal: gone'), 'error: failed fatal: gone hint: try again');
   const cutOff = parseStatus('# branch.head main\x001 .M N... 100644 100644 100644 a a x\x001 ', true);
   assert.deepEqual([cutOff.files.map(file => file.path), cutOff.more], [['x'], true]);
@@ -145,8 +148,9 @@ test('moving loads that file, Space stages it, discarding needs a confirmation a
   assert.ok(gits(discarded.calls).includes('checkout HEAD -- b.ts'));
   const untracked = key(key(state, 'j').state, 'd');
   assert.equal(prompts(untracked.calls)[0].message, 'Delete untracked new.txt?');
-  const allListed = started({ status: '# branch.head main\x001 M. N... 100644 100644 100644 a a b.ts\0' });
-  assert.ok(gits(key(allListed, 'a', { unstaged: true }).calls).includes('add -A'));
+  const listed = { status: '# branch.head main\x001 M. N... 100644 100644 100644 a a b.ts\0', truncated: true };
+  const allListed = started(listed);
+  assert.ok(gits(key(allListed, 'a', { ...listed, unstaged: true }).calls).includes('add -A'));
   assert.ok(gits(key(allListed, 'a').calls).includes('reset -q'));
   const clean = started({ status: '# branch.head main\0' });
   assert.equal(notice(draw(key(clean, 'a', { status: '# branch.head main\0' }).state)), 'Nothing to stage');
@@ -240,6 +244,7 @@ test('push asks first, tracks origin without an upstream and offers a force push
   const call = pushed.calls.find(item => item.operation === 'exec.run' && item.arguments.argv.includes('push'));
   assert.deepEqual(call.arguments.argv.slice(-4), ['push', '-u', 'origin', 'main']);
   assert.equal(call.arguments.timeout_ms, 120_000);
+  assert.match(notice(draw(key(state, 'P', { answer: '', rejected: true }).state)), /^origin already has a different main/);
   const tracked = { status: STATUS.replace('# branch.head main', '# branch.head main\0# branch.upstream origin/main\0# branch.ab +1 -0') };
   const upstream = started(tracked);
   for (const [counts, title] of [['0\t2\n', undefined], ['1\t2\n', 'Force push']]) {
@@ -281,6 +286,7 @@ test('a watch event right after the panel’s own change is skipped once, a writ
   assert.ok(!gits(edited.calls).some(argv => argv.includes('for-each-ref')));
   assert.deepEqual(gits(run('turn_end', null, { state: next.state }).calls), []);
   assert.ok(gits(run('turn_end', null, { state: { ...next.state, watch: undefined } }).calls).some(argv => argv.includes('status')));
+  assert.ok(gits(run('turn_end', null, { state: { ...next.state, repo: { ...next.state.repo, top: '/elsewhere' } } }).calls).some(argv => argv.includes('status')));
   const unplaced = run('workspace_change', { repository: TOP, source: 'tool', call_id: 'c', changes: [], status: 'observed' }, { state: { ...staged, placed: false } });
   assert.deepEqual(unplaced.calls, []);
 });
