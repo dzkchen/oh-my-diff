@@ -6278,7 +6278,7 @@ impl ModHost {
         let mut contributors = Vec::new();
         let mut conflicts = Vec::new();
         let mut diagnostics = Vec::new();
-        let mut hiding_welcome = std::collections::BTreeSet::new();
+        let mut hiding_welcome = BTreeMap::new();
         for (id, result) in results {
             if let Some(error) = self
                 .loaded
@@ -6333,12 +6333,16 @@ impl ModHost {
                 patch.sites.remove("dialog");
             }
             let before = view::site_component_ids(&view.sites);
-            let hides = patch.welcome.as_ref().is_some_and(|welcome| welcome.hidden);
+            let hides = patch
+                .welcome
+                .as_ref()
+                .filter(|welcome| welcome.hidden)
+                .map(|welcome| welcome.show_while_composing);
             match patch.apply(&mut view, &mut claims, &id, origin) {
                 Ok(lost) => {
                     conflicts.extend(lost);
-                    if hides {
-                        hiding_welcome.insert(id.clone());
+                    if let Some(composing) = hides {
+                        hiding_welcome.insert(id.clone(), composing);
                     }
                     component_owners.extend(
                         view::site_component_ids(&view.sites)
@@ -6375,11 +6379,14 @@ impl ModHost {
             }
         }
         // Only the underlay's owner hides the welcome: a refused underlay brings it back and a later writer can't undo it.
+        let hider = view
+            .underlay
+            .as_ref()
+            .and(claims.get("underlay"))
+            .and_then(|owner| hiding_welcome.get(owner).copied());
         if let Some(welcome) = view.welcome.as_mut() {
-            welcome.hidden = view.underlay.is_some()
-                && claims
-                    .get("underlay")
-                    .is_some_and(|owner| hiding_welcome.contains(owner));
+            welcome.hidden = hider.is_some();
+            welcome.show_while_composing |= hider.unwrap_or_default();
         }
         conflicts.truncate(32);
         ModTerminalView {

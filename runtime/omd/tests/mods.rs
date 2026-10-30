@@ -1777,6 +1777,25 @@ fn a_later_welcome_writer_keeps_the_underlay_owners_hidden_welcome() {
     let view = host(&temp).terminal_view(json!({}), || true);
     let welcome = view.view.welcome.unwrap();
     assert!(welcome.show_while_composing && welcome.hidden);
+
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true,show_while_composing:true}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:false}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let welcome = host(&temp)
+        .terminal_view(json!({}), || true)
+        .view
+        .welcome
+        .unwrap();
+    assert!(welcome.show_while_composing && welcome.hidden);
 }
 
 #[test]

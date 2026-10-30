@@ -111400,10 +111400,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4dc170e7e2c45c743583e248e07dcee768341f9c
+index 0000000000000000000000000000000000000000..5b5c0b6d551a47058387cd83c548c59181a96566
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6973 @@
+@@ -0,0 +1,6980 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -117684,7 +117684,7 @@ index 0000000000000000000000000000000000000000..4dc170e7e2c45c743583e248e07dcee7
 +        let mut contributors = Vec::new();
 +        let mut conflicts = Vec::new();
 +        let mut diagnostics = Vec::new();
-+        let mut hiding_welcome = std::collections::BTreeSet::new();
++        let mut hiding_welcome = BTreeMap::new();
 +        for (id, result) in results {
 +            if let Some(error) = self
 +                .loaded
@@ -117739,12 +117739,16 @@ index 0000000000000000000000000000000000000000..4dc170e7e2c45c743583e248e07dcee7
 +                patch.sites.remove("dialog");
 +            }
 +            let before = view::site_component_ids(&view.sites);
-+            let hides = patch.welcome.as_ref().is_some_and(|welcome| welcome.hidden);
++            let hides = patch
++                .welcome
++                .as_ref()
++                .filter(|welcome| welcome.hidden)
++                .map(|welcome| welcome.show_while_composing);
 +            match patch.apply(&mut view, &mut claims, &id, origin) {
 +                Ok(lost) => {
 +                    conflicts.extend(lost);
-+                    if hides {
-+                        hiding_welcome.insert(id.clone());
++                    if let Some(composing) = hides {
++                        hiding_welcome.insert(id.clone(), composing);
 +                    }
 +                    component_owners.extend(
 +                        view::site_component_ids(&view.sites)
@@ -117781,11 +117785,14 @@ index 0000000000000000000000000000000000000000..4dc170e7e2c45c743583e248e07dcee7
 +            }
 +        }
 +        // Only the underlay's owner hides the welcome: a refused underlay brings it back and a later writer can't undo it.
++        let hider = view
++            .underlay
++            .as_ref()
++            .and(claims.get("underlay"))
++            .and_then(|owner| hiding_welcome.get(owner).copied());
 +        if let Some(welcome) = view.welcome.as_mut() {
-+            welcome.hidden = view.underlay.is_some()
-+                && claims
-+                    .get("underlay")
-+                    .is_some_and(|owner| hiding_welcome.contains(owner));
++            welcome.hidden = hider.is_some();
++            welcome.show_while_composing |= hider.unwrap_or_default();
 +        }
 +        conflicts.truncate(32);
 +        ModTerminalView {
@@ -145864,10 +145871,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..36b1f0ada01b84103f67431b9d2902d264cd1291
+index 0000000000000000000000000000000000000000..647f53905fba81f04baeed87041c9d76dbf574bd
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5031 @@
+@@ -0,0 +1,5050 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -147646,6 +147653,25 @@ index 0000000000000000000000000000000000000000..36b1f0ada01b84103f67431b9d2902d2
 +    trust(&store, &other, &["terminal"]);
 +    let view = host(&temp).terminal_view(json!({}), || true);
 +    let welcome = view.view.welcome.unwrap();
++    assert!(welcome.show_while_composing && welcome.hidden);
++
++    let (temp, store, _) = fixture(
++        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true,show_while_composing:true}}));",
++        &["terminal"],
++    );
++    let root = temp.path().canonicalize().unwrap();
++    let other = package(
++        &root,
++        "other",
++        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:false}}));",
++        &["terminal"],
++    );
++    trust(&store, &other, &["terminal"]);
++    let welcome = host(&temp)
++        .terminal_view(json!({}), || true)
++        .view
++        .welcome
++        .unwrap();
 +    assert!(welcome.show_while_composing && welcome.hidden);
 +}
 +
@@ -174343,10 +174369,10 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..79dee87d821b24b566560c0bbb894e2a0e6f44ab
+index 0000000000000000000000000000000000000000..3f27743ef193485230f1668b8750ca495645f0bd
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5831 @@
+@@ -0,0 +1,5832 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -177071,7 +177097,8 @@ index 0000000000000000000000000000000000000000..79dee87d821b24b566560c0bbb894e2a
 +
 +/// For a frame that doesn't draw the welcome.
 +pub(crate) fn hide_welcome_terminals() {
-+    for (session, binding) in std::mem::take(&mut INTERACTION.locked().welcome_terminals) {
++    let shown = std::mem::take(&mut INTERACTION.locked().welcome_terminals);
++    for (session, binding) in shown {
 +        crate::mod_pty::set_shown(binding.as_ref(), &session, false);
 +    }
 +}

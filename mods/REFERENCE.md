@@ -3491,8 +3491,8 @@ The reserved `welcome` site renders bounded generic components centered in the o
 or mention popup is open; the default shows it only with an empty composer. `welcome: {hidden: true}`
 (`terminal_welcome_hidden_v1`, experimental) keeps the welcome area under the same rules, with Codex's own welcome and
 animation off, but draws no `welcome` site there, for a mod that fills the fresh screen another way (an underlay).
-`hidden` takes effect only for the mod that owns the composed underlay, so a later `welcome` writer can't un-hide it
-and a refused underlay brings the usual welcome back.
+`hidden` takes effect only for the mod that owns the composed underlay, so a later `welcome` writer can't un-hide it,
+not even by turning `show_while_composing` off, and a refused underlay brings the usual welcome back.
 
 - Accepted/running and resumed sessions, transcript selection/search, raw output and overlays suppress it.
 - Any history beyond the startup header and notices (a command's output, a rejected submission) hides it until a new
