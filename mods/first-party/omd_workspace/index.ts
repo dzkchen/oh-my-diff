@@ -408,6 +408,7 @@ export default function activate(api: ModAPI) {
         if (sitesOf(panel).some((name, index, all) => taken.has(name) || all.indexOf(name) !== index)) return refuse('site in use');
         if (others.length >= REGISTERED) return refuse('too many panels');
         state.registered = others.length < state.registered.length ? state.registered.map(item => item.id === id ? panel : item) : [...others, panel];
+        if (raw.show === true) state.dock = id;
         return { registered: id };
       });
     },

@@ -196,6 +196,10 @@ test('other mods register, replace and unregister panels, which join the dock af
   ]) assert.ok(service('register', bad, state).value.error, JSON.stringify(bad));
   assert.deepEqual(service('unregister', { id: 'git' }, state).value, { removed: true });
   assert.deepEqual(service('unregister', { id: 'git' }, service('unregister', { id: 'git' }, state).state).value, { removed: false });
+  assert.equal(state.dock, null);
+  const shown = service('register', { id: 'lazygit', title: 'Lazygit', site: 'omd_lazygit/main', show: true }, state).state;
+  assert.equal(shown.dock, 'lazygit');
+  assert.equal(draw(shown).layout.children[1].active, 4);
 });
 
 test('dragged sizes and clicked tabs persist and survive a panel order change', () => {

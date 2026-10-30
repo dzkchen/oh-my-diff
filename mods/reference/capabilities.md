@@ -90,6 +90,10 @@ needs `exec`.
 - A program is `*`, a bare name resolved on `PATH` outside the repository, or an absolute path.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
+- Every unsandboxed `exec.run`, `process.start` and `terminal.pty` start asks once per mod and binary ("Run NAME for
+  mod ID?") and again when the binary's hash changes, as after an upgrade; a callback outside a command waits for the
+  answer. The three share the pins in `pty-pins.json` in the mod store. A declined prompt fails
+  `exec_program_declined` or `process_program_declined`, and a terminal start returns `{status: 'declined'}`.
 
 ### `approves` manifest field
 

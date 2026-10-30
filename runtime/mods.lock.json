@@ -225,11 +225,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "21d810ede0959a19e18bb16bcc65ae5b426544606a06f8d8bf04c6797e3cc6e8",
-        "mod.json": "0cc0d773231997895207e7fc85ec0c1680a1afe95208d3a790318caa3ea8d4ec"
+        "index.ts": "3caf5563bdedbfa0148d2088bfa0c707add6e82b9249b7a5322af2073c8ebda6",
+        "mod.json": "3e8a1867a93440453a732356660cc07a2ba4dd99f6f1e6cce8286b8a9614ce10"
       },
       "id": "omd_lazygit",
-      "package_sha256": "17566261d06343e7d8fec3eca9bc23b29679ecdc696fc99639953ce65f870353",
+      "package_sha256": "59e068586ada99a698547961e1179348e4e58e253157116bda0dde8d58199a58",
       "source": "mods/first-party/omd_lazygit",
       "version": "1.0.0"
     },
@@ -708,11 +708,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "6f6600a627945784a1f58836539bcd3e549beadd2d8223571bcbde6a08ae1225",
+        "index.ts": "45710191fd28dd55a380d04a3067607d3943ec6cd3995efc36cd6d109ebd4ee9",
         "mod.json": "d3fbfcb8a23bd9b0a573e78ef9ce27c5ec16a33e1a786a4b234c1ecb93e0c8fe"
       },
       "id": "omd_workspace",
-      "package_sha256": "5ddb7ddfff817cf3dccad7a5419e32f32a3325be786734ec0991cc8df90c317c",
+      "package_sha256": "1b908be77edafabb5c87a169172da7a5302e5f730297f8ee2b2704c48fcfa0d8",
       "source": "mods/first-party/omd_workspace",
       "version": "1.0.0"
     },
@@ -731,11 +731,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "a39a8347de3dcf5b782825e853557fb770aa8ca8b25d0086b53e444d2249c19c",
-        "mod.json": "c9366a9d9159c3833f36db6775f82570f739ea79f5067365f8a6368bccec9031"
+        "index.ts": "720e0888b4c2217ecf82c7d758bdb10efbd5b6b065ce1c1f8cdfd00370ffcdf9",
+        "mod.json": "d1e8cad1b0763d4e0660508146432d594a2fbeec6cb7b0df670519caad0f1976"
       },
       "id": "omd_yazi",
-      "package_sha256": "9e68a131e4c1c2e317d9ce8ac97a6614d5b9cf80255f77bdd8748d10a1880b93",
+      "package_sha256": "407bdc52451a40cee69409aee6601afeef2ad9314d1d9da239c8babaf7f958f9",
       "source": "mods/first-party/omd_yazi",
       "version": "1.0.0"
     }

@@ -1858,6 +1858,13 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
         os_access: Some(&access),
         ..caller(&capabilities, &[], Origin::Tool)
     };
+    let trust = |access: &codex_omd::ModOsAccess, name: &str| {
+        let program = codex_omd::host::unrestricted_program(access, name, &repository).unwrap();
+        let hash = codex_omd::host::program_hash(&program).unwrap();
+        codex_omd::program_trust::pin(&data, granted.id, &program, &hash).unwrap();
+    };
+    trust(&access, "cat");
+    trust(&access, "env");
     let read = host
         .call(
             &granted,
@@ -1908,6 +1915,7 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
         programs: strings(&["*"]),
         network: false,
     };
+    trust(&offline, "/usr/bin/nc");
     let offline = Caller {
         os_access: Some(&offline),
         ..caller(&capabilities, &[], Origin::Tool)

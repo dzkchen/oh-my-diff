@@ -267,6 +267,10 @@ needs `exec`.
 - A program is `*`, a bare name resolved on `PATH` outside the repository, or an absolute path.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
+- Every unsandboxed `exec.run`, `process.start` and `terminal.pty` start asks once per mod and binary ("Run NAME for
+  mod ID?") and again when the binary's hash changes, as after an upgrade; a callback outside a command waits for the
+  answer. The three share the pins in `pty-pins.json` in the mod store. A declined prompt fails
+  `exec_program_declined` or `process_program_declined`, and a terminal start returns `{status: 'declined'}`.
 
 #### `approves` manifest field
 
@@ -4041,7 +4045,8 @@ With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with 
 binary ("Allow and remember"); it starts without asking while the hash matches and asks again when the binary changes,
 for example after a package manager upgrade. Pins live in `pty-pins.json` in the mod store. A declined prompt returns
 `{status: 'declined'}`; a start that reaches the spawn without that approval or a matching pin fails
-`pty_program_unpinned`.
+`pty_program_unpinned`. The pane gets the environment of an unsandboxed `exec.run`, the mod's declared
+`exec_environment` names included, plus `SSH_AUTH_SOCK`, `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 Sessions:
 
@@ -4058,12 +4063,12 @@ Sessions:
 | Keys | xterm encodings: F1–F12, PgUp/PgDn, Insert, Home/End, Shift+Tab, modified arrows (`CSI 1;m X`), Alt as an Esc prefix, Ctrl+Space and Ctrl+symbol control bytes, application-cursor mode. |
 | Mouse | When the program enables mouse reporting, clicks, releases, drags, motion and the wheel go to it in its encoding (SGR, UTF-8 or X10) with modifiers. Otherwise the wheel scrolls the pane's scrollback, or sends Up/Down on the alternate screen. |
 | Drawing | A focused pane draws its cursor; wide characters take two cells; italic, underline and dim are kept. |
-| Signals | Title changes (OSC 0/2), the bell and OSC 9 / OSC 777 notifications reach the owner as `component_event` `title {title}`, `bell` and `notify {text}` (1 KiB, ten a second). The exit arrives once as `exit {session, exit_code, files}`. |
+| Signals | Title changes (OSC 0/2), the bell and OSC 9 / OSC 777 notifications reach the owner as `component_event` `title {title}`, `bell` and `notify {text}` (1 KiB, ten a second). The exit arrives once as `exit {session, exit_code, files}`. A drawn `terminal` component whose session isn't running (never started, stopped, or ended by the host on a thread switch, reload or restart) reports `exit {session, exit_code: null}` once, so the owner can drop its layout. |
 | Links | OSC 8 `http`/`https` links become terminal hyperlinks. |
 | Replies | The pane answers device attributes (`CSI c`), status (`CSI 5n`) and cursor position (`CSI 6n`) queries, as a terminal does. |
 | Clipboard | An OSC 52 copy asks the user once per pane ("Allow for this pane"), then goes through the terminal's clipboard. A decline lasts for the pane. |
-| Session directory | `start {files: {NAME: text}}` (four files, 16 KiB each, names `[A-Za-z0-9._-]`) writes a private directory; every `{dir}` in `argv` is its path. `read` and the exit event return its top-level files (64 KiB in all), including files the program wrote. It is removed when the session ends, is stopped or is replaced. Sandboxed panes keep it in the scratch `HOME` they share, so other sandboxed panes can read it. Errors: `pty_files_invalid`. |
-| Focus | `autofocus: true` on the `terminal` component focuses it when it appears and when its focus region is entered. When a focused terminal unmounts, focus returns to where it was before. |
+| Session directory | `start {files: {NAME: text}}` (four files, 16 KiB each, names `[A-Za-z0-9._-]`) writes a private directory; every `{dir}` in `argv` is its path. `read` and the exit event return its top-level regular files (64 KiB in all; symlinks and hard links are skipped), including files the program wrote. It is removed when the session ends, is stopped or is replaced. Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach; sandboxed panes keep it in the scratch `HOME` they share, so other sandboxed panes can read it. Errors: `pty_files_invalid`. |
+| Focus | `autofocus: true` on the `terminal` component focuses it when it appears while nothing else has focus, and when its focus region is entered. A focused terminal shows a Ctrl+] hint until the first key. A key for a terminal whose program has ended leaves it. When a focused terminal unmounts, focus returns to where it was before. |
 
 ##### `builtins.invoke` and `api.builtins`
 

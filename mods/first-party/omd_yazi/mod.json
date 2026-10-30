@@ -10,12 +10,13 @@
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_yazi"},
   "capabilities": ["commands", "terminal", "store", "exec", "os", "pty", "composer", "inventory", "services"],
   "os_access": {"programs": ["yazi"]},
+  "exec_environment": ["EDITOR", "VISUAL", "XDG_CONFIG_HOME", "YAZI_CONFIG_HOME"],
   "services": {"imports": [{"name": "omd.workspace", "version": "1.0.0", "optional": true}]},
   "compatibility": {"required_features": ["store_v1", "exec_v1", "unrestricted_process_v1", "state_scopes_v1", "service_dispatch_v1", "terminal_surface_v1", "terminal_layout_title_v1", "terminal_pty_v1", "pty_programs_v1", "terminal_pty_v2", "composer_v2", "ui_composition_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {
-      "placement": {"type": "string", "enum": ["full", "panel"], "default": "full", "title": "Placement", "description": "full: yazi takes the screen above a compact chat; panel: a tab of the omd_workspace dock, falling back to full without it"}
+      "placement": {"type": "string", "enum": ["full", "panel"], "default": "panel", "title": "Placement", "description": "full: yazi takes the screen above a compact chat; panel: a tab of the omd_workspace dock, falling back to full without it"}
     },
     "additionalProperties": false
   }

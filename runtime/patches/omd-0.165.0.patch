@@ -32313,7 +32313,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..9003cc02898288db0b577653517400d1c707c3ab 100644
+index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..77308f6d8ee253f080c02bff837df90169b3d916 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -32515,12 +32515,13 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..9003cc02898288db0b577653517400d1
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1247,33 +1380,50 @@ impl App {
+@@ -1247,33 +1380,49 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
 +        let mod_snapshot = crate::mod_ui::inline_snapshot(self.mod_render_snapshot());
 +        let mod_dialog_visible = crate::mod_ui::dialog_visible(&mod_snapshot);
++        let mod_holds_keys = self.mod_overlays_allowed() && crate::mod_ui::holds_keys();
 +        let screen = Rect::new(0, 0, screen_size.width, screen_size.height);
 +        let header_rows = crate::mod_ui::header_rows(screen, &mod_snapshot);
 +        let chat_width = crate::mod_ui::chat_area(screen, &mod_snapshot, header_rows).width;
@@ -32561,9 +32562,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..9003cc02898288db0b577653517400d1
 +                crate::mod_ui::render(area, chat_area, frame.buffer, &mod_snapshot);
 +                crate::mod_ui::render_help(area, &mod_snapshot, frame.buffer);
 +                self.chat_widget.note_rendered_width(chat_area.width);
-+                if !crate::mod_ui::holds_keys()
-+                    && let Some((x, y)) = chat_widget.cursor_pos(chat_area)
-+                {
++                if !mod_holds_keys && let Some((x, y)) = chat_widget.cursor_pos(chat_area) {
 +                    frame.set_cursor_style(chat_widget.cursor_style(chat_area));
                      frame.set_cursor_position((x, y));
                  }
@@ -32573,7 +32572,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..9003cc02898288db0b577653517400d1
              Ok(rendered_area)
          })
      }
-@@ -1283,6 +1433,7 @@ impl App {
+@@ -1283,6 +1432,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -35209,7 +35208,7 @@ index fb8babd3d195d18a802ccae87afaafb50041f59f..ce262bbb8e78ae7925106b69f68abe55
                              lines.activity
                          })
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index e2b86c9c1ef01564d7bb72dcdd8e597569140457..140d4a689125c8657ab73d6b587e4e48e576552f 100644
+index e2b86c9c1ef01564d7bb72dcdd8e597569140457..4c73a4937be11f2b6b17dc8a1c0e7585dff3d041 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -416,6 +416,10 @@ pub(crate) enum AppEvent {
@@ -35223,7 +35222,7 @@ index e2b86c9c1ef01564d7bb72dcdd8e597569140457..140d4a689125c8657ab73d6b587e4e48
 
      /// Fork the current thread into a transient side conversation.
      StartSide {
-@@ -515,6 +519,61 @@ pub(crate) enum AppEvent {
+@@ -515,6 +519,60 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -35275,7 +35274,6 @@ index e2b86c9c1ef01564d7bb72dcdd8e597569140457..140d4a689125c8657ab73d6b587e4e48
 +        id: u64,
 +        approved: bool,
 +    },
-+    /// A mod terminal's program asked to copy text; `decision` carries the user's answer to the one prompt per pane.
 +    ModPtyClipboard {
 +        binding: crate::mod_pty::Binding,
 +        session: String,
@@ -35285,7 +35283,7 @@ index e2b86c9c1ef01564d7bb72dcdd8e597569140457..140d4a689125c8657ab73d6b587e4e48
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -666,6 +725,10 @@ pub(crate) enum AppEvent {
+@@ -666,6 +724,10 @@ pub(crate) enum AppEvent {
          nth_user_message: usize,
      },
 
@@ -35296,7 +35294,7 @@ index e2b86c9c1ef01564d7bb72dcdd8e597569140457..140d4a689125c8657ab73d6b587e4e48
      /// Request to exit the application.
      ///
      /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
-@@ -712,6 +775,14 @@ pub(crate) enum AppEvent {
+@@ -712,6 +774,14 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -47120,10 +47118,10 @@ index 0000000000000000000000000000000000000000..85c8d5498650ca65b97be34595306ffd
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0eed4c7377f749e15fa7ca488d64c79fa4886fae
+index 0000000000000000000000000000000000000000..25410849286e94c2d2b3cf9a1295488704d22643
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,417 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -47285,6 +47283,40 @@ index 0000000000000000000000000000000000000000..0eed4c7377f749e15fa7ca488d64c79f
 +        })
 +        .await?;
 +        answer.await.map_err(|_| closed())?
++    }
++
++    async fn trust(&self, call: &SurfaceCall) -> Result<Value, String> {
++        let (program, hash, previous) =
++            codex_omd::program_trust::request(&call.arguments).ok_or("program_trust_invalid")?;
++        let (title, message) = codex_omd::program_trust::prompt(
++            &call.caller,
++            &program,
++            &hash,
++            previous.as_deref(),
++            false,
++        );
++        let confirmers = self.clients.serving("terminal.prompt");
++        if confirmers.is_empty() {
++            return Ok(json!({"status": "declined"}));
++        }
++        let answer = self
++            .clients
++            .surface_call(
++                confirmers,
++                OmdSurfaceCallParams {
++                    caller: call.caller.clone(),
++                    operation: "terminal.prompt".to_string(),
++                    arguments: json!({"kind": "confirm", "title": title, "message": message}),
++                    confirm: None,
++                },
++                || call.lifetime.active(),
++            )
++            .await?;
++        Ok(if answer["status"] == "accepted" {
++            json!({"trusted": true})
++        } else {
++            json!({"status": "declined"})
++        })
 +    }
 +
 +    async fn app_request(&self, call: &SurfaceCall) -> Result<Value, String> {
@@ -47465,6 +47497,13 @@ index 0000000000000000000000000000000000000000..0eed4c7377f749e15fa7ca488d64c79f
 +                let host = Arc::clone(&self.0);
 +                self.0.runtime.spawn(async move {
 +                    let _ = call.reply.send(host.app_request(&call).await);
++                });
++                return Ok(());
++            }
++            _ if operation == codex_omd::program_trust::OPERATION => {
++                let host = Arc::clone(&self.0);
++                self.0.runtime.spawn(async move {
++                    let _ = call.reply.send(host.trust(&call).await);
 +                });
 +                return Ok(());
 +            }
@@ -80751,10 +80790,10 @@ index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5fffc64a38017c18f7b262bd121f2098e46a77fa
+index 0000000000000000000000000000000000000000..0ae6ec9e2ac5bb4151172685883b9bb2e9a5517b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,801 @@
+@@ -0,0 +1,819 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -81262,7 +81301,25 @@ index 0000000000000000000000000000000000000000..5fffc64a38017c18f7b262bd121f2098
 +            .filter(|arguments| arguments.get("raster").is_some())
 +            .and_then(|_| super::expansion::blit_sink(core, lead, &caller));
 +        let thread = lead.thread.to_string();
++        let store = host.root.clone();
 +        let result = tokio::task::spawn_blocking(move || {
++            if request.operation == "process.start"
++                && request.arguments["sandbox"] == "none"
++                && os_access.is_some()
++                && let (Some(path), Some(sha256)) = (
++                    request.arguments["path"].as_str(),
++                    request.arguments["sha256"].as_str(),
++                )
++                && !codex_omd::program_trust::ensure(
++                    &store,
++                    &id,
++                    std::path::Path::new(path),
++                    sha256,
++                    &active,
++                )?
++            {
++                return Err("process_program_declined".to_owned());
++            }
 +            processes.call(
 +                crate::managed_process::ProcessOwner {
 +                    thread: Some(&thread),
@@ -98314,10 +98371,10 @@ index 0000000000000000000000000000000000000000..333060130f2fd47f9b6dd447e77affa8
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5411012990ab97aaea4ed893796edb432cddaecf
+index 0000000000000000000000000000000000000000..720b9b8f3a6c7adbae974aea9c0f57c2fcd00d44
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1615 @@
+@@ -0,0 +1,1631 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -98428,6 +98485,7 @@ index 0000000000000000000000000000000000000000..5411012990ab97aaea4ed893796edb43
 +        || operation == "terminal.prompt"
 +        || operation == "terminal.open"
 +        || (operation == "terminal.pty" && arguments["action"] == "start")
++        || operation == crate::program_trust::OPERATION
 +        || (operation == "app.request"
 +            && arguments["method"]
 +                .as_str()
@@ -98950,7 +99008,7 @@ index 0000000000000000000000000000000000000000..5411012990ab97aaea4ed893796edb43
 +    confirm: Option<String>,
 +    active: Arc<dyn Fn() -> bool + Send + Sync>,
 +) -> Result<PendingReply, BlitError> {
-+    if !SURFACE_OPERATIONS.contains(&operation) {
++    if !SURFACE_OPERATIONS.contains(&operation) && operation != crate::program_trust::OPERATION {
 +        return Err(BlitError::fatal(format!(
 +            "unsupported_host_operation: {operation}"
 +        )));
@@ -99006,6 +99064,21 @@ index 0000000000000000000000000000000000000000..5411012990ab97aaea4ed893796edb43
 +        })
 +        .map_err(BlitError::retryable)?;
 +    Ok(PendingReply { receiver, lifetime })
++}
++
++pub fn trust(caller: &str, arguments: Value, active: &dyn Fn() -> bool) -> Result<Value, String> {
++    let pending = submit_bound(
++        caller,
++        crate::program_trust::OPERATION,
++        arguments,
++        InvocationContext::Event,
++        false,
++        None,
++        None,
++        Arc::new(|| true),
++    )
++    .map_err(|error| error.message)?;
++    wait_classified(pending, active, None).map_err(|error| error.message)
 +}
 +
 +pub fn wait(
@@ -104019,10 +104092,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2357070ef
+index 0000000000000000000000000000000000000000..ec4ecd80122d571509f755e4e58a9a4c017b4aac
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1773 @@
+@@ -0,0 +1,1784 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -105127,6 +105200,17 @@ index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2
 +        {
 +            return Err("exec_program_changed".into());
 +        }
++        if unrestricted.is_some()
++            && !crate::program_trust::ensure(
++                self.data_root,
++                caller.id,
++                &program,
++                &digest,
++                self.active,
++            )?
++        {
++            return Err("exec_program_declined".into());
++        }
 +        let cwd = match (input.cwd.as_deref(), unrestricted) {
 +            (None | Some("") | Some("."), _) => repository.clone(),
 +            (Some(name), Some(_)) if Path::new(name).is_absolute() || relative(name) => repository
@@ -105931,10 +106015,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..37289c249d6276718dc135b516890b6703b28699
+index 0000000000000000000000000000000000000000..3fa1462e6d439f84fc234920dadc1cdb1848547c
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,263 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -105962,6 +106046,7 @@ index 0000000000000000000000000000000000000000..37289c249d6276718dc135b516890b67
 +pub mod plan_routes;
 +pub mod power;
 +pub mod process_raster;
++pub mod program_trust;
 +pub mod resource_data;
 +pub mod route_writes;
 +pub mod scoped_data;
@@ -132712,6 +132797,149 @@ index 0000000000000000000000000000000000000000..c1f5c12542ce890d42bf0d90a3244e46
 +        assert_eq!(*seen.lock().unwrap(), vec![json!(2)]);
 +    }
 +}
+diff --git a/codex-rs/omd/src/program_trust.rs b/codex-rs/omd/src/program_trust.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..c646352e66fd2123157df632f8320e7fc1fd0544
+--- /dev/null
++++ b/codex-rs/omd/src/program_trust.rs
+@@ -0,0 +1,137 @@
++use serde_json::Value;
++use serde_json::json;
++use std::path::Path;
++use std::path::PathBuf;
++
++pub const OPERATION: &str = "program.trust";
++
++fn pins_path(store: &Path) -> PathBuf {
++    store.join("pty-pins.json")
++}
++
++pub fn pinned(store: &Path, owner: &str, program: &Path) -> Option<String> {
++    let pins: Value = serde_json::from_slice(&std::fs::read(pins_path(store)).ok()?).ok()?;
++    pins["pins"][owner][program.to_string_lossy().as_ref()]
++        .as_str()
++        .map(str::to_owned)
++}
++
++pub fn pin(store: &Path, owner: &str, program: &Path, hash: &str) -> Result<(), String> {
++    let path = pins_path(store);
++    let mut pins = std::fs::read(&path)
++        .ok()
++        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++        .filter(|pins| pins["pins"].is_object())
++        .unwrap_or_else(|| json!({"pins": {}}));
++    let owners = pins["pins"].as_object_mut().ok_or("pty_pins_invalid")?;
++    let programs = owners.entry(owner.to_owned()).or_insert_with(|| json!({}));
++    if !programs.is_object() {
++        *programs = json!({});
++    }
++    programs[program.to_string_lossy().as_ref()] = Value::String(hash.to_owned());
++    let temporary = path.with_extension("json.tmp");
++    std::fs::write(
++        &temporary,
++        serde_json::to_vec_pretty(&pins).map_err(|error| error.to_string())?,
++    )
++    .and_then(|()| std::fs::rename(&temporary, &path))
++    .map_err(|error| format!("pty_pin_failed: {error}"))
++}
++
++fn short(hash: &str) -> &str {
++    &hash[..hash.floor_char_boundary(12)]
++}
++
++pub fn prompt(
++    owner: &str,
++    program: &Path,
++    hash: &str,
++    previous: Option<&str>,
++    pane: bool,
++) -> (String, String) {
++    let name = program
++        .file_name()
++        .map_or_else(|| program.to_string_lossy(), |name| name.to_string_lossy());
++    let history = match previous {
++        Some(previous) => format!(
++            "It changed since you allowed sha256 {}, for example after an update.",
++            short(previous)
++        ),
++        None => "This is its first run for this mod.".to_owned(),
++    };
++    let (place, control) = if pane {
++        (
++            " in a terminal pane",
++            " The mod can type into it and read its screen.",
++        )
++    } else {
++        ("", "")
++    };
++    (
++        format!("Run {name} for mod {owner}?"),
++        format!(
++            "Mod {owner} wants to run {} (sha256 {}){place} outside the sandbox, with your HOME and your user's permissions. {history}{control}",
++            program.display(),
++            short(hash)
++        ),
++    )
++}
++
++pub fn ensure(
++    store: &Path,
++    owner: &str,
++    program: &Path,
++    hash: &str,
++    active: &dyn Fn() -> bool,
++) -> Result<bool, String> {
++    let previous = pinned(store, owner, program);
++    if previous.as_deref() == Some(hash) {
++        return Ok(true);
++    }
++    let answer = crate::client_surface::trust(
++        owner,
++        json!({"program": program, "sha256": hash, "previous": previous}),
++        active,
++    )?;
++    if answer["status"] == "declined" {
++        return Ok(false);
++    }
++    pin(store, owner, program, hash)?;
++    Ok(true)
++}
++
++pub fn request(arguments: &Value) -> Option<(PathBuf, String, Option<String>)> {
++    Some((
++        PathBuf::from(arguments["program"].as_str()?),
++        arguments["sha256"].as_str()?.to_owned(),
++        arguments["previous"].as_str().map(str::to_owned),
++    ))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn pins_round_trip_per_owner_and_prompts_name_the_change() {
++        let store = tempfile::tempdir().unwrap();
++        let program = Path::new("/opt/homebrew/bin/lazygit");
++        assert_eq!(pinned(store.path(), "m", program), None);
++        pin(store.path(), "m", program, "aa").unwrap();
++        pin(store.path(), "m", program, "bb").unwrap();
++        assert_eq!(pinned(store.path(), "m", program).as_deref(), Some("bb"));
++        assert_eq!(pinned(store.path(), "other", program), None);
++        let (title, first) = prompt("m", program, &"a".repeat(64), None, true);
++        assert_eq!(title, "Run lazygit for mod m?");
++        assert!(first.contains("in a terminal pane") && first.contains("first run"));
++        let (_, changed) = prompt(
++            "m",
++            program,
++            &"b".repeat(64),
++            Some("é".repeat(10).as_str()),
++            false,
++        );
++        assert!(changed.contains("It changed since you allowed sha256 éééééé,"));
++        assert!(!changed.contains("terminal pane"));
++    }
++}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..4c609671eb333a8968173bdd8f19de0a39daf419
@@ -138019,10 +138247,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb0c3f8840fb03a2f1d18941708bea666894e200
+index 0000000000000000000000000000000000000000..0394c9c607fb3f54522eb17da63d1024a6dcac9b
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2097 @@
+@@ -0,0 +1,2105 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -139883,6 +140111,13 @@ index 0000000000000000000000000000000000000000..cb0c3f8840fb03a2f1d18941708bea66
 +        os_access: Some(&access),
 +        ..caller(&capabilities, &[], Origin::Tool)
 +    };
++    let trust = |access: &codex_omd::ModOsAccess, name: &str| {
++        let program = codex_omd::host::unrestricted_program(access, name, &repository).unwrap();
++        let hash = codex_omd::host::program_hash(&program).unwrap();
++        codex_omd::program_trust::pin(&data, granted.id, &program, &hash).unwrap();
++    };
++    trust(&access, "cat");
++    trust(&access, "env");
 +    let read = host
 +        .call(
 +            &granted,
@@ -139933,6 +140168,7 @@ index 0000000000000000000000000000000000000000..cb0c3f8840fb03a2f1d18941708bea66
 +        programs: strings(&["*"]),
 +        network: false,
 +    };
++    trust(&offline, "/usr/bin/nc");
 +    let offline = Caller {
 +        os_access: Some(&offline),
 +        ..caller(&capabilities, &[], Origin::Tool)
@@ -153125,10 +153361,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba35d2b97ca
+index 0000000000000000000000000000000000000000..d4d8c3ad7a1202696df1a1361f1fe4d2b1d22b37
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2404 @@
+@@ -0,0 +1,2420 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -153500,11 +153736,14 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +    Route(Box<codex_omd::plan_routes::PlanRoute>),
 +    RouteWrite(Box<codex_omd::route_writes::RouteWrite>),
 +    Contract(Option<String>),
-+    Pty(
-+        crate::mod_pty::Binding,
-+        Option<(std::path::PathBuf, String)>,
-+    ),
-+    Pin(std::path::PathBuf, String),
++    Pty(crate::mod_pty::Binding, Option<Pin>),
++}
++
++#[derive(Clone)]
++struct Pin {
++    program: std::path::PathBuf,
++    hash: String,
++    stored: bool,
 +}
 +
 +static CONFIRMED: std::sync::Mutex<std::collections::BTreeMap<u64, Confirmed>> =
@@ -153630,35 +153869,17 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +            call.caller,
 +            open_target(&call.arguments)?
 +        )),
-+        "terminal.pty"
-+            if call.arguments["action"] == "start" && call.arguments["sandbox"] == "none" =>
-+        {
-+            let (program, hash, store) = unrestricted_pty_program(&call.caller, &call.arguments)?;
-+            let previous = crate::mod_pty::pinned(&store, &call.caller, &program);
-+            if previous.as_deref() == Some(hash.as_str()) {
-+                None
-+            } else {
-+                let name = program
-+                    .file_name()
-+                    .map_or_else(|| program.to_string_lossy(), |name| name.to_string_lossy());
-+                let history = match previous {
-+                    Some(previous) => format!(
-+                        "It changed since you allowed sha256 {}, which an update of the program does.",
-+                        &previous[..previous.len().min(12)]
-+                    ),
-+                    None => "This is its first run for this mod.".to_owned(),
-+                };
-+                return Ok(Some((
-+                    Some(format!("Run {name} for mod {}?", call.caller)),
-+                    format!(
-+                        "Mod {} wants to run {} (sha256 {}) in a terminal pane outside the sandbox, with your HOME and your user's permissions. {history} The mod can type into it and read its screen.",
-+                        call.caller,
-+                        program.display(),
-+                        &hash[..12]
-+                    ),
-+                    Some(Confirmed::Pin(program, hash)),
-+                )));
-+            }
++        operation if operation == codex_omd::program_trust::OPERATION => {
++            let (program, hash, previous) = codex_omd::program_trust::request(&call.arguments)
++                .ok_or("program_trust_invalid")?;
++            let (title, prompt) = codex_omd::program_trust::prompt(
++                &call.caller,
++                &program,
++                &hash,
++                previous.as_deref(),
++                false,
++            );
++            return Ok(Some((Some(title), prompt, None)));
 +        }
 +        "terminal.pty" if call.arguments["action"] == "start" => {
 +            Some(crate::mod_pty::start_prompt(&call.caller, &call.arguments)?)
@@ -154067,12 +154288,12 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +        &self,
 +        caller: &str,
 +        arguments: &Value,
-+        pinned: Option<&str>,
++        pin: Option<&Pin>,
 +    ) -> Result<
 +        (
 +            std::process::Command,
 +            std::path::PathBuf,
-+            Option<std::path::PathBuf>,
++            Option<crate::mod_pty::SessionDir>,
 +        ),
 +        String,
 +    > {
@@ -154091,18 +154312,22 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +            let program =
 +                codex_omd::host::unrestricted_program(&access, &argv[0], &paths.repository)?;
 +            let store = paths.store.clone().ok_or("mod store is not configured")?;
-+            let approved = pinned
-+                .map(str::to_owned)
-+                .or_else(|| crate::mod_pty::pinned(&store, caller, &program))
++            let pin = pin
++                .filter(|pin| pin.program == program)
 +                .ok_or("pty_program_unpinned")?;
-+            let hash = codex_omd::host::program_hash(&program)?;
-+            if hash != approved || arguments["sha256"].as_str().is_some_and(|pin| pin != hash) {
++            let hash = if pin.stored {
++                pin.hash.clone()
++            } else {
++                codex_omd::host::program_hash(&program)?
++            };
++            if hash != pin.hash || arguments["sha256"].as_str().is_some_and(|sha| sha != hash) {
 +                return Err("pty_program_changed".into());
 +            }
-+            let mut command = codex_omd::host::unrestricted_command(&access, &program, &[])?;
++            let environment = crate::mod_runtime::exec_environment(caller);
++            let mut command =
++                codex_omd::host::unrestricted_command(&access, &program, &environment)?;
 +            let home = std::env::var_os("HOME").ok_or("pty_home_unavailable")?;
-+            let scratch = store.join("pty-scratch");
-+            let dir = crate::mod_pty::prepare(&scratch, arguments, &mut argv)?;
++            let dir = crate::mod_pty::prepare(&store, true, arguments, &mut argv)?;
 +            command.args(&argv[1..]).current_dir(cwd);
 +            return Ok((command, home.into(), dir));
 +        }
@@ -154118,11 +154343,8 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +        if !cwd.starts_with(&paths.repository) || !cwd.is_dir() {
 +            return Err("pty_cwd_invalid".into());
 +        }
-+        let scratch = paths
-+            .store
-+            .clone()
-+            .ok_or("mod store is not configured")?
-+            .join("pty-scratch");
++        let store = paths.store.clone().ok_or("mod store is not configured")?;
++        let scratch = store.join("pty-scratch");
 +        std::fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
 +        let loopback = match arguments["network"].as_str() {
 +            None if arguments["network"].is_null() => false,
@@ -154138,7 +154360,7 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +            return Err("pty_program_changed".into());
 +        }
 +        argv[0] = program.to_string_lossy().into_owned();
-+        let dir = crate::mod_pty::prepare(&scratch, arguments, &mut argv)?;
++        let dir = crate::mod_pty::prepare(&store, false, arguments, &mut argv)?;
 +        let mut command = crate::mod_runtime::sandboxed_command(
 +            &paths,
 +            &policy,
@@ -154146,12 +154368,7 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +            &scratch,
 +            arguments["write"] == true,
 +            loopback,
-+        )
-+        .inspect_err(|_| {
-+            if let Some(dir) = &dir {
-+                let _ = std::fs::remove_dir_all(dir);
-+            }
-+        })?;
++        )?;
 +        command.current_dir(cwd);
 +        Ok((command, scratch, dir))
 +    }
@@ -154216,14 +154433,47 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +            }
 +            return;
 +        }
++        if let Some(binding) = &binding
++            && call.arguments["action"] == "start"
++            && call.arguments["sandbox"] == "none"
++        {
++            let (program, hash, store) =
++                match unrestricted_pty_program(&call.caller, &call.arguments) {
++                    Ok(found) => found,
++                    Err(error) => {
++                        let _ = call.reply.send(Err(error));
++                        return;
++                    }
++                };
++            let previous = codex_omd::program_trust::pinned(&store, &call.caller, &program);
++            let stored = previous.as_deref() == Some(hash.as_str());
++            let (title, prompt) = codex_omd::program_trust::prompt(
++                &call.caller,
++                &program,
++                &hash,
++                previous.as_deref(),
++                true,
++            );
++            let held = Some(Confirmed::Pty(
++                binding.clone(),
++                Some(Pin {
++                    program,
++                    hash,
++                    stored,
++                }),
++            ));
++            if stored {
++                self.run_mod_surface_call(tui, app_server, call, held).await;
++            } else {
++                self.confirm_mod_surface_call(call, Some(title), prompt, held);
++            }
++            return;
++        }
 +        match confirmation(&call) {
 +            Ok(Some((title, prompt, held))) => {
-+                let held = match (binding, held) {
-+                    (Some(binding), Some(Confirmed::Pin(program, hash))) => {
-+                        Some(Confirmed::Pty(binding, Some((program, hash))))
-+                    }
-+                    (Some(binding), _) => Some(Confirmed::Pty(binding, None)),
-+                    (None, held) => held,
++                let held = match binding {
++                    Some(binding) => Some(Confirmed::Pty(binding, None)),
++                    None => held,
 +                };
 +                self.confirm_mod_surface_call(call, title, prompt, held)
 +            }
@@ -154640,16 +154890,15 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +                return;
 +            }
 +            "terminal.open" => open(&call.arguments),
++            operation if operation == codex_omd::program_trust::OPERATION => {
++                Ok(json!({"trusted": true}))
++            }
 +            "terminal.pty" if call.arguments["action"] == "start" => {
 +                let command = (call.context == codex_omd::app_routes::InvocationContext::User)
 +                    .then_some(())
 +                    .ok_or_else(|| "host_operation_user_only: terminal.pty start".to_owned())
 +                    .and_then(|()| {
-+                        self.mod_shell_command(
-+                            &call.caller,
-+                            &call.arguments,
-+                            pin.as_ref().map(|(_, hash)| hash.as_str()),
-+                        )
++                        self.mod_shell_command(&call.caller, &call.arguments, pin.as_ref())
 +                    });
 +                match (command, pty.as_ref()) {
 +                    (Ok((command, home, dir)), Some(binding)) => {
@@ -154668,10 +154917,13 @@ index 0000000000000000000000000000000000000000..75859b8f1404bac88b884dab86cfbba3
 +                            pin,
 +                            crate::omd::mod_paths().and_then(|paths| paths.store),
 +                        ) {
-+                            (Ok(started), Some((program, hash)), Some(store)) => {
-+                                if let Err(error) =
-+                                    crate::mod_pty::pin(&store, &call.caller, &program, &hash)
-+                                {
++                            (Ok(started), Some(pin), Some(store)) if !pin.stored => {
++                                if let Err(error) = codex_omd::program_trust::pin(
++                                    &store,
++                                    &call.caller,
++                                    &pin.program,
++                                    &pin.hash,
++                                ) {
 +                                    tracing::warn!("terminal program pin not saved: {error}");
 +                                }
 +                                Ok(started)
@@ -162101,10 +162353,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d0831797a917
+index 0000000000000000000000000000000000000000..29b554538e3f4c3f36946d2ba041d0af45d4c460
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,1484 @@
+@@ -0,0 +1,1573 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use base64::Engine;
@@ -162124,6 +162376,9 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +use std::collections::BTreeMap;
 +use std::collections::VecDeque;
 +use std::io::Write;
++use std::os::fd::FromRawFd;
++use std::os::unix::fs::DirBuilderExt;
++use std::os::unix::fs::MetadataExt;
 +use std::os::unix::fs::OpenOptionsExt;
 +use std::os::unix::fs::PermissionsExt;
 +use std::path::Path;
@@ -162292,17 +162547,34 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    exit: Arc<Mutex<Option<i32>>>,
 +    size: (u16, u16),
 +    unrestricted: bool,
-+    dir: Option<PathBuf>,
++    dir: Option<SessionDir>,
 +    component: Option<String>,
 +    reported: bool,
 +    title: Option<String>,
 +    clipboard: Clipboard,
 +}
 +
-+impl Drop for Pane {
++pub(crate) struct SessionDir {
++    path: PathBuf,
++    identity: (u64, u64),
++}
++
++impl SessionDir {
++    fn open(&self) -> Option<std::fs::File> {
++        let dir = std::fs::OpenOptions::new()
++            .read(true)
++            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
++            .open(&self.path)
++            .ok()?;
++        let metadata = dir.metadata().ok()?;
++        ((metadata.dev(), metadata.ino()) == self.identity).then_some(dir)
++    }
++}
++
++impl Drop for SessionDir {
 +    fn drop(&mut self) {
-+        if let Some(dir) = &self.dir {
-+            let _ = std::fs::remove_dir_all(dir);
++        if self.open().is_some() {
++            let _ = std::fs::remove_dir_all(&self.path);
 +        }
 +    }
 +}
@@ -162333,6 +162605,7 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    scope: Scope,
 +    owners: BTreeMap<String, String>,
 +    panes: BTreeMap<(String, String), Pane>,
++    missing: std::collections::BTreeSet<(String, String, String)>,
 +}
 +
 +static SESSIONS: std::sync::LazyLock<Mutex<Sessions>> =
@@ -162416,6 +162689,7 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +        pane.handle.terminate();
 +    }
 +    sessions.panes.clear();
++    sessions.missing.clear();
 +}
 +
 +pub(crate) fn context(epoch: u64, thread: Option<String>) {
@@ -162514,10 +162788,11 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    ))
 +}
 +pub(crate) fn prepare(
-+    scratch: &Path,
++    store: &Path,
++    unrestricted: bool,
 +    arguments: &Value,
 +    argv: &mut [String],
-+) -> Result<Option<PathBuf>, String> {
++) -> Result<Option<SessionDir>, String> {
 +    let files = match &arguments["files"] {
 +        Value::Null => Vec::new(),
 +        Value::Object(files) if files.len() <= FILES => files
@@ -162534,50 +162809,63 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    if files.is_empty() && !argv.iter().skip(1).any(|arg| arg.contains("{dir}")) {
 +        return Ok(None);
 +    }
++    let roots = [
++        store.join("pty-sessions"),
++        store.join("pty-scratch").join("sessions"),
++    ];
 +    static SWEPT: std::sync::Once = std::sync::Once::new();
-+    SWEPT.call_once(|| sweep(&scratch.join("sessions")));
++    SWEPT.call_once(|| roots.iter().for_each(|root| sweep(root)));
++    let root = &roots[usize::from(!unrestricted)];
 +    let unique = std::time::SystemTime::now()
 +        .duration_since(std::time::UNIX_EPOCH)
 +        .unwrap_or_default()
 +        .as_nanos();
-+    let dir = scratch
-+        .join("sessions")
-+        .join(format!("{}-{unique}", std::process::id()));
-+    let create = || -> std::io::Result<()> {
-+        std::fs::create_dir_all(&dir)?;
-+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
++    let path = root.join(format!("{}-{unique}", std::process::id()));
++    let create = || -> std::io::Result<SessionDir> {
++        std::fs::create_dir_all(root)?;
++        if !std::fs::symlink_metadata(root)?.is_dir() {
++            return Err(std::io::Error::other("sessions is not a directory"));
++        }
++        std::fs::DirBuilder::new().mode(0o700).create(&path)?;
++        let metadata = std::fs::symlink_metadata(&path)?;
++        let dir = SessionDir {
++            path: path.clone(),
++            identity: (metadata.dev(), metadata.ino()),
++        };
 +        for (name, text) in &files {
 +            let mut file = std::fs::OpenOptions::new()
 +                .write(true)
 +                .create_new(true)
 +                .mode(0o600)
-+                .open(dir.join(name))?;
++                .custom_flags(libc::O_NOFOLLOW)
++                .open(path.join(name))?;
 +            file.write_all(text.as_bytes())?;
 +        }
-+        Ok(())
++        Ok(dir)
 +    };
-+    if let Err(error) = create() {
-+        let _ = std::fs::remove_dir_all(&dir);
-+        return Err(format!("pty_files_invalid: {error}"));
-+    }
-+    let path = dir.to_string_lossy();
++    let dir = create().map_err(|error| format!("pty_files_invalid: {error}"))?;
++    let shown = dir.path.to_string_lossy();
 +    for arg in argv.iter_mut().skip(1) {
-+        *arg = arg.replace("{dir}", &path);
++        *arg = arg.replace("{dir}", &shown);
 +    }
 +    Ok(Some(dir))
 +}
 +
-+fn sweep(sessions: &Path) {
-+    for entry in std::fs::read_dir(sessions).into_iter().flatten().flatten() {
++fn sweep(root: &Path) {
++    if !std::fs::symlink_metadata(root).is_ok_and(|metadata| metadata.is_dir()) {
++        return;
++    }
++    for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
 +        let name = entry.file_name().to_string_lossy().into_owned();
-+        let Some(pid) = name
-+            .split('-')
-+            .next()
-+            .and_then(|pid| pid.parse::<libc::pid_t>().ok())
-+        else {
++        let Some((pid, unique)) = name.split_once('-') else {
 +            continue;
 +        };
-+        // SAFETY: signal 0 only checks whether the process exists.
++        let Ok(pid) = pid.parse::<libc::pid_t>() else {
++            continue;
++        };
++        if unique.is_empty() || !unique.bytes().all(|b| b.is_ascii_digit()) {
++            continue;
++        }
 +        let gone = pid != std::process::id() as libc::pid_t
 +            && unsafe { libc::kill(pid, 0) } != 0
 +            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
@@ -162596,33 +162884,47 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 +}
 +
-+fn files(dir: Option<&Path>) -> Option<Value> {
-+    let entries = std::fs::read_dir(dir?).ok()?;
++fn files(dir: Option<&SessionDir>) -> Option<Value> {
++    let dir = dir?;
++    let opened = dir.open()?;
++    let entries = std::fs::read_dir(&dir.path).ok()?;
 +    let mut files = serde_json::Map::new();
 +    let mut used = 0;
 +    for entry in entries.flatten() {
 +        let name = entry.file_name().to_string_lossy().into_owned();
-+        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
++        let Ok(c_name) = std::ffi::CString::new(name.as_str()) else {
 +            continue;
 +        };
-+        if !valid_file(&name)
-+            || !metadata.is_file()
++        if !valid_file(&name) || used >= RESULT_BYTES {
++            continue;
++        }
++        let fd = unsafe {
++            libc::openat(
++                std::os::fd::AsRawFd::as_raw_fd(&opened),
++                c_name.as_ptr(),
++                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,
++            )
++        };
++        if fd < 0 {
++            continue;
++        }
++        let file = unsafe { std::fs::File::from_raw_fd(fd) };
++        let Ok(metadata) = file.metadata() else {
++            continue;
++        };
++        if !metadata.is_file()
++            || metadata.nlink() != 1
 +            || used + metadata.len() as usize > RESULT_BYTES
 +        {
 +            continue;
 +        }
 +        let mut bytes = Vec::new();
-+        let read = std::fs::OpenOptions::new()
-+            .read(true)
-+            .custom_flags(libc::O_NOFOLLOW)
-+            .open(entry.path())
-+            .and_then(|file| {
-+                std::io::Read::read_to_end(
-+                    &mut std::io::Read::take(file, (RESULT_BYTES - used) as u64),
-+                    &mut bytes,
-+                )
-+            });
-+        if read.is_ok() {
++        if std::io::Read::read_to_end(
++            &mut std::io::Read::take(file, (RESULT_BYTES - used) as u64),
++            &mut bytes,
++        )
++        .is_ok()
++        {
 +            used += bytes.len();
 +            files.insert(
 +                name,
@@ -162633,60 +162935,16 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    Some(Value::Object(files))
 +}
 +
-+fn pins_path(store: &Path) -> PathBuf {
-+    store.join("pty-pins.json")
-+}
-+
-+pub(crate) fn pinned(store: &Path, owner: &str, program: &Path) -> Option<String> {
-+    let pins: Value = serde_json::from_slice(&std::fs::read(pins_path(store)).ok()?).ok()?;
-+    pins["pins"][owner][program.to_string_lossy().as_ref()]
-+        .as_str()
-+        .map(str::to_owned)
-+}
-+
-+pub(crate) fn pin(store: &Path, owner: &str, program: &Path, hash: &str) -> Result<(), String> {
-+    let path = pins_path(store);
-+    let mut pins = std::fs::read(&path)
-+        .ok()
-+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-+        .filter(|pins| pins["pins"].is_object())
-+        .unwrap_or_else(|| json!({"pins": {}}));
-+    let owners = pins["pins"].as_object_mut().ok_or("pty_pins_invalid")?;
-+    let programs = owners.entry(owner.to_owned()).or_insert_with(|| json!({}));
-+    if !programs.is_object() {
-+        *programs = json!({});
-+    }
-+    programs[program.to_string_lossy().as_ref()] = Value::String(hash.to_owned());
-+    let temporary = path.with_extension("json.tmp");
-+    std::fs::write(
-+        &temporary,
-+        serde_json::to_vec_pretty(&pins).map_err(|error| error.to_string())?,
-+    )
-+    .and_then(|()| std::fs::rename(&temporary, &path))
-+    .map_err(|error| format!("pty_pin_failed: {error}"))
-+}
-+
 +pub(crate) async fn start(
 +    binding: &Binding,
 +    arguments: &Value,
 +    command: std::process::Command,
 +    home: &Path,
-+    dir: Option<PathBuf>,
++    dir: Option<SessionDir>,
 +    frames: crate::tui::FrameRequester,
 +    events: crate::app_event_sender::AppEventSender,
 +) -> Result<Value, String> {
-+    let remove = |dir: &Option<PathBuf>| {
-+        if let Some(dir) = dir {
-+            let _ = std::fs::remove_dir_all(dir);
-+        }
-+    };
-+    let session = match session_name(&arguments["session"]) {
-+        Ok(session) => session,
-+        Err(error) => {
-+            remove(&dir);
-+            return Err(error);
-+        }
-+    };
++    let session = session_name(&arguments["session"])?;
 +    let owner = &binding.owner;
 +    let key = (owner.clone(), session.clone());
 +    let limit = crate::omd::mod_paths()
@@ -162702,16 +162960,9 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    };
 +    {
 +        let sessions = sessions();
-+        let refused = validate(&sessions, binding).and_then(|()| {
-+            if unavailable(&sessions) {
-+                Err("pty_session_exists_or_limit".to_owned())
-+            } else {
-+                Ok(())
-+            }
-+        });
-+        if let Err(error) = refused {
-+            remove(&dir);
-+            return Err(error);
++        validate(&sessions, binding)?;
++        if unavailable(&sessions) {
++            return Err("pty_session_exists_or_limit".into());
 +        }
 +    }
 +    let program = command.get_program().to_string_lossy().into_owned();
@@ -162719,19 +162970,37 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +        .get_args()
 +        .map(|arg| arg.to_string_lossy().into_owned())
 +        .collect::<Vec<_>>();
-+    let Some(cwd) = command.get_current_dir().map(Path::to_path_buf) else {
-+        remove(&dir);
-+        return Err("pty_cwd_invalid".into());
++    let cwd = command
++        .get_current_dir()
++        .map(Path::to_path_buf)
++        .ok_or("pty_cwd_invalid")?;
++    let unrestricted = arguments["sandbox"] == "none";
++    let mut environment = if unrestricted {
++        command
++            .get_envs()
++            .filter_map(|(name, value)| {
++                Some((
++                    name.to_string_lossy().into_owned(),
++                    value?.to_string_lossy().into_owned(),
++                ))
++            })
++            .chain(
++                std::env::var("SSH_AUTH_SOCK")
++                    .ok()
++                    .map(|socket| ("SSH_AUTH_SOCK".to_owned(), socket)),
++            )
++            .collect()
++    } else {
++        ["PATH", "LANG", "USER", "SHELL"]
++            .into_iter()
++            .filter_map(|name| Some((name.to_owned(), std::env::var(name).ok()?)))
++            .collect::<std::collections::HashMap<_, _>>()
 +    };
-+    let mut environment = std::collections::HashMap::from([
++    environment.extend([
 +        ("TERM".to_owned(), "xterm-256color".to_owned()),
++        ("COLORTERM".to_owned(), "truecolor".to_owned()),
 +        ("HOME".to_owned(), home.to_string_lossy().into_owned()),
 +    ]);
-+    for name in ["PATH", "LANG", "USER", "SHELL"] {
-+        if let Ok(value) = std::env::var(name) {
-+            environment.insert(name.to_owned(), value);
-+        }
-+    }
 +    let size = codex_utils_pty::TerminalSize { rows: 24, cols: 80 };
 +    let spawned = match codex_utils_pty::pty::spawn_process(
 +        &program,
@@ -162745,10 +163014,7 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    .await
 +    {
 +        Ok(spawned) => spawned,
-+        Err(error) => {
-+            remove(&dir);
-+            return Err(format!("pty_start_failed: {error}"));
-+        }
++        Err(error) => return Err(format!("pty_start_failed: {error}")),
 +    };
 +    let screen = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
 +        size.rows,
@@ -162782,7 +163048,9 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +            if !replies.is_empty() {
 +                let _ = replier.try_send(replies);
 +            }
-+            deliver(&delivered);
++            if !deliver(&delivered, &reader) {
++                break;
++            }
 +            for text in copies {
 +                events.send(crate::app_event::AppEvent::ModPtyClipboard {
 +                    binding: copied.clone(),
@@ -162796,23 +163064,25 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    });
 +    let status = exit.clone();
 +    let exited_key = key.clone();
++    let exited_screen = screen.clone();
 +    tokio::spawn(async move {
 +        let code = exited.await.unwrap_or(-1);
 +        *status.locked() = Some(code);
-+        deliver(&exited_key);
++        deliver(&exited_key, &exited_screen);
 +        frames.schedule_frame();
 +    });
 +    let mut sessions = sessions();
 +    if let Err(error) = validate(&sessions, binding) {
 +        spawned.session.terminate();
-+        remove(&dir);
 +        return Err(error);
 +    }
 +    if unavailable(&sessions) {
 +        spawned.session.terminate();
-+        remove(&dir);
 +        return Err("pty_session_exists_or_limit".into());
 +    }
++    sessions
++        .missing
++        .retain(|(id, name, _)| (id, name) != (&key.0, &key.1));
 +    sessions.panes.insert(
 +        key,
 +        Pane {
@@ -162821,7 +163091,7 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +            screen,
 +            exit,
 +            size: (size.rows, size.cols),
-+            unrestricted: arguments["sandbox"] == "none",
++            unrestricted,
 +            dir,
 +            component: None,
 +            reported: false,
@@ -162853,7 +163123,7 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +            let exit_code = *pane.exit.locked();
 +            let mut result =
 +                json!({"text": text, "running": exit_code.is_none(), "exit_code": exit_code});
-+            if let Some(files) = files(pane.dir.as_deref()) {
++            if let Some(files) = files(pane.dir.as_ref()) {
 +                result["files"] = files;
 +            }
 +            Ok(result)
@@ -162867,7 +163137,6 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    }
 +}
 +
-+/// Terminal-to-owner signals since the last drain: title, bell, notifications and, once, the exit.
 +fn drain(pane: &mut Pane, session: &str) -> Vec<Value> {
 +    let Some(component) = pane.component.clone() else {
 +        return Vec::new();
@@ -162894,7 +163163,7 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    {
 +        pane.reported = true;
 +        let mut exit = json!({"kind": "exit", "session": session, "exit_code": code});
-+        if let Some(files) = files(pane.dir.as_deref()) {
++        if let Some(files) = files(pane.dir.as_ref()) {
 +            exit["files"] = files;
 +        }
 +        events.push(exit);
@@ -162905,15 +163174,16 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    events
 +}
 +
-+fn deliver(key: &(String, String)) {
-+    let events = sessions()
-+        .panes
-+        .get_mut(key)
-+        .map(|pane| drain(pane, &key.1))
-+        .unwrap_or_default();
++fn deliver(key: &(String, String), screen: &Arc<Mutex<vt100::Parser<Signals>>>) -> bool {
++    let events = match sessions().panes.get_mut(key) {
++        Some(pane) if Arc::ptr_eq(&pane.screen, screen) => drain(pane, &key.1),
++        Some(_) => return false,
++        None => Vec::new(),
++    };
 +    for event in events {
 +        crate::mod_surface::component_event(event);
 +    }
++    true
 +}
 +
 +/// Moves a pane's clipboard permission from `Ask` to `Asking` for the caller that will prompt.
@@ -162955,9 +163225,29 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    focused: bool,
 +) -> Vec<(Line<'static>, Vec<TerminalHyperlink>)> {
 +    let mut sessions = sessions();
-+    let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) else {
++    let Some(binding) = binding else {
 +        return vec![(
-+            Line::from(format!("{prefix}[shell {session} is not running]")),
++            Line::from(format!("{prefix}[{session} is not running]")),
++            Vec::new(),
++        )];
++    };
++    if validate(&sessions, binding).is_ok()
++        && !sessions
++            .panes
++            .contains_key(&(binding.owner.clone(), session.to_owned()))
++        && sessions.missing.insert((
++            binding.owner.clone(),
++            session.to_owned(),
++            component.to_owned(),
++        ))
++    {
++        crate::mod_surface::component_event(json!({
++            "kind": "exit", "session": session, "exit_code": null, "component": component,
++        }));
++    }
++    let Ok(pane) = owned(&mut sessions, binding, session) else {
++        return vec![(
++            Line::from(format!("{prefix}[{session} is not running]")),
 +            Vec::new(),
 +        )];
 +    };
@@ -163040,7 +163330,7 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +        .collect::<Vec<_>>();
 +    if let Some(code) = exited {
 +        lines.push((
-+            Line::from(format!("{prefix}[shell exited with {code}]")),
++            Line::from(format!("{prefix}[{session} exited with {code}]")),
 +            Vec::new(),
 +        ));
 +    }
@@ -163125,6 +163415,13 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    Some(text.into_bytes())
 +}
 +
++pub(crate) fn live(binding: Option<&Binding>, session: &str) -> bool {
++    let mut sessions = sessions();
++    binding
++        .and_then(|binding| owned(&mut sessions, binding, session).ok())
++        .is_some_and(|pane| pane.exit.locked().is_none())
++}
++
 +pub(crate) fn key(binding: Option<&Binding>, session: &str, key: KeyEvent) -> bool {
 +    let mut sessions = sessions();
 +    let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) else {
@@ -163138,7 +163435,6 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    pane.writer.try_send(bytes).is_ok()
 +}
 +
-+/// Forwards a pointer event at a cell of the pane in the program's mouse encoding; without mouse reporting the wheel scrolls.
 +pub(crate) fn mouse(
 +    binding: Option<&Binding>,
 +    session: &str,
@@ -163364,45 +163660,83 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +    }
 +
 +    #[test]
-+    fn session_directories_carry_files_both_ways_and_pins_round_trip() {
++    fn session_directories_carry_files_both_ways_and_refuse_links() {
 +        let store = tempfile::tempdir().unwrap();
 +        let mut argv = vec!["yazi".to_owned(), "--chooser-file={dir}/chosen".to_owned()];
 +        let dir = prepare(
 +            store.path(),
++            true,
 +            &json!({"files": {"config.yml": "a: 1"}}),
 +            &mut argv,
 +        )
 +        .unwrap()
 +        .unwrap();
-+        assert_eq!(argv[1], format!("--chooser-file={}/chosen", dir.display()));
++        assert!(dir.path.starts_with(store.path().join("pty-sessions")));
 +        assert_eq!(
-+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
++            argv[1],
++            format!("--chooser-file={}/chosen", dir.path.display())
++        );
++        assert_eq!(
++            std::fs::metadata(&dir.path).unwrap().permissions().mode() & 0o777,
 +            0o700
 +        );
-+        std::fs::write(dir.join("chosen"), "src/a.rs\n").unwrap();
-+        std::fs::write(dir.join("bad name"), "x").unwrap();
++        std::fs::write(dir.path.join("chosen"), "src/a.rs\n").unwrap();
++        std::fs::write(dir.path.join("bad name"), "x").unwrap();
++        std::fs::write(store.path().join("secret"), "s").unwrap();
++        std::fs::hard_link(store.path().join("secret"), dir.path.join("linked")).unwrap();
 +        assert_eq!(
 +            files(Some(&dir)).unwrap(),
 +            json!({"chosen": "src/a.rs\n", "config.yml": "a: 1"})
++        );
++        let moved = store.path().join("moved");
++        std::fs::rename(&dir.path, &moved).unwrap();
++        std::os::unix::fs::symlink(store.path(), &dir.path).unwrap();
++        assert_eq!(files(Some(&dir)), None);
++        std::fs::remove_file(&dir.path).unwrap();
++        std::fs::rename(&moved, &dir.path).unwrap();
++        let path = dir.path.clone();
++        drop(dir);
++        assert!(!path.exists());
++        let sandboxed = prepare(
++            store.path(),
++            false,
++            &json!({"files": {"a": ""}}),
++            &mut argv.clone(),
++        )
++        .unwrap()
++        .unwrap();
++        assert!(
++            sandboxed
++                .path
++                .starts_with(store.path().join("pty-scratch/sessions"))
 +        );
 +        for files in [
 +            json!({"../x": "a"}),
 +            json!({"a": 1}),
 +            json!({"a": "x".repeat(FILE_BYTES + 1)}),
 +        ] {
-+            assert!(prepare(store.path(), &json!({"files": files}), &mut argv.clone()).is_err());
++            assert!(
++                prepare(
++                    store.path(),
++                    true,
++                    &json!({"files": files}),
++                    &mut argv.clone()
++                )
++                .is_err()
++            );
 +        }
 +        assert!(
-+            prepare(store.path(), &json!({}), &mut vec!["sh".to_owned()])
++            prepare(store.path(), true, &json!({}), &mut vec!["sh".to_owned()])
 +                .unwrap()
 +                .is_none()
 +        );
-+        let program = Path::new("/opt/homebrew/bin/lazygit");
-+        assert_eq!(pinned(store.path(), "m", program), None);
-+        pin(store.path(), "m", program, "aa").unwrap();
-+        pin(store.path(), "m", program, "bb").unwrap();
-+        assert_eq!(pinned(store.path(), "m", program).as_deref(), Some("bb"));
-+        assert_eq!(pinned(store.path(), "other", program), None);
++        let elsewhere = store.path().join("elsewhere");
++        std::fs::create_dir_all(elsewhere.join("999999-1")).unwrap();
++        std::os::unix::fs::symlink(&elsewhere, store.path().join("linked")).unwrap();
++        sweep(&store.path().join("linked"));
++        assert!(elsewhere.join("999999-1").exists());
++        sweep(&elsewhere);
++        assert!(!elsewhere.join("999999-1").exists());
 +    }
 +
 +    #[tokio::test]
@@ -163466,6 +163800,12 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +                .iter()
 +                .any(|(line, _)| line.to_string().contains("not running"))
 +        );
++        rows(Some(&other), "t1", "c", 40, 4, "", false);
++        assert_eq!(
++            sessions().missing.iter().collect::<Vec<_>>(),
++            [&("other".to_owned(), "t1".to_owned(), "c".to_owned())]
++        );
++        assert!(live(Some(&a), "t1") && !live(Some(&other), "t1"));
 +        assert!(
 +            call(&a, &json!({"session": "t1", "action": "read"})).unwrap()["text"]
 +                .as_str()
@@ -163476,6 +163816,7 @@ index 0000000000000000000000000000000000000000..042e6b728c7bc0a96b7f521ddba9d083
 +        retain(1, "admitted", &owners, &Default::default());
 +        assert!(call(&a, &json!({"session": "t1", "action": "read"})).is_ok());
 +        context(2, Some("b".into()));
++        assert!(sessions().missing.is_empty() && !live(Some(&a), "t1"));
 +        assert!(binding("m", Some("b"), &authority).is_err());
 +        assert!(!current(&a));
 +        assert!(call(&a, &json!({"session": "t1", "action": "read"})).is_err());
@@ -165348,10 +165689,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..934447e449fb14aadeeb1368d5cca66358fe007a
+index 0000000000000000000000000000000000000000..48179ea29e6c95eb43f4036025d27ad6288698ce
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1744 @@
+@@ -0,0 +1,1749 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -166741,6 +167082,11 @@ index 0000000000000000000000000000000000000000..934447e449fb14aadeeb1368d5cca663
 +
 +pub(crate) fn os_access(owner: &str) -> Option<codex_omd::ModOsAccess> {
 +    try_with_host(|runtime, _| runtime.grants(owner).and_then(|grants| grants.os_access))
++}
++
++pub(crate) fn exec_environment(owner: &str) -> Vec<String> {
++    try_with_host(|runtime, _| runtime.grants(owner).map(|grants| grants.exec_environment))
++        .unwrap_or_default()
 +}
 +
 +fn owner_grants(runtime: &ModHost) -> BTreeMap<String, codex_omd::ModGrants> {
@@ -170096,10 +170442,10 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983d32d74bf
+index 0000000000000000000000000000000000000000..ffe9bf08d6ae067330155e24855868f741645f84
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5677 @@
+@@ -0,0 +1,5729 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -170258,6 +170604,7 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +    hotkeys: Vec<(String, String)>,
 +    autofocus: Vec<String>,
 +    terminals: BTreeSet<String>,
++    typed: Option<String>,
 +    /// Focus and region before a terminal took the focus, restored when that terminal unmounts.
 +    prior_focus: (Option<String>, Option<String>),
 +    /// Controls that held focus when their overlay's anchor vanished.
@@ -170268,6 +170615,7 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +    anchors: BTreeMap<String, Rect>,
 +    hovered: BTreeMap<String, Region>,
 +    captured: Option<String>,
++    terminal_press: Option<(String, Option<crate::mod_pty::Binding>, u16, u16)>,
 +    focus_areas: Vec<(String, Rect)>,
 +    focus_region: Option<String>,
 +    last_region: Option<String>,
@@ -170975,6 +171323,7 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +    hotkeys: Vec::new(),
 +    autofocus: Vec::new(),
 +    terminals: BTreeSet::new(),
++    typed: None,
 +    prior_focus: (None, None),
 +    parked: BTreeSet::new(),
 +    regions: Vec::new(),
@@ -170983,6 +171332,7 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +    anchors: BTreeMap::new(),
 +    hovered: BTreeMap::new(),
 +    captured: None,
++    terminal_press: None,
 +    focus_areas: Vec::new(),
 +    focus_region: None,
 +    last_region: None,
@@ -173060,10 +173410,13 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +    }
 +    render_overlays(area, snapshot, style, buffer, &mut interaction);
 +    render_dialog(area, chat, snapshot, style, buffer, &mut interaction);
-+    highlight_focus(buffer, &interaction);
++    highlight_focus(buffer, &mut interaction);
 +}
 +
-+fn highlight_focus(buffer: &mut Buffer, interaction: &Interaction) {
++fn highlight_focus(buffer: &mut Buffer, interaction: &mut Interaction) {
++    if interaction.typed != interaction.focused {
++        interaction.typed = None;
++    }
 +    if let Some(focused) = interaction.focused.clone()
 +        && let Some(hitbox) = interaction
 +            .hitboxes
@@ -173071,9 +173424,19 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +            .find(|hitbox| hitbox.id == focused)
 +    {
 +        buffer.set_style(hitbox.area, crate::style::accent_style());
-+        let hint = " Ctrl+] leaves, Ctrl+C cancels ";
++        let terminal = interaction.terminals.contains(&focused);
++        let hint = if terminal {
++            " Ctrl+] back to chat "
++        } else {
++            " Ctrl+] leaves, Ctrl+C cancels "
++        };
 +        let width = hint.len() as u16;
-+        if interaction.key_panes.contains(&focused) && hitbox.area.width >= width + 8 {
++        let shown = if terminal {
++            interaction.typed.is_none()
++        } else {
++            interaction.key_panes.contains(&focused)
++        };
++        if shown && hitbox.area.width >= width + 8 {
 +            buffer.set_string(
 +                hitbox.area.right() - width,
 +                hitbox.area.y,
@@ -173637,7 +174000,7 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +    }
 +    render_overlays(screen, snapshot, style, buffer, &mut interaction);
 +    render_dialog(screen, chat, snapshot, style, buffer, &mut interaction);
-+    highlight_focus(buffer, &interaction);
++    highlight_focus(buffer, &mut interaction);
 +}
 +
 +fn focus_areas(placement: &crate::mod_layout::Placement) -> Vec<(String, Rect)> {
@@ -174628,8 +174991,12 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +    {
 +        if crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key) {
 +            interaction.focused = None;
++        } else if !crate::mod_pty::live(binding.as_ref(), session) {
++            interaction.focused = None;
++            return None;
 +        } else {
 +            crate::mod_pty::key(binding.as_ref(), session, key);
++            interaction.typed = Some(focused);
 +        }
 +        return Some(ModInput::Consumed);
 +    }
@@ -175251,6 +175618,21 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +
 +fn handle_pointer(event: MouseEvent) -> Option<ModPointer> {
 +    let mut interaction = INTERACTION.locked();
++    if matches!(event.kind, MouseEventKind::Drag(_) | MouseEventKind::Up(_))
++        && let Some((session, binding, left, top)) = interaction.terminal_press.clone()
++    {
++        if matches!(event.kind, MouseEventKind::Up(_)) {
++            interaction.terminal_press = None;
++        }
++        crate::mod_pty::mouse(
++            binding.as_ref(),
++            &session,
++            event,
++            event.column.saturating_sub(left),
++            event.row.saturating_sub(top),
++        );
++        return Some(ModPointer::Consumed);
++    }
 +    let top = interaction
 +        .layers
 +        .iter()
@@ -175264,6 +175646,22 @@ index 0000000000000000000000000000000000000000..821d66ed1b917218b1c493b469ccc983
 +        .rev()
 +        .find(|hitbox| hitbox.layer == top && contains(hitbox.area, event.column, event.row))
 +        .cloned();
++    if let (
++        MouseEventKind::Down(_),
++        Some(HitBox {
++            area,
++            target: ComponentTarget::Terminal(session, binding, row),
++            ..
++        }),
++    ) = (event.kind, &hit)
++    {
++        interaction.terminal_press = Some((
++            session.clone(),
++            binding.clone(),
++            area.x,
++            area.y.saturating_sub(*row),
++        ));
++    }
 +    let (consumed, events) = region_pointer(&mut interaction, event, top);
 +    let pressed = events
 +        .iter()
@@ -176029,10 +176427,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b0da3201d611b4acb1a080fb0642d2ccc6e9992c
+index 0000000000000000000000000000000000000000..7c2d020a89eadabb1f68b8ff27fc33440bb604a7
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2469 @@
+@@ -0,0 +1,2491 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -178440,6 +178838,11 @@ index 0000000000000000000000000000000000000000..b0da3201d611b4acb1a080fb0642d2cc
 +            &mut buffer,
 +            snapshot,
 +        );
++        buffer
++            .content
++            .iter()
++            .map(|cell| cell.symbol())
++            .collect::<String>()
 +    };
 +    let press = |code, modifiers| input(KeyEvent::new(code, modifiers), true);
 +    let focus = || {
@@ -178492,7 +178895,24 @@ index 0000000000000000000000000000000000000000..b0da3201d611b4acb1a080fb0642d2cc
 +        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 +    }
 +    assert!(text.contains("[<0;3;2M"), "{text}");
-+    draw(&with);
++    pointer(MouseEvent {
++        kind: MouseEventKind::Up(MouseButton::Left),
++        column: anchor.x + 2,
++        row: 0,
++        modifiers: KeyModifiers::NONE,
++    });
++    for _ in 0..100 {
++        text = screen();
++        if text.contains("[<0;3;1m") {
++            break;
++        }
++        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++    }
++    assert!(text.contains("[<0;3;1m"), "{text}");
++    assert!(INTERACTION.lock().unwrap().terminal_press.is_none());
++    assert!(draw(&with).contains("Ctrl+] back to chat"));
++    press(KeyCode::Char('x'), KeyModifiers::NONE);
++    assert!(!draw(&with).contains("Ctrl+] back to chat"));
 +    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
 +    assert_eq!(focus(), (None, Some("m/term".into())));
 +    press(KeyCode::Char('2'), KeyModifiers::NONE);

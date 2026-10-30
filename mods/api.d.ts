@@ -186,7 +186,7 @@ export type TerminalComponent =
   | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number; pointer?: boolean }
   /** A keyed canvas of `width`×`height` cells (up to 512×256) drawn by `terminal.blit`; `alt` shows until the first frame. */
   | { type: 'raster'; id: string; label: string; alt: string; width?: number; height?: number; pointer?: boolean }
-  | { type: 'terminal'; id: string; label: string; session: string; height?: number; /** `terminal_pty_v2`: entering this component's focus region focuses the terminal. */ autofocus?: boolean }
+  | { type: 'terminal'; id: string; label: string; session: string; height?: number; /** `terminal_pty_v2`: focuses the terminal when it appears with nothing else focused and when its focus region is entered. */ autofocus?: boolean }
   /** A region drawn by the mod's `api.component(module, ...)`; `keys` takes focus on click or Tab, `pointer` sends pointer events. */
   | { type: 'module'; id: string; label: string; module: string; props?: Json; height?: number; keys?: boolean | 'all'; pointer?: boolean }
   | { type: 'slot' }
@@ -541,7 +541,7 @@ export interface Events {
   /** Independent per-channel sequence; restarts at 1 after publisher reclamation (15 minutes idle and no queued events). */
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
   component_event: { input: { component: string; thread_id: string | null; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close' | 'exit' | 'title' | 'bell' | 'notify';
-    /** `terminal_pty_v2` terminal events: `exit` carries `session`, `exit_code` and `files`; `title` carries `title`; `notify` carries `text`. */ session?: string; exit_code?: number; files?: Record<string, string>; title?: string;
+    /** `terminal_pty_v2` terminal events: `exit` carries `session`, `exit_code` (null when the host ended or never had the session) and `files`; `title` carries `title`; `notify` carries `text`. */ session?: string; exit_code?: number | null; files?: Record<string, string>; title?: string;
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
     pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };

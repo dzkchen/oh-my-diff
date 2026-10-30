@@ -505,7 +505,25 @@ async fn run(
             .filter(|arguments| arguments.get("raster").is_some())
             .and_then(|_| super::expansion::blit_sink(core, lead, &caller));
         let thread = lead.thread.to_string();
+        let store = host.root.clone();
         let result = tokio::task::spawn_blocking(move || {
+            if request.operation == "process.start"
+                && request.arguments["sandbox"] == "none"
+                && os_access.is_some()
+                && let (Some(path), Some(sha256)) = (
+                    request.arguments["path"].as_str(),
+                    request.arguments["sha256"].as_str(),
+                )
+                && !codex_omd::program_trust::ensure(
+                    &store,
+                    &id,
+                    std::path::Path::new(path),
+                    sha256,
+                    &active,
+                )?
+            {
+                return Err("process_program_declined".to_owned());
+            }
             processes.call(
                 crate::managed_process::ProcessOwner {
                     thread: Some(&thread),
