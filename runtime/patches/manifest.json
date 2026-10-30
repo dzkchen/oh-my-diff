@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.165.0.patch",
-    "sha256": "47376844a70ac6c15a327209cb6b222bcfb6164e05705e7d35684bc2e56a4410"
+    "sha256": "aad971cabd462fbcd4c7bcb9d14cf27aa703e254028ec0b333946dd6d02178a3"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1411,7 +1411,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "49644c3a9aac485780529341cfd8f44ab21a93dabcd2abf0146f240504699feb"
+      "after": "6b525b689261e71d1d5e60c8e416247202e05fad4cafda66d36ec26f5e0f6b6e"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1479,7 +1479,7 @@
     },
     "codex-rs/omd/src/mods/view.rs": {
       "before": null,
-      "after": "9bb101b2d4bcffca1ad7d17ec47846c7464a3790385a27ed493e33c53632a084"
+      "after": "3274d0f94177715edb81260b2658392e4a415b859b3f1962eca536c428dbc33e"
     },
     "codex-rs/omd/src/mods/view_surface_tests.rs": {
       "before": null,
@@ -1607,7 +1607,7 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "69157a7e1421f74f75a047afbb74e5c38e4997327bcd231137a38c83aa5b8b89"
+      "after": "8872e0175e2fa9ee48d7c243d7d4787e27b4e3765aafe4a5e8fb7ecc93cbb3d9"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,
@@ -1787,11 +1787,11 @@
     },
     "codex-rs/tui/src/app/mod_surface.rs": {
       "before": null,
-      "after": "4be929c5bc8291e6b91d6481ab3852527701fc4e44ed62f9c516710a92916984"
+      "after": "e27e0cf94368e77672edf90a2c8edfc9589a1ef07b890a2a7a0e9ac3a941bb60"
     },
     "codex-rs/tui/src/app/owned_transcript.rs": {
       "before": "6da0da8c0c4440a9aae08ed2f664b707008c59fbd4667a33603b5ecbdc26fa93",
-      "after": "fa12d9575025e66047c6059135f13ee084a18b3577f77213483fb99536d89350"
+      "after": "7e70ac31bacc4cf71fc97b8cd83c4a5a5152294502472eb9bd63459af018acf8"
     },
     "codex-rs/tui/src/app/owned_transcript_browsing_tests.rs": {
       "before": "520028368963ae69feb54c043eaf1631793b33b7725d681228c00159f2493658",
@@ -2375,11 +2375,11 @@
     },
     "codex-rs/tui/src/mod_client.rs": {
       "before": null,
-      "after": "d40075c93e52d17529b6435ca5dff43f6940ba9cb84716935672ada6bc043da0"
+      "after": "04cd55b9e1aaf1b726effc086eaf0b95782e9594affac8ae32c3728f8797898d"
     },
     "codex-rs/tui/src/mod_client_tests.rs": {
       "before": null,
-      "after": "a5d5606c685c60ce0117eaacfc4d652d311b4fb299ae4d485ed0bd7a30d1b436"
+      "after": "7963e081e45cd6bba84580686086d06f01402ea87373614f87e8a92e9f32c630"
     },
     "codex-rs/tui/src/mod_components.rs": {
       "before": null,
@@ -2419,11 +2419,11 @@
     },
     "codex-rs/tui/src/mod_raster.rs": {
       "before": null,
-      "after": "830cf774d29cf5944d002e7f6300afa4c9f5f83a470b0c183c5b89e55c5ef1d3"
+      "after": "683a55818bdba10c5a8dd13c7592ab3907084e65bbb1814acaeef06ebd0e575f"
     },
     "codex-rs/tui/src/mod_raster_tests.rs": {
       "before": null,
-      "after": "e5e011a33d21040ff36d879c4ce9e44fbc3479f11b9f2b8b18121aca9431926e"
+      "after": "31091b391d7d00192fdfeadae363ac44ad7a7b3a24c1c7e6378a8b19b9dbf4e8"
     },
     "codex-rs/tui/src/mod_render.rs": {
       "before": null,
@@ -2547,7 +2547,7 @@
     },
     "codex-rs/tui/src/startup_draft_layout.rs": {
       "before": "a42204939a1309bda21de85a68edc9354adf10f522214d387e8ab2072b344f3b",
-      "after": "c69333793ffaa6c9649fbf49c474f9c179a02a03301b2bd7e26df3d526335a1b"
+      "after": "c8af5f628e2fd8ab0cc81f85d7ff4f71035f46772a04b77d5be7db40263417ec"
     },
     "codex-rs/tui/src/startup_draft_layout_tests.rs": {
       "before": "9831b730e4032990fb2d4b46c8c0b58b4a2fd8eec86acbf171444f6ed48fe010",
@@ -2687,7 +2687,7 @@
     },
     "codex-rs/tui/src/terminal_palette.rs": {
       "before": "c15f3a9d0c4a75c960d89902aa38f1d373066b5265c56147566a842e3cdc1e2e",
-      "after": "1c2c68a43744613edbd3730966f61c7c7d18a0548de88853e0510bb77e41bf3d"
+      "after": "d77220d84abdcd7a360208d7b5354e04d0bd5b1ac080696b2faab418e828e3c2"
     },
     "codex-rs/tui/src/terminal_probe.rs": {
       "before": "297595b22b4cb6f7b0c797677ec2d30f13cb1afdf7e18c4469087a246acd6751",

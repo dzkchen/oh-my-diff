@@ -582,7 +582,7 @@
       "source": "mods/first-party/omd_theme",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; terminal_underlay_v1, terminal_raster_packed_v1, timers_16ms_v1, terminal_panel_v1",
+      "compatibility": "Codex 0.165.0; OMD 1.2.0; mod API 1.0.0; terminal_underlay_v1, terminal_raster_packed_v1, timers_16ms_v1, terminal_panel_navigation_v1; optional terminal_chat_area_v1, terminal_colors_v1, terminal_welcome_area_v1",
       "tested_versions": [
         "Codex 0.165.0",
         "OMD 1.2.0 pre-release (offline checks)",

@@ -29,6 +29,6 @@
       "terminal_welcome_v1",
       "timers_16ms_v1"
     ],
-    "optional_features": ["terminal_chat_area_v1", "terminal_copy_v1", "terminal_image_sample_v1"]
+    "optional_features": ["terminal_chat_area_v1", "terminal_colors_v1", "terminal_copy_v1", "terminal_image_sample_v1", "terminal_welcome_area_v1"]
   }
 }

@@ -29,10 +29,12 @@ While it is on, `/theme` opens its panel; Codex's own syntax-highlighting picker
 Every picture is made of two-cell tiles holding a glyph, tinted over a colour gradient. Choosing a scene applies it
 at once with a circular reveal. On a fresh session the scene shows at full strength in place of the OMD mark and the
 welcome text. Once anything else is on screen it stays behind it, darkened: its colours fill every cell with the
-default background and show through the prompt box, menus such as `/theme` and `/mods` and your submitted
-prompts as raised glass, and its glyphs only
-appear in blank space past the end of each line, so text stays readable and copies never include them. With
-workspace panes, sidebars or docks the picture sits in the chat column and panes get only its darkened colours. The
+default background, and the prompt box, menus such as `/theme` and `/mods` and your submitted prompts become
+frosted glass with the scene faintly visible through them. Its glyphs only appear in blank space past the end of
+each line and never over images, so text stays readable and OMD's copies never include them (the terminal's own
+selection, such as Shift-drag, copies what the screen shows). On a light terminal, text that would be hard to read
+over the dark scene gets a readable colour. With workspace panes, sidebars or docks the picture sits in the chat
+column and panes get only its darkened colours. The
 scene is the preview while the `/theme` panel is open.
 
 ## The panel
@@ -52,7 +54,8 @@ Typed forms: `/theme lagoon`, `/theme off`, `/theme image ~/Pictures/sky.png`, `
 ## When it draws less
 
 - Reduced motion (the system setting or `tui.animations = false`) or animation off: one still frame.
-- `NO_COLOR`, fewer than 60 columns or inline mode (`--no-alt-screen`): no scene.
+- `NO_COLOR`, a 16-colour terminal, fewer than 60 columns or inline mode (`--no-alt-screen`): no scene, and the
+  usual welcome.
 - Sidebars, panels, overlays and dialogs draw over the scene.
 
 ## Needs and limits
@@ -61,5 +64,5 @@ Typed forms: `/theme lagoon`, `/theme off`, `/theme image ~/Pictures/sky.png`, `
   sessions), `events` (frame timer), `lifecycle` (pauses during turns), `builtins` (takes over `/theme`) and `exec`
   (reads `TERM_PROGRAM`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR` and `WEZTERM_EXECUTABLE`).
 - Needs the screen underlay (`terminal_underlay_v1`). Animation runs eight frames a second while the session is idle
-  and sends only the cells that changed.
+  and sends only the changed part of each row; a still or paused scene redraws nothing.
 - A change made in one session reaches other running sessions at their next new session.

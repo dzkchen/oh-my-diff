@@ -222,6 +222,8 @@ export type TerminalClient = {
   welcome?: { columns: number; rows: number } | null;
   /** `terminal_chat_area_v1`: the chat column's cells, beside any sidebar, dock or layout region; null before the first fullscreen draw. */
   chat?: { x: number; y: number; columns: number; rows: number } | null;
+  /** `terminal_colors_v1`: the colours the terminal shows. */
+  colors?: 'truecolor' | '256' | '16';
 };
 /** An external client attached over `omd/client/attach`; `viewport` is null until the client reports one. */
 export type ClientEntry = {

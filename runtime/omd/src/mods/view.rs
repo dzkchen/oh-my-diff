@@ -1352,16 +1352,15 @@ impl ModView {
                 _ => None,
             })
         }
-        if self
-            .underlay
-            .as_ref()
-            .is_some_and(|underlay| underlay.raster == id)
-        {
-            return Some((None, None));
-        }
         self.sites
             .values()
             .find_map(|site| find(&site.components, id))
+            .or_else(|| {
+                self.underlay
+                    .as_ref()
+                    .is_some_and(|underlay| underlay.raster == id)
+                    .then_some((None, None))
+            })
     }
 
     pub fn module(&self, id: &str) -> Option<(&str, &Value)> {

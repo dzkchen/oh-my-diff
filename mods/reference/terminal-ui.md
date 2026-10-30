@@ -453,6 +453,7 @@ rows}`:
 | `columns` and `rows` | The terminal grid. |
 | `welcome` | `terminal_welcome_area_v1`: `{columns, rows}` of the blank area a `welcome` site gets this frame (the chat width beside any sidebar or dock, by the unused transcript height), or null when the welcome cannot show. Size welcome content from it; a change renders the view again. |
 | `chat` | `terminal_chat_area_v1`: `{x, y, columns, rows}` of the chat column this frame (the conversation and prompt box, beside any sidebar, dock or layout region), or null before the first fullscreen draw. Place art relative to the conversation with it; a change renders the view again. |
+| `colors` | `terminal_colors_v1`: the colours the terminal shows, `truecolor`, `256` or `16`. |
 
 `client` is null without a terminal client. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`; a burst of changes renders once per render in progress.
@@ -498,7 +499,8 @@ rect.height` little-endian u32 triplets `[codePoint, fg, bg]`, row by row:
 | `terminal_blit_packed_invalid` | `packed` is not base64, is not 12 bytes a cell, or has a code point or color outside the rules above; the message names the cell. |
 
 Cells and packed updates that reach a raster before its next 16 ms frame merge into that frame, later cells
-overwriting earlier ones, so one timer tick can draw a frame in several calls. The call returns `{frame, queued,
+overwriting earlier ones, so one timer tick can draw a frame in several calls. Cells identical to what the raster
+already shows are dropped: a call that changes nothing returns `queued: 0` and draws no frame. The call returns `{frame, queued,
 frame_ms}`: the frame the update shows in and the frames pending (a picture, then the cells merged after it). Merged
 cells never take more than the raster, so the call returns `{status: 'backpressure', retry_after_ms: 250}` only while
 a pending frame stays undrawn for four ticks (an inactive tab or unplaced layout). Image and pixel frames keep the
@@ -564,16 +566,19 @@ owns it, and later claims become `terminal.conflicts` entries.
 
 - The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
   raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a
-  blit at the new size starts a fresh raster; a reply with `frame: 1` means the raster restarted, so send it whole.
+  blit at the new size starts a fresh raster; a reply with `frame: 1` and `queued: 1` means the raster restarted, so
+  send it whole.
 - It is painted after the transcript and the bottom pane and before selection, layout regions, the sidebar,
   overlays, the `welcome` site and dialogs, so all of those draw over it.
 - Its background colours every cell whose background is the terminal default, and Codex's raised surface (menus,
-  list views, submitted prompts) gets the same colour lifted the way Codex lifts the terminal background. Text with
-  the default colour on a coloured cell gets a readable foreground; explicit colours stay.
-- Its glyphs land only in blank transcript cells: after each row's last character plus a 2-cell gutter, and in
-  empty rows. The prompt box, the footer, popups and copied text never get its glyphs.
-- Image and pixel frames draw nothing. Nothing draws under `NO_COLOR`, with fewer than 256 colours, below 60
-  columns, inline (`--no-alt-screen`) or in an external client.
+  list views, the prompt box, submitted prompts) gets the same colour lifted the way Codex lifts the terminal
+  background. Text with the default colour on a coloured cell gets a readable foreground; explicit colours stay,
+  except on a light terminal, where any that would be hard to read get a readable one.
+- Its glyphs land only in blank cells after each row's last character plus a 2-cell gutter: at full colour in the
+  transcript, faintly (35 %) on the raised surface. Transcript images, the footer and OMD's own copies never get
+  them; the terminal's own selection (for example Shift-drag) copies what the screen shows.
+- Image and pixel frames draw nothing. Nothing draws under `NO_COLOR`, with fewer than 256 colours (`colors: '16'`),
+  below 60 columns, inline (`--no-alt-screen`) or in an external client.
 
 ### Box model (`terminal_box_model_v1`)
 

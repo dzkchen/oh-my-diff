@@ -1,13 +1,15 @@
 export type Rgb = number;
 export type Sample = { label: string; width: number; height: number; rgb: string };
-export type Palette = { tint: [Rgb, Rgb]; body: Rgb; eye: Rgb; accent: Rgb };
-export type Scene = { id: string; name: string; detail: string; palette: Palette; paint(c: Canvas, t: number): void };
+export type Palette = { tint: [Rgb, Rgb]; accent: Rgb };
+export type Scene = { id: string; name: string; detail: string; palette?: Palette; paint(c: Canvas, t: number): void };
 export type Rect = { x: number; y: number; width: number; height: number };
 
 const TEXTURE = '$%St#&*+=@oS';
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const SPACE = 32;
 const REVEAL_MS = 1200;
+const PANE_SHADE = 0.5;
+const GLYPH_SHADE = 0.6;
 export const FRAME_SECONDS = 0.125;
 export const STILL_SECONDS = 24;
 
@@ -16,7 +18,7 @@ const G = (c: Rgb) => c >>> 8 & 255;
 const B = (c: Rgb) => c & 255;
 const clamp = (value: number, low: number, high: number) => value < low ? low : value > high ? high : value;
 const rgb = (r: number, g: number, b: number): Rgb => (Math.round(clamp(r, 0, 255)) << 16) | (Math.round(clamp(g, 0, 255)) << 8) | Math.round(clamp(b, 0, 255));
-export const mix = (a: Rgb, b: Rgb, t: number): Rgb => {
+const mix = (a: Rgb, b: Rgb, t: number): Rgb => {
   const k = clamp(t, 0, 1);
   return rgb(R(a) + (R(b) - R(a)) * k, G(a) + (G(b) - G(a)) * k, B(a) + (B(b) - B(a)) * k);
 };
@@ -199,7 +201,7 @@ function hills(c: Canvas, base: number, waves: [number, number, number][], color
 export const SCENES: Scene[] = [
   {
     id: 'ember', name: 'Ember mark', detail: 'The OMD mark glowing over a banked fire; embers rise and drift on the draft.',
-    palette: { tint: [0x2a140c, 0x14090a], body: 0xff8a3d, eye: 0x1a0d0f, accent: 0xffd27a },
+    palette: { tint: [0x2a140c, 0x14090a], accent: 0xffd27a },
     paint(c, t) {
       c.sky([0x0b0910, 0x1a0d0f, 0x34140a]);
       c.glow(c.cols / 2, c.height + 1, c.height * 0.9, 0xff6a1a, 0.38);
@@ -210,7 +212,7 @@ export const SCENES: Scene[] = [
   },
   {
     id: 'drift', name: 'Cloud drift', detail: 'Dusk clouds sliding past at different heights and speeds over a low sun.',
-    palette: { tint: [0x2b2550, 0x3b2c4f], body: 0xf3c6d4, eye: 0x2b2550, accent: 0xffe0b0 },
+    palette: { tint: [0x2b2550, 0x3b2c4f], accent: 0xffe0b0 },
     paint(c, t) {
       c.sky([0x172347, 0x5a4a86, 0xe39a7f]);
       c.glow(c.cols * 0.72, c.height * 1.05, c.height * 0.75, 0xffc78a, 0.45);
@@ -231,7 +233,7 @@ export const SCENES: Scene[] = [
   },
   {
     id: 'lagoon', name: 'Lagoon', detail: 'Light shafts swaying through shallow water while a sea turtle paddles past; bubbles rise.',
-    palette: { tint: [0x0d4a57, 0x062733], body: 0x7fd9b0, eye: 0x062433, accent: 0xc8fff5 },
+    palette: { tint: [0x0d4a57, 0x062733], accent: 0xc8fff5 },
     paint(c, t) {
       c.sky([0x2a9d9a, 0x0d5466, 0x062433, 0x04131c]);
       for (let i = 0; i < 3; i++) c.shaft(c.cols * (0.18 + 0.32 * i) + 2 * Math.sin(t * 0.25 + i * 2), -0.35, 2.2, 0xbff7ee, 0.2);
@@ -249,7 +251,7 @@ export const SCENES: Scene[] = [
   },
   {
     id: 'jelly', name: 'Jellyfish', detail: 'Three glowing jellyfish pulse and rise through deep water, trailing their tentacles.',
-    palette: { tint: [0x231446, 0x0f0a2b], body: 0xff9fdc, eye: 0x1b0f3d, accent: 0x9fd9ff },
+    palette: { tint: [0x231446, 0x0f0a2b], accent: 0x9fd9ff },
     paint(c, t) {
       c.sky([0x1b0f3d, 0x0d0a29, 0x05061a]);
       c.shaft(c.cols * 0.6, 0.25, 3, 0x6c5bd6, 0.12);
@@ -275,7 +277,7 @@ export const SCENES: Scene[] = [
   },
   {
     id: 'fireflies', name: 'Fireflies', detail: 'A dark treeline under a night sky; fireflies wander and blink with soft halos.',
-    palette: { tint: [0x10261b, 0x0a1a12], body: 0xc9f06b, eye: 0x0b1830, accent: 0xf6ffc2 },
+    palette: { tint: [0x10261b, 0x0a1a12], accent: 0xf6ffc2 },
     paint(c, t) {
       c.sky([0x0b1830, 0x0a1a24, 0x07140e]);
       for (let i = 0; i < Math.round(30 * c.density); i++) c.dot(Math.floor(rand(i, 1, 8) * c.width), Math.floor(rand(i, 2, 8) * c.height * 0.4), '.', 0x9fb0d0, 0.5);
@@ -294,7 +296,7 @@ export const SCENES: Scene[] = [
   },
   {
     id: 'moonlit', name: 'Moonlit night', detail: 'Stars twinkle over rolling hills while a wisp of cloud crosses the moon; now and then a meteor.',
-    palette: { tint: [0x151f45, 0x0c1230], body: 0xdfe6ff, eye: 0x111a3a, accent: 0xffcf7a },
+    palette: { tint: [0x151f45, 0x0c1230], accent: 0xffcf7a },
     paint(c, t) {
       c.sky([0x050816, 0x111a3a, 0x24305c]);
       for (let i = 0; i < Math.round(70 * c.density); i++) {
@@ -324,7 +326,6 @@ export const SCENES: Scene[] = [
   },
   {
     id: 'image', name: 'Your image', detail: 'Your picture drawn as glyph tiles, with a slow light sweep and drifting motes.',
-    palette: { tint: [0x1a1a1a, 0x101010], body: 0xd0d0d0, eye: 0x101010, accent: 0xffffff },
     paint(c, t) {
       const sample = c.sample;
       if (!sample) return c.sky([0x101010, 0x202020]);
@@ -362,8 +363,7 @@ export function samplePalette(sample: Sample): Palette {
   };
   const top = mix(average(Math.floor(sample.height * 0.5), Math.floor(sample.height * 0.75)), 0x000000, 0.6);
   const bottom = mix(average(Math.floor(sample.height * 0.75), sample.height), 0x000000, 0.65);
-  const body = mix(average(0, sample.height), 0xffffff, 0.45);
-  return { tint: [top, bottom], body, eye: bottom, accent: mix(body, 0xffffff, 0.5) };
+  return { tint: [top, bottom], accent: mix(mix(average(0, sample.height), 0xffffff, 0.45), 0xffffff, 0.5) };
 }
 
 export function compose(id: string, previous: string | null, progress: number, width: number, height: number, density: number, sample: Sample | null, t: number): Canvas {
@@ -403,7 +403,7 @@ export function shade(canvas: Canvas, amount: number, cap: number): Canvas {
     const bg = mix(canvas.bg[at], 0x000000, amount);
     const peak = Math.max(R(bg), G(bg), B(bg));
     canvas.bg[at] = peak > cap ? mix(bg, 0x000000, 1 - cap / peak) : bg;
-    canvas.fg[at] = mix(canvas.fg[at], 0x000000, amount * 0.6);
+    canvas.fg[at] = mix(canvas.fg[at], 0x000000, amount * GLYPH_SHADE);
   }
   return canvas;
 }
@@ -413,7 +413,7 @@ export function place(chat: Canvas, width: number, height: number, x: number, y:
   const out = new Canvas(width, height, chat.density, chat.sample);
   for (let row = 0; row < height; row++) {
     const from = Math.min(chat.height - 1, Math.max(0, row - y)) * chat.width;
-    out.bg.fill(mix(mix(chat.bg[from], chat.bg[from + chat.width - 1], 0.5), 0x000000, 0.5), row * width, (row + 1) * width);
+    out.bg.fill(mix(mix(chat.bg[from], chat.bg[from + chat.width - 1], 0.5), 0x000000, PANE_SHADE), row * width, (row + 1) * width);
     if (row < y || row >= y + chat.height) continue;
     const span = Math.min(chat.width, width - x);
     out.glyph.set(chat.glyph.subarray(from, from + span), row * width + x);
@@ -447,18 +447,17 @@ export function pack(frame: Canvas, rect: Rect): string {
   return base64(new Uint8Array(view.buffer));
 }
 
-export function changed(previous: Canvas | null, next: Canvas): Rect | null {
-  if (!previous) return { x: 0, y: 0, width: next.width, height: next.height };
-  let left = next.width, right = -1, top = next.height, bottom = -1;
+export function changed(previous: Canvas, next: Canvas): Rect[] {
+  const out: Rect[] = [];
   for (let y = 0; y < next.height; y++) {
+    let left = -1, right = -1;
     for (let x = 0; x < next.width; x++) {
       const at = y * next.width + x;
       if (previous.glyph[at] === next.glyph[at] && previous.fg[at] === next.fg[at] && previous.bg[at] === next.bg[at]) continue;
-      left = Math.min(left, x);
-      right = Math.max(right, x);
-      top = Math.min(top, y);
-      bottom = y;
+      if (left < 0) left = x;
+      right = x;
     }
+    if (left >= 0) out.push({ x: left, y, width: right - left + 1, height: 1 });
   }
-  return right < 0 ? null : { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+  return out;
 }

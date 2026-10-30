@@ -1692,6 +1692,28 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
 }
 
 #[test]
+fn an_underlay_never_takes_a_raster_another_mod_already_draws() {
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({sites:{dialog:{mode:'replace',components:[{type:'raster',id:'shared',label:'Chart',alt:'chart',width:4,height:2}]}}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let view = host(&temp).terminal_view(json!({}), || true);
+    assert_eq!(view.component_owners["shared"], "fixture");
+    assert_eq!(
+        view.view.raster_declared("shared"),
+        Some((Some(4), Some(2)))
+    );
+}
+
+#[test]
 fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() {
     let source = "export default api => { api.command('view', () => { api.uiState.set('open'); return {terminal:{sites:{dialog:{mode:'replace',components:[{type:'text',id:'own',label:'Own',text:'Visible'}]}}}}; }); api.command('close', () => ({terminal:null})); api.command('change', () => api.uiState.set('changed')); api.command('durable', () => api.state.set('changed')); api.command('bad', () => { api.uiState.set('bad'); return {terminal:{title:'x'.repeat(10000)}}; }); api.on('terminal', () => ({title:'First'})); };";
     let (temp, store, _) = fixture(source, &["commands", "terminal", "store"]);
