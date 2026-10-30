@@ -172684,10 +172684,10 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d89360d5ced2ea4c93ff588b8cf303b2cd2f5762
+index 0000000000000000000000000000000000000000..c3efbc89720718ac721c87811182b8fcdd6d7a5b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5639 @@
+@@ -0,0 +1,5643 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -175509,9 +175509,13 @@ index 0000000000000000000000000000000000000000..d89360d5ced2ea4c93ff588b8cf303b2
 +        width,
 +        height,
 +    );
-+    Paragraph::new(rows.iter().map(|row| borrowed(&row.line)).collect::<Vec<_>>())
-+        .style(panel_style(&snapshot.view))
-+        .render(stage, buffer);
++    Paragraph::new(
++        rows.iter()
++            .map(|row| borrowed(&row.line))
++            .collect::<Vec<_>>(),
++    )
++    .style(panel_style(&snapshot.view))
++    .render(stage, buffer);
 +    mark_links(buffer, stage, &rows);
 +    register_component_targets(stage, rows, 0, &mut interaction);
 +}
