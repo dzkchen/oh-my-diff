@@ -203,11 +203,10 @@ test('other mods set the screen mode on a shown panel, and unregistering that pa
   assert.deepEqual(service('unregister', { id: 'lazygit' }, other).state.mode, { target: 'changes', level: 'full' });
 });
 
-test('while the workspace is off other mods cannot register and see no panels', () => {
-  const off = command('off', null).state;
-  assert.equal(service('register', { id: 'lazygit', title: 'Lazygit', site: 'omd_lazygit/main' }, off).value.error, 'the workspace is off');
+test('while the workspace is off other mods see no panels, and a panel registered then shows once it is on', () => {
+  const off = service('register', { id: 'lazygit', title: 'Lazygit', site: 'omd_lazygit/main' }, command('off', null).state).state;
   assert.deepEqual(service('panels', null, off).value, { panels: [] });
-  assert.deepEqual(service('panels', null, command('on', off).state).value.panels.map(item => item.id), ['changes', 'terminal']);
+  assert.deepEqual(service('panels', null, command('on', off).state).value.panels.map(item => item.id), ['changes', 'terminal', 'lazygit']);
 });
 
 test('other mods register, replace and unregister panels, which join the dock after the built-ins by order', () => {

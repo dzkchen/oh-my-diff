@@ -78,8 +78,11 @@ test('yazi starts in the remembered directory only while it is inside the sessio
 });
 
 test('panel is the default placement; it registers a workspace panel shown in the dock and draws only its site, full placement the screen', () => {
+  assert.equal(defaults.placement, 'panel');
   const panel = command('', { settings: { placement: 'panel' } });
-  assert.deepEqual(ops(panel, 'mods.service'), [{ name: 'omd.workspace', method: 'register', input: { id: 'yazi', title: 'Yazi', site: SITE, show: true } }]);
+  assert.equal(panel.value.display, 'yazi started (Ctrl+] leaves it)');
+  assert.equal(command('', { settings: { placement: 'panel' }, world: { docked: true } }).value.display, 'yazi started in its workspace tab (Ctrl+] leaves it)');
+  assert.deepEqual(ops(panel, 'mods.service'), [{ name: 'omd.workspace', method: 'register', input: { id: 'yazi', title: 'Yazi', site: SITE, show: true } }, { name: 'omd.workspace', method: 'panels', input: null }]);
   assert.deepEqual(panel.state, { running: true, panel: true, dir: null });
   assert.equal(draw(panel.state, 40, {}, { docked: true }).layout, undefined);
   assert.ok(draw(panel.state).layout);

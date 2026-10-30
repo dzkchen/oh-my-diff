@@ -41,12 +41,24 @@ pub fn pin(store: &Path, owner: &str, program: &Path, hash: &str) -> Result<(), 
     crate::fsio::write_json(&path, &pins).map_err(failed)
 }
 
-pub fn allow(store: &Path, owner: &str, name: &str) -> Result<(PathBuf, String), String> {
+pub fn allow(
+    store: &Path,
+    owner: &str,
+    access: &crate::ModOsAccess,
+    name: &str,
+) -> Result<(PathBuf, String), String> {
     let any = crate::ModOsAccess {
         programs: vec!["*".to_owned()],
         network: false,
     };
     let program = crate::host::unrestricted_program(&any, name, Path::new("/dev/null"))?;
+    let base = Path::new(name)
+        .file_name()
+        .and_then(|base| base.to_str())
+        .unwrap_or(name);
+    if !access.allows(name, &program) && !access.allows(base, &program) {
+        return Err(format!("os_access_denied: {name}"));
+    }
     let hash = crate::host::program_hash(&program)?;
     pin(store, owner, &program, &hash)?;
     Ok((program, hash))
@@ -141,8 +153,20 @@ mod tests {
     #[test]
     fn allow_pins_the_resolved_program_hash() {
         let store = tempfile::tempdir().unwrap();
-        let (program, hash) = allow(store.path(), "m", "sh").unwrap();
-        assert_eq!(pinned(store.path(), "m", &program), Some(hash));
+        let access = crate::ModOsAccess {
+            programs: vec!["sh".to_owned()],
+            network: false,
+        };
+        let (program, hash) = allow(store.path(), "m", &access, "sh").unwrap();
+        assert_eq!(pinned(store.path(), "m", &program), Some(hash.clone()));
+        assert_eq!(
+            allow(store.path(), "m", &access, &program.to_string_lossy()),
+            Ok((program, hash))
+        );
+        assert_eq!(
+            allow(store.path(), "m", &access, "ls"),
+            Err("os_access_denied: ls".to_owned())
+        );
     }
 
     #[test]

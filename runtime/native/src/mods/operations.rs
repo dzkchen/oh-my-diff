@@ -784,11 +784,10 @@ fn trust_start(
     if codex_omd::host::unrestricted_program(access, name, repository)? != path {
         return Err("process_program_or_arguments_invalid".to_owned());
     }
-    let hash = codex_omd::host::program_hash(path)?;
-    if hash != sha256 {
+    if codex_omd::host::program_hash(path).ok().as_deref() != Some(sha256) {
         return Err("process_executable_changed".to_owned());
     }
-    if !codex_omd::program_trust::ensure(store, id, path, &hash, active)? {
+    if !codex_omd::program_trust::ensure(store, id, path, sha256, active)? {
         return Err("process_program_declined".to_owned());
     }
     Ok(())

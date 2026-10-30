@@ -71,7 +71,7 @@ export default function activate(api: ModAPI) {
     } catch {}
     api.state.set({ running: true, panel, dir: remembered });
     api.host.tryCall('terminal.pane', { action: 'focus', id: ID });
-    return { display: panel && !full ? 'yazi started in its workspace tab (Ctrl+] leaves it)' : 'yazi started (Ctrl+] leaves it)' };
+    return { display: panel && !full && docked() ? 'yazi started in its workspace tab (Ctrl+] leaves it)' : 'yazi started (Ctrl+] leaves it)' };
   }, { description: 'Run yazi in this session and mention the files you pick; --stop closes it', args_hint: '[path|--stop]' });
 
   const docked = () => {

@@ -43019,7 +43019,7 @@ index c185f40f02df952e3f4fd4d2b96e447d9b382187..e8e435f16c962aa6ec267c62345f2e7f
      let mut modifiers = KeyModifiers::NONE;
      let mut key_name = None;
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index c31c2d4da28603b043aa515701fa84a3539b9e9d..d4a220e5d9b8acddf1183fa2aa8bf585ae322125 100644
+index c31c2d4da28603b043aa515701fa84a3539b9e9d..f559c8373e5fefbb2d8da60d465abb8b4b1a6dbc 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
 @@ -171,6 +171,7 @@ pub use insert_history::insert_history_lines;
@@ -43130,6 +43130,14 @@ index c31c2d4da28603b043aa515701fa84a3539b9e9d..d4a220e5d9b8acddf1183fa2aa8bf585
                  )
                  .await?;
                  app_server = AppServerSession::new(
+@@ -2196,6 +2218,7 @@ async fn run_ratatui_app(
+     .await;
+
+     terminal_restore_guard.restore_silently();
++    let _ = tokio::task::spawn_blocking(crate::mod_pty::shutdown).await;
+     // Mark the end of the recorded session.
+     session_log::log_session_end();
+     // ignore error when collecting usage – report underlying error instead
 diff --git a/codex-rs/tui/src/managed_worktree_tools_tests.rs b/codex-rs/tui/src/managed_worktree_tools_tests.rs
 index d799c52dd3b20b961160beb3a1f543d83eb52f9f..f56cffc99450a6f51d04c0c9a561a4b59ff8c728 100644
 --- a/codex-rs/tui/src/managed_worktree_tools_tests.rs
@@ -59078,10 +59086,10 @@ index 0000000000000000000000000000000000000000..eba78f68f26af276b1ed4025b9a99be0
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4280fce823a2e51464f73ef6f4d74bf1d7cdead
+index 0000000000000000000000000000000000000000..b8719f47aa44cb402e4095528b3a44100bb05b7e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,598 @@
+@@ -0,0 +1,605 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -59401,9 +59409,16 @@ index 0000000000000000000000000000000000000000..f4280fce823a2e51464f73ef6f4d74bf
 +            Ok(Value::String("updated".into()))
 +        }
 +        [command, root, id, program] if command == "trust-program" => {
-+            open(root)?;
++            let access = ModHost::open_validated(store(root)?, validate_tool_schema)?
++                .grants(id)
++                .and_then(|grants| grants.os_access)
++                .ok_or_else(|| {
++                    io::Error::other(format!(
++                        "program_trust_unavailable: {id} is not an active mod with os_access"
++                    ))
++                })?;
 +            let (program, sha256) =
-+                codex_omd::program_trust::allow(std::path::Path::new(root), id, program)
++                codex_omd::program_trust::allow(std::path::Path::new(root), id, &access, program)
 +                    .map_err(io::Error::other)?;
 +            Ok(json!({"pinned": program, "sha256": sha256}))
 +        }
@@ -64564,10 +64579,10 @@ index 0000000000000000000000000000000000000000..2a1112136fdeccf94c23be850f37fd82
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd7132d6c31c1
+index 0000000000000000000000000000000000000000..252d5d7afd1bf085a73c07cea74d0ca1096f04e8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2563 @@
+@@ -0,0 +1,2542 @@
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +#[cfg(target_os = "macos")]
@@ -64886,26 +64901,6 @@ index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd713
 +    ContentLength,
 +    Ndjson,
 +    Raw,
-+}
-+
-+fn program_sha256(path: &Path) -> io::Result<String> {
-+    static HASHES: Mutex<BTreeMap<PathBuf, (codex_omd::FileStamp, String)>> =
-+        Mutex::new(BTreeMap::new());
-+    let stamp = codex_omd::file_stamp(&fs::metadata(path)?);
-+    if let Some((known, sha256)) = HASHES
-+        .lock()
-+        .unwrap_or_else(PoisonError::into_inner)
-+        .get(path)
-+        && *known == stamp
-+    {
-+        return Ok(sha256.clone());
-+    }
-+    let sha256 = crate::execution::hash(&fs::read(path)?);
-+    HASHES
-+        .lock()
-+        .unwrap_or_else(PoisonError::into_inner)
-+        .insert(path.to_path_buf(), (stamp, sha256.clone()));
-+    Ok(sha256)
 +}
 +
 +/// The newest frame waiting for the blit thread; older ones are dropped.
@@ -65337,7 +65332,7 @@ index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd713
 +                        if metadata.len() > 128 * 1024 * 1024 {
 +                            return None;
 +                        }
-+                        let sha256 = program_sha256(&path).ok()?;
++                        let sha256 = codex_omd::host::program_hash(&path).ok()?;
 +                        Some(json!({"name":name,"path":path,"sha256":sha256}))
 +                    })
 +                    .collect::<Vec<_>>();
@@ -65479,8 +65474,7 @@ index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd713
 +                let metadata = fs::metadata(&input.path).map_err(|error| error.to_string())?;
 +                if !metadata.is_file()
 +                    || metadata.len() > 128 * 1024 * 1024
-+                    || program_sha256(&input.path).map_err(|error| error.to_string())?
-+                        != input.sha256
++                    || codex_omd::host::program_hash(&input.path)? != input.sha256
 +                {
 +                    return Err("process_executable_changed".into());
 +                }
@@ -66574,7 +66568,7 @@ index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd713
 +            blit: Some(&sink),
 +        };
 +        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
-+        let sha256 = program_sha256(&sh).unwrap();
++        let sha256 = codex_omd::host::program_hash(&sh).unwrap();
 +        let script = r#"printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
 +        let start = |owner: ProcessOwner<'_>, session: &str, framing: &str| {
 +            processes.call(
@@ -66936,7 +66930,7 @@ index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd713
 +                owner,
 +                "process.start",
 +                json!({"session":"slow","name":"sh","path":sh,
-+            "sha256":program_sha256(&sh).unwrap(),"sandbox":"none","framing":"ndjson",
++            "sha256":codex_omd::host::program_hash(&sh).unwrap(),"sandbox":"none","framing":"ndjson",
 +            "arguments":["-c","sleep 3; cat >/dev/null"]}),
 +                || true,
 +            )
@@ -83478,10 +83472,10 @@ index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..36482a84c7c9696f787752b12fdc0c4f2e0b8439
+index 0000000000000000000000000000000000000000..9a41f0c56af31f6c3afbaa1503362dfaaf393355
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,873 @@
+@@ -0,0 +1,872 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -84268,11 +84262,10 @@ index 0000000000000000000000000000000000000000..36482a84c7c9696f787752b12fdc0c4f
 +    if codex_omd::host::unrestricted_program(access, name, repository)? != path {
 +        return Err("process_program_or_arguments_invalid".to_owned());
 +    }
-+    let hash = codex_omd::host::program_hash(path)?;
-+    if hash != sha256 {
++    if codex_omd::host::program_hash(path).ok().as_deref() != Some(sha256) {
 +        return Err("process_executable_changed".to_owned());
 +    }
-+    if !codex_omd::program_trust::ensure(store, id, path, &hash, active)? {
++    if !codex_omd::program_trust::ensure(store, id, path, sha256, active)? {
 +        return Err("process_program_declined".to_owned());
 +    }
 +    Ok(())
@@ -136185,10 +136178,10 @@ index 0000000000000000000000000000000000000000..c1f5c12542ce890d42bf0d90a3244e46
 +}
 diff --git a/codex-rs/omd/src/program_trust.rs b/codex-rs/omd/src/program_trust.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fa9fcba67e619a406c6d9b1d5114964855846248
+index 0000000000000000000000000000000000000000..992d0e713c9b58cb92c9e06b757dc2f9303c7756
 --- /dev/null
 +++ b/codex-rs/omd/src/program_trust.rs
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,191 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::path::Path;
@@ -136232,12 +136225,24 @@ index 0000000000000000000000000000000000000000..fa9fcba67e619a406c6d9b1d51149648
 +    crate::fsio::write_json(&path, &pins).map_err(failed)
 +}
 +
-+pub fn allow(store: &Path, owner: &str, name: &str) -> Result<(PathBuf, String), String> {
++pub fn allow(
++    store: &Path,
++    owner: &str,
++    access: &crate::ModOsAccess,
++    name: &str,
++) -> Result<(PathBuf, String), String> {
 +    let any = crate::ModOsAccess {
 +        programs: vec!["*".to_owned()],
 +        network: false,
 +    };
 +    let program = crate::host::unrestricted_program(&any, name, Path::new("/dev/null"))?;
++    let base = Path::new(name)
++        .file_name()
++        .and_then(|base| base.to_str())
++        .unwrap_or(name);
++    if !access.allows(name, &program) && !access.allows(base, &program) {
++        return Err(format!("os_access_denied: {name}"));
++    }
 +    let hash = crate::host::program_hash(&program)?;
 +    pin(store, owner, &program, &hash)?;
 +    Ok((program, hash))
@@ -136332,8 +136337,20 @@ index 0000000000000000000000000000000000000000..fa9fcba67e619a406c6d9b1d51149648
 +    #[test]
 +    fn allow_pins_the_resolved_program_hash() {
 +        let store = tempfile::tempdir().unwrap();
-+        let (program, hash) = allow(store.path(), "m", "sh").unwrap();
-+        assert_eq!(pinned(store.path(), "m", &program), Some(hash));
++        let access = crate::ModOsAccess {
++            programs: vec!["sh".to_owned()],
++            network: false,
++        };
++        let (program, hash) = allow(store.path(), "m", &access, "sh").unwrap();
++        assert_eq!(pinned(store.path(), "m", &program), Some(hash.clone()));
++        assert_eq!(
++            allow(store.path(), "m", &access, &program.to_string_lossy()),
++            Ok((program, hash))
++        );
++        assert_eq!(
++            allow(store.path(), "m", &access, "ls"),
++            Err("os_access_denied: ls".to_owned())
++        );
 +    }
 +
 +    #[test]
@@ -166378,10 +166395,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f68c7f2abb357916f206c149afaa95bceadd8cc5
+index 0000000000000000000000000000000000000000..8c8a256e9912e6e10a66c8605fe58a322b463534
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,1779 @@
+@@ -0,0 +1,1862 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use crate::terminal_palette::StdoutColorLevel;
@@ -166714,6 +166731,16 @@ index 0000000000000000000000000000000000000000..f68c7f2abb357916f206c149afaa95bc
 +    )
 +}
 +
++static HUNG_UP: Mutex<Vec<(std::time::Instant, codex_utils_pty::ProcessHandle)>> =
++    Mutex::new(Vec::new());
++
++fn prune_hung_up() -> bool {
++    let now = std::time::Instant::now();
++    let mut hung_up = HUNG_UP.locked();
++    hung_up.retain(|(deadline, handle)| !handle.has_exited() && *deadline > now);
++    hung_up.is_empty()
++}
++
 +fn hang_up(handle: codex_utils_pty::ProcessHandle) {
 +    if handle.has_exited()
 +        || handle
@@ -166722,12 +166749,12 @@ index 0000000000000000000000000000000000000000..f68c7f2abb357916f206c149afaa95bc
 +    {
 +        return;
 +    }
++    let deadline = std::time::Instant::now() + HANGUP_GRACE;
++    HUNG_UP.locked().push((deadline, handle));
 +    std::thread::spawn(move || {
-+        let deadline = std::time::Instant::now() + HANGUP_GRACE;
-+        while !handle.has_exited() && std::time::Instant::now() < deadline {
++        while !prune_hung_up() && std::time::Instant::now() < deadline {
 +            std::thread::sleep(std::time::Duration::from_millis(50));
 +        }
-+        drop(handle);
 +    });
 +}
 +
@@ -166736,6 +166763,13 @@ index 0000000000000000000000000000000000000000..f68c7f2abb357916f206c149afaa95bc
 +        hang_up(pane.handle);
 +    }
 +    sessions.missing.clear();
++}
++
++pub(crate) fn shutdown() {
++    clear(&mut sessions());
++    while !prune_hung_up() {
++        std::thread::sleep(std::time::Duration::from_millis(50));
++    }
 +}
 +
 +pub(crate) fn context(epoch: u64, thread: Option<String>) {
@@ -167895,6 +167929,72 @@ index 0000000000000000000000000000000000000000..f68c7f2abb357916f206c149afaa95bc
 +        }
 +        assert!(hung.exists());
 +        context(2, None);
++    }
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn shutdown_kills_panes_that_ignore_the_hangup() {
++        let _restore = test_scope();
++        let owners = BTreeMap::from([("m".to_owned(), "source".to_owned())]);
++        context(1, Some("a".into()));
++        retain(1, "admitted", &owners, &Default::default());
++        let authority = codex_omd::client_surface::Authority {
++            epoch: 1,
++            admission: codex_omd::client_surface::admission(),
++            configuration: "admitted".into(),
++            source: "source".into(),
++        };
++        let a = binding("m", Some("a"), &authority).unwrap();
++        let dir = tempfile::tempdir().unwrap();
++        let mut pids = Vec::new();
++        for session in ["t1", "t2"] {
++            std::fs::create_dir(dir.path().join(session)).unwrap();
++            let mut command = std::process::Command::new("/bin/sh");
++            command
++                .args([
++                    "-c",
++                    "trap '' HUP; echo $$ > pid; while :; do sleep 1; done",
++                ])
++                .current_dir(dir.path().join(session));
++            start(
++                &a,
++                &json!({"session": session}),
++                command,
++                dir.path(),
++                None,
++                crate::tui::FrameRequester::test_dummy(),
++                events(),
++            )
++            .await
++            .unwrap();
++            let pid = dir.path().join(session).join("pid");
++            for _ in 0..100 {
++                if std::fs::read_to_string(&pid).is_ok_and(|text| text.ends_with('\n')) {
++                    break;
++                }
++                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++            }
++            pids.push(
++                std::fs::read_to_string(&pid)
++                    .unwrap()
++                    .trim()
++                    .parse::<libc::pid_t>()
++                    .unwrap(),
++            );
++        }
++        call(&a, &json!({"session": "t1", "action": "stop"})).unwrap();
++        tokio::task::spawn_blocking(shutdown).await.unwrap();
++        for pid in pids {
++            let mut gone = false;
++            for _ in 0..25 {
++                if unsafe { libc::kill(pid, 0) } != 0 {
++                    gone = true;
++                    break;
++                }
++                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++            }
++            assert!(gone, "pane {pid} survived shutdown");
++        }
 +    }
 +
 +    #[tokio::test]

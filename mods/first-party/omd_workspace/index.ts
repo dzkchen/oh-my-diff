@@ -638,7 +638,6 @@ export default function activate(api: ModAPI) {
       const placement = raw.placement === undefined ? {} : { placement: { beside: spot.beside as string, edge: spot.edge as Edge, ...(share === undefined ? {} : { share: Math.round(share as number) }) } };
       const panel: Panel = { id, title, site: where, ...(tabs ? { tabs: tabs as Tab[] } : {}), ...(typeof raw.order === 'number' && Number.isFinite(raw.order) ? { order: raw.order } : {}), ...placement };
       return changed(state => {
-        if (state.off) return refuse('the workspace is off');
         const others = state.registered.filter(item => item.id !== id);
         const taken = new Set([...BUILTIN, ...commands, ...others].flatMap(sitesOf));
         if (sitesOf(panel).some((name, index, all) => taken.has(name) || all.indexOf(name) !== index)) return refuse('site in use');

@@ -11,7 +11,6 @@ const HINT = 'Install it: https://github.com/jesseduffield/lazygit#installation 
 const tell = (path: string, suffix: string, args: string) => `f=${path}; case "$f" in /*) ;; *) f="$PWD/$f";; esac; printf '\\033]9;${EDIT}%s:${suffix}\\007' "$f"${args} > /dev/tty`;
 const CONFIG = JSON.stringify({ os: { edit: tell('{{filename}}', '', ''), editAtLine: tell('{{filename}}', '%s', ' {{line}}'), openDirInEditor: tell('{{dir}}', '', ''), editInTerminal: false } });
 const IDLE = 'lazygit is not running in this thread; /lazygit starts it.';
-let userConfig: string | null = null;
 const plain = (path: string) => path.split('/').every(part => part !== '' && part !== '.' && part !== '..');
 const mention = (path: string) => (/[\s\x22]|\W$/.test(path) ? `@${JSON.stringify(path)}` : `@${path}`);
 const lastLine = (text: string) => text.split('\n').map(line => line.trim()).filter(Boolean).pop()?.slice(0, 200) ?? '';
@@ -39,8 +38,9 @@ export default function activate(api: ModAPI) {
     const path = file.slice(root.length);
     if (settings.edit !== 'composer') {
       const opened = api.host.tryCall('terminal.open', { path, editor: true, ...(line > 0 ? { line } : {}) });
-      if (opened.ok && 'opened' in opened.value) return;
-      api.host.tryCall('terminal.notice', { text: `Could not open ${path} in an editor: set editor in host.json or edit: composer in the mod settings. Mentioning it instead.`, kind: 'warning' });
+      if (opened.ok) return;
+      const why = opened.error.includes('terminal_open_editor_unconfigured') ? 'set editor in host.json or edit: composer in the mod settings' : opened.error;
+      api.host.tryCall('terminal.notice', { text: `Could not open ${path} in an editor (${why}). Mentioning it instead.`, kind: 'warning' });
     }
     const { revision } = api.host.call('composer.read', null);
     api.host.call('composer.write', { revision, edit: { kind: 'insert', text: `${mention(path)} ` } });
@@ -63,16 +63,14 @@ export default function activate(api: ModAPI) {
     }
     const { cwd } = api.session();
     const path = given.startsWith('/') ? given : given ? `${cwd}/${given}` : cwd;
-    if (userConfig === null) {
-      const dir = api.host.tryCall('exec.run', { program: 'lazygit', argv: ['-cd'], sandbox: 'none', timeout_ms: 5000 });
-      if (!dir.ok) return { display: dir.error.startsWith('exec_program_declined') ? 'lazygit start declined' : dir.error.includes('program_unavailable') ? `Cannot run lazygit. ${HINT}` : `lazygit did not start: ${dir.error}` };
-      const config = dir.value.exit_code === 0 && dir.value.stdout.trim() ? `${dir.value.stdout.trim()}/config.yml` : null;
-      const exists = config ? api.host.tryCall('exec.run', { program: '/bin/test', argv: ['-f', config], timeout_ms: 5000 }) : null;
-      if (exists?.ok) userConfig = exists.value.exit_code === 0 ? `${config},` : '';
-    }
+    const dir = api.host.tryCall('exec.run', { program: 'lazygit', argv: ['-cd'], sandbox: 'none', timeout_ms: 5000 });
+    if (!dir.ok) return { display: dir.error.startsWith('exec_program_declined') ? 'lazygit start declined' : dir.error.includes('program_unavailable') ? `Cannot run lazygit. ${HINT}` : `lazygit did not start: ${dir.error}` };
+    const config = dir.value.exit_code === 0 && dir.value.stdout.trim() ? `${dir.value.stdout.trim()}/config.yml` : null;
+    const exists = config ? api.host.tryCall('exec.run', { program: '/bin/test', argv: ['-f', config], timeout_ms: 5000 }) : null;
+    const userConfig = exists?.ok && exists.value.exit_code === 0 ? `${config},` : '';
     const started = api.host.tryCall('terminal.pty', {
       action: 'start', session: SESSION, program: 'lazygit', cwd: path, sandbox: 'none',
-      argv: ['-p', path, '--use-config-file', `${userConfig ?? ''}{dir}/omd.yml`], files: { 'omd.yml': CONFIG },
+      argv: ['-p', path, '--use-config-file', `${userConfig}{dir}/omd.yml`], files: { 'omd.yml': CONFIG },
     });
     if (!started.ok) return { display: started.error.includes('program_unavailable') ? `Cannot run lazygit. ${HINT}` : started.error.includes('pty_cwd_invalid') ? `No such directory: ${path}` : `lazygit did not start: ${started.error}` };
     if (!('running' in started.value)) return { display: 'lazygit start declined' };
@@ -85,7 +83,7 @@ export default function activate(api: ModAPI) {
     } catch {}
     api.state.set({ running: true, panel });
     api.host.tryCall('terminal.pane', { action: 'focus', id: ID });
-    return { display: panel && !full ? 'lazygit started in its workspace tab (Ctrl+] leaves it)' : 'lazygit started (Ctrl+] leaves it)' };
+    return { display: panel && !full && docked() ? 'lazygit started in its workspace tab (Ctrl+] leaves it)' : 'lazygit started (Ctrl+] leaves it)' };
   }, { description: 'Run lazygit in this session; --stop closes it', args_hint: '[path|--stop]' });
 
   const docked = () => {

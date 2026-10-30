@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.165.0.patch",
-    "sha256": "8b203794aefdfc30df8c23f732559e455459c31533d2d8ad25dd6414fc50471a"
+    "sha256": "8b653a0b6b4fee7189992cc928cf95031f21c131ce9d0f331882b8bfd62d10f9"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1035,7 +1035,7 @@
     },
     "codex-rs/ext/omd/src/bin/omd-mod.rs": {
       "before": null,
-      "after": "c2356f6774859baa227f9888256ec236f7eb2c4ba3e0b680daf0db92ce80e7ab"
+      "after": "21714b697a21b2e15e1991a8e2a491d94a5e73c4132d0312cf5d6a3581507670"
     },
     "codex-rs/ext/omd/src/clients.rs": {
       "before": null,
@@ -1083,7 +1083,7 @@
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
-      "after": "a37fad0c14924ab95afe1d8098345aceaf00464ec4c527a518c2afafe9067e3c"
+      "after": "74e384b7903d643b4d1acc793083a6615ee9c24db0980e18c6d83bca05313a2b"
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
@@ -1163,7 +1163,7 @@
     },
     "codex-rs/ext/omd/src/mods/operations.rs": {
       "before": null,
-      "after": "7d91d5096cdc2189590c53bdaf275005da08a4339b61a42190bdfdaae174260c"
+      "after": "d2001cab604faf7f1bed51b3e23d5fcb665a1f1147ecc1c60877ad59e19c13ea"
     },
     "codex-rs/ext/omd/src/mods/peering.rs": {
       "before": null,
@@ -1583,7 +1583,7 @@
     },
     "codex-rs/omd/src/program_trust.rs": {
       "before": null,
-      "after": "536184a03f2b09b5aa3cdfdc5e349dcd9bfecbf9841b73e98da226f20d73dce3"
+      "after": "1b2706ad2d7ca256dd21baf2ab2c4df345d5d39153690dcf28e12457ce03add1"
     },
     "codex-rs/omd/src/resource_data.rs": {
       "before": null,
@@ -2439,7 +2439,7 @@
     },
     "codex-rs/tui/src/lib.rs": {
       "before": "3d4525c34ee68b3a3766d2fb72384ad4c933d21a86f4b5e3790a394e7703914d",
-      "after": "75a8dd1d93e63216592eaeb990fd20cfee2e4d48406c4408464a2f1dcf201446"
+      "after": "796b74da7d3fbc1d7053e6508c7ed6658c10871807d435051e5dc036b1be4026"
     },
     "codex-rs/tui/src/managed_worktree_tools_tests.rs": {
       "before": "b6018fbf22d7525ecb0b84675d26213935be774b6e4b2165e8f37bfd19a41f02",
@@ -2487,7 +2487,7 @@
     },
     "codex-rs/tui/src/mod_pty.rs": {
       "before": null,
-      "after": "13d042281a789570a36e5b78950f7ec75dff9030f637c5207ee84327e5f2dd93"
+      "after": "15036df1b0a91170430408ab6ad34ddea8f683aadde66dfad400546c8542d843"
     },
     "codex-rs/tui/src/mod_raster.rs": {
       "before": null,

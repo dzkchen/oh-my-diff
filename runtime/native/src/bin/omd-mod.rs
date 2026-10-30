@@ -317,9 +317,16 @@ fn run(args: &[String]) -> io::Result<Value> {
             Ok(Value::String("updated".into()))
         }
         [command, root, id, program] if command == "trust-program" => {
-            open(root)?;
+            let access = ModHost::open_validated(store(root)?, validate_tool_schema)?
+                .grants(id)
+                .and_then(|grants| grants.os_access)
+                .ok_or_else(|| {
+                    io::Error::other(format!(
+                        "program_trust_unavailable: {id} is not an active mod with os_access"
+                    ))
+                })?;
             let (program, sha256) =
-                codex_omd::program_trust::allow(std::path::Path::new(root), id, program)
+                codex_omd::program_trust::allow(std::path::Path::new(root), id, &access, program)
                     .map_err(io::Error::other)?;
             Ok(json!({"pinned": program, "sha256": sha256}))
         }

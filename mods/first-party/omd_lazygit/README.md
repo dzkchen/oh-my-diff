@@ -17,11 +17,11 @@ It runs `lazygit` outside the sandbox with your real `HOME`, network, your SSH a
 | Command | What it does |
 | --- | --- |
 | `/lazygit [path]` | Start lazygit; while it runs, focus it again |
-| `/lazygit --stop` (or `stop`) | Close it |
+| `/lazygit --stop` (or `stop`) | Close it; open a directory named `stop` with `/lazygit ./stop` |
 
 Ctrl+] leaves lazygit for the prompt; after you enter its workspace panel from the dock, the first Ctrl+] goes back to the panel and a second to the prompt. Quitting lazygit (`q`) closes it, and a failed exit shows lazygit's last output line in a notice. Entering its region with Ctrl+] or a click focuses it again. A path that doesn't exist shows `No such directory`.
 
-Pressing `e` (edit) on a file or folder in lazygit hands it back to OMD, which does what the `edit` setting says. Lazygit's `os.edit`, `os.editAtLine` and `os.openDirInEditor` are replaced for this run only by a small config file that sends the path and line to OMD. If no editor is set in `host.json` or the open is declined, a notice says so and the `@path` mention is inserted instead. Edits lazygit waits for, such as a commit message, open your `EDITOR` inside the pane.
+Pressing `e` (edit) on a file or folder in lazygit hands it back to OMD, which does what the `edit` setting says. Lazygit's `os.edit`, `os.editAtLine` and `os.openDirInEditor` are replaced for this run only by a small config file that sends the path and line to OMD. If no editor is set in `host.json` or it fails to start, a notice says why and the `@path` mention is inserted instead; declining the confirmation does neither. Edits lazygit waits for, such as a commit message, open your `EDITOR` inside the pane.
 
 ## Settings
 
@@ -32,7 +32,7 @@ Pressing `e` (edit) on a file or folder in lazygit hands it back to OMD, which d
 
 ## Needs and limits
 
-- Your own lazygit config still loads: the mod finds its folder with `lazygit -cd` and passes `config.yml` there first, then its injected file, through `--use-config-file`. Your files are never changed. If `lazygit -cd` fails, only the injected file is used and your config is not loaded. The folder is looked up once per OMD run, so a config file created later is picked up after a reload. `LG_CONFIG_FILE` is ignored.
+- Your own lazygit config still loads: the mod finds its folder with `lazygit -cd` and passes `config.yml` there first, then its injected file, through `--use-config-file`. Your files are never changed. If `lazygit -cd` fails, only the injected file is used and your config is not loaded. The folder is looked up at every start. `LG_CONFIG_FILE` is ignored.
 - Only files inside the session root are opened or mentioned; others show a notice.
 - Needs the `terminal_pty_v2` host feature. Without `omd_workspace`, `panel` falls back to `full`.
 - One lazygit per thread. It stops when you switch threads or OMD reloads, and its layout goes with it. If the workspace is turned off or the panel is removed while it runs, lazygit moves to the full screen layout.

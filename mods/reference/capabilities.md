@@ -93,7 +93,8 @@ needs `exec`.
 - Every unsandboxed `exec.run`, `process.start` and `terminal.pty` start asks once per mod and binary ("Run NAME for
   mod ID?") and again when the binary's hash changes, as after an upgrade; a callback outside a command waits for the
   answer. The three share the pins in `program-pins.json` in the mod store; `omd-mod trust-program STORE MOD_ID PROGRAM`
-  pins a binary ahead of time for headless runs, where an unpinned run fails `program_unconfirmed`. A declined prompt fails
+  pins a binary ahead of time for headless runs, where an unpinned run fails `program_unconfirmed` naming the resolved
+  path to pass as PROGRAM; MOD_ID must be an active mod whose `os_access` lists it. A declined prompt fails
   `exec_program_declined` or `process_program_declined`, and a terminal start returns `{status: 'declined'}`.
 
 ### `approves` manifest field

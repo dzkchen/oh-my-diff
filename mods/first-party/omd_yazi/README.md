@@ -17,7 +17,7 @@ It runs `yazi` outside the sandbox with your real `HOME`, without network, and w
 | Command | What it does |
 | --- | --- |
 | `/yazi [path]` | Start yazi in `path` (relative to the session directory); while it runs, focus it again |
-| `/yazi --stop` (or `stop`) | Close it without inserting mentions |
+| `/yazi --stop` (or `stop`) | Close it without inserting mentions; open a directory named `stop` with `/yazi ./stop` |
 
 Pick files with yazi's open action (Enter) or its chooser keys. When yazi quits (`q`), the picked paths are inserted at the prompt's cursor as `@relative/path`, `@"quoted path"` when the path has spaces. Ctrl+] leaves yazi for the prompt without closing it; after you enter its workspace panel from the dock, the first Ctrl+] goes back to the panel and a second to the prompt. A failed exit shows yazi's last output line in a notice.
 

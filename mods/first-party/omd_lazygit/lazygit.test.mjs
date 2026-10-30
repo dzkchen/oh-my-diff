@@ -39,8 +39,8 @@ function run(event, payload, { state = null, settings = {}, name, world = {} } =
       case 'composer.read': return { text: '', cursor: 0, selection: null, revision: 7, attachments: [], suggestion: null };
       case 'composer.write': return { applied: true };
       case 'terminal.open':
-        if (world.noEditor) throw new Error('editor_unavailable');
-        return { opened: true };
+        if (world.openError) throw new Error(world.openError);
+        return world.openDeclined ? { status: 'declined' } : { opened: true };
       case 'terminal.pane': return { applied: true };
       case 'terminal.notice': return { shown: true };
       default: throw new Error(`unexpected host operation ${operation}`);
@@ -81,7 +81,9 @@ test('start runs lazygit unsandboxed in the session directory with the user conf
     action: 'start', session: 'lazygit', program: 'lazygit', cwd: '/repo/app', sandbox: 'none',
     argv: ['-p', '/repo/app', '--use-config-file', '/home/me/.config/lazygit/config.yml,{dir}/omd.yml'], files: ['omd.yml'],
   });
-  assert.equal(JSON.parse(start.files['omd.yml']).os.editInTerminal, false);
+  const { os } = JSON.parse(start.files['omd.yml']);
+  assert.equal(os.editInTerminal, false);
+  for (const [key, template] of [['edit', /^f=\{\{filename\}\};.*omd-edit:%s:\\007' "\$f" >/], ['editAtLine', /^f=\{\{filename\}\};.*omd-edit:%s:%s\\007' "\$f" \{\{line\}\} >/], ['openDirInEditor', /^f=\{\{dir\}\};.*omd-edit:%s:\\007' "\$f" >/]]) assert.match(os[key], template);
   assert.deepEqual(ops(result, 'terminal.pane'), [{ action: 'focus', id: ID }]);
   assert.deepEqual(result.state, { running: true, panel: true });
   assert.match(result.value.display, /^lazygit started/);
@@ -111,8 +113,11 @@ test('full placement gives lazygit the screen above a compact chat, and the term
 });
 
 test('panel is the default placement; it registers a workspace panel shown in the dock and draws only its site', () => {
+  assert.equal(defaults.placement, 'panel');
   const result = command('', { settings: { placement: 'panel' } });
-  assert.deepEqual(ops(result, 'mods.service'), [{ name: 'omd.workspace', method: 'register', input: { id: 'lazygit', title: 'Lazygit', site: SITE, show: true } }]);
+  assert.equal(result.value.display, 'lazygit started (Ctrl+] leaves it)');
+  assert.equal(command('', { settings: { placement: 'panel' }, world: { docked: true } }).value.display, 'lazygit started in its workspace tab (Ctrl+] leaves it)');
+  assert.deepEqual(ops(result, 'mods.service'), [{ name: 'omd.workspace', method: 'register', input: { id: 'lazygit', title: 'Lazygit', site: SITE, show: true } }, { name: 'omd.workspace', method: 'panels', input: null }]);
   assert.deepEqual(result.state, { running: true, panel: true });
   const view = draw(result.state, 40, {}, { docked: true });
   assert.equal(view.layout, undefined);
@@ -166,9 +171,13 @@ test('with edit set to composer an edit inserts an @path mention at the cursor',
   assert.deepEqual(ops(plain, 'terminal.open'), []);
   const spaced = notify(running, 'omd-edit:/repo/my file.ts:', { settings });
   assert.equal(ops(spaced, 'composer.write')[0].edit.text, '@"my file.ts" ');
-  const noEditor = notify(running, 'omd-edit:/repo/src/a.ts:12', { world: { noEditor: true } });
-  assert.match(ops(noEditor, 'terminal.notice')[0].text, /host\.json/);
+  const noEditor = notify(running, 'omd-edit:/repo/src/a.ts:12', { world: { openError: 'terminal_open_editor_unconfigured: set "editor" in host.json' } });
+  assert.match(ops(noEditor, 'terminal.notice')[0].text, /\(set editor in host\.json/);
   assert.equal(ops(noEditor, 'composer.write')[0].edit.text, '@src/a.ts ');
+  const failed = notify(running, 'omd-edit:/repo/src/a.ts:12', { world: { openError: 'terminal_open_failed: No such file or directory' } });
+  assert.match(ops(failed, 'terminal.notice')[0].text, /\(terminal_open_failed: No such file or directory\)/);
+  const declined = notify(running, 'omd-edit:/repo/src/a.ts:12', { world: { openDeclined: true } });
+  assert.deepEqual([ops(declined, 'terminal.notice'), ops(declined, 'composer.write')], [[], []]);
 });
 
 test('exit stops the session, unregisters the panel and clears the state', () => {
