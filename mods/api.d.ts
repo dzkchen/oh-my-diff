@@ -218,6 +218,10 @@ export interface TerminalTheme {
 export type TerminalClient = {
   kind: 'terminal'; graphics: 'kitty' | 'iip' | 'cells' | 'text'; pointer: 'half_cell' | 'cell' | 'none'; reduced_motion: boolean;
   cell_px: { width: number; height: number } | null; columns: number; rows: number;
+  /** `terminal_welcome_area_v1`: the blank area a `welcome` site gets this frame, null when the welcome cannot show. */
+  welcome?: { columns: number; rows: number } | null;
+  /** `terminal_chat_area_v1`: the chat column's cells, beside any sidebar, dock or layout region; null before the first fullscreen draw. */
+  chat?: { x: number; y: number; columns: number; rows: number } | null;
 };
 /** An external client attached over `omd/client/attach`; `viewport` is null until the client reports one. */
 export type ClientEntry = {
@@ -234,6 +238,8 @@ export interface TerminalView {
   placeholder?: string;
   layout?: LayoutNode; surface_styles?: { composer?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
   inline_sites?: 'hidden';
+  /** `terminal_underlay_v1`: one of the mod's rasters drawn under the whole fullscreen screen; exclusive. */
+  underlay?: { raster: string };
 }
 /** One mod's contribution to the composed view; exclusive fields go to the first mod in composition order. */
 export type TerminalPatch = TerminalView;

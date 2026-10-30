@@ -317,3 +317,27 @@ fn key_contexts_are_bounded_and_compose_with_their_owner() {
     );
     assert!(!composed.keys.contains_key("x"));
 }
+
+#[test]
+fn the_underlay_names_a_raster_and_goes_to_its_first_claimant() {
+    assert!(view(json!({"underlay": {"raster": "Scene!"}})).is_err());
+    assert!(view(json!({"underlay": {"raster": "scene", "opacity": 1}})).is_err());
+    let mut target = ModView::default();
+    let mut claims = BTreeMap::new();
+    let mut apply = |id: &str, raster: &str| {
+        ModViewPatch::parse(json!({"underlay": {"raster": raster}}))
+            .unwrap()
+            .apply(&mut target, &mut claims, id, "idle")
+            .unwrap()
+    };
+    assert_eq!(apply("first", "scene"), Vec::new());
+    assert_eq!(apply("second", "other")[0].field, "underlay");
+    assert_eq!(
+        target.underlay,
+        Some(ModUnderlay {
+            raster: "scene".into()
+        })
+    );
+    assert_eq!(target.raster_declared("scene"), Some((None, None)));
+    assert_eq!(target.raster_declared("other"), None);
+}

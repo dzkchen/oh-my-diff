@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "id": "omd_theme",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "/theme: living character-drawn scenes behind the whole screen, prompt box and menus, and terminal background steps",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_theme"},
+  "capabilities": ["terminal", "commands", "store", "events", "lifecycle", "builtins", "exec"],
+  "assets": ["scenes.ts", "steps.ts"],
+  "exec_environment": ["TERM_PROGRAM", "KITTY_WINDOW_ID", "GHOSTTY_RESOURCES_DIR", "WEZTERM_EXECUTABLE"],
+  "subscriptions": {"channels": ["omd_theme/wake"]},
+  "compatibility": {
+    "required_features": [
+      "builtins_v1",
+      "events_v1",
+      "exec_v1",
+      "lifecycle_events_v1",
+      "package_imports_v1",
+      "package_text_assets_v1",
+      "state_scopes_v1",
+      "store_v1",
+      "terminal_panel_navigation_v1",
+      "terminal_raster_packed_v1",
+      "terminal_render_sites_v1",
+      "terminal_underlay_v1",
+      "terminal_welcome_v1",
+      "timers_16ms_v1"
+    ],
+    "optional_features": ["terminal_chat_area_v1", "terminal_copy_v1", "terminal_image_sample_v1"]
+  }
+}

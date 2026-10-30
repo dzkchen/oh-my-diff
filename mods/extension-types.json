@@ -541,6 +541,12 @@
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Lays the screen out as a tabbed dock beside the chat through generic layouts, leaf titles, focus regions and key contexts; adds no model tool."
+    },
+    {
+      "path": "mods/first-party/omd_theme",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Draws animated scenes under the whole screen through the generic raster underlay, packed blits and timers; replaces /theme only while on; adds no model tool."
     }
   ],
   "synthetic_fixtures": [

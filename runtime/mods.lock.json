@@ -543,6 +543,29 @@
       "source": "mods/first-party/omd_statusline",
       "version": "1.0.0"
     },
+    "omd_theme": {
+      "api": "1.0.0",
+      "capabilities": [
+        "terminal",
+        "commands",
+        "store",
+        "events",
+        "lifecycle",
+        "builtins",
+        "exec"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "9a5a1841ab4a1650853a2a24a389e26027ad232b70eadc23b5f5f57c12b64b0b",
+        "mod.json": "aca574dfb6e08f6e36a1bc226126949daba599a1f9745cddc116e2d5260cab1f",
+        "scenes.ts": "88ec8c4d8525c8a502316d07704618aae8dbbc7dde7dade43a65c28390a7f3eb",
+        "steps.ts": "94f79d6f963178b87a347403dee7a8765351afc19b1c4e4ca39be870cfd73127"
+      },
+      "id": "omd_theme",
+      "package_sha256": "1a3c34825887f74faa023654216a46684a8eb048daa06ace20d5ecc1c733052b",
+      "source": "mods/first-party/omd_theme",
+      "version": "1.0.0"
+    },
     "omd_tool_absorb": {
       "api": "1.0.0",
       "capabilities": [

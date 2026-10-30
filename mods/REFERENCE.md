@@ -3753,6 +3753,8 @@ rows}`:
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |
 | `cell_px` | The measured cell size or null. |
 | `columns` and `rows` | The terminal grid. |
+| `welcome` | `terminal_welcome_area_v1`: `{columns, rows}` of the blank area a `welcome` site gets this frame (the chat width beside any sidebar or dock, by the unused transcript height), or null when the welcome cannot show. Size welcome content from it; a change renders the view again. |
+| `chat` | `terminal_chat_area_v1`: `{x, y, columns, rows}` of the chat column this frame (the conversation and prompt box, beside any sidebar, dock or layout region), or null before the first fullscreen draw. Place art relative to the conversation with it; a change renders the view again. |
 
 `client` is null without a terminal client. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`; a burst of changes renders once per render in progress.
@@ -3855,6 +3857,25 @@ layout instead of in the sidebar.
   `offset.y` within ±200, and a screen anchor cannot use `clip: 'anchor'`.
 - Overlays are not exclusive: when several patches set one for the same site, the patch that composes last wins,
   and a `wrap` patch overrides another mod's overlay without a claim or a `terminal.conflicts` entry.
+
+##### Underlay (`terminal_underlay_v1`)
+
+`underlay: {raster: KEY}` draws one of the mod's own cell rasters under the whole fullscreen screen, behind the
+conversation, the prompt box and the footer. It is experimental and exclusive: the first mod in composition order
+owns it, and later claims become `terminal.conflicts` entries.
+
+- The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
+  raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a
+  blit at the new size starts a fresh raster; a reply with `frame: 1` means the raster restarted, so send it whole.
+- It is painted after the transcript and the bottom pane and before selection, layout regions, the sidebar,
+  overlays, the `welcome` site and dialogs, so all of those draw over it.
+- Its background colours every cell whose background is the terminal default, and Codex's raised surface (menus,
+  list views, submitted prompts) gets the same colour lifted the way Codex lifts the terminal background. Text with
+  the default colour on a coloured cell gets a readable foreground; explicit colours stay.
+- Its glyphs land only in blank transcript cells: after each row's last character plus a 2-cell gutter, and in
+  empty rows. The prompt box, the footer, popups and copied text never get its glyphs.
+- Image and pixel frames draw nothing. Nothing draws under `NO_COLOR`, with fewer than 256 colours, below 60
+  columns, inline (`--no-alt-screen`) or in an external client.
 
 #### Box model (`terminal_box_model_v1`)
 

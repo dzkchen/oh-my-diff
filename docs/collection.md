@@ -59,6 +59,7 @@ OMD Core includes only the first three.
 | `omd_tool_absorb` | Runs a read the model repeats in one response once, and reuses unchanged file reads in code mode; `/absorb` | |
 | `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 | `omd_workspace` | A tabbed dock beside the chat: numbered tabs for Git changes, a shell and other mods' panels, with resize and focus keys; `/workspace` | `git` on your `PATH` for the Changes panel |
+| `omd_theme` | Living scenes drawn in character tiles behind the whole screen, prompt box and menus; `/theme` picks a scene and prints terminal background steps | |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 
