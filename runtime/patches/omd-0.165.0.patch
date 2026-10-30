@@ -75654,10 +75654,10 @@ index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7cf1f5c75abb7ed3227891ede084cc9857fc9830
+index 0000000000000000000000000000000000000000..eda1c165b0e4321fed400cf63d39c7dd5e879af5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,733 @@
+@@ -0,0 +1,738 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -75989,10 +75989,15 @@ index 0000000000000000000000000000000000000000..7cf1f5c75abb7ed3227891ede084cc98
 +            let (git, paths): (Vec<String>, Vec<String>) = paths
 +                .into_iter()
 +                .partition(|path| path.starts_with(".git/"));
-+            let mut changes =
-+                super::activity::external_changes(core, &lead, &paths, include_ignored).await;
++            let mut changes = if paths.is_empty() {
++                Vec::new()
++            } else {
++                super::activity::external_changes(core, &lead, &paths, include_ignored).await
++            };
++            let room = 128_usize.saturating_sub(changes.len());
 +            changes.extend(
 +                git.into_iter()
++                    .take(room)
 +                    .map(|path| json!({"path": path, "before": null, "after": null})),
 +            );
 +            if changes.is_empty() {
@@ -88091,7 +88096,7 @@ index 0000000000000000000000000000000000000000..4d6805c78213dc7e4ba05f798593fb21
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..15d8a2cbb1eb62f7cf7989efbc59eeba1d2325e1
+index 0000000000000000000000000000000000000000..347e272d3eafbc406ee51cda7932c2fcd3a28b53
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch.rs
 @@ -0,0 +1,296 @@
@@ -88142,7 +88147,7 @@ index 0000000000000000000000000000000000000000..15d8a2cbb1eb62f7cf7989efbc59eeba
 +    relative.to_str().map(str::to_owned)
 +}
 +
-+const GIT_FILES: [&str; 3] = ["HEAD", "index", "packed-refs"];
++const WORKTREE_GIT_FILES: [&str; 2] = ["HEAD", "index"];
 +
 +fn git_dirs(root: &Path) -> Option<(PathBuf, PathBuf)> {
 +    let top = root.ancestors().find(|dir| dir.join(".git").exists())?;
@@ -88181,12 +88186,12 @@ index 0000000000000000000000000000000000000000..15d8a2cbb1eb62f7cf7989efbc59eeba
 +        .strip_prefix(&dirs.0)
 +        .ok()
 +        .and_then(Path::to_str)
-+        .filter(|name| GIT_FILES[..2].contains(name));
++        .filter(|name| WORKTREE_GIT_FILES.contains(name));
 +    let shared = || {
 +        path.strip_prefix(&dirs.1)
 +            .ok()
 +            .and_then(Path::to_str)
-+            .filter(|name| *name == GIT_FILES[2] || name.starts_with("refs/"))
++            .filter(|name| *name == "packed-refs" || name.starts_with("refs/"))
 +    };
 +    own.or_else(shared)
 +        .filter(|name| !name.ends_with(".lock"))
@@ -107251,10 +107256,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6ade77b27789e19f711feb2b1f657463eaa76214
+index 0000000000000000000000000000000000000000..1aa4dbf6c0bd5072902ccf699fc0c83b0c9d31b3
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,2067 @@
+@@ -0,0 +1,2068 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -107758,6 +107763,7 @@ index 0000000000000000000000000000000000000000..6ade77b27789e19f711feb2b1f657463
 +}
 +
 +/// Starts `command` as the leader of a new session without a controlling terminal; its environment must already be cleared and set in full.
++/// On macOS `POSIX_SPAWN_SETSID` does this without forking the multithreaded host, which a `pre_exec` hook would make std do.
 +#[cfg(target_os = "macos")]
 +fn spawn_session(command: &Command, stdin: bool) -> std::io::Result<Child> {
 +    use std::ffi::CString;

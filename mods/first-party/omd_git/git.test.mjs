@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { callback } from '../../../tests/mod_runner.mjs';
-import { cut, mention, parseStatus, summary } from './git.ts';
+import { parseStatus, summary } from './git.ts';
 
 const mod = new URL('./', import.meta.url);
 const read = name => readFileSync(new URL(name, mod), 'utf8');
@@ -29,6 +29,9 @@ function run(event, payload, { state = null, name, world = {} } = {}) {
       if (argv[0] !== '--no-optional-locks' && world.after) world.status = world.after;
       if (argv.includes('grep')) return world.rebasing ? ok('rebase-merge/head-name\n') : world.op ? ok(`${world.op}\n`) : failed('');
       if (argv[1] === 'status') return ok(world.status ?? STATUS);
+      if (argv[1] === 'diff' && argv.includes('--quiet')) return world.unstaged ? failed('') : ok();
+      if (argv[1] === 'ls-files') return ok(world.untracked ?? '');
+      if (argv[1] === 'rev-list' && argv.includes('--left-right')) return ok(world.counts ?? '0\t0\n');
       if (argv[1] === 'diff') return ok(argv.includes('--cached') ? '' : world.diff ?? DIFF);
       if (argv[1] === 'log') return ok(argv.includes('--graph') ? '* abc main\n' : 'abc\0First\0Ann\x001700000000\ndef\0Second\0Ann\x001600000000\n');
       if (argv[1] === 'rev-parse' && argv[2] === 'HEAD') return ok(world.moves && world.rebased ? 'other\n' : 'fix\n');
@@ -81,10 +84,9 @@ test('porcelain v2 renames and unmerged records keep paths with spaces and unico
     { path: 'conflict – ü.ts', kind: 'u', x: 'U', y: 'U' },
     { path: 'plain.ts', kind: '1', x: ' ', y: 'M' },
   ]);
-  assert.equal(cut('line\r\n', 100), 'line?');
-  assert.equal(cut('crlf\r', 100), 'crlf');
   assert.equal(summary('hint: try again\nerror: failed\nfatal: gone'), 'error: failed fatal: gone hint: try again');
-  assert.deepEqual([mention('src/a b.ts'), mention('src/a.ts')], ['@"src/a b.ts" ', '@src/a.ts ']);
+  const cutOff = parseStatus('# branch.head main\x001 .M N... 100644 100644 100644 a a x\x001 ', true);
+  assert.deepEqual([cutOff.files.map(file => file.path), cutOff.more], [['x'], true]);
 });
 
 test('start draws files with the selected diff, side by side once the site has 85 columns', () => {
@@ -143,14 +145,18 @@ test('moving loads that file, Space stages it, discarding needs a confirmation a
   assert.ok(gits(discarded.calls).includes('checkout HEAD -- b.ts'));
   const untracked = key(key(state, 'j').state, 'd');
   assert.equal(prompts(untracked.calls)[0].message, 'Delete untracked new.txt?');
+  const allListed = started({ status: '# branch.head main\x001 M. N... 100644 100644 100644 a a b.ts\0' });
+  assert.ok(gits(key(allListed, 'a', { unstaged: true }).calls).includes('add -A'));
+  assert.ok(gits(key(allListed, 'a').calls).includes('reset -q'));
   const clean = started({ status: '# branch.head main\0' });
   assert.equal(notice(draw(key(clean, 'a', { status: '# branch.head main\0' }).state)), 'Nothing to stage');
 });
 
-test('discarding a staged rename restores the old path and removes the new one', () => {
+test('a staged rename is unstaged and discarded with its old path', () => {
   const world = { status: ['# branch.head main', '2 R. N... 100644 100644 100644 a b R100 new name.ts', 'old name.ts', ''].join('\0'), answer: '' };
-  const discarded = key(started(world), 'd', world);
-  assert.ok(gits(discarded.calls).includes('restore --staged --worktree --source=HEAD -- old name.ts new name.ts'));
+  const state = started(world);
+  assert.ok(gits(key(state, 'Space', world).calls).includes('reset -q -- old name.ts new name.ts'));
+  assert.ok(gits(key(state, 'd', world).calls).includes('restore --staged --worktree --source=HEAD -- old name.ts new name.ts'));
 });
 
 test('Enter lists the hunks, Space stages one through git apply, @ adds it to the prompt and Esc goes back', () => {
@@ -164,7 +170,6 @@ test('Enter lists the hunks, Space stages one through git apply, @ adds it to th
   assert.equal(apply.arguments.stdin, 'diff --git a/src/a.ts b/src/a.ts\nindex 1..2 100644\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -9,1 +9,1 @@\n-x\n+y\n');
   const attached = key(second, '@');
   assert.match(attached.calls.find(call => call.operation === 'composer.write').arguments.edit.text, /^\n```diff\n.*@@ -9,1 \+9,1 @@\n-x\n\+y\n```\n$/s);
-  assert.equal(find(draw(key(second, 'Enter').state), 'omd_git_side1_box').title, '[2] Files');
   const escaped = run('component_event', { component: 'omd_git_list', thread_id: 't1', kind: 'input', events: [{ key: 'Esc', text: null }] }, { state: second });
   assert.equal(find(draw(escaped.state), 'omd_git_side1_box').title, '[2] Files');
   assert.match(text(find(draw(escaped.state), 'omd_git_main')), /^diff --git/);
@@ -228,17 +233,22 @@ test('a rebase in progress shows in Status, m continues or aborts it, and Space 
   assert.equal(notice(draw(key(state, 'P', world).state)), 'HEAD is detached: check out a branch to push it');
 });
 
-test('push asks first, tracks origin without an upstream and offers a force push with lease once rejected', () => {
+test('push asks first, tracks origin without an upstream and offers a force push with lease only once diverged', () => {
   const state = started();
   assert.ok(!gits(key(state, 'P').calls).some(argv => argv.startsWith('push')));
   const pushed = key(state, 'P', { answer: '' });
   const call = pushed.calls.find(item => item.operation === 'exec.run' && item.arguments.argv.includes('push'));
   assert.deepEqual(call.arguments.argv.slice(-4), ['push', '-u', 'origin', 'main']);
   assert.equal(call.arguments.timeout_ms, 120_000);
-  const forced = key(state, 'P', { answer: '', rejected: true });
-  assert.equal(prompts(forced.calls)[1].title, 'Force push');
-  assert.ok(gits(forced.calls).includes('push --force-with-lease -u origin main'));
-  assert.equal(notice(draw(forced.state)), 'Force pushed');
+  const tracked = { status: STATUS.replace('# branch.head main', '# branch.head main\0# branch.upstream origin/main\0# branch.ab +1 -0') };
+  const upstream = started(tracked);
+  for (const [counts, title] of [['0\t2\n', undefined], ['1\t2\n', 'Force push']]) {
+    const world = { ...tracked, answer: '', rejected: true, counts };
+    const tried = key(upstream, 'P', world);
+    assert.equal(prompts(tried.calls)[1]?.title, title);
+    assert.equal(gits(tried.calls).includes('push --force-with-lease'), Boolean(title));
+    assert.equal(notice(draw(tried.state)), title ? 'Force pushed' : "The remote main has commits you haven't pulled: pull first (p)");
+  }
 });
 
 test('a push that needs a password reruns in a terminal pane after asking, and R returns once git exits', () => {
@@ -266,6 +276,11 @@ test('a watch event right after the panel’s own change is skipped once, a writ
   assert.ok(gits(next.calls).some(argv => argv.includes('status')));
   const unchanged = key(started(), 'c', { answer: 'nothing staged' }).state;
   assert.ok(gits(run('workspace_change', change, { state: unchanged }).calls).some(argv => argv.includes('status')));
+  const edited = run('workspace_change', { ...change, changes: [{ path: 'src/a.ts', before: null, after: null }] }, { state: next.state });
+  assert.ok(gits(edited.calls).some(argv => argv.includes('status')));
+  assert.ok(!gits(edited.calls).some(argv => argv.includes('for-each-ref')));
+  assert.deepEqual(gits(run('turn_end', null, { state: next.state }).calls), []);
+  assert.ok(gits(run('turn_end', null, { state: { ...next.state, watch: undefined } }).calls).some(argv => argv.includes('status')));
   const unplaced = run('workspace_change', { repository: TOP, source: 'tool', call_id: 'c', changes: [], status: 'observed' }, { state: { ...staged, placed: false } });
   assert.deepEqual(unplaced.calls, []);
 });

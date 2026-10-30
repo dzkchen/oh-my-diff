@@ -5,7 +5,7 @@ import type { Branch, Change, Commit, Head, Operation, Stash } from './git.ts';
 export type Hunk = { staged: boolean; header: string; line: number };
 export type Repo = {
   dir: string; top: string; gitdir: string; error: string | null; notice: string | null;
-  panel: number; sel: number[]; head: Head; op: Operation | null; files: Change[]; branches: Branch[]; commits: Commit[]; stash: Stash[];
+  panel: number; sel: number[]; head: Head; op: Operation | null; files: Change[]; more?: boolean; branches: Branch[]; commits: Commit[]; stash: Stash[];
   hunks: { path: string; list: Hunk[] } | null; hunk: number; main: string; scroll: number; signin?: boolean; echo?: number;
 };
 export type Area = { columns: number; rows: number };
@@ -42,7 +42,8 @@ const DOCK_SHARE = 1 / 3;
 const DOCK_CHROME = 3;
 const BAND_SHARE = 0.4;
 
-export const rows = (r: Repo): unknown[] => [[r.head], r.files, r.branches, r.commits, r.stash][r.panel];
+const lists = (r: Repo): unknown[][] => [[r.head], r.files, r.branches, r.commits, r.stash];
+export const rows = (r: Repo) => lists(r)[r.panel];
 export const selected = (r: Repo) => Math.min(r.sel[r.panel], Math.max(0, rows(r).length - 1));
 
 export const area = (client: TerminalClient | null | undefined): Area => {
@@ -67,38 +68,37 @@ const frame = (id: string, title: string, active: boolean, children: TerminalCom
   type: 'box', id: `omd_git_${id}_box`, label: cut(title, TITLE_BYTES), title: cut(title, TITLE_BYTES), style: { border: active ? 'thick' : 'rounded' }, children, ...(flex ? { flex } : {}),
 });
 
-const listLines = (r: Repo, panel: number, now: number): TerminalSpan[][] => {
+const listLines = (r: Repo, panel: number, now: number, from: number, count: number): TerminalSpan[][] => {
   const active = panel === r.panel;
   const mark = (index: number) => span(active && index === (r.hunks ? r.hunk : selected(r)) ? '▶ ' : '  ', { tone: 'accent' });
-  if (panel === 1 && r.hunks) {
-    return r.hunks.list.map((h, index) => [mark(index), span(h.staged ? 'staged   ' : 'unstaged ', { tone: h.staged ? 'success' : 'attention' }), span(h.header)]);
-  }
+  const each = <T>(items: T[], row: (item: T) => TerminalSpan[]) => items.slice(from, from + count).map((item, index) => [mark(from + index), ...row(item)]);
+  if (panel === 1 && r.hunks) return each(r.hunks.list, h => [span(h.staged ? 'staged   ' : 'unstaged ', { tone: h.staged ? 'success' : 'attention' }), span(h.header)]);
   if (panel === 0) {
     const doing = r.op ? [span(` (${DOING[r.op]})`, { tone: 'attention', bold: true })] : [];
     return [[span(`${r.top.split('/').at(-1)} → `, { tone: 'muted' }), span(headline(r.head), { bold: true }), ...doing]];
   }
-  if (panel === 1) return r.files.map((f, index) => [mark(index), span(f.x, { tone: f.x === '?' ? 'failure' : 'success' }), span(f.y, { tone: 'failure' }), span(` ${f.orig ? `${f.orig} → ` : ''}${f.path}`)]);
-  if (panel === 2) return r.branches.map((b, index) => [mark(index), span(b.head ? '* ' : '  ', { tone: 'success' }), span(b.name, { bold: b.head }), span(b.track ? ` ${b.track}` : '', { tone: 'muted' })]);
-  if (panel === 3) return r.commits.map((c, index) => [mark(index), span(`${c.sha} `, { tone: 'attention' }), span(c.subject), span(`  ${c.author}, ${ago(c.at, now)}`, { tone: 'muted' })]);
-  return r.stash.map((s, index) => [mark(index), span(`${s.ref} `, { tone: 'attention' }), span(s.subject)]);
+  if (panel === 1) return each(r.files, f => [span(f.x, { tone: f.x === '?' ? 'failure' : 'success' }), span(f.y, { tone: 'failure' }), span(` ${f.orig ? `${f.orig} → ` : ''}${f.path}`)]);
+  if (panel === 2) return each(r.branches, b => [span(b.head ? '* ' : '  ', { tone: 'success' }), span(b.name, { bold: b.head }), span(b.track ? ` ${b.track}` : '', { tone: 'muted' })]);
+  if (panel === 3) return each(r.commits, c => [span(`${c.sha} `, { tone: 'attention' }), span(c.subject), span(`  ${c.author}, ${ago(c.at, now)}`, { tone: 'muted' })]);
+  return each(r.stash, s => [span(`${s.ref} `, { tone: 'attention' }), span(s.subject)]);
 };
 
 const side = (r: Repo, panel: number, collapsed: number, tall: number, now: number): [TerminalComponent, number] => {
-  const lines = listLines(r, panel, now);
+  const total = (panel === 1 && r.hunks ? r.hunks.list : lists(r)[panel]).length;
   const empty = [[span(EMPTY[panel], { tone: 'muted' })]];
   const title = `[${panel + 1}] ${panel === 1 && r.hunks ? `Hunks of ${r.hunks.path}` : PANELS[panel]}`;
   if (panel !== r.panel) {
-    const at = Math.max(0, Math.min(r.sel[panel], lines.length - 1));
-    const from = Math.max(0, Math.min(at - 1, lines.length - collapsed));
-    const shown = lines.slice(from, from + collapsed);
+    const at = Math.max(0, Math.min(r.sel[panel], total - 1));
+    const from = Math.max(0, Math.min(at - 1, total - collapsed));
+    const shown = listLines(r, panel, now, from, collapsed);
     const height = Math.max(1, shown.length);
     const document: TerminalComponent = { type: 'document', id: `omd_git_side${panel}`, label: PANELS[panel], lines: shown.length ? shown : empty, keys: true, height };
     return [frame(`side${panel}`, title, false, [document]), height + BORDER];
   }
   const at = r.hunks ? r.hunk : selected(r);
-  const height = panel === 0 ? 1 : Math.max(SHORT, Math.min(lines.length, tall));
-  const from = Math.max(0, Math.min(at - WINDOW / 2, lines.length - WINDOW));
-  const shown = lines.slice(from, from + WINDOW);
+  const height = panel === 0 ? 1 : Math.max(SHORT, Math.min(total, tall));
+  const from = Math.max(0, Math.min(at - WINDOW / 2, total - WINDOW));
+  const shown = listLines(r, panel, now, from, WINDOW);
   const document: TerminalComponent = { type: 'document', id: LIST, label: PANELS[panel], lines: shown.length ? shown : empty, keys: true, height, selected: { start: at - from, end: at - from } };
   return [frame(`side${panel}`, title, true, [document]), height + BORDER];
 };

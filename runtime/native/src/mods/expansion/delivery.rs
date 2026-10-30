@@ -329,10 +329,15 @@ async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending
             let (git, paths): (Vec<String>, Vec<String>) = paths
                 .into_iter()
                 .partition(|path| path.starts_with(".git/"));
-            let mut changes =
-                super::activity::external_changes(core, &lead, &paths, include_ignored).await;
+            let mut changes = if paths.is_empty() {
+                Vec::new()
+            } else {
+                super::activity::external_changes(core, &lead, &paths, include_ignored).await
+            };
+            let room = 128_usize.saturating_sub(changes.len());
             changes.extend(
                 git.into_iter()
+                    .take(room)
                     .map(|path| json!({"path": path, "before": null, "after": null})),
             );
             if changes.is_empty() {

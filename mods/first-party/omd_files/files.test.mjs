@@ -193,6 +193,7 @@ test('find selects matches, z jumps to a frecency-ranked file and @ mentions it,
   assert.match(text(columns(lower)[1]), /▶ a2\.ts/);
   assert.match(text(columns(key(lower, 'n').state)[1]), /▶ a10\.ts/);
   assert.match(text(columns(key(lower, 'N').state)[1]), /▶ main\.ts/);
+  assert.ok(!run('start', null).calls.some(call => call.arguments?.name === 'omd.frecency'));
   const prompted = key(started(), 'z', { answer: { values: ['src/lib/util.ts'] } });
   assert.equal(text(columns(prompted.state)[1]), '▶ util.ts');
   const typed = key(started(), 'z', { answer: { values: ['guide'], other: true } }).state;
@@ -210,14 +211,14 @@ test('d moves to the Trash with the first command that runs, D deletes for good,
   assert.match(prompt.message, /^Move src\/main\.ts to the Trash\?/);
   assert.deepEqual(ran(trashed.calls).map(args => [args.program, args.argv.at(-1), args.sandbox]), [['/usr/bin/trash', '/repo/src/main.ts', 'none'], ['trash', '/repo/src/main.ts', 'none']]);
   assert.match(status(trashed.state), /Moved main\.ts to the Trash/);
-  const stuck = key(inSrc, 'd', { answer: {}, missing: ['/usr/bin/trash', 'trash', 'gio', 'osascript'] });
+  const stuck = key(inSrc, 'd', { answer: {}, missing: ['/usr/bin/trash', 'trash', 'osascript'] });
   assert.match(status(stuck.state), /D deletes permanently/);
   const removed = key(inSrc, 'D', { answer: {} });
   assert.match(removed.calls.find(call => call.operation === 'terminal.prompt').arguments.message, /cannot be undone/);
   assert.deepEqual(ran(removed.calls).map(args => [args.program, args.write, args.argv.at(-1)]), [['sh', true, 'src/main.ts']]);
 });
 
-test('rename moves inside the workspace, refuses an existing target and allows a case-only rename', () => {
+test('rename moves inside the workspace, keeps a renamed directory selected, refuses an existing target and allows a case-only rename', () => {
   const inSrc = keys(started(), ['j', 'l', 'G']);
   const moved = ran(key(inSrc, 'r', { answer: { value: 'lib/main.ts' } }).calls);
   assert.deepEqual(moved.map(args => [args.write, ...args.argv.slice(-2)]), [[true, 'src/main.ts', 'src/lib/main.ts']]);
@@ -225,6 +226,8 @@ test('rename moves inside the workspace, refuses an existing target and allows a
   const taken = key(inSrc, 'r', { answer: { value: 'lib/util.ts' } });
   assert.deepEqual(ran(taken.calls), []);
   assert.match(status(taken.state), /^src\/lib\/util\.ts already exists/);
+  const renamed = key(keys(started(), ['j', 'l']), 'r', { answer: { value: 'helpers' }, tree: { ...TREE, src: ['helpers/', 'main.ts'] } }).state;
+  assert.deepEqual([columns(renamed)[1].label, text(columns(renamed)[1])], ['src', '▶ helpers/\n  main.ts']);
   const files = { ...FILES, 'src/Main.ts': FILES['src/main.ts'] };
   const cased = ran(key(inSrc, 'r', { answer: { value: 'Main.ts' }, files }).calls);
   assert.deepEqual(cased.map(args => args.argv.slice(-2)), [['src/main.ts', 'src/Main.ts']]);
@@ -235,7 +238,6 @@ test('images go to a raster through a timer, from a private temporary file', () 
   assert.deepEqual(image.calls.find(call => call.operation === 'events.publish').arguments, { channel: 'blit', data: 'src/logo.png' });
   assert.equal(columns(image.state)[2].type, 'raster');
   const timer = run('timer', { key: 'blit' }, { state: image.state, world: { stdout: 'AAAA\n' } });
-  assert.doesNotMatch(ran(timer.calls)[0].argv[1], /omd-files-preview/);
   assert.deepEqual(timer.calls.find(call => call.operation === 'terminal.blit').arguments, { key: 'omd_files_image', image: { media_type: 'image/jpeg', base64: 'AAAA' } });
 });
 

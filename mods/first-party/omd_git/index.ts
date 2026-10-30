@@ -13,6 +13,7 @@ const MAIN_LINES = 1_000;
 const NOTICE_BYTES = 240;
 const STEP = 10;
 const ECHO_MS = 5_000;
+const REFS = /^\.git\/(HEAD|packed-refs|refs\/)/;
 const GIT_MS = 10_000;
 const WRITE_MS = 60_000;
 const REMOTE_MS = 120_000;
@@ -81,9 +82,10 @@ export default function activate(api: ModAPI) {
       return;
     }
     const kept = r.files[Math.min(r.sel[1], r.files.length - 1)]?.path;
-    const { head, files } = parseStatus(run.out);
+    const { head, files, more } = parseStatus(run.out, run.truncated);
     r.head = head;
     r.files = files;
+    r.more = more;
     const found = r.files.findIndex(change => change.path === kept);
     if (found >= 0) r.sel[1] = found;
     r.op = operation(r);
@@ -92,7 +94,7 @@ export default function activate(api: ModAPI) {
   const list = (r: Repo, panel: number) => {
     if (panel === 2) r.branches = parseBranches(git(r.top, [...READ, 'for-each-ref', '--sort=-committerdate', `--count=${ROWS}`, '--format=%(HEAD)%00%(refname:short)%00%(upstream:short) %(upstream:track)', 'refs/heads']).out);
     else if (panel === 3) r.commits = parseCommits(git(r.top, [...READ, 'log', '--no-color', `-n${COMMITS}`, '--format=%h%x00%s%x00%an%x00%at']).out);
-    else if (panel === 4) r.stash = parseStash(git(r.top, [...READ, 'stash', 'list', '--no-color', '--format=%gd%x00%s']).out);
+    else if (panel === 4) r.stash = parseStash(git(r.top, [...READ, 'stash', 'list', '--no-color', `--max-count=${ROWS}`, '--format=%gd%x00%s']).out);
   };
   const file = (r: Repo) => (r.panel === 1 ? r.files[selected(r)] : undefined);
   const relative = (r: Repo, path: string) => {
@@ -163,10 +165,10 @@ export default function activate(api: ModAPI) {
     const last = done.text.split('\n').map(part => part.trim()).filter(Boolean).at(-1);
     r.notice = done.exit_code === 0 ? 'git finished' : cut(`git exited with ${done.exit_code}${last ? `: ${last}` : ''}`, NOTICE_BYTES);
   };
-  const refresh = (r: Repo) => {
+  const refresh = (r: Repo, lists = true) => {
     if (r.signin) closeSignin(r);
     status(r);
-    for (const panel of [2, 3, 4]) list(r, panel);
+    if (lists) for (const panel of [2, 3, 4]) list(r, panel);
     if (r.hunks) loadHunks(r, r.hunks.path);
     if (r.hunks && !r.hunks.list.length) r.hunks = null;
     view(r);
@@ -215,12 +217,13 @@ export default function activate(api: ModAPI) {
     const argv = upstream ? ['push'] : ['push', '-u', 'origin', branch];
     const run = git(r.top, argv, REMOTE_MS);
     if (run.ok || !REJECTED.test(run.err)) return remote(r, argv, 'Pushed', run);
-    if (!confirm('Force push', `The remote ${branch} has commits yours doesn't, as after an amend or reword. Force push with lease?`)) return summary(run.err);
+    // Forcing a branch that is only behind would drop others' commits.
+    const [ahead = 0, behind = 0] = upstream ? git(r.top, [...READ, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).out.trim().split(/\s+/).map(Number) : [];
+    if (!ahead || !behind) return `The remote ${branch} has commits you haven't pulled: pull first (p)`;
+    if (!confirm('Force push', `${branch} and its upstream have diverged (↑${ahead} ↓${behind}), as after an amend or reword. Force push with lease? The ${behind} remote ${behind === 1 ? 'commit is' : 'commits are'} dropped.`)) return summary(run.err);
     return remote(r, ['push', '--force-with-lease', ...argv.slice(1)], 'Force pushed');
   };
   const rebase = (r: Repo, base: string, sequence: string, editor: string | null, squash: boolean): Run => {
-    const refused = busy(r);
-    if (refused) return fail(refused);
     if (git(r.top, [...READ, 'rev-list', '--merges', '-n1', `${base}..HEAD`]).out.trim()) return fail('Merges follow this commit: rebase it by hand');
     const parent = git(r.top, [...READ, 'rev-parse', '--verify', '-q', `${base}^`]).ok;
     const run = git(r.top, [
@@ -253,7 +256,6 @@ export default function activate(api: ModAPI) {
     const panel = (index: number) => () => {
       r.panel = (index + PANELS.length) % PANELS.length;
       r.hunks = null;
-      list(r, r.panel);
       view(r);
       return null;
     };
@@ -314,12 +316,12 @@ export default function activate(api: ModAPI) {
       Space: [change?.kind === 'u' ? 'Mark the file resolved' : change && staged(change) ? 'Unstage the file' : 'Stage the file', () => {
         if (!change) return null;
         if (change.kind === 'u') return confirm('Resolved', `Mark ${change.path} as resolved?`) ? result(git(r.top, ['add', '--', change.path]), 'Marked resolved') : null;
-        if (staged(change)) return result(git(r.top, ['reset', '-q', '--', change.path]), 'Unstaged');
+        if (staged(change)) return result(git(r.top, ['reset', '-q', '--', ...(change.orig ? [change.orig] : []), change.path]), 'Unstaged');
         return result(git(r.top, ['add', '--', change.path]), 'Staged');
       }],
       a: ['Stage or unstage everything', () => {
         if (!r.files.length) return 'Nothing to stage';
-        const all = r.files.every(staged);
+        const all = git(r.top, [...READ, 'diff', '--quiet']).ok && !git(r.top, [...READ, 'ls-files', '--others', '--exclude-standard']).out;
         return result(git(r.top, all ? ['reset', '-q'] : ['add', '-A']), all ? 'Unstaged everything' : 'Staged everything');
       }],
       d: ['Discard the file’s changes', () => {
@@ -389,6 +391,8 @@ export default function activate(api: ModAPI) {
         const message = ask('Reword', `New message for ${commit.sha} ${commit.subject}`);
         if (!message) return null;
         if (at === 0) return result(git(r.top, ['commit', '--amend', '--only', '-m', message], WRITE_MS), 'Reworded');
+        const refused = busy(r);
+        if (refused) return refused;
         const editor = `sh -c 'printf "%s\\n" "$0" > "$1"' ${quote(message)}`;
         const sequence = `sh -c 'sed "1s/^pick /reword /" "$1" > "$1.omd" && mv "$1.omd" "$1"' sh`;
         return result(rebase(r, commit.sha, sequence, editor, false), 'Reworded');
@@ -437,25 +441,28 @@ export default function activate(api: ModAPI) {
       if (state.placed && !kept) repo(state, cwd(), true);
     });
   };
-  const reload = () => changed(state => {
-    if (!state.placed) state.placed = place();
-    if (state.placed) repo(state, cwd(), true);
+  const reload = (always: boolean) => changed(state => {
+    const placed = state.placed;
+    if (!placed) state.placed = place();
+    if (state.placed && (always || !placed || state.watch === undefined)) repo(state, cwd(), true);
   });
   api.on('start', () => start(true));
   api.on('resume', () => start(true));
   api.on('mods_changed', () => start(false));
-  api.on('turn_end', reload);
+  api.on('turn_end', () => reload(false));
   api.on('thread_settings', ({ cwd: dir }) => {
-    if (dir.before !== dir.after) reload();
+    if (dir.before !== dir.after) reload(true);
   });
-  api.on('workspace_change', ({ source }) => changed(state => {
+  api.on('workspace_change', ({ source, changes }) => changed(state => {
     if (!state.placed) return;
     const echo = source === 'external' ? state.repo?.echo : undefined;
     if (echo !== undefined && state.repo) {
       delete state.repo.echo;
       if (Date.now() - echo < ECHO_MS) return;
     }
-    repo(state, cwd(), true);
+    const r = state.repo?.dir === cwd() && state.repo.top ? state.repo : null;
+    if (r && changes.length && !changes.some(change => REFS.test(change.path))) refresh(r, false);
+    else repo(state, cwd(), true);
   }));
   api.on('component_event', ({ kind, events }) => {
     if (kind !== 'input' || !events?.some(event => 'key' in event && event.key === 'Esc')) return;
@@ -478,7 +485,7 @@ export default function activate(api: ModAPI) {
       }
       const r = repo(state, cwd(), false);
       if (!r.top) return r.error;
-      if (op !== 'key') return `Git panel: ${r.head.branch || 'HEAD (detached)'} in ${r.top}, ${r.files.length} changed. Open it from the workspace dock (/workspace); ? there lists its keys. Usage: /git refresh`;
+      if (op !== 'key') return `Git panel: ${r.head.branch || 'HEAD (detached)'} in ${r.top}, ${r.files.length}${r.more ? '+' : ''} changed. Open it from the workspace dock (/workspace); ? there lists its keys. Usage: /git refresh`;
       const action = actions(r)[key];
       if (!action) return null;
       const before = fingerprint(r);
