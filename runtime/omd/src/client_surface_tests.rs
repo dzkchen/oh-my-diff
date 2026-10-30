@@ -58,6 +58,21 @@ fn hub_test() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[test]
+fn program_trust_without_a_client_names_the_pre_approval() {
+    let _serial = hub_test();
+    let store = tempfile::tempdir().unwrap();
+    let error = crate::program_trust::ensure(
+        store.path(),
+        "m",
+        std::path::Path::new("/bin/sh"),
+        "aa",
+        &|| true,
+    )
+    .unwrap_err();
+    assert!(error.starts_with("program_unconfirmed:"), "{error}");
+}
+
+#[test]
 fn surface_routes_enforces_user_context_cancels_and_unregisters() {
     let _serial = hub_test();
     let active = || true;

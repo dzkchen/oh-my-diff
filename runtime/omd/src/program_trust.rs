@@ -6,49 +6,57 @@ use std::path::PathBuf;
 pub const OPERATION: &str = "program.trust";
 
 fn pins_path(store: &Path) -> PathBuf {
-    store.join("pty-pins.json")
+    store.join("program-pins.json")
+}
+
+fn read_pins(path: &Path) -> Option<Value> {
+    serde_json::from_slice::<Value>(&std::fs::read(path).ok()?)
+        .ok()
+        .filter(|pins| pins["pins"].is_object())
 }
 
 pub fn pinned(store: &Path, owner: &str, program: &Path) -> Option<String> {
-    let pins: Value = serde_json::from_slice(&std::fs::read(pins_path(store)).ok()?).ok()?;
-    pins["pins"][owner][program.to_string_lossy().as_ref()]
+    read_pins(&pins_path(store))?["pins"][owner][program.to_string_lossy().as_ref()]
         .as_str()
         .map(str::to_owned)
 }
 
 pub fn pin(store: &Path, owner: &str, program: &Path, hash: &str) -> Result<(), String> {
+    let failed = |error: std::io::Error| format!("program_pin_failed: {error}");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(store.join("program-pins.lock"))
+        .map_err(failed)?;
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive)
+        .map_err(|error| failed(error.into()))?;
     let path = pins_path(store);
-    let mut pins = std::fs::read(&path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .filter(|pins| pins["pins"].is_object())
-        .unwrap_or_else(|| json!({"pins": {}}));
-    let owners = pins["pins"].as_object_mut().ok_or("pty_pins_invalid")?;
-    let programs = owners.entry(owner.to_owned()).or_insert_with(|| json!({}));
+    let mut pins = read_pins(&path).unwrap_or_else(|| json!({"pins": {}}));
+    let programs = &mut pins["pins"][owner];
     if !programs.is_object() {
         *programs = json!({});
     }
     programs[program.to_string_lossy().as_ref()] = Value::String(hash.to_owned());
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(
-        &temporary,
-        serde_json::to_vec_pretty(&pins).map_err(|error| error.to_string())?,
-    )
-    .and_then(|()| std::fs::rename(&temporary, &path))
-    .map_err(|error| format!("pty_pin_failed: {error}"))
+    crate::fsio::write_json(&path, &pins).map_err(failed)
+}
+
+pub fn allow(store: &Path, owner: &str, name: &str) -> Result<(PathBuf, String), String> {
+    let any = crate::ModOsAccess {
+        programs: vec!["*".to_owned()],
+        network: false,
+    };
+    let program = crate::host::unrestricted_program(&any, name, Path::new("/dev/null"))?;
+    let hash = crate::host::program_hash(&program)?;
+    pin(store, owner, &program, &hash)?;
+    Ok((program, hash))
 }
 
 fn short(hash: &str) -> &str {
     &hash[..hash.floor_char_boundary(12)]
 }
 
-pub fn prompt(
-    owner: &str,
-    program: &Path,
-    hash: &str,
-    previous: Option<&str>,
-    pane: bool,
-) -> (String, String) {
+pub fn prompt(owner: &str, program: &Path, hash: &str, previous: Option<&str>) -> (String, String) {
     let name = program
         .file_name()
         .map_or_else(|| program.to_string_lossy(), |name| name.to_string_lossy());
@@ -59,18 +67,10 @@ pub fn prompt(
         ),
         None => "This is its first run for this mod.".to_owned(),
     };
-    let (place, control) = if pane {
-        (
-            " in a terminal pane",
-            " The mod can type into it and read its screen.",
-        )
-    } else {
-        ("", "")
-    };
     (
         format!("Run {name} for mod {owner}?"),
         format!(
-            "Mod {owner} wants to run {} (sha256 {}){place} outside the sandbox, with your HOME and your user's permissions. {history}{control}",
+            "Mod {owner} wants to run {} (sha256 {}) outside the sandbox, with your HOME and your user's permissions. {history} Allowing it also lets the mod run it in a terminal pane, where it can type into it and read its screen.",
             program.display(),
             short(hash)
         ),
@@ -92,7 +92,18 @@ pub fn ensure(
         owner,
         json!({"program": program, "sha256": hash, "previous": previous}),
         active,
-    )?;
+    )
+    .map_err(|error| {
+        if error.starts_with("client_surface_unavailable") {
+            format!(
+                "program_unconfirmed: allow {} once in the TUI, or run omd-mod trust-program STORE {owner} {}",
+                program.display(),
+                program.display()
+            )
+        } else {
+            error
+        }
+    })?;
     if answer["status"] == "declined" {
         return Ok(false);
     }
@@ -121,17 +132,36 @@ mod tests {
         pin(store.path(), "m", program, "bb").unwrap();
         assert_eq!(pinned(store.path(), "m", program).as_deref(), Some("bb"));
         assert_eq!(pinned(store.path(), "other", program), None);
-        let (title, first) = prompt("m", program, &"a".repeat(64), None, true);
+        let (title, _) = prompt("m", program, &"a".repeat(64), None);
         assert_eq!(title, "Run lazygit for mod m?");
-        assert!(first.contains("in a terminal pane") && first.contains("first run"));
-        let (_, changed) = prompt(
-            "m",
-            program,
-            &"b".repeat(64),
-            Some("é".repeat(10).as_str()),
-            false,
-        );
+        let (_, changed) = prompt("m", program, &"b".repeat(64), Some("é".repeat(10).as_str()));
         assert!(changed.contains("It changed since you allowed sha256 éééééé,"));
-        assert!(!changed.contains("terminal pane"));
+    }
+
+    #[test]
+    fn allow_pins_the_resolved_program_hash() {
+        let store = tempfile::tempdir().unwrap();
+        let (program, hash) = allow(store.path(), "m", "sh").unwrap();
+        assert_eq!(pinned(store.path(), "m", &program), Some(hash));
+    }
+
+    #[test]
+    fn concurrent_pins_keep_every_approval() {
+        let store = tempfile::tempdir().unwrap();
+        std::thread::scope(|scope| {
+            for index in 0..16 {
+                let store = store.path();
+                scope.spawn(move || {
+                    pin(store, "m", Path::new(&format!("/bin/p{index}")), "aa").unwrap()
+                });
+            }
+        });
+        for index in 0..16 {
+            let program = format!("/bin/p{index}");
+            assert_eq!(
+                pinned(store.path(), "m", Path::new(&program)).as_deref(),
+                Some("aa")
+            );
+        }
     }
 }

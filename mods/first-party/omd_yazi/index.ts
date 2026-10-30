@@ -7,10 +7,11 @@ const SITE = 'omd_yazi/main';
 const ID = 'omd_yazi_terminal';
 const PANEL = 'yazi';
 const MENTIONS = 16;
-const HINT = 'Install it with brew install yazi (https://yazi-rs.github.io/docs/installation).';
+const HINT = 'Install it: https://yazi-rs.github.io/docs/installation (Homebrew: brew install yazi).';
 const IDLE = 'yazi is not running in this thread; /yazi starts it.';
 const plain = (path: string) => path.split('/').every(part => part !== '' && part !== '.' && part !== '..');
 const mention = (path: string) => (/[\s\x22]|\W$/.test(path) ? `@${JSON.stringify(path)}` : `@${path}`);
+const lastLine = (text: string) => text.split('\n').map(line => line.trim()).filter(Boolean).pop()?.slice(0, 200) ?? '';
 
 export default function activate(api: ModAPI) {
   const load = (): State => ({ running: false, panel: false, dir: null, ...(api.state.get() as Partial<State> | null) });
@@ -25,9 +26,13 @@ export default function activate(api: ModAPI) {
 
   const finish = (files: Record<string, string> = {}) => {
     const root = `${api.session().root}/`;
-    const picked = (files.chosen ?? '').split('\n').filter(path => path.startsWith(root) && plain(path.slice(root.length))).slice(0, MENTIONS);
+    const chosen = (files.chosen ?? '').split('\n').filter(Boolean);
+    const inRoot = chosen.filter(path => path.startsWith(root) && plain(path.slice(root.length)));
+    const picked = inRoot.slice(0, MENTIONS);
     const dir = (files.cwd ?? '').trim();
     close(inside(dir) ? dir : load().dir);
+    const reasons = [chosen.length - inRoot.length && `${chosen.length - inRoot.length} outside this session`, inRoot.length - picked.length && `${inRoot.length - picked.length} over the ${MENTIONS} mention limit`].filter(Boolean);
+    if (reasons.length) api.host.tryCall('terminal.notice', { text: `Skipped ${chosen.length - picked.length} picked paths (${reasons.join(', ')})`, kind: 'warning' });
     if (!picked.length) return;
     const { revision } = api.host.call('composer.read', null);
     api.host.call('composer.write', { revision, edit: { kind: 'insert', text: `${picked.map(path => mention(path.slice(root.length))).join(' ')} ` } });
@@ -35,7 +40,7 @@ export default function activate(api: ModAPI) {
 
   api.command('yazi', (args): CommandResult => {
     const given = String(args ?? '').trim();
-    if (given === '--stop') {
+    if (given === '--stop' || given === 'stop') {
       if (!load().running) return { display: 'yazi is not running' };
       close(load().dir);
       return { display: 'yazi stopped' };
@@ -55,7 +60,7 @@ export default function activate(api: ModAPI) {
       action: 'start', session: SESSION, program: 'yazi', cwd, sandbox: 'none',
       argv: [path, '--chooser-file={dir}/chosen', '--cwd-file={dir}/cwd'], files: { chosen: '', cwd: '' },
     });
-    if (!started.ok) return { display: started.error.includes('program_unavailable') ? `Cannot run yazi. ${HINT}` : `yazi did not start: ${started.error}` };
+    if (!started.ok) return { display: started.error.includes('program_unavailable') ? `Cannot run yazi. ${HINT}` : started.error.includes('pty_cwd_invalid') ? `No such directory: ${cwd}` : `yazi did not start: ${started.error}` };
     if (!('running' in started.value)) return { display: 'yazi start declined' };
     const full = api.settings.placement === 'full';
     let panel = false;
@@ -66,7 +71,7 @@ export default function activate(api: ModAPI) {
     } catch {}
     api.state.set({ running: true, panel, dir: remembered });
     api.host.tryCall('terminal.pane', { action: 'focus', id: ID });
-    return { display: panel && !full ? 'yazi started in its workspace tab' : 'yazi started (Ctrl+] leaves it)' };
+    return { display: panel && !full ? 'yazi started in its workspace tab (Ctrl+] leaves it)' : 'yazi started (Ctrl+] leaves it)' };
   }, { description: 'Run yazi in this session and mention the files you pick; --stop closes it', args_hint: '[path|--stop]' });
 
   const docked = () => {
@@ -77,7 +82,7 @@ export default function activate(api: ModAPI) {
     const { running, panel } = load();
     if (!running) return api.settings.placement === 'panel' && docked() ? { sites: { [SITE]: { components: [{ type: 'text', id: `${ID}_idle`, label: 'yazi', text: IDLE }] } } } : null;
     const sites = { [SITE]: { components: [{ type: 'terminal' as const, id: ID, label: 'yazi', session: SESSION, autofocus: true }] } };
-    if (panel) return { sites };
+    if (panel && docked()) return { sites };
     const chat = Math.min(99, Math.max(1, Math.round(500 / (client?.rows ?? 40))));
     return {
       sites,
@@ -90,7 +95,10 @@ export default function activate(api: ModAPI) {
 
   api.on('component_event', event => {
     if (event.component !== ID || event.kind !== 'exit') return;
+    const read = api.host.tryCall('terminal.pty', { action: 'read', session: SESSION });
+    if (read.ok && 'running' in read.value && read.value.running) return;
+    const last = read.ok && 'text' in read.value ? lastLine(read.value.text) : '';
     finish(event.files);
-    if (event.exit_code) api.host.tryCall('terminal.notice', { text: `yazi exited with ${event.exit_code}`, kind: 'warning' });
+    if (event.exit_code) api.host.tryCall('terminal.notice', { text: `yazi exited with ${event.exit_code}${last ? `: ${last}` : ''}`, kind: 'warning' });
   });
 }

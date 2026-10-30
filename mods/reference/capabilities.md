@@ -92,7 +92,8 @@ needs `exec`.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
 - Every unsandboxed `exec.run`, `process.start` and `terminal.pty` start asks once per mod and binary ("Run NAME for
   mod ID?") and again when the binary's hash changes, as after an upgrade; a callback outside a command waits for the
-  answer. The three share the pins in `pty-pins.json` in the mod store. A declined prompt fails
+  answer. The three share the pins in `program-pins.json` in the mod store; `omd-mod trust-program STORE MOD_ID PROGRAM`
+  pins a binary ahead of time for headless runs, where an unpinned run fails `program_unconfirmed`. A declined prompt fails
   `exec_program_declined` or `process_program_declined`, and a terminal start returns `{status: 'declined'}`.
 
 ### `approves` manifest field

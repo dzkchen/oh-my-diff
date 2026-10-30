@@ -638,6 +638,7 @@ export default function activate(api: ModAPI) {
       const placement = raw.placement === undefined ? {} : { placement: { beside: spot.beside as string, edge: spot.edge as Edge, ...(share === undefined ? {} : { share: Math.round(share as number) }) } };
       const panel: Panel = { id, title, site: where, ...(tabs ? { tabs: tabs as Tab[] } : {}), ...(typeof raw.order === 'number' && Number.isFinite(raw.order) ? { order: raw.order } : {}), ...placement };
       return changed(state => {
+        if (state.off) return refuse('the workspace is off');
         const others = state.registered.filter(item => item.id !== id);
         const taken = new Set([...BUILTIN, ...commands, ...others].flatMap(sitesOf));
         if (sitesOf(panel).some((name, index, all) => taken.has(name) || all.indexOf(name) !== index)) return refuse('site in use');
@@ -654,7 +655,10 @@ export default function activate(api: ModAPI) {
       if (removed && state.mode?.target === obj(input).id) state.mode = null;
       return { removed };
     }),
-    panels: () => ({ panels: panels(load()).map(({ id, title, site: name, tabs, placement }) => ({ id, title, site: name, ...(tabs ? { tabs } : {}), ...(placement ? { placement } : {}) })) as unknown as Json }),
+    panels: () => {
+      const state = load();
+      return { panels: (state.off ? [] : panels(state)).map(({ id, title, site: name, tabs, placement }) => ({ id, title, site: name, ...(tabs ? { tabs } : {}), ...(placement ? { placement } : {}) })) as unknown as Json };
+    },
     arrange: input => changed(state => {
       if (state.arranged?.by === 'user' || (!state.arranged && settled)) return refuse('the user arranged the workspace; /workspace reset hands it back');
       const refused = commit(state, parseNode(obj(input).tree), 'mod');

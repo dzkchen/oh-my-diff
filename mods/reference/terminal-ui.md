@@ -772,16 +772,18 @@ The confirmation names the program, write and network access and that the mod ca
 With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with the real `HOME` (no `write` or
 `network` fields) and stops when the grant ends. The host hashes the resolved program and asks once per mod and
 binary ("Allow and remember"); it starts without asking while the hash matches and asks again when the binary changes,
-for example after a package manager upgrade. Pins live in `pty-pins.json` in the mod store. A declined prompt returns
+for example after a package manager upgrade. Pins live in `program-pins.json` in the mod store. A declined prompt returns
 `{status: 'declined'}`; a start that reaches the spawn without that approval or a matching pin fails
 `pty_program_unpinned`. The pane gets the environment of an unsandboxed `exec.run`, the mod's declared
-`exec_environment` names included, plus `SSH_AUTH_SOCK`, `TERM=xterm-256color` and `COLORTERM=truecolor`.
+`exec_environment` names included, plus `SSH_AUTH_SOCK`, `TERM=xterm-256color` and, on a 24-bit colour terminal, `COLORTERM=truecolor`; 24-bit colours
+are drawn at the terminal's colour depth.
 
 Sessions:
 
 - Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod` in `host.json` `mod_limits`: four by default, up to sixteen, and sixteen in all).
 - Render only in terminal components owned by that mod.
-- Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads.
+- Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads. A stop hangs
+  up the program (SIGHUP) and kills it 2 s later if it still runs.
 - Queued requests and terminal input retain their original binding and cannot address a replacement session.
 - A focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
 
@@ -796,8 +798,8 @@ Sessions:
 | Links | OSC 8 `http`/`https` links become terminal hyperlinks. |
 | Replies | The pane answers device attributes (`CSI c`), status (`CSI 5n`) and cursor position (`CSI 6n`) queries, as a terminal does. |
 | Clipboard | An OSC 52 copy asks the user once per pane ("Allow for this pane"), then goes through the terminal's clipboard. A decline lasts for the pane. |
-| Session directory | `start {files: {NAME: text}}` (four files, 16 KiB each, names `[A-Za-z0-9._-]`) writes a private directory; every `{dir}` in `argv` is its path. `read` and the exit event return its top-level regular files (64 KiB in all; symlinks and hard links are skipped), including files the program wrote. It is removed when the session ends, is stopped or is replaced. Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach; sandboxed panes keep it in the scratch `HOME` they share, so other sandboxed panes can read it. Errors: `pty_files_invalid`. |
-| Focus | `autofocus: true` on the `terminal` component focuses it when it appears while nothing else has focus, and when its focus region is entered. A focused terminal shows a Ctrl+] hint until the first key. A key for a terminal whose program has ended leaves it. When a focused terminal unmounts, focus returns to where it was before. |
+| Session directory | `start {files: {NAME: text}}` (four files, 16 KiB each, names `[A-Za-z0-9._-]`) writes a private directory; every `{dir}` in `argv` is its path. The exit event and a `read` after the exit return its top-level regular files (64 KiB in all; symlinks and hard links are skipped), including files the program wrote. It is removed when the session stops or is replaced; one left behind when OMD quits is removed by the next start. Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach; sandboxed panes keep it in the scratch `HOME` they share, so other sandboxed panes can read it. Errors: `pty_files_invalid`. |
+| Focus | `autofocus: true` on the `terminal` component focuses it when it appears while nothing else has focus, and when its focus region is entered. A focused terminal shows a Ctrl+] hint until the first key; inside a focus region the first Ctrl+] leaves for the region and a second for the chat. A key for a terminal whose program has ended leaves it. When a focused terminal unmounts, focus returns to where it was before. |
 
 #### `builtins.invoke` and `api.builtins`
 

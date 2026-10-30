@@ -10,16 +10,16 @@ It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 omd-package mod enable omd_yazi
 ```
 
-It runs `yazi` outside the sandbox with your real `HOME`, without network, and with your `EDITOR`, `VISUAL`, `XDG_CONFIG_HOME` and `YAZI_CONFIG_HOME`, so trusting the mod grants that (`os_access` lists only `yazi`). The first start asks once per `yazi` binary, and again when the binary changes. Install yazi first: `brew install yazi`, or see the [installation guide](https://yazi-rs.github.io/docs/installation); without it `/yazi` says so.
+It runs `yazi` outside the sandbox with your real `HOME`, without network, and with your `EDITOR`, `VISUAL`, `XDG_CONFIG_HOME` and `YAZI_CONFIG_HOME`, so trusting the mod grants that (`os_access` lists only `yazi`). The first start asks once per `yazi` binary, and again when the binary changes. Install yazi first, following the [installation guide](https://yazi-rs.github.io/docs/installation) (Homebrew: `brew install yazi`); without it `/yazi` says so.
 
 ## Use it
 
 | Command | What it does |
 | --- | --- |
 | `/yazi [path]` | Start yazi in `path` (relative to the session directory); while it runs, focus it again |
-| `/yazi --stop` | Close it without inserting mentions |
+| `/yazi --stop` (or `stop`) | Close it without inserting mentions |
 
-Pick files with yazi's open action (Enter) or its chooser keys. When yazi quits (`q`), the picked paths are inserted at the prompt's cursor as `@relative/path`, `@"quoted path"` when the path has spaces. Ctrl+] leaves yazi without closing it.
+Pick files with yazi's open action (Enter) or its chooser keys. When yazi quits (`q`), the picked paths are inserted at the prompt's cursor as `@relative/path`, `@"quoted path"` when the path has spaces. Ctrl+] leaves yazi for the prompt without closing it; after you enter its workspace panel from the dock, the first Ctrl+] goes back to the panel and a second to the prompt. A failed exit shows yazi's last output line in a notice.
 
 Without a `path`, yazi starts where it last ended in this thread, if that is inside the session root, else in the session directory.
 
@@ -31,6 +31,6 @@ Without a `path`, yazi starts where it last ended in this thread, if that is ins
 
 ## Needs and limits
 
-- At most 16 mentions; paths outside the session root are skipped.
+- At most 16 mentions; paths outside the session root are skipped, and a notice says how many were skipped and why.
 - Needs the `terminal_pty_v2` host feature. Without `omd_workspace`, `panel` falls back to `full`.
-- One yazi per thread. It stops when you switch threads or OMD reloads, and its layout goes with it.
+- One yazi per thread. It stops when you switch threads or OMD reloads, and its layout goes with it. If the workspace is turned off or the panel is removed while it runs, yazi moves to the full screen layout.

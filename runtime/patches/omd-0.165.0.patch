@@ -33510,7 +33510,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8754c8d816818a7bab9d6e228d04be7d1288f11e 100644
+index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..6a27d802a84615816a6188297b48d548222649f0 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -33736,13 +33736,13 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8754c8d816818a7bab9d6e228d04be7d
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1247,33 +1390,49 @@ impl App {
+@@ -1247,33 +1390,51 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
 +        let mod_snapshot = crate::mod_ui::inline_snapshot(self.mod_render_snapshot());
 +        let mod_dialog_visible = crate::mod_ui::dialog_visible(&mod_snapshot);
-+        let mod_holds_keys = self.mod_overlays_allowed() && crate::mod_ui::holds_keys();
++        let mod_overlays_allowed = self.mod_overlays_allowed();
 +        let screen = Rect::new(0, 0, screen_size.width, screen_size.height);
 +        let header_rows = crate::mod_ui::header_rows(screen, &mod_snapshot);
 +        let chat_width = crate::mod_ui::chat_area(screen, &mod_snapshot, header_rows).width;
@@ -33783,7 +33783,9 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8754c8d816818a7bab9d6e228d04be7d
 +                crate::mod_ui::render(area, chat_area, frame.buffer, &mod_snapshot);
 +                crate::mod_ui::render_help(area, &mod_snapshot, frame.buffer);
 +                self.chat_widget.note_rendered_width(chat_area.width);
-+                if !mod_holds_keys && let Some((x, y)) = chat_widget.cursor_pos(chat_area) {
++                if !(mod_overlays_allowed && crate::mod_ui::holds_keys())
++                    && let Some((x, y)) = chat_widget.cursor_pos(chat_area)
++                {
 +                    frame.set_cursor_style(chat_widget.cursor_style(chat_area));
                      frame.set_cursor_position((x, y));
                  }
@@ -33793,7 +33795,7 @@ index 1b3b21e07f206ba3beb0053132d36b5b6f2bd540..8754c8d816818a7bab9d6e228d04be7d
              Ok(rendered_area)
          })
      }
-@@ -1283,6 +1442,7 @@ impl App {
+@@ -1283,6 +1444,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -44968,7 +44970,7 @@ index 3cb54b2cf73b665e2606e99b827e06973e695ac1..e328e146d698deed8e50555c6c599fb2
              shimmer,
          ));
 diff --git a/codex-rs/tui/src/style.rs b/codex-rs/tui/src/style.rs
-index b9f6d45155125635fb64232fae93b7bf18d3d623..1438c35271c5a44545012062df01c46dea55e7c3 100644
+index b9f6d45155125635fb64232fae93b7bf18d3d623..3d4cd8d3ad10f0ec241554882b1290297dad9bd1 100644
 --- a/codex-rs/tui/src/style.rs
 +++ b/codex-rs/tui/src/style.rs
 @@ -35,6 +35,14 @@ pub(crate) enum StatusTone {
@@ -45007,6 +45009,15 @@ index b9f6d45155125635fb64232fae93b7bf18d3d623..1438c35271c5a44545012062df01c46d
      if matches!(
          effective_stdout_color_level(),
          StdoutColorLevel::TrueColor | StdoutColorLevel::Ansi256
+@@ -109,7 +124,7 @@ pub(crate) fn accent_color_on(background: Option<Color>) -> Color {
+     accent_color_for(background_rgb(background))
+ }
+
+-fn background_rgb(background: Option<Color>) -> Option<(u8, u8, u8)> {
++pub(crate) fn background_rgb(background: Option<Color>) -> Option<(u8, u8, u8)> {
+     match background {
+         Some(Color::Rgb(r, g, b)) => Some((r, g, b)),
+         Some(Color::Indexed(index)) if index >= 16 => {
 diff --git a/codex-rs/tui/src/temporary_structured_request_tests.rs b/codex-rs/tui/src/temporary_structured_request_tests.rs
 index e86668e5ad75e97260a2261257afa3fdf2dea4b2..b64a130d2823f1f7ac26e25c8e858fdeb3faf45a 100644
 --- a/codex-rs/tui/src/temporary_structured_request_tests.rs
@@ -46231,6 +46242,96 @@ index aa3664d09746ae4eb8c4e0e643e9b2d9f261f2ec..4029ba9cdc0a833f4c69ac1863791cab
      })
      .await?
  }
+diff --git a/codex-rs/utils/pty/src/pipe.rs b/codex-rs/utils/pty/src/pipe.rs
+index 802dfa5280101e310cf3a49a6f67f429c8dde679..b4e7c483d604323fd859e30d0a16e92a4605fbe7 100644
+--- a/codex-rs/utils/pty/src/pipe.rs
++++ b/codex-rs/utils/pty/src/pipe.rs
+@@ -63,6 +63,17 @@ impl ChildTerminator for PipeChildTerminator {
+                     Err(crate::process::unsupported_signal(signal))
+                 }
+             }
++            ProcessSignal::Hangup => {
++                #[cfg(unix)]
++                {
++                    crate::process_group::hangup_process_group(self.process_group_id)
++                }
++
++                #[cfg(not(unix))]
++                {
++                    Err(crate::process::unsupported_signal(signal))
++                }
++            }
+         }
+     }
+
+diff --git a/codex-rs/utils/pty/src/process.rs b/codex-rs/utils/pty/src/process.rs
+index 5593450b89d0578d59f3ab74cb5cfcf625c908f6..6b06cfc0038576160136370847890ac642a2642f 100644
+--- a/codex-rs/utils/pty/src/process.rs
++++ b/codex-rs/utils/pty/src/process.rs
+@@ -21,6 +21,7 @@ use tokio::task::JoinHandle;
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum ProcessSignal {
+     Interrupt,
++    Hangup,
+ }
+
+ pub(crate) fn unsupported_signal(signal: ProcessSignal) -> io::Error {
+@@ -29,6 +30,10 @@ pub(crate) fn unsupported_signal(signal: ProcessSignal) -> io::Error {
+             io::ErrorKind::Unsupported,
+             "process interrupt is not supported by this process backend",
+         ),
++        ProcessSignal::Hangup => io::Error::new(
++            io::ErrorKind::Unsupported,
++            "process hangup is not supported by this process backend",
++        ),
+     }
+ }
+
+diff --git a/codex-rs/utils/pty/src/process_group.rs b/codex-rs/utils/pty/src/process_group.rs
+index f403b7e647dbf697b88d14e8f5468dc277da648e..30ee0de3df7d7cae839bdc329dfad5bbfe92393a 100644
+--- a/codex-rs/utils/pty/src/process_group.rs
++++ b/codex-rs/utils/pty/src/process_group.rs
+@@ -264,6 +264,11 @@ pub fn interrupt_process_group(_process_group_id: u32) -> io::Result<()> {
+     Ok(())
+ }
+
++#[cfg(unix)]
++pub fn hangup_process_group(process_group_id: u32) -> io::Result<()> {
++    signal_process_group_id(process_group_id as libc::pid_t, libc::SIGHUP).map(|_| ())
++}
++
+ #[cfg(all(unix, not(target_os = "macos")))]
+ /// Kill a specific process group ID (best-effort).
+ pub fn kill_process_group(process_group_id: u32) -> io::Result<()> {
+diff --git a/codex-rs/utils/pty/src/pty.rs b/codex-rs/utils/pty/src/pty.rs
+index 035fad8841761f95eee4cd2db0365ea75f39bd0d..250be8631427a53e959e6838bb8a0439c7d90ca4 100644
+--- a/codex-rs/utils/pty/src/pty.rs
++++ b/codex-rs/utils/pty/src/pty.rs
+@@ -85,6 +85,14 @@ impl ChildTerminator for PtyChildTerminator {
+                     return crate::process_group::interrupt_process_group(process_group_id);
+                 }
+
++                Err(crate::process::unsupported_signal(signal))
++            }
++            ProcessSignal::Hangup => {
++                #[cfg(unix)]
++                if let Some(process_group_id) = self.process_group_id {
++                    return crate::process_group::hangup_process_group(process_group_id);
++                }
++
+                 Err(crate::process::unsupported_signal(signal))
+             }
+         }
+@@ -122,6 +130,9 @@ impl ChildTerminator for RawPidTerminator {
+             ProcessSignal::Interrupt => {
+                 crate::process_group::interrupt_process_group(self.process_group_id)
+             }
++            ProcessSignal::Hangup => {
++                crate::process_group::hangup_process_group(self.process_group_id)
++            }
+         }
+     }
+
 diff --git a/codex-rs/websocket-auth/src/auth_tests.rs b/codex-rs/websocket-auth/src/auth_tests.rs
 index b78e87f3ab7e344276ca77118de8daa2aefa1559..f5a75ac436d48be4cbd3dc748c65932c42d65b30 100644
 --- a/codex-rs/websocket-auth/src/auth_tests.rs
@@ -48744,10 +48845,10 @@ index 0000000000000000000000000000000000000000..85c8d5498650ca65b97be34595306ffd
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..25410849286e94c2d2b3cf9a1295488704d22643
+index 0000000000000000000000000000000000000000..0ce16ea5b144581068a17f762649e81703af0eb4
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,408 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -48911,19 +49012,15 @@ index 0000000000000000000000000000000000000000..25410849286e94c2d2b3cf9a12954887
 +        answer.await.map_err(|_| closed())?
 +    }
 +
-+    async fn trust(&self, call: &SurfaceCall) -> Result<Value, String> {
-+        let (program, hash, previous) =
-+            codex_omd::program_trust::request(&call.arguments).ok_or("program_trust_invalid")?;
-+        let (title, message) = codex_omd::program_trust::prompt(
-+            &call.caller,
-+            &program,
-+            &hash,
-+            previous.as_deref(),
-+            false,
-+        );
++    async fn confirm(
++        &self,
++        call: &SurfaceCall,
++        title: &str,
++        message: &str,
++    ) -> Result<bool, String> {
 +        let confirmers = self.clients.serving("terminal.prompt");
 +        if confirmers.is_empty() {
-+            return Ok(json!({"status": "declined"}));
++            return Ok(false);
 +        }
 +        let answer = self
 +            .clients
@@ -48938,7 +49035,15 @@ index 0000000000000000000000000000000000000000..25410849286e94c2d2b3cf9a12954887
 +                || call.lifetime.active(),
 +            )
 +            .await?;
-+        Ok(if answer["status"] == "accepted" {
++        Ok(answer["status"] == "accepted")
++    }
++
++    async fn trust(&self, call: &SurfaceCall) -> Result<Value, String> {
++        let (program, hash, previous) =
++            codex_omd::program_trust::request(&call.arguments).ok_or("program_trust_invalid")?;
++        let (title, message) =
++            codex_omd::program_trust::prompt(&call.caller, &program, &hash, previous.as_deref());
++        Ok(if self.confirm(call, &title, &message).await? {
 +            json!({"trusted": true})
 +        } else {
 +            json!({"status": "declined"})
@@ -48946,29 +49051,16 @@ index 0000000000000000000000000000000000000000..25410849286e94c2d2b3cf9a12954887
 +    }
 +
 +    async fn app_request(&self, call: &SurfaceCall) -> Result<Value, String> {
-+        if let Some(confirm) = &call.confirm {
-+            let confirmers = self.clients.serving("terminal.prompt");
-+            if confirmers.is_empty() {
-+                return Ok(json!({"status": "declined"}));
-+            }
-+            let answer = self
-+                .clients
-+                .surface_call(
-+                    confirmers,
-+                    OmdSurfaceCallParams {
-+                        caller: call.caller.clone(),
-+                        operation: "terminal.prompt".to_string(),
-+                        arguments: json!({"kind": "confirm",
-+                            "title": format!("Confirm request from mod {}", call.caller),
-+                            "message": confirm}),
-+                        confirm: None,
-+                    },
-+                    || call.lifetime.active(),
++        if let Some(confirm) = &call.confirm
++            && !self
++                .confirm(
++                    call,
++                    &format!("Confirm request from mod {}", call.caller),
++                    confirm,
 +                )
-+                .await?;
-+            if answer["status"] != "accepted" {
-+                return Ok(json!({"status": "declined"}));
-+            }
++                .await?
++        {
++            return Ok(json!({"status": "declined"}));
 +        }
 +        let method = call.arguments["method"]
 +            .as_str()
@@ -58986,10 +59078,10 @@ index 0000000000000000000000000000000000000000..eba78f68f26af276b1ed4025b9a99be0
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..edd4a0a85623ef9ff0182fd8221625c82dc77634
+index 0000000000000000000000000000000000000000..f4280fce823a2e51464f73ef6f4d74bf1d7cdead
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,591 @@
+@@ -0,0 +1,598 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -59233,7 +59325,7 @@ index 0000000000000000000000000000000000000000..edd4a0a85623ef9ff0182fd8221625c8
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(concat!(
-+            "usage: omd-mod init STORE | authorize-runner STORE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | require STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE MOD_ID_OR_PACKAGE | rollback STORE MOD_ID_OR_PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD] | cost STORE MOD RUNS [COMMAND [ARGS_JSON]]",
++            "usage: omd-mod init STORE | authorize-runner STORE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | trust-program STORE MOD_ID PROGRAM | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | require STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE MOD_ID_OR_PACKAGE | rollback STORE MOD_ID_OR_PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD] | cost STORE MOD RUNS [COMMAND [ARGS_JSON]]",
 +            " | broker-grants-import STORE [SNAPSHOT_JSON]"
 +        ))
 +    };
@@ -59307,6 +59399,13 @@ index 0000000000000000000000000000000000000000..edd4a0a85623ef9ff0182fd8221625c8
 +        [command, root] if command == "authorize-runner" => {
 +            open(root)?.authorize_runner()?;
 +            Ok(Value::String("updated".into()))
++        }
++        [command, root, id, program] if command == "trust-program" => {
++            open(root)?;
++            let (program, sha256) =
++                codex_omd::program_trust::allow(std::path::Path::new(root), id, program)
++                    .map_err(io::Error::other)?;
++            Ok(json!({"pinned": program, "sha256": sha256}))
 +        }
 +        [command, path] if command == "inspect" => {
 +            ModStore::inspect_package(&PathBuf::from(path).canonicalize()?)
@@ -83379,10 +83478,10 @@ index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0ae6ec9e2ac5bb4151172685883b9bb2e9a5517b
+index 0000000000000000000000000000000000000000..36482a84c7c9696f787752b12fdc0c4f2e0b8439
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,819 @@
+@@ -0,0 +1,873 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -83894,20 +83993,16 @@ index 0000000000000000000000000000000000000000..0ae6ec9e2ac5bb4151172685883b9bb2
 +        let result = tokio::task::spawn_blocking(move || {
 +            if request.operation == "process.start"
 +                && request.arguments["sandbox"] == "none"
-+                && os_access.is_some()
-+                && let (Some(path), Some(sha256)) = (
-+                    request.arguments["path"].as_str(),
-+                    request.arguments["sha256"].as_str(),
-+                )
-+                && !codex_omd::program_trust::ensure(
++                && let Some(access) = os_access.as_ref()
++            {
++                trust_start(
++                    access,
++                    &request.arguments,
++                    &authority.repository,
 +                    &store,
 +                    &id,
-+                    std::path::Path::new(path),
-+                    sha256,
 +                    &active,
-+                )?
-+            {
-+                return Err("process_program_declined".to_owned());
++                )?;
 +            }
 +            processes.call(
 +                crate::managed_process::ProcessOwner {
@@ -84154,9 +84249,67 @@ index 0000000000000000000000000000000000000000..0ae6ec9e2ac5bb4151172685883b9bb2
 +    }
 +}
 +
++fn trust_start(
++    access: &codex_omd::ModOsAccess,
++    arguments: &Value,
++    repository: &std::path::Path,
++    store: &std::path::Path,
++    id: &str,
++    active: &dyn Fn() -> bool,
++) -> Result<(), String> {
++    let (Some(name), Some(path), Some(sha256)) = (
++        arguments["name"].as_str(),
++        arguments["path"].as_str(),
++        arguments["sha256"].as_str(),
++    ) else {
++        return Err("process_program_or_arguments_invalid".to_owned());
++    };
++    let path = std::path::Path::new(path);
++    if codex_omd::host::unrestricted_program(access, name, repository)? != path {
++        return Err("process_program_or_arguments_invalid".to_owned());
++    }
++    let hash = codex_omd::host::program_hash(path)?;
++    if hash != sha256 {
++        return Err("process_executable_changed".to_owned());
++    }
++    if !codex_omd::program_trust::ensure(store, id, path, &hash, active)? {
++        return Err("process_program_declined".to_owned());
++    }
++    Ok(())
++}
++
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    fn unsandboxed_process_start_checks_the_program_before_asking() {
++        let access = codex_omd::ModOsAccess {
++            programs: vec!["sh".into()],
++            network: true,
++        };
++        let (repository, store) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
++        let sh = codex_omd::host::unrestricted_program(&access, "sh", repository.path()).unwrap();
++        let start = |path: &std::path::Path| {
++            trust_start(
++                &access,
++                &json!({"name": "sh", "path": path, "sha256": "aa"}),
++                repository.path(),
++                store.path(),
++                "m",
++                &|| true,
++            )
++        };
++        assert_eq!(
++            start(std::path::Path::new("/bin/ls")),
++            Err("process_program_or_arguments_invalid".into())
++        );
++        assert_eq!(start(&sh), Err("process_executable_changed".into()));
++        assert_eq!(
++            codex_omd::program_trust::pinned(store.path(), "m", &sh),
++            None
++        );
++    }
 +
 +    #[test]
 +    fn live_exec_write_reserves_the_workspace_across_sessions() {
@@ -102770,10 +102923,10 @@ index 0000000000000000000000000000000000000000..720b9b8f3a6c7adbae974aea9c0f57c2
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..918ab1b8c34fdad4533cbf3c6f3d76b431750150
+index 0000000000000000000000000000000000000000..e27047eb10e974034486697ff8acc18997a90c53
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,726 @@
+@@ -0,0 +1,741 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -102831,6 +102984,21 @@ index 0000000000000000000000000000000000000000..918ab1b8c34fdad4533cbf3c6f3d76b4
 +    HUB_TESTS
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
++}
++
++#[test]
++fn program_trust_without_a_client_names_the_pre_approval() {
++    let _serial = hub_test();
++    let store = tempfile::tempdir().unwrap();
++    let error = crate::program_trust::ensure(
++        store.path(),
++        "m",
++        std::path::Path::new("/bin/sh"),
++        "aa",
++        &|| true,
++    )
++    .unwrap_err();
++    assert!(error.starts_with("program_unconfirmed:"), "{error}");
 +}
 +
 +#[test]
@@ -136017,10 +136185,10 @@ index 0000000000000000000000000000000000000000..c1f5c12542ce890d42bf0d90a3244e46
 +}
 diff --git a/codex-rs/omd/src/program_trust.rs b/codex-rs/omd/src/program_trust.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c646352e66fd2123157df632f8320e7fc1fd0544
+index 0000000000000000000000000000000000000000..fa9fcba67e619a406c6d9b1d5114964855846248
 --- /dev/null
 +++ b/codex-rs/omd/src/program_trust.rs
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,167 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::path::Path;
@@ -136029,49 +136197,57 @@ index 0000000000000000000000000000000000000000..c646352e66fd2123157df632f8320e7f
 +pub const OPERATION: &str = "program.trust";
 +
 +fn pins_path(store: &Path) -> PathBuf {
-+    store.join("pty-pins.json")
++    store.join("program-pins.json")
++}
++
++fn read_pins(path: &Path) -> Option<Value> {
++    serde_json::from_slice::<Value>(&std::fs::read(path).ok()?)
++        .ok()
++        .filter(|pins| pins["pins"].is_object())
 +}
 +
 +pub fn pinned(store: &Path, owner: &str, program: &Path) -> Option<String> {
-+    let pins: Value = serde_json::from_slice(&std::fs::read(pins_path(store)).ok()?).ok()?;
-+    pins["pins"][owner][program.to_string_lossy().as_ref()]
++    read_pins(&pins_path(store))?["pins"][owner][program.to_string_lossy().as_ref()]
 +        .as_str()
 +        .map(str::to_owned)
 +}
 +
 +pub fn pin(store: &Path, owner: &str, program: &Path, hash: &str) -> Result<(), String> {
++    let failed = |error: std::io::Error| format!("program_pin_failed: {error}");
++    let lock = std::fs::OpenOptions::new()
++        .create(true)
++        .truncate(false)
++        .write(true)
++        .open(store.join("program-pins.lock"))
++        .map_err(failed)?;
++    rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive)
++        .map_err(|error| failed(error.into()))?;
 +    let path = pins_path(store);
-+    let mut pins = std::fs::read(&path)
-+        .ok()
-+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-+        .filter(|pins| pins["pins"].is_object())
-+        .unwrap_or_else(|| json!({"pins": {}}));
-+    let owners = pins["pins"].as_object_mut().ok_or("pty_pins_invalid")?;
-+    let programs = owners.entry(owner.to_owned()).or_insert_with(|| json!({}));
++    let mut pins = read_pins(&path).unwrap_or_else(|| json!({"pins": {}}));
++    let programs = &mut pins["pins"][owner];
 +    if !programs.is_object() {
 +        *programs = json!({});
 +    }
 +    programs[program.to_string_lossy().as_ref()] = Value::String(hash.to_owned());
-+    let temporary = path.with_extension("json.tmp");
-+    std::fs::write(
-+        &temporary,
-+        serde_json::to_vec_pretty(&pins).map_err(|error| error.to_string())?,
-+    )
-+    .and_then(|()| std::fs::rename(&temporary, &path))
-+    .map_err(|error| format!("pty_pin_failed: {error}"))
++    crate::fsio::write_json(&path, &pins).map_err(failed)
++}
++
++pub fn allow(store: &Path, owner: &str, name: &str) -> Result<(PathBuf, String), String> {
++    let any = crate::ModOsAccess {
++        programs: vec!["*".to_owned()],
++        network: false,
++    };
++    let program = crate::host::unrestricted_program(&any, name, Path::new("/dev/null"))?;
++    let hash = crate::host::program_hash(&program)?;
++    pin(store, owner, &program, &hash)?;
++    Ok((program, hash))
 +}
 +
 +fn short(hash: &str) -> &str {
 +    &hash[..hash.floor_char_boundary(12)]
 +}
 +
-+pub fn prompt(
-+    owner: &str,
-+    program: &Path,
-+    hash: &str,
-+    previous: Option<&str>,
-+    pane: bool,
-+) -> (String, String) {
++pub fn prompt(owner: &str, program: &Path, hash: &str, previous: Option<&str>) -> (String, String) {
 +    let name = program
 +        .file_name()
 +        .map_or_else(|| program.to_string_lossy(), |name| name.to_string_lossy());
@@ -136082,18 +136258,10 @@ index 0000000000000000000000000000000000000000..c646352e66fd2123157df632f8320e7f
 +        ),
 +        None => "This is its first run for this mod.".to_owned(),
 +    };
-+    let (place, control) = if pane {
-+        (
-+            " in a terminal pane",
-+            " The mod can type into it and read its screen.",
-+        )
-+    } else {
-+        ("", "")
-+    };
 +    (
 +        format!("Run {name} for mod {owner}?"),
 +        format!(
-+            "Mod {owner} wants to run {} (sha256 {}){place} outside the sandbox, with your HOME and your user's permissions. {history}{control}",
++            "Mod {owner} wants to run {} (sha256 {}) outside the sandbox, with your HOME and your user's permissions. {history} Allowing it also lets the mod run it in a terminal pane, where it can type into it and read its screen.",
 +            program.display(),
 +            short(hash)
 +        ),
@@ -136115,7 +136283,18 @@ index 0000000000000000000000000000000000000000..c646352e66fd2123157df632f8320e7f
 +        owner,
 +        json!({"program": program, "sha256": hash, "previous": previous}),
 +        active,
-+    )?;
++    )
++    .map_err(|error| {
++        if error.starts_with("client_surface_unavailable") {
++            format!(
++                "program_unconfirmed: allow {} once in the TUI, or run omd-mod trust-program STORE {owner} {}",
++                program.display(),
++                program.display()
++            )
++        } else {
++            error
++        }
++    })?;
 +    if answer["status"] == "declined" {
 +        return Ok(false);
 +    }
@@ -136144,18 +136323,37 @@ index 0000000000000000000000000000000000000000..c646352e66fd2123157df632f8320e7f
 +        pin(store.path(), "m", program, "bb").unwrap();
 +        assert_eq!(pinned(store.path(), "m", program).as_deref(), Some("bb"));
 +        assert_eq!(pinned(store.path(), "other", program), None);
-+        let (title, first) = prompt("m", program, &"a".repeat(64), None, true);
++        let (title, _) = prompt("m", program, &"a".repeat(64), None);
 +        assert_eq!(title, "Run lazygit for mod m?");
-+        assert!(first.contains("in a terminal pane") && first.contains("first run"));
-+        let (_, changed) = prompt(
-+            "m",
-+            program,
-+            &"b".repeat(64),
-+            Some("é".repeat(10).as_str()),
-+            false,
-+        );
++        let (_, changed) = prompt("m", program, &"b".repeat(64), Some("é".repeat(10).as_str()));
 +        assert!(changed.contains("It changed since you allowed sha256 éééééé,"));
-+        assert!(!changed.contains("terminal pane"));
++    }
++
++    #[test]
++    fn allow_pins_the_resolved_program_hash() {
++        let store = tempfile::tempdir().unwrap();
++        let (program, hash) = allow(store.path(), "m", "sh").unwrap();
++        assert_eq!(pinned(store.path(), "m", &program), Some(hash));
++    }
++
++    #[test]
++    fn concurrent_pins_keep_every_approval() {
++        let store = tempfile::tempdir().unwrap();
++        std::thread::scope(|scope| {
++            for index in 0..16 {
++                let store = store.path();
++                scope.spawn(move || {
++                    pin(store, "m", Path::new(&format!("/bin/p{index}")), "aa").unwrap()
++                });
++            }
++        });
++        for index in 0..16 {
++            let program = format!("/bin/p{index}");
++            assert_eq!(
++                pinned(store.path(), "m", Path::new(&program)).as_deref(),
++                Some("aa")
++            );
++        }
 +    }
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
@@ -156725,10 +156923,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3c7ca4e8504867793d4da326d518550b74952ead
+index 0000000000000000000000000000000000000000..92c0180198e3103480309000d2657a4ae74f7871
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2432 @@
+@@ -0,0 +1,2426 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -157241,7 +157439,6 @@ index 0000000000000000000000000000000000000000..3c7ca4e8504867793d4da326d518550b
 +                &program,
 +                &hash,
 +                previous.as_deref(),
-+                false,
 +            );
 +            return Ok(Some((Some(title), prompt, None)));
 +        }
@@ -157683,11 +157880,7 @@ index 0000000000000000000000000000000000000000..3c7ca4e8504867793d4da326d518550b
 +            let pin = pin
 +                .filter(|pin| pin.program == program)
 +                .ok_or("pty_program_unpinned")?;
-+            let hash = if pin.stored {
-+                pin.hash.clone()
-+            } else {
-+                codex_omd::host::program_hash(&program)?
-+            };
++            let hash = codex_omd::host::program_hash(&program)?;
 +            if hash != pin.hash || arguments["sha256"].as_str().is_some_and(|sha| sha != hash) {
 +                return Err("pty_program_changed".into());
 +            }
@@ -157820,7 +158013,6 @@ index 0000000000000000000000000000000000000000..3c7ca4e8504867793d4da326d518550b
 +                &program,
 +                &hash,
 +                previous.as_deref(),
-+                true,
 +            );
 +            let held = Some(Confirmed::Pty(
 +                binding.clone(),
@@ -166186,12 +166378,14 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d65ce5040
+index 0000000000000000000000000000000000000000..f68c7f2abb357916f206c149afaa95bceadd8cc5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,1669 @@
+@@ -0,0 +1,1779 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
++use crate::terminal_palette::StdoutColorLevel;
++use crate::terminal_palette::best_color_for_level;
 +use base64::Engine;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -166234,6 +166428,7 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +const COPY_BYTES: usize = 64 * 1024;
 +const NOTICES: usize = 32;
 +const REPLY_BYTES: usize = 1024;
++const HANGUP_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 +
 +#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 +pub(crate) enum Clipboard {
@@ -166519,11 +166714,27 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +    )
 +}
 +
-+fn clear(sessions: &mut Sessions) {
-+    for pane in sessions.panes.values() {
-+        pane.handle.terminate();
++fn hang_up(handle: codex_utils_pty::ProcessHandle) {
++    if handle.has_exited()
++        || handle
++            .signal(codex_utils_pty::ProcessSignal::Hangup)
++            .is_err()
++    {
++        return;
 +    }
-+    sessions.panes.clear();
++    std::thread::spawn(move || {
++        let deadline = std::time::Instant::now() + HANGUP_GRACE;
++        while !handle.has_exited() && std::time::Instant::now() < deadline {
++            std::thread::sleep(std::time::Duration::from_millis(50));
++        }
++        drop(handle);
++    });
++}
++
++fn clear(sessions: &mut Sessions) {
++    for pane in std::mem::take(&mut sessions.panes).into_values() {
++        hang_up(pane.handle);
++    }
 +    sessions.missing.clear();
 +}
 +
@@ -166550,14 +166761,15 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +        sessions.scope.configuration = configuration.to_owned();
 +    }
 +    sessions.owners = active.clone();
-+    sessions.panes.retain(|(owner, _), pane| {
-+        let keep =
-+            active.contains_key(owner) && (!pane.unrestricted || unrestricted.contains(owner));
-+        if !keep {
-+            pane.handle.terminate();
-+        }
-+        keep
-+    });
++    let (kept, stopped): (BTreeMap<_, _>, BTreeMap<_, _>) = std::mem::take(&mut sessions.panes)
++        .into_iter()
++        .partition(|((owner, _), pane)| {
++            active.contains_key(owner) && (!pane.unrestricted || unrestricted.contains(owner))
++        });
++    sessions.panes = kept;
++    for pane in stopped.into_values() {
++        hang_up(pane.handle);
++    }
 +}
 +
 +pub(crate) fn argv(arguments: &Value) -> Result<Vec<String>, String> {
@@ -166833,9 +167045,11 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +    };
 +    environment.extend([
 +        ("TERM".to_owned(), "xterm-256color".to_owned()),
-+        ("COLORTERM".to_owned(), "truecolor".to_owned()),
 +        ("HOME".to_owned(), home.to_string_lossy().into_owned()),
 +    ]);
++    if crate::terminal_palette::effective_stdout_color_level() == StdoutColorLevel::TrueColor {
++        environment.insert("COLORTERM".to_owned(), "truecolor".to_owned());
++    }
 +    let size = codex_utils_pty::TerminalSize { rows: 24, cols: 80 };
 +    let spawned = match codex_utils_pty::pty::spawn_process(
 +        &program,
@@ -166962,14 +167176,18 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +            let exit_code = *pane.exit.locked();
 +            let mut result =
 +                json!({"text": text, "running": exit_code.is_none(), "exit_code": exit_code});
-+            if let Some(files) = files(pane.dir.as_ref()) {
++            if exit_code.is_some()
++                && let Some(files) = files(pane.dir.as_ref())
++            {
 +                result["files"] = files;
 +            }
 +            Ok(result)
 +        }
 +        Some("stop") => {
-+            owned(&mut sessions, binding, &session)?.handle.terminate();
-+            sessions.panes.remove(&(binding.owner.clone(), session));
++            owned(&mut sessions, binding, &session)?;
++            if let Some(pane) = sessions.panes.remove(&(binding.owner.clone(), session)) {
++                hang_up(pane.handle);
++            }
 +            Ok(json!({"stopped": true}))
 +        }
 +        _ => Err("pty_action_invalid".into()),
@@ -167045,12 +167263,11 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +    }
 +}
 +
-+#[allow(clippy::disallowed_methods)]
-+fn color(color: vt100::Color) -> Option<Color> {
++fn color(color: vt100::Color, level: StdoutColorLevel) -> Option<Color> {
 +    match color {
 +        vt100::Color::Default => None,
 +        vt100::Color::Idx(index) => Some(Color::Indexed(index)),
-+        vt100::Color::Rgb(r, g, b) => Some(Color::Rgb(r, g, b)),
++        vt100::Color::Rgb(r, g, b) => Some(best_color_for_level((r, g, b), level)),
 +    }
 +}
 +
@@ -167114,9 +167331,11 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +        .map(|(row, column)| (row, column.min(cols - 1)));
 +    let offset = prefix.width();
 +    let links = &parser.callbacks().links;
++    let level = crate::terminal_palette::effective_stdout_color_level();
 +    let mut lines = (0..rows)
 +        .map(|row| {
 +            let mut spans = vec![Span::raw(prefix.to_owned())];
++            let mut run = (String::new(), Style::default());
 +            for column in 0..cols {
 +                let Some(cell) = screen.cell(row, column) else {
 +                    continue;
@@ -167125,10 +167344,10 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +                    continue;
 +                }
 +                let mut style = Style::default();
-+                if let Some(foreground) = color(cell.fgcolor()) {
++                if let Some(foreground) = color(cell.fgcolor(), level) {
 +                    style = style.fg(foreground);
 +                }
-+                if let Some(background) = color(cell.bgcolor()) {
++                if let Some(background) = color(cell.bgcolor(), level) {
 +                    style = style.bg(background);
 +                }
 +                for (on, modifier) in [
@@ -167145,12 +167364,19 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +                        style = style.add_modifier(modifier);
 +                    }
 +                }
-+                let text = if cell.has_contents() {
-+                    cell.contents().to_owned()
++                if style != run.1 && !run.0.is_empty() {
++                    let (text, style) = std::mem::take(&mut run);
++                    spans.push(Span::styled(text, style));
++                }
++                run.1 = style;
++                run.0.push_str(if cell.has_contents() {
++                    cell.contents()
 +                } else {
-+                    " ".to_owned()
-+                };
-+                spans.push(Span::styled(text, style));
++                    " "
++                });
++            }
++            if !run.0.is_empty() {
++                spans.push(Span::styled(run.0, run.1));
 +            }
 +            let row_links = links
 +                .iter()
@@ -167280,6 +167506,15 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +    };
 +    parser.screen_mut().set_scrollback(0);
 +    pane.writer.try_send(bytes).is_ok()
++}
++
++pub(crate) fn reports_mouse(binding: Option<&Binding>, session: &str) -> bool {
++    let mut sessions = sessions();
++    binding
++        .and_then(|binding| owned(&mut sessions, binding, session).ok())
++        .is_some_and(|pane| {
++            pane.screen.locked().screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None
++        })
 +}
 +
 +pub(crate) fn mouse(
@@ -167593,6 +167828,73 @@ index 0000000000000000000000000000000000000000..6c334a1a9931d2d0dfc317bb781e673d
 +        assert!(elsewhere.join("999999-1").exists());
 +        sweep(&elsewhere);
 +        assert!(!elsewhere.join("999999-1").exists());
++    }
++
++    #[test]
++    fn rgb_cells_follow_the_terminal_colour_depth() {
++        let red = vt100::Color::Rgb(255, 0, 0);
++        assert!(matches!(
++            color(red, StdoutColorLevel::TrueColor),
++            Some(Color::Rgb(255, 0, 0))
++        ));
++        assert!(matches!(
++            color(red, StdoutColorLevel::Ansi256),
++            Some(Color::Indexed(_))
++        ));
++    }
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn stop_hangs_up_before_killing() {
++        let _restore = test_scope();
++        let owners = BTreeMap::from([("m".to_owned(), "source".to_owned())]);
++        context(1, Some("a".into()));
++        retain(1, "admitted", &owners, &Default::default());
++        let authority = codex_omd::client_surface::Authority {
++            epoch: 1,
++            admission: codex_omd::client_surface::admission(),
++            configuration: "admitted".into(),
++            source: "source".into(),
++        };
++        let a = binding("m", Some("a"), &authority).unwrap();
++        let dir = tempfile::tempdir().unwrap();
++        let mut command = std::process::Command::new("/bin/sh");
++        command
++            .args([
++                "-c",
++                "trap 'echo hup > hung; exit 0' HUP; echo ready; while :; do sleep 1; done",
++            ])
++            .current_dir(dir.path());
++        start(
++            &a,
++            &json!({"session": "t1"}),
++            command,
++            dir.path(),
++            None,
++            crate::tui::FrameRequester::test_dummy(),
++            events(),
++        )
++        .await
++        .unwrap();
++        for _ in 0..100 {
++            if call(&a, &json!({"session": "t1", "action": "read"})).unwrap()["text"]
++                .as_str()
++                .is_some_and(|text| text.contains("ready"))
++            {
++                break;
++            }
++            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++        }
++        call(&a, &json!({"session": "t1", "action": "stop"})).unwrap();
++        let hung = dir.path().join("hung");
++        for _ in 0..100 {
++            if hung.exists() {
++                break;
++            }
++            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++        }
++        assert!(hung.exists());
++        context(2, None);
 +    }
 +
 +    #[tokio::test]
@@ -174753,10 +175055,10 @@ index 0000000000000000000000000000000000000000..010703e1cda8c601ee75f9c257a5faf5
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ad8163d7e848f343f07f58322ba1356fa5e6e68a
+index 0000000000000000000000000000000000000000..f1316e8c8c84d0911ab5411d6d0c066f9e0331d3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5838 @@
+@@ -0,0 +1,5835 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -177804,7 +178106,9 @@ index 0000000000000000000000000000000000000000..ad8163d7e848f343f07f58322ba1356f
 +    {
 +        buffer.set_style(hitbox.area, crate::style::accent_style());
 +        let terminal = interaction.terminals.contains(&focused);
-+        let hint = if terminal {
++        let hint = if terminal && interaction.focus_region.is_some() {
++            " Ctrl+] twice for chat "
++        } else if terminal {
 +            " Ctrl+] back to chat "
 +        } else {
 +            " Ctrl+] leaves, Ctrl+C cancels "
@@ -178387,37 +178691,30 @@ index 0000000000000000000000000000000000000000..ad8163d7e848f343f07f58322ba1356f
 +}
 +
 +fn shade_dock_zone(shade: Rect, buffer: &mut Buffer) {
-+    const TINT: f32 = 0.25;
-+    let resolve = |color: Color| match color {
-+        Color::Rgb(r, g, b) => Some((r, g, b)),
-+        Color::Indexed(index) if index >= 16 => {
-+            Some(crate::terminal_palette::XTERM_COLORS[usize::from(index)])
-+        }
-+        _ => None,
-+    };
-+    let accent = crate::style::accent_color();
-+    let tint = if crate::mod_client::facts().no_color {
-+        None
-+    } else {
-+        resolve(accent).zip(crate::terminal_palette::default_bg())
-+    };
-+    let Some((accent_rgb, default_bg)) = tint else {
-+        buffer.set_style(shade, Style::default().add_modifier(Modifier::DIM));
-+        return;
-+    };
++    const INSIDE: f32 = 0.18;
++    const EDGE: f32 = 0.4;
++    let accent = (!crate::mod_client::facts().no_color)
++        .then(|| crate::style::background_rgb(Some(crate::style::accent_color())))
++        .flatten();
 +    for y in shade.top()..shade.bottom() {
 +        for x in shade.left()..shade.right() {
-+            let cell = &mut buffer[(x, y)];
-+            let under = resolve(cell.bg).unwrap_or(default_bg);
-+            cell.set_bg(crate::terminal_palette::best_color(crate::color::blend(
-+                accent_rgb, under, TINT,
-+            )));
-+            if x == shade.left()
++            let edge = x == shade.left()
 +                || x + 1 == shade.right()
 +                || y == shade.top()
-+                || y + 1 == shade.bottom()
-+            {
-+                cell.set_fg(accent);
++                || y + 1 == shade.bottom();
++            let cell = &mut buffer[(x, y)];
++            match accent.zip(crate::style::background_rgb(Some(cell.bg))) {
++                Some((accent, under)) => {
++                    cell.set_bg(crate::terminal_palette::best_color(crate::color::blend(
++                        accent,
++                        under,
++                        if edge { EDGE } else { INSIDE },
++                    )));
++                }
++                None if edge && cell.symbol() == " " => {
++                    cell.modifier.insert(Modifier::REVERSED);
++                }
++                None => cell.modifier.insert(Modifier::DIM),
 +            }
 +        }
 +    }
@@ -179409,9 +179706,7 @@ index 0000000000000000000000000000000000000000..ad8163d7e848f343f07f58322ba1356f
 +        && let Some(ComponentTarget::Terminal(session, binding, _)) =
 +            interaction.targets.get(&focused)
 +    {
-+        if crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key) {
-+            interaction.focused = None;
-+        } else if !crate::mod_pty::live(binding.as_ref(), session) {
++        if !crate::mod_pty::live(binding.as_ref(), session) {
 +            interaction.focused = None;
 +            return None;
 +        } else {
@@ -180066,6 +180361,9 @@ index 0000000000000000000000000000000000000000..ad8163d7e848f343f07f58322ba1356f
 +        .rev()
 +        .find(|hitbox| hitbox.layer == top && contains(hitbox.area, event.column, event.row))
 +        .cloned();
++    if matches!(event.kind, MouseEventKind::Down(_)) {
++        interaction.terminal_press = None;
++    }
 +    if let (
 +        MouseEventKind::Down(_),
 +        Some(HitBox {
@@ -180074,6 +180372,7 @@ index 0000000000000000000000000000000000000000..ad8163d7e848f343f07f58322ba1356f
 +            ..
 +        }),
 +    ) = (event.kind, &hit)
++        && crate::mod_pty::reports_mouse(binding.as_ref(), session)
 +    {
 +        interaction.terminal_press = Some((
 +            session.clone(),
@@ -180847,10 +181146,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ade6d9be23a19584342b93190107e4e0fa5244e0
+index 0000000000000000000000000000000000000000..3b44ea1dba08b2165315fdd0b57016b36dda1256
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2609 @@
+@@ -0,0 +1,2636 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -181551,6 +181850,50 @@ index 0000000000000000000000000000000000000000..ade6d9be23a19584342b93190107e4e0
 +        assert_eq!(buffer[(0, 0)].symbol(), "-");
 +        assert_ne!(buffer[(1, 0)].bg, buffer[(1, 3)].bg);
 +        assert_ne!(buffer[(1, 1)].fg, Color::Reset);
++    });
++}
++
++#[test]
++fn dock_zone_tints_cells_and_keeps_their_text_and_foreground() {
++    let colors = crate::terminal_probe::DefaultColors {
++        fg: (240, 240, 240),
++        bg: (0, 0, 0),
++    };
++    crate::terminal_palette::with_test_default_colors(colors, || {
++        let mut buffer = Buffer::empty(Rect::new(0, 0, 8, 5));
++        buffer[(3, 2)].set_char('X').set_fg(Color::Red);
++        buffer[(4, 2)].set_bg(crate::terminal_palette::rgb_color((200, 0, 0)));
++        buffer[(5, 2)].set_char('Y').set_bg(Color::Blue);
++        buffer[(1, 1)].set_char('+').set_fg(Color::Red);
++        shade_dock_zone(Rect::new(1, 1, 6, 3), &mut buffer);
++        let accent = crate::style::accent_color();
++        let Color::Rgb(r, g, b) = accent else {
++            panic!("truecolor accent expected, got {accent:?}");
++        };
++        let tint = |under, amount| {
++            crate::terminal_palette::rgb_color(crate::color::blend((r, g, b), under, amount))
++        };
++        assert_eq!(
++            (
++                buffer[(3, 2)].symbol(),
++                buffer[(3, 2)].fg,
++                buffer[(3, 2)].bg
++            ),
++            ("X", Color::Red, tint((0, 0, 0), 0.18))
++        );
++        assert_eq!(buffer[(4, 2)].bg, tint((200, 0, 0), 0.18));
++        assert_eq!(buffer[(5, 2)].bg, Color::Blue);
++        assert!(buffer[(5, 2)].modifier.contains(Modifier::DIM));
++        assert_eq!(
++            (
++                buffer[(1, 1)].symbol(),
++                buffer[(1, 1)].fg,
++                buffer[(1, 1)].bg
++            ),
++            ("+", Color::Red, tint((0, 0, 0), 0.4))
++        );
++        assert_eq!(buffer[(0, 0)].bg, Color::Reset);
++        assert_eq!(buffer[(7, 4)].bg, Color::Reset);
 +    });
 +}
 +
@@ -183330,47 +183673,29 @@ index 0000000000000000000000000000000000000000..ade6d9be23a19584342b93190107e4e0
 +    }
 +    assert!(text.contains("[<0;3;1m"), "{text}");
 +    assert!(INTERACTION.lock().unwrap().terminal_press.is_none());
-+    assert!(draw(&with).contains("Ctrl+] back to chat"));
++    assert!(draw(&with).contains("Ctrl+] twice for chat"));
 +    press(KeyCode::Char('x'), KeyModifiers::NONE);
-+    assert!(!draw(&with).contains("Ctrl+] back to chat"));
++    assert!(!draw(&with).contains("Ctrl+] twice"));
 +    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
 +    assert_eq!(focus(), (None, Some("m/term".into())));
 +    press(KeyCode::Char('2'), KeyModifiers::NONE);
 +    assert_eq!(focus(), (Some("term".into()), Some("m/term".into())));
++    let down = |column, row| {
++        pointer(MouseEvent {
++            kind: MouseEventKind::Down(MouseButton::Left),
++            column,
++            row,
++            modifiers: KeyModifiers::NONE,
++        })
++    };
++    down(anchor.x + 2, anchor.y + 1);
++    assert!(INTERACTION.lock().unwrap().terminal_press.is_some());
++    down(0, 0);
++    assert!(INTERACTION.lock().unwrap().terminal_press.is_none());
 +    draw(&with);
 +    preview(without.clone());
 +    assert_eq!(focus(), (Some("files".into()), Some("m/files".into())));
 +    preview(ModViewSnapshot::default());
-+}
-+
-+#[test]
-+fn dock_zone_tints_cells_and_keeps_their_text_and_foreground() {
-+    let colors = crate::terminal_probe::DefaultColors {
-+        fg: (240, 240, 240),
-+        bg: (0, 0, 0),
-+    };
-+    crate::terminal_palette::with_test_default_colors(colors, || {
-+        let mut buffer = Buffer::empty(Rect::new(0, 0, 8, 5));
-+        buffer[(3, 2)].set_char('X').set_fg(Color::Red);
-+        buffer[(4, 2)].set_bg(crate::terminal_palette::rgb_color((200, 0, 0)));
-+        buffer[(1, 1)].set_char('+').set_fg(Color::Red);
-+        shade_dock_zone(Rect::new(1, 1, 6, 3), &mut buffer);
-+        let accent = crate::style::accent_color();
-+        let Color::Rgb(r, g, b) = accent else {
-+            panic!("truecolor accent expected, got {accent:?}");
-+        };
-+        let tint =
-+            |under| crate::terminal_palette::rgb_color(crate::color::blend((r, g, b), under, 0.25));
-+        assert_eq!(buffer[(3, 2)].symbol(), "X");
-+        assert_eq!(buffer[(3, 2)].fg, Color::Red);
-+        assert_eq!(buffer[(3, 2)].bg, tint((0, 0, 0)));
-+        assert_eq!(buffer[(4, 2)].bg, tint((200, 0, 0)));
-+        assert_ne!(buffer[(3, 2)].bg, accent);
-+        assert_eq!(buffer[(1, 1)].symbol(), "+");
-+        assert_eq!(buffer[(1, 1)].fg, accent);
-+        assert_eq!(buffer[(0, 0)].bg, Color::Reset);
-+        assert_eq!(buffer[(7, 4)].bg, Color::Reset);
-+    });
 +}
 +
 +#[tokio::test]
@@ -183458,6 +183783,7 @@ index 0000000000000000000000000000000000000000..ade6d9be23a19584342b93190107e4e0
 +        ("X", Color::Red, Color::Reset)
 +    );
 +    assert!(cell.modifier.contains(Modifier::DIM) && !cell.modifier.contains(Modifier::REVERSED));
++    assert!(buffer[(2, 1)].modifier.contains(Modifier::REVERSED));
 +    assert!(!buffer[(0, 0)].modifier.contains(Modifier::DIM));
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs
