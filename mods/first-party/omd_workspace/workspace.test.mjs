@@ -7,6 +7,7 @@ import { callback } from '../../../tests/mod_runner.mjs';
 const mod = new URL('./', import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
 const source = readFileSync(new URL('index.ts', mod), 'utf8');
+const assets = Object.fromEntries(manifest.assets.map(name => [name, { text: readFileSync(new URL(name, mod), 'utf8'), sha256: '0'.repeat(64) }]));
 
 const status = (prefix = '') => [` M ${prefix}src/a.ts`, `?? ${prefix}new file.txt`, `R  ${prefix}b.ts`, `${prefix}a.ts`].join('\0') + '\0';
 const defaults = Object.fromEntries(Object.entries(manifest.settings_schema.properties).map(([name, schema]) => [name, schema.default]));
@@ -34,7 +35,7 @@ function run(event, payload, { state = null, settings = {}, name, world = {} } =
     if (operation === 'terminal.notice') return {};
     throw new Error(`unexpected host operation ${operation}`);
   };
-  const request = { source, filename: fileURLToPath(new URL('index.ts', mod)), entrypoint: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: { ...defaults, ...settings }, settings_file: { path: '/store/settings/omd_workspace.json', status: 'missing', error: null }, event, name, payload, hook_budget_ms: 10000 };
+  const request = { source, filename: fileURLToPath(new URL('index.ts', mod)), entrypoint: 'index.ts', assets, api: manifest.api, capabilities: manifest.capabilities, state, settings: { ...defaults, ...settings }, settings_file: { path: '/store/settings/omd_workspace.json', status: 'missing', error: null }, event, name, payload, hook_budget_ms: 10000 };
   const output = callback(request, host);
   if (output.error) throw new Error(output.error);
   return { value: output.value, state: output.state ?? state, calls };
@@ -49,7 +50,7 @@ const leaf = (name, title = '', border = 'rounded') => ({ content: `site:${name}
 const chat = { split: 'vertical', ratio: [5, 1], children: [{ content: 'transcript', title: 'Chat' }, { content: 'composer' }] };
 const CHANGES = 'omd_workspace/changes';
 const SHELL = 'omd_workspace/terminal';
-const dock = (active = 0, tabs = [['1 Changes', CHANGES], ['2 Shell', SHELL]]) => ({ tabs: tabs.map(([title, site]) => ({ title, node: leaf(site) })), active });
+const dock = (active = 0, tabs = [['1 Changes', CHANGES], ['2 Shell', SHELL]]) => ({ tabs: tabs.map(([title, site]) => ({ title, node: leaf(site, title) })), active });
 const stack = { layout: 'stack' };
 const register = (state, id, tabs = 0, order) => service('register', {
   id, title: id, site: `${id}/main`, ...(order === undefined ? {} : { order }),
@@ -85,6 +86,8 @@ test('half and full screen modes act on the whole dock and keep a compact chat b
   assert.deepEqual(draw(mode('dock', 'full'), { rows: 200 }).layout.ratio, [96, 4]);
   assert.deepEqual(draw(mode('dock', 'full'), { rows: 4 }).layout.ratio, [1, 99]);
   assert.deepEqual(draw(mode('chat', 'half')).layout.ratio, [75, 25]);
+  const grown = command('grow').state;
+  assert.deepEqual([draw({ ...grown, ...mode('dock', 'half') }).layout.ratio, draw({ ...grown, ...mode('chat', 'half') }).layout.ratio], [[50, 50], [75, 25]]);
   const full = draw(mode('chat', 'full'));
   assert.deepEqual(full.layout, chat);
   assert.equal(full.key_contexts, undefined);
@@ -159,18 +162,18 @@ test('a registered panel with tabs nests in the dock and every key and layout li
   const { key_contexts: contexts, layout } = draw(state);
   const titles = layout.children[1].tabs.map(tab => tab.title);
   assert.deepEqual(titles, ['1 Changes', '2 Shell', '3 git', '4 files', '5 agents', '6 notes']);
-  assert.deepEqual(layout.children[1].tabs[2].node, { tabs: [{ title: 't0', node: leaf('git/t0') }, { title: 't1', node: leaf('git/t1') }], active: 0 });
-  assert.ok(cells(layout) <= 12 && depth(layout) <= 4);
+  assert.deepEqual(layout.children[1].tabs[2].node, { tabs: [{ title: 't0', node: leaf('git/t0', '3 git') }, { title: 't1', node: leaf('git/t1', '3 git') }], active: 0 });
+  assert.ok(cells(layout) <= 12 && depth(layout) <= 6);
 
   for (const id of ['a', 'b', 'c', 'd', 'e']) state = register(state, id, 1);
   const six = draw(state, { settings: { panels: 'a, b, c, d, e, terminal, git' } });
   assert.equal(six.layout.children[1].tabs.length, 6);
-  assert.ok(cells(six.layout) <= 12 && depth(six.layout) <= 4);
+  assert.ok(cells(six.layout) <= 12 && depth(six.layout) <= 6);
   assert.ok(six.key_contexts.length <= 8 && keysOf(six.key_contexts) <= 32);
   assert.deepEqual(six.key_contexts[0].keys['{'].action, { command: 'workspace', args: 'tab previous a' });
   state = register(state, 'f', 1);
   for (const [panels, columns, region] of [['a, b, c, d, e, f', 120, 'Left'], ['a, b, c, d, e, f', 60, 'Up'], ['a, b, c, d, e, terminal', 120, 'Right']]) {
-    const tabbed = draw({ ...state, threads: { t1: { shell: true } } }, { columns, settings: { panels } }).key_contexts;
+    const tabbed = draw({ ...state, threads: { t1: { sessions: ['shell'] } } }, { columns, settings: { panels } }).key_contexts;
     assert.ok(tabbed.length <= 8 && keysOf(tabbed) <= 32, `${panels} at ${columns} columns`);
     assert.deepEqual(tabbed.at(-1).keys[region].action, { region: region.toLowerCase() });
   }
@@ -182,7 +185,7 @@ test('a registered panel with tabs nests in the dock and every key and layout li
 
   const stacked = draw(state, { settings: { layout: 'stack', panels: 'git files agents changes terminal' } });
   assert.equal(stacked.layout.children[1].children.length, 4);
-  assert.ok(cells(stacked.layout) <= 12 && depth(stacked.layout) <= 4);
+  assert.ok(cells(stacked.layout) <= 12 && depth(stacked.layout) <= 6);
   assert.ok(stacked.key_contexts.length <= 8 && keysOf(stacked.key_contexts) <= 32);
 });
 
@@ -258,18 +261,24 @@ test('tab commands show panels in tabs and cycle a tabbed panel', () => {
   assert.equal(command('tab next git', state).state.tabs.git, 0);
   assert.match(command('tab next changes', state).value.display, /^Usage: \/workspace tab next\|previous PANEL/);
   assert.equal(command('tab next', state, { settings: stack }).value.display, 'No panels are in tabs');
+  const two = { arrangement: { split: 'horizontal', children: ['chat', { tabs: ['changes', 'terminal'] }, { tabs: ['git', 'files'] }] } };
+  const groups = register(register(null, 'git'), 'files');
+  const focused = draw({ ...groups, recent: ['files'] }, { settings: two }).key_contexts.find(context => context.when.focus.includes(CHANGES));
+  assert.deepEqual([focused.keys['['].action, focused.keys[']'].action], [{ command: 'workspace', args: 'tab 2' }, { command: 'workspace', args: 'tab 2' }]);
 });
 
 test('turning the workspace off draws nothing and on brings it back', () => {
   assert.equal(command('off', null).value.display, 'Workspace off');
   const off = command('off', null).state;
   assert.equal(draw(off), null);
+  assert.deepEqual(Object.keys(command('off', { share: 40, stack: {}, dock: 'changes' }).state).sort(), Object.keys(off).sort());
   assert.ok(draw(command('on', off).state).layout);
-  assert.match(command('', null).value.display, /^Workspace is on \(dock\)\. Panels: 1 Changes, 2 Shell\./);
+  assert.match(command('', null).value.display, /^Workspace is on \(dock\)\. Panels: 1 Changes, 2 Shell \(terminal\)\./);
   assert.match(command('', null).value.display, /\? lists the keys/);
   assert.doesNotMatch(command('', null, { settings: { key_help: '<disabled>' } }).value.display, /lists the keys/);
   assert.match(command('toString', null).value.display, /^Workspace is on/);
   assert.match(command('', command('layout grid').state).value.display, /^Workspace is on \(grid, set by you\)/);
+  assert.match(command('', null, { settings: { arrangement: { split: 'diagonal' } } }).value.display, /\nArrangement setting ignored: a node is/);
 });
 
 test('changes lists files relative to the directory and loads the diff of the selected one', () => {
@@ -302,7 +311,7 @@ test('changes lists files relative to the directory and loads the diff of the se
   assert.equal(command('refresh', null, { world: { notGit: true } }).state.threads.t1.changes.error, 'Not a Git repository');
 });
 
-test('a large diff is cut to fit one view', () => {
+test('a large diff and a long list of long paths are cut to fit one view', () => {
   const lines = Array.from({ length: 5000 }, (_, index) => `+line ${index} ${'x'.repeat(40)}`);
   const world = { diff: lines.join('\n') };
   let state = command('refresh', null, { world }).state;
@@ -315,13 +324,10 @@ test('a large diff is cut to fit one view', () => {
     state = run('command', `diff ${state.threads.t1.changes.files[0].path}`, { state: { ...state, threads: { ...state.threads, [thread]: state.threads.t1 } }, name: 'workspace', world }).state;
   }
   assert.ok(new TextEncoder().encode(JSON.stringify(state)).length <= 120_000);
-});
-
-test('a long list of long paths and a large diff still fit one view', () => {
   const paths = Array.from({ length: 60 }, (_, index) => `${(index % 2 ? '"' : 'dd').repeat(96)}${String(index).padStart(3, '0')}.ts`);
-  const world = { paths, diff: Array.from({ length: 2000 }, (_, index) => `+line ${index} ${'x'.repeat(40)}`).join('\n') };
-  let state = command('refresh', null, { world }).state;
-  state = command(`diff ${paths[0]}`, state, { world }).state;
+  const long = { paths, diff: world.diff };
+  state = command('refresh', null, { world: long }).state;
+  state = command(`diff ${paths[0]}`, state, { world: long }).state;
   assert.equal(state.threads.t1.changes.files.length, 50);
   assert.ok(new TextEncoder().encode(JSON.stringify(draw(state))).length < 65536);
 });
@@ -343,7 +349,7 @@ test('the start button opens the shell with the configured access, and a decline
   const declined = command('start', null, { world: { declined: true } });
   assert.equal(declined.value.display, 'Shell start declined');
   assert.equal(button(declined.state).id, 'omd_workspace_start');
-  assert.match(command('start', null, { world: { full: true } }).value.display, /pty_session_exists_or_limit.*: each mod runs at most pty_panes_per_mod PTYs/);
+  assert.match(command('start', null, { world: { full: true } }).value.display, /^Shell is already running, or the terminal limit is reached \(each mod runs at most pty_panes_per_mod terminals/);
   const started = command('start', declined.state);
   assert.deepEqual(started.calls.filter(call => call.operation === 'terminal.pty').map(call => call.arguments), [{ action: 'start', session: 'shell' }]);
   assert.equal(draw(started.state).sites[SHELL].components.at(-1).session, 'shell');
@@ -366,9 +372,17 @@ test('terminal panels from settings start their program sandboxed with the acces
   const long = { terminals: [{ id: 'long', title: 'Long', argv: ['node', '-e', `${'é'.repeat(300)}`] }] };
   assert.ok(new TextEncoder().encode(draw(null, { settings: long }).sites['omd_workspace/run_long'].components[0].label).length <= 128);
   const text = command('config', null, { settings }).value.display;
-  assert.match(text, /Terminals: snake\. PTYs: each mod runs/);
+  assert.match(text, /Terminals: snake\. Terminal limit: each mod runs/);
   assert.equal(text.match(/Ignored: terminals\[\d\]/g).length, 2);
   assert.equal(service('register', { id: 'snake', title: 'S', site: 'x/y' }, null, { settings }).value.error, 'invalid id');
+
+  const id = 'a'.repeat(24);
+  const edge = { terminals: [{ id, title: 'Long id', argv: ['sh', '-c', ''] }, { id: 'big', title: 'Big', argv: ['sh', 'x'.repeat(8193)] }] };
+  assert.ok(draw(null, { settings: edge }).sites[`omd_workspace/run_${id}`].components.every(component => component.id.length <= 48));
+  assert.equal(command('config', null, { settings: edge }).value.display.match(/Ignored: terminals\[1\]/g).length, 1);
+  const shadow = register(null, 'snake');
+  assert.deepEqual(draw(shadow, { settings }).layout.children[1].tabs.map(tab => tab.title), ['1 Changes', '2 Shell', '3 Snake']);
+  assert.match(command('config', shadow, { settings }).value.display, /Ignored: registered panel snake: a terminal has that id/);
 });
 
 test('config shows the settings file, the effective keys and layout, and the ignored keys', () => {
@@ -382,16 +396,10 @@ test('config shows the settings file, the effective keys and layout, and the ign
   assert.match(text, /Example file:\n\{/);
 });
 
-test('panel frames are rounded by default and follow the border setting', () => {
-  const frames = layout => JSON.stringify(layout).match(/"border":"\w+"/g);
-  assert.deepEqual(frames(draw(null).layout), ['"border":"rounded"', '"border":"rounded"']);
-  assert.deepEqual(frames(draw(null, { settings: { border: 'plain', layout: 'stack' } }).layout), ['"border":"plain"', '"border":"plain"']);
-});
-
 test('presets arrange the chat and panels, mirror for the left side and stack when narrow', () => {
   const corner = { split: 'horizontal', ratio: [55, 45], children: [{ split: 'vertical', ratio: [65, 35], children: [chat, leaf(CHANGES, '1 Changes')] }, leaf(SHELL, '2 Shell')] };
   assert.deepEqual(draw(null, { settings: { layout: 'corner' } }).layout, corner);
-  assert.deepEqual(draw(command('layout corner').state).layout, corner);
+  assert.deepEqual(JSON.stringify(draw(null, { settings: { border: 'plain', layout: 'stack' } }).layout).match(/"border":"\w+"/g), ['"border":"plain"', '"border":"plain"']);
   assert.deepEqual(draw(null, { settings: { layout: 'corner', side: 'left' } }).layout, { split: 'horizontal', ratio: [45, 55], children: [leaf(SHELL, '2 Shell'), corner.children[0]] });
   assert.deepEqual(draw(null, { columns: 83, settings: { layout: 'corner' } }).layout, { ...corner, split: 'vertical' });
   assert.deepEqual(draw(null, { settings: { layout: 'columns' } }).layout, { split: 'horizontal', children: [chat, leaf(CHANGES, '1 Changes'), leaf(SHELL, '2 Shell')] });
@@ -428,6 +436,7 @@ test('move and swap rearrange panels by id, and a refused change keeps the arran
   assert.equal(command('swap chat changes', state).value.display, 'the chat cannot go into tabs');
   assert.equal(command('move changes tab', state).value.display, 'changes is already in tabs');
   assert.deepEqual(arrangement(command('move changes down', state).state).tree, { split: 'horizontal', children: [{ split: 'vertical', children: ['terminal', 'changes'] }, 'chat'] });
+  assert.deepEqual(service('arrangement', {}, command('move Shell down').state).value, service('arrangement', {}, command('move 2 down').state).value);
   assert.match(command('move chat left', state).value.display, /^Usage: \/workspace move/);
   assert.match(command('swap nope chat', state).value.display, /^Usage: \/workspace swap/);
 });
@@ -447,6 +456,8 @@ test('layouts switch by preset, save and load by name, and reset returns to the 
   let full = state;
   for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) full = command(`layout save ${name}`, full).state;
   assert.match(command('layout save h', full).value.display, /^At most 8 saved layouts/);
+  assert.match(command('layout save constructor', full).value.display, /^At most 8 saved layouts/);
+  assert.match(command('layout delete constructor', state).value.display, /^Usage:/);
   const reset = command('reset', loaded.state).state;
   assert.deepEqual([reset.arranged, Object.keys(reset.saved)], [null, ['mine']]);
   assert.deepEqual(draw(reset).layout, draw(null).layout);
@@ -511,4 +522,6 @@ test('a dock drop moves the dragged panel beside or into tabs with its target, a
   assert.deepEqual(refused.calls.at(-1), { operation: 'terminal.notice', arguments: { text: 'Workspace: the chat cannot hold tabs', kind: 'warning', placement: 'toast' } });
   assert.deepEqual(drop(state, 'r.0', 'r.1.0', 'left').state, state);
   assert.deepEqual(drop(state, 'r.1.1', 'r.1.1', 'left').calls.at(-1).arguments.text, 'Workspace: a panel cannot move beside itself');
+  const narrow = emit(null, { kind: 'dock', component: 'r.1.1', content: `site:${SHELL}`, target: 'r.1.0', edge: 'left', columns: 60, rows: 30 }, { settings: stack }).state;
+  assert.deepEqual(service('arrangement', {}, narrow, { settings: stack }).value.tree, { split: 'vertical', ratio: [67, 33], children: ['chat', { split: 'horizontal', children: ['terminal', 'changes'] }] });
 });

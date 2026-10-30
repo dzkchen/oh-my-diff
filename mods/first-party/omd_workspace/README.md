@@ -34,35 +34,64 @@ Without it nothing changes. `/workspace off` hides the workspace and `/workspace
 
 ## Arranging
 
-- **Layouts.** `/workspace layout dock|stack|columns|grid|corner` picks a preset: `dock` (one tabbed dock, the default), `stack` (split panels in one column), `columns` (side by side), `grid` (two rows) or `corner` (one panel below the chat, the rest full height beside it). `side: left` mirrors them.
-- **Moving.** `/workspace move PANEL left|right|up|down|tab` swaps a panel with its neighbour that way, or moves it out to the next level, or tabs it with its neighbour. `/workspace swap PANEL PANEL` exchanges two panels (`chat` counts as one).
-- **Dragging.** Drag a panel by its title row onto another panel: its edges split beside it, its centre tabs with it. The chat takes the four edges.
-- **Saving.** `/workspace layout save NAME`, `load NAME` and `delete NAME` keep up to 8 arrangements.
+Pick a preset with `/workspace layout NAME`. `side: left` mirrors each one.
 
-The last change you make wins and persists per profile store, including sizes you drag and tabs you pick. Another mod can arrange the workspace only until you change it or set `arrangement`; `/workspace reset` returns to the settings default (the `layout` preset, or the `arrangement` setting) and hands arranging back to mods. A change that doesn't fit what the host can draw is refused with the reason, and the previous arrangement stays.
+| Preset | Shape |
+| --- | --- |
+| `dock` (default) | One tabbed dock beside the chat |
+| `stack` | Split panels in one column beside the chat |
+| `columns` | The chat and panels side by side |
+| `grid` | Two rows |
+| `corner` | One panel below the chat, the rest full height beside it |
 
-Below `narrow_below` columns, splits that hold the chat stack top to bottom and splits of panels become a row, so a `dock` becomes a band below the prompt.
+Then rearrange it:
+
+- **Drag** a panel by its title row onto another panel. Dropping on an edge splits beside it; dropping in the centre tabs with it. In a tab group, grab the frame line under the tab bar.
+- **Move** with `/workspace move PANEL left|right|up|down|tab`, or exchange two panels with `/workspace swap PANEL PANEL`. `PANEL` is a panel's number, title or id; `chat` counts as a panel.
+- **Save** up to 8 arrangements with `/workspace layout save NAME`, then `load NAME` or `delete NAME`.
+
+Your last change wins and is kept, including sizes you drag and tabs you pick. A change the host can't draw is refused with the reason and the old arrangement stays.
+
+Other mods can arrange the workspace only until you change it. `/workspace reset` goes back to your settings and lets mods arrange again.
+
+When the window is narrower than `narrow_below` columns, the chat stacks above the panels, and panels that were stacked sit side by side. A panel dropped there is placed in this narrow arrangement, which stays when the window widens. Even then, panels dropped beside the chat go above or below it, and panels dropped above or below another panel go beside it.
 
 ## Keys
 
-These keys work while a panel has focus, and Tab moves between its controls. From the prompt, Ctrl+] enters the panels; Esc or Ctrl+] in a panel returns to the chat.
+From the prompt, Ctrl+] enters the panels. Esc or Ctrl+] in a panel returns to the chat. Tab moves between a panel's controls.
 
-| Key | Does |
-| --- | --- |
-| `1`-`6` | Show that panel's tab, or focus it when it isn't in tabs |
-| `[` / `]` | Previous / next tab |
-| `{` / `}` | Previous / next tab inside a panel that has its own tabs |
-| `=` / `-` | Grow / shrink the panels beside the chat (dragging a border works too) |
-| `+` / `_` | Next / previous screen mode of the focused panel: normal, half, full |
-| `0` | Main view (the chat) |
-| `h`, `Left` / `l`, `Right` | Region on the left / right |
-| `k`, `Up` / `j`, `Down` | Region above / below (Up and Down move inside a focused list first) |
-| `?` | List the keys that apply here |
-| `Enter` | In a running Shell or terminal panel, type in it (Ctrl+] leaves it) |
+| Key | Does | Setting |
+| --- | --- | --- |
+| `1`–`6` | Show that panel (its tab, or focus it) | `key_panel_1` … `key_panel_6` |
+| `0` | Back to the chat | `key_main` |
+| `Left` or `h` | Region on the left | `key_left`, `key_left_alt` |
+| `Right` or `l` | Region on the right | `key_right`, `key_right_alt` |
+| `Up` or `k` | Region above (inside a list, moves in the list first) | `key_up`, `key_up_alt` |
+| `Down` or `j` | Region below (same) | `key_down`, `key_down_alt` |
+| `[` / `]` | Previous / next tab of the focused tab group | `key_tab_previous`, `key_tab_next` |
+| `{` / `}` | Previous / next tab inside a panel with its own tabs | `key_panel_tab_previous`, `key_panel_tab_next` |
+| `=` / `-` | Grow / shrink the panels (dragging a border works too) | `key_grow`, `key_shrink` |
+| `+` / `_` | Next / previous screen mode: normal, half, full | `key_mode_next`, `key_mode_previous` |
+| `Enter` | Type in a running Shell or terminal (Ctrl+] leaves it) | `key_focus_shell` |
+| `?` | List the keys that work here | `key_help` |
 
-A mod has 32 keys; with many panels the alternate region keys, then the screen mode keys, are left out first.
+To change a key, set its setting to one of:
 
-Screen modes work for any panel and for the chat: half shows the chat beside that panel (or its tab group), full shows the panel with a compact chat below it, and `/workspace mode next chat` shrinks the panels to a quarter, then hides them. `dock` as the target means every panel. `/workspace mode normal` restores the arrangement.
+- a single character, such as `m`
+- a named key, such as `Home` or `PageDown`
+- `F2` to `F12`
+- `Ctrl+` or `Alt+` with a lowercase letter or digit, such as `Ctrl+g` (not Ctrl+c, d, h, i, j, m or z)
+- `<disabled>` to turn it off
+
+An invalid key keeps its default and is listed by `/workspace config`. The workspace binds at most 32 keys; with many panels the alternate region keys, then the screen mode keys, are dropped first.
+
+Screen modes enlarge one panel for a while:
+
+- **half** shows the chat beside that panel (or its tab group), half and half.
+- **full** shows the panel with a small chat below it.
+- On the chat, `/workspace mode next chat` shrinks the panels to a quarter, then hides them.
+
+`/workspace mode … dock` applies to every panel, and `/workspace mode normal` brings back the arrangement.
 
 ## Panels
 
@@ -79,11 +108,18 @@ Each mod runs at most `pty_panes_per_mod` terminals at once (4 unless `mod_limit
 
 | Method | Does |
 | --- | --- |
-| `register {id, title, site, tabs?, order?, placement?}` | Adds or replaces a panel: any id but a built-in or terminal one, `chat` or `dock`; `site` is `<mod>/<name>`; `tabs` (up to 4) gives it its own tab bar. `placement {beside: 'chat' \| PANEL, edge: 'left' \| 'right' \| 'top' \| 'bottom' \| 'tab', share?: 5-95}` puts it next to the chat or a panel the first time it appears, instead of the default spot. |
+| `register {id, title, site, tabs?, order?, placement?}` | Adds or replaces a panel (see below). |
 | `unregister {id}` | Removes a panel. |
 | `panels` | The shown panels in order. |
 | `arrange {tree}` | Sets the whole arrangement, unless the user has arranged it (`/workspace reset` hands it back). A tree is `"chat"`, a panel id, `{split: 'horizontal' \| 'vertical', children: [2-4], ratio?}` or `{tabs: [panel ids]}`, with `chat` once and outside tabs. A refused tree returns `{error}` with the reason. |
 | `arrangement {}` | `{tree, by: 'user' \| 'mod' \| 'settings', preset?}`: the arrangement with every shown panel. |
+
+`register` fields:
+
+- `id`: any id except a built-in or terminal panel's, `chat` or `dock`.
+- `site`: `<mod>/<name>`, drawn by the registering mod.
+- `tabs`: up to 4 `{title, site}` entries, giving the panel its own tab bar.
+- `placement {beside, edge, share?}`: where it first appears. `beside` is `chat` or a panel id, `edge` is `left`, `right`, `top`, `bottom` or `tab`, and `share` is 5–95 percent.
 
 A registration persists until `unregister`, so a mod can register again on every start. Titles are at most 30 bytes (tab titles 32) without control characters; the workspace only places panels, the registering mod draws them. Panels missing from an arrangement join it by their placement, else the first tab group, else beside the last panel; panels that are gone are left out.
 
@@ -118,18 +154,21 @@ Every setting is its own row in `/mods` (open the workspace's settings there). T
 | `arrangement` | `{}` | A full tree (see `arrange` under [Service](#service)) that replaces the preset; an invalid one is listed under `Ignored:` in `/workspace config` |
 | `border` | `rounded` | Frame of the panels: `rounded`, `plain`, `double` or `thick` |
 | `side` | `right` | Side of the chat the presets put the panels on: `right` or `left` |
-| `dock_size` | `33` | Percent of the width the panels take in `dock`, `stack` and `grid`, 15 to 85; resizing overrides it until `/workspace reset` |
+| `dock_size` | `33` | Percent of the width the panels take in `dock` and `stack` (and `grid` with one panel), 15 to 85; resizing overrides it until `/workspace reset` |
 | `narrow_below` | `84` | Columns below which the arrangement stacks (see [Arranging](#arranging)) |
 | `panels` | empty | Panel ids in order, separated by commas (`changes, terminal`); panels you leave out are hidden, and unknown ids are listed under `Ignored:`; empty shows built-ins, terminals, then registrations |
 | `shell_write` | `false` | Let the Shell write the workspace |
 | `shell_network` | `none` | `loopback` lets the Shell reach services on this computer |
 | `terminals` | `[]` | Up to 6 terminal panels: `{id, title, argv, write?: true, network?: "loopback"}`; `argv[0]` is the program |
-| `key_ACTION` | see Keys | One per action: `key_panel_1` to `key_panel_6`, `key_main`, `key_left`, `key_left_alt`, `key_right`, `key_right_alt`, `key_up`, `key_up_alt`, `key_down`, `key_down_alt`, `key_help`, `key_mode_next`, `key_mode_previous`, `key_tab_previous`, `key_tab_next`, `key_panel_tab_previous`, `key_panel_tab_next`, `key_grow`, `key_shrink`, `key_focus_shell`. A key is a single character, a named key such as `Left` or `Home`, F2–F12, or `Ctrl+x` / `Alt+x` with a lowercase letter or digit (not Ctrl+c, d, h, i, j, m or z); `<disabled>` turns it off. Invalid keys keep the default and show in `/workspace config`. |
+| `key_…` | see [Keys](#keys) | One setting per key, listed in the Keys table |
 
 ## Needs and limits
 
+- Asks for `fs.write` and `network` so `shell_write`, `shell_network` and terminals' `write` and `network` can work. Nothing writes or reaches the network unless you turn it on, and each start asks you first.
 - Needs `git` on your `PATH` for the Changes panel. A directory outside a Git repository shows "Not a Git repository".
-- At most 6 panels (`stack` and `columns` tab the ones past their fourth cell) and 10 panel sites, counting each tab of a panel that has tabs; extra panels are left out. The host draws 12 cells (the chat counts two), nests 6 levels and splits into at most 4; a move, drop or tree beyond that is refused. The first 50 changed files are listed, and a diff is cut at about 30 KB or 1,000 lines.
+- At most 6 panels and 10 panel sites (each tab of a panel with tabs counts); extra panels are left out. `stack` and `columns` put panels past the fourth into tabs.
+- The host draws at most 12 cells (the chat counts two), 6 levels deep, and splits into at most 4. A move, drop or tree beyond that is refused.
+- Changes lists the first 50 files and cuts a diff at about 30 KB or 1,000 lines.
 - Below 60 columns or 12 rows the host drops the layout and shows its own.
 - The chat (transcript and prompt) is one area: panels go beside, above or below it, never between the transcript and the prompt.
 - Sizes are kept per split by the panels in it, so they survive reordering but reset when a split gains or loses a panel.

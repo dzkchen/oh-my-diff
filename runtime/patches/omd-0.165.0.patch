@@ -160967,11 +160967,12 @@ index 0000000000000000000000000000000000000000..444a73f47042d6e6a9d8cba4746d0a5c
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0ee8adfd23a53006d55526dc817e141d97fc79a6
+index 0000000000000000000000000000000000000000..c8e69ea70a7e5fb52a18455883326d7def0c36a2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,520 @@
+@@ -0,0 +1,532 @@
 +use crate::omd::LockExt;
++use codex_omd::ModBoxBorder;
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
 +use crossterm::event::MouseButton;
@@ -160993,6 +160994,15 @@ index 0000000000000000000000000000000000000000..0ee8adfd23a53006d55526dc817e141d
 +    pub(crate) style: Option<codex_omd::ModBoxStyle>,
 +    pub(crate) title: Option<String>,
 +    pub(crate) tabs: Option<String>,
++}
++
++impl Region {
++    fn grab_row(&self) -> Option<u16> {
++        let style = self.style.unwrap_or_default();
++        let framed = style.border != Some(ModBoxBorder::None) || self.title.as_deref() != Some("");
++        let margin = style.margin.map_or(0, |margin| margin.axes().0);
++        framed.then(|| self.area.y.saturating_add(margin))
++    }
 +}
 +
 +#[derive(Clone, Debug, PartialEq, Eq)]
@@ -161081,6 +161091,7 @@ index 0000000000000000000000000000000000000000..0ee8adfd23a53006d55526dc817e141d
 +    drag: Option<(String, usize)>,
 +    dock: Option<Dock>,
 +    last: Placement,
++    screen: Rect,
 +}
 +
 +static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -161230,6 +161241,7 @@ index 0000000000000000000000000000000000000000..0ee8adfd23a53006d55526dc817e141d
 +            };
 +        }
 +        state.owner = owner.map(str::to_owned);
++        state.screen = area;
 +        let mut placement = Placement::default();
 +        walk(layout, area, ("r", None), state, &mut placement);
 +        state.last = placement.clone();
@@ -161386,7 +161398,7 @@ index 0000000000000000000000000000000000000000..0ee8adfd23a53006d55526dc817e141d
 +                .iter()
 +                .find(|region| {
 +                    region.content.starts_with("site:")
-+                        && event.row == region.area.y
++                        && region.grab_row() == Some(event.row)
 +                        && inside(region.area, event.column, event.row)
 +                })
 +                .filter(|_| state.drag.is_none())
@@ -161457,7 +161469,7 @@ index 0000000000000000000000000000000000000000..0ee8adfd23a53006d55526dc817e141d
 +                ) {
 +                    crate::mod_surface::layout_event(
 +                        owner,
-+                        serde_json::json!({"component": dock.path, "kind": "dock", "content": dock.content, "target": zone.target, "edge": zone.edge}),
++                        serde_json::json!({"component": dock.path, "kind": "dock", "content": dock.content, "target": zone.target, "edge": zone.edge, "columns": state.screen.width, "rows": state.screen.height}),
 +                    );
 +                }
 +                return true;
@@ -161493,10 +161505,10 @@ index 0000000000000000000000000000000000000000..0ee8adfd23a53006d55526dc817e141d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_layout_tests.rs b/codex-rs/tui/src/mod_layout_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f160870f06a3d041654f304426152419334b58da
+index 0000000000000000000000000000000000000000..229e00450a0dce061e1964e3a48dd6af8c516d08
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout_tests.rs
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,354 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -161637,7 +161649,10 @@ index 0000000000000000000000000000000000000000..f160870f06a3d041654f304426152419
 +}
 +
 +fn dock_drag(from: (u16, u16), to: (u16, u16)) {
-+    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), from)));
++    assert!(!pointer(mouse(
++        MouseEventKind::Down(MouseButton::Left),
++        from
++    )));
 +    pointer(mouse(MouseEventKind::Drag(MouseButton::Left), to));
 +    pointer(mouse(MouseEventKind::Up(MouseButton::Left), to));
 +}
@@ -161647,7 +161662,10 @@ index 0000000000000000000000000000000000000000..f160870f06a3d041654f304426152419
 +fn dock_drags_shade_edges_and_centre_of_a_site_and_only_edges_of_the_chat() {
 +    place(&dock_layout(), Some("owner"), Rect::new(0, 0, 100, 40));
 +    let hover = |at| {
-+        assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 0))));
++        assert!(!pointer(mouse(
++            MouseEventKind::Down(MouseButton::Left),
++            (10, 0)
++        )));
 +        assert!(pointer(mouse(MouseEventKind::Drag(MouseButton::Left), at)));
 +        let shade = dock_preview();
 +        assert!(pointer(mouse(MouseEventKind::Up(MouseButton::Left), at)));
@@ -161673,24 +161691,60 @@ index 0000000000000000000000000000000000000000..f160870f06a3d041654f304426152419
 +        assert_eq!(hover(at), shade, "{at:?}");
 +    }
 +
-+    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 0))));
-+    assert!(!pointer(mouse(MouseEventKind::Drag(MouseButton::Left), (10, 0))));
++    assert!(!pointer(mouse(
++        MouseEventKind::Down(MouseButton::Left),
++        (10, 0)
++    )));
++    assert!(!pointer(mouse(
++        MouseEventKind::Drag(MouseButton::Left),
++        (10, 0)
++    )));
 +    assert_eq!(dock_preview(), None);
-+    assert!(!pointer(mouse(MouseEventKind::Up(MouseButton::Left), (10, 0))));
++    assert!(!pointer(mouse(
++        MouseEventKind::Up(MouseButton::Left),
++        (10, 0)
++    )));
 +
-+    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 0))));
++    assert!(!pointer(mouse(
++        MouseEventKind::Down(MouseButton::Left),
++        (10, 0)
++    )));
 +    assert!(!cancel_dock());
-+    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 1))));
-+    assert!(!pointer(mouse(MouseEventKind::Drag(MouseButton::Left), (30, 30))));
-+    assert!(!pointer(mouse(MouseEventKind::Up(MouseButton::Left), (30, 30))));
++    assert!(!pointer(mouse(
++        MouseEventKind::Down(MouseButton::Left),
++        (10, 1)
++    )));
++    assert!(!pointer(mouse(
++        MouseEventKind::Drag(MouseButton::Left),
++        (30, 30)
++    )));
++    assert!(!pointer(mouse(
++        MouseEventKind::Up(MouseButton::Left),
++        (30, 30)
++    )));
 +
-+    assert!(!pointer(mouse(MouseEventKind::Down(MouseButton::Left), (10, 0))));
-+    assert!(pointer(mouse(MouseEventKind::Drag(MouseButton::Left), (30, 30))));
++    assert!(!pointer(mouse(
++        MouseEventKind::Down(MouseButton::Left),
++        (10, 0)
++    )));
++    assert!(pointer(mouse(
++        MouseEventKind::Drag(MouseButton::Left),
++        (30, 30)
++    )));
 +    assert!(cancel_dock());
 +    assert_eq!(dock_preview(), None);
-+    assert!(pointer(mouse(MouseEventKind::Drag(MouseButton::Left), (31, 30))));
-+    assert!(pointer(mouse(MouseEventKind::Up(MouseButton::Left), (30, 30))));
-+    assert!(!pointer(mouse(MouseEventKind::Up(MouseButton::Left), (30, 30))));
++    assert!(pointer(mouse(
++        MouseEventKind::Drag(MouseButton::Left),
++        (31, 30)
++    )));
++    assert!(pointer(mouse(
++        MouseEventKind::Up(MouseButton::Left),
++        (30, 30)
++    )));
++    assert!(!pointer(mouse(
++        MouseEventKind::Up(MouseButton::Left),
++        (30, 30)
++    )));
 +    hide();
 +}
 +
@@ -161706,7 +161760,7 @@ index 0000000000000000000000000000000000000000..f160870f06a3d041654f304426152419
 +    std::fs::write(package.join("mod.json"), serde_json::to_vec(&serde_json::json!({"schema": 1, "id": "owner", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["terminal", "store"]})).unwrap()).unwrap();
 +    std::fs::write(
 +        package.join("index.ts"),
-+        "export default api => api.on('component_event', e => { api.state.set([...(api.state.get() ?? []), { kind: e.kind, component: e.component, content: e.content, target: e.target, edge: e.edge }]); });",
++        "export default api => api.on('component_event', e => { api.state.set([...(api.state.get() ?? []), { kind: e.kind, component: e.component, content: e.content, target: e.target, edge: e.edge, columns: e.columns, rows: e.rows }]); });",
 +    )
 +    .unwrap();
 +    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
@@ -161730,25 +161784,24 @@ index 0000000000000000000000000000000000000000..f160870f06a3d041654f304426152419
 +
 +    place(&dock_layout(), Some("owner"), Rect::new(0, 0, 100, 40));
 +    let source = (10, 0);
-+    dock_drag(source, (75, 20));
-+    dock_drag(source, (10, 5));
-+    dock_drag(source, (120, 5));
-+    dock_drag(source, source);
-+    for to in [(1, 30), (48, 30), (25, 21), (25, 38), (25, 30), (75, 38)] {
-+        dock_drag(source, to);
-+    }
++    assert!(!pointer(mouse(
++        MouseEventKind::Down(MouseButton::Left),
++        source
++    )));
++    assert!(pointer(mouse(
++        MouseEventKind::Drag(MouseButton::Left),
++        (1, 30)
++    )));
++    assert!(cancel_dock());
++    assert!(pointer(mouse(
++        MouseEventKind::Up(MouseButton::Left),
++        (1, 30)
++    )));
++    dock_drag(source, (75, 38));
 +    hide();
 +
-+    let event = |target: &str, edge: &str| {
-+        serde_json::json!({"kind": "dock", "component": "r.0.0", "content": "site:a/one", "target": target, "edge": edge})
-+    };
 +    let expected = serde_json::json!([
-+        event("r.0.1", "left"),
-+        event("r.0.1", "right"),
-+        event("r.0.1", "top"),
-+        event("r.0.1", "bottom"),
-+        event("r.0.1", "center"),
-+        event("r.1", "bottom"),
++        {"kind": "dock", "component": "r.0.0", "content": "site:a/one", "target": "r.1", "edge": "bottom", "columns": 100, "rows": 40}
 +    ]);
 +    let state = || {
 +        crate::mod_runtime::shared_host()
@@ -161760,10 +161813,55 @@ index 0000000000000000000000000000000000000000..f160870f06a3d041654f304426152419
 +            .unwrap_or_default()
 +    };
 +    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-+    while state().as_array().map_or(0, Vec::len) < 6 && std::time::Instant::now() < deadline {
++    while state().as_array().map_or(0, Vec::len) < 1 && std::time::Instant::now() < deadline {
 +        std::thread::sleep(std::time::Duration::from_millis(10));
 +    }
 +    assert_eq!(state(), expected);
++}
++
++#[test]
++#[serial_test::serial]
++fn a_press_on_the_first_row_of_a_frameless_leaf_is_left_to_its_components() {
++    let frameless = layout(serde_json::json!({
++        "split": "horizontal",
++        "children": [
++            {"content": "site:a/one", "title": "", "style": {"border": "none"}},
++            {"content": "site:a/two", "title": "", "style": {"border": "none", "margin": 1}},
++            {"content": "site:a/three", "style": {"border": "none"}},
++            {"content": "transcript"}
++        ]
++    }));
++    place(&frameless, Some("owner"), Rect::new(0, 0, 100, 40));
++    for (column, row) in [(10, 0), (35, 0), (35, 1)] {
++        assert!(!pointer(mouse(
++            MouseEventKind::Down(MouseButton::Left),
++            (column, row)
++        )));
++        assert!(!pointer(mouse(
++            MouseEventKind::Drag(MouseButton::Left),
++            (column, 20)
++        )));
++        assert_eq!(dock_preview(), None);
++        assert!(!cancel_dock());
++        assert!(!pointer(mouse(
++            MouseEventKind::Up(MouseButton::Left),
++            (column, 20)
++        )));
++    }
++    assert!(!pointer(mouse(
++        MouseEventKind::Down(MouseButton::Left),
++        (60, 0)
++    )));
++    assert!(pointer(mouse(
++        MouseEventKind::Drag(MouseButton::Left),
++        (10, 20)
++    )));
++    assert!(dock_preview().is_some());
++    assert!(pointer(mouse(
++        MouseEventKind::Up(MouseButton::Left),
++        (10, 20)
++    )));
++    hide();
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
 new file mode 100644
@@ -162325,10 +162423,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f7faffc7f029308c0239c2e46e043898c53f3a42
+index 0000000000000000000000000000000000000000..e269f517c5962ab273713609c6703465ebef89ab
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,659 @@
+@@ -0,0 +1,696 @@
 +use crate::omd::LockExt;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -162829,6 +162927,14 @@ index 0000000000000000000000000000000000000000..f7faffc7f029308c0239c2e46e043898
 +}
 +
 +#[cfg(test)]
++pub(crate) fn test_drawn(binding: &Binding, session: &str) -> Option<bool> {
++    let mut sessions = sessions();
++    owned(&mut sessions, binding, session)
++        .ok()
++        .map(|pane| pane.drawn.load(Ordering::Relaxed))
++}
++
++#[cfg(test)]
 +mod tests {
 +    use super::*;
 +
@@ -162977,14 +163083,43 @@ index 0000000000000000000000000000000000000000..f7faffc7f029308c0239c2e46e043898
 +        start(&a, &json!({"session": "t1"}), command, dir.path(), frames)
 +            .await
 +            .unwrap();
-+        let mut count = || std::iter::from_fn(|| requests.try_recv().ok()).count();
-+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-+        assert_eq!(count(), 1);
-+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-+        assert_eq!(count(), 0);
++        let wait = std::time::Duration::from_secs(10);
++        let drawn = || test_drawn(&a, "t1");
++        let printed = || {
++            sessions()
++                .panes
++                .values()
++                .next()
++                .unwrap()
++                .screen
++                .locked()
++                .screen()
++                .contents()
++                .len()
++        };
++        assert!(
++            tokio::time::timeout(wait, requests.recv())
++                .await
++                .unwrap()
++                .is_some()
++        );
++        assert_eq!(drawn(), Some(false));
++        let seen = printed();
++        let deadline = std::time::Instant::now() + wait;
++        while printed() == seen && std::time::Instant::now() < deadline {
++            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
++        }
++        assert!(printed() > seen, "the pane stopped printing");
++        assert!(requests.try_recv().is_err());
++        assert_eq!(drawn(), Some(false));
 +        rows(Some(&a), "t1", 40, 4, "");
-+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-+        assert_eq!(count(), 1);
++        assert_eq!(drawn(), Some(true));
++        assert!(
++            tokio::time::timeout(wait, requests.recv())
++                .await
++                .unwrap()
++                .is_some()
++        );
 +        context(2, None);
 +    }
 +}
@@ -169500,10 +169635,10 @@ index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..993d9494113bbd2cc986f599c28523461ece5cef
+index 0000000000000000000000000000000000000000..eebdc36d7bc632cdf3e4fca633c433c2dc2558c2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5656 @@
+@@ -0,0 +1,5693 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -173033,7 +173168,7 @@ index 0000000000000000000000000000000000000000..993d9494113bbd2cc986f599c2852346
 +        Paragraph::new(Line::from(spans)).render(bar.area, buffer);
 +    }
 +    if let Some(shade) = crate::mod_layout::dock_preview() {
-+        buffer.set_style(shade, crate::style::selection_style());
++        shade_dock_zone(shade, buffer);
 +    }
 +    if std::mem::take(&mut interaction.follow_tab)
 +        && let Some(region) = interaction.focus_region.clone()
@@ -173044,6 +173179,43 @@ index 0000000000000000000000000000000000000000..993d9494113bbd2cc986f599c2852346
 +    render_dialog(screen, chat, snapshot, style, buffer, &mut interaction);
 +    hide_undrawn_terminals(&mut interaction);
 +    highlight_focus(buffer, &interaction);
++}
++
++fn shade_dock_zone(shade: Rect, buffer: &mut Buffer) {
++    const TINT: f32 = 0.25;
++    let resolve = |color: Color| match color {
++        Color::Rgb(r, g, b) => Some((r, g, b)),
++        Color::Indexed(index) if index >= 16 => {
++            Some(crate::terminal_palette::XTERM_COLORS[usize::from(index)])
++        }
++        _ => None,
++    };
++    let accent = crate::style::accent_color();
++    let tint = if crate::mod_client::facts().no_color {
++        None
++    } else {
++        resolve(accent).zip(crate::terminal_palette::default_bg())
++    };
++    let Some((accent_rgb, default_bg)) = tint else {
++        buffer.set_style(shade, crate::style::selection_style());
++        return;
++    };
++    for y in shade.top()..shade.bottom() {
++        for x in shade.left()..shade.right() {
++            let cell = &mut buffer[(x, y)];
++            let under = resolve(cell.bg).unwrap_or(default_bg);
++            cell.set_bg(crate::terminal_palette::best_color(crate::color::blend(
++                accent_rgb, under, TINT,
++            )));
++            if x == shade.left()
++                || x + 1 == shade.right()
++                || y == shade.top()
++                || y + 1 == shade.bottom()
++            {
++                cell.set_fg(accent);
++            }
++        }
++    }
 +}
 +
 +fn focus_areas(placement: &crate::mod_layout::Placement) -> Vec<(String, Rect)> {
@@ -175412,10 +175584,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f467b4b5d0f03b68ffe0bd6e3adf0dc0b056d7a0
+index 0000000000000000000000000000000000000000..837d0c3a67cbc3623c57827fa73c2b277f781f1d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2417 @@
+@@ -0,0 +1,2441 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -176116,6 +176288,36 @@ index 0000000000000000000000000000000000000000..f467b4b5d0f03b68ffe0bd6e3adf0dc0
 +        assert_eq!(buffer[(0, 0)].symbol(), "-");
 +        assert_ne!(buffer[(1, 0)].bg, buffer[(1, 3)].bg);
 +        assert_ne!(buffer[(1, 1)].fg, Color::Reset);
++    });
++}
++
++#[test]
++fn dock_zone_tints_cells_and_keeps_their_text_and_foreground() {
++    let colors = crate::terminal_probe::DefaultColors {
++        fg: (240, 240, 240),
++        bg: (0, 0, 0),
++    };
++    crate::terminal_palette::with_test_default_colors(colors, || {
++        let mut buffer = Buffer::empty(Rect::new(0, 0, 8, 5));
++        buffer[(3, 2)].set_char('X').set_fg(Color::Red);
++        buffer[(4, 2)].set_bg(crate::terminal_palette::rgb_color((200, 0, 0)));
++        buffer[(1, 1)].set_char('+').set_fg(Color::Red);
++        shade_dock_zone(Rect::new(1, 1, 6, 3), &mut buffer);
++        let accent = crate::style::accent_color();
++        let Color::Rgb(r, g, b) = accent else {
++            panic!("truecolor accent expected, got {accent:?}");
++        };
++        let tint =
++            |under| crate::terminal_palette::rgb_color(crate::color::blend((r, g, b), under, 0.25));
++        assert_eq!(buffer[(3, 2)].symbol(), "X");
++        assert_eq!(buffer[(3, 2)].fg, Color::Red);
++        assert_eq!(buffer[(3, 2)].bg, tint((0, 0, 0)));
++        assert_eq!(buffer[(4, 2)].bg, tint((200, 0, 0)));
++        assert_ne!(buffer[(3, 2)].bg, accent);
++        assert_eq!(buffer[(1, 1)].symbol(), "+");
++        assert_eq!(buffer[(1, 1)].fg, accent);
++        assert_eq!(buffer[(0, 0)].bg, Color::Reset);
++        assert_eq!(buffer[(7, 4)].bg, Color::Reset);
 +    });
 +}
 +
@@ -177778,12 +177980,11 @@ index 0000000000000000000000000000000000000000..f467b4b5d0f03b68ffe0bd6e3adf0dc0
 +    bind_terminals(&mut interaction, &snapshot);
 +    let dir = tempfile::tempdir().unwrap();
 +    let mut command = std::process::Command::new("/bin/sh");
-+    command
-+        .args(["-c", "while :; do printf x; sleep 0.02; done"])
-+        .current_dir(dir.path());
-+    let (frames, mut requests) = crate::tui::FrameRequester::test_channel();
++    command.args(["-c", "sleep 30"]).current_dir(dir.path());
++    let (frames, _requests) = crate::tui::FrameRequester::test_channel();
++    let binding = interaction.pty_bindings["m"].clone();
 +    crate::mod_pty::start(
-+        &interaction.pty_bindings["m"].clone(),
++        &binding,
 +        &serde_json::json!({"session": "t1"}),
 +        command,
 +        dir.path(),
@@ -177818,19 +178019,14 @@ index 0000000000000000000000000000000000000000..f467b4b5d0f03b68ffe0bd6e3adf0dc0
 +        );
 +        hide_undrawn_terminals(interaction);
 +    };
-+    let mut count = || std::iter::from_fn(|| requests.try_recv().ok()).count();
++    let drawn = || crate::mod_pty::test_drawn(&binding, "t1");
++    assert_eq!(drawn(), Some(true));
 +    for (components, height) in [(&flat, 6), (&paned, 40)] {
-+        let mut hidden = 0;
-+        for _ in 0..5 {
-+            draw(components, height, &mut interaction);
-+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-+            hidden += count();
-+        }
-+        assert!(hidden <= 1, "{hidden} frames for a scrolled-out terminal");
++        draw(components, height, &mut interaction);
++        assert_eq!(drawn(), Some(false));
 +    }
 +    draw(&flat, 40, &mut interaction);
-+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-+    assert_eq!(count(), 1);
++    assert_eq!(drawn(), Some(true));
 +    crate::mod_pty::context(2, None);
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs

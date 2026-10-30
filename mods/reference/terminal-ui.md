@@ -305,13 +305,14 @@ rows left after the region's other components and gaps. In a row layout each get
 - Clicking a tab title switches the tab and sends `component_event {kind: 'select', component, index}` with the
   `tabs` node's path (`terminal_tabs_v1`), so the owner can keep `active` in its layout.
 - Releasing a drag that started on a `site:` leaf's top frame row (not a tab bar or split border) over another site
-  leaf or the chat sends one `component_event {kind: 'dock', component, content, target, edge}`
+  leaf or the chat sends one `component_event {kind: 'dock', component, content, target, edge, columns, rows}`
   (`terminal_layout_dock_v1`). `component` is the dragged leaf's path and `content` its `site:<name>`. `target` is the
   leaf path it was dropped on; for the chat it is the path of the split holding the transcript and composer, or the
   transcript leaf without a composer. `edge` is `left`, `right`, `top` or `bottom` over the outer quarter of the
-  target and `center` over its middle, never over the chat. While dragging, the host shades where the pane would
-  land. It changes nothing itself and sends nothing when the drag is cancelled with Esc or ends on the dragged leaf
-  or outside every zone, so the owner republishes its layout.
+  target and `center` over its middle, never over the chat. `columns` and `rows` are the size of the area the layout
+  was drawn in. While dragging, the host shades where the pane would land. It changes nothing itself and sends nothing
+  when the drag is cancelled with Esc or ends on the dragged leaf or outside every zone, so the owner republishes its
+  layout.
 
 These go only to the mod whose view supplied the layout.
 

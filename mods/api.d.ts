@@ -544,7 +544,7 @@ export interface Events {
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
     pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number;
-    content?: string; target?: string; edge?: 'left' | 'right' | 'top' | 'bottom' | 'center' }; output: void };
+    content?: string; target?: string; edge?: 'left' | 'right' | 'top' | 'bottom' | 'center'; columns?: number; rows?: number }; output: void };
   /** The latest value a component module posted this frame. */
   component_post: { input: { component: string; module: string; client?: string; data: Json }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null; dropped?: number }; output: void };

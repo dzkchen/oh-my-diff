@@ -1,14 +1,11 @@
 import type { CommandResult, Json, KeyAction, KeyContext, LayoutNode, ModAPI, TerminalComponent, TerminalPatch } from '../../api.d.ts';
+import { CHILDREN, ID, PANELS, REGISTERED, WAYS, at, clone, failed, groupsOf, insert, kids, leaves, locate, mirror, move, obj, orient, parseNode, place, problem, prune, set, signature, swap } from './tree.ts';
+import type { Edge, Failure, Group, Node } from './tree.ts';
 
 type Tab = { title: string; site: string };
-type Edge = 'left' | 'right' | 'top' | 'bottom' | 'tab';
 type Place = { beside: string; edge: Edge; share?: number };
 type Run = { argv: string[]; write: boolean; network: boolean };
 type Panel = { id: string; title: string; site: string; tabs?: Tab[]; order?: number; placement?: Place; run?: Run };
-type Split = 'horizontal' | 'vertical';
-type Group = { tabs: string[] };
-type Fork = { split: Split; ratio?: number[]; children: Node[] };
-type Node = string | Fork | Group;
 type Preset = typeof PRESETS[number];
 type Arranged = { by: 'user' | 'mod'; preset?: Preset; tree?: Node };
 type File = { path: string; code: string };
@@ -28,23 +25,17 @@ const BUILTIN: Panel[] = [
 ];
 const PRESETS = ['dock', 'stack', 'columns', 'grid', 'corner'] as const;
 const EDGES: Edge[] = ['left', 'right', 'top', 'bottom', 'tab'];
-const WAYS: Record<string, Edge> = { left: 'left', right: 'right', up: 'top', down: 'bottom', tab: 'tab' };
 const LEVELS: Level[] = ['normal', 'half', 'full'];
 const REGIONS = [['left', 'Panel on the left'], ['right', 'Panel on the right'], ['up', 'Panel above'], ['down', 'Panel below']] as const;
-const TABS = 6;
 const KEYS: Record<string, string> = {
-  ...Object.fromEntries(Array.from({ length: TABS }, (_, index) => [`panel_${index + 1}`, String(index + 1)])),
+  ...Object.fromEntries(Array.from({ length: PANELS }, (_, index) => [`panel_${index + 1}`, String(index + 1)])),
   main: '0', left: 'Left', left_alt: 'h', right: 'Right', right_alt: 'l', up: 'Up', up_alt: 'k', down: 'Down', down_alt: 'j', help: '?',
   mode_next: '+', mode_previous: '_', tab_previous: '[', tab_next: ']', panel_tab_previous: '{', panel_tab_next: '}',
   grow: '=', shrink: '-', focus_shell: 'Enter',
 };
 const KEY = /^(?:[\x21-\x7e]|F(?:[2-9]|1[0-2])|(?:Ctrl\+(?![cdzhijm]$)|Alt\+|Ctrl\+Alt\+)[a-z0-9]|(?:Ctrl\+|Alt\+|Shift\+)?(?:Up|Down|Left|Right|Home|End|PageUp|PageDown|Delete|Insert|Tab|Enter|Backspace|Space))$/;
-const ID = /^[a-z][a-z0-9_]{0,23}$/;
 const SITE = /^[a-z][a-z0-9_]{0,23}\/[a-z0-9_-]{1,48}$/;
 const DISABLED = '<disabled>';
-const CHILDREN = 4;
-const DEPTH = 6;
-const LEAVES = 12;
 const CELLS = 10;
 const BINDINGS = 32;
 const STEP = 5;
@@ -54,27 +45,28 @@ const SAVED = 8;
 const RATIOS = 32;
 const RECENT = 16;
 const COMMANDS = 6;
+const ARGS = 64;
+const ARGV_BYTES = 8_192;
 const STATE_BYTES = 120_000;
-const ROWS = 50;
-const REGISTERED = 16;
+const FILES = 50;
 const CLIP = 30_000;
 const BUDGET = 40_000;
 const LINES = 1_000;
-const PTY_CAP = 'each mod runs at most pty_panes_per_mod PTYs (4 unless mod_limits in the store\'s host.json sets 1-16) and all mods 16';
+const PTY_CAP = 'each mod runs at most pty_panes_per_mod terminals (4 unless mod_limits in the store\'s host.json sets 1-16) and all mods 16';
 const START = 'omd_workspace_start';
 const LIST = 'omd_workspace_changes';
 const REFRESH = 'omd_workspace_refresh';
 const SHELL = 'omd_workspace_shell';
 const EXAMPLE = {
-  layout: 'corner', panels: 'terminal, changes', side: 'left', dock_size: 25, narrow_below: 90, border: 'plain', key_main: 'm', key_help: DISABLED,
+  layout: 'corner', panels: 'changes, terminal, snake', side: 'left', dock_size: 25, narrow_below: 90, border: 'plain', key_main: 'm',
   shell_write: true, terminals: [{ id: 'snake', title: 'Snake', argv: ['node', 'demo/snake.mjs'] }],
 };
 const encoder = new TextEncoder();
 
-const obj = (value: unknown): Record<string, Json> => (value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, Json> : {});
 const str = (value: unknown, bytes: number): string | null => (typeof value === 'string' && value && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && encoder.encode(value).length <= bytes ? value : null);
 const sitesOf = (panel: Panel) => panel.tabs?.map(tab => tab.site) ?? [panel.site];
 const size = (value: unknown) => encoder.encode(JSON.stringify(value)).length;
+const own = <T>(record: Record<string, T>, key: string): T | undefined => (Object.hasOwn(record, key) ? record[key] : undefined);
 const clamp = (percent: number) => Math.min(85, Math.max(15, percent));
 const leaf = (name: string, title: string, border: Border): LayoutNode => ({ content: `site:${name}` as `site:${string}/${string}`, title, style: { border } });
 const clip = (text: string, limit: number) => {
@@ -88,200 +80,12 @@ const clip = (text: string, limit: number) => {
   return kept.join('\n');
 };
 
-const kids = (node: Node): Node[] => (typeof node === 'string' ? [] : 'tabs' in node ? node.tabs : node.children);
-const leaves = (node: Node): string[] => (typeof node === 'string' ? [node] : kids(node).flatMap(leaves));
-const signature = (node: Fork) => node.children.map(child => leaves(child).sort().join(',')).join('|');
-const at = (root: Node, path: number[]): Node => path.reduce((node, index) => kids(node)[index], root);
-const set = (root: Node, path: number[], node: Node): Node => {
-  if (!path.length) return node;
-  kids(at(root, path.slice(0, -1)))[path[path.length - 1]] = node;
-  return root;
-};
-const locate = (node: Node, id: string, path: number[] = []): number[] | null => {
-  if (node === id) return path;
-  for (const [index, child] of kids(node).entries()) {
-    const found = locate(child, id, [...path, index]);
-    if (found) return found;
-  }
-  return null;
-};
-const clone = (node: Node): Node => JSON.parse(JSON.stringify(node)) as Node;
-const failed = (value: Node | string): value is string => typeof value === 'string' && value.includes(' ');
-const mirror = (node: Node): Node => {
-  if (typeof node === 'string' || 'tabs' in node) return node;
-  const children = node.children.map(mirror);
-  return node.split === 'horizontal'
-    ? { split: node.split, ...(node.ratio ? { ratio: [...node.ratio].reverse() } : {}), children: children.reverse() }
-    : { ...node, children };
-};
-const prune = (node: Node, keep: (id: string) => boolean): Node | null => {
-  if (typeof node === 'string') return keep(node) ? node : null;
-  if ('tabs' in node) {
-    const tabs = node.tabs.filter(keep);
-    return tabs.length ? { tabs } : null;
-  }
-  const children = node.children.map(child => prune(child, keep)).filter((child): child is Node => child !== null);
-  if (children.length <= 1) return children[0] ?? null;
-  return { split: node.split, ...(node.ratio && children.length === node.children.length ? { ratio: node.ratio } : {}), children };
-};
-const tidy = (node: Node): Node | null => {
-  if (typeof node === 'string') return node;
-  if ('tabs' in node) return node.tabs.length ? node : null;
-  const children = node.children.map(tidy).filter((child): child is Node => child !== null);
-  const flat = children.flatMap(child => (typeof child === 'object' && 'split' in child && child.split === node.split ? child.children : [child]));
-  const list = flat.length <= CHILDREN ? flat : children;
-  if (list.length <= 1) return list[0] ?? null;
-  return { split: node.split, ...(node.ratio?.length === list.length && node.children.length === list.length ? { ratio: node.ratio } : {}), children: list };
-};
-const remove = (root: Node, id: string): Node | null => {
-  const path = locate(root, id);
-  if (!path) return root;
-  if (!path.length) return null;
-  const parent = at(root, path.slice(0, -1)) as Fork | Group;
-  const index = path[path.length - 1];
-  kids(parent).splice(index, 1);
-  if ('split' in parent && parent.ratio) parent.ratio.splice(index, 1);
-  if ('tabs' in parent && parent.tabs.length === 1) root = set(root, path.slice(0, -1), parent.tabs[0]);
-  return tidy(root);
-};
-const spread = (ratio: number[] | undefined, count: number, index: number, share: number) => {
-  const old = ratio ?? Array.from({ length: count }, () => 1);
-  const total = old.reduce((sum, weight) => sum + weight, 0);
-  const scaled = old.map(weight => Math.max(1, Math.round(weight * (100 - share) / total)));
-  scaled.splice(index, 0, share);
-  return scaled;
-};
-const insert = (root: Node, id: string, beside: string, edge: Edge, share?: number): Node | string => {
-  let path = locate(root, beside);
-  if (!path) return `${beside} is not shown`;
-  const holder = path.length ? at(root, path.slice(0, -1)) : null;
-  if (holder && typeof holder === 'object' && 'tabs' in holder) {
-    if (edge === 'tab') {
-      if (holder.tabs.length >= TABS) return `tabs hold at most ${TABS} panels`;
-      holder.tabs.splice(path[path.length - 1] + 1, 0, id);
-      return root;
-    }
-    path = path.slice(0, -1);
-  }
-  if (edge === 'tab') return beside === 'chat' ? 'the chat cannot hold tabs' : set(root, path, { tabs: [beside, id] });
-  const split: Split = edge === 'left' || edge === 'right' ? 'horizontal' : 'vertical';
-  const before = edge === 'left' || edge === 'top';
-  const outer = path.length ? at(root, path.slice(0, -1)) : null;
-  if (outer && typeof outer === 'object' && 'split' in outer && outer.split === split && outer.children.length < CHILDREN) {
-    const index = path[path.length - 1] + (before ? 0 : 1);
-    if (share) outer.ratio = spread(outer.ratio, outer.children.length, index, share);
-    else delete outer.ratio;
-    outer.children.splice(index, 0, id);
-    return root;
-  }
-  const target = at(root, path);
-  const ratio = share ? { ratio: before ? [share, 100 - share] : [100 - share, share] } : {};
-  return set(root, path, { split, ...ratio, children: before ? [id, target] : [target, id] });
-};
-const place = (root: Node, id: string, beside: string, edge: Edge, share?: number): Node | string => {
-  if (id === beside) return 'a panel cannot move beside itself';
-  const rest = remove(clone(root), id);
-  if (rest === null || !locate(rest, beside)) return `${beside} is not shown`;
-  const placed = insert(rest, id, beside, edge, share);
-  return failed(placed) ? placed : tidy(placed) ?? 'nothing left to show';
-};
-const move = (root: Node, id: string, way: string): Node | string => {
-  const tree = clone(root);
-  const path = locate(tree, id);
-  if (!path || !path.length) return `${id} is not shown`;
-  const parent = at(tree, path.slice(0, -1)) as Fork | Group;
-  const index = path[path.length - 1];
-  if (way === 'tab') {
-    if ('tabs' in parent) return `${id} is already in tabs`;
-    const panelsIn = (node?: Node) => (node === undefined ? [] : leaves(node).filter(name => name !== 'chat'));
-    const beside = panelsIn(parent.children[index - 1]).at(-1) ?? panelsIn(parent.children[index + 1])[0];
-    return beside ? place(tree, id, beside, 'tab') : `no panel next to ${id}`;
-  }
-  if ('tabs' in parent) {
-    const other = parent.tabs.find(name => name !== id) as string;
-    return place(tree, id, other, WAYS[way]);
-  }
-  const split: Split = way === 'left' || way === 'right' ? 'horizontal' : 'vertical';
-  const step = way === 'right' || way === 'down' ? 1 : -1;
-  for (let depth = path.length - 1; depth >= 0; depth -= 1) {
-    const outer = at(tree, path.slice(0, depth));
-    const slot = path[depth];
-    if (typeof outer === 'string' || 'tabs' in outer || outer.split !== split || !outer.children[slot + step]) continue;
-    if (depth === path.length - 1) {
-      [outer.children[slot], outer.children[slot + step]] = [outer.children[slot + step], outer.children[slot]];
-      if (outer.ratio) [outer.ratio[slot], outer.ratio[slot + step]] = [outer.ratio[slot + step], outer.ratio[slot]];
-      return tree;
-    }
-    if (outer.children.length >= CHILDREN) return `no room ${way} of ${id}`;
-    parent.children.splice(index, 1);
-    if (parent.ratio) parent.ratio.splice(index, 1);
-    outer.children.splice(slot + (step > 0 ? 1 : 0), 0, id);
-    delete outer.ratio;
-    return tidy(tree) ?? `${id} is not shown`;
-  }
-  if (typeof tree === 'object' && 'split' in tree && tree.split === split && tree.children[step > 0 ? tree.children.length - 1 : 0] === id) return `${id} is already at the ${way} edge`;
-  const rest = remove(tree, id);
-  if (rest === null) return `${id} is not shown`;
-  return tidy({ split, children: step > 0 ? [rest, id] : [id, rest] }) ?? `${id} is not shown`;
-};
-const swap = (root: Node, first: string, second: string): Node | string => {
-  const tree = clone(root);
-  const [one, two] = [locate(tree, first), locate(tree, second)];
-  if (!one || !two) return `${one ? second : first} is not shown`;
-  set(tree, one, second);
-  return set(tree, two, first);
-};
-const parseNode = (value: unknown): Node | string => {
-  const seen = new Set<string>();
-  const walk = (raw: unknown, depth = 1): Node => {
-    if (depth > DEPTH + 2 || seen.size >= LEAVES + REGISTERED) throw new Error(`a tree nests at most ${DEPTH + 2} levels and names at most ${LEAVES + REGISTERED} panels`);
-    if (typeof raw === 'string') {
-      if (raw !== 'chat' && !ID.test(raw)) throw new Error(`invalid panel id ${JSON.stringify(raw).slice(0, 40)}`);
-      if (seen.has(raw)) throw new Error(`${raw} appears twice`);
-      seen.add(raw);
-      return raw;
-    }
-    const node = obj(raw);
-    if (Array.isArray(node.tabs) && Object.keys(node).length === 1) {
-      if (!node.tabs.length || node.tabs.length > TABS || node.tabs.some(tab => typeof tab !== 'string')) throw new Error(`tabs hold 1 to ${TABS} panel ids`);
-      if (node.tabs.includes('chat')) throw new Error('the chat cannot go into tabs');
-      return { tabs: node.tabs.map(tab => walk(tab, depth + 1)) as string[] };
-    }
-    const { split, ratio, children } = node;
-    if ((split !== 'horizontal' && split !== 'vertical') || !Array.isArray(children) || Object.keys(node).some(key => !['split', 'ratio', 'children'].includes(key))) {
-      throw new Error('a node is "chat", a panel id, {split, children, ratio?} or {tabs}');
-    }
-    if (children.length < 2 || children.length > CHILDREN) throw new Error(`a split holds 2 to ${CHILDREN} children`);
-    if (ratio !== undefined && (!Array.isArray(ratio) || ratio.length !== children.length || ratio.some(weight => !Number.isInteger(weight) || (weight as number) < 1 || (weight as number) > 100))) {
-      throw new Error('ratio needs one whole number from 1 to 100 per child');
-    }
-    return { split, ...(ratio ? { ratio: ratio as number[] } : {}), children: children.map(child => walk(child, depth + 1)) };
-  };
-  try {
-    const node = walk(value);
-    return seen.has('chat') ? node : 'the arrangement needs "chat" once';
-  } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    return error.message;
-  }
-};
-const measure = (node: LayoutNode, depth = 1): { depth: number; cells: string[] } => {
-  const inner = 'tabs' in node ? node.tabs.map(tab => tab.node) : 'children' in node ? node.children : [];
-  const parts = inner.map(child => measure(child, depth + 1));
-  return { depth: Math.max(depth, ...parts.map(part => part.depth)), cells: 'content' in node ? [node.content] : parts.flatMap(part => part.cells) };
-};
-const problem = (layout: LayoutNode): string | null => {
-  const { depth, cells } = measure(layout);
-  if (depth > DEPTH) return `nested ${depth} levels deep (the host draws ${DEPTH}; the chat counts two)`;
-  if (cells.length > LEAVES) return `${cells.length} cells (the host draws ${LEAVES}; the chat counts two)`;
-  return new Set(cells).size === cells.length ? null : 'a panel site appears twice';
-};
-
 export default function activate(api: ModAPI) {
-  const load = (): State => ({
-    off: false, registered: [], arranged: null, saved: {}, ratios: {}, recent: [], tabs: {}, mode: null, threads: {},
-    ...(api.state.get() as Partial<State> | null),
-  });
+  const load = (): State => {
+    const stored = obj(api.state.get());
+    const empty: State = { off: false, registered: [], arranged: null, saved: {}, ratios: {}, recent: [], tabs: {}, mode: null, threads: {} };
+    return Object.fromEntries(Object.entries(empty).map(([key, value]) => [key, own(stored, key) ?? value])) as State;
+  };
   const save = (state: State) => api.state.set(state as unknown as Json);
   const changed = <T>(change: (state: State) => T): T => {
     const state = load();
@@ -324,17 +128,20 @@ export default function activate(api: ModAPI) {
   const shellWrite = settings.shell_write === true;
   const shellNetwork = settings.shell_network === 'loopback';
   const configured = Object.keys(obj(settings.arrangement)).length ? parseNode(settings.arrangement) : null;
-  const settled = typeof configured === 'object' ? configured : null;
-  const ignored = [...invalid, ...(typeof configured === 'string' ? [`arrangement: ${configured}`] : [])];
+  const settled = configured && !failed(configured) ? configured : null;
+  const unusable = configured && failed(configured) ? configured.error : null;
+  const ignored = [...invalid, ...(unusable ? [`arrangement: ${unusable}`] : [])];
   const commands: Panel[] = [];
   for (const [index, raw] of (Array.isArray(settings.terminals) ? settings.terminals : []).entries()) {
     const entry = obj(raw);
     const id = str(entry.id, 24);
     const title = str(entry.title, TITLE);
-    const argv = Array.isArray(entry.argv) ? entry.argv.map(arg => str(arg, 1024)) : [];
+    const argv = Array.isArray(entry.argv) ? entry.argv : [];
+    const runnable = typeof argv[0] === 'string' && argv[0] !== '' && argv.length <= ARGS + 1 && argv.every(arg => typeof arg === 'string' && !arg.includes('\0'))
+      && encoder.encode(argv.slice(1).join('')).length <= ARGV_BYTES;
     const taken = !id || !ID.test(id) || ['chat', 'dock'].includes(id) || [...BUILTIN, ...commands].some(panel => panel.id === id);
-    if (taken || !title || !argv.length || argv.length > 64 || argv.some(arg => arg === null) || commands.length >= COMMANDS) {
-      ignored.push(`terminals[${index}]: needs a new id, a title of at most ${TITLE} bytes and argv (1-64 strings); at most ${COMMANDS} terminals`);
+    if (taken || !title || !runnable || commands.length >= COMMANDS) {
+      ignored.push(`terminals[${index}]: needs a new id, a title of at most ${TITLE} bytes and argv (a program and up to ${ARGS} arguments of ${ARGV_BYTES} bytes in all); at most ${COMMANDS} terminals`);
       continue;
     }
     commands.push({ id, title, site: `omd_workspace/run_${id}`, run: { argv: argv as string[], write: entry.write === true, network: entry.network === 'loopback' } });
@@ -343,9 +150,10 @@ export default function activate(api: ModAPI) {
     ? { session: 'shell', component: SHELL, start: START, args: 'start' }
     : panel.run ? { session: `run_${panel.id}`, component: `omd_workspace_run_${panel.id}`, start: `omd_workspace_start_${panel.id}`, args: `start ${panel.id}` } : null);
 
+  const shadowed = (state: State, hidden: boolean) => state.registered.filter(panel => commands.some(command => command.id === panel.id) === hidden);
   const presetOf = (state: State): Preset | null => (state.arranged ? state.arranged.preset ?? null : settled ? null : layoutSetting);
   const panels = (state: State): Panel[] => {
-    const known = [...BUILTIN, ...commands, ...[...state.registered].sort((a, b) => (a.order ?? 100) - (b.order ?? 100))];
+    const known = [...BUILTIN, ...commands, ...shadowed(state, false).sort((a, b) => (a.order ?? 100) - (b.order ?? 100))];
     const wanted = order.length ? [...new Set(order)].flatMap(id => known.filter(panel => panel.id === id)) : known;
     let cells = 0;
     const fits = (panel: Panel) => {
@@ -354,7 +162,7 @@ export default function activate(api: ModAPI) {
       cells += count;
       return true;
     };
-    return wanted.filter(fits).slice(0, TABS);
+    return wanted.filter(fits).slice(0, PANELS);
   };
   const preset = (name: Preset, ids: string[]): Node => {
     if (!ids.length) return 'chat';
@@ -376,15 +184,9 @@ export default function activate(api: ModAPI) {
     return right ? shapes[name]() : mirror(shapes[name]());
   };
   const fallback = (tree: Node, panel: Panel): Node => {
-    const groups: number[][] = [];
-    const visit = (node: Node, path: number[]) => {
-      if (typeof node === 'object' && 'tabs' in node) groups.push(path);
-      kids(node).forEach((child, index) => visit(child, [...path, index]));
-    };
-    visit(tree, []);
-    const open = groups.find(path => (at(tree, path) as Group).tabs.length < TABS);
+    const open = groupsOf(tree).find(group => group.tabs.length < PANELS);
     if (open) {
-      (at(tree, open) as Group).tabs.push(panel.id);
+      open.tabs.push(panel.id);
       return tree;
     }
     const last = leaves(tree).filter(name => name !== 'chat').at(-1);
@@ -423,7 +225,7 @@ export default function activate(api: ModAPI) {
     return { split: 'vertical', ratio: [100 - compact, compact], children: [other, 'chat'] };
   };
   const activeOf = (state: State, group: Group) => Math.max(0, group.tabs.findIndex(id => id === state.recent.find(name => group.tabs.includes(name))));
-  const ownTab = (state: State, panel: Panel) => Math.min(state.tabs[panel.id] ?? 0, (panel.tabs?.length ?? 1) - 1);
+  const ownTab = (state: State, panel: Panel) => Math.min(own(state.tabs, panel.id) ?? 0, (panel.tabs?.length ?? 1) - 1);
   const expand = (state: State, list: Panel[], tree: Node, narrow: boolean): LayoutNode => {
     const byId = new Map(list.map((panel, index) => [panel.id, { panel, title: `${index + 1} ${panel.title}` }]));
     const chat: LayoutNode = { split: 'vertical', ratio: [5, 1], children: [{ content: 'transcript', title: 'Chat' }, { content: 'composer' }] };
@@ -433,23 +235,24 @@ export default function activate(api: ModAPI) {
         ? { tabs: panel.tabs.map(tab => ({ title: tab.title, node: leaf(tab.site, title, border) })), active: ownTab(state, panel) }
         : leaf(panel.site, title, border);
     };
-    const walk = (node: Node): LayoutNode => {
+    const walk = (node: Node, root = false): LayoutNode => {
       if (node === 'chat') return chat;
       if (typeof node === 'string') return panelNode(node, byId.get(node)!.title);
-      if ('tabs' in node) return { tabs: node.tabs.map(id => ({ title: byId.get(id)!.title, node: panelNode(id, '') })), active: activeOf(state, node) };
-      const stored = state.ratios[signature(node)];
+      if ('tabs' in node) return { tabs: node.tabs.map(id => ({ title: byId.get(id)!.title, node: panelNode(id, byId.get(id)!.title) })), active: activeOf(state, node) };
+      const stored = root && state.mode ? undefined : state.ratios[signature(node)];
       const ratio = stored?.length === node.children.length ? stored : node.ratio;
-      const split = narrow ? (leaves(node).includes('chat') ? 'vertical' : 'horizontal') : node.split;
-      return { split, ...(ratio ? { ratio } : {}), children: node.children.map(walk) };
+      return { split: node.split, ...(ratio ? { ratio } : {}), children: node.children.map(child => walk(child)) };
     };
-    return walk(tree);
+    return walk(orient(tree, narrow), true);
   };
-  const render = (state: State, list: Panel[], columns: number, rows: number) => {
+  const render = (state: State, list: Panel[], columns = 120, rows = 40) => {
     const tree = shape(state, list, rows);
-    const layout = expand(state, list, tree, columns < narrowBelow);
-    if (!problem(layout)) return { tree, layout };
+    const narrow = columns < narrowBelow;
+    const layout = expand(state, list, tree, narrow);
+    const refused = problem(layout);
+    if (!refused) return { tree, layout, refused };
     const dock = preset('dock', list.map(panel => panel.id));
-    return { tree: dock, layout: expand(state, list, dock, columns < narrowBelow) };
+    return { tree: dock, layout: expand(state, list, dock, narrow), refused };
   };
   const check = (state: State, tree: Node): string | null => {
     const list = panels(state);
@@ -457,10 +260,10 @@ export default function activate(api: ModAPI) {
     const kept = prune(clone(tree), id => visible.has(id));
     return kept ? problem(expand(state, list, kept, false)) : null;
   };
-  const commit = (state: State, tree: Node | string, by: 'user' | 'mod' = 'user'): string | null => {
-    if (failed(tree)) return tree;
+  const commit = (state: State, tree: Node | Failure, by: 'user' | 'mod' = 'user'): string | null => {
+    if (failed(tree)) return tree.error;
     const parsed = parseNode(tree);
-    if (failed(parsed)) return parsed;
+    if (failed(parsed)) return parsed.error;
     const refused = check(state, parsed);
     if (refused) return refused;
     state.arranged = { by, tree: parsed };
@@ -513,6 +316,13 @@ export default function activate(api: ModAPI) {
       bind(5, 'tab_previous', run('tab previous'), 'Previous tab');
       bind(5, 'tab_next', run('tab next'), 'Next tab');
     }
+    for (const group of groupsOf(tree)) {
+      const now = activeOf(state, group);
+      const panel = all.find(item => item.id === group.tabs[now])!;
+      const number = (step: number) => all.findIndex(item => item.id === group.tabs[(now + step + group.tabs.length) % group.tabs.length]) + 1;
+      bind(5, 'tab_previous', run(`tab ${number(-1)}`), 'Previous tab', panel);
+      bind(5, 'tab_next', run(`tab ${number(1)}`), 'Next tab', panel);
+    }
     bind(5, 'grow', run('grow'), 'Grow the panels (or drag their border)');
     bind(5, 'shrink', run('shrink'), 'Shrink the panels (or drag their border)');
     for (const panel of list) {
@@ -555,7 +365,7 @@ export default function activate(api: ModAPI) {
     const kept = state.threads[thread]?.changes?.selected;
     const selected = files.find(file => file.path === kept);
     touch(state, thread, { changes: {
-      files: files.slice(0, ROWS), total: files.length, selected: selected?.path ?? null, diff: selected ? diffOf(selected) : '',
+      files: files.slice(0, FILES), total: files.length, selected: selected?.path ?? null, diff: selected ? diffOf(selected) : '',
       error: status === null ? 'Not a Git repository' : null,
     } });
   };
@@ -572,7 +382,7 @@ export default function activate(api: ModAPI) {
     const run = api.host.tryCall('terminal.pty', panel.run
       ? { action: 'start', session, program: panel.run.argv[0], argv: panel.run.argv.slice(1), ...access(panel.run.write, panel.run.network) }
       : { action: 'start', session, ...access(shellWrite, shellNetwork) });
-    if (!run.ok) return /pty_session_exists_or_limit/.test(run.error) ? `${run.error}: ${PTY_CAP}` : run.error;
+    if (!run.ok) return /pty_session_exists_or_limit/.test(run.error) ? `${panel.title} is already running, or the terminal limit is reached (${PTY_CAP})` : run.error;
     if (!('running' in run.value)) return `${panel.title} start declined`;
     touch(state, thread, { sessions: [...new Set([...(state.threads[thread]?.sessions ?? []), session])] });
     return null;
@@ -584,9 +394,9 @@ export default function activate(api: ModAPI) {
   const ptySite = (panel: Panel, thread?: Thread): TerminalComponent[] => {
     const session = pty(panel)!;
     if (thread?.sessions?.includes(session.session)) return [{ type: 'terminal', id: session.component, label: panel.title, session: session.session }];
-    const line = panel.run ? panel.run.argv.join(' ') : 'a sandboxed shell';
-    const what = line.slice(0, encoder.encodeInto(line, new Uint8Array(100)).read);
-    return [text(`${panel.id}_start`, `Enter starts ${what}.`), button(session.start, `Start ${panel.run ? panel.title : 'shell'}`, session.args)];
+    const command = panel.run ? panel.run.argv.join(' ').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ') : 'a sandboxed shell';
+    const what = command.slice(0, encoder.encodeInto(command, new Uint8Array(100)).read);
+    return [text(session.session, `Enter starts ${what}.`), button(session.start, `Start ${panel.run ? panel.title : 'shell'}`, session.args)];
   };
   const changesSite = (changes?: Changes): TerminalComponent[] => {
     if (!changes?.files.length) return [text('changes', changes ? changes.error ?? 'Working tree clean' : 'Not loaded yet'), button(REFRESH, 'Refresh', 'refresh')];
@@ -609,7 +419,7 @@ export default function activate(api: ModAPI) {
     if (state.off) return null;
     const list = panels(state);
     const thread = state.threads[ledger?.thread_id ?? ''];
-    const { tree, layout } = render(state, list, client?.columns ?? 120, client?.rows ?? 40);
+    const { tree, layout } = render(state, list, client?.columns, client?.rows);
     const shown = new Set(leaves(tree));
     const sites: NonNullable<TerminalPatch['sites']> = {};
     for (const panel of list.filter(item => shown.has(item.id))) {
@@ -635,7 +445,7 @@ export default function activate(api: ModAPI) {
       }
       if (!/^r(\.\d)*$/.test(event.component)) return;
       const list = panels(state);
-      const { tree } = render(state, list, narrowBelow, 40);
+      const { tree } = render(state, list, event.columns, event.rows);
       const node = locateEvent(tree, event.component);
       if (event.kind === 'resize' && event.ratio && !state.mode) {
         if (node === null || typeof node !== 'object' || !('split' in node) || node.children.length !== event.ratio.length) return;
@@ -648,7 +458,8 @@ export default function activate(api: ModAPI) {
       } else if (event.kind === 'dock' && event.target && event.edge) {
         const [source, target] = [node, locateEvent(tree, event.target)];
         if (typeof source !== 'string' || source === 'chat' || typeof target !== 'string') return;
-        const refused = commit(state, place(arrangement(state, list), source, target, event.edge === 'center' ? 'tab' : event.edge));
+        const shown = orient(arrangement(state, list), (event.columns ?? 120) < narrowBelow);
+        const refused = commit(state, place(shown, source, target, event.edge === 'center' ? 'tab' : event.edge));
         if (refused) api.host.tryCall('terminal.notice', { text: `Workspace: ${refused}`, kind: 'warning', placement: 'toast' });
       }
     });
@@ -660,11 +471,14 @@ export default function activate(api: ModAPI) {
 
   const status = (state: State) => {
     const list = panels(state);
-    const source = state.arranged ? `${state.arranged.preset ?? 'custom'}, set by ${state.arranged.by === 'mod' ? 'a mod' : 'you'}` : typeof configured === 'object' && configured ? 'arrangement setting' : layoutSetting;
+    const source = state.arranged ? `${state.arranged.preset ?? 'custom'}, set by ${state.arranged.by === 'mod' ? 'a mod' : 'you'}` : settled ? 'arrangement setting' : layoutSetting;
+    const { refused } = render(state, list);
+    const notes = [...(refused ? [`Showing dock instead: ${refused}.`] : []), ...(unusable ? [`Arrangement setting ignored: ${unusable}.`] : [])];
     const hints = ([['panel_1', 'shows or focuses the first panel'], ['grow', 'grows'], ['shrink', 'shrinks'], ['main', 'returns to the chat'], ['help', 'lists the keys']] as [string, string][])
       .flatMap(([action, what]) => keys[action] ? [`${keys[action]} ${what}`] : []);
     return [
-      `Workspace is ${state.off ? 'off' : 'on'} (${source}). Panels: ${list.map((panel, index) => `${index + 1} ${panel.title}`).join(', ') || 'none'}. Screen mode: ${state.mode ? `${state.mode.target} ${state.mode.level}` : 'normal'}.`,
+      `Workspace is ${state.off ? 'off' : 'on'} (${source}). Panels: ${list.map((panel, index) => `${index + 1} ${panel.title}${panel.title.toLowerCase() === panel.id ? '' : ` (${panel.id})`}`).join(', ') || 'none'}. Screen mode: ${state.mode ? `${state.mode.target} ${state.mode.level}` : 'normal'}.`,
+      ...notes,
       `Usage: /workspace on | off | layout ${PRESETS.join('|')}|save NAME|load NAME | move PANEL left|right|up|down|tab | swap PANEL PANEL | mode next|previous|normal|half|full [PANEL|dock|chat] | tab N|next|previous [PANEL] | grow | shrink | start [PANEL] | diff PATH | refresh | config | reset`,
       `Ctrl+] from the prompt enters the panels. In them: ${hints.join(', ')}.`,
     ].join('\n');
@@ -677,9 +491,10 @@ export default function activate(api: ModAPI) {
       `Keys: ${JSON.stringify(Object.fromEntries(Object.entries(keys).map(([action, key]) => [`key_${action}`, key ?? DISABLED])))}`,
       `Layout: ${JSON.stringify({ layout: layoutSetting, panels: panels(state).map(panel => panel.id).join(', '), side: right ? 'right' : 'left', dock_size: base, narrow_below: narrowBelow, border })}`,
       `Arrangement: ${JSON.stringify(arrangement(state, panels(state)))}`,
-      `Shell: ${shellWrite ? 'writes the workspace' : 'read-only'}, ${shellNetwork ? 'loopback network' : 'no network'}. Terminals: ${commands.map(panel => panel.id).join(', ') || 'none'}. PTYs: ${PTY_CAP}.`,
+      `Shell: ${shellWrite ? 'writes the workspace' : 'read-only'}, ${shellNetwork ? 'loopback network' : 'no network'}. Terminals: ${commands.map(panel => panel.id).join(', ') || 'none'}. Terminal limit: ${PTY_CAP}.`,
       ...ignored.map(reason => `Ignored: ${reason}`),
       ...unknown.map(id => `Ignored: panels: unknown panel ${id}`),
+      ...shadowed(state, true).map(panel => `Ignored: registered panel ${panel.id}: a terminal has that id`),
       `Example file:\n${JSON.stringify(EXAMPLE, null, 2)}`,
     ].join('\n');
   };
@@ -692,6 +507,7 @@ export default function activate(api: ModAPI) {
       const list = panels(state);
       const current = () => arrangement(state, list);
       const known = (id: string) => id === 'chat' || list.some(panel => panel.id === id);
+      const named = (word = '') => (list[Number(word) - 1] ?? list.find(panel => panel.id === word || panel.title.toLowerCase() === word.toLowerCase()))?.id ?? word;
       const resize = (step: number) => {
         state.mode = null;
         const tree = current();
@@ -718,7 +534,7 @@ export default function activate(api: ModAPI) {
         shrink: () => resize(-STEP),
         config: () => config(state),
         start: () => {
-          const panel = list.find(item => item.id === (words[0] ?? 'terminal') && pty(item));
+          const panel = list.find(item => item.id === named(words[0] ?? 'terminal') && pty(item));
           return panel ? start(state, thread(), panel) ?? `${panel.title} started` : `Usage: /workspace start [${list.filter(item => pty(item)).map(item => item.id).join('|')}]`;
         },
         refresh: () => { refresh(state, thread()); return null; },
@@ -731,29 +547,31 @@ export default function activate(api: ModAPI) {
             return `Layout: ${what}`;
           }
           if (what === 'save' && ID.test(name)) {
-            if (!state.saved[name] && Object.keys(state.saved).length >= SAVED) return `At most ${SAVED} saved layouts; /workspace layout delete NAME frees one`;
+            if (!own(state.saved, name) && Object.keys(state.saved).length >= SAVED) return `At most ${SAVED} saved layouts; /workspace layout delete NAME frees one`;
             state.saved[name] = current();
             return `Saved layout ${name}`;
           }
-          if (what === 'load' && state.saved[name]) return commit(state, state.saved[name]) ?? `Layout: ${name}`;
-          if (what === 'delete' && state.saved[name]) {
+          const saved = own(state.saved, name);
+          if (what === 'load' && saved) return commit(state, saved) ?? `Layout: ${name}`;
+          if (what === 'delete' && saved) {
             delete state.saved[name];
             return `Deleted layout ${name}`;
           }
           return `Usage: /workspace layout ${PRESETS.join('|')}|save NAME|load NAME|delete NAME. Saved: ${Object.keys(state.saved).join(', ') || 'none'}`;
         },
         move: () => {
-          const [id = '', way = ''] = words;
+          const [id, way = ''] = [named(words[0]), words[1]];
           if (!known(id) || id === 'chat' || !Object.hasOwn(WAYS, way)) return 'Usage: /workspace move PANEL left|right|up|down|tab';
           return commit(state, move(current(), id, way));
         },
         swap: () => {
-          const [first = '', second = ''] = words;
+          const [first, second] = [named(words[0]), named(words[1])];
           if (!known(first) || !known(second) || first === second) return 'Usage: /workspace swap PANEL PANEL (chat counts as a panel)';
           return commit(state, swap(current(), first, second));
         },
         tab: () => {
-          const [direction, id] = words;
+          const [direction, word] = words;
+          const id = word === undefined ? undefined : named(word);
           const tree = current();
           if (id === undefined && /^\d+$/.test(direction ?? '')) {
             const panel = list[Number(direction) - 1];
@@ -762,12 +580,7 @@ export default function activate(api: ModAPI) {
             return null;
           }
           if (id === undefined && (direction === 'next' || direction === 'previous')) {
-            const groups: Group[] = [];
-            const visit = (node: Node) => {
-              if (typeof node === 'object' && 'tabs' in node) groups.push(node);
-              kids(node).forEach(visit);
-            };
-            visit(tree);
+            const groups = groupsOf(tree);
             const group = groups.find(item => item.tabs.includes(state.recent.find(name => groups.some(other => other.tabs.includes(name))) ?? '')) ?? groups[0];
             if (!group) return 'No panels are in tabs';
             const now = activeOf(state, group);
@@ -780,7 +593,8 @@ export default function activate(api: ModAPI) {
           return null;
         },
         mode: () => {
-          const [action = '', target = state.mode?.target ?? 'chat'] = words;
+          const [action = '', word] = words;
+          const target = word === undefined ? state.mode?.target ?? 'chat' : word === 'dock' ? word : named(word);
           if (target !== 'dock' && !known(target)) return `Unknown panel ${target}`;
           const now = LEVELS.indexOf(state.mode?.target === target ? state.mode.level : 'normal');
           const next = action === 'next' ? (now + 1) % 3 : action === 'previous' ? (now + 2) % 3 : LEVELS.indexOf(action as Level);
