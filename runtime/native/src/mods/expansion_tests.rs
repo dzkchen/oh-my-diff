@@ -2533,7 +2533,8 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
                             std::fs::write(config, serde_json::to_vec(&value)?)?;
                         }
                         "replace" => {
-                            std::fs::write(path.join("index.ts"), "export default () => {}")?
+                            std::fs::write(path.join("index.ts"), "export default () => {}")?;
+                            std::thread::sleep(std::time::Duration::from_millis(2100));
                         }
                         "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
                         "cancel" => active.set(false),
@@ -2860,6 +2861,114 @@ async fn model_completions_use_only_configured_worker_routes() {
     assert_eq!(
         fork, "capability_denied: sessions",
         "a fork needs history authority before accessing the live thread"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mod_workers_may_run_on_a_registered_providers_lead_route() {
+    let Some(fixture) = fixture(&[Package {
+        id: "delegate",
+        capabilities: &["agents"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let models = ["provider-worker-model", "provider-worker-other"]
+        .map(codex_models_manager::model_info::model_info_from_slug);
+    codex_models_manager::runtime_models::set("provider-worker", models.to_vec());
+    let route = |name: &str, model: &str, mods: Value| {
+        json!({"name": name, "roles": ["lead"], "provider": "provider-worker", "model": model,
+            "mods": mods, "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
+            "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
+            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
+            "input_token_ceiling": 1000, "included_subscription": true}})
+    };
+    std::fs::write(
+        fixture.lead.host.root.join("host.json"),
+        json!({"routes": [
+            route("open", "provider-worker-model", json!([])),
+            route("granted", "provider-worker-model", json!(["delegate"])),
+            route("other-mod", "provider-worker-model", json!(["someone-else"])),
+            route("unregistered", "not-a-runtime-model", json!([])),
+        ], "worker_limits": {"requests": 5, "seconds": 60, "exposure_microusd": 0}})
+        .to_string(),
+    )
+    .unwrap();
+    let grants = fixture.core.runtime.lock().unwrap().grants("delegate");
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let spawn_model = |route: &'static str, model: Option<&'static str>| {
+        let (core, lead, grants, cancelled) =
+            (&fixture.core, &fixture.lead, grants.clone(), &cancelled);
+        async move {
+            operations::dispatch(
+                core,
+                lead,
+                Caller {
+                    id: "delegate",
+                    source: "",
+                    grants,
+                    generation: 0,
+                    origin: Origin::Event,
+                    record_changes: false,
+                },
+                None,
+                ModHostCall {
+                    operation: "agents.spawn".into(),
+                    arguments: json!({"role": "r", "route": route, "prompt": "x", "model": model}),
+                },
+                cancelled,
+            )
+            .await
+        }
+    };
+    let spawn = |route: &'static str| spawn_model(route, None);
+    let refused = |result: Result<Value, String>| result.err().unwrap_or_default();
+    assert_eq!(
+        refused(spawn("open").await),
+        "native_thread_manager_stopped",
+        "a registered provider's open lead route is admitted up to thread start"
+    );
+    assert_eq!(
+        refused(spawn_model("open", Some("provider-worker-other")).await),
+        "native_thread_manager_stopped",
+        "another model from the route provider's runtime catalog is admitted on its lead route"
+    );
+    assert_eq!(
+        refused(spawn_model("open", Some("gpt-5.5")).await),
+        "agent_model_not_in_route_provider_catalog"
+    );
+    let (routing, _) = fixture.lead.host.route_config();
+    let granted = routing
+        .route("granted", crate::config::RouteRole::Lead, None)
+        .unwrap()
+        .clone();
+    fixture
+        .lead
+        .host
+        .enroll(
+            fixture.lead.thread,
+            &fixture.lead.session,
+            "lead",
+            Some(&granted),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        refused(spawn_model("lead", Some("provider-worker-other")).await),
+        "agent_model_requires_provider_lead_route",
+        "the lead alias keeps the lead's model"
+    );
+    assert_eq!(
+        refused(spawn("other-mod").await),
+        "provider_not_registered_or_stopped"
+    );
+    codex_models_manager::runtime_models::set("provider-worker", Vec::new());
+    assert_eq!(
+        refused(spawn("unregistered").await),
+        "provider_not_registered_or_stopped"
     );
 }
 
@@ -3950,6 +4059,244 @@ async fn peer_messages_pass_receive_interceptors_as_untrusted_data() {
         .await,
         ("refused", Some("no_peer_message_handler".to_owned()))
     );
+}
+
+#[test]
+fn a_child_back_on_the_configured_provider_is_an_ordinary_child() {
+    assert!(crate::cross_provider_child(
+        "lead", "openai", "claude", "openai"
+    ));
+    assert!(!crate::cross_provider_child(
+        "lead", "claude", "openai", "openai"
+    ));
+    assert!(!crate::cross_provider_child(
+        "lead", "openai", "openai", "openai"
+    ));
+    assert!(crate::cross_provider_child(
+        "agent:a@b",
+        "claude",
+        "openai",
+        "openai"
+    ));
+}
+
+#[test]
+fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let host = &fixture.lead.host;
+    let route = |name: &str, model: &str| {
+        json!({"name": name, "roles": ["lead"], "provider": "other", "model": model,
+            "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
+            "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
+            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
+            "input_token_ceiling": 1000, "included_subscription": true}})
+    };
+    std::fs::write(
+        host.root.join("host.json"),
+        json!({"routes": [route("other", "other-default"), route("other-fast", "other-fast")],
+            "worker_limits": {"requests": 5, "seconds": 60, "exposure_microusd": 0}})
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(host.route_config().1, None);
+    let name = |model: &str| {
+        host.provider_lead_route("other", model)
+            .map(|route| route.name)
+    };
+    assert_eq!(name("other-fast").as_deref(), Some("other-fast"));
+    assert_eq!(name("other-new").as_deref(), Some("other"));
+    assert!(host.provider_lead_route("missing", "m").is_none());
+
+    let session = &fixture.lead.session;
+    let child = ThreadId::new();
+    let owner = format!("agent:{child}");
+    host.enroll_cross_provider(child, session, &owner, "lead", 1, "other", "other-new")
+        .unwrap();
+    let account = host.accounts.by_thread.lock().unwrap()[&child.to_string()].clone();
+    assert_eq!(
+        (account.provider.as_str(), account.model.as_str()),
+        ("other", "other-new")
+    );
+    assert_eq!(account.route.as_deref(), Some("other"));
+    assert!(account.rates.is_some());
+    assert!(crate::provider_worker(&account.owner));
+    session
+        .task
+        .admit(&account.owner, "other", "other-new", 0)
+        .unwrap();
+    assert!(
+        session
+            .task
+            .admit(&account.owner, "other", "other-fast", 0)
+            .is_err()
+    );
+    let grandchild = ThreadId::new();
+    host.enroll_cross_provider(
+        grandchild,
+        session,
+        &format!("agent:{grandchild}"),
+        &format!("agent:{}", ThreadId::new()),
+        2,
+        "other",
+        "other-new",
+    )
+    .unwrap();
+
+    let missing = ThreadId::new();
+    let error = host
+        .enroll_cross_provider(
+            missing,
+            session,
+            &format!("agent:{missing}"),
+            "lead",
+            1,
+            "missing",
+            "m",
+        )
+        .unwrap_err();
+    assert!(error.starts_with("agent_route_unavailable"), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let inventory = &fixture.core.inventory;
+    let lead = fixture.lead.thread.to_string();
+    static SPAWN: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("spawn_agent"));
+    let session_store = ExtensionData::new("session".to_owned());
+    let attempt = |depth: u32| {
+        let store = ExtensionData::new(lead.clone());
+        store.insert(Lead {
+            depth,
+            ..fixture.lead.clone()
+        });
+        let mods = &mods;
+        let session_store = &session_store;
+        async move {
+            let payload = codex_tools::ToolPayload::Function {
+                arguments: r#"{"message":"go"}"#.to_owned(),
+            };
+            mods.intercept_tool(ToolStartInput {
+                session_store,
+                thread_store: &store,
+                turn_store: &ExtensionData::new("turn".to_owned()),
+                turn_id: "turn",
+                root_turn_id: None,
+                call_id: "spawn",
+                originating_item_id: None,
+                tool_name: &SPAWN,
+                mcp_tool: None,
+                permissions: Box::pin(async { None }),
+                payload: &payload,
+                conversation_history: Arc::new(NoHistory),
+                source: codex_extension_api::ToolCallSource::Direct,
+            })
+            .await
+            .err()
+        }
+    };
+    assert_eq!(attempt(0).await, None);
+    assert_eq!(attempt(1).await, None);
+    assert_eq!(
+        attempt(2).await.as_deref(),
+        Some("subagent_depth_limit: depth 3 exceeds limits.max_depth 2")
+    );
+    inventory.release_spawn("spawn");
+
+    let child = |index: u32| format!("child-{index}");
+    for index in 0..3 {
+        inventory.start(
+            &child(index),
+            json!({"origin": "model", "parent": {"thread_id": lead, "agent_id": null}}),
+        );
+    }
+    fixture
+        .lead
+        .session
+        .task
+        .start_worker(
+            "mod-worker".into(),
+            "lead".into(),
+            1,
+            codex_omd::WorkerLimits {
+                requests: 1,
+                seconds: 1,
+                exposure_microusd: 0,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        attempt(0).await.as_deref(),
+        Some("subagent_concurrency_limit: 4 running of limits.concurrent_workers 4")
+    );
+    inventory.turn(&child(0), "turn", "completed", Value::Null);
+    assert_eq!(
+        attempt(0).await,
+        None,
+        "a child that finished its turn is idle"
+    );
+    assert!(
+        attempt(0).await.is_some(),
+        "an admitted spawn holds its slot until its child starts"
+    );
+    inventory.release_spawn("spawn");
+    assert_eq!(
+        attempt(0).await,
+        None,
+        "a finished spawn call releases its slot"
+    );
+    inventory.start(
+        &child(3),
+        json!({"origin": "model", "parent": {"thread_id": lead, "agent_id": null}}),
+    );
+    inventory.release_spawn("spawn");
+    inventory.turn_started(&child(0));
+    assert!(attempt(0).await.is_some(), "a child running again counts");
+    inventory.end(&child(0), "completed", None);
+    inventory.end(&child(3), "completed", None);
+    assert_eq!(attempt(0).await, None, "an ended child is not live");
+}
+
+#[test]
+fn the_agent_inventory_prunes_only_stale_snapshots_and_staging_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
+    let staging = format!("{}snapshot", codex_omd::fsio::STAGING_PREFIX);
+    for name in ["role.toml", "stale.json", staging.as_str()] {
+        std::fs::File::create(directory.path().join(name))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    inventory::Inventory::default().persist_to(directory.path().to_path_buf());
+    assert!(directory.path().join("role.toml").exists());
+    assert!(!directory.path().join("stale.json").exists());
+    assert!(!directory.path().join(staging).exists());
+}
+
+#[test]
+fn the_agent_inventory_keeps_finished_parents_of_remaining_and_starting_agents() {
+    let inventory = inventory::Inventory::default();
+    let model = |parent: &str| json!({"origin": "model", "parent": {"thread_id": parent, "agent_id": null}});
+    for (parent, child) in [("root", "a"), ("a", "a1"), ("root", "b")] {
+        inventory.start(child, model(parent));
+    }
+    inventory.end("a", "completed", None);
+    inventory.end("b", "completed", None);
+    for index in 0..inventory::FINISHED_LIMIT - 1 {
+        let id = format!("done-{index}");
+        inventory.start(&id, model("root"));
+        inventory.end(&id, "completed", None);
+    }
+    inventory.start("b1", model("b"));
+    assert_eq!(inventory.root_thread("a1"), "root");
+    assert_eq!(inventory.root_thread("b1"), "root");
 }
 
 #[test]

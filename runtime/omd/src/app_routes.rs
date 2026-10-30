@@ -81,16 +81,21 @@ pub fn class(capability: &str) -> bool {
 }
 
 pub fn classes_named_in(source: &str) -> Option<BTreeSet<&'static str>> {
-    let named: BTreeSet<_> = TABLE
-        .requests
-        .iter()
-        .filter(|(method, _)| {
-            ['\'', '"', '`']
-                .iter()
-                .any(|quote| source.contains(&format!("{quote}{method}{quote}")))
-        })
-        .map(|(_, route)| route.class.as_str())
-        .collect();
+    let mut named = BTreeSet::new();
+    for quote in *b"'\"`" {
+        let mut open = None;
+        for (index, byte) in source.bytes().enumerate() {
+            if byte != quote {
+                continue;
+            }
+            if let Some(start) = open
+                && let Some(route) = TABLE.requests.get(&source[start + 1..index])
+            {
+                named.insert(route.class.as_str());
+            }
+            open = Some(index);
+        }
+    }
     (!named.is_empty()).then_some(named)
 }
 

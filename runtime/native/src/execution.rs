@@ -391,7 +391,7 @@ impl ParentState {
         let tracked = codex_omd::tracked_paths(&host.repository, &untracked).map_err(error)?;
         let mut paths = tracked.clone();
         paths.extend(candidate_paths);
-        let current = Snapshot::capture(&host.repository, &paths, host.config.snapshot_bytes)
+        let current = Snapshot::capture_tree(&host.repository, &paths, host.config.snapshot_bytes)
             .map_err(error)?;
         Ok(Self {
             untracked,
@@ -405,8 +405,12 @@ impl ParentState {
         Ok(
             codex_omd::tracked_paths(&host.repository, &self.untracked).map_err(error)?
                 == self.tracked
-                && Snapshot::capture(&host.repository, &self.paths, host.config.snapshot_bytes)
-                    .map_err(error)?
+                && Snapshot::capture_tree(
+                    &host.repository,
+                    &self.paths,
+                    host.config.snapshot_bytes,
+                )
+                .map_err(error)?
                     == *expected,
         )
     }

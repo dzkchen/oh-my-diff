@@ -76,18 +76,23 @@ def archive_payload(artifact_dir, destination):
 def checked_extract(archive_path, expected, destination):
     if support.digest(archive_path) != expected:
         raise ValueError("prebuilt package SHA-256 mismatch")
+    count = total = 0
     with tarfile.open(archive_path, "r:xz") as archive:
-        members = archive.getmembers()
-        if not members or len(members) > 1000:
-            raise ValueError("unrecognized package file count")
-        if sum(item.size for item in members) > MAX_UNPACKED_BYTES:
-            raise ValueError("prebuilt package exceeds unpacked byte limit")
-        if any(not item.isfile() or not item.name.startswith("payload/")
-               or any(part in ("", ".", "..") for part in item.name.split("/")) for item in members):
-            raise ValueError("unsafe package member")
-        if any(item.size > MAX_MEMBER_BYTES for item in members):
-            raise ValueError("prebuilt package member exceeds byte limit")
-        archive.extractall(destination, filter="data")
+        for item in archive:
+            count += 1
+            total += item.size
+            if count > 1000:
+                raise ValueError("unrecognized package file count")
+            if total > MAX_UNPACKED_BYTES:
+                raise ValueError("prebuilt package exceeds unpacked byte limit")
+            if (not item.isfile() or not item.name.startswith("payload/")
+                    or any(part in ("", ".", "..") for part in item.name.split("/"))):
+                raise ValueError("unsafe package member")
+            if item.size > MAX_MEMBER_BYTES:
+                raise ValueError("prebuilt package member exceeds byte limit")
+            archive.extract(item, destination, filter="data")
+    if not count:
+        raise ValueError("unrecognized package file count")
     return verified_payload(destination / "payload")
 
 

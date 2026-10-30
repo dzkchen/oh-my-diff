@@ -12,7 +12,7 @@
       "path": "mods/first-party/omd_claude_cli",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the Claude CLI model catalog, request translation and ask_claude delegation over a host-approved provider service while the native host executes every tool and keeps permissions, accounting and cancellation."
+      "why_mod": "Owns the Claude CLI model catalog and request translation over a host-approved provider service while the native host executes every tool and keeps permissions, accounting and cancellation."
     },
     {
       "path": "mods/first-party/omd_inspector",
@@ -525,6 +525,12 @@
       "why_mod": "Owns which identical read calls of a response merge through the exclusive tool_batch replacement, the merged tool that runs them once through tools.invoke, and code-mode read reuse as a tool interceptor over structured values shared through its repository store; installed inactive in OMD+."
     },
     {
+      "path": "mods/first-party/omd_subagent_router",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Reads model directives from submitted prompts and rewrites each model spawn's model and effort through the agent_spawn interceptor, which the host re-admits, and adds the delegate_task tool for background workers; installed inactive in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_tool_fix",
       "extension_type": "mod",
       "role": "bundled",
@@ -553,6 +559,12 @@
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Draws a file manager into a workspace dock site from workspace reads, watches and previews; adds no model tool."
+    },
+    {
+      "path": "mods/first-party/omd_theme",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Draws animated scenes under the whole screen through the generic raster underlay, packed blits and timers; replaces /theme only while on; adds no model tool."
     }
   ],
   "synthetic_fixtures": [

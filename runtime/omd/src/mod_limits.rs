@@ -29,7 +29,7 @@ impl ModLimits {
             watches_per_mod: self.watches_per_mod.clamp(1, 64),
             paths_per_watch: self.paths_per_watch.clamp(1, 256),
             timers_per_mod: self.timers_per_mod.clamp(1, 64),
-            pty_panes_per_mod: self.pty_panes_per_mod.clamp(1, 8),
+            pty_panes_per_mod: self.pty_panes_per_mod.clamp(1, 16),
             completion_items: self.completion_items.clamp(1, 1000),
         }
     }

@@ -414,6 +414,7 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
         "export default () => { throw new Error('broken') }",
     )
     .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2100));
     assert!(
         runtime
             .invoke("fixture", generation, "command", "count", Value::Null)
@@ -1725,6 +1726,28 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
             "{error}"
         );
     }
+}
+
+#[test]
+fn an_underlay_never_takes_a_raster_another_mod_already_draws() {
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({sites:{dialog:{mode:'replace',components:[{type:'raster',id:'shared',label:'Chart',alt:'chart',width:4,height:2}]}}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let view = host(&temp).terminal_view(json!({}), || true);
+    assert_eq!(view.component_owners["shared"], "fixture");
+    assert_eq!(
+        view.view.raster_declared("shared"),
+        Some((Some(4), Some(2)))
+    );
 }
 
 #[test]
@@ -3472,6 +3495,53 @@ fn settings_file_overrides_saved_settings_and_an_invalid_file_is_skipped_whole()
     assert_eq!(runtime.status()["mods"][0]["error"], Value::Null);
     std::fs::remove_file(file("json")).unwrap();
     assert_eq!(read(&mut runtime)[1]["status"], "missing");
+}
+
+#[test]
+fn settings_a_newer_package_no_longer_declares_are_dropped() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => api.command('read', () => JSON.stringify(api.settings))",
+        &["commands"],
+    );
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    let schema = |old: bool| {
+        let mut properties = json!({"mode":{"type":"string","default":"a"}});
+        if old {
+            properties["old"] = json!({"type":"boolean","default":false});
+        }
+        json!({"type":"object","properties":properties,"additionalProperties":false})
+    };
+    value["settings_schema"] = schema(true);
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+    codex_omd::write_settings(&store, "fixture", &json!({"old":true,"mode":"b"})).unwrap();
+    value["settings_schema"] = schema(false);
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    assert_eq!(
+        runtime
+            .invoke("fixture", generation, "command", "read", Value::Null)
+            .unwrap(),
+        json!(r#"{"mode":"b"}"#)
+    );
+    assert!(codex_omd::write_settings(&store, "fixture", &json!({"other":1})).is_err());
+    assert_eq!(
+        codex_omd::write_settings(&store, "fixture", &json!({"mode":"a"})).unwrap(),
+        json!({"settings":{"mode":"a"}})
+    );
+    assert_eq!(
+        store.configuration().unwrap().mods[0].settings,
+        std::collections::BTreeMap::from([("mode".to_string(), json!("a"))])
+    );
 }
 
 #[test]

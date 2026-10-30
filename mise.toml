@@ -1,6 +1,7 @@
 [tools]
 git-cliff = "2.14.2"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.150"
+"aqua:mozilla/sccache" = "0.19.0"
 node = "24.22.1"
 
 [tasks."mods:check"]

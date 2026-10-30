@@ -57,12 +57,10 @@ impl WorkspaceAuthority {
         approved: &BTreeSet<String>,
         limit: usize,
     ) -> Result<Option<String>, String> {
-        match codex_omd::hash_tracked(&self.repository, approved, limit, |path| {
-            self.readable(&self.repository.join(path))
-        }) {
-            Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => Ok(None),
-            result => result.map_err(|error| error.to_string()),
-        }
+        codex_omd::hash_tracked(&self.repository, approved, limit, |paths| {
+            self.tree_readable(paths)
+        })
+        .map_err(|error| error.to_string())
     }
 
     pub async fn for_call(lead: &crate::Lead, call: &crate::ToolCall<'_>) -> Result<Self, String> {
@@ -147,6 +145,15 @@ impl WorkspaceAuthority {
         self.access(path, false)
     }
 
+    pub fn tree_readable<'a>(&self, names: impl IntoIterator<Item = &'a String>) -> bool {
+        names
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .chunks(128)
+            .all(|chunk| self.paths(chunk, false, codex_omd::tree_path).is_ok())
+    }
+
     pub fn writable(&self, path: &std::path::Path) -> bool {
         self.access(path, true)
     }
@@ -160,7 +167,9 @@ impl WorkspaceAuthority {
             return false;
         };
         if !name.is_empty() {
-            return self.paths(&[name.to_owned()], write).is_ok();
+            return self
+                .paths(&[name.to_owned()], write, codex_omd::workspace_path)
+                .is_ok();
         }
         let Ok(absolute) = AbsolutePathBuf::from_absolute_path_checked(&self.repository) else {
             return false;
@@ -204,7 +213,11 @@ impl WorkspaceAuthority {
     ) -> Result<Vec<codex_omd::WorkspaceChange>, String> {
         for change in &changes {
             if self
-                .paths(std::slice::from_ref(&change.path), false)
+                .paths(
+                    std::slice::from_ref(&change.path),
+                    false,
+                    codex_omd::workspace_path,
+                )
                 .is_err()
             {
                 return Err("workspace_change_scope_unavailable".into());
@@ -219,7 +232,11 @@ impl WorkspaceAuthority {
         new: &str,
         active: impl Fn() -> bool,
     ) -> Result<Value, String> {
-        self.paths(&[old.to_owned(), new.to_owned()], true)?;
+        self.paths(
+            &[old.to_owned(), new.to_owned()],
+            true,
+            codex_omd::workspace_path,
+        )?;
         let read = self.call("workspace.read", json!({"paths":[old,new]}), active)?;
         let source = read["files"][old]["sha256"]
             .as_str()
@@ -465,7 +482,12 @@ impl WorkspaceAuthority {
         })
     }
 
-    fn paths(&self, names: &[String], write: bool) -> Result<Vec<PathBuf>, String> {
+    fn paths(
+        &self,
+        names: &[String],
+        write: bool,
+        resolve: fn(&std::path::Path, &str) -> std::io::Result<PathBuf>,
+    ) -> Result<Vec<PathBuf>, String> {
         if names.is_empty()
             || names.len() > 128
             || names.iter().collect::<BTreeSet<_>>().len() != names.len()
@@ -481,8 +503,7 @@ impl WorkspaceAuthority {
         let deny_read = ReadDenyMatcher::try_new_with_context(&self.policy, &context)?;
         let mut paths = Vec::with_capacity(names.len());
         for name in names {
-            let path =
-                codex_omd::workspace_path(&self.repository, name).map_err(|e| e.to_string())?;
+            let path = resolve(&self.repository, name).map_err(|e| e.to_string())?;
             let absolute =
                 AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
             let uri = PathUri::from_abs_path(&absolute);
@@ -520,7 +541,7 @@ impl WorkspaceAuthority {
                     paths: Vec<String>,
                 }
                 let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
-                self.paths(&input.paths, false)?;
+                self.paths(&input.paths, false, codex_omd::workspace_path)?;
                 let selected = input.paths.into_iter().collect::<BTreeSet<_>>();
                 let snapshot =
                     codex_omd::Snapshot::capture(&self.repository, &selected, 4 * 1024 * 1024)
@@ -544,6 +565,7 @@ impl WorkspaceAuthority {
                 self.paths(
                     &transaction.expected.keys().cloned().collect::<Vec<_>>(),
                     true,
+                    codex_omd::workspace_path,
                 )?;
                 let result = transaction
                     .apply(&self.repository, active)
@@ -813,7 +835,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_identity_is_absent_only_when_capture_exceeds_limit_or_permissions() {
+    fn workspace_identity_is_absent_only_without_permissions() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
         assert!(
@@ -827,14 +849,26 @@ mod tests {
         std::fs::write(root.join("a.py"), "source\n").unwrap();
         let mut approved = BTreeSet::from(["a.py".to_owned()]);
         let readable = authority(root.clone(), FileSystemAccessMode::Read);
-        assert!(readable.identity(&approved, 1024).unwrap().is_some());
-        assert_eq!(readable.identity(&approved, 4), Ok(None));
+        let full = readable.identity(&approved, 1024).unwrap();
+        assert!(full.is_some());
+        let past_limit = readable.identity(&approved, 4).unwrap();
+        assert!(past_limit.is_some() && past_limit != full);
+        let chmod = |mode| {
+            std::fs::set_permissions(
+                root.join("a.py"),
+                std::os::unix::fs::PermissionsExt::from_mode(mode),
+            )
+            .unwrap()
+        };
+        chmod(0o000);
         assert_eq!(
             authority(root.clone(), FileSystemAccessMode::Deny).identity(&approved, 1024),
             Ok(None)
         );
+        chmod(0o644);
         std::os::unix::fs::symlink("a.py", root.join("link")).unwrap();
         approved.insert("link".to_owned());
-        assert!(readable.identity(&approved, 1024).is_err());
+        let linked = readable.identity(&approved, 1024).unwrap();
+        assert!(linked.is_some() && linked != full);
     }
 }

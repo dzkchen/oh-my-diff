@@ -130,6 +130,13 @@ Require `settings_file_v1` to use it.
 
 ## Host limits
 
+`host.json` `limits.max_depth` (default 2) and `limits.concurrent_workers` (default 4) cap a session's subagents: a mod
+worker or model `spawn_agent` past either is refused with `subagent_depth_limit` or `subagent_concurrency_limit`.
+The concurrency limit counts running mod workers (`agents.spawn`), running model children (a child in a turn or not yet
+through its first turn) and children on another provider while they run a turn; idle or ended children don't count,
+so a child woken by a message can briefly take the count past the cap.
+A provider service process (such as the `omd_claude_cli` relay) needs a free slot to start but holds none once running.
+
 `host.json` may set `mod_limits`:
 
 | Limit | Default | Maximum |
@@ -137,7 +144,7 @@ Require `settings_file_v1` to use it.
 | `watches_per_mod` | 16 | 64 |
 | `paths_per_watch` | 32 | 256 |
 | `timers_per_mod` | 16 | 64 |
-| `pty_panes_per_mod` | 4 | 8 |
+| `pty_panes_per_mod` | 4 | 16 |
 | `completion_items` | 200 | 1000 |
 
 ### Fault limit
@@ -337,7 +344,9 @@ Anything else (`task.*`, `contract.*`, other `routes.*`, `evidence.*`, `workspac
 ### Settings defaults
 
 Callbacks receive explicit settings over each `settings_schema` property's `default`; give every property a
-default.
+default. With `additionalProperties: false`, a stored setting the package no longer declares is ignored and dropped
+at the next settings write or update, so a release can remove a setting; a write naming an undeclared setting is
+still refused (`unknown_setting`).
 
 A property may also carry a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
 instead of the raw name, and `choices: "routes"` on a string property without `enum`: `packages.list` then fills its

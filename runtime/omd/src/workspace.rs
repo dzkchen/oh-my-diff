@@ -27,8 +27,10 @@ use std::process::Command;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct File {
+    /// The contents, or the link text of a symlink.
     pub bytes: Vec<u8>,
     pub executable: bool,
+    pub symlink: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -136,6 +138,20 @@ fn too_large() -> io::Error {
 
 fn content_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn identity(metadata: &fs::Metadata) -> Vec<u8> {
+    let stamp = (
+        metadata.len(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+        metadata.ino(),
+    );
+    format!("identity:{stamp:?}").into_bytes()
+}
+
+fn raced(message: String) -> io::Error {
+    io::Error::new(io::ErrorKind::Interrupted, message)
 }
 
 fn read_version(
@@ -476,9 +492,7 @@ impl WorkspaceIndex {
                 let hash = match cached.get(&name) {
                     Some((seen, hash)) if *seen == stamp => hash.clone(),
                     // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
-                    _ if metadata.nlink() != 1 => {
-                        content_hash(format!("hardlink:{stamp:?}").as_bytes())
-                    }
+                    _ if metadata.nlink() != 1 => content_hash(&identity(&metadata)),
                     _ => {
                         let (content, _) = read_version(repository, &name, max_bytes)?
                             .ok_or_else(|| invalid("workspace file disappeared during index"))?;
@@ -586,6 +600,10 @@ pub fn take_workspace_changes(repository: &Path) -> Vec<RecordedChange> {
 }
 
 fn safe_path(root: &Path, name: &str) -> io::Result<PathBuf> {
+    checked_path(root, name, false)
+}
+
+fn checked_path(root: &Path, name: &str, link: bool) -> io::Result<PathBuf> {
     let path = Path::new(name);
     if name.is_empty()
         || name.len() > 4096
@@ -599,10 +617,13 @@ fn safe_path(root: &Path, name: &str) -> io::Result<PathBuf> {
         return Err(invalid("unsafe snapshot path"));
     }
     let mut resolved = root.to_path_buf();
-    for part in path.components() {
+    let mut parts = path.components().peekable();
+    while let Some(part) = parts.next() {
         resolved.push(part);
         match fs::symlink_metadata(&resolved) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
+            Ok(metadata)
+                if metadata.file_type().is_symlink() && !(link && parts.peek().is_none()) =>
+            {
                 return Err(invalid("snapshot symlink rejected"));
             }
             Ok(_) => (),
@@ -615,6 +636,10 @@ fn safe_path(root: &Path, name: &str) -> io::Result<PathBuf> {
 
 pub fn workspace_path(root: &Path, name: &str) -> io::Result<PathBuf> {
     safe_path(root, name)
+}
+
+pub fn tree_path(root: &Path, name: &str) -> io::Result<PathBuf> {
+    checked_path(root, name, true)
 }
 
 pub(crate) fn private_path(
@@ -703,9 +728,12 @@ fn open_source(root: &fs::File, name: &str) -> io::Result<fs::File> {
 }
 
 fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> io::Result<bool> {
+    Ok(before.is_file() && same_entry(before, after)?)
+}
+
+fn same_entry(before: &fs::Metadata, after: &fs::Metadata) -> io::Result<bool> {
     use std::os::unix::fs::MetadataExt;
-    Ok(before.is_file()
-        && after.is_file()
+    Ok(before.file_type() == after.file_type()
         && before.dev() == after.dev()
         && before.ino() == after.ino()
         && before.len() == after.len()
@@ -715,11 +743,34 @@ fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> io::Result<bool> {
         && before.mode() == after.mode())
 }
 
-fn frame(digest: &mut Sha256, name: &str, executable: bool, contents: &[u8]) {
+const EXECUTABLE: u8 = 1;
+const SYMLINK: u8 = 2;
+const GITLINK: u8 = 3;
+
+fn frame(digest: &mut Sha256, name: &str, kind: u8, contents: &[u8]) {
     digest.update((name.len() as u64).to_le_bytes());
     digest.update(name.as_bytes());
-    digest.update([u8::from(executable)]);
+    digest.update([kind]);
     digest.update(contents);
+}
+
+impl File {
+    fn kind(&self) -> u8 {
+        if self.symlink {
+            SYMLINK
+        } else {
+            u8::from(self.executable) * EXECUTABLE
+        }
+    }
+}
+
+/// `Contents` rejects symlinks and hardlinks; `Tree` records a symlink's link text, never following it; `Digest`
+/// also reads a hardlinked file, or one past `max_bytes`, by identity only.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Visit {
+    Contents,
+    Tree,
+    Digest,
 }
 
 /// Reads each existing path once, within `max_bytes` of names and contents, and fails if any changes meanwhile.
@@ -727,50 +778,81 @@ fn visit(
     root: &Path,
     paths: &BTreeSet<String>,
     max_bytes: usize,
-    mut read: impl FnMut(&str, &mut dyn Read, bool) -> io::Result<usize>,
+    visit: Visit,
+    mut read: impl FnMut(&str, &mut dyn Read, u8) -> io::Result<usize>,
 ) -> io::Result<()> {
     let root = root.canonicalize()?;
     let directory = open_directory(&root)?;
     let mut observed = BTreeMap::new();
     let mut remaining = max_bytes;
     for name in paths {
-        let path = safe_path(&root, name)?;
-        let mut input = match open_source(&directory, name) {
-            Ok(input) => input,
+        let path = checked_path(&root, name, visit != Visit::Contents)?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 observed.insert(name.clone(), None);
                 continue;
             }
             Err(error) => return Err(error),
         };
-        let metadata = input.metadata()?;
-        if !metadata.is_file() {
-            return Err(invalid(format!("snapshot requires regular files: {name}")));
-        }
-        if metadata.nlink() != 1 {
-            return Err(hardlink(name));
-        }
-        let executable = metadata.permissions().mode() & 0o111 != 0;
-        let count = read(
-            name,
-            &mut (&mut input).take(remaining.saturating_add(1) as u64),
-            executable,
-        )?;
+        let changed = || raced(format!("source changed during snapshot: {name}"));
+        let count = if metadata.file_type().is_symlink() {
+            if visit == Visit::Contents {
+                return Err(invalid("snapshot symlink rejected"));
+            }
+            let (parent, leaf) = open_parent(&root, name)?;
+            let link = rustix::fs::readlinkat(&parent, leaf.as_os_str(), Vec::new())?;
+            let count = read(name, &mut link.as_bytes(), SYMLINK)?;
+            if !same_entry(&metadata, &fs::symlink_metadata(&path)?)? {
+                return Err(changed());
+            }
+            count
+        } else if metadata.is_file() {
+            let mut input = open_source(&directory, name)?;
+            if !same_file(&metadata, &input.metadata()?)? {
+                return Err(changed());
+            }
+            let hardlinked = metadata.nlink() != 1;
+            let identify = visit == Visit::Digest;
+            if hardlinked && !identify {
+                return Err(hardlink(name));
+            }
+            let kind = u8::from(metadata.permissions().mode() & 0o111 != 0) * EXECUTABLE;
+            let count = if hardlinked || (identify && metadata.len() > remaining as u64) {
+                read(name, &mut identity(&metadata).as_slice(), kind)?;
+                0
+            } else {
+                read(
+                    name,
+                    &mut (&mut input).take(remaining.saturating_add(1) as u64),
+                    kind,
+                )?
+            };
+            if !same_file(&metadata, &input.metadata()?)?
+                || !same_file(&metadata, &fs::symlink_metadata(&path)?)?
+            {
+                return Err(changed());
+            }
+            count
+        } else {
+            observed.insert(name.clone(), Some(metadata));
+            continue;
+        };
         let cost = count
             .checked_add(name.len())
             .ok_or_else(|| invalid("snapshot size overflow"))?;
-        remaining = remaining.checked_sub(cost).ok_or_else(too_large)?;
-        let after = fs::symlink_metadata(&path)?;
-        if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
-            return Err(invalid(format!("source changed during snapshot: {name}")));
-        }
+        remaining = match remaining.checked_sub(cost) {
+            Some(remaining) => remaining,
+            None if visit == Visit::Digest => 0,
+            None => return Err(too_large()),
+        };
         observed.insert(name.clone(), Some(metadata));
     }
     for (name, before) in observed {
-        match (before, open_source(&directory, &name)) {
+        match (before, fs::symlink_metadata(root.join(&name))) {
             (None, Err(error)) if error.kind() == io::ErrorKind::NotFound => (),
-            (Some(before), Ok(current)) if same_file(&before, &current.metadata()?)? => (),
-            _ => return Err(invalid("source tree changed during snapshot")),
+            (Some(before), Ok(current)) if same_entry(&before, &current)? => (),
+            _ => return Err(raced("source tree changed during snapshot".into())),
         }
     }
     Ok(())
@@ -778,47 +860,74 @@ fn visit(
 
 impl Snapshot {
     pub fn capture(root: &Path, paths: &BTreeSet<String>, max_bytes: usize) -> io::Result<Self> {
+        Self::collect(root, paths, max_bytes, Visit::Contents)
+    }
+
+    pub fn capture_tree(
+        root: &Path,
+        paths: &BTreeSet<String>,
+        max_bytes: usize,
+    ) -> io::Result<Self> {
+        Self::collect(root, paths, max_bytes, Visit::Tree)
+    }
+
+    fn collect(
+        root: &Path,
+        paths: &BTreeSet<String>,
+        max_bytes: usize,
+        kind: Visit,
+    ) -> io::Result<Self> {
         let mut files = BTreeMap::new();
-        visit(root, paths, max_bytes, |name, input, executable| {
+        visit(root, paths, max_bytes, kind, |name, input, kind| {
             let mut bytes = Vec::new();
             input.read_to_end(&mut bytes)?;
             let read = bytes.len();
-            files.insert(name.to_owned(), File { bytes, executable });
+            let (executable, symlink) = (kind == EXECUTABLE, kind == SYMLINK);
+            files.insert(
+                name.to_owned(),
+                File {
+                    bytes,
+                    executable,
+                    symlink,
+                },
+            );
             Ok(read)
         })?;
         Ok(Self { files })
     }
 
-    /// Same digest as `capture(...).hash()`, streamed without holding the contents.
+    /// Same digest as `capture_tree(...).hash()` where that succeeds, streamed; hardlinked files and files past
+    /// `max_bytes` contribute only their identity.
     pub fn digest(root: &Path, paths: &BTreeSet<String>, max_bytes: usize) -> io::Result<String> {
         let mut digest = Sha256::new();
-        visit(root, paths, max_bytes, |name, input, executable| {
-            let mut contents = Sha256::new();
-            let mut buffer = [0; 64 * 1024];
-            let mut read = 0;
-            loop {
-                let count = input.read(&mut buffer)?;
-                if count == 0 {
-                    break;
+        visit(
+            root,
+            paths,
+            max_bytes,
+            Visit::Digest,
+            |name, input, kind| {
+                let mut contents = Sha256::new();
+                let mut buffer = [0; 64 * 1024];
+                let mut read = 0;
+                loop {
+                    let count = input.read(&mut buffer)?;
+                    if count == 0 {
+                        break;
+                    }
+                    contents.update(&buffer[..count]);
+                    read += count;
                 }
-                contents.update(&buffer[..count]);
-                read += count;
-            }
-            frame(&mut digest, name, executable, &contents.finalize());
-            Ok(read)
-        })?;
+                frame(&mut digest, name, kind, &contents.finalize());
+                Ok(read)
+            },
+        )?;
         Ok(format!("{:x}", digest.finalize()))
     }
 
     pub fn hash(&self) -> String {
         let mut digest = Sha256::new();
         for (name, file) in &self.files {
-            frame(
-                &mut digest,
-                name,
-                file.executable,
-                &Sha256::digest(&file.bytes),
-            );
+            frame(&mut digest, name, file.kind(), &Sha256::digest(&file.bytes));
         }
         format!("{:x}", digest.finalize())
     }
@@ -872,6 +981,9 @@ impl Snapshot {
                         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                         Mode::empty(),
                     )?);
+                } else if file.symlink {
+                    use std::os::unix::ffi::OsStrExt;
+                    rustix::fs::symlinkat(std::ffi::OsStr::from_bytes(&file.bytes), &parent, name)?;
                 } else {
                     parent = fs::File::from(openat(
                         &parent,
@@ -885,6 +997,9 @@ impl Snapshot {
                     )?);
                 }
             }
+            if file.symlink {
+                continue;
+            }
             let mut output = parent;
             output.write_all(&file.bytes)?;
             output.sync_all()?;
@@ -897,7 +1012,7 @@ impl Snapshot {
                 }))?;
             }
         }
-        if Self::capture(root, &self.files.keys().cloned().collect(), max_bytes)? != *self {
+        if Self::capture_tree(root, &self.files.keys().cloned().collect(), max_bytes)? != *self {
             return Err(invalid(
                 "snapshot destination changed during materialization",
             ));
@@ -949,21 +1064,40 @@ pub fn tracked_paths(
     root: &Path,
     approved_untracked: &BTreeSet<String>,
 ) -> io::Result<BTreeSet<String>> {
-    let output = git(root).args(["ls-files", "--cached", "-z"]).output()?;
+    Ok(tracked_entries(root, approved_untracked)?.0)
+}
+
+fn tracked_entries(
+    root: &Path,
+    approved_untracked: &BTreeSet<String>,
+) -> io::Result<(BTreeSet<String>, BTreeMap<String, String>)> {
+    let output = git(root)
+        .args(["ls-files", "--cached", "--stage", "-z"])
+        .output()?;
     if !output.status.success() {
         return Err(invalid("cannot enumerate tracked source"));
     }
     let mut paths = approved_untracked.clone();
-    for path in output
+    let mut submodules = BTreeMap::new();
+    for entry in output
         .stdout
         .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
+        .filter(|entry| !entry.is_empty())
     {
-        paths.insert(
-            String::from_utf8(path.to_vec()).map_err(|_| invalid("non-UTF8 tracked path"))?,
-        );
+        let entry = std::str::from_utf8(entry).map_err(|_| invalid("non-UTF8 tracked path"))?;
+        let (stage, path) = entry
+            .split_once('\t')
+            .ok_or_else(|| invalid("malformed tracked entry"))?;
+        match stage.split(' ').collect::<Vec<_>>()[..] {
+            ["160000", commit, ..] => {
+                submodules.insert(path.to_owned(), commit.to_owned());
+            }
+            _ => {
+                paths.insert(path.to_owned());
+            }
+        }
     }
-    Ok(paths)
+    Ok((paths, submodules))
 }
 
 pub fn capture_tracked(
@@ -971,35 +1105,58 @@ pub fn capture_tracked(
     approved_untracked: &BTreeSet<String>,
     max_bytes: usize,
 ) -> io::Result<Snapshot> {
-    tracked(root, approved_untracked, |paths| {
-        Snapshot::capture(root, paths, max_bytes)
+    tracked(root, approved_untracked, |paths, _| {
+        Snapshot::capture_tree(root, paths, max_bytes)
     })
 }
 
-/// The `capture_tracked` digest, or `None` when a tracked path is not `readable`.
+/// The `capture_tracked` digest with each submodule's recorded commit, or `None` when the tracked paths are not `readable`.
 pub fn hash_tracked(
     root: &Path,
     approved_untracked: &BTreeSet<String>,
     max_bytes: usize,
-    readable: impl Fn(&str) -> bool,
+    readable: impl Fn(&BTreeSet<String>) -> bool,
 ) -> io::Result<Option<String>> {
-    tracked(root, approved_untracked, |paths| {
-        let digest = Snapshot::digest(root, paths, max_bytes)?;
-        Ok(paths.iter().all(|path| readable(path)).then_some(digest))
+    tracked(root, approved_untracked, |paths, submodules| {
+        if !readable(paths) {
+            return Ok(None);
+        }
+        let mut digest = Snapshot::digest(root, paths, max_bytes)?;
+        if !submodules.is_empty() {
+            let mut combined = Sha256::new();
+            combined.update(digest.as_bytes());
+            for (name, commit) in submodules {
+                frame(&mut combined, name, GITLINK, commit.as_bytes());
+            }
+            digest = format!("{:x}", combined.finalize());
+        }
+        Ok(Some(digest))
     })
 }
 
 fn tracked<T>(
     root: &Path,
     approved_untracked: &BTreeSet<String>,
-    capture: impl FnOnce(&BTreeSet<String>) -> io::Result<T>,
+    mut capture: impl FnMut(&BTreeSet<String>, &BTreeMap<String, String>) -> io::Result<T>,
 ) -> io::Result<T> {
-    let paths = tracked_paths(root, approved_untracked)?;
-    let captured = capture(&paths)?;
-    if tracked_paths(root, approved_untracked)? != paths {
-        return Err(invalid("tracked path set changed during snapshot"));
+    let mut attempt = 0;
+    loop {
+        let entries = tracked_entries(root, approved_untracked)?;
+        let result = capture(&entries.0, &entries.1).and_then(|captured| {
+            if tracked_entries(root, approved_untracked)? == entries {
+                Ok(captured)
+            } else {
+                Err(raced("tracked path set changed during snapshot".into()))
+            }
+        });
+        match result {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted && attempt < 2 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            result => return result,
+        }
     }
-    Ok(captured)
 }
 
 fn git(root: &Path) -> Command {
@@ -1071,7 +1228,7 @@ pub fn create_worktree(
         }
     }
     let paths = snapshot.files.keys().cloned().collect();
-    if Snapshot::capture(&worker, &paths, max_bytes)? != *snapshot {
+    if Snapshot::capture_tree(&worker, &paths, max_bytes)? != *snapshot {
         return Err(invalid("worktree bytes differ from captured input"));
     }
     Ok(worker)
@@ -1124,8 +1281,10 @@ mod transaction_tests {
         assert_eq!(digest, Snapshot::capture(&root, &paths, 64).unwrap().hash());
         fs::set_permissions(root.join("b.sh"), fs::Permissions::from_mode(0o644)).unwrap();
         assert_ne!(Snapshot::digest(&root, &paths, 64).unwrap(), digest);
-        let error = Snapshot::digest(&root, &paths, 16).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
+        assert_ne!(
+            Snapshot::digest(&root, &paths, 1).unwrap(),
+            Snapshot::digest(&root, &paths, 64).unwrap()
+        );
     }
 
     #[test]
@@ -1176,6 +1335,10 @@ mod transaction_tests {
             error.starts_with("workspace hardlink rejected: a.txt "),
             "{error}"
         );
+        let digest = Snapshot::digest(&root, &paths, 64).unwrap();
+        fs::write(root.join("b.txt"), "three\n").unwrap();
+        assert_ne!(Snapshot::digest(&root, &paths, 64).unwrap(), digest);
+        fs::write(root.join("b.txt"), "two\n").unwrap();
         let transaction = WorkspaceTransaction {
             expected: BTreeMap::from([(
                 "a.txt".into(),
@@ -1190,6 +1353,55 @@ mod transaction_tests {
             "{error}"
         );
         assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "two\n");
+    }
+
+    #[test]
+    fn tracked_trees_keep_symlinks_and_submodules_and_digest_past_the_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let run = |args: &[&str]| assert!(git(&root).args(args).output().unwrap().status.success());
+        run(&["init", "-q"]);
+        fs::write(root.join("AGENTS.md"), "rules\n").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", root.join("CLAUDE.md")).unwrap();
+        fs::write(root.join("large"), vec![b'x'; 256]).unwrap();
+        run(&["add", "."]);
+        let submodule = |commit: &str| {
+            run(&[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{commit},vendor"),
+            ])
+        };
+        submodule(&"1".repeat(40));
+        let approved = BTreeSet::new();
+        let snapshot = capture_tracked(&root, &approved, 1024).unwrap();
+        assert_eq!(
+            snapshot.files.keys().collect::<Vec<_>>(),
+            ["AGENTS.md", "CLAUDE.md", "large"]
+        );
+        assert!(snapshot.files["CLAUDE.md"].symlink);
+        assert_eq!(snapshot.files["CLAUDE.md"].bytes, b"AGENTS.md");
+        let link = BTreeSet::from(["CLAUDE.md".into()]);
+        assert!(Snapshot::capture(&root, &link, 1024).is_err());
+        let output = tempfile::tempdir().unwrap();
+        let worker = create_worktree(&snapshot, &output.path().join("agent"), 1024).unwrap();
+        assert_eq!(
+            fs::read_link(worker.join("CLAUDE.md")).unwrap(),
+            Path::new("AGENTS.md")
+        );
+        let digest = hash_tracked(&root, &approved, 1024, |_| true).unwrap();
+        assert!(capture_tracked(&root, &approved, 64).is_err());
+        assert!(
+            hash_tracked(&root, &approved, 64, |_| true)
+                .unwrap()
+                .is_some()
+        );
+        submodule(&"2".repeat(40));
+        assert_ne!(
+            hash_tracked(&root, &approved, 1024, |_| true).unwrap(),
+            digest
+        );
     }
 
     #[test]

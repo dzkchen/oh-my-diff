@@ -284,6 +284,7 @@ impl Services {
             info.truncation_policy =
                 codex_protocol::openai_models::TruncationPolicyConfig::tokens(10_000);
             info.supports_search_tool = true;
+            info.multi_agent_version = Some(codex_protocol::protocol::MultiAgentVersion::V2);
             info.used_fallback_model_metadata = false;
             models.push(info);
         }
@@ -519,9 +520,7 @@ impl Services {
         if !metadata.is_file() || metadata.len() > 134_217_728 {
             return Err("service_executable_limit".into());
         }
-        if execution::hash(&std::fs::read(&grant.program).map_err(|e| e.to_string())?)
-            != grant.program_sha256
-        {
+        if codex_omd::host::program_hash(&grant.program)? != grant.program_sha256 {
             return Err("service_executable_changed".into());
         }
         let manager = host
@@ -800,6 +799,10 @@ impl Services {
                 lead.depth.saturating_add(1),
                 host.worker_limits(&lead.session)?,
             )
+            .map_err(|e| e.to_string())?;
+        lead.session
+            .task
+            .set_worker_idle(&worker, true)
             .map_err(|e| e.to_string())?;
         let mut argv = vec![grant.program.to_string_lossy().into_owned()];
         argv.extend(grant.arguments);

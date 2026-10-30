@@ -115,6 +115,7 @@ export type Agent = { handle: string; route: string; permissions: 'read_only' | 
 export type AgentDefinition = { name: string; description: string; instructions: string; route?: string; effort?: ReasoningEffort; tools?: string[]; offer?: boolean };
 export type AgentRecord = { agent_id: string | null; thread_id: string; parent: { thread_id: string | null; agent_id: string | null }; origin: 'model' | 'mod' | 'native';
   owner: string | null; definition: { name: string; owner: string; source_sha256: string } | null; role: string | null; route?: string;
+  provider?: string; model?: string; billing?: 'included_subscription' | 'explicit_paid_api_grant' | 'provider_billed' | null;
   status: 'running' | 'completed' | 'failed' | 'cancelled'; started_at_ms: number; ended_at_ms: number | null; duration_ms: number | null; turns: number;
   last_turn: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; at_ms: number; answer: string | null; error: AgentFailure | null } | null; answer: string | null;
   usage: { requests: number | null; input_tokens: number; output_tokens: number; cached_tokens: number; microusd: number | null; basis: 'unknown' | 'settled' | 'partial'; source: 'accounting' | 'engine' | null }; reason: string | null };
@@ -220,6 +221,12 @@ export type TerminalClient = {
   cell_px: { width: number; height: number } | null; columns: number; rows: number;
   /** Needs `terminal_site_area_v1`: the content area the last frame gave each of this mod's own `mod/site` layout leaves and overlays. */
   sites?: Record<string, { columns: number; rows: number }>;
+  /** `terminal_welcome_area_v1`: the blank area a `welcome` site gets this frame, null when the welcome cannot show. */
+  welcome?: { columns: number; rows: number } | null;
+  /** `terminal_chat_area_v1`: the chat column's cells, beside any sidebar, dock or layout region; null before the first fullscreen draw. */
+  chat?: { x: number; y: number; columns: number; rows: number } | null;
+  /** `terminal_colors_v1`: the colours the terminal shows. */
+  colors?: 'truecolor' | '256' | '16';
 };
 /** An external client attached over `omd/client/attach`; `viewport` is null until the client reports one. */
 export type ClientEntry = {
@@ -236,6 +243,8 @@ export interface TerminalView {
   placeholder?: string;
   layout?: LayoutNode; surface_styles?: { composer?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
   inline_sites?: 'hidden';
+  /** `terminal_underlay_v1`: one of the mod's rasters drawn under the whole fullscreen screen; exclusive. */
+  underlay?: { raster: string };
 }
 /** One mod's contribution to the composed view; exclusive fields go to the first mod in composition order. */
 export type TerminalPatch = TerminalView;
@@ -396,7 +405,7 @@ export interface HostOperations {
   'contract.status': { arguments: null; result: ContractStatus };
   'contract.restrict': { arguments: { operations?: string[]; scoped?: ContractRestriction[]; reason: string }; result: { restrictions: string[]; scoped_restrictions: ContractRestriction[] } };
   'contract.select': { arguments: { contract: string }; result: { selected: Json; applies: 'next_session' } | Declined };
-  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] } }; result: Agent };
+  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] }; model?: string }; result: Agent };
   'agents.message': { arguments: { handle: string; message: string }; result: { delivered: boolean } };
   'agents.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };
   'agents.result': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
@@ -542,10 +551,11 @@ export interface Events {
   timer: { input: { key: string }; output: void };
   /** Independent per-channel sequence; restarts at 1 after publisher reclamation (15 minutes idle and no queued events). */
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; thread_id: string | null; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close';
+  component_event: { input: { component: string; thread_id: string | null; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close' | 'dock';
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
     pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
-    range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
+    range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number;
+    content?: string; target?: string; edge?: 'left' | 'right' | 'top' | 'bottom' | 'center'; columns?: number; rows?: number }; output: void };
   /** The latest value a component module posted this frame. */
   component_post: { input: { component: string; module: string; client?: string; data: Json }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null; dropped?: number }; output: void };
