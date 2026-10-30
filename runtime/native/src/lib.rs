@@ -434,6 +434,11 @@ impl Host {
         })?;
         route.model = model.to_owned();
         let worker = format!("{owner}@{}", ThreadId::new());
+        let parent = if provider_worker(parent) {
+            parent
+        } else {
+            "lead"
+        };
         session
             .task
             .start_worker(

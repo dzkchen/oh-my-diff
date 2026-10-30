@@ -120,8 +120,8 @@ agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?,
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
 
-- `route` may also be a lead route of a registered provider whose `mods` is empty or lists the caller; the agent is
-  admitted like a cross-provider native child under `worker_limits`, with no grant.
+- `route` may also be a lead route of a registered provider ([Choosing a route](models.md#choosing-a-route)); the
+  agent runs under `worker_limits`.
 - `model` picks another model from that provider's runtime catalog on such a lead route (rates and billing stay the
   route's); outside the catalog it fails with `agent_model_not_in_route_provider_catalog`, and on any other route a
   `model` other than the route's fails with `agent_model_requires_provider_lead_route`.
@@ -178,6 +178,24 @@ uncertain in-flight requests.
 - Implicit reopening, changed limits and completed tasks are refused.
 - Agent handles and snapshot handles do not survive process restart; mods must reconcile saved pending work without
   silently spawning replacements.
+
+### Native subagents
+
+Multi-agent V2 children behave like this in OMD (V1 sessions keep upstream behaviour):
+
+- **Completion wake.** When a child's result reaches an idle parent (the root or another child), the parent starts one
+  turn about 500 ms after the last result, and that turn reads every queued result. An interrupted parent and Plan
+  mode stay idle. A result over 16 KiB is cut with a pointer to `list_agents`. A `wait_agent` that times out tells
+  the model to end its turn.
+- **Forwarding.** A child's approval, permission or MCP elicitation request is reported to the parent's mailbox; only
+  the user can answer it. A child may call `request_user_input`: its question is queued in the parent's mailbox and
+  read at the parent's next turn (it does not start one), and the TUI shows "Waiting on you in <thread>" so the user
+  can answer meanwhile. The parent's next `send_message` to that child answers the question ("Your parent replied; its
+  message follows." then the message); the user can answer too. The question card stays until the child's turn ends.
+- **Caps.** Every model `spawn_agent` counts against `host.json` `limits.max_depth` (default 2) and
+  `limits.concurrent_workers` (default 4) and is refused with `subagent_depth_limit` or
+  `subagent_concurrency_limit` ([Host limits](packages-and-limits.md#host-limits)). These apply in addition to
+  Codex's `agents.max_threads`.
 
 ## Agent definitions, inventory and spawn interception (`agent_lifecycle_v1`)
 

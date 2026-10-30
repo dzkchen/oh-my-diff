@@ -133,6 +133,7 @@ struct Worker {
     requests: u32,
     exposure: u64,
     status: WorkerStatus,
+    idle: bool,
     objective: Option<String>,
     result: Option<VersionMarker>,
 }
@@ -236,7 +237,7 @@ fn active_workers(state: &State) -> usize {
     state
         .workers
         .values()
-        .filter(|worker| worker.status == WorkerStatus::Active)
+        .filter(|worker| worker.status == WorkerStatus::Active && !worker.idle)
         .count()
 }
 
@@ -426,6 +427,7 @@ impl Task {
                             requests: 0,
                             exposure: 0,
                             status: WorkerStatus::Active,
+                            idle: false,
                             objective: None,
                             result: None,
                         },
@@ -740,13 +742,10 @@ impl Task {
         if state.status != TaskStatus::Active || self.expired() {
             return Err(denied("task stopped or expired"));
         }
-        let valid_parent = if depth == 1 {
-            parent == "lead"
-        } else {
-            state.workers.get(&parent).is_some_and(|worker| {
-                worker.status == WorkerStatus::Active && worker.depth.checked_add(1) == Some(depth)
-            })
-        };
+        let valid_parent = parent == "lead"
+            || state.workers.get(&parent).is_some_and(|worker| {
+                worker.status == WorkerStatus::Active && worker.depth < depth
+            });
         let ceiling = self.limits();
         check_depth(depth, ceiling.max_depth)?;
         if !valid_parent {
@@ -777,6 +776,7 @@ impl Task {
                 requests: 0,
                 exposure: 0,
                 status: WorkerStatus::Active,
+                idle: false,
                 objective: None,
                 result: None,
             },
@@ -796,6 +796,21 @@ impl Task {
             active_workers(&state).saturating_add(other_running),
             ceiling.concurrent_workers,
         )
+    }
+
+    /// An idle worker keeps its limits and route but holds no concurrency slot.
+    pub fn set_worker_idle(&self, id: &str, idle: bool) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        let worker = state
+            .workers
+            .get_mut(id)
+            .filter(|worker| worker.status == WorkerStatus::Active)
+            .ok_or_else(|| denied("unknown or inactive worker"))?;
+        worker.idle = idle;
+        Ok(())
     }
 
     pub fn claim_worker_objective(&self, id: &str, objective: &str) -> io::Result<()> {

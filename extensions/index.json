@@ -303,13 +303,13 @@
       "id": "omd_subagent_router",
       "version": "1.0.0",
       "extension_type": "mod",
-      "capability": "Opt-in subagent model routing: prompt directives and per-role defaults pick each spawn's model and effort, including another provider's, with a visible fallback to the lead's model",
+      "capability": "Opt-in subagent model routing: prompt directives and per-role defaults pick each spawn's model and effort, including another provider's, with a visible fallback to the lead's model; its delegate_task tool runs background workers on worker routes and in worktrees",
       "source": "mods/first-party/omd_subagent_router",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.164.0; OMD 1.1.0; mod API 1.0.0; agent_lifecycle_v1, app_v1, state_scopes_v1, store_v1, ui_controls_v1",
+      "compatibility": "Codex 0.165.0; OMD 1.1.0; mod API 1.0.0; agent_lifecycle_v1, app_v1, autonomous_turns_v1, events_v1, lifecycle_events_v1, state_scopes_v1, store_v1, timers_v1, ui_controls_v1",
       "tested_versions": [
-        "Codex 0.164.0",
+        "Codex 0.165.0",
         "OMD 1.1.0 pre-release (offline checks)",
         "mod API 1.0.0"
       ],

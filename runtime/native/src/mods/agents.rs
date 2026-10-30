@@ -2237,6 +2237,7 @@ impl Agents {
             .model_providers
             .get(&route.provider)
             .cloned()
+            .or_else(|| codex_model_provider_info::runtime_provider(&route.provider))
             .ok_or("configured_provider_missing")?;
         if configured
             && route.rates.included_subscription

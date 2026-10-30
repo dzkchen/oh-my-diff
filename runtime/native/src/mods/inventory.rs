@@ -38,9 +38,13 @@ impl Inventory {
             .flatten()
         {
             if entry
-                .metadata()
-                .and_then(|metadata| metadata.modified())
-                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "json")
+                && entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
             {
                 let _ = std::fs::remove_file(entry.path());
             }
@@ -114,20 +118,7 @@ impl Inventory {
         if let (Some(record), Some(fields)) = (record.as_object_mut(), fields.as_object()) {
             record.extend(fields.clone());
         }
-        let mut reserved = self.reserved.lock().ok();
         if let Ok(mut records) = self.records.lock() {
-            if record["origin"] == "model"
-                && let Some(reserved) = reserved.as_mut()
-            {
-                let root = root_of(
-                    &records,
-                    record["parent"]["thread_id"].as_str().unwrap_or(thread),
-                )
-                .to_owned();
-                if let Some(index) = reserved.iter().position(|(owner, ..)| *owner == root) {
-                    reserved.remove(index);
-                }
-            }
             let finished = records
                 .iter()
                 .filter(|(_, record)| record["status"] != "running")

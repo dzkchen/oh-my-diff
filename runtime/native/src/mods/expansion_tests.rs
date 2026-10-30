@@ -4131,6 +4131,17 @@ fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
             .admit(&account.owner, "other", "other-fast", 0)
             .is_err()
     );
+    let grandchild = ThreadId::new();
+    host.enroll_cross_provider(
+        grandchild,
+        session,
+        &format!("agent:{grandchild}"),
+        &format!("agent:{}", ThreadId::new()),
+        2,
+        "other",
+        "other-new",
+    )
+    .unwrap();
 
     let missing = ThreadId::new();
     let error = host
@@ -4195,6 +4206,7 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
         attempt(2).await.as_deref(),
         Some("subagent_depth_limit: depth 3 exceeds limits.max_depth 2")
     );
+    inventory.release_spawn("spawn");
 
     let child = |index: u32| format!("child-{index}");
     for index in 0..3 {
@@ -4242,6 +4254,7 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
         &child(3),
         json!({"origin": "model", "parent": {"thread_id": lead, "agent_id": null}}),
     );
+    inventory.release_spawn("spawn");
     inventory.turn_started(&child(0));
     assert!(attempt(0).await.is_some(), "a child running again counts");
     inventory.end(&child(0), "completed", None);

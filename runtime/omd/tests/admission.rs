@@ -75,6 +75,9 @@ fn depth_and_concurrency_refusals_are_distinct_and_readable() {
         full
     );
     assert_eq!(refusal(task.admit_subagent(1, 0)), full);
+    task.set_worker_idle("two", true).unwrap();
+    task.admit_subagent(1, 0).unwrap();
+    task.set_worker_idle("two", false).unwrap();
     assert_eq!(
         refusal(task.start_worker("deep".into(), "one".into(), 3, worker())),
         "subagent_depth_limit: depth 3 exceeds limits.max_depth 2"
