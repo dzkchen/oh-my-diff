@@ -132,7 +132,10 @@ Require `settings_file_v1` to use it.
 
 `host.json` `limits.max_depth` (default 2) and `limits.concurrent_workers` (default 4) cap a session's subagents: a mod
 worker or model `spawn_agent` past either is refused with `subagent_depth_limit` or `subagent_concurrency_limit`.
-Running mod workers and model children count; a child between turns or ended does not.
+The concurrency limit counts running mod workers (`agents.spawn`), running model children (a child in a turn or not yet
+through its first turn) and children on another provider while they run a turn; idle or ended children don't count,
+so a child woken by a message can briefly take the count past the cap.
+A provider service process (such as the `omd_claude_cli` relay) needs a free slot to start but holds none once running.
 
 `host.json` may set `mod_limits`:
 

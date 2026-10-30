@@ -3,7 +3,7 @@ use codex_omd::peers::now_ms;
 use std::collections::BTreeSet;
 
 const ANSWER_CHARS: usize = 4096;
-const FINISHED_LIMIT: usize = 64;
+pub(super) const FINISHED_LIMIT: usize = 64;
 const SPAWN_RESERVATION_MS: u64 = 30_000;
 
 /// Session-wide agent records; observing one grants no control over it.
@@ -37,10 +37,9 @@ impl Inventory {
             .flatten()
             .flatten()
         {
-            if entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "json")
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if (name.ends_with(".json") || name.starts_with(codex_omd::fsio::STAGING_PREFIX))
                 && entry
                     .metadata()
                     .and_then(|metadata| metadata.modified())
@@ -53,17 +52,18 @@ impl Inventory {
     }
 
     pub(super) fn forget_session(&self, thread: &str) {
-        if let Ok(mut working) = self.working.lock() {
-            working.remove(thread);
-        }
         if let Ok(mut records) = self.records.lock() {
             let session = records
                 .keys()
                 .filter(|id| root_of(&records, id) == thread)
                 .cloned()
                 .collect::<Vec<_>>();
+            let mut working = self.working.lock().ok();
             for id in session {
                 records.remove(&id);
+                if let Some(working) = working.as_mut() {
+                    working.remove(&id);
+                }
             }
         }
         if let Some(directory) = self.directory.get() {
@@ -121,38 +121,16 @@ impl Inventory {
         if let (Some(record), Some(fields)) = (record.as_object_mut(), fields.as_object()) {
             record.extend(fields.clone());
         }
-        let mut reserved = self.reserved.lock().ok();
         if let Ok(mut records) = self.records.lock() {
-            if record["origin"] == "model"
-                && let Some(reserved) = reserved.as_mut()
-            {
-                let root = root_of(
-                    &records,
-                    record["parent"]["thread_id"].as_str().unwrap_or(thread),
-                )
-                .to_owned();
-                if let Some(index) = reserved.iter().position(|(owner, ..)| *owner == root) {
-                    reserved.remove(index);
-                }
-            }
-            let mut ancestors = BTreeSet::new();
-            for (id, record) in records.iter() {
-                if record["status"] == "running" {
-                    let mut child = id.as_str();
-                    while let Some(parent) = records
-                        .get(child)
-                        .and_then(|record| record["parent"]["thread_id"].as_str())
-                        && ancestors.insert(parent.to_owned())
-                    {
-                        child = parent;
-                    }
-                }
-            }
+            let parents = records
+                .values()
+                .chain([&record])
+                .filter_map(|record| record["parent"]["thread_id"].as_str())
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>();
             let finished = records
                 .iter()
-                .filter(|(id, record)| {
-                    record["status"] != "running" && !ancestors.contains(id.as_str())
-                })
+                .filter(|(id, record)| record["status"] != "running" && !parents.contains(*id))
                 .map(|(thread, record)| (record["ended_at_ms"].as_u64(), thread.clone()))
                 .collect::<BTreeSet<_>>();
             for (_, thread) in finished
@@ -162,7 +140,9 @@ impl Inventory {
                 records.remove(thread);
             }
             records.insert(thread.to_owned(), record.clone());
-            self.save(self.snapshot(&records, thread));
+            let snapshot = self.snapshot(&records, thread);
+            drop(records);
+            self.save(snapshot);
         }
         record
     }
@@ -172,7 +152,9 @@ impl Inventory {
         let record = records.get_mut(thread)?;
         change(record);
         let record = record.clone();
-        self.save(self.snapshot(&records, thread));
+        let snapshot = self.snapshot(&records, thread);
+        drop(records);
+        self.save(snapshot);
         Some(record)
     }
 

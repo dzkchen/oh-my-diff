@@ -133,10 +133,10 @@ struct Worker {
     requests: u32,
     exposure: u64,
     status: WorkerStatus,
+    idle: bool,
     objective: Option<String>,
     result: Option<VersionMarker>,
     closing: bool,
-    idle: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -428,10 +428,10 @@ impl Task {
                             requests: 0,
                             exposure: 0,
                             status: WorkerStatus::Active,
+                            idle: false,
                             objective: None,
                             result: None,
                             closing: false,
-                            idle: false,
                         },
                     );
                 }
@@ -744,13 +744,10 @@ impl Task {
         if state.status != TaskStatus::Active || self.expired() {
             return Err(denied("task stopped or expired"));
         }
-        let valid_parent = if depth == 1 {
-            parent == "lead"
-        } else {
-            state.workers.get(&parent).is_some_and(|worker| {
-                worker.status == WorkerStatus::Active && worker.depth.checked_add(1) == Some(depth)
-            })
-        };
+        let valid_parent = parent == "lead"
+            || state.workers.get(&parent).is_some_and(|worker| {
+                worker.status == WorkerStatus::Active && worker.depth < depth
+            });
         let ceiling = self.limits();
         check_depth(depth, ceiling.max_depth)?;
         if !valid_parent {
@@ -781,30 +778,13 @@ impl Task {
                 requests: 0,
                 exposure: 0,
                 status: WorkerStatus::Active,
+                idle: false,
                 objective: None,
                 result: None,
                 closing: false,
-                idle: false,
             },
         );
         Ok(())
-    }
-
-    pub fn worker_depth(&self, id: &str) -> Option<u32> {
-        self.state
-            .lock()
-            .ok()?
-            .workers
-            .get(id)
-            .map(|worker| worker.depth)
-    }
-
-    pub fn set_worker_idle(&self, id: &str, idle: bool) {
-        if let Ok(mut state) = self.state.lock()
-            && let Some(worker) = state.workers.get_mut(id)
-        {
-            worker.idle = idle;
-        }
     }
 
     /// Admits a model-spawned subagent at `depth` beside `other_running` live children the task does not track as workers.
@@ -819,6 +799,21 @@ impl Task {
             active_workers(&state).saturating_add(other_running),
             ceiling.concurrent_workers,
         )
+    }
+
+    /// An idle worker keeps its limits and route but holds no concurrency slot.
+    pub fn set_worker_idle(&self, id: &str, idle: bool) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        let worker = state
+            .workers
+            .get_mut(id)
+            .filter(|worker| worker.status == WorkerStatus::Active)
+            .ok_or_else(|| denied("unknown or inactive worker"))?;
+        worker.idle = idle;
+        Ok(())
     }
 
     pub fn claim_worker_objective(&self, id: &str, objective: &str) -> io::Result<()> {
@@ -883,7 +878,8 @@ impl Task {
         worker.status = WorkerStatus::Completed;
         worker.result = Some(result);
         let parent = worker.parent.clone();
-        self.close_waiting_parent(&mut state, &parent)
+        let _ = self.stop_if_closing(&mut state, &parent);
+        Ok(())
     }
 
     pub fn consume_worker_result(&self, id: &str) -> io::Result<()> {
@@ -939,39 +935,16 @@ impl Task {
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        if !state
-            .workers
-            .get(id)
-            .is_some_and(|worker| worker.status == WorkerStatus::Active)
-        {
-            return Err(denied("unknown or inactive worker"));
-        }
-        if state
-            .workers
-            .values()
-            .any(|worker| worker.status == WorkerStatus::Active && worker.parent == id)
-        {
-            if let Some(worker) = state.workers.get_mut(id) {
-                worker.closing = true;
-            }
-            return Err(denied("worker has active descendants"));
-        }
-        self.record(
-            &mut state,
-            &serde_json::json!({"event": "worker_stopped", "worker": id}),
-        )?;
-        let worker = state
+        state
             .workers
             .get_mut(id)
-            .ok_or_else(|| denied("worker disappeared"))?;
-        worker.status = WorkerStatus::Stopped;
-        let parent = worker.parent.clone();
-        self.archive_worker(&mut state, id)?;
-        self.close_waiting_parent(&mut state, &parent)
+            .filter(|worker| worker.status == WorkerStatus::Active)
+            .ok_or_else(|| denied("unknown or inactive worker"))?
+            .closing = true;
+        self.stop_if_closing(&mut state, id)
     }
 
-    /// Stops a parent whose earlier finish waited on descendants once its last one ends.
-    fn close_waiting_parent(&self, state: &mut State, id: &str) -> io::Result<()> {
+    fn stop_if_closing(&self, state: &mut State, id: &str) -> io::Result<()> {
         if !state
             .workers
             .get(id)
@@ -994,7 +967,7 @@ impl Task {
         worker.status = WorkerStatus::Stopped;
         let parent = worker.parent.clone();
         self.archive_worker(state, id)?;
-        self.close_waiting_parent(state, &parent)
+        self.stop_if_closing(state, &parent)
     }
 
     pub fn authorize_route(&self, provider: &str, model: &str) -> io::Result<()> {

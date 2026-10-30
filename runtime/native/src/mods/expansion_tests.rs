@@ -4111,7 +4111,7 @@ fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
     let session = &fixture.lead.session;
     let child = ThreadId::new();
     let owner = format!("agent:{child}");
-    host.enroll_cross_provider(child, session, &owner, "lead", "other", "other-new")
+    host.enroll_cross_provider(child, session, &owner, "lead", 1, "other", "other-new")
         .unwrap();
     let account = host.accounts.by_thread.lock().unwrap()[&child.to_string()].clone();
     assert_eq!(
@@ -4131,6 +4131,17 @@ fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
             .admit(&account.owner, "other", "other-fast", 0)
             .is_err()
     );
+    let grandchild = ThreadId::new();
+    host.enroll_cross_provider(
+        grandchild,
+        session,
+        &format!("agent:{grandchild}"),
+        &format!("agent:{}", ThreadId::new()),
+        2,
+        "other",
+        "other-new",
+    )
+    .unwrap();
 
     let missing = ThreadId::new();
     let error = host
@@ -4139,25 +4150,12 @@ fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
             session,
             &format!("agent:{missing}"),
             "lead",
+            1,
             "missing",
             "m",
         )
         .unwrap_err();
     assert!(error.starts_with("agent_route_unavailable"), "{error}");
-
-    let same_provider_parent = format!("agent:{}", ThreadId::new());
-    for parent in [same_provider_parent.as_str(), account.owner.as_str()] {
-        let grandchild = ThreadId::new();
-        host.enroll_cross_provider(
-            grandchild,
-            session,
-            &format!("agent:{grandchild}"),
-            parent,
-            "other",
-            "other-new",
-        )
-        .unwrap();
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4208,6 +4206,7 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
         attempt(2).await.as_deref(),
         Some("subagent_depth_limit: depth 3 exceeds limits.max_depth 2")
     );
+    inventory.release_spawn("spawn");
 
     let child = |index: u32| format!("child-{index}");
     for index in 0..3 {
@@ -4255,6 +4254,7 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
         &child(3),
         json!({"origin": "model", "parent": {"thread_id": lead, "agent_id": null}}),
     );
+    inventory.release_spawn("spawn");
     inventory.turn_started(&child(0));
     assert!(attempt(0).await.is_some(), "a child running again counts");
     inventory.end(&child(0), "completed", None);
@@ -4263,30 +4263,39 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
 }
 
 #[test]
-fn the_agent_inventory_keeps_role_files_and_the_ancestors_of_running_agents() {
+fn the_agent_inventory_prunes_only_stale_snapshots_and_staging_files() {
     let directory = tempfile::tempdir().unwrap();
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
-    for name in ["role.toml", "stale.json"] {
+    let staging = format!("{}snapshot", codex_omd::fsio::STAGING_PREFIX);
+    for name in ["role.toml", "stale.json", staging.as_str()] {
         std::fs::File::create(directory.path().join(name))
             .unwrap()
             .set_modified(old)
             .unwrap();
     }
-    let inventory = inventory::Inventory::default();
-    inventory.persist_to(directory.path().to_path_buf());
+    inventory::Inventory::default().persist_to(directory.path().to_path_buf());
     assert!(directory.path().join("role.toml").exists());
     assert!(!directory.path().join("stale.json").exists());
+    assert!(!directory.path().join(staging).exists());
+}
 
+#[test]
+fn the_agent_inventory_keeps_finished_parents_of_remaining_and_starting_agents() {
+    let inventory = inventory::Inventory::default();
     let model = |parent: &str| json!({"origin": "model", "parent": {"thread_id": parent, "agent_id": null}});
-    inventory.start("child", model("root"));
-    inventory.start("grandchild", model("child"));
-    inventory.end("child", "completed", None);
-    for index in 0..64 {
+    for (parent, child) in [("root", "a"), ("a", "a1"), ("root", "b")] {
+        inventory.start(child, model(parent));
+    }
+    inventory.end("a", "completed", None);
+    inventory.end("b", "completed", None);
+    for index in 0..inventory::FINISHED_LIMIT - 1 {
         let id = format!("done-{index}");
         inventory.start(&id, model("root"));
         inventory.end(&id, "completed", None);
     }
-    assert_eq!(inventory.root_thread("grandchild"), "root");
+    inventory.start("b1", model("b"));
+    assert_eq!(inventory.root_thread("a1"), "root");
+    assert_eq!(inventory.root_thread("b1"), "root");
 }
 
 #[test]

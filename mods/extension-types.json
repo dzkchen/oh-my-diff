@@ -528,7 +528,7 @@
       "path": "mods/first-party/omd_subagent_router",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Reads model directives from submitted prompts and rewrites each model spawn's model and effort through the agent_spawn interceptor, which the host re-admits; installed inactive in OMD+."
+      "why_mod": "Reads model directives from submitted prompts and rewrites each model spawn's model and effort through the agent_spawn interceptor, which the host re-admits, and adds the delegate_task tool for background workers; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_tool_fix",

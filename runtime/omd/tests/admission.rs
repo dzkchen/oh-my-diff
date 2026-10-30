@@ -75,6 +75,9 @@ fn depth_and_concurrency_refusals_are_distinct_and_readable() {
         full
     );
     assert_eq!(refusal(task.admit_subagent(1, 0)), full);
+    task.set_worker_idle("two", true).unwrap();
+    task.admit_subagent(1, 0).unwrap();
+    task.set_worker_idle("two", false).unwrap();
     assert_eq!(
         refusal(task.start_worker("deep".into(), "one".into(), 3, worker())),
         "subagent_depth_limit: depth 3 exceeds limits.max_depth 2"
@@ -89,21 +92,6 @@ fn depth_and_concurrency_refusals_are_distinct_and_readable() {
 }
 
 #[test]
-fn an_idle_worker_leaves_the_concurrency_count_until_its_next_turn() {
-    let directory = tempfile::tempdir().unwrap();
-    let task = Task::create(limits(), directory.path().join("task")).unwrap();
-    task.start_worker("one".into(), "lead".into(), 1, worker())
-        .unwrap();
-    task.start_worker("two".into(), "lead".into(), 1, worker())
-        .unwrap();
-    assert!(task.admit_subagent(1, 0).is_err());
-    task.set_worker_idle("two", true);
-    task.admit_subagent(1, 0).unwrap();
-    task.set_worker_idle("two", false);
-    assert!(task.admit_subagent(1, 0).is_err());
-}
-
-#[test]
 fn a_parent_finished_before_its_child_stops_when_the_child_does() {
     let directory = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), directory.path().join("task")).unwrap();
@@ -111,10 +99,9 @@ fn a_parent_finished_before_its_child_stops_when_the_child_does() {
         .unwrap();
     task.start_worker("two".into(), "one".into(), 2, worker())
         .unwrap();
-    assert_eq!(task.worker_depth("two"), Some(2));
-    assert!(task.finish_worker("one").is_err());
+    task.finish_worker("one").unwrap();
+    assert!(task.admit_subagent(1, 0).is_err());
     task.finish_worker("two").unwrap();
-    assert_eq!(task.worker_depth("one"), None);
     task.start_worker("three".into(), "lead".into(), 1, worker())
         .unwrap();
     task.start_worker("four".into(), "lead".into(), 1, worker())

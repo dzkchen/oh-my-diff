@@ -198,8 +198,8 @@ workspace (`agents` is also required). `expected` rejects a changed candidate.
 
 - References are bound to the caller, package source, generation and thread.
 - A capture holds at most 128 MiB of file contents and paths (`snapshot_bytes` in the host config can lower it); a
-  larger workspace fails with `snapshot size limit`. Turn evidence then carries `workspace_sha256: null`, as it does
-  when a captured path is unreadable.
+  larger workspace fails with `snapshot size limit`. Turn evidence still identifies such a workspace; its
+  `workspace_sha256` is `null` only when a captured path is unreadable.
 - Each mod generation and thread holds at most 8 snapshots and 128 MiB, the host at most 32 and 256 MiB; a full host
   evicts the oldest snapshot of the largest holder.
 - Identical captures are deduplicated, and the registry clears on owner cleanup or session stop.

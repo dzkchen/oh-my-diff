@@ -682,8 +682,8 @@ workspace (`agents` is also required). `expected` rejects a changed candidate.
 
 - References are bound to the caller, package source, generation and thread.
 - A capture holds at most 128 MiB of file contents and paths (`snapshot_bytes` in the host config can lower it); a
-  larger workspace fails with `snapshot size limit`. Turn evidence then carries `workspace_sha256: null`, as it does
-  when a captured path is unreadable.
+  larger workspace fails with `snapshot size limit`. Turn evidence still identifies such a workspace; its
+  `workspace_sha256` is `null` only when a captured path is unreadable.
 - Each mod generation and thread holds at most 8 snapshots and 128 MiB, the host at most 32 and 256 MiB; a full host
   evicts the oldest snapshot of the largest holder.
 - Identical captures are deduplicated, and the registry clears on owner cleanup or session stop.
@@ -1564,8 +1564,8 @@ agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?,
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
 
-- `route` may also be a lead route of a registered provider whose `mods` is empty or lists the caller; the agent is
-  admitted like a cross-provider native child under `worker_limits`, with no grant.
+- `route` may also be a lead route of a registered provider ([Choosing a route](#choosing-a-route)); the
+  agent runs under `worker_limits`.
 - `model` picks another model from that provider's runtime catalog on such a lead route (rates and billing stay the
   route's); outside the catalog it fails with `agent_model_not_in_route_provider_catalog`, and on any other route a
   `model` other than the route's fails with `agent_model_requires_provider_lead_route`.
@@ -1622,6 +1622,24 @@ uncertain in-flight requests.
 - Implicit reopening, changed limits and completed tasks are refused.
 - Agent handles and snapshot handles do not survive process restart; mods must reconcile saved pending work without
   silently spawning replacements.
+
+#### Native subagents
+
+Multi-agent V2 children behave like this in OMD (V1 sessions keep upstream behaviour):
+
+- **Completion wake.** When a child's result reaches an idle parent (the root or another child), the parent starts one
+  turn about 500 ms after the last result, and that turn reads every queued result. An interrupted parent and Plan
+  mode stay idle. A result over 16 KiB is cut with a pointer to `list_agents`. A `wait_agent` that times out tells
+  the model to end its turn.
+- **Forwarding.** A child's approval, permission or MCP elicitation request is reported to the parent's mailbox; only
+  the user can answer it. A child may call `request_user_input`: its question is queued in the parent's mailbox and
+  read at the parent's next turn (it does not start one), and the TUI shows "Waiting on you in <thread>" so the user
+  can answer meanwhile. The parent's next `send_message` or `followup_task` to that child answers the question ("Your
+  parent replied; its message follows." then the message); the user can answer too. The question card stays until the child's turn ends.
+- **Caps.** Every model `spawn_agent` counts against `host.json` `limits.max_depth` (default 2) and
+  `limits.concurrent_workers` (default 4) and is refused with `subagent_depth_limit` or
+  `subagent_concurrency_limit` ([Host limits](#host-limits)). These apply in addition to
+  Codex's `agents.max_threads`.
 
 ### Agent definitions, inventory and spawn interception (`agent_lifecycle_v1`)
 
@@ -2718,9 +2736,8 @@ efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, defa
 grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
 or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
 (shell, freeform `apply_patch`, tool search, multi-agent v2). Picking one switches the thread to that provider from the
-next turn; history carries over except reasoning another provider produced. Codex sends an item id only in
-`prefix_rest` form, so a provider gives its items ids without `_` unless every provider accepts them, and marks
-plaintext function arguments with `encrypted_function_args: []`. A compaction checkpoint only another provider can
+next turn; history carries over except reasoning another provider produced. Codex replays an item id to the next provider only
+when it contains `_`, so give items ids without `_`, and mark plaintext function arguments with `encrypted_function_args: []`. A compaction checkpoint only another provider can
 read is first rewritten as a plaintext summary by that provider (one request on its account); if that fails, the turn
 shows a warning and runs without the summary.
 
@@ -4606,7 +4623,10 @@ Require `settings_file_v1` to use it.
 
 `host.json` `limits.max_depth` (default 2) and `limits.concurrent_workers` (default 4) cap a session's subagents: a mod
 worker or model `spawn_agent` past either is refused with `subagent_depth_limit` or `subagent_concurrency_limit`.
-Running mod workers and model children count; a child between turns or ended does not.
+The concurrency limit counts running mod workers (`agents.spawn`), running model children (a child in a turn or not yet
+through its first turn) and children on another provider while they run a turn; idle or ended children don't count,
+so a child woken by a message can briefly take the count past the cap.
+A provider service process (such as the `omd_claude_cli` relay) needs a free slot to start but holds none once running.
 
 `host.json` may set `mod_limits`:
 
