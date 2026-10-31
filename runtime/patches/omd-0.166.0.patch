@@ -20163,15 +20163,16 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..0264c5fbc435701f32a8e9058d7cc65d
                  .join(", ");
              format!(
 diff --git a/codex-rs/core/src/agent/control/completion.rs b/codex-rs/core/src/agent/control/completion.rs
-index 587f4cdaebffca42c2d19451e8ba0e8db18c6598..b2aa8b7a22e8cc529838b6cd0738da6617d874a1 100644
+index 587f4cdaebffca42c2d19451e8ba0e8db18c6598..ae9482e24192bd12cb2b144b633e432eeaab986c 100644
 --- a/codex-rs/core/src/agent/control/completion.rs
 +++ b/codex-rs/core/src/agent/control/completion.rs
-@@ -140,6 +140,11 @@ impl LocalAgentControl {
+@@ -140,6 +140,12 @@ impl LocalAgentControl {
              debug!("failed to notify parent thread {parent_thread_id}: {err}");
              return;
          }
 +        if let Ok(state) = self.runtime.upgrade()
 +            && let Ok(parent) = state.get_thread(parent_thread_id).await
++            && parent.session.get_config().await.agent_completion_wake
 +        {
 +            parent.session.schedule_completion_wake();
 +        }
@@ -21946,7 +21947,7 @@ index 2fd34d2f0ccd3c3e4cda7ff715e6f1112511d745..46105aaf9fbf0ebad08ef2b56bb2da10
      candidate.normalize_dependencies();
      candidate
 diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
-index eb949b8a461575cf3260669cb3dbe24ffd40ae71..3a20ab879e6cd76800e8fc75c35f6a86c5324b88 100644
+index eb949b8a461575cf3260669cb3dbe24ffd40ae71..67388bd72551fcc5bbaa4916510c1726fce8e2c8 100644
 --- a/codex-rs/core/src/config/mod.rs
 +++ b/codex-rs/core/src/config/mod.rs
 @@ -352,6 +352,10 @@ pub struct Permissions {
@@ -21979,7 +21980,17 @@ index eb949b8a461575cf3260669cb3dbe24ffd40ae71..3a20ab879e6cd76800e8fc75c35f6a86
      /// Deprecated: `friendly` and `pragmatic` no longer select a style.
      pub personality: Option<Personality>,
 
-@@ -1231,6 +1240,7 @@ pub struct CodeModeConfig {
+@@ -1133,6 +1142,9 @@ pub struct Config {
+     /// Whether to register the update_plan tool.
+     pub update_plan_enabled: bool,
+
++    /// Wakes an idle parent shortly after a child agent's result arrives, set by host extensions.
++    pub agent_completion_wake: bool,
++
+     /// Policy for collecting and validating tool runtimes.
+     pub tool_registry: ToolRegistryConfig,
+
+@@ -1231,6 +1243,7 @@ pub struct CodeModeConfig {
      pub direct_only_tool_namespaces: Vec<String>,
      /// Keep code mode fail-closed when the standalone host is unavailable.
      pub disable_in_process_fallback: bool,
@@ -21987,7 +21998,7 @@ index eb949b8a461575cf3260669cb3dbe24ffd40ae71..3a20ab879e6cd76800e8fc75c35f6a86
  }
 
  impl Default for CodeModeConfig {
-@@ -1242,6 +1252,7 @@ impl Default for CodeModeConfig {
+@@ -1242,6 +1255,7 @@ impl Default for CodeModeConfig {
              excluded_tool_namespaces: Vec::new(),
              direct_only_tool_namespaces: Vec::new(),
              disable_in_process_fallback: false,
@@ -21995,7 +22006,7 @@ index eb949b8a461575cf3260669cb3dbe24ffd40ae71..3a20ab879e6cd76800e8fc75c35f6a86
          }
      }
  }
-@@ -2865,6 +2876,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
+@@ -2865,6 +2879,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
          disable_in_process_fallback: host
              .and_then(|config| config.disable_in_process_fallback)
              .unwrap_or_default(),
@@ -22005,7 +22016,7 @@ index eb949b8a461575cf3260669cb3dbe24ffd40ae71..3a20ab879e6cd76800e8fc75c35f6a86
      }
  }
 
-@@ -4039,6 +4053,7 @@ impl Config {
+@@ -4039,6 +4056,7 @@ impl Config {
 
          let mut model_providers =
              merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
@@ -22013,7 +22024,7 @@ index eb949b8a461575cf3260669cb3dbe24ffd40ae71..3a20ab879e6cd76800e8fc75c35f6a86
                  .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
 
          if let Some(provider) = model_providers.get_mut(GCP_PROVIDER_ID) {
-@@ -4047,8 +4062,17 @@ impl Config {
+@@ -4047,8 +4065,17 @@ impl Config {
 
          let model_provider_id = config_layer_stack.required_model_provider().map(str::to_string)
              .or(model_provider)
@@ -22032,7 +22043,7 @@ index eb949b8a461575cf3260669cb3dbe24ffd40ae71..3a20ab879e6cd76800e8fc75c35f6a86
          let model_provider = model_providers
              .get(&model_provider_id)
              .ok_or_else(|| {
-@@ -4541,6 +4565,7 @@ impl Config {
+@@ -4541,6 +4568,7 @@ impl Config {
                  .model_post_turn_compact_threshold_percent
                  .unwrap_or_default(),
              async_compaction_threshold_percent,
@@ -22040,7 +22051,7 @@ index eb949b8a461575cf3260669cb3dbe24ffd40ae71..3a20ab879e6cd76800e8fc75c35f6a86
              model_provider_id,
              model_provider,
              cwd: resolved_cwd,
-@@ -4555,6 +4580,8 @@ impl Config {
+@@ -4555,6 +4583,8 @@ impl Config {
                  network,
                  allow_login_shell,
                  shell_environment_policy,
@@ -22049,6 +22060,14 @@ index eb949b8a461575cf3260669cb3dbe24ffd40ae71..3a20ab879e6cd76800e8fc75c35f6a86
                  windows_sandbox_mode,
                  windows_sandbox_type,
              },
+@@ -4722,6 +4752,7 @@ impl Config {
+             web_search_config,
+             experimental_request_user_input_enabled,
+             update_plan_enabled,
++            agent_completion_wake: false,
+             tool_registry,
+             code_mode,
+             background_terminal_max_timeout,
 diff --git a/codex-rs/core/src/config/runtime_refresh.rs b/codex-rs/core/src/config/runtime_refresh.rs
 index a8b61d35987ccf34f22708e263d84151acf070da..b93cba082c4ef9db3c324f7f395835e55ec7c578 100644
 --- a/codex-rs/core/src/config/runtime_refresh.rs
@@ -22634,6 +22653,19 @@ index e2a82e65ae6cf21c0d60a2b4a59b59e29638dd43..244cb73df1305d29b66c67af3d32faae
      fn items_with_sources(
          &self,
      ) -> Box<dyn Iterator<Item = (&ResponseItem, Option<&codex_history::RetainedSource>)> + Send + '_>
+diff --git a/codex-rs/core/src/guardian/tests.rs b/codex-rs/core/src/guardian/tests.rs
+index b09c5431aa4069162b8d18a19df91dbc59db4c69..1723ba0ee55f84fd76f2f9ba7e8d2b421cbe074d 100644
+--- a/codex-rs/core/src/guardian/tests.rs
++++ b/codex-rs/core/src/guardian/tests.rs
+@@ -3560,7 +3560,7 @@ async fn guardian_review_routes_required_actions(
+ #[tokio::test]
+ async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() -> anyhow::Result<()>
+ {
+-    const TEST_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
++    const TEST_STACK_SIZE_BYTES: usize = 8 * 1024 * 1024;
+
+     let handle = std::thread::Builder::new()
+         .name("guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history".to_string())
 diff --git a/codex-rs/core/src/hook_runtime.rs b/codex-rs/core/src/hook_runtime.rs
 index 02d710450024db7f79ae712996b2270c9a63350a..383541ca39a63835052f450efafcb3f33e3c90fb 100644
 --- a/codex-rs/core/src/hook_runtime.rs
@@ -25715,7 +25747,7 @@ index a25dd60102b48b8a889a3ae80326e29dca7145ff..4784db27f283508a103e191c9572dffc
          FileSystemSandboxContext {
              sandbox_override: SandboxOverride::NoOverride,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..ad88f7ef97b25010a9a75737b6109accb1fc0630 100644
+index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..0de1cdec3b4a0691479786b9bf310e2bcd5ea10c 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -236,13 +236,14 @@ pub(super) async fn handle(
@@ -25888,7 +25920,7 @@ index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..ad88f7ef97b25010a9a75737b6109acc
          {
              return None;
          }
-@@ -773,6 +914,20 @@ impl Session {
+@@ -773,6 +914,21 @@ impl Session {
          Some(configuration.clone())
      }
 
@@ -25897,13 +25929,14 @@ index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..ad88f7ef97b25010a9a75737b6109acc
 +            return false;
 +        }
 +        let state = self.state.lock().await;
-+        TurnStartKind::Automatic.permits_mode(
-+            state
-+                .session_configuration
-+                .step_settings
-+                .collaboration_mode
-+                .mode,
-+        )
++        !state.shutting_down
++            && TurnStartKind::Automatic.permits_mode(
++                state
++                    .session_configuration
++                    .step_settings
++                    .collaboration_mode
++                    .mode,
++            )
 +    }
 +
      async fn should_wake_on_agent_messages(&self) -> bool {
@@ -32737,10 +32770,10 @@ index 06f63ede9ee18b94f52d66b1e804f741552b3de4..352c6350735a68e0e11f25347a4effab
      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
          f.write_str("EnvironmentAccessKey(..)")
 diff --git a/codex-rs/git-utils/src/baseline.rs b/codex-rs/git-utils/src/baseline.rs
-index 6ab104372c9fde209f69fe2c44cf2db9914001e2..81152f8b827820950851c67bf59a17dcdb545266 100644
+index 6ab104372c9fde209f69fe2c44cf2db9914001e2..f0c48bbf740fc1bacb993fdf1023eb3758ba09f6 100644
 --- a/codex-rs/git-utils/src/baseline.rs
 +++ b/codex-rs/git-utils/src/baseline.rs
-@@ -784,6 +784,56 @@ mod tests {
+@@ -784,6 +784,53 @@ mod tests {
          assert_eq!(git_stdout(&root, &["ls-files"]), "");
      }
 
@@ -32786,12 +32819,9 @@ index 6ab104372c9fde209f69fe2c44cf2db9914001e2..81152f8b827820950851c67bf59a17dc
 +        ensure_git_baseline_repository(&root)
 +            .await
 +            .expect("recover baseline");
-+        assert!(
-+            !diff_since_latest_init(&root)
-+                .await
-+                .expect("recovered diff")
-+                .has_changes()
-+        );
++        let recovered = diff_since_latest_init(&root).await.expect("recovered diff");
++        assert!(recovered.unified_diff.contains("+changed"));
++        assert!(!recovered.unified_diff.contains("-baseline"));
 +    }
 +
      #[cfg(unix)]
@@ -68178,10 +68208,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5997485f17664b130777c1b3eed16e260d9c7911
+index 0000000000000000000000000000000000000000..e25592342088d43c2a873c1539b2621a7ba46dd9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2628 @@
+@@ -0,0 +1,2631 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -69258,6 +69288,9 @@ index 0000000000000000000000000000000000000000..5997485f17664b130777c1b3eed16e26
 +        if let Ok(keys) = self.codex_config.lock() {
 +            if keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
 +                config.update_plan_enabled = true;
++            }
++            if keys.contains(codex_omd::CODEX_CONFIG_COMPLETION_WAKE) {
++                config.agent_completion_wake = true;
 +            }
 +            if keys.contains(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE) {
 +                config.tool_output_token_limit = Some(
@@ -110894,10 +110927,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3fa1462e6d439f84fc234920dadc1cdb1848547c
+index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b3652968d83edbb
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,264 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -111002,6 +111035,7 @@ index 0000000000000000000000000000000000000000..3fa1462e6d439f84fc234920dadc1cdb
 +pub use workspace::workspace_path;
 +
 +pub use mods::AUTHORITY_CAPABILITIES;
++pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
 +pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 +pub use mods::CODEX_CONFIG_UPDATE_PLAN;
 +pub use mods::CODEX_HOST_RELEASE;
@@ -112808,10 +112842,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c136e7f44ee3c2db0fbb8149e1d03f2213604ad0
+index 0000000000000000000000000000000000000000..38683877bf05a66b392650d4330df151f802a915
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6997 @@
+@@ -0,0 +1,7002 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -114490,7 +114524,12 @@ index 0000000000000000000000000000000000000000..c136e7f44ee3c2db0fbb8149e1d03f22
 +
 +pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
 +pub const CODEX_CONFIG_TOOL_OUTPUT_RAISE: &str = "tool_output_token_limit.raise";
-+const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN, CODEX_CONFIG_TOOL_OUTPUT_RAISE];
++pub const CODEX_CONFIG_COMPLETION_WAKE: &str = "agents.completion_wake";
++const CODEX_CONFIG_KEYS: &[&str] = &[
++    CODEX_CONFIG_UPDATE_PLAN,
++    CODEX_CONFIG_TOOL_OUTPUT_RAISE,
++    CODEX_CONFIG_COMPLETION_WAKE,
++];
 +pub const RAISED_TOOL_OUTPUT_TOKENS: usize = 65_536;
 +pub const TOOL_OUTPUT_BYTES: usize = 256 * 1024;
 +

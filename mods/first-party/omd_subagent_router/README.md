@@ -15,7 +15,8 @@ omd mods enable omd_subagent_router
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 Turning it on asks for the `autonomous` grant. The mod uses it to queue a wake prompt, a turn that tells the lead a
-background task finished (at most 4 queued and 20 turns).
+background task finished (at most 4 queued and 20 turns). While it's on, an idle lead also wakes about 0.5 s after a
+subagent's result arrives (Codex's `agents.completion_wake`).
 
 ## Use it
 
