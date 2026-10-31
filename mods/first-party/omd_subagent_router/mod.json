@@ -38,6 +38,7 @@
       "agent_lifecycle_v1",
       "app_v1",
       "autonomous_turns_v1",
+      "codex_config_v1",
       "events_v1",
       "lifecycle_events_v1",
       "state_scopes_v1",
@@ -45,6 +46,9 @@
       "timers_v1",
       "ui_controls_v1"
     ]
+  },
+  "codex_config": {
+    "agents.completion_wake": true
   },
   "settings_schema": {
     "type": "object",

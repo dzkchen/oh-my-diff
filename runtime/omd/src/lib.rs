@@ -102,6 +102,7 @@ pub use workspace::tree_path;
 pub use workspace::workspace_path;
 
 pub use mods::AUTHORITY_CAPABILITIES;
+pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
 pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 pub use mods::CODEX_CONFIG_UPDATE_PLAN;
 pub use mods::CODEX_HOST_RELEASE;

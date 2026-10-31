@@ -1075,6 +1075,9 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             if keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
                 config.update_plan_enabled = true;
             }
+            if keys.contains(codex_omd::CODEX_CONFIG_COMPLETION_WAKE) {
+                config.agent_completion_wake = true;
+            }
             if keys.contains(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE) {
                 config.tool_output_token_limit = Some(
                     config
