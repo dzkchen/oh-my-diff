@@ -244,6 +244,22 @@ A provider service is a mod-owned service process that a routed `host.json` serv
 - A grant with exactly one secret uses it as the bearer token.
 - A thread resumed after its provider is gone continues on the configured provider.
 
+### `models.context_window` (`model_context_window_v1`)
+
+`models.context_window` (capability `model`, experimental) sets how much of a thread a model sees before Codex
+compacts it.
+
+- `models.context_window {model, tokens?}` returns `{model, tokens, max}`. A number sets the window for that model
+  slug, `null` clears it, and leaving `tokens` out only reads it.
+- It applies from each thread's next turn in this session. Other sessions on the same mod store read it when a turn
+  starts, so they use it from the turn after. It persists across restarts.
+- The window is capped at the model's `max_context_window`, or at its catalog window when it has no maximum. A
+  provider model's maximum is the `context_window` its `providers.models` entry published, so it can only be lowered.
+- `max` is that cap for a provider model and `null` for a Codex catalog model.
+- An explicit `model_context_window` in `config.toml` or `-c` wins over it.
+- `tokens` is a whole number from 1 to 10,000,000, and at most 64 models keep a window. Errors:
+  `model_context_window_invalid`, `model_context_window_limit`.
+
 ### `providers.models`
 
 `providers.models` puts a provider service's models in the `/model` picker.

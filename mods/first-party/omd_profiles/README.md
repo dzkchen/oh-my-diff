@@ -40,6 +40,7 @@ Each account you add becomes a profile.
 | `/profile use NAME` | Switch this thread at its next turn. Paid profiles ask first. |
 | `/profile list` | Print the profiles. |
 | `/profile add` | Pick an account kind and sign in or enter its key (see [Add an account](#add-an-account)). |
+| `/profile window [PROFILE\|MODEL]` | Change a context window: how much of a thread a model sees before Codex compacts it. Without a name it lists this thread's model first, then your profiles and the other models in `/model` (Codex, Claude, Cursor). Pick a size (the default and the model's maximum are marked) or type one such as `300k`. Codex models go up to their catalog maximum and apply from each thread's next turn; other open sessions pick it up a turn later. Claude and Cursor models can only be lowered; a Claude 1M variant is its own model in `/model`. A profile's new window applies to new threads; start one with `/new` if this thread still shows the old size. |
 | `/profile remove NAME` | Remove a profile and, if no other profile uses it, its sign-in. Claude and Cursor profiles are removed with `/claude remove` and `/cursor remove`. |
 | `/profile refresh NAME` | Refresh a credential's sign-in. `NAME` is its label or id and may contain spaces. |
 
@@ -52,12 +53,12 @@ Run `/profile add` (or pick **+ Add an account…** in `/profile`) and choose wh
 | ChatGPT account | Asks a name, then the ChatGPT sign-in runs in the session. The first ChatGPT profile also asks its model. |
 | Claude account | Asks a name and plan or Console API credits, then runs `omd_claude_cli`'s sign-in (`/claude login`). |
 | Cursor account | Asks a name, then runs `omd_cursor`'s setup (`/cursor setup`). |
-| OpenAI API key | Asks a name, model and price, then the key. The context window is asked only for a model Codex's catalog doesn't list. |
+| OpenAI API key | Asks a name, model, context window and price, then the key. For a model in Codex's catalog the window list marks its default and stops at its maximum. |
 | Anthropic API key | The same, for `api.anthropic.com`. |
-| Local Ollama (no key) | Asks a name, model and context window, then talks to `http://localhost:11434/v1` over Chat Completions with no key, price or allowance. Ollama uses its own context length, so start it with `OLLAMA_CONTEXT_LENGTH` set to the window you enter. |
+| Local Ollama (no key) | Asks a name, where Ollama runs (`http://localhost:11434` or another local address), the model and the context window, then talks to it over Chat Completions with no key, price or allowance. Ollama can serve as few as 4,096 tokens and silently cuts longer prompts, so start it with `OLLAMA_CONTEXT_LENGTH` set to the window you pick. Only `localhost`, `127.0.0.1` and `[::1]` addresses are accepted. |
 | Other provider (URL) | The same, plus the endpoint URL and its protocol. |
 
-Shortcuts: `/profile add chatgpt|claude|cursor|api_key|anthropic|ollama NAME` and `/profile add provider NAME HTTPS_URL`.
+Shortcuts: `/profile add chatgpt|claude|cursor|api_key|anthropic|ollama NAME`, `/profile add ollama NAME URL` (for example `localhost:11500`) and `/profile add provider NAME HTTPS_URL`.
 
 - Everything happens in the session, the first profile included.
 - Paid keys ask for an allowance (USD, `20` or `$20`) the first time.

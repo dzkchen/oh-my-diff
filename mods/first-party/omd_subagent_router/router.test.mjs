@@ -418,4 +418,10 @@ test('with retry_after_limit, a task stopped by a usage limit restarts once at t
   assert.match(turnedOff.state.tasks.h1.error, /retry_after_limit is off/);
   const off = fire('agent_end', '', failure, { state: delegate({ action: 'start', task: 'Map it', model: 'sonnet' }).state, answer: stored(limited) });
   assert.equal(off.state.tasks.h1.retry_at, undefined, 'off by default');
+  const switchedOff = fire('agent_end', '', failure, { state: started.state, answer: stored(limited) });
+  assert.equal(switchedOff.state.tasks.h1.retry_at, undefined, 'turning the setting off stops a pending hold');
+  assert.deepEqual(switchedOff.of('events.schedule').map(call => call.key), ['wake']);
+  assert.match(delegate({ action: 'status', handle: 'h1' }, { state: { ...ended.state, wakeOff: true }, settings }).value.text, /will not wake this thread/);
+  const idle = fire('timer', '', { key: 'retry' }, { state: ended.state, settings });
+  assert.deepEqual([idle.of('routes.list').length, idle.of('agents.spawn').length], [0, 0], 'an early retry timer only re-arms');
 });

@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callback, runnerSync } from '../../../tests/mod_runner.mjs';
 import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter, chatEvents, anthropicEvents } from './router.mjs';
-import { URLS, origin, profileEntry, routeFor, serviceFor } from './profiles.ts';
+import { origin, profileEntry, routeFor, serviceFor } from './profiles.ts';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
@@ -93,7 +93,7 @@ test('router adapts Responses requests to each protocol through the credential g
   await new Promise(resolve => probe.close(resolve));
   const profile = (name, protocol, path) => ({ name, protocol, url: `https://up.example${path}`, model: 'up-model', credential: name, max_output: 4096, reasoning: true });
   const hostPath = hostFile(directory, [profile('a', 'responses', '/responses'), profile('b', 'responses', '/responses'), profile('c', 'chat', '/chat'), profile('d', 'anthropic', '/anthropic'),
-    { ...profile('e', 'chat', ''), url: `http://127.0.0.1:${port}/key/direct/chat`, credential: '' }]);
+    { ...profile('e', 'chat', ''), url: 'http://192.0.2.1/key/direct/chat', credential: '' }]);
   const token = 'local-token-'.repeat(4);
   const child = spawn(process.execPath, [router, 'serve', hostPath, String(free)], { env: { OMD_PROFILES_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready', OMD_CREDENTIAL_GATEWAY: `http://127.0.0.1:${port}/key` }, stdio: 'ignore' });
   try {
@@ -145,8 +145,10 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.deepEqual(normalized, { input_tokens: 12, input_tokens_details: { cached_tokens: 2, cache_write_tokens: 3 }, output_tokens: 4, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 16, omd_reported_cost: { usd: 0.0012, basis: 'provider_billed' } });
 
     delete seen['/chat'];
-    await ask('e').catch(() => {});
-    assert.equal(seen['/chat'], undefined, 'a keyless profile reaches only the local Ollama URL');
+    const keyless = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'e', instructions: 'sys', input, tools, stream: true }) });
+    assert.deepEqual([keyless.status, /credential_required/.test(await keyless.text())], [503, true]);
+    assert.equal(seen['/chat'], undefined, 'a keyless profile reaches only a local address');
 
     const anthropic = await ask('d');
     assert.equal(seen['/anthropic'].headers['x-omd-credential-header'], 'x-api-key');
@@ -346,7 +348,7 @@ test('the session setup waits for the host store lock and reads catalog models f
     mkdirSync(join(store, 'codex'));
     writeFileSync(join(store, 'codex', 'models_cache.json'), JSON.stringify({ models: [{ slug: 'up', context_window: 5000, default_reasoning_level: 'high', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] }] }));
     const lookup = model => JSON.parse(spawnSync(process.execPath, [setup, 'catalog', model], { encoding: 'utf8', env: { ...process.env, CODEX_HOME: join(store, 'codex') } }).stdout);
-    assert.deepEqual([lookup('up'), lookup('other')], [{ window: 5000, effort: 'high', efforts: ['low', 'high'] }, null]);
+    assert.deepEqual([lookup('up'), lookup('other')], [{ window: 5000, max: 5000, effort: 'high', efforts: ['low', 'high'] }, null]);
   } finally {
     rmSync(store, { recursive: true, force: true });
   }
@@ -388,7 +390,7 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   routes = [];
   const prompted = () => calls.filter(call => call.operation === 'terminal.prompt').map(call => call.args);
   const catalogued = { exit_code: 0, stdout: JSON.stringify({ window: 272000, effort: 'medium', efforts: ['low', 'medium', 'xhigh'] }), stderr: '' };
-  answers.push('gpt-6.1-sol', '1.25:10', '20', 'declined');
+  answers.push('gpt-6.1-sol', '272000', '1.25:10', '20', 'declined');
   setup = [catalogued];
   let asked = prompted().length;
   invoke(state, 'command', 'add api_key key1', 'profile');
@@ -396,7 +398,7 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   assert.match(prompted().at(-1).message, /use key1/);
   credentials = [{ id: 'cred-k', label: 'key1', kind: 'api_key', origin: 'https://api.openai.com', status: 'ready' }];
   const enrolls = calls.filter(call => call.operation === 'credentials.request').length;
-  answers.push('gpt-6.1-sol', '1.25:10', 'twenty', '$20', 'accepted');
+  answers.push('gpt-6.1-sol', '272000', '1.25:10', 'twenty', '$20', 'accepted');
   const routed = { ...profileData('key1', true), credential: 'cred-k', router: 'http://127.0.0.1:41000/v1' };
   setup = [catalogued, { exit_code: 0, stdout: JSON.stringify({ profiles: [routed] }), stderr: '' }];
   asked = prompted().length;
@@ -419,30 +421,91 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   const after = calls.slice(before).map(call => call.operation);
   assert.ok(after.includes('routes.list') && after.includes('providers.register') && after.includes('providers.models'), after.join(','));
   credentials = [{ id: 'cred-half', label: 'key3', kind: 'api_key', origin: 'https://api.openai.com', status: 'not_enrolled' }];
-  answers.push('gpt-6.1-sol', '1.25:10', '5', 'accepted');
+  answers.push('gpt-6.1-sol', '272000', '1.25:10', '5', 'accepted');
   setup = [catalogued, { exit_code: 0, stdout: JSON.stringify({ profiles: [routed, { ...profileData('key3', true), credential: 'cred-k', router: routed.router }] }), stderr: '' }];
   const enrolling = calls.filter(call => call.operation === 'credentials.request').length;
   assert.ok(invoke(added.state, 'command', 'add api_key key3', 'profile').state.accounts.some(account => account.name === 'key3'));
   assert.equal(calls.filter(call => call.operation === 'credentials.request').length, enrolling + 1);
   assert.match(prompted().at(-1).message, /use key3[\s\S]*\$5/);
   answers.length = 0;
-  answers.push('llama3.3', '32768', 'accepted');
+  answers.push('default', 'llama3.3', '32768', 'accepted');
   const local = { ...profileData('local'), protocol: 'chat', url: 'http://localhost:11434/v1/chat/completions', model: 'llama3.3', credential: '', kind: 'ollama', router: routed.router };
-  setup = [{ exit_code: 1, stdout: '', stderr: 'no cache' }, { exit_code: 0, stdout: JSON.stringify({ profiles: [local] }), stderr: '' }];
+  setup = [{ exit_code: 0, stdout: JSON.stringify({ profiles: [local] }), stderr: '' }];
   const keyless = [calls.filter(call => call.operation === 'credentials.request').length, prompted().length];
   assert.ok(invoke(state, 'command', 'add ollama local', 'profile').state.accounts.some(account => account.name === 'local'));
   assert.equal(calls.filter(call => call.operation === 'credentials.request').length, keyless[0]);
-  assert.deepEqual(prompted().slice(keyless[1]).map(prompt => prompt.title), ['Upstream model', 'Context window', 'Change model routes']);
+  assert.deepEqual(prompted().slice(keyless[1]).map(prompt => prompt.title), ['Ollama address', 'Upstream model', 'Context window', 'Change model routes']);
+  assert.match(prompted().slice(keyless[1])[2].message, /OLLAMA_CONTEXT_LENGTH/);
+  assert.deepEqual(prompted().slice(keyless[1])[2].options.map(option => option.value), ['4096', '8192', '32768', '131072', 'other']);
   answers.length = 0;
   answers.push('gpt-6.1-sol');
   setup = [new Error('exec_program_unavailable')];
   assert.match(invoke(state, 'command', 'add api_key key2', 'profile').value.display, /brew install node/);
   assert.equal(answers.length, 0);
-  answers.push('gpt-6.1-sol', '1.25:10', '5', 'accepted');
+  answers.push('gpt-6.1-sol', '272000', '1.25:10', '5', 'accepted');
   setup = [catalogued, { exit_code: 0, stdout: 'not json', stderr: '' }];
   assert.match(invoke(state, 'command', 'add api_key key3', 'profile').value.display, /unreadable output/);
   state.accounts = Array.from({ length: 16 }, (_, index) => ({ name: `p${index}`, provider: 'omd_profiles', model: `p${index}`, effort: 'high', billing: 'included_subscription', available: true, profile: profileData(`p${index}`) }));
   assert.match(invoke(state, 'command', 'add api_key key4', 'profile').value.display, /At most 16/);
+});
+
+test('/profile window picks a size inside the catalog range and rewrites the route; Ollama takes any local address', () => {
+  const calls = [];
+  const answers = [];
+  const windows = [];
+  let setup = [];
+  const invoke = (state, payload) => callback({ ...request, state, event: 'command', name: 'profile', payload, virtual_time_ms: 1_000_000 }, ({ operation, arguments: args }) => {
+    calls.push({ operation, args });
+    if (operation === 'terminal.prompt') return args.kind === 'text' ? { status: 'accepted', value: answers.shift() } : { status: 'accepted', values: [answers.shift()] };
+    if (operation === 'exec.run') return setup.shift();
+    if (operation === 'models.context_window') {
+      windows.push(args);
+      return { model: args.model, tokens: args.tokens ?? null, max: args.model.startsWith('claude') || args.model === 'cursor-auto' ? 200000 : null };
+    }
+    if (operation === 'app.request') return { data: [{ model: 'work', displayName: 'work', modelProvider: 'omd_profiles' }, { model: 'gpt-6.1-sol', displayName: 'GPT-6.1 Sol', modelProvider: 'openai' },
+      { model: 'claude-sonnet-5.work', displayName: 'Claude Sonnet 5 · work', modelProvider: 'omd_claude_cli' }, { model: 'claude-sonnet-5-1m.work', displayName: 'Claude Sonnet 5 (1M context) · work', modelProvider: 'omd_claude_cli' },
+      { model: 'cursor-auto', displayName: 'Cursor Auto', modelProvider: 'omd_cursor' }, { model: 'secret', displayName: 'Hidden', hidden: true, modelProvider: 'openai' }], nextCursor: null };
+    return { 'session.info': { thread_id: 'thread-1', provider: 'omd_profiles', model: 'work' }, 'routes.write': { routes: [] }, 'store.get': null, 'store.put': { revision: 1 }, 'events.publish': { delivered: 1, dropped: 0 }, 'credentials.list': [] }[operation];
+  });
+  const profile = { ...profileData('work'), model: 'gpt-6.1-sol', window: 272000 };
+  const state = { accounts: [{ name: 'work', provider: 'omd_profiles', model: 'work', effort: 'high', billing: 'included_subscription', available: true, profile }], mod: '/store/sources/omd_profiles' };
+  const catalogued = { exit_code: 0, stdout: JSON.stringify({ window: 272000, max: 872000, effort: 'medium', efforts: ['medium'] }), stderr: '' };
+  setup = [catalogued];
+  answers.push('profile:work', '400000');
+  const resized = invoke(state, 'window');
+  const models = calls.find(call => call.operation === 'terminal.prompt').args.options;
+  assert.deepEqual(models.map(option => option.value), ['profile:work', 'model:gpt-6.1-sol', 'model:claude-sonnet-5.work', 'model:claude-sonnet-5-1m.work', 'model:cursor-auto']);
+  const picker = calls.filter(call => call.operation === 'terminal.prompt').at(-1).args;
+  assert.deepEqual(picker.options.map(option => option.label), ['128K tokens', '200K tokens', '272K tokens (default) (current)', '400K tokens', '872K tokens', 'Another size…']);
+  assert.match(picker.message, /272K by default, up to 872K/);
+  const written = calls.find(call => call.operation === 'routes.write').args.routes[0];
+  assert.deepEqual([written.data.window, written.rates.input_token_ceiling], [400000, 400000]);
+  assert.match(resized.value.display, /^work now uses a 400K-token context window, which new threads use/);
+  assert.equal(resized.state.accounts[0].profile.window, 400000);
+  setup = [catalogued];
+  answers.push('other', '1m');
+  assert.equal(invoke(state, 'window work').value.display, 'Cancelled: gpt-6.1-sol allows at most 872K tokens.');
+  setup = [catalogued];
+  answers.push('other', '300k');
+  invoke(state, 'window work');
+  assert.equal(calls.filter(call => call.operation === 'routes.write').at(-1).args.routes[0].data.window, 300000);
+  answers.push('128000');
+  assert.match(invoke(state, 'window claude-sonnet-5.work').value.display, /^Claude Sonnet 5 · work now uses a 128K-token context window from each thread's next turn; other open sessions/);
+  const claude = calls.filter(call => call.operation === 'terminal.prompt').at(-1).args;
+  assert.deepEqual(claude.options.map(option => option.label), ['128K tokens', '200K tokens (default) (current)', 'Another size…']);
+  assert.match(claude.message, /serves at most 200K, so it can only be lowered\. For a 1M-token window, switch to Claude Sonnet 5 \(1M context\) · work in \/model\./);
+  answers.push('200000');
+  invoke(state, 'window cursor-auto');
+  setup = [catalogued];
+  answers.push('model:gpt-6.1-sol', '400000');
+  assert.match(invoke(state, 'window').value.display, /^GPT-6\.1 Sol now uses a 400K-token/);
+  assert.deepEqual(windows.filter(call => 'tokens' in call), [{ model: 'claude-sonnet-5.work', tokens: 128000 }, { model: 'cursor-auto', tokens: null }, { model: 'gpt-6.1-sol', tokens: 400000 }], 'the default clears the override');
+  assert.match(invoke(state, 'window typo-model').value.display, /^Unknown profile or model typo-model/);
+  assert.equal(windows.filter(call => call.model === 'typo-model').length, 0);
+  assert.match(invoke(state, 'add ollama box http://192.168.1.5:11434').value.display, /must run on this computer/);
+  answers.push('llama3.3', '8192', 'accepted');
+  invoke(state, 'add ollama box localhost:11500');
+  assert.equal(calls.filter(call => call.operation === 'routes.write').at(-1).args.routes.at(-1).data.url, 'http://localhost:11500/v1/chat/completions');
 });
 
 test('a profile URL matches the origin its credential was enrolled for however it is written', () => {
@@ -518,6 +581,7 @@ test('the switcher meters the active account, cycles with Alt+s and adds or remo
     'terminal.prompt': { status: 'accepted', value: 'home' }, 'credentials.request': { status: 'completed', profile: { id: 'cred-home', label: 'home', kind: 'chatgpt', origin: 'https://chatgpt.com' } } };
   const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload, virtual_time_ms: 1_000_000 }, ({ operation, arguments: args }) => {
     calls.push({ operation, args });
+    if (operation === 'terminal.prompt') return { status: 'accepted', value: args.title === 'Context window' ? '272000' : 'home' };
     if (operation === 'store.get') return kv[args.key] ?? null;
     if (operation === 'store.put') {
       kv[args.key] = { value: args.value, revision: (kv[args.key]?.revision ?? 0) + 1, provenance: { at: clock } };
@@ -599,7 +663,7 @@ test('Claude and Cursor accounts from their own mods are listed, metered from th
       kv[args.key] = { value: args.value, revision: (kv[args.key]?.revision ?? 0) + 1, provenance: { at: 1_000_000 } };
       return { revision: kv[args.key].revision };
     }
-    if (operation === 'terminal.prompt') { prompts.push(args); return { status: 'accepted', value: ['claude-sonnet-4-5', '200000', '3:15'][prompts.filter(item => item.kind === 'text').length - 1] }; }
+    if (operation === 'terminal.prompt') { prompts.push(args); return { status: 'accepted', value: args.title === 'Context window' ? '200000' : ['claude-sonnet-4-5', '3:15'][prompts.filter(item => item.kind === 'text').length - 1] }; }
     return { 'packages.list': installed, 'routes.list': routes, 'session.info': session, 'events.publish': { delivered: 1, dropped: 0 }, 'app.request': {}, 'routes.write': { routes: ['work', 'api1'], services: ['omd_profiles'] },
       'sidecars.status': { running: true, started_at_ms: 2_000_000 }, 'credentials.list': [], 'exec.run': { exit_code: 0, stdout: 'null', stderr: '' },
       'credentials.request': { status: 'completed', profile: { id: 'cred-a', label: 'api1', kind: 'provider', origin: 'https://api.anthropic.com' } } }[operation];
@@ -732,11 +796,12 @@ test('/profile refresh addresses a credential whose label holds spaces', () => {
 });
 
 test('a local Ollama profile needs no credential, price or allowance', () => {
-  const entry = { name: 'local', protocol: 'chat', url: URLS.ollama, model: 'llama3.3', window: 32768 };
+  const entry = { name: 'local', protocol: 'chat', url: 'http://localhost:11434/v1/chat/completions', model: 'llama3.3', window: 32768 };
   const profile = { ...profileEntry(entry, []), router: 'http://127.0.0.1:9/v1' };
   assert.deepEqual([profile.kind, profile.credential, profile.paid], ['ollama', '', null]);
   assert.equal(routeFor(profile).rates.included_subscription, true);
   assert.deepEqual(serviceFor([profile])[0].credentials, []);
   assert.throws(() => profileEntry({ ...entry, protocol: 'responses' }, []), /profile_protocol_invalid/);
-  assert.throws(() => profileEntry({ ...entry, url: 'http://localhost:9/v1/chat/completions' }, []), /profile_url_and_upstream_model_required/);
+  assert.equal(profileEntry({ ...entry, url: 'http://127.0.0.1:11500/v1/chat/completions' }, []).kind, 'ollama');
+  assert.throws(() => profileEntry({ ...entry, url: 'http://192.0.2.1:11434/v1/chat/completions' }, []), /profile_url_and_upstream_model_required/);
 });

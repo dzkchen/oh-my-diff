@@ -3,7 +3,7 @@ import type { HostRoute, Json, ProviderModel, ServiceGrantUpdate } from '../../a
 export const PROVIDER = 'omd_profiles';
 export const PROTOCOLS = ['responses', 'chat', 'anthropic'];
 export const URLS: Record<string, string> = { chatgpt: 'https://chatgpt.com/backend-api/codex/responses', api_key: 'https://api.openai.com/v1/responses',
-  anthropic: 'https://api.anthropic.com/v1/messages', ollama: 'http://localhost:11434/v1/chat/completions' };
+  anthropic: 'https://api.anthropic.com/v1/messages' };
 
 type Credential = { id: string; label?: string; kind: string; origin?: string | null };
 export type Options = { name?: string; credential?: string; protocol?: string; url?: string; model?: string; window?: unknown; paid?: unknown;
@@ -12,6 +12,7 @@ export type Profile = { name: string; protocol: string; url: string; model: stri
   reasoning: boolean; cache_control: boolean; text_only: boolean; max_output: number; paid: number[] | null; effort?: string; efforts?: string[]; router?: string };
 
 export const NAME = /^[a-z0-9_-]{1,32}$/;
+export const loopback = (url: string) => /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?\//i.test(url);
 export const origin = (url: string) => {
   const authority = /^https:\/\/([^/?#]+)/i.exec(url)?.[1].toLowerCase();
   return authority ? `https://${authority.replace(/:443$/, '')}` : null;
@@ -21,7 +22,7 @@ export function profileEntry(options: Options, credentials: Credential[]): Profi
   const { name, credential, protocol, url, model } = options;
   if (!NAME.test(name ?? '')) throw new Error('profile_name_invalid: lowercase letters, digits, _ or -');
   if (!PROTOCOLS.includes(protocol ?? '')) throw new Error(`profile_protocol_invalid: ${PROTOCOLS.join('|')}`);
-  const local = url === URLS.ollama;
+  const local = !credential && loopback(url ?? '');
   if (!local && !origin(url ?? '') || !model) throw new Error('profile_url_and_upstream_model_required');
   if (local && protocol !== 'chat') throw new Error('profile_protocol_invalid: a local Ollama profile speaks chat');
   const found = local ? { id: '', kind: 'ollama' } : credentials.find(item => item.label === credential || item.id === credential);

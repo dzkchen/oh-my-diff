@@ -370,6 +370,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "pty_programs_v1",
     "route_reload_v1",
     "route_write_v1",
+    "model_context_window_v1",
     "power_hold_v1",
     "tool_original_v1",
     "builtins_features_v1",
@@ -476,6 +477,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "credentials.list",
     "credentials.request",
     "routes.select",
+    "models.context_window",
     "turns.activity",
     "turns.abort",
     "terminal.notify",
@@ -3688,6 +3690,7 @@ fn read_only(operation: &str, arguments: &Value) -> bool {
         | "exec.output_page"
         | "terminal.image_sample" => true,
         "workspace.check_access" => arguments["write"] != true,
+        "models.context_window" => arguments.get("tokens").is_none(),
         "exec.run" => {
             arguments["write"] != true
                 && arguments["network"]

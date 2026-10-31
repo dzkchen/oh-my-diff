@@ -402,8 +402,9 @@ else if (argv[0] === 'auth') {
   const row = JSON.parse(line);
   if (row.type === 'control_request') console.log(JSON.stringify({ type: 'control_response', response: { response: { models: [
     { value: 'default', resolvedModel: 'claude-opus-5' }, { value: 'sonnet', resolvedModel: 'claude-sonnet-5', description: 'Sonnet 5 · fast', supportsEffort: true, supportedEffortLevels: ['low', 'high'] },
-    { value: 'opus', resolvedModel: 'claude-opus-5', description: 'Opus 5', supportsEffort: true, supportedEffortLevels: ['high'] }] } } }));
-  else console.log(JSON.stringify({ type: 'result', modelUsage: { [argv[argv.indexOf('--model') + 1]]: { contextWindow: 200000 } } }));
+    { value: 'opus', resolvedModel: 'claude-opus-5', description: 'Opus 5', supportsEffort: true, supportedEffortLevels: ['high'] },
+    { value: 'sonnet[1m]', resolvedModel: 'claude-sonnet-5[1m]', description: 'Sonnet 5 · long sessions', supportsEffort: true, supportedEffortLevels: ['high'] }] } } }));
+  else { const model = argv[argv.indexOf('--model') + 1]; console.log(JSON.stringify({ type: 'result', modelUsage: { [model]: { contextWindow: model.endsWith('[1m]') ? 1000000 : 200000 } } })); }
 }
 `, { mode: 0o755 });
     const setup = (...args) => spawnSync(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), ...args],
@@ -418,13 +419,16 @@ else if (argv[0] === 'auth') {
     assert.deepEqual(result.accounts.map(account => [account.name, account.billing, account.email, account.config_dir, account.route]),
       [['default', 'subscription', 'me@example.com', null, 'claude'], ['work', 'api', 'work@example.com', dir, 'claude-work']]);
     assert.deepEqual(result.accounts.map(account => account.cli_version), [CLI_VERSION, CLI_VERSION]);
-    assert.deepEqual(result.models.map(model => model.slug), ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-5.work', 'claude-sonnet-5.work']);
+    assert.deepEqual(result.models.map(model => [model.slug, model.display, model.context_window]), [['claude-opus-5', 'Claude Opus 5', 200000], ['claude-sonnet-5', 'Claude Sonnet 5', 200000],
+      ['claude-sonnet-5-1m', 'Claude Sonnet 5 (1M context)', 1000000], ['claude-opus-5.work', 'Claude Opus 5 · work', 200000], ['claude-sonnet-5.work', 'Claude Sonnet 5 · work', 200000],
+      ['claude-sonnet-5-1m.work', 'Claude Sonnet 5 (1M context) · work', 1000000]]);
     const written = await host();
     assert.deepEqual(written.routes.map(route => [route.name, route.provider, route.model, route.rates.included_subscription, route.rates.provider_billed]),
       [['claude', 'omd_claude_cli', 'claude-opus-5', true, undefined], ['claude-work', 'omd_claude_cli', 'claude-opus-5.work', undefined, true]]);
     const grant = written.services.find(service => service.id === 'claude_cli');
     assert.ok(grant.read_paths.includes(dir));
     assert.equal(grant.route.rates.provider_billed, true);
+    assert.deepEqual([written.routes[1].rates.input_token_ceiling, grant.route.rates.input_token_ceiling], [1000000, 1000000], 'the ceiling admits the widest model');
     const route = JSON.parse(await readFile(join(store, 'routes/claude/route.json'), 'utf8'));
     assert.deepEqual([route.accounts[1].models[0].cli, route.accounts[1].models[0].efforts, route.accounts[1].models[0].window], ['claude-opus-5', ['high'], 200000]);
     await writeFile(join(store, 'host.json'), JSON.stringify({ ...written, routes: [...written.routes, { ...written.routes[0], name: 'claude-spare', provider: 'omd_profiles' }] }));

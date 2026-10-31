@@ -185,6 +185,7 @@
     "operations:packages.reload": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('packages.reload'"},"decision":"coordination.packages"},
     "operations:peers.list": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:peers.send": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
+    "operations:models.context_window": {"status":"experimental","reason":"Added after 1.0.0 for per-model context windows; experimental."},
     "operations:power.hold": {"status":"experimental","reason":"Added after 1.0.0 for power holds; experimental."},
     "operations:power.release": {"status":"experimental","reason":"Added after 1.0.0 for power holds; experimental."},
     "operations:process.exchange": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/client.ts","snippet":"api.host.tryCall('process.exchange'"},"decision":"tool.managed_process"},
@@ -1512,6 +1513,7 @@
         "operations": [
           "credentials.list",
           "credentials.request",
+          "models.context_window",
           "routes.select"
         ]
       },

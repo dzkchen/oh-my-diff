@@ -230,9 +230,9 @@ export default function activate(api: ModAPI) {
       next = { ...task, status: 'failed', error: clip(outcome.error ?? 'failed', ERROR_BYTES), brief: undefined };
       const category = outcome.failure?.category;
       if (category && HARD_FAILURES.includes(category)) remember(value => ({ ...value, failed: { ...value.failed, [task.provider]: { at: Date.now(), category } } }));
-      const usage = vitals().value.windows?.[LIMIT_IDS[task.provider] ?? ''];
+      const usage = retrying && category === 'rate_limit' && task.brief && !task.retry_of ? vitals().value.windows?.[LIMIT_IDS[task.provider] ?? ''] : undefined;
       const now = Date.now();
-      if (category === 'rate_limit' && task.brief && !task.retry_of && usage && usage.used >= FULL_PERCENT && usage.resets !== null && usage.resets > now && usage.resets - now <= RETRY_MAX_MS) {
+      if (usage && usage.used >= FULL_PERCENT && usage.resets !== null && usage.resets > now && usage.resets - now <= RETRY_MAX_MS) {
         next = { ...next, brief: task.brief, retry_at: usage.resets + RETRY_GRACE_MS, told: true };
         save({ ...state, tasks: { ...state.tasks, [handle]: next } });
         rearm();
@@ -250,15 +250,16 @@ export default function activate(api: ModAPI) {
 
   const retry = () => {
     const now = Date.now();
+    const due = Object.entries(current().tasks ?? {}).filter(([, task]) => task.retry_at && task.retry_at <= now + 1000);
+    if (!due.length) return rearm();
     const models = catalog();
     const seen = vitals().value;
     const available = routes();
     let woke = false;
-    for (const [handle, task] of Object.entries(current().tasks ?? {})) {
-      if (!task.retry_at || task.retry_at > now + 1000) continue;
+    for (const [handle, task] of due) {
       const route = available.find(item => item.name === task.route);
       const failure = seen.failed?.[task.provider];
-      const cleared = failure && failure.at < task.retry_at - RETRY_GRACE_MS ? { ...seen, failed: { ...seen.failed, [task.provider]: { ...failure, at: 0 } } } : seen;
+      const cleared = failure && failure.at < task.retry_at! - RETRY_GRACE_MS ? { ...seen, failed: { ...seen.failed, [task.provider]: { ...failure, at: 0 } } } : seen;
       const reason = !retrying ? 'retry_after_limit is off' : route ? skip(route, models, cleared, task.isolation === 'worktree') : 'its route is gone';
       const launched = route && !reason ? launch({ role: task.role, route: task.route, provider: task.provider, model: task.model, isolation: task.isolation, retry_of: handle }, route, task.brief ?? '') : null;
       const restarted = typeof launched === 'string';
@@ -280,7 +281,7 @@ export default function activate(api: ModAPI) {
     if (!task) return { status: 'unknown', error: `No delegated task ${handle}` };
     const { status, route, model } = task;
     if (status === 'running') return { handle, status, route, model, text: state.wakeOff ? UNWOKEN : RUNNING };
-    if (task.retry_at) return { handle, status: 'waiting', route, model, text: `Its provider hit its usage limit; it restarts at ${new Date(task.retry_at).toISOString()} as a new task, whose result wakes this thread. Cancel stops the restart.` };
+    if (task.retry_at) return { handle, status: 'waiting', route, model, text: `Its provider hit its usage limit; it restarts at ${new Date(task.retry_at).toISOString()} as a new task, ${state.wakeOff ? 'whose result will not wake this thread; call delegate_task status with this handle after then to find it' : 'whose result wakes this thread'}. Cancel stops the restart.` };
     if (!task.told || task.wake) {
       const tasks = { ...state.tasks, [handle]: { ...task, told: true, wake: undefined } };
       const removed = task.wake ? api.host.tryCall('turns.dequeue', { key: task.wake }) : null;

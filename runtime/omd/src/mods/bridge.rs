@@ -53,7 +53,7 @@ impl ModHostCall {
             "workspace.watch" | "workspace.unwatch" => Ok("fs.read"),
             "events.publish" | "events.schedule" | "events.cancel" => Ok("events"),
             "credentials.list" | "credentials.request" => Ok("credentials"),
-            "routes.select" => Ok("model"),
+            "routes.select" | "models.context_window" => Ok("model"),
             "turns.activity" => Ok("sessions"),
             "turns.abort" => Ok("threads"),
             "terminal.notify"

@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, handoff } from './handoff.mjs';
-import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
+import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, loginCommand, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
@@ -26,7 +26,7 @@ export function cliEnv(values = {}) {
 }
 
 export const accountEnv = account => account?.config_dir ? { CLAUDE_CONFIG_DIR: account.config_dir } : {};
-export const loginHint = (billing, account) => `\`/claude login${billing === 'api' ? ' api' : ''}${account && account.name !== 'default' ? ` ${account.name}` : ''}\``;
+const loginHint = (billing, account) => `\`${loginCommand(billing, account?.name)}\``;
 
 export function checkCli(claude, billing = 'subscription', home = process.env.HOME, username = process.env.USER, account = null) {
   const cliVersion = checkVersion(claude);

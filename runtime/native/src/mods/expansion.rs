@@ -45,6 +45,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "events.publish",
     "credentials.list",
     "routes.select",
+    "models.context_window",
     "turns.activity",
     "packages.list",
     "packages.index",
@@ -528,6 +529,10 @@ pub(super) async fn dispatch(
         "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
         "turns.activity" => activity::read(core, lead, request.arguments).await,
         "routes.select" => select_route(lead, caller.id, request.arguments),
+        "models.context_window" => {
+            let arguments = request.arguments;
+            blocking(Box::new(move || crate::model_windows::call(&host.root, arguments))).await
+        }
         "tools.list" => tool_specs::list(core, lead),
         "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
         "tools.original" => tool_output::stored(core, lead, caller, request.arguments).await,

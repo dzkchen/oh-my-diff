@@ -3,7 +3,7 @@ import { request as httpsRequest } from 'node:https';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { PROVIDER, URLS, profilesOf } from './profiles.ts';
+import { PROVIDER, loopback, profilesOf } from './profiles.ts';
 import { claim, handoff } from './handoff.mjs';
 
 const BODY_LIMIT = 64 * 1024 * 1024;
@@ -311,7 +311,7 @@ function post(url, headers, payload, signal) {
 function through(profile) {
   const gateway = process.env.OMD_CREDENTIAL_GATEWAY;
   if (!profile.credential) {
-    if (profile.url !== URLS.ollama) throw Object.assign(new Error('credential_required'), { status: 503 });
+    if (!loopback(profile.url)) throw Object.assign(new Error('credential_required'), { status: 503 });
     return profile.url;
   }
   if (!gateway) throw Object.assign(new Error('credential_gateway_unavailable'), { status: 503 });

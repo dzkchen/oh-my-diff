@@ -72,6 +72,9 @@ Change settings in `/mods`.
   OpenAI request. If that fails, Claude continues without the summary and a warning shows. OpenAI's encrypted
   reasoning isn't sent.
 - A prompt over the model's context window is refused (`context_length_exceeded`).
+- When the CLI offers a 1M-token variant of a model (such as `sonnet[1m]`), it is listed as its own model, for example
+  `Claude Sonnet 5 (1M context)`, with the window the CLI reports. `/profile window` (in `omd_profiles`) can lower
+  any Claude model's window, so Codex compacts sooner.
 
 ## More
 

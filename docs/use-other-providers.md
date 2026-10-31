@@ -48,7 +48,7 @@ covers billing, several accounts and limits.
    /profile add
    ```
 
-   Pick a ChatGPT account, a Claude or Cursor account, an OpenAI or Anthropic API key, a local Ollama (no key, no allowance; `http://localhost:11434/v1`), or another provider by URL.
+   Pick a ChatGPT account, a Claude or Cursor account, an OpenAI or Anthropic API key, a local Ollama (no key, no allowance; `http://localhost:11434` or another local address), or another provider by URL.
    Sign-in and key entry happen in the session. The first time you add a paid key, the session asks for a spending
    allowance in USD. When the account is added, the session prints `Added NAME.` and how to switch to it.
 3. Switch with `/profile`, `/profile use NAME`, or Alt+s for the next account.
