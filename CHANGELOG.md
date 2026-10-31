@@ -40,6 +40,8 @@ Oh My Diff now builds on Codex 0.166.0, with cross-provider subagents, a free pa
 - Workspace: snapshots record tracked symlinks by their link text and refuse a file swapped for a symlink mid-read
 - Installer: an aborted uninstall keeps the rollback point, rollback checks the generation it restores, a withdrawn installed release is reported and certificate errors get their own message
 - Mentions: an `@` mention after a malformed `@"` is still recognised
+- Packed baseline test expects upstream's empty recovery baseline (#351)
+- Release gate failures in core and client acceptance (#352)
 
 ## [1.2.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.2.0) — 2026-10-24
 

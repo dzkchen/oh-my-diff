@@ -43,7 +43,9 @@
           "Subagents: idle cross-provider subagents no longer hold worker slots, and a reloaded agent keeps its own provider's settings",
           "Workspace: snapshots record tracked symlinks by their link text and refuse a file swapped for a symlink mid-read",
           "Installer: an aborted uninstall keeps the rollback point, rollback checks the generation it restores, a withdrawn installed release is reported and certificate errors get their own message",
-          "Mentions: an `@` mention after a malformed `@\"` is still recognised"
+          "Mentions: an `@` mention after a malformed `@\"` is still recognised",
+          "Packed baseline test expects upstream's empty recovery baseline (#351)",
+          "Release gate failures in core and client acceptance (#352)"
         ]
       }
     ],
@@ -89,7 +91,9 @@
       "7995bfb",
       "4bdb60d",
       "05cebb5",
-      "9789bc2"
+      "9789bc2",
+      "ed12a94",
+      "96406fc"
     ]
   },
   {
