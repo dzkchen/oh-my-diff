@@ -84,7 +84,7 @@ clients, rich children inside buttons (a button uses its typed `text`), audio, t
 
 ## Migration notes
 
-These changes are on `main` after OMD 1.2.0 and not yet in a release.
+These changes ship in OMD 1.3.0.
 
 - Only mod `owner` can replace or wrap a site named `owner/name`. The host refuses a patch to that site from any other
   mod and reports it under `terminal.conflicts`. Before this change, any mod could wrap or replace another mod's site.
