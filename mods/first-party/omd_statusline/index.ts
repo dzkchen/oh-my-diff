@@ -130,6 +130,7 @@ export default function activate(api: ModAPI) {
   const settle = api.time.after('settle', 2000, () => {
     const rates = api.usage.rateLimits();
     if (rates.available) update(data => limits(data, rates.value));
+    workspace();
     refresh(true);
   });
 
@@ -147,10 +148,33 @@ export default function activate(api: ModAPI) {
     const credits = object(snapshot.credits);
     if (Object.keys(credits).length) data.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? 'credits' : 'none';
   };
+  // Mirrors Codex's processing-tier label: the configured tier (or, unset, the catalog default) when the model offers it,
+  // named from the catalog, or Flex on a provider other than Amazon Bedrock.
+  const tierFor = (configured: unknown, model: string | null, provider: string | null, fallback = false): Data['model']['tier'] => {
+    if ((typeof configured !== 'string' || !configured) && !fallback) return null;
+    const listed = api.host.tryCall('app.request', { method: 'model/list', params: { includeHidden: true, limit: 200 } });
+    const catalog = listed.ok ? object(listed.value).data : null;
+    const preset = Array.isArray(catalog) ? catalog.map(object).find(item => item.model === model) : undefined;
+    const tiers: Record<string, any>[] = Array.isArray(preset?.serviceTiers) ? preset.serviceTiers.map(object) : [];
+    const id = typeof configured === 'string' && configured ? configured : preset?.defaultServiceTier;
+    if (typeof id !== 'string' || !id) return null;
+    if (id === 'flex') return { id, name: provider && !provider.startsWith('amazon-bedrock') ? 'Flex' : null };
+    const named = tiers.find(tier => tier.id === id)?.name;
+    return preset && !tiers.some(tier => tier.id === id) ? null : { id, name: typeof named === 'string' ? visible(named, 24) : null };
+  };
+  const workspace = () => {
+    const read = api.host.tryCall('app.request', { method: 'account/read', params: {} });
+    if (!read.ok) return;
+    const account = object(object(read.value).account);
+    update(data => { data.workspace = account.type === 'chatgpt' && typeof account.workspaceName === 'string' && account.workspaceName ? visible(account.workspaceName, 60) : null; });
+  };
+
   const configure = () => {
     const session = api.host.tryCall('session.info', null);
-    const read = api.host.tryCall('app.request', { method: 'config/read', params: {} });
+    const read = api.host.tryCall('app.request', { method: 'config/read', params: { includeLayers: true } });
     const values = object(read.ok ? object(read.value).config : null);
+    const layers: unknown[] = read.ok && Array.isArray(object(read.value).layers) ? object(read.value).layers : [];
+    const user = layers.map(layer => object(object(layer).name)).find(name => name.type === 'user');
     update(data => {
       if (session.ok) {
         if (data.thread !== session.value.thread_id) data.started = Date.now();
@@ -159,6 +183,10 @@ export default function activate(api: ModAPI) {
         data.model = { ...data.model, requested: session.value.model ?? data.model.requested, provider: session.value.provider };
       }
       if (data.started === null) data.started = Date.now();
+      if (read.ok) {
+        data.profile = typeof user?.profile === 'string' && user.profile ? visible(user.profile, 60) : null;
+        data.model.tier = tierFor(values.service_tier, data.model.requested, data.model.provider, true);
+      }
       if (typeof values.model_reasoning_effort === 'string') data.model.effort = values.model_reasoning_effort;
       data.context.window = number(values.model_context_window) ?? data.context.window;
     });
@@ -226,7 +254,10 @@ export default function activate(api: ModAPI) {
   });
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update_ = object(params);
-    if (method === 'account/updated') return update(data => { data.limits = []; data.credits = null; });
+    if (method === 'account/updated') {
+      update(data => { data.limits = []; data.credits = null; });
+      return workspace();
+    }
     if (method === 'account/rateLimits/updated') return update(data => limits(data, update_));
     const thread = thread_id ?? update_.threadId ?? null;
     const current = saved().thread;
@@ -236,6 +267,8 @@ export default function activate(api: ModAPI) {
       update(data => {
         const model = typeof next.model === 'string' ? next.model : data.model.requested;
         const provider = typeof next.modelProvider === 'string' ? next.modelProvider : data.model.provider;
+        const tier = 'serviceTier' in next ? next.serviceTier ?? null : data.model.tier?.id ?? null;
+        if (tier !== (data.model.tier?.id ?? null) || model !== data.model.requested || provider !== data.model.provider) data.model.tier = tierFor(tier, model, provider);
         if (model !== data.model.requested || provider !== data.model.provider) data.context.switched = data.context.used !== null;
         data.model = { ...data.model, requested: model, provider, served: model !== data.model.requested ? null : data.model.served, effort: typeof next.effort === 'string' ? next.effort : data.model.effort };
       });

@@ -26,7 +26,7 @@ tools, context and screens. You still run `codex`, with your settings, sign-in a
 
 ## Install
 
-Needs an Apple Silicon Mac, Codex `0.165.x` and Python 3.12+ ([details](docs/install.md#before-you-begin)).
+Needs an Apple Silicon Mac, Codex `0.166.x` and Python 3.12+ ([details](docs/install.md#before-you-begin)).
 
 There are two installs. Pick one; you can switch later by rerunning the command with the other profile.
 
@@ -73,7 +73,7 @@ do, such as read files, use the network or run programs, and asks first. Mods ru
 beside Codex, and if one misbehaves, `omd mods disable ID` switches it off from any shell, even when `codex` won't
 start.
 
-**It stays in step with Codex.** Each OMD release is built on one Codex version line, now `0.165.x`, and follows
+**It stays in step with Codex.** Each OMD release is built on one Codex version line, now `0.166.x`, and follows
 the latest stable Codex. Turn off automatic Codex updates and update Codex only once `omd update` supports the new
 version. Updates are signed and checked before they install, and `omd update rollback` undoes the last one.
 

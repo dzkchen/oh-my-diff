@@ -143,7 +143,7 @@ pub use store::ModStore;
 pub use store::Trust;
 pub(crate) use store::lock as store_lock;
 
-pub const CODEX_HOST_RELEASE: &str = "0.165.0";
+pub const CODEX_HOST_RELEASE: &str = "0.166.0";
 /// The OMD product release: the `codex-omd` crate version is the release version (`release.py check` enforces it).
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "1.0.0";
@@ -640,7 +640,7 @@ pub fn capability_phrase(capability: &str) -> &str {
         "config" => "read Codex settings",
         "config.write" => "change Codex settings",
         "inventory" => "list skills, plugins and commands",
-        "account" => "read account details",
+        "account" => "read account details and switch workspaces",
         "packages" => "install and manage mods",
         "approvals" => "answer approval prompts",
         "events" => "send and receive mod events",

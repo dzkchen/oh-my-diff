@@ -2,7 +2,7 @@
 
 This is every [mod API reference page](reference/README.md) in one file, for agents and search.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.165.0`.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.166.0`.
 `omd-mod status` reports the OMD release as `host.omd`, the version `compatibility.releases` matches. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
 ## Generated declarations
@@ -104,7 +104,7 @@ follows.
 
 #### Codex plugins and hooks
 
-Codex 0.165.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
+Codex 0.166.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
 that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_model_request`,
 `post_model_request`, `pre_tool_use`, `permission_request`, `post_tool_use`, `pre_compact`, `post_compact`,
 `session_start`, `session_end`, `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
@@ -221,7 +221,7 @@ Capabilities name authority classes. A call or registration outside the package'
 | Capability | Grants |
 | --- | --- |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`, `terminal.image_sample`; the `component_change` interceptor |
-| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `app.routes`, `session.info` and `tools.list` |
+| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `app.routes`, `session.info` and `tools.list`; `account` lists ChatGPT workspaces (`accountSession/list`) and, from user actions only, switches them (`accountSession/switch`, confirmed natively on every call; browser sign-in stays native) |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
@@ -3414,7 +3414,8 @@ interceptor order, so unrelated wrappers nest, and each hook sees the props the 
 #### `tool_call` props
 
 Every agent tool row (`RenderToolCall`) carries `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
-`interrupted`), `duration_ms` and `expanded`, and per kind:
+`interrupted`), `duration_ms` (null without a recorded start and completion, such as a patch row drawn live) and
+`expanded`, and per kind:
 
 | `kind` | Props |
 | --- | --- |
@@ -3525,8 +3526,8 @@ the upstream fields.
 
 #### Selection and clipboard
 
-`terminal.selection {}` (`terminal`) returns `{text, truncated}` for the current TUI selection, or `text: null`
-when there is none. It prefers the visible transcript overlay and never reads obscured transcript text, another
+`terminal.selection {}` (`terminal`) returns `{text, truncated}` for the current TUI selection (a mouse selection
+or a select-mode mark), or `text: null` when there is none. It prefers the visible transcript overlay and never reads obscured transcript text, another
 client's selection or the OS clipboard.
 
 - UTF-8 text is capped at 64 KiB and further bounded by its JSON-encoded size so a selection followed by a copy

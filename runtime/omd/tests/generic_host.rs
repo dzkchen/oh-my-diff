@@ -1837,7 +1837,7 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
 #[test]
 fn exec_children_lead_their_own_session_without_the_terminal() {
     let _exec = exec_slot();
-    let (_temp, _repository, data, authority) = setup();
+    let (_temp, repository, data, authority) = setup();
     let active = || true;
     let host = Host {
         authority: &authority,
@@ -1855,6 +1855,9 @@ fn exec_children_lead_their_own_session_without_the_terminal() {
         os_access: Some(&access),
         ..caller(&capabilities, &[], Origin::Tool)
     };
+    let program = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
+    let hash = codex_omd::host::program_hash(&program).unwrap();
+    codex_omd::program_trust::pin(&data, granted.id, &program, &hash).unwrap();
     let stat = host
         .call(
             &granted,

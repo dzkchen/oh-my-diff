@@ -119,7 +119,7 @@ const WORKERS = [
   { name: 'claude', provider: 'omd_claude_cli', model: 'claude-opus-5-5', roles: ['lead'], available: true, tools: [], billing: 'included_subscription' },
 ];
 const stored = value => ({ 'store.get': () => ({ value, revision: 3, provenance: {} }) });
-const SESSION = { thread_id: 't', root: '/repo', cwd: '/repo', codex_version: '0.165.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1, process_id: 'p' };
+const SESSION = { thread_id: 't', root: '/repo', cwd: '/repo', codex_version: '0.166.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1, process_id: 'p' };
 
 function fire(event, name, payload, { state = null, settings = {}, routes = WORKERS, answer = {} } = {}) {
   const calls = [];

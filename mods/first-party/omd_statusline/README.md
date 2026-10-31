@@ -27,8 +27,8 @@ omd-mod settings "$STORE" "$STORE/sources/omd_statusline" '{"preset": "detailed"
 
 Presets:
 
-- `compact`: `model context limits cost cache git omd`
-- `detailed`: `model effort provider context tokens cache cost limits`, then `git changes pr ci session tools agents plan omd` on a second line
+- `compact`: `model tier context limits cost cache git omd`
+- `detailed`: `model effort tier provider context tokens cache cost limits`, then `git changes pr ci session tools agents plan omd` on a second line
 
 A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLOR`.
 
@@ -51,6 +51,9 @@ A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLO
 ## Segments
 
 - `model`, `effort`, `provider`: the model (`requested→served` if they differ), reasoning effort, provider.
+- `tier`: the processing tier name (such as Fast), from the model catalog, or Flex. With no tier configured it shows the model's catalog default; hidden when no tier applies, as in Codex's own model label.
+- `profile`: `profile: <name>` when the active user config layer is a `--profile` one. Not in a preset; add it to a custom layout.
+- `workspace`: `workspace: <name>` for the selected ChatGPT workspace. Not in a preset; add it to a custom layout.
 - `context`: usage with a bar. `~` and muted after a compaction, rewind or model switch; compactions as `⟳N`.
 - `tokens`, `cache`: token use and cache state.
 - `cost`: session cost. `~` / `est.` for estimates, `included` for subscriptions, `+?` while some cost is unsettled or unknown. Never an invoice. `omd_usage` (`Alt+a`) breaks it down by request.
@@ -83,7 +86,7 @@ Add your own segment with up to four scripts:
 
 Then add `script:weather` to a custom layout.
 
-- Your script gets one JSON object on stdin (session, model, context, tokens, cost, limits, git, github, plan, tools, agents). Unknown fields are null.
+- Your script gets one JSON object on stdin (session, model, profile, workspace, context, tokens, cost, limits, git, github, plan, tools, agents). Unknown fields are null.
 - The first non-empty stdout line is drawn. Colors, bold, italic, underline and `http(s)` links are kept.
 - It runs sandboxed: no network, private HOME, read-only workspace, 100-5000 ms deadline, 8 KiB output. A hang shows `timed out`; a non-zero exit shows `failed`.
 - Scripts come only from your settings, never from a repository file.

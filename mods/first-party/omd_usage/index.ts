@@ -10,10 +10,10 @@ type Entry = {
 };
 type Sample = { scope: string; minutes: number | null; used: number; resets: number | null; at: number; seen: number };
 type Hud = {
-  thread: string | null; entries: Entry[]; dropped: number; shed: number; counted: [string, number][]; owed: [number, string][]; alerted: { budget: number; level: number } | null; since: number | null; turn: string | null; detail: boolean;
+  thread: string | null; entries: Entry[]; dropped: number; shed: number; leadShed: number; counted: [string, number][]; owed: [number, string, boolean][]; alerted: { budget: number; level: number } | null; since: number | null; turn: string | null; detail: boolean;
   current: { model: string | null; provider: string | null; effort: string | null }; tick: number; room: { size: number | null; compact: number | null };
   compaction: { started: number; installed: number; start: number | null; end: number | null; trigger: string | null };
-  reverted: number | null; samples: Sample[]; credits: string | null;
+  reverted: number | null; samples: Sample[]; credits: string | null; native: number | null;
   agents: Record<string, { role: string; status: string; at: number }>; tools: Record<string, { tool: string; at: number }>;
   plan: { done: number; total: number; step: string | null } | null;
   assembled: { at: number; bytes: number; categories: [string, number][] } | null;
@@ -28,8 +28,8 @@ const MAX_SAMPLES = 32;
 const MAX_COUNTED = 512;
 const tag = (key: string) => { let hash = 2166136261; for (const char of key) hash = Math.imul(hash ^ char.codePointAt(0)!, 16777619) >>> 0; return hash.toString(36); };
 const HUD: Hud = {
-  thread: null, entries: [], dropped: 0, shed: 0, counted: [], owed: [], alerted: null, since: null, turn: null, detail: false, current: { model: null, provider: null, effort: null }, tick: 0, room: { size: null, compact: null },
-  compaction: { started: 0, installed: 0, start: null, end: null, trigger: null }, reverted: null, samples: [], credits: null, agents: {}, tools: {}, plan: null, assembled: null,
+  thread: null, entries: [], dropped: 0, shed: 0, leadShed: 0, counted: [], owed: [], alerted: null, since: null, turn: null, detail: false, current: { model: null, provider: null, effort: null }, tick: 0, room: { size: null, compact: null },
+  compaction: { started: 0, installed: 0, start: null, end: null, trigger: null }, reverted: null, samples: [], credits: null, native: null, agents: {}, tools: {}, plan: null, assembled: null,
 };
 const EMPTY: Snapshot = { open: false, ledger: null, error: null, allowance: null, hud: HUD };
 const SPARK = ' .:-=+*#';
@@ -59,7 +59,14 @@ export default function activate(api: ModAPI) {
   const text = (id: string, label: string, body: string): TerminalComponent => ({ type: 'text', id, label, text: visible(body, 4000) });
   const multiline = (id: string, label: string, lines: string[]): TerminalComponent => ({ type: 'text', id, label, text: lines.map(line => line.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '?')).join('\n').slice(0, 4000) });
 
-  const capture = (state: Snapshot): Snapshot => {
+  // Codex reports native dollar usage for the thread on some plans; it replaces the configured-rate estimate.
+  const nativeUsd = (thread: string | null, fallback: number | null) => {
+    const read = thread ? api.host.tryCall('app.request', { method: 'account/usage/read', params: { threadId: thread } }) : null;
+    if (!read?.ok) return fallback;
+    const micros = number(object(object(read.value).threadUsage).nativeUsageUsdMicros);
+    return micros === null ? null : micros / 1e6;
+  };
+  const capture = (state: Snapshot, usage = true): Snapshot => {
     const task = api.host.tryCall('task.status', null);
     const cost = object(task.ok ? task.value.ledger.cost : null);
     const limits = object(task.ok ? task.value.limits : null);
@@ -70,12 +77,15 @@ export default function activate(api: ModAPI) {
         ? { ...entry, cost: { microusd: settled.settled_microusd, basis: (settled.provider_billed === true ? 'provider_reported' : 'settled') as CostBasis }, revision: entry.revision + 1 } : entry;
     });
     let shed = state.hud.shed;
+    let leadShed = state.hud.leadShed;
     let counted = state.hud.counted;
-    const owed = state.hud.owed.filter(([id, name]) => {
-      const microusd = number(attempts.find(attempt => attempt.request === id)?.settled_microusd);
+    const owed = state.hud.owed.filter(([id, name, lead]) => {
+      const attempt = attempts.find(attempt => attempt.request === id);
+      const microusd = number(attempt?.settled_microusd);
       if (microusd === null) return true;
       const seen = counted.find(([other]) => other === name)?.[1] ?? 0;
       shed += Math.max(0, microusd / 1e6 - seen);
+      if (lead && attempt?.provider_billed !== true) leadShed += Math.max(0, microusd / 1e6 - seen);
       counted = [...counted.filter(([other]) => other !== name), [name, Math.max(microusd / 1e6, seen)] as [string, number]].slice(-MAX_COUNTED);
       return false;
     });
@@ -84,7 +94,7 @@ export default function activate(api: ModAPI) {
       ledger: task.ok ? { ...task.value.ledger, cost: { settled_task_charge_microusd: number(cost.settled_task_charge_microusd) } } : state.ledger,
       error: task.ok ? null : `Task status unavailable: ${visible(task.error, 120)}`,
       allowance: task.ok && number(limits.exposure_microusd) ? { used: number(cost.retained_exposure_upper_bound_microusd) ?? 0, limit: limits.exposure_microusd, requests: attempts.length, max: number(limits.requests) ?? 0 } : null,
-      hud: { ...state.hud, entries, owed, shed, counted },
+      hud: { ...state.hud, entries, owed, shed, leadShed, counted, native: usage ? nativeUsd(state.hud.thread, state.hud.native) : state.hud.native },
     };
   };
 
@@ -103,13 +113,18 @@ export default function activate(api: ModAPI) {
     pending: sum.pending + (item.kind === 'pending' ? 1 : 0), included: sum.included + (item.kind === 'included' ? 1 : 0),
     list: sum.list + (item.list ?? 0), unknown: sum.unknown + (item.kind === 'unknown' ? 1 : 0),
   }), { billed: 0, estimate: 0, pending: 0, included: 0, list: 0, unknown: 0 });
-  const spendText = (sum: ReturnType<typeof totals>) => [
-    sum.billed ? `${usd(sum.billed)} billed` : '', sum.estimate ? `~${usd(sum.estimate)} configured-rate est.` : '',
+  const spendText = (sum: ReturnType<typeof totals>, native: number | null = null) => [
+    sum.billed ? `${usd(sum.billed)} billed` : '', native !== null ? `${usd(native)} native` : sum.estimate ? `~${usd(sum.estimate)} configured-rate est.` : '',
     sum.included ? `${sum.included} included${sum.list ? ` (~${usd(sum.list)} list-equivalent)` : ''}` : '',
     sum.pending ? `${sum.pending} unsettled` : '', sum.unknown ? `${sum.unknown} unknown cost` : '',
   ].filter(Boolean).join(' · ') || 'no priced requests';
 
-  const outlay = (hud: Hud) => { const sum = totals(hud.entries); return sum.billed + sum.estimate + hud.shed; };
+  // Native usage covers the lead thread, so it replaces only the lead's configured-rate estimates.
+  const outlay = (hud: Hud) => {
+    const sum = totals(hud.entries);
+    const native = hud.native === null ? 0 : hud.native - totals(hud.entries.filter(entry => isLead(hud, entry))).estimate - hud.leadShed;
+    return sum.billed + sum.estimate + hud.shed + native;
+  };
   const level = (spent: number) => budget === null ? 0 : spent >= budget ? 100 : spent >= budget * 0.8 ? 80 : 0;
 
   const isLead = (hud: Hud, entry: Entry) => entry.kind === 'main' && !entry.agent && (hud.thread === null || entry.thread === hud.thread);
@@ -161,8 +176,9 @@ export default function activate(api: ModAPI) {
       const name = tag(gone.key);
       const seen = hud.counted.find(([other]) => other === name)?.[1] ?? 0;
       hud.shed += Math.max(0, cost - seen);
+      if (item.kind === 'estimate' && isLead(hud, gone)) hud.leadShed += Math.max(0, cost - seen);
       if (cost) hud.counted = [...hud.counted.filter(([other]) => other !== name), [name, Math.max(cost, seen)] as [string, number]].slice(-MAX_COUNTED);
-      if (item.kind === 'pending' && gone.billing !== null) hud.owed = [...hud.owed.filter(([, other]) => other !== name), [gone.billing, name] as [number, string]].slice(-64);
+      if (item.kind === 'pending' && gone.billing !== null) hud.owed = [...hud.owed.filter(([, other]) => other !== name), [gone.billing, name, isLead(hud, gone)] as [number, string, boolean]].slice(-64);
       size -= JSON.stringify(gone).length + 1;
     }
     const extra = before - hud.entries.length;
@@ -240,7 +256,7 @@ export default function activate(api: ModAPI) {
       expires === null ? `Cache expiry: unavailable${last ? ` for ${visible(last.provider, 30)}` : ''}; reuse is never guaranteed` : expires > now ? `Cache expiry: ~${span(expires - now)} left (provider TTL from last cache use; projection, not guaranteed)` : 'Cache expiry: TTL passed; the next request likely writes the prefix again',
     ];
     const workerTokens = tokens(workers);
-    const costLines = [`Lead: ${spendText(totals(lead))}`, `Workers: ${workers.length ? `${spendText(totals(workers))} · ${count(workerTokens.input + workerTokens.output)} tokens` : 'none'}`,
+    const costLines = [`Lead: ${spendText(totals(lead), h.native)}`, `Workers: ${workers.length ? `${spendText(totals(workers))} · ${count(workerTokens.input + workerTokens.output)} tokens` : 'none'}`,
       ...(inherited.length ? [`Inherited from the parent session: ${inherited.length} requests (${spendText(totals(inherited))})`] : []),
       ...(h.entries.some(entry => entry.overage) ? ['Subscription overage: not reported by the provider (unknown)'] : []),
       `Host ledger: ${paid(state.ledger?.cost && typeof state.ledger.cost === 'object' && !Array.isArray(state.ledger.cost) ? state.ledger.cost : null)}`,
@@ -338,12 +354,15 @@ export default function activate(api: ModAPI) {
     const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
     const values = object(config.ok ? object(config.value).config : null);
     hud(state => {
-      state.thread = session.ok ? session.value.thread_id : state.thread;
+      const thread = session.ok ? session.value.thread_id : state.thread;
+      if (thread !== state.thread) state.leadShed = 0;
+      state.thread = thread;
       state.current = { model: session.ok ? session.value.model : state.current.model, provider: session.ok ? session.value.provider : state.current.provider,
         effort: typeof values.model_reasoning_effort === 'string' ? values.model_reasoning_effort : state.current.effort };
       state.room = { size: number(values.model_context_window), compact: number(values.model_auto_compact_token_limit) };
       state.samples = [];
       state.credits = null;
+      state.native = null;
     });
     const read = api.usage.rateLimits();
     if (read.available) hud(state => limits(state, object(read.value), Date.now()));
@@ -376,7 +395,7 @@ export default function activate(api: ModAPI) {
   });
   api.on('turn_start', ({ turn_id }) => hud(state => { state.turn = turn_id; }));
   api.on('turn_end', () => {
-    const state = capture(saved());
+    const state = capture(saved(), saved().open || budget !== null);
     state.hud.tools = {};
     save(state);
     warn();

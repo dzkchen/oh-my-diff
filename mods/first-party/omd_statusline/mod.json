@@ -21,7 +21,7 @@
     "properties": {
       "placement": {"type": "string", "enum": ["below", "above"], "default": "below", "title": "Position", "description": "Show the status line below or above the prompt"},
       "preset": {"type": "string", "enum": ["compact", "detailed", "custom"], "default": "compact", "title": "Preset", "description": "compact or detailed segment sets; custom uses the Custom layout setting"},
-      "layout": {"type": "string", "default": "model effort provider context tokens cache cost limits; git changes pr ci session tools agents plan omd", "title": "Custom layout", "description": "Segment IDs separated by spaces, lines by ; (up to 4 lines); used when Preset is custom"},
+      "layout": {"type": "string", "default": "model effort tier provider context tokens cache cost limits; git changes pr ci session tools agents plan omd", "title": "Custom layout", "description": "Segment IDs separated by spaces, lines by ; (up to 4 lines); used when Preset is custom"},
       "hidden": {"type": "string", "default": "", "title": "Hidden segments", "description": "Segment IDs to hide from the chosen preset, separated by spaces"},
       "glyphs": {"type": "string", "enum": ["unicode", "ascii"], "default": "unicode", "title": "Symbols", "description": "unicode symbols, or plain ascii characters"},
       "bars": {"type": "boolean", "default": true, "title": "Progress bars", "description": "Draw a bar before the context percentage"},

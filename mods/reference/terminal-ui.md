@@ -48,7 +48,8 @@ interceptor order, so unrelated wrappers nest, and each hook sees the props the 
 ### `tool_call` props
 
 Every agent tool row (`RenderToolCall`) carries `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
-`interrupted`), `duration_ms` and `expanded`, and per kind:
+`interrupted`), `duration_ms` (null without a recorded start and completion, such as a patch row drawn live) and
+`expanded`, and per kind:
 
 | `kind` | Props |
 | --- | --- |
@@ -159,8 +160,8 @@ the upstream fields.
 
 ### Selection and clipboard
 
-`terminal.selection {}` (`terminal`) returns `{text, truncated}` for the current TUI selection, or `text: null`
-when there is none. It prefers the visible transcript overlay and never reads obscured transcript text, another
+`terminal.selection {}` (`terminal`) returns `{text, truncated}` for the current TUI selection (a mouse selection
+or a select-mode mark), or `text: null` when there is none. It prefers the visible transcript overlay and never reads obscured transcript text, another
 client's selection or the OS clipboard.
 
 - UTF-8 text is capped at 64 KiB and further bounded by its JSON-encoded size so a selection followed by a copy
