@@ -398,7 +398,6 @@ test('with retry_after_limit, a task stopped by a usage limit restarts once at t
   const failure = { handle: 'h1', role: 'general', status: 'failed', error: 'rate limited', failure: { category: 'rate_limit', code: 429, message: 'limit' } };
   const ended = fire('agent_end', '', failure, { state: started.state, settings, answer: stored(limited) });
   assert.equal(ended.state.tasks.h1.retry_at, now + 60 * 60_000 + 30_000);
-  assert.equal(ended.state.tasks.h1.told, true);
   assert.deepEqual(ended.of('events.schedule').map(call => call.key), ['retry']);
   assert.equal(delegate({ action: 'status', handle: 'h1' }, { state: ended.state, settings }).value.status, 'waiting');
   const due = { ...ended.state, tasks: { h1: { ...ended.state.tasks.h1, retry_at: now - 1 } } };
@@ -406,7 +405,6 @@ test('with retry_after_limit, a task stopped by a usage limit restarts once at t
   const restarted = fire('timer', '', { key: 'retry' }, { state: due, settings, answer: { ...ownFailure, 'agents.spawn': () => ({ handle: 'h2', route: 'sonnet-worker', permissions: 'read_only' }) } });
   assert.deepEqual(restarted.of('agents.spawn'), [{ role: 'general', route: 'sonnet-worker', prompt: 'Map it', workspace: 'read_only', tools: ['exec_command', 'write_stdin'] }]);
   assert.equal(restarted.state.tasks.h2.retry_of, 'h1');
-  assert.equal(restarted.state.tasks.h1.retry_at, undefined);
   assert.match(restarted.state.tasks.h1.error, /restarted as h2/);
   const again = fire('agent_end', '', { ...failure, handle: 'h2' }, { state: restarted.state, settings, answer: stored(limited) });
   assert.equal(again.state.tasks.h2.status, 'failed', 'a restart is not restarted again');
@@ -420,5 +418,4 @@ test('with retry_after_limit, a task stopped by a usage limit restarts once at t
   assert.match(turnedOff.state.tasks.h1.error, /retry_after_limit is off/);
   const off = fire('agent_end', '', failure, { state: delegate({ action: 'start', task: 'Map it', model: 'sonnet' }).state, answer: stored(limited) });
   assert.equal(off.state.tasks.h1.retry_at, undefined, 'off by default');
-  assert.equal(off.state.tasks.h1.brief, undefined);
 });

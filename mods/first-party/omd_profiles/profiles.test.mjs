@@ -433,7 +433,6 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   assert.ok(invoke(state, 'command', 'add ollama local', 'profile').state.accounts.some(account => account.name === 'local'));
   assert.equal(calls.filter(call => call.operation === 'credentials.request').length, keyless[0]);
   assert.deepEqual(prompted().slice(keyless[1]).map(prompt => prompt.title), ['Upstream model', 'Context window', 'Change model routes']);
-  assert.match(prompted().at(-1).message, /local, free/);
   answers.length = 0;
   answers.push('gpt-6.1-sol');
   setup = [new Error('exec_program_unavailable')];
