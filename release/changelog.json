@@ -8,7 +8,7 @@
       {
         "label": "New",
         "items": [
-          "Subagents: a subagent can run on another provider's model (for example a Claude model through omd_claude_cli), counts against worker limits and wakes its parent when it finishes; mods get an opt-in `delegate_task` tool",
+          "Subagents: a subagent can run on another provider's model (for example a Claude model through omd_claude_cli) and counts against worker limits; with omd_subagent_router an idle lead wakes when a subagent's result arrives, and mods get an opt-in `delegate_task` tool",
           "Subagents: ordered fallback models with the reason each route was skipped, and an opt-in restart of a delegated task once its provider's usage limit resets",
           "Profiles: a keyless Ollama profile for a local address, and `/profile window` sets how much of a thread a model sees",
           "Workspace: the opt-in omd_workspace mod arranges chat and panels freely (presets, saved layouts, `/workspace move` and `swap`); drag a panel title to dock it, Ctrl+] switches between the chat and the last panel, Esc returns to the chat",
@@ -25,7 +25,7 @@
         "label": "Changed",
         "items": [
           "Upstream: Codex 0.166.0; OMD 1.3.0 is the first release that supports it",
-          "Plan mode is removed",
+          "Plan mode: in OMD+, omd_plan_removal now removes Plan mode completely; a thread that still holds it runs in the default mode",
           "Performance: mods activate, start and save state faster, and the statusline and `/mods` render faster",
           "Sandbox: agent commands keep your Codex sandbox; OMD's protected paths (mod store, leases, secret files) are denied to every sandboxed command, file tools included",
           "Logo: shows the OMD version and profile (OMD+ or OMD Core); the slash popup lists each mod command once",
