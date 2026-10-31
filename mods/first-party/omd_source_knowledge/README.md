@@ -1,21 +1,25 @@
 # omd_source_knowledge
 
-Lets the agent keep notes about a repository for later tasks. A fact points at exact lines of a file and is checked
-against the file each time it's reused. The agent can also keep a copy of a small structured result from the current
-thread, such as a test report, as evidence, and propose lessons from that evidence. A lesson is used only after you
-approve it.
+Lets the agent keep notes about a repository for later tasks, each checked against the file it points at before it's
+reused. It's off by default in OMD+. OMD Core doesn't include it.
+
+A fact points at exact lines of a file and is checked against the file each time it's reused. The agent can also keep
+a copy of a small structured result from the current thread, such as a test report, as evidence, and propose lessons
+from that evidence. A lesson is used only after you approve it.
 
 ## Turn it on
 
-It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
+Turn it on in `/mods`, or run:
 
 ```sh
 omd mods enable omd_source_knowledge
 ```
 
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+
 ## Use it
 
-The agent calls its tools; you don't need to.
+The agent calls its tools. You don't need to.
 
 | Tool | What it does |
 | --- | --- |
@@ -26,18 +30,22 @@ The agent calls its tools; you don't need to.
 | `inspect` | Lists everything kept, including facts that are no longer valid and why |
 
 When it reuses a fact, it rereads a changed file and returns the current text of the fact's lines. A fact is marked
-invalid and left out when its file is gone, is no longer a small text file, is now shorter than the fact's lines, or
-when those lines are now blank, start or end with whitespace, or look like a credential. Lessons whose evidence was
-removed are left out too.
+invalid and left out when:
 
-Every call names the repository. Each call that adds, approves or removes notes also names the revision it expects; if the
-notes changed first, it is refused with `knowledge_revision_stale` and nothing is written. Reuse and `inspect` can
-move the revision too, when they record a fact that changed.
+- its file is gone, is no longer a small text file or is now shorter than the fact's lines
+- those lines are now blank, start or end with whitespace, or look like a credential
 
-## Approve and remove
+Lessons whose evidence was removed are left out too.
 
-Three commands each take one line of JSON with no spaces outside quoted text. Ask the agent to run `inspect` for
-the repository name and current revision.
+Every call names the repository. Calls that add, approve or remove notes also name the revision they expect, a number
+that goes up each time the notes change. If the notes changed in between, the call is refused with
+`knowledge_revision_stale` and nothing is written. Reuse and `inspect` can also raise the revision when they record a
+changed fact.
+
+### Approve and remove
+
+Three commands each take one line of JSON with no spaces outside quoted text. Ask the agent to run `inspect` for the
+repository name and current revision.
 
 ```text
 /omd_source_knowledge:approve_lesson {"repository_identity":"my-app","expected_revision":7,"lesson_id":"flaky-retry","action":{"actor":"me","reason":"seen twice"}}
@@ -50,6 +58,10 @@ the repository name and current revision.
   proposed, so approve them again if the evidence comes back.
 - `discard` removes everything kept for the repository.
 
+## Settings
+
+It has no settings.
+
 ## Needs and limits
 
 - Up to 16 facts, 8 evidence records and 8 lessons per repository, 32 KB in all.
@@ -61,6 +73,10 @@ the repository name and current revision.
 - Files over 48 KB aren't read, and one reuse rereads at most 48 KB of changed files. Facts past that are left out
   this time and rechecked next time.
 - Evidence must still be readable in the current thread when it's kept. Later tasks reuse the stored copy.
-- The repository and task names are whatever the agent passes; OMD doesn't verify them. The actor and reason of an
+- The agent passes the repository and task names, and OMD doesn't verify them. The actor and reason of an
   approval are stored as typed, and the mod can't confirm who ran the command. Only the current notes are kept, with
   no history of approvals or removals.
+
+## More
+
+- [Included mods](../../../docs/collection.md)

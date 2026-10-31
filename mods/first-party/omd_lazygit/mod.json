@@ -5,7 +5,7 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Runs lazygit inside the session, full screen or as an omd_workspace panel; its edits open in your editor or become @path mentions. Experimental",
+  "description": "Runs lazygit inside the session, full screen or as an omd_workspace panel; its edits open in your editor or become @path mentions",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_lazygit"},
   "capabilities": ["commands", "terminal", "store", "exec", "os", "pty", "composer", "inventory", "services"],

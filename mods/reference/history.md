@@ -1,27 +1,29 @@
 # History and compaction
 
-How a mod sees and changes conversation history: the bounded view of each model request, store-time redaction,
-durable transcript rewriting and compaction interception. Use this page when a mod edits what the model sees, what
-is stored, or how and when the thread compacts.
+Use it when a mod edits what the model sees, what is stored, or how and when the thread compacts. It covers the
+bounded view of each model request, store-time redaction, durable transcript rewriting and compaction interception.
+
+| Mechanism | Capability | What it changes |
+| --- | --- | --- |
+| [Model-bound history](#model-bound-history-history_v1) | `history` | One model request; the transcript is unchanged |
+| [Store-time history rewriting](#store-time-history-rewriting-history_persist_v1) | `history_persist` | Text written to the rollout and the prompt-recall file |
+| [Durable transcript rewriting](#durable-transcript-rewriting-history_rewrite_v1) | `history_write` (experimental) | The persisted transcript |
+| [Compaction interception](#compaction-interception-compaction_intercept_v1) | `compaction` | How and when the thread compacts (experimental) |
+
+Capabilities are listed in [Capabilities](capabilities.md). Entries are frozen in Mod API `1.0.0` unless marked
+experimental (see the [registry table](stability-and-migration.md#experimental-entries-in-the-registry)).
+Runs on Apple Silicon macOS.
 
 ## Model-bound history (`history_v1`)
 
 `replace('history')` receives a bounded view of each model request's items and may return `{drop?, replace?,
 insert?}`.
 
-Each item in the view carries:
+Each item in the view contains `index`, `type`, `role`, `call_id`, `editable`, a 2 KiB text preview, the byte size and
+the `images` count.
 
-- `index`
-- `type`
-- `role`
-- `call_id`
-- `editable`
-- a 2 KiB text preview
-- the byte size
-- the `images` count
-
-The view holds the newest items, at most 2048, that fit the callback's 4 MiB runner request, in order and keyed by
-their original `index`.
+The view contains the newest items in order, keyed by their original `index`. It has at most 2,048 items and must fit
+the callback's 4 MiB runner request.
 
 ### History edit rules
 
@@ -32,51 +34,57 @@ their original `index`.
 - The last item (the current input) is kept.
 - Inserts are `user` or `developer` text.
 
-The transcript and resume data are unchanged, each applied edit is recorded, and an invalid edit or failing mod
-keeps the original request.
+An edit changes only the request being sent. The transcript and resume data stay unchanged, and the host records each
+applied edit. An invalid edit or a failing mod leaves the original request.
 
 ## Store-time history rewriting (`history_persist_v1`)
 
-`api.intercept('history_persist', …)` (authority capability `history_persist`) rewrites history text before it is
-stored, for redaction: every text written to the thread's rollout and the prompt-recall file
-(`~/.codex/history.jsonl`). Each batch arrives as `{thread_id, entries}`; an entry is `{index, kind, role, call_id,
-text}`.
+`api.intercept('history_persist', …)` (authority grant `history_persist`) rewrites history text before the host
+stores it, so a mod can redact it. It sees every text written to the thread's rollout and to the prompt-recall file
+(`~/.codex/history.jsonl`). Each batch arrives as `{thread_id, entries}`, and an entry is
+`{index, kind, role, call_id, text}`.
+
+Redaction applies to stored text only. The model sees the original text until the thread is resumed, forked or
+rolled back from the rollout.
 
 ### `history_persist` entry kinds
 
 `kind` is one of:
 
-- a response item type:
-  - `message`
-  - `agent_message`
-  - `reasoning` (summary and raw text)
-  - `function_call`
-  - `custom_tool_call`
-  - `local_shell_call` (each command word and environment value)
-  - `tool_search_call` (each string in its arguments)
-  - `function_call_output`
-  - `custom_tool_call_output`
-  - `tool_search_output` (tool descriptions)
-  - `web_search_call` (queries, URLs, patterns)
-  - `image_generation_call` (the revised prompt)
-- a text kept beside an item: `delivered_message`, `sender_user_messages`;
-- an event copy:
-  - `event:user_message`
-  - `event:agent_message` (also a turn's last agent message)
-  - `event:reasoning`
-  - `event:plan`
-  - `event:goal` (a thread goal's objective)
-  - `event:command_execution` (command words, input and output)
-  - `event:function_call_output`
-  - `event:mcp_tool_call` (each argument string, result text, structured content string and error)
-  - `event:dynamic_tool_call`
-  - `event:file_change` (added and deleted file contents, diffs, stdout and stderr)
-  - `event:web_search` (query, action and result strings)
-  - `event:review` (custom instructions, hint, findings and explanation)
-  - `event:image_generation`
-  - `event:hook_prompt` or `event:collab_agent_tool_call` (the prompt);
-- `inter_agent_communication`, `compacted` (a compaction summary and its replacement history) or `prompt_history`
-  (a prompt-recall entry).
+| `kind` | Group | Text it covers |
+| --- | --- | --- |
+| `message` | response item | its text |
+| `agent_message` | response item | its text |
+| `reasoning` | response item | summary and raw text |
+| `function_call` | response item | its arguments |
+| `custom_tool_call` | response item | its input |
+| `local_shell_call` | response item | each command word and environment value |
+| `tool_search_call` | response item | each string in its arguments |
+| `function_call_output` | response item | its text |
+| `custom_tool_call_output` | response item | its text |
+| `tool_search_output` | response item | tool descriptions |
+| `web_search_call` | response item | queries, URLs, patterns |
+| `image_generation_call` | response item | the revised prompt |
+| `delivered_message` | text kept beside an item | its text |
+| `sender_user_messages` | text kept beside an item | its text |
+| `event:user_message` | event copy | its text |
+| `event:agent_message` | event copy | also a turn's last agent message |
+| `event:reasoning` | event copy | its text |
+| `event:plan` | event copy | its text |
+| `event:goal` | event copy | a thread goal's objective |
+| `event:command_execution` | event copy | command words, input and output |
+| `event:function_call_output` | event copy | its text |
+| `event:mcp_tool_call` | event copy | each argument string, result text, structured content string and error |
+| `event:dynamic_tool_call` | event copy | each argument string, output text and error |
+| `event:file_change` | event copy | added and deleted file contents, diffs, stdout and stderr |
+| `event:web_search` | event copy | query, action and result strings |
+| `event:review` | event copy | custom instructions, hint, findings and explanation |
+| `event:image_generation` | event copy | the revised prompt |
+| `event:hook_prompt` | event copy | the prompt |
+| `event:collab_agent_tool_call` | event copy | the prompt |
+| `inter_agent_communication` | other | its text |
+| `compacted` | other | a compaction summary and its replacement history |
+| `prompt_history` | other | a prompt-recall entry |
 
 ### `history_persist` returns and batching
 
@@ -90,12 +98,10 @@ long run without whitespace is cut inside a token.
 ### `history_persist` effects and limits
 
 - Item ids, call ids, roles, order and count never change.
-- A rewritten response item carries `rewritten {revision, op: "redact", by}` and reads as not original. `by` names
-  the mods whose link changed the text (`mod:<id>`) and `host` when entries were withheld.
+- A rewritten response item contains `rewritten {revision, op: "redact", by}` and reads as not original. `by` names
+  each mod whose interceptor changed the text (`mod:<id>`), and `host` when the host withheld entries.
 - A rewritten user message drops its text elements.
 - The interceptor gets no host operations.
-- The live conversation keeps the original text until the thread is resumed, forked or rolled back from the
-  rollout.
 
 Not offered:
 
@@ -103,7 +109,7 @@ Not offered:
 - images and other binary payloads
 - encrypted content
 - extension-owned items (standalone web search, image generation and sleep)
-- sub-agent activity
+- subagent activity
 - realtime transcripts
 
 ### `history_persist` failures
@@ -114,8 +120,11 @@ Not offered:
 
 ## Durable transcript rewriting (`history_rewrite_v1`)
 
-A mod with the `history_write` authority grant changes the persisted transcript itself through `app.request
-thread/rewrite {threadId, expectedRevision?, edits?, undo?}`, on the current thread or a thread it started.
+Experimental: the `history_write` capability is experimental.
+
+A mod with the `history_write` authority grant changes the persisted transcript itself by calling
+[`app.request`](app-bridge-and-approvals.md) with `thread/rewrite {threadId, expectedRevision?, edits?, undo?}`, on
+the current thread or a thread it started.
 Revoking the mod drops `history_write`.
 
 ### Reading rows
@@ -123,13 +132,12 @@ Revoking the mod drops `history_write`.
 Without `expectedRevision` the call only reads `{revision, rows}`; `edits` or `undo` without it fail with
 `history_rewrite_invalid`.
 
-Each row is `{id, turnId, kind, access}`:
+A row pairs a display item with its model items: a message, or a tool call with its output. Each row is
+`{id, turnId, kind, access}`:
 
 - `kind` is `message.<role>`, the tool call type or a display item type.
 - `access` is `edit`, `delete` (reasoning, web search, image generation and display-only items) or `frozen`
   (compaction, configuration and rows before the newest compaction checkpoint).
-
-A row pairs a display item with its model items: a message, or a tool call with its output.
 
 ### Edits
 
@@ -155,8 +163,11 @@ A row pairs a display item with its model items: a message, or a tool call with 
 | Error | When |
 | --- | --- |
 | `history_rewrite_invalid` | `edits` or `undo` without `expectedRevision`, or not exactly one of 1 to 256 `edits` and `undo` |
-| `history_rewrite_busy` | A turn is in progress or agent mail is pending on the thread. The check is repeated atomically when the thread unloads, so a turn that starts meanwhile is never cut off and the thread stays loaded; retry once it is idle |
+| `history_rewrite_busy` | A turn is in progress or agent mail is pending on the thread |
 | `history_revision_conflict` | A stale `expectedRevision` |
+
+The host repeats the busy check atomically when the thread unloads, so a turn that starts meanwhile is never cut off
+and the thread stays loaded. Retry once the thread is idle.
 
 Any refused edit leaves the transcript unchanged.
 
@@ -167,7 +178,7 @@ A rewrite copies the whole edited transcript to a new rollout and switches the t
 `thread/rewritten {threadId, revision}` and the terminal reloads the transcript. The replaced rollout is kept
 unchanged.
 
-- Each inserted, replaced or moved model item carries `rewritten {revision, op, source?, by: "mod:<id>"}` metadata.
+- Each inserted, replaced or moved model item contains `rewritten {revision, op, source?, by: "mod:<id>"}` metadata.
   It loses the host's execution, delivery and tool-call inventory metadata and so never proves that a tool ran.
 - The approval reviewer's transcript labels rewritten messages and tool rows as not original.
 - Receipts, usage and evidence records are not rewritten.
@@ -187,9 +198,12 @@ An interrupted rewrite, including a record torn by a crash, is rolled forward or
 
 ## Compaction interception (`compaction_intercept_v1`)
 
+Experimental: the `compaction` interceptor is experimental.
+
 `api.intercept('compaction', (input, next) => …)` (capability `compaction`) sees every compaction of the lead
-thread once: manual `/compact` and automatic pre-turn, mid-turn and post-turn compaction, through local
-summarization (`implementation: 'local'`), provider compaction (`'remote'`) or a token-budget reset (`'budget'`).
+thread once. That includes manual `/compact` and automatic pre-turn, mid-turn and post-turn compaction.
+`implementation` is `local` for local summarization, `remote` for provider compaction or `budget` for a token-budget
+reset.
 
 ### Compaction input
 
@@ -234,7 +248,8 @@ the new history.
 
 ### Compaction summarizers and results
 
-A custom summarizer calls `model.fork` (the conversation on its own route) or `model.complete` and answers
+A custom summarizer calls [`model.fork`](model-calls.md#modelfork) (the conversation on its own route) or
+[`model.complete`](model-calls.md#modelcomplete) and answers
 `{summary}`.
 
 Interrupting the turn cancels a waiting chain. The installed result persists as the normal compaction checkpoint,
@@ -244,3 +259,11 @@ so resume reads it.
 they then decide. `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `deferred` or `failed`),
 `by` and `provider_call`. Both are observe-only events of the `lifecycle` capability: a handler cannot change or
 stop the compaction.
+
+### Evidence across compaction
+
+With the `sessions` capability, `turn_end` delivers `evidence`, a completed-turn packet of the turn's visible records.
+Completed-turn packets retain bounded original visible records across a host-observed compaction, tagging each
+segment's records with its history revision. Compaction summaries do not replace those records. An unobserved
+history reset or interrupted compaction still rejects evidence explicitly. The mod chooses how to select and
+summarize a truncated packet.

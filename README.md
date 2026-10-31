@@ -16,37 +16,46 @@
 <p align="center">
   <a href="https://www.ohmydiff.me">Website</a> ·
   <a href="docs/install.md">Install</a> ·
-  <a href="docs/collection.md">Included mods</a> ·
-  <a href="docs/write-a-mod.md">Write a mod</a> ·
+  <a href="docs/README.md">Docs</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-Oh My Diff (OMD) is [Codex CLI](https://github.com/openai/codex) with a host for TypeScript mods: new commands,
-tools, context and screens. You still run `codex`, with your settings, sign-in and sessions.
+Oh My Diff (OMD) is [Codex CLI](https://github.com/openai/codex), OpenAI's coding agent for the terminal, with a
+host for TypeScript mods. A mod is a small program that adds commands, tools, context or screens to Codex. You still
+run `codex`, with your settings, sign-in and sessions, and you can go back to plain Codex at any time with nothing
+to migrate. OMD is in beta and runs only on Apple Silicon macOS.
+
+A mod can add a slash command, give the model a new tool, add context to a request, draw a status line, a panel or a
+dialog, or react when the agent runs a tool. A mod you install doesn't run until you turn it on, and OMD shows what
+the mod may do before you allow it. OMD+ turns some of its included mods on for you.
+[How OMD works](docs/how-omd-works.md) explains the design, and [trust and permissions](docs/trust-and-permissions.md)
+explains what a mod can and can't do.
 
 ## Install
 
-Needs an Apple Silicon Mac, Codex `0.166.x` and Python 3.12+ ([details](docs/install.md#before-you-begin)).
+You need an Apple Silicon Mac, Codex `0.166.x` already installed, and Python 3.12 or later. The
+[install guide](docs/install.md) lists every requirement.
 
-There are two installs. Pick one; you can switch later by rerunning the command with the other profile.
+There are two install profiles, OMD+ and OMD Core. Choose OMD+ unless you want only the mod host, the part of OMD
+that loads mods. You can switch later by running the other command.
 
-**OMD+ (recommended for most people)** is OMD plus the [mod collection](docs/collection.md): a status line, compact
-tool output, a pinned plan, a model picker and more are on from the start, and the rest are a click away in `/mods`.
-Three of its defaults change how Codex behaves: an approval nobody answers within two minutes is declined, a large
-idle chat is compacted (cancelling a pending approval) and `/plan` is removed. Turn any of them off in `/mods`.
+The OMD+ install profile (`--profile full`) is OMD plus the [included mods](docs/collection.md). A status line,
+compact tool output, a pinned plan, a model picker and more are on from the start, and the rest are a click away in
+`/mods`. Three of its defaults change how Codex behaves: an approval nobody answers within two minutes is
+declined, a large idle chat is compacted (cancelling a pending approval) and `/plan` is removed. Turn any of them off
+in `/mods`.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
 ```
 
-**OMD Core** is only the mod host: the `/mods` screen, update notices and the OMD mark, and Codex otherwise looks and
-behaves as it always has. Choose it if you want to add only mods you pick yourself, or to write your own.
+The OMD Core install profile (`--profile platform`) is only the mod host: the `/mods` screen, update notices and the
+OMD logo. Codex otherwise looks and behaves as it always has. Choose it to add only mods you pick yourself, or to
+write your own.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile platform
 ```
-
-[Update, switch profile and uninstall](docs/install.md).
 
 ## First run
 
@@ -54,51 +63,41 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/rele
 codex
 ```
 
-Type `/mods` to see which mods are on and turn others on or off. If `codex` is still plain Codex, add the
-`export PATH=...` line the installer printed to the end of `~/.zshrc` and open a new shell. Run `omd` for the
-commands you can use from a shell.
+Codex starts and shows the OMD logo. Type `/mods` to see which mods are on and to turn others on or off. Outside
+`codex`, run `omd` in a shell for a short summary of the commands that install, update and manage mods. If `codex`
+still starts plain Codex, see [troubleshooting](docs/troubleshooting.md).
 
-## How OMD works
+## Where to go next
 
-**It is still Codex.** OMD is the Codex CLI you already use, rebuilt with one addition: a place for mods to plug in.
-The installer puts a `codex` command in `~/.local/bin` that starts this build instead of the stock one. Your
-settings, sign-in, sessions and history in `~/.codex` are the same ones Codex uses, so you can go back to plain
-Codex at any time with nothing to migrate.
+Use OMD:
 
-**Mods are small add-ons.** A mod is a TypeScript package that can add a slash command, give the model a new tool,
-add context to a request, draw a status line, a panel or a dialog, or react when the agent runs a tool. OMD+ comes
-with a collection of them; you can also install mods from the curated directory, npm, Git or a folder with
-`omd install`, or [write your own](docs/write-a-mod.md). Just like Claude Mods!
+- [Install, update, switch install profile or uninstall](docs/install.md)
+- [Included mods](docs/collection.md) and [Manage mods](docs/manage-mods.md)
+- [Use Claude, Cursor or an API key](docs/use-other-providers.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
-**You decide what runs.** Installing a mod doesn't turn it on. When you turn one on, OMD shows what it is allowed to
-do, such as read files, use the network or run programs, and asks first. Mods run in small sandboxed processes
-beside Codex, and if one misbehaves, `omd mods disable ID` switches it off from any shell, even when `codex` won't
-start.
+Build a mod:
 
-**It stays in step with Codex.** Each OMD release is built on one Codex version line, now `0.166.x`, and follows
-the latest stable Codex. Turn off automatic Codex updates and update Codex only once `omd update` supports the new
-version. Updates are signed and checked before they install, and `omd update rollback` undoes the last one.
+- [Write your first mod](docs/mod-authors/first-mod.md)
+- [Agent mod guide](docs/AGENT_MOD_GUIDE.md), for coding agents
+- [Mod API reference](mods/reference/README.md)
+
+Contribute:
+
+- [Contributing](CONTRIBUTING.md)
+- [Report a security problem](SECURITY.md) privately, not in a public issue
+
+The [docs index](docs/README.md) lists every page.
 
 ## Status
 
-Mod API `1.0.0` is stable; surfaces marked experimental can change ([compatibility](mods/conformance/COMPATIBILITY.md)).
-The API is still young, so expect new capabilities. If you need a specific one, open an issue or a PR.
+Expect bugs and rough edges while OMD is in beta. Mod API `1.0.0` is stable, and the parts marked experimental can
+change ([support policy](docs/support.md)).
 
-OMD is in beta and under active development, so expect bugs; please report them in an issue. If you'd like to become
-a core contributor, get in touch.
-
-## Help and contributing
-
-- Bug or docs problem: [open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
-- Security problem: [report it privately](SECURITY.md), not in a public issue.
-- Missing API for a mod: [request it](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml).
-- Code or docs change: see [CONTRIBUTING.md](CONTRIBUTING.md). New features are best written as mods.
-
-## Docs
-
-- [Install, update, remove](docs/install.md)
-- [Included mods](docs/collection.md) and [manage mods](docs/manage-mods.md)
-- [Write a mod](docs/write-a-mod.md), [API reference](mods/reference/README.md) and [agent mod guide](docs/AGENT_MOD_GUIDE.md)
+The API is young, so if a mod needs a capability that's missing,
+[request it](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml). For bugs and docs problems,
+[open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose). To become a core contributor, open an
+issue and say so. New features are best written as mods.
 
 Oh My Diff is not affiliated with or endorsed by OpenAI.
 

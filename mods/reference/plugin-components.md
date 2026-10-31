@@ -1,58 +1,31 @@
 # Plugin components and shell commands
 
-How a plugin carries a mod component, how the `omd` shell command dispatches exported CLI aliases, and how session
-reads and request helpers behave outside the TUI.
+Use it when a plugin contains a mod component or when you run a mod's exported shell command with `omd COMMAND`.
+To bundle a mod in a plugin step by step, see
+[Bundle a mod in a plugin](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/bundle-in-a-plugin.md).
+
+The descriptor and `omd COMMAND` run on Apple Silicon macOS.
 
 ## Plugin component descriptor
 
-A plugin can contain `.codex-plugin/omd.json` with:
+A plugin names its [mod component](glossary.md#mods-and-the-host) in `.codex-plugin/omd.json`:
 
 ```json
-{"schema":1,"component":"component","sha256":"<inspected package digest>"}
+{"schema":1,"component":"mod","sha256":"<inspected package digest>"}
 ```
 
-The contained directory is an ordinary public-API package with `mod.json` and `index.ts`.
+`component` names the component's folder in the plugin, and `sha256` is the package digest that
+`omd-mod plugin-component` reports for it. The folder is an ordinary public-API package with `mod.json` and
+`index.ts`.
 
 - Inspect it with `omd-mod plugin-component PLUGIN_ROOT`; the inspector rejects traversal, symlinks and digest
   changes.
-- Trust and enable the inspected component through the existing mod-store workflow. The descriptor does not
-  activate it.
+- Trust and enable the inspected component the same way as any other package ([Packaging](packaging.md)). The
+  descriptor does not activate it.
 
 ## `omd COMMAND` shell dispatch
 
-`omd COMMAND --repo PATH [--store STORE] [--home CODEX_HOME] [--sqlite-home DIR]` dispatches an exported CLI alias. It offers
-`evidence.*` and `sessions.*` only; model and process operations are unavailable. The host store must be protected
-from agent process writes. Ambiguous command ownership fails closed.
-
-## Independent examples
-
-Independent examples live in [`examples/virtual_reader`](../examples/virtual_reader),
-[`examples/scoped_data`](../examples/scoped_data), [`examples/review_probe`](../examples/review_probe), and
-[`examples/workspace`](../examples/workspace). They demonstrate shared interfaces, not production
-implementations.
-
-## Evidence across compaction
-
-Completed-turn packets retain bounded original visible records across a host-observed compaction, tagging each
-segment's records with its history revision. Compaction summaries do not replace those records. An unobserved
-history reset or interrupted compaction still rejects evidence explicitly. The extension decides how to select and
-summarize a truncated packet.
-
-## Session reads and the SQLite home
-
-Live session reads use the runtime's configured state database, including a separate SQLite home. Standalone
-commands resolve the selected user configuration/profile and `CODEX_SQLITE_HOME`; `--sqlite-home` explicitly
-selects the state directory.
-
-- If a repository or system configuration redirects SQLite, standalone dispatch requires that explicit directory
-  rather than guessing.
-- Relative SQLite directories are rejected.
-- The pinned reader consults `state_5.sqlite` read-only before and after a read, and does not modify transcripts or
-  opt-out state.
-
-## Request helper supervision
-
-Granted request helpers use the host's bounded request supervisor. It captures a completed helper result before
-returning it, then terminates the process group; cancellation, deadline and loss of the host also terminate the
-group. Existing long-running service supervision remains separate. The helper, supplied by the extension, owns
-request parsing, remote protocols and content selection.
+`omd COMMAND --repo PATH [--store STORE] [--home CODEX_HOME] [--sqlite-home DIR]` runs the command a mod exports with
+the `cli` option of [`api.command`](sdk-helpers.md#other-api-members). That command can call only `evidence.*` and
+`sessions.*`. Model and process operations aren't available. Protect the mod store from writes by agent processes.
+When more than one mod exports `COMMAND`, `omd` refuses to run it (`plugin_command_collision`).

@@ -1,9 +1,17 @@
-# Packaging, publishing and offline scenarios
+# Packaging
 
-How packages are planned, installed, locked, protected and published, and how `mod.test.json` scenarios test a mod
-offline. For the author-side commands, see [Authoring](authoring.md).
+Use it when you plan, install, update, roll back, protect or inspect packages, from the shell with `omd-mod` or
+from a mod with `packages.*`. For the author-side commands, see [Authoring](authoring.md). To publish a mod to npm
+or Git step by step, see
+[Install, share and update a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/publish-a-mod.md).
+
+Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
+[registry table](stability-and-migration.md#experimental-entries-in-the-registry)). `packages.*` operations need the
+`packages` capability. The commands run on Apple Silicon macOS.
 
 ## Package commands
+
+These `omd-mod` commands manage a package store.
 
 ### Install, update and remove
 
@@ -15,28 +23,37 @@ offline. For the author-side commands, see [Authoring](authoring.md).
 | `omd-mod package-rollback-plan STORE ID` | Preview the prior integrity-addressed package version |
 | `omd-mod package-rollback STORE ID CONFIRMATION` | Restore the prior cached package disabled, preserving explicit settings |
 | `omd-mod package-uninstall-plan STORE ID` | Preview removal and reject installed dependents |
-| `omd-mod package-uninstall STORE ID CONFIRMATION` | Remove the managed selection while retaining local source, state, cache, and history |
+| `omd-mod package-uninstall STORE ID CONFIRMATION` | Remove the installed package's selection while retaining local source, state, cache, and history |
 | `omd-mod plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE` | Compare a local plugin candidate and its skills/hooks against the installed cache without applying it |
 
 ### Trust, credentials and runner
 
 | Command | Result |
 | --- | --- |
-| `omd-mod credentials STORE` | List credential profiles (id, label, kind, provider, origin, status) without secret material |
+| [`omd-mod credentials STORE`](credentials.md#omd-mod-credentials) | List credential profiles (id, label, kind, provider, origin, status) without secret material |
 | `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN` | Store stdin as a secret owned by `MOD_ID` (replacing that mod's same-label secret) and print the profile |
-| `omd-mod authorize-runner STORE` | With the authority broker deployed, grant the `omd-runner` beside this `omd-mod` as the store's runner (the installer runs it after each update); without the broker it does nothing |
+| `omd-mod authorize-runner STORE` | With the [authority broker](protected-authority.md) deployed, grant the `omd-runner` beside this `omd-mod` as the store's runner (the installer runs it after each update); without the broker it does nothing |
+| [`omd-mod trust-program STORE MOD_ID PROGRAM`](authority-grants.md#os_access-manifest-field) | Pin an unsandboxed program for a mod ahead of time, for headless runs; MOD_ID must be an active mod whose `os_access` lists the program |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
-| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Also grants the `omd-runner` beside this `omd-mod` as the runner; imports no package-source provenance. |
+| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Capture the current configuration, or protect existing selections with that snapshot (see below) |
+
+`omd-mod broker-grants-import`:
+
+- Without `SNAPSHOT_JSON`, captures the exact current configuration.
+- With that unchanged snapshot, protects existing valid selections without changing capabilities, secret grants,
+  expiry, settings or activation, and reports stale selections as skipped.
+- Also grants the `omd-runner` beside this `omd-mod` as the runner.
+- Imports no package-source provenance.
 
 ### Selection, policy and protection
 
 | Command | Result |
 | --- | --- |
 | `omd-mod selection-status STORE` | Show managed, project and user selections, precedence, administrator refusals, source errors, and each setting's origin without running mod code |
-| `omd-mod package-sync STORE [--offline\|--rollback]` | Deploy the [administrator policy](safety.md#administrator-policy-and-managed-deployment)'s packages unattended, or reactivate the previous generation |
-| `omd-mod policy show\|clear\|rollback`, `policy check\|set FILE`, `policy explain STORE [PROJECT_DIR]` | Print, validate, store (administrator) or explain the administrator policy |
+| `omd-mod package-sync STORE [--offline\|--rollback]` | Deploy the [administrator policy](administrator-policy.md)'s packages unattended, or reactivate the previous generation |
+| `omd-mod policy show\|clear\|rollback`, `policy check\|set FILE`, `policy explain STORE [PROJECT_DIR]` | Print, validate, store (administrator) or explain the [administrator policy](administrator-policy.md#inspecting-managed-state) |
 | `omd-mod package-enable STORE ID` | Re-enable an unchanged trusted package at the next turn boundary, retaining settings and state |
-| `omd-mod package-disable STORE ID` | Disable a managed package without deleting source, state, or cache |
+| `omd-mod package-disable STORE ID` | Disable an installed package without deleting source, state, or cache |
 | `omd-mod package-quarantine STORE ID REASON` | Disable the package and block its installed version and integrity; enable, reinstall and rollback of it are refused while data, cache and sources stay |
 | `omd-mod package-unblock STORE ID` | Lift the blocks; the package stays disabled |
 | `omd-mod revoke STORE MOD_ID_OR_PACKAGE` | Disable the mod and drop its grant (capabilities and secret environment cleared) |
@@ -44,11 +61,15 @@ offline. For the author-side commands, see [Authoring](authoring.md).
 
 ## Package requests
 
+A package change is a JSON request. `omd-mod package-plan` and `package-apply` take the native request. The
+`packages.preview` and `packages.apply` operations and the `omd` CLI take the higher-level request, which names a
+package by `source` or by `reference`.
+
 ### Native `package-plan` and `package-apply` requests
 
 For native `package-plan` and `package-apply`, `REQUEST_JSON` is:
 
-```ts
+```text
 {action?, source, index?, scope?, offline?, trust, settings?}
 ```
 
@@ -56,7 +77,10 @@ For native `package-plan` and `package-apply`, `REQUEST_JSON` is:
 | --- | --- |
 | `action` | `install` (the default) or `update` |
 | `trust` | `{packages: {ID: {capabilities, lifecycle?, dependencies?, secret_environment?}}}`: each package needs its exact capability and lifecycle grants, and dependencies need explicit trust too |
-| `settings` | Maps package IDs to setting objects; an update preserves existing settings when omitted |
+| `index` | An index file to resolve `package` sources from; the store's `package-index.json` when omitted |
+| `scope` | The selection scope, `user` (the default) or `project` |
+| `offline` | `true` for an offline install, `false` when omitted |
+| `settings` | Maps package ids to setting objects; an update preserves existing settings when omitted |
 
 Apply the identical request with the preview's `confirmation` string.
 
@@ -64,12 +88,14 @@ Apply the identical request with the preview's `confirmation` string.
 
 The higher-level `packages.preview`/`packages.apply` operations and `omd` CLI use:
 
-```ts
-{action, id?, source?, reference?, version?, index?, scope?}
+```text
+{action, id?, source?, reference?, version?, index?, scope?, expected_generation?}
 ```
 
 `action` is one of `install`, `update`, `remove`, `rollback`, `enable`, `disable` or `trust`. A request names a package
-with `source` or with a `reference` (and optional `version`), never both.
+with `source` or with a `reference` (and optional `version`), never both. `scope` is `user` or `project`.
+`expected_generation` is described under
+[`packages.apply`, `packages.preview` and `packages.reload`](#packagesapply-packagespreview-and-packagesreload).
 
 ### Package sources
 
@@ -91,11 +117,13 @@ A `reference` is the same choice as one string, shared by the `/mods` directory 
 | `ID[@VERSION]` | A release from the curated index |
 | `npm:NAME[@VERSION]` | An npm package; scoped names work (`npm:@author/omd-mod@1.2.3`) |
 | `git+URL[#REF[:DIRECTORY]]` | A Git repository; `REF` defaults to `HEAD`; `git+file:///path` and a local path work |
-| a folder | A local directory (absolute in the directory; `./`, `../`, `~/` or absolute in the CLI) |
+| a folder | A local directory (an absolute path in the `/mods` directory; `./`, `../`, `~/` or an absolute path in the `omd` CLI) |
 
 Local package files reached through a symlinked directory outside the package are refused (`package_path_escape`).
 
 ## npm packages
+
+A package can come from an npm registry.
 
 ### Version and tarball checks
 
@@ -109,7 +137,7 @@ The tarball must match the registry's sha512 `dist.integrity` and is extracted s
 | Entry types | Regular files only; symlinks, hardlinks and path escapes are rejected |
 | Tarball size | At most 4 MiB |
 | Unpacked size | At most 16 MiB |
-| Entries | At most 1024 |
+| Entries | At most 1,024 |
 
 ### Package contents
 
@@ -175,10 +203,37 @@ integrity against the manifest, entrypoint, and every declared lifecycle script.
 - Each dependency needs its own exact trust entry.
 - Index files do not grant capabilities or script execution.
 
-## Managed package manifests
+## Package assets
 
-A managed package manifest must declare `license` and `provenance`; the scaffold emits both with placeholders to
-change.
+A mod reads its own entrypoint and declared text assets with `api.assets.read`.
+
+```text
+api.assets.read(name) → {text, sha256}
+```
+
+`api.assets.read(name)` returns a selected package's UTF-8 entrypoint or declared text asset with its SHA-256. It
+reads only the caller's own hash-bound package. Installed package caches include declared assets, so a mod can pass
+its own source to a sandboxed `exec.run` process without a copy in the workspace.
+
+| Package limit | Value |
+| --- | --- |
+| Assets declared per package | At most 16 |
+| `mod.json` | At most 8 KiB |
+| Each other package file | At most 512 KiB (`file_limit` names the file) |
+| Entrypoint and declared text together | At most 1 MiB per callback (`package_text_input_limit`) |
+
+A package over the per-callback text limit is refused by inspection, install and `omd-mod-author check`.
+
+```ts
+const sent = api.host.tryCall('process.exchange', { session: session(m), send: [{ src: api.assets.read('github.mjs').text }], wait_ms: 0 });
+```
+
+That call is from [`omd_monitor`](../first-party/omd_monitor/index.ts).
+
+## Installed package manifests
+
+The manifest of a package installed through the package manager must declare `license` and `provenance`. The
+scaffold emits both with placeholders to change.
 
 ### `provenance.source` for Git installs
 
@@ -194,7 +249,122 @@ change.
 An optional `description` of 1–160 printable characters says what the mod adds; `packages.list` and the `/mods`
 screen show it.
 
+## Codex configuration (`codex_config_v1`)
+
+A manifest's `codex_config` turns on Codex features the package depends on, for every lead thread the session
+starts, resumes or forks while the package is active: `{"codex_config": {"tools.update_plan.enabled": true}}`.
+
+- Keys come from a closed host allowlist (`tools.update_plan.enabled`, `tool_output_token_limit.raise`) and must be
+  `true`.
+- `tool_output_token_limit.raise` sets the thread's `tool_output_token_limit` to at least 65,536 tokens (about
+  256 KiB). A larger configured value stays.
+- `exec_command` and `write_stdin` still default to 10,000 tokens unless the call sets a larger `max_output_tokens`.
+  A `tool` interceptor can set it.
+- The raise makes no output smaller or safer. The package must budget model-visible outputs itself, or every long
+  output reaches the model whole.
+- The package must list `codex_config_v1` in `required_features`.
+- Anything else fails inspection with `invalid_codex_config`.
+
+The host recomputes the keys whenever it reloads the active packages (at the next turn boundary after a change), so
+a package enabled mid-session applies to lead threads started after that reload. Threads that already exist keep
+their configuration. For the threads it applies to, `codex_config` overrides an explicit `false` in the user's
+config, and the host writes nothing to `config.toml`.
+
+Install, update and trust previews and `omd-mod status` list a package's `codex_config` with its other authority.
+
+## Package controls (`package_controls_v1`)
+
+The `packages.*` operations (`package_controls_v1`) let a mod install, update, remove, roll back, enable and disable
+packages. Packages come from local directories, Git repositories, curated index releases and npm packages.
+[Package sources](#package-sources) and [Package references](#package-references) list the forms. `index` resolves
+dependencies.
+
+### `packages.list`
+
+```text
+packages.list {fields} | null → {packages, generation, reload_error}
+```
+
+`generation` is the store's package generation, which `packages.preview` and `packages.apply` take as
+`expected_generation`. `packages.list` reports every selection in the store: installed packages and trusted
+`omd-mod` selections. A trusted selection has `source: 'selection'`. You can enable, disable and `trust` it, but not
+update it.
+
+- `source` is also `npm` for npm packages.
+- `blocked` is the quarantine reason or `null`.
+- `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
+  and grants it does not show.
+- `packages.list` reports each mod's `settings` and `settings_schema`.
+- `required` marks a selection the installer keeps on. `/mods` and `/omd` don't turn it off, but `omd mods disable`
+  does.
+
+### `packages.index`
+
+`packages.index {index?, query?, cursor?, limit?}` is read-only and returns:
+
+```text
+{index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}], total, cursor}
+```
+
+It reads the named index (the store's `package-index.json` by default), filtered by `query`, one page of `limit`
+entries (1-200, default 200) in id order. `total` counts every match; pass the returned `cursor` to read the next
+page, and it is `null` on the last one. Paging requires `package_index_paging_v1`. It fails with
+`package_index_unavailable` when no index exists.
+
+### Package state fields
+
+These `packages.list` fields say whether a package change has taken effect.
+
+- `effective`, `pending: 'reload'` and `failed` describe the session that serves the store. A change shows as
+  pending until that session's next safe boundary. A removed mod stays listed with `installed: false` until it stops.
+- `reload_error` names a rejected change while the previous mods keep running.
+
+### `packages.apply`, `packages.preview` and `packages.reload`
+
+```text
+packages.preview {...request, expected_generation?} → {action, id, changes, grants_added}
+packages.apply {...request, expected_generation} → {status: 'applied', generation} | {status: 'declined'}
+packages.reload → {generation, failed, applies: 'next_boundary'}
+```
+
+The request is the one under
+[`packages.preview` and `packages.apply` requests](#packagespreview-and-packagesapply-requests).
+
+| Argument | Meaning |
+| --- | --- |
+| `expected_generation` | The `generation` from `packages.list`; required on `apply`, optional on `preview` |
+
+- `apply` returns the new generation, or `declined` when the user declines the confirmation.
+- `reload` returns the generation, the ids of mods that failed, and `next_boundary`, when the revalidation applies.
+
+| Error | When |
+| --- | --- |
+| `expected_generation_required` | `apply` without `expected_generation` |
+| `package_state_changed: list again` | `expected_generation` isn't the current generation |
+| `package_state_changed: preview again` | The packages changed between the confirmed preview and the apply |
+
+```ts
+const result = api.host.tryCall('packages.apply', { ...request, expected_generation: generation });
+```
+
+That call is from [`omd_mods`](../first-party/omd_mods/index.ts).
+
+`apply` and `reload` run only from [user contexts](host-model.md#callback-contexts). The `trust` action re-approves
+an edited selection's current source and capabilities and keeps it enabled.
+
+- `apply` shows a native confirmation naming every new grant, dependencies as `id:capability`, and applies exactly
+  the confirmed plan or refuses if the package, lock or selection changed.
+- Installing never enables a package; see [Enablement on install and update](#enablement-on-install-and-update).
+- The preview lists per package `authority {from, to}`, `grant {from, to}` and `renewed_approval`.
+- Once a confirmed package mutation starts, it returns its definitive result even if its writes reload or disable
+  the calling mod. A queued call is still rejected when it's cancelled or when the mod's source, the originating
+  generation or the client context changed.
+- An update resolves dependencies through the index the package came from and previews the capabilities it adds.
+- `packages.reload` makes every enabled selection revalidate at the next safe boundary, retrying failed mods.
+
 ## Enablement, rollback and history
+
+Installing and updating decide whether a package is on, and rollback returns it to an earlier install.
 
 ### Enablement on install and update
 
@@ -241,147 +411,3 @@ lose credentials and query strings. Its events:
 Permissions a user deliberately grants (`os` unsandboxed, network, `approve`, secrets) still run with that authority.
 Scanning, integrity checks, signatures and directory inclusion do not make a mod safe, and a trusted service provider
 acts with its own authority for any caller.
-
-## Publish a mod to npm
-
-`omd-mod-author package .` (`pnpm run package`) writes the checked directory `dist/ID-VERSION` with a JavaScript build,
-source map and digest report. It doesn't produce a tarball, so check the npm tarball with `pnpm pack`.
-
-1. In `package.json` remove `"private": true` (the scaffold's publish guard) and set the scoped `name` (for example
-   `@author/omd-mod`) and a `version` equal to `mod.json`'s; set `license` and `provenance` in `mod.json`.
-2. Keep `files` listing `mod.json` and the entrypoint (the scaffold starts with both) and add every declared asset and
-   lifecycle script.
-3. Keep `dependencies` empty: ship runtime code as the entrypoint and its imported assets, and keep
-   `@oh-my-diff/mod-api` a `peerDependency` or `devDependency`.
-4. Run `pnpm check`, `pnpm test`, then `pnpm pack`. The tarball must stay under 4 MiB and 1024 entries and list only
-   regular files. Inspect it with `tar -tzf *.tgz`.
-5. Run `pnpm publish --access public`.
-6. Share `npm:@author/omd-mod@1.2.3`; users run `omd install` with it or paste it into `/mods` under Add from source.
-   Catalog inclusion isn't needed.
-
-## Offline scenarios
-
-A `mod.test.json` file uses schema 1 and runs a mod with no external work.
-
-### Scenario file fields
-
-| Field | Meaning |
-| --- | --- |
-| `virtual_time_ms` | Fixes `Date.now()` and zero-argument `new Date()` inside every callback |
-| `host_operations` | An ordered result/error queue for each approved host operation |
-| `settings` | A map from mod ID to that mod's explicit settings; the author commands apply it through `omd-mod settings` before the run, so configured behaviour is testable offline |
-| `packages` | Additional trusted packages, enabling provider/consumer and conflict fixtures without shared globals or ambient authority |
-| `tiers` | Maps loaded mod IDs to `prepend` or `append` and runs them as administrator-managed packages in that tier for the scenario only, so a test sees the managed interceptor order and that its answers can't skip a managed required guard |
-| `environment` | Nonsecret names mapped to string values (see [Offline environment](#offline-environment)) |
-
-- Any unmocked call fails before external work, and every result records `paid_requests: 0`.
-- `expect` is deep equality of the step's whole value, not a subset (`offline_expectation_failed`). A render `intercept`
-  result includes `trace[].location` (`index.ts:75:7`), so an exact expectation breaks when lines move: test
-  interceptors in a `*.test.ts` file ([TypeScript tests](authoring.md#typescript-tests)).
-- A store-level `omd-mod test STORE SCENARIO` uses the store's own settings instead of `settings`.
-- A mod that fails to activate reports its retained cause, so a missing service provider, denied capability or source
-  error names itself instead of only asking for a reload.
-
-### What steps can do
-
-Every step has a `type`:
-
-| `type` | Meaning |
-| --- | --- |
-| `invoke` | Calls one mod's tool, command or hook by `mod`, `event` and `name` with `payload` |
-| `event` | Dispatches `event` with `payload` to every mod that handles it |
-| `tool_outcome`, `agent` | Dispatches a `tool_result` or `agent` lifecycle event |
-| `advance_time` | Moves virtual time forward by `ms`, running due timers |
-| `wait_until` | Repeats a `check` step as time advances until it equals `until` |
-| `reload`, `status` | Reloads the mods at a safe boundary; returns the host's status |
-| `state` | Returns (or with `value`, first writes) a mod's persisted `api.state` |
-| `tool_exposure` | Returns the tool names the mods expose for a `payload` ledger |
-| `terminal_mount`, `terminal_interact` | Draws a mod's terminal view; sends it a `key` or a `component` interaction |
-| `component` | Steps one `api.component` module instance |
-| `client_attach`, `client_detach` | Adds or removes an external client |
-| `intercept` | Runs an interceptor chain for `surface`, answering `next` from `core` |
-
-Steps can:
-
-- advance virtual time;
-- invoke tools or commands;
-- dispatch ordinary events, interceptor chains (an `intercept` step answers `next` from its `core` replies), tool
-  outcomes and agent lifecycle;
-- reload at a safe boundary;
-- mount a terminal view, and interact with a mounted key or component ID. Component interaction activates buttons,
-  inputs, and selectors with an optional `value`; copy actions return without touching the system clipboard.
-
-A step can carry `expect`, `expect_error`, or `cancelled`, and `thread_id` to run in that thread when its payload names
-none. Thread-scoped state, timers and component events follow it; the `THREAD` argument of `omd-mod test` binds every
-step and takes precedence. In a TypeScript test, pass `threadId` in a step's options.
-
-### Offline environment
-
-`environment` maps nonsecret names to string values (4096 bytes at most) that `environment.read` answers in place of a
-`host_operations` queue, so a scenario never reads the host's environment.
-
-- An unlisted name is `{set: false}`.
-- A secret-like name (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `AWS_*`, ...) fails the scenario with
-  `offline_environment_secret_name`.
-
-### `state` step
-
-```json
-{"type": "state", "mod": ID, "value"?: VALUE, "thread_id"?: ID}
-```
-
-Returns that mod's persisted `api.state` from the scenario's store, so `expect` can check it after any step. With
-`value` it first writes that state (the mod needs `store`, and the usual state limits apply), seeding a test without a
-setup command.
-
-### `component` step
-
-```json
-{"type": "component", "mod": ID, "module": NAME, "instance"?: NAME, "props"?: VALUE, "columns"?: 80, "rows"?: 0, "events"?: [...]}
-```
-
-Steps one instance of the mod's `api.component` module at the scenario's virtual time, delivering the `key` and
-`pointer` events and every due tick, and returns `{tree, post, next_ms}`.
-
-- The instance mounts on its first step and keeps its state until the scenario ends, so `advance_time` steps drive
-  `every` ticks.
-- The module gets no host authority and its tree is validated as for a terminal.
-- `omd-mod test` and `mod_host_check --scenarios` run it like any other step.
-
-### `wait_until` step
-
-```json
-{"type": "wait_until", "check": STEP, "until": VALUE, "every_ms": 1000, "max_ms": N}
-```
-
-Runs `check`, and while its value differs from `until` advances virtual time by `every_ms` and checks again (at most
-256 checks). It returns `{waited_ms, value}` or fails with `offline_wait_timeout` at `max_ms`.
-
-### Pointer and client steps
-
-- A `terminal_interact` `key` runs the view's `keybindings` entry, else the first `key_contexts` binding for that key
-  (offline steps have no focus).
-- `terminal_interact` also takes `pointer: {column, row, half?, action, button?}` with `component`. The mounting mod
-  receives `component_event {kind: 'pointer'}` with `origin: 'user'`, only for a `box`, `image` or `raster` mounted
-  with `pointer: true` (`offline_terminal_component_not_pointer`). Adding `client: ID` delivers it as that attached
-  client's event (`client`, no `origin`).
-- `client_attach {name, renderer?, viewport?, focused?}` adds an external client as `client-1`, `client-2`, ... and
-  `client_detach {id}` removes it (`offline_client_not_attached`).
-- A mounted `terminal` payload carries the roster as `clients` unless it sets its own.
-
-These steps run the mod's callbacks on fixture data; they are not terminal or client rendering evidence.
-
-### Task-scoped tools and `tool_exposure`
-
-`task_scoped: true` on `api.tool` and the `tool_exposure` event (host feature `task_tool_exposure_v1`) expose optional tools per task.
-
-- Before each sampling step, the event receives the host `ledger`, thread ID, and only the current mod's optional tool
-  names. It returns `{enable: [...]}` for a subset of those names.
-- A missing or failed decision exposes none of that mod's optional tools; an invalid or foreign name disables the mod
-  with a visible error.
-- Ordinary registered tools and every native tool keep their existing exposure. A tool still executes through native
-  permission, cancellation, accounting, and workflow gates.
-- Context contributors can attach a bounded subordinate fragment for the same task without replacing base
-  instructions.
-- In an offline scenario, `{"type":"tool_exposure", "payload": {...ledger...}}` records the exact names registered for
-  that step.

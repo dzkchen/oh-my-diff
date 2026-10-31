@@ -1,16 +1,21 @@
 # omd_subagent_router
 
-Runs subagents on the model you name, including another provider's, such as Claude subagents under a GPT lead, and adds a `delegate_task` tool for background workers.
+Runs subagents, the helper agents the main agent (the lead) starts for part of a task, on the model you name. That can
+be another provider's model, such as Claude subagents under a GPT lead. It also adds a `delegate_task` tool that runs
+background workers. It's off by default in OMD+. OMD Core doesn't include it.
 
 ## Turn it on
 
-It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
+Turn it on in `/mods`, or run:
 
 ```sh
 omd mods enable omd_subagent_router
 ```
 
-A model from another provider also needs that provider set up, for example `omd_claude_cli` with `/claude login`.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+
+Turning it on asks for the `autonomous` grant. The mod uses it to queue a wake prompt, a turn that tells the lead a
+background task finished (at most 4 queued and 20 turns).
 
 ## Use it
 
@@ -24,77 +29,113 @@ Say which model subagents should use, in any prompt you type (queued prompts fro
 | `use gpt-6.1-sol as subagents` | every subagent |
 | `use the lead model as subagents for review` | review subagents go back to the lead's model |
 
-A directive lasts for the rest of the conversation, and a later one for the same role replaces it. Words match
-model names loosely: `sonnet 5.5` finds `claude-sonnet-5-5`.
+A directive lasts for the rest of the conversation, and a later one for the same role replaces it. Words match model
+names loosely: `sonnet 5.5` finds `claude-sonnet-5-5`.
 
 A subagent's role comes from its definition (`explorer` is research, `worker` is worker) or from words in its task,
-matched by prefix and checked in the order review (review, audit, critique, verif), research (research, investigat,
-explor, look up, look into, find out, survey) then worker (implement, write, edit, fix, build, code, work). GPT-6.1 models seal the task they give
-a subagent, so the router can't read it and another provider's model can't either: that subagent follows your only
-role directive when you gave exactly one, and works from the conversation it inherits and its agent name (such as
-`/root/readme_research`). When the lead picks an available model itself, that choice stands.
+matched by prefix and checked in this order:
+
+1. review: review, audit, critique, verif
+2. research: research, investigat, explor, look up, look into, find out, survey
+3. worker: implement, write, edit, fix, build, code, work
+
+Some tasks have no role words, for example when Codex's multi-agent v2 tools seal the task so the router can't read it.
+Such a task follows your role directive if you gave exactly one. When the lead picks an available model itself, that
+choice stands.
 
 The agent's tool row shows the model it runs on, and `/status` lists each subagent with its model, tokens and cost.
 
-## Delegate tasks
+### Delegate tasks
 
-The model also gets a `delegate_task` tool (found through `tool_search`). Use native `spawn_agent` for same-provider
-work. Use `delegate_task` for another provider's model through a worker route, for a worktree, or for a task the lead
-polls or integrates itself.
+The model, not you, gets a `delegate_task` tool (found through `tool_search`). Its description tells the model to
+use native `spawn_agent` for same-provider work, and `delegate_task` for another provider's model through a worker
+route, for a worktree, or for a task the lead polls or integrates itself.
 
 | `action` | What it does |
 | --- | --- |
-| `start` | Runs `task` as a background worker. `role` is `research`, `review`, `worker` or `general`; `model` defaults to the role's directive or setting; `isolation` is `shared` (read-only workspace and tools) or `worktree`; `mode` is `async` (default) or `wait` (one wait of up to 30 s, then it returns running); a repeated `request_id` (up to 128 characters) returns the existing task whatever the other fields say |
+| `start` | Runs `task` as a background worker (fields below) |
 | `status` | Reports a task by `handle`, or lists them all |
 | `cancel` | Stops a task, or discards a finished worktree result |
-| `integrate` | Applies a finished `worktree` task's changes to the workspace; `status` lists its `changed_paths` and `candidate_sha256` |
+| `integrate` | Applies a finished `worktree` task's changes to the workspace. `status` lists its `changed_paths` and `candidate_sha256` |
 | `targets` | Lists routes with their model, provider, health, and why one is skipped |
 
-A task runs on a worker route from `host.json` (a role `worker` route with a grant, or a lead route of a provider
-such as `omd_claude_cli`; either open to this mod) and has only the permissions the host gives it. On a provider's lead
-route it can run any model of that provider's catalog (`model: claude-sonnet-5-5` on the `claude` route); `targets`
+Fields of `start`:
+
+- `role`: `research`, `review`, `worker` or `general`.
+- `model`: defaults to the role's directive or setting.
+- `isolation`: `shared` (read-only workspace and tools) or `worktree`.
+- `mode`: `async` (default) or `wait` (one wait of up to 30 s, then it returns running).
+- `request_id` (up to 128 bytes): a repeated one returns the existing task whatever the other fields say.
+
+A task runs on a worker route from `host.json` and has only the permissions the host gives it. A route is a model setup
+in `host.json`: provider, model, URL and rates. The task's route is either a route with role `worker` and a grant, or a
+lead route of a provider such as `omd_claude_cli`, and it must be open to this mod. On a provider's lead route, a task
+can run any model in that provider's catalog, for example `model: claude-sonnet-5-5` on the `claude` route. `targets`
 lists those models.
 
-- A finished task wakes the lead (about 1.5 s later, batched). Results over 5 KiB are named for `status` rather than
-  inlined; each result is untrusted subagent output.
-- A stored result is at most 8 KiB; a longer one ends with a truncation marker.
-- A worker keeps going after the turn ends but not after the session. A finished `worktree` task holds one of the
+- A finished task wakes the lead about 1.5 s later (batched). Results over 5 KiB are named for `status` instead of
+  shown in full. The wake prompt marks every result as untrusted subagent output.
+- A stored result is at most 8 KiB, and a longer one ends with a truncation marker.
+- A worker keeps going after the turn ends but not after the session. A finished `worktree` task uses one of the
   host's agent slots until you `integrate` or `cancel` it. Running tasks share `limits.concurrent_workers` in
   `host.json` with other subagents.
 - The mod keeps its 12 newest tasks, dropping read ones first.
 
-## Routing health
+### Routing health
 
-For `delegate_task` and for subagents the router routes (a model the lead named itself is kept unchecked), a target
-is skipped when its route isn't available, when its provider's latest usage window (from `account/rateLimits/updated`, which Claude sends after a Claude request) is at
-90% or more, or when a task on that provider failed for authorization, rate limit or allowance in the last 15
-minutes. Windows and failures are kept in the mod's user store, so every thread sees them; a window with no reset
-time stops counting after an hour. The task or subagent then runs on `fallback_model`, else the lead's model, with a
-notice naming every skipped route and why. With no usable route left, `delegate_task` refuses and lists them.
-A subagent model the lead picked itself, and models on the built-in OpenAI provider, skip these checks.
+This applies to `delegate_task` and to subagents the router routes. A model the lead named itself is kept unchecked.
+A target is skipped when:
+
+- its route isn't available,
+- its provider's latest usage window (from `account/rateLimits/updated`, which Claude sends after a Claude request) is
+  at 90% or more, or
+- a task on that provider failed for authorization, rate limit or allowance in the last 15 minutes.
+
+Windows and failures are kept in the mod's user store, so every thread sees them. A window with no reset time stops
+counting after an hour. The task or subagent then runs on `fallback_model`, else the lead's model, with a notice naming
+every skipped route and why. With no usable route left, `delegate_task` refuses and lists them. A subagent model the
+lead picked itself, and models on the built-in OpenAI provider, skip these checks.
 
 ## Settings
+
+Change settings in `/mods`. Effort values are empty, `none`, `minimal`, `low`, `medium`, `high` or `xhigh`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `research_model`, `review_model`, `worker_model` | empty | The model for that role when no directive names one. Empty keeps the lead's model. |
-| `research_effort`, `review_effort`, `worker_effort` | empty | The reasoning effort for that role; it applies only together with that role's `*_model` setting (a directive for the role replaces both). Empty uses the effort the lead put in the spawn call if the model supports it, else the model's default; an effort the model lacks is ignored. `delegate_task` ignores it: the host sets a worker's effort from its route. |
+| `research_effort`, `review_effort`, `worker_effort` | empty | Reasoning effort for that role, used only with that role's `*_model` setting |
 | `fallback_model` | empty | The model to try first when the chosen one is skipped, before the lead's model. Empty goes straight to the lead's model. |
+
+A directive for a role replaces both its model and effort settings. An empty effort uses the effort the lead put in the
+spawn call if the model supports it, else the model's default. An effort the model lacks is ignored. `delegate_task`
+ignores the effort settings, because the host sets a worker's effort from its route.
 
 ## Needs and limits
 
-- A skipped model (see Routing health) tries `fallback_model` first, then the lead's model; a model that matches
-  nothing runs on the lead's model. Either way a warning shows above the prompt and in the transcript.
-- A subagent on another provider is admitted like any helper agent on that provider's route: it counts against
-  `worker_limits` in `host.json` (by default 60 requests and 30 minutes per subagent; `omd_claude_cli` setup raises
-  them to 300 requests and a day), and if it can't be admitted its requests are refused.
+- It asks to read the prompts you type for directives, change the model of subagents the lead starts, start background
+  workers on other routes, add `delegate_task`, read providers' rate-limit updates, queue wake prompts, show warnings,
+  run timers and keep its state. The capabilities are `input`, `agents`, `model`, `tools`, `threads`, `autonomous`,
+  `terminal`, `events`, `lifecycle`, `inventory` and `store` (see
+  [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
+- A model from another provider needs that provider set up, for example `omd_claude_cli` with `/claude login`. See
+  [Use other providers](../../../docs/use-other-providers.md).
+- A skipped model (see [Routing health](#routing-health)) tries `fallback_model` first, then the lead's model. A model
+  that matches nothing runs on the lead's model. Either way a warning shows above the prompt and in the transcript.
+- A subagent on another provider is allowed to run like any helper agent on that provider's route. It counts against
+  `worker_limits` in `host.json`, by default 60 requests and 30 minutes per subagent (`omd_claude_cli` setup raises
+  them to 300 requests and a day). If it isn't allowed to run, its requests are refused.
 - `delegate_task` reaches another provider through its lead route (for example `omd_claude_cli`'s Claude routes) or a
-  granted worker route; an OpenAI lead route is not a delegate target.
-- Turning it on asks for the `autonomous` grant, to queue the wake prompt (at most 4 queued, 20 turns).
-- A `use ... as subagents` directive whose model isn't available is not kept and a warning names it; an unmatched
+  granted worker route. An OpenAI lead route isn't a delegate target.
+- A `use ... as subagents` directive whose model isn't available isn't kept, and a warning names it. An unmatched
   `@name for role` is ignored silently.
 - Routed `spawn_agent` subagents keep the lead's tools, permissions and approvals. `delegate_task` workers are
   read-only or worktree-only, and children on another provider lose web search.
 - Earlier reasoning and compaction summaries from the lead aren't sent to a subagent on another provider.
 - A Claude lead's subagent on a GPT model runs on the provider the session started on, with its own sign-in. A Claude
-  subagent's own GPT subagent needs an OpenAI lead route in `host.json`; without one it is refused.
+  subagent's own GPT subagent needs an OpenAI lead route in `host.json`. Without one it's refused.
+
+## More
+
+- [`omd_claude_cli`](../omd_claude_cli/README.md)
+- [Included mods](../../../docs/collection.md)
+- [Agents reference](../../reference/agents.md)

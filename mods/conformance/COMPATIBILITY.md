@@ -1,27 +1,23 @@
 # Mod compatibility
 
-Which hosts a mod runs on. The source is [compatibility.json](compatibility.json); `python3 scripts/mod_compatibility.py`
-checks it against the host.
-
-API `1.0.0` is stable and supported through `2027-10-19`. Entries marked frozen in
-[the conformance registry](contract.json) keep their shape until then; a breaking change needs a
-major version and a migration note in [the reference](../REFERENCE.md). Experimental entries (including the raster
-surfaces `terminal.blit` and `process_raster_v1`), and the `experimental_fields` of frozen entries, may change in any
-release.
+Which OMD host runs which Codex and mod API versions, which host features a mod can require, and what is tested.
+The source is [compatibility.json](compatibility.json); `python3 scripts/mod_compatibility.py` checks it against the
+host. The support policy, platforms and terminals are in [Support](../../docs/support.md).
 
 ## Supported versions
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.166.0 | next release | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.166.0 | unreleased (`main`, host crate version `1.2.0`, not the released 1.2.0) | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.164.0 | 1.2.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.163.0 | 1.0.0 to 1.1.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 
-Upstream lag on 2026-10-30: none. Codex 0.166.0 is the latest stable Codex release. A newer Codex is supported once an
-OMD release lists it here. Update and roll back OMD with `omd update` and `omd update rollback`
-([install](../../docs/install.md#update)).
+The `host` object in [compatibility.json](compatibility.json) describes `main`: Codex 0.166.0 with the host crate
+version `1.2.0` from `runtime/omd/Cargo.toml`. The released OMD 1.2.0 runs Codex 0.164.0, as the table shows.
+
+On the matrix's `as_of` date, OMD didn't lag upstream. Codex 0.166.0 was the newest stable Codex release then.
 
 ## What the host checks
 
@@ -36,7 +32,8 @@ A mod can also list `compatibility.releases`, `required_features` and `optional_
 
 ### Features to require
 
-These reject older hosts before activation, even when the API version matches.
+Listing one of these features in `required_features` makes an older host refuse the mod before it turns on, even when
+the API version matches.
 
 | If you use | Require |
 | --- | --- |
@@ -64,15 +61,18 @@ These reject older hosts before activation, even when the API version matches.
 | Declared assets | `package_text_assets_v1` |
 | Relative asset imports | `package_imports_v1` |
 | `api.component` | `component_modules_v1` |
+| `terminal` event `client.welcome` | `terminal_welcome_area_v1` |
+| `terminal` event `client.chat` | `terminal_chat_area_v1` |
+| `terminal` event `client.colors` | `terminal_colors_v1` |
+| `terminal.panel` `group`, `keywords`, `detail`, `query`, `selected`, `close_args` | `terminal_panel_navigation_v1` |
+| View `underlay` | `terminal_underlay_v1` |
+| View `welcome: {hidden}` | `terminal_welcome_hidden_v1` |
+| `terminal.blit` `packed` | `terminal_raster_packed_v1` |
+| `terminal` component `autofocus`, `terminal.pty` `files`, and the `exit`, `title`, `bell`, `notify` events | `terminal_pty_v2` |
 
-`mise run mods:check` checks the last three.
+`mise run mods:check` checks declared assets, relative asset imports and `api.component`.
 
-## Terminals
-
-Supported terminals: Kitty, Ghostty, WezTerm and Orca's terminal. Images use Kitty graphics in
-Kitty and Ghostty, and inline images in Orca and WezTerm. Other terminals aren't tested; the host falls back to half-block cells or text.
-
-## Services
+## Service version ranges
 
 Service contracts use `x.y.z` versions. A consumer asks for an exact version or a caret range.
 
@@ -81,30 +81,20 @@ Service contracts use `x.y.z` versions. A consumer asks for an exact version or 
 
 ## State changes
 
-The host never rewrites a mod's code or settings.
-
-- When `state_version` changes, a mod with `"store"` state stays off until its `migrate` handler runs.
-- Thread and checkout state migrates through the same handler before the mod's next callback there. An update
-  that changes their `state_version` needs one.
-- Migration backs up the old state first. To restore it while the mod is off:
-
-  ```sh
-  omd-mod rollback STORE MOD_ID_OR_PACKAGE BACKUP
-  ```
-
-  `omd-mod migrate STORE MOD_ID_OR_PACKAGE` runs the handler by hand. A bare name is a mod id among the store's
-  selected mods; `.`, `..` and anything with a `/` are package folders. An id present in more than one scope fails with
-  `mod_ambiguous` (pass the folder), and a mod without saved store state fails with `migration_requires_saved_state`.
+When a mod changes `state_version`, its saved state must be migrated before it runs. The steps are in
+[Change a mod's saved state](../../docs/mod-authors/migrate-state.md).
 
 ## Tested and not tested
 
-Tested: Apple Silicon macOS with Codex 0.166.0, the OMD+ and OMD Core collections, and the bundled plugins.
+OMD is tested on Apple Silicon macOS with Codex 0.166.0, the OMD+ and OMD Core install profiles, and the bundled
+plugins.
+
+Linux and Intel macOS are unsupported, and the installer refuses them.
 
 Not tested:
 
-- Linux or Intel macOS.
-- Terminals other than those above.
-- Third-party mods combined with the OMD+ collection.
+- Terminals not listed in [Support](../../docs/support.md).
+- Third-party mods combined with the mods OMD+ includes.
 - Upgrading from an earlier OMD release.
 - Artifact reading and code execution together in one live task.
 - Every combination of mods, plugins and options.

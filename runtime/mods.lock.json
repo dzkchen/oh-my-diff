@@ -43,10 +43,10 @@
       "extension_type": "mod",
       "files": {
         "index.ts": "73f4e865aae71e4f7d35a1f15dc5372d60aec7f094d84b74b5f78c2e0401230b",
-        "mod.json": "3402fbc9ff23bb4d5fdd09698f3bad1ef11a5c77926dcdcb06fdcb9e5a05cecc"
+        "mod.json": "d6ac5a1a3f7f05fc04745cb1a9cd36eb50e42c8bd3b8437fe2b1263e0326ea3f"
       },
       "id": "omd_auto_continue",
-      "package_sha256": "30ed682f93f39521a558e85b5abbc2c7f5e521d3534c851a23a5b5f4ca591f23",
+      "package_sha256": "d827738e81782af431828bcf7e0dd608f568ab8927620e76c3205aa0d69968b8",
       "source": "mods/first-party/omd_auto_continue",
       "version": "1.0.0"
     },
@@ -136,12 +136,12 @@
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
         "index.ts": "665d79af2c07e6031d43544edac25f2389bcd8b53ee1c8c88b9584be8f834329",
-        "mod.json": "7ece15a0d1d2cfaa148413b01771cb36e705919865d8a985ff96dcd559a9ee30",
+        "mod.json": "076c6a16e1286a733723910d56b697caf87628ef64368c17de558903beb094d5",
         "setup.mjs": "f5000fdab138b690618fbacf2e1aa1f851df311179b284026156f23c8b67eecb",
         "transport.mjs": "f3ef04dd3c525b2eca3c79caaff1f97b630e18a92ee235dc6c837880820c0b52"
       },
       "id": "omd_cursor",
-      "package_sha256": "49dd520bb08abf6ffc5897f7e9ab3a6412d6361804a2c4ccbe865eaa4ebcf4ad",
+      "package_sha256": "a582223d80f020024f7f5d51a66da16ddd0394529658bdf258923a1e171aab54",
       "source": "mods/first-party/omd_cursor",
       "version": "1.0.0"
     },
@@ -278,10 +278,10 @@
       "extension_type": "mod",
       "files": {
         "index.ts": "a724d9039d8aef90f0e699fc8dd464637dcc2dfed8f67ffc5eceeecea047d701",
-        "mod.json": "b889cdb16bf6426aaa53e77eebe2d27fcee3fe80a7e09bdc679b6e11aeaf17ce"
+        "mod.json": "ac5d35e05ac84f86e9155d1c5821401baa77f9a2e8e2d9e5f52254ddedbd62af"
       },
       "id": "omd_lazygit",
-      "package_sha256": "1c5f4b4e1cf5e3621d685bd5a1a875f2331da0e82809594ff92d7a202b863e33",
+      "package_sha256": "fa24d3aae1cfdf8535eee9c06059860b0ba66739c212b3e135e6644d126bc31a",
       "source": "mods/first-party/omd_lazygit",
       "version": "1.0.0"
     },
@@ -836,10 +836,10 @@
       "extension_type": "mod",
       "files": {
         "index.ts": "234dc57434570170de199a668f36a2cb2c292457a09f618715c1ff662ca91a30",
-        "mod.json": "587d430c66ccabe2e51b558a90d69e072366eb978ca1a49e6bfbd43e77aee6dd"
+        "mod.json": "73e6d8b067f0582b05f60a048e317772a5bc3b972207720f4d8ef1451038c440"
       },
       "id": "omd_yazi",
-      "package_sha256": "2d8e1f854c8fc192c993bbcbddf2837e3387946ac4fb3d559fc9ae31f98ae869",
+      "package_sha256": "d080de8ea0322d57407be623e7a59ab41c6eb85accac32417a248f87411dfa14",
       "source": "mods/first-party/omd_yazi",
       "version": "1.0.0"
     }
