@@ -101,7 +101,7 @@ test('a provider near its limit or recently failing is skipped, then the fallbac
   const full = spawn({}, { state, vitals: windows(93, null) });
   assert.equal(full.next.model, null);
   assert.match(full.notices[0], /Claude Sonnet 5\.5 is skipped \(93% of its usage limit used\), so this research subagent runs on the lead's model/);
-  const spare = spawn({}, { state, vitals: windows(93, null), settings: { fallback_model: 'gpt-6.1-sol' } });
+  const spare = spawn({}, { state, vitals: windows(93, null), settings: { fallback_models: 'gpt-6.1-sol' } });
   assert.equal(spare.next.model, 'gpt-6.1-sol');
   assert.match(spare.notices[0], /so this research subagent runs on GPT-6\.1 Sol/);
   assert.equal(spawn({}, { state, vitals: windows(99, 1) }).next.model, 'claude-sonnet-5-5', 'an expired window no longer counts');
@@ -181,7 +181,7 @@ test('delegate_task skips unhealthy routes, falls back with a notice and lists t
   const lead = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored({ windows }) });
   assert.equal(lead.of('agents.spawn')[0].route, 'plan-gpt', 'the lead model is the last resort');
   assert.match(lead.of('terminal.notice')[0].text, /sonnet-worker: 95% of its usage limit used; claude: 95% of its usage limit used, so this general task runs on plan-gpt/);
-  const spare = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored({ windows }), settings: { fallback_model: 'mini' } });
+  const spare = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored({ windows }), settings: { fallback_models: 'mini' } });
   assert.equal(spare.of('agents.spawn')[0].route, 'reader');
   const same = delegate({ action: 'start', task: 'Go', model: 'gpt' }, { answer: stored({ failed: { openai: { at: now - 60_000, category: 'authorization' } } }), routes: [{ ...WORKERS[0], name: 'a' }, { ...WORKERS[0], name: 'b', provider: 'other' }] });
   assert.equal(same.of('agents.spawn')[0].route, 'b');
@@ -366,4 +366,56 @@ test('the status list settles running tasks, and a start without model follows t
   assert.equal(routed.of('agents.spawn')[0].route, 'sonnet-worker');
   const general = delegate({ action: 'start', task: 'Map it' }, { state: { all: { query: 'sonnet', effort: null }, research: { query: 'gpt', effort: null } } });
   assert.equal(general.of('agents.spawn')[0].route, 'sonnet-worker');
+});
+
+test('fallback models are tried in order, skipping unhealthy ones, before the lead', () => {
+  const state = { all: { query: 'sonnet', effort: null } };
+  const vitals = { windows: { claude: { used: 93, resets: null, at: Date.now() } } };
+  const chained = spawn({}, { state, vitals, settings: { fallback_models: 'opus, missing, gpt-6.1-sol' } });
+  assert.equal(chained.next.model, 'gpt-6.1-sol');
+  assert.match(chained.notices[0], /^Claude Sonnet 5\.5 is skipped \(93% of its usage limit used\); Claude Opus 5\.5 is skipped \(93% of its usage limit used\), so this research subagent runs on GPT-6\.1 Sol/);
+  const started = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored(vitals), settings: { fallback_models: 'opus, mini, gpt' } });
+  assert.equal(started.of('agents.spawn')[0].route, 'reader');
+  assert.deepEqual(started.value.skipped, ['sonnet-worker: 93% of its usage limit used', 'claude: 93% of its usage limit used'], 'start returns the skip trace');
+});
+
+test('targets report the isolation each route allows, search by model and cap long model lists', () => {
+  const listed = delegate({ action: 'targets' }).value.targets;
+  assert.deepEqual(listed.map(target => [target.route, target.isolation]), [['plan-gpt', ['shared', 'worktree']], ['sonnet-worker', ['shared', 'worktree']], ['reader', ['shared']], ['claude', ['shared', 'worktree']]]);
+  assert.deepEqual(delegate({ action: 'targets', model: 'sonnet' }).value.targets.map(target => [target.route, target.models]), [['sonnet-worker', undefined], ['claude', ['claude-sonnet-5-5']]]);
+  const many = Array.from({ length: 15 }, (_, index) => ({ model: `claude-x-${index}`, displayName: `Claude X ${index}`, hidden: false, modelProvider: 'omd_claude_cli', supportedReasoningEfforts: [] }));
+  const capped = delegate({ action: 'targets' }, { answer: { 'app.request': () => ({ data: [...MODELS, ...many], nextCursor: null }) } }).value.targets.find(target => target.route === 'claude');
+  assert.equal(capped.models.length, 12);
+  assert.equal(capped.more_models, 4);
+});
+
+test('with retry_after_limit, a task stopped by a usage limit restarts once at the reset without waking the lead', () => {
+  const now = Date.now();
+  const settings = { retry_after_limit: true };
+  const limited = { windows: { claude: { used: 100, resets: now + 60 * 60_000, at: now } } };
+  const started = delegate({ action: 'start', task: 'Map it', model: 'sonnet' }, { settings });
+  assert.equal(started.state.tasks.h1.brief, 'Map it');
+  const failure = { handle: 'h1', role: 'general', status: 'failed', error: 'rate limited', failure: { category: 'rate_limit', code: 429, message: 'limit' } };
+  const ended = fire('agent_end', '', failure, { state: started.state, settings, answer: stored(limited) });
+  assert.equal(ended.state.tasks.h1.retry_at, now + 60 * 60_000 + 30_000);
+  assert.deepEqual(ended.of('events.schedule').map(call => call.key), ['retry']);
+  assert.equal(delegate({ action: 'status', handle: 'h1' }, { state: ended.state, settings }).value.status, 'waiting');
+  const due = { ...ended.state, tasks: { h1: { ...ended.state.tasks.h1, retry_at: now - 1 } } };
+  const ownFailure = stored({ failed: { omd_claude_cli: { at: now - 60_000, category: 'rate_limit' } } });
+  const restarted = fire('timer', '', { key: 'retry' }, { state: due, settings, answer: { ...ownFailure, 'agents.spawn': () => ({ handle: 'h2', route: 'sonnet-worker', permissions: 'read_only' }) } });
+  assert.deepEqual(restarted.of('agents.spawn'), [{ role: 'general', route: 'sonnet-worker', prompt: 'Map it', workspace: 'read_only', tools: ['exec_command', 'write_stdin'] }]);
+  assert.equal(restarted.state.tasks.h2.retry_of, 'h1');
+  assert.match(restarted.state.tasks.h1.error, /restarted as h2/);
+  const again = fire('agent_end', '', { ...failure, handle: 'h2' }, { state: restarted.state, settings, answer: stored(limited) });
+  assert.equal(again.state.tasks.h2.status, 'failed', 'a restart is not restarted again');
+  assert.equal(again.state.tasks.h2.retry_at, undefined);
+  assert.equal(restarted.state.tasks.h2.brief, undefined, 'a restart keeps no brief');
+  const roomy = fire('agent_end', '', failure, { state: started.state, settings, answer: stored({ windows: { claude: { used: 40, resets: now + 60 * 60_000, at: now } } }) });
+  assert.equal(roomy.state.tasks.h1.retry_at, undefined, 'a window with room left is a transient limit');
+  assert.deepEqual(fire('resume', '', { thread_id: 't', last_turn: null, restarted: true }, { state: ended.state, settings }).of('events.schedule').map(call => call.key), ['retry'], 'a resumed thread re-arms its restart');
+  const turnedOff = fire('timer', '', { key: 'retry' }, { state: due });
+  assert.equal(turnedOff.of('agents.spawn').length, 0);
+  assert.match(turnedOff.state.tasks.h1.error, /retry_after_limit is off/);
+  const off = fire('agent_end', '', failure, { state: delegate({ action: 'start', task: 'Map it', model: 'sonnet' }).state, answer: stored(limited) });
+  assert.equal(off.state.tasks.h1.retry_at, undefined, 'off by default');
 });

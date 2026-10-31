@@ -6,9 +6,9 @@ type Quota = { windows: Window[]; at: number };
 type Account = { name: string; provider: string; model: string; effort: string; billing: string; available: boolean; profile: Profile | null };
 type Saved = { accounts: Account[]; mod?: string; watch?: { provider: string; known: string[]; polls: number } | null; current: string | null; notice: string | null; pending: string | null; ours: boolean; seen: { profile: string; windows: string } | null; quota: Record<string, Quota> };
 
-const USAGE = 'usage: /profile [list | next | use NAME | add [chatgpt|claude|cursor|api_key|anthropic NAME] | add provider NAME HTTPS_URL | remove NAME | refresh NAME]';
+const USAGE = 'usage: /profile [list | next | use NAME | add [chatgpt|claude|cursor|api_key|anthropic|ollama NAME] | add provider NAME HTTPS_URL | remove NAME | refresh NAME]';
 const KINDS = [['chatgpt', 'ChatGPT account'], ['claude', 'Claude account'], ['cursor', 'Cursor account'], ['api_key', 'OpenAI API key'],
-  ['anthropic', 'Anthropic API key'], ['provider', 'Other provider (URL)']];
+  ['anthropic', 'Anthropic API key'], ['ollama', 'Local Ollama (no key)'], ['provider', 'Other provider (URL)']];
 const ACCOUNT = /^[a-z][a-z0-9_-]{0,23}$/;
 const MODELS = 16;
 const NODE_MISSING = 'Node.js was not found on PATH. Install it (brew install node, or from nodejs.org), restart OMD, then try again.';
@@ -79,13 +79,13 @@ export default function activate(api: ModAPI) {
   const windows = (quota: Quota | undefined, now: number) => (quota?.windows ?? []).map(slot => ({ name: windowName(slot.minutes),
     used: slot.resets !== null && slot.resets < now ? null : slot.used }));
   const billed = (account: Account) => account.billing === 'explicit_paid_api_grant' ? 'paid API, per request'
-    : account.billing === 'provider_billed' ? `billed by ${kind(account)}` : 'quota not seen yet';
+    : account.billing === 'provider_billed' ? `billed by ${kind(account)}` : account.profile?.kind === 'ollama' ? 'local, free' : 'quota not seen yet';
   const summary = (account: Account, quota: Quota | undefined, now: number) => !quota ? billed(account)
     : [...windows(quota, now).map(slot => `${slot.name} ${slot.used === null ? 'reset' : `${slot.used}%`}`), `seen ${ago(now - quota.at)}`].join(' · ');
   const kind = (account: Account) => {
     const profile = account.profile;
     if (!profile) return PROVIDERS[account.provider]?.label ?? account.provider;
-    return profile.kind === 'chatgpt' ? 'ChatGPT' : profile.kind === 'api_key' ? 'OpenAI API' : origin(profile.url) === origin(URLS.anthropic) ? 'Anthropic API' : profile.protocol;
+    return profile.kind === 'chatgpt' ? 'ChatGPT' : profile.kind === 'api_key' ? 'OpenAI API' : profile.kind === 'ollama' ? 'Ollama' : origin(profile.url) === origin(URLS.anthropic) ? 'Anthropic API' : profile.protocol;
   };
 
   api.replace('routing', ({ routes, model, provider }) => {
@@ -160,7 +160,7 @@ export default function activate(api: ModAPI) {
     if (notice) part(`switch failed: ${fit(notice, 60)}`, 'failure');
     else if (pending) part('switches at the next turn');
     else if (!active) part('unknown account');
-    else if (!quota[active.name]) part(active.billing === 'explicit_paid_api_grant' ? 'paid API' : active.billing === 'provider_billed' ? `billed by ${kind(active)}` : 'quota not seen yet');
+    else if (!quota[active.name]) part(active.billing === 'explicit_paid_api_grant' ? 'paid API' : active.billing === 'provider_billed' ? `billed by ${kind(active)}` : active.profile?.kind === 'ollama' ? 'local, free' : 'quota not seen yet');
     else {
       for (const slot of windows(quota[active.name], now)) part(slot.used === null ? `${slot.name} reset` : `${slot.name} ${bar(slot.used)} ${slot.used}%`, slot.used !== null && slot.used >= 90 ? 'attention' : 'normal');
       part(ago(now - quota[active.name].at));
@@ -216,8 +216,8 @@ export default function activate(api: ModAPI) {
   // Only the first profile (which creates the router's service grant) and a new allowance write host.json outside routes.write.
   const bootstrap = (profiles: Profile[], added: Profile, allowance: number | null, done: string) => {
     const first = !profiles.some(profile => profile !== added && profile.router);
-    const shared = profiles.some(profile => profile !== added && profile.credential === added.credential);
-    const changes = [`Add model route ${added.name}: ${added.model}, ${added.paid ? 'paid API, per request' : 'subscription'}`,
+    const shared = !added.credential || profiles.some(profile => profile !== added && profile.credential === added.credential);
+    const changes = [`Add model route ${added.name}: ${added.model}, ${added.paid ? 'paid API, per request' : added.credential ? 'subscription' : 'local, free'}`,
       ...first ? ['Add service omd_profiles: runs the omd_profiles router (node) with network access and the sign-ins of your profiles'] : [],
       ...shared ? [] : [`Let service omd_profiles use ${added.name} (${added.kind})`],
       ...allowance === null ? [] : [`Let paid API profiles spend at most $${allowance} per thread`]];
@@ -257,6 +257,7 @@ export default function activate(api: ModAPI) {
     if (kindName === 'provider' && !origin(url)) return 'The endpoint must be an https URL.';
     const endpoint = kindName === 'provider' ? url : URLS[kindName];
     const credentialKind = kindName === 'provider' || kindName === 'anthropic' ? 'provider' : kindName;
+    const local = kindName === 'ollama';
     const enroll = () => {
       const listed = api.host.tryCall('credentials.list', null);
       const kept = (listed.ok ? listed.value : []).find(item => item.label === name && item.kind === credentialKind && item.origin === origin(endpoint) && item.status === 'ready');
@@ -268,10 +269,10 @@ export default function activate(api: ModAPI) {
       return enrolled.value.status === 'completed' && enrolled.value.profile ? enrolled.value.profile : 'Enrollment cancelled.';
     };
     const base = profiles.find(profile => profile.name === current) ?? profiles[0];
-    const fixed = kindName === 'provider' ? null : kindName === 'anthropic' ? 'anthropic' : 'responses';
+    const fixed = kindName === 'provider' ? null : kindName === 'anthropic' ? 'anthropic' : local ? 'chat' : 'responses';
     const template = kindName === 'chatgpt' ? [base, ...profiles].find(profile => profile?.kind === 'chatgpt') : undefined;
     const where = kindName === 'provider' ? url : kindName === 'anthropic' ? 'the Anthropic API, for example claude-sonnet-4-5'
-      : kindName === 'chatgpt' ? 'ChatGPT, for example gpt-6.1-sol' : 'the OpenAI API, for example gpt-6.1-sol';
+      : kindName === 'chatgpt' ? 'ChatGPT, for example gpt-6.1-sol' : local ? 'your local Ollama, for example llama3.3' : 'the OpenAI API, for example gpt-6.1-sol';
     const model = template?.model ?? ask('Upstream model', `Model name at ${where}`);
     if (!model) return 'Cancelled.';
     const listed = profiles.find(profile => profile.model === model);
@@ -279,32 +280,32 @@ export default function activate(api: ModAPI) {
     if (known && 'error' in known) return known.error;
     const size = known?.window ?? Number(ask('Context window', `Tokens ${model} accepts, for example ${kindName === 'anthropic' ? '200000' : '272000'}`));
     if (!Number.isInteger(size) || size <= 0) return 'Cancelled: the context window is a whole number of tokens.';
-    const paid = kindName === 'chatgpt' ? null : ask('Price', `INPUT_USD:OUTPUT_USD per million tokens, for example ${kindName === 'anthropic' ? '3:15' : '1.25:10'}`);
-    if (kindName !== 'chatgpt' && !paid) return 'Cancelled.';
+    const paid = kindName === 'chatgpt' || local ? null : ask('Price', `INPUT_USD:OUTPUT_USD per million tokens, for example ${kindName === 'anthropic' ? '3:15' : '1.25:10'}`);
+    if (kindName !== 'chatgpt' && !local && !paid) return 'Cancelled.';
     const protocol = fixed ?? choose('Protocol', `How ${url} speaks`, [['chat', 'Chat Completions'], ['anthropic', 'Anthropic Messages'], ['responses', 'OpenAI Responses']]);
     if (!protocol) return 'Cancelled.';
-    const credential = enroll();
+    const credential = local ? null : enroll();
     if (typeof credential === 'string') return credential;
-    const kept = `The sign-in "${name}" was kept: /profile add reuses it, /profile remove ${name} drops it.`;
+    const kept = credential ? ` The sign-in "${name}" was kept: /profile add reuses it, /profile remove ${name} drops it.` : '';
     let profile: Profile;
     try {
-      profile = { ...profileEntry({ name, credential: credential.id, protocol, url: endpoint, model, window: size, paid,
-        reasoning: template?.reasoning, cache_control: template?.cache_control, text_only: template?.text_only, max_output: template?.max_output }, [credential]),
+      profile = { ...profileEntry({ name, credential: credential?.id, protocol, url: endpoint, model, window: size, paid,
+        reasoning: template?.reasoning, cache_control: template?.cache_control, text_only: template?.text_only, max_output: template?.max_output }, credential ? [credential] : []),
       effort: known?.effort ?? 'medium', efforts: known?.efforts?.length ? known.efforts : ['low', 'medium', 'high'], router: base?.router };
     } catch (error) {
       if (!(error instanceof Error)) throw error;
-      return `${error.message}. ${kept}`;
+      return `${error.message}.${kept}`;
     }
     const done = `Added ${name}. Switch with Alt+s or /profile use ${name}; it applies at this thread's next turn.`;
     const next = [...profiles, profile];
     const upfront = !base?.router && profile.paid ? allowance() : null;
-    if (!base?.router && profile.paid && upfront === null) return `Cancelled: paid profiles need an allowance. ${kept}`;
+    if (!base?.router && profile.paid && upfront === null) return `Cancelled: paid profiles need an allowance.${kept}`;
     let result = base?.router ? write(next, done) : bootstrap(next, profile, upfront, done);
     if (/allowance_required/.test(result)) {
       const usd = allowance();
       result = usd === null ? 'Cancelled: paid profiles need an allowance.' : bootstrap(next, profile, usd, done);
     }
-    return result.startsWith('Added') ? result : `${result} ${kept}`;
+    return result.startsWith('Added') ? result : `${result}${kept}`;
   };
   const subscription = (kindName: string, name: string) => {
     if (!ACCOUNT.test(name) || name === 'api') return 'Account names start with a letter and use lowercase letters, digits, _ or - (at most 24).';
@@ -343,7 +344,7 @@ export default function activate(api: ModAPI) {
       const listed = api.host.tryCall('credentials.list', null);
       return (listed.ok ? listed.value : []).find(item => item.label === name || item.id === name)?.id;
     })();
-    if (!credential) return `Unknown profile ${name}`;
+    if (credential === undefined) return `Unknown profile ${name}`;
     const user = profile ? undefined : profiles.find(item => item.credential === credential);
     if (user) return `${name} is the sign-in of profile ${user.name}; remove that profile instead.`;
     if (profile && (profile.name === current || profile.name === pending)) return `${name} is this thread's profile; switch to another one first.`;
@@ -353,7 +354,7 @@ export default function activate(api: ModAPI) {
       if (result) return result;
       remember(quota => { delete quota[name]; });
     }
-    if (profiles.some(item => item !== profile && item.credential === credential)) return `Removed ${name}.`;
+    if (!credential || profiles.some(item => item !== profile && item.credential === credential)) return `Removed ${name}.`;
     const done = api.host.tryCall('credentials.request', { action: 'remove', profile: credential });
     return done.ok ? `Removed ${name}${done.value.status === 'completed' ? ' and its sign-in' : '; its sign-in was kept'}.` : `Removed ${name}; its sign-in was kept: ${done.error}`;
   };
@@ -367,7 +368,7 @@ export default function activate(api: ModAPI) {
       ...accounts.map(account => ({ id: `use:${account.name}`, kind: 'action' as const,
         label: `${account.name === (pending ?? current) ? '●' : '○'} ${account.name}${account.available ? '' : ' (unavailable)'}`,
         description: describe(account, quota, now) })),
-      { id: 'add', kind: 'action', label: '+ Add an account…', description: 'ChatGPT, Claude or Cursor account, OpenAI or Anthropic API key, or another provider' },
+      { id: 'add', kind: 'action', label: '+ Add an account…', description: 'ChatGPT, Claude or Cursor account, OpenAI or Anthropic API key, local Ollama, or another provider' },
       ...owned(accounts).length > 1 ? [{ id: 'remove', kind: 'action' as const, label: 'Remove a profile…', description: 'Drops its route and, if unused, its sign-in' }] : [],
     ];
     const shown = api.host.tryCall('terminal.panel', { title: 'Profiles', subtitle: result ? fit(result, 200) : 'Enter switches this thread at its next turn · Alt+s cycles', items, action: PANEL });

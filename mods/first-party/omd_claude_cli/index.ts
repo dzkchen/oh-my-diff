@@ -426,7 +426,7 @@ export default function activate(api: ModAPI): void {
     };
     return { display: [
       `CLI: ${error ? `check failed: ${error}` : wrong ? `${wrong}; /claude login and Claude requests are refused until then` : version ?? cliProblem(null)}`,
-      ...accounts.length ? accounts.map((account, index) => `Account ${account.name}: ${login(index)} · ${account.billing === 'api' ? 'Console API credits' : 'subscription'} · ${account.models} models`)
+      ...accounts.length ? accounts.map((account, index) => `Account ${account.name}: ${login(index)} · ${account.billing === 'api' ? 'Console API credits' : 'subscription'} · ${account.models} models${account.cli_version && version && !wrong && account.cli_version !== version ? `; read with Claude CLI ${account.cli_version}, run /claude login${account.billing === 'api' ? ' api' : ''}${account.name === 'default' ? '' : ` ${account.name}`} to refresh` : ''}`)
         : ['Accounts: none; run /claude login [api] [NAME]'],
       `Models: ${published === true ? `${(models as Row[]).length} published to /model${wrong ? ', unusable until the CLI is updated' : ''}` : 'none published'}`].join('\n') };
   }, { description: 'Sign in to Claude accounts (login [api] [NAME] | remove NAME | code CODE) or show their status', args_hint: '[login [api] [NAME] | remove NAME | code CODE]' });

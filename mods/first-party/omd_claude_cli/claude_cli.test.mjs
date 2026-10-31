@@ -417,6 +417,7 @@ else if (argv[0] === 'auth') {
     const dir = await realpath(join(store, 'routes/claude/accounts/work'));
     assert.deepEqual(result.accounts.map(account => [account.name, account.billing, account.email, account.config_dir, account.route]),
       [['default', 'subscription', 'me@example.com', null, 'claude'], ['work', 'api', 'work@example.com', dir, 'claude-work']]);
+    assert.deepEqual(result.accounts.map(account => account.cli_version), [CLI_VERSION, CLI_VERSION]);
     assert.deepEqual(result.models.map(model => model.slug), ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-5.work', 'claude-sonnet-5.work']);
     const written = await host();
     assert.deepEqual(written.routes.map(route => [route.name, route.provider, route.model, route.rates.included_subscription, route.rates.provider_billed]),
@@ -653,6 +654,11 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
     return { exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [signedIn, null] }), stderr: '' };
   }, 'claude').value.display;
   assert.match(listed, /me@example\.com[\s\S]*work: not signed in/);
+  const aged = [{ ...accounts[0], cli_version: '2.1.400 (Claude Code)' }, { ...accounts[1], cli_version: '2.1.400 (Claude Code)' }, { name: 'same', billing: 'api', config_dir: '/accounts/same', models: 1, cli_version: CLI_VERSION }];
+  const stale = modEvent('command', '', { accounts: aged, models: [], published: true }, () => ({ exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [null, null, null] }), stderr: '' }), 'claude').value.display;
+  assert.match(stale, /default: not signed in.*3 models; read with Claude CLI 2\.1\.400 \(Claude Code\), run \/claude login to refresh/);
+  assert.match(stale, /work: .*run \/claude login api work to refresh/);
+  assert.doesNotMatch(stale, /Account same.*read with/);
   const login = (args, state = null) => modEvent('command', args, state, () => ({ delivered: 1 }), 'claude');
   assert.deepEqual(login('login api work').calls[0].arguments, { channel: 'login', data: { billing: 'api', account: 'work' } });
   assert.deepEqual(login('login').calls[0].arguments, { channel: 'login', data: { billing: 'subscription', account: 'default' } });

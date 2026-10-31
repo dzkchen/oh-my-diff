@@ -112,11 +112,17 @@
         ],
         "default": ""
       },
-      "fallback_model": {
-        "title": "Fallback model",
-        "description": "Model to use when a subagent's model has no usable route or its provider is near its limit or recently failed; empty keeps the lead's model",
+      "fallback_models": {
+        "title": "Fallback models",
+        "description": "Comma-separated models to try in order when a subagent's model has no usable route or its provider is near its limit or recently failed, such as \"opus, gpt-6.1-sol\"; the lead's model comes last",
         "type": "string",
         "default": ""
+      },
+      "retry_after_limit": {
+        "title": "Restart after a usage limit",
+        "description": "Restart a delegate_task task once on the same route when its provider's usage limit stopped it and resets within 6 hours",
+        "type": "boolean",
+        "default": false
       }
     },
     "additionalProperties": false

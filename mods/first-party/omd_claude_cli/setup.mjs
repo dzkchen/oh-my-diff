@@ -176,7 +176,7 @@ async function setup(name, action, login) {
         : { ...model, slug: `${model.slug}.${name}`, name: `${model.name} · ${name}`.slice(0, 64) });
       const fallback = models.find(model => model.family === 'opus') ?? models[0];
       added = { ...account, plan: status.subscriptionType ?? null,
-        email: status.email ?? null, default: fallback.slug, models: [fallback, ...models.filter(model => model !== fallback)] };
+        email: status.email ?? null, cli_version: status.cliVersion, default: fallback.slug, models: [fallback, ...models.filter(model => model !== fallback)] };
     } catch (error) {
       await discard();
       throw error;
@@ -231,7 +231,7 @@ async function setup(name, action, login) {
   }
   const published = publishable(accounts);
   return { signed_out: signedOut, accounts: accounts.map(account => ({ name: account.name, billing: account.billing, plan: account.plan,
-    email: account.email, config_dir: account.config_dir, route: routeName(account.name), models: account.models.length })),
+    email: account.email, cli_version: account.cli_version, config_dir: account.config_dir, route: routeName(account.name), models: account.models.length })),
     models: published.map(model => ({ slug: model.slug, display: model.name, context_window: model.window, efforts: model.efforts,
       ...model.efforts.includes('high') ? { default_effort: 'high' } : {} })) };
 }

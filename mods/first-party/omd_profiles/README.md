@@ -54,9 +54,10 @@ Run `/profile add` (or pick **+ Add an account…** in `/profile`) and choose wh
 | Cursor account | Asks a name, then runs `omd_cursor`'s setup (`/cursor setup`). |
 | OpenAI API key | Asks a name, model and price, then the key. The context window is asked only for a model Codex's catalog doesn't list. |
 | Anthropic API key | The same, for `api.anthropic.com`. |
+| Local Ollama (no key) | Asks a name, model and context window, then talks to `http://localhost:11434/v1` over Chat Completions with no key, price or allowance. Ollama uses its own context length, so start it with `OLLAMA_CONTEXT_LENGTH` set to the window you enter. |
 | Other provider (URL) | The same, plus the endpoint URL and its protocol. |
 
-Shortcuts: `/profile add chatgpt|claude|cursor|api_key|anthropic NAME` and `/profile add provider NAME HTTPS_URL`.
+Shortcuts: `/profile add chatgpt|claude|cursor|api_key|anthropic|ollama NAME` and `/profile add provider NAME HTTPS_URL`.
 
 - Everything happens in the session, the first profile included.
 - Paid keys ask for an allowance (USD, `20` or `$20`) the first time.

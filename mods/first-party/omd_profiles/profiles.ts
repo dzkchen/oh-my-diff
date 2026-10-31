@@ -3,9 +3,9 @@ import type { HostRoute, Json, ProviderModel, ServiceGrantUpdate } from '../../a
 export const PROVIDER = 'omd_profiles';
 export const PROTOCOLS = ['responses', 'chat', 'anthropic'];
 export const URLS: Record<string, string> = { chatgpt: 'https://chatgpt.com/backend-api/codex/responses', api_key: 'https://api.openai.com/v1/responses',
-  anthropic: 'https://api.anthropic.com/v1/messages' };
+  anthropic: 'https://api.anthropic.com/v1/messages', ollama: 'http://localhost:11434/v1/chat/completions' };
 
-type Credential = { id: string; label: string; kind: string; origin?: string | null };
+type Credential = { id: string; label?: string; kind: string; origin?: string | null };
 export type Options = { name?: string; credential?: string; protocol?: string; url?: string; model?: string; window?: unknown; paid?: unknown;
   reasoning?: boolean; cache_control?: boolean; text_only?: boolean; max_output?: unknown };
 export type Profile = { name: string; protocol: string; url: string; model: string; credential: string; kind: string; window: number | null;
@@ -21,13 +21,15 @@ export function profileEntry(options: Options, credentials: Credential[]): Profi
   const { name, credential, protocol, url, model } = options;
   if (!NAME.test(name ?? '')) throw new Error('profile_name_invalid: lowercase letters, digits, _ or -');
   if (!PROTOCOLS.includes(protocol ?? '')) throw new Error(`profile_protocol_invalid: ${PROTOCOLS.join('|')}`);
-  if (!origin(url ?? '') || !model) throw new Error('profile_url_and_upstream_model_required');
-  const found = credentials.find(item => item.label === credential || item.id === credential);
+  const local = url === URLS.ollama;
+  if (!local && !origin(url ?? '') || !model) throw new Error('profile_url_and_upstream_model_required');
+  if (local && protocol !== 'chat') throw new Error('profile_protocol_invalid: a local Ollama profile speaks chat');
+  const found = local ? { id: '', kind: 'ollama' } : credentials.find(item => item.label === credential || item.id === credential);
   if (!found || found.kind === 'secret') throw new Error(`credential_not_enrolled: run /profile add in an OMD+ session first (${credential})`);
-  if (origin(url!) !== found.origin) throw new Error(`profile_url_origin_mismatch: ${found.label} is enrolled for ${found.origin}`);
+  if (!local && origin(url!) !== found.origin) throw new Error(`profile_url_origin_mismatch: ${found.label} is enrolled for ${found.origin}`);
   const paid = options.paid ? String(options.paid).split(':').map(Number) : null;
   if (paid && (paid.length !== 2 || paid.some(value => !Number.isFinite(value) || value <= 0))) throw new Error('profile_paid_invalid: INPUT_USD:OUTPUT_USD per million tokens, both above zero');
-  if (found.kind !== 'chatgpt' && !paid) throw new Error('profile_paid_required: API-key profiles bill per request');
+  if (found.kind !== 'chatgpt' && !local && !paid) throw new Error('profile_paid_required: API-key profiles bill per request');
   const count = (value: unknown, label: string, fallback: number | null) => {
     if (value === undefined || value === null || value === '') return fallback;
     const number = Number(value);
@@ -52,7 +54,7 @@ export const modelFor = (profile: Profile): ProviderModel => ({ slug: profile.na
   efforts: profile.efforts?.length ? profile.efforts : [profile.effort ?? 'medium'], default_effort: profile.effort ?? 'medium' });
 
 export const serviceFor = (profiles: Profile[]): ServiceGrantUpdate[] => profiles.length
-  ? [{ id: PROVIDER, credentials: [...new Set(profiles.map(profile => profile.credential))], route: { ...routeFor(profiles[0]), data: undefined } }] : [];
+  ? [{ id: PROVIDER, credentials: [...new Set(profiles.map(profile => profile.credential).filter(Boolean))], route: { ...routeFor(profiles[0]), data: undefined } }] : [];
 
 export const profilesOf = (routes: { provider: string; data?: Json }[]): Profile[] =>
   routes.filter(route => route.provider === PROVIDER && route.data && typeof route.data === 'object').map(route => route.data as unknown as Profile);

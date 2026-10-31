@@ -29,8 +29,8 @@ export const accountEnv = account => account?.config_dir ? { CLAUDE_CONFIG_DIR: 
 export const loginHint = (billing, account) => `\`/claude login${billing === 'api' ? ' api' : ''}${account && account.name !== 'default' ? ` ${account.name}` : ''}\``;
 
 export function checkCli(claude, billing = 'subscription', home = process.env.HOME, username = process.env.USER, account = null) {
-  checkVersion(claude);
-  return checkAuth(claude, billing, home, username, account);
+  const cliVersion = checkVersion(claude);
+  return { ...checkAuth(claude, billing, home, username, account), cliVersion };
 }
 
 function checkVersion(claude) {
@@ -38,6 +38,7 @@ function checkVersion(claude) {
   if (version.status !== 0 || !cliSupported(version.stdout)) {
     throw new Error(`claude_cli_unsupported: ${CLI_MINIMUM} or a newer 2.x is required; run claude update (or ${CLI_INSTALL})`);
   }
+  return version.stdout.trim();
 }
 
 function checkAuth(claude, billing, home, username, account) {
