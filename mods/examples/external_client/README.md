@@ -1,10 +1,14 @@
 # external_client
 
-Shows a mod that owns its client adapter: a text renderer process that joins the session over the client protocol
-(`omd-client/1`) with the SDK in `@oh-my-diff/mod-api/client`. It's an example for mod authors. It isn't in the
-bundled collection or the curated directory.
+Shows a mod that starts and manages its own client adapter: a text renderer process that joins the session over the
+client protocol (`omd-client/1`) with the SDK in `@oh-my-diff/mod-api/client`. It's an example for mod authors. OMD+
+and OMD Core don't install it, and it isn't in the curated directory.
 
-It's an independent-author API `1.0.0` mod. It shows:
+Read it if you're building a mod that starts an [external client](../../reference/external-clients.md) as a
+[managed process](../../reference/managed-processes.md).
+
+It's an API `1.0.0` mod that uses only the public mod API, like any outside author's mod
+([host primitives](../../reference/host-model.md#host-primitives)). It shows:
 
 - Roster view: the `terminal` handler lists attached clients from `input.clients` in the `external_clients` list.
   `Space` or `Enter` on a row, or `omd/action` from a client, runs `external_client:pick` with that client's id.
@@ -13,10 +17,11 @@ It's an independent-author API `1.0.0` mod. It shows:
 - Pointer source: a press on the badge records `component_event.client`, so the status text names the client
   that clicked.
 - Launching a process: slash commands can't start processes, so `launch` hops through `events.publish` to the
-  mod's `channel` handler. It finds `node` with `process.which` and starts `node <client_path>` with
+  mod's `channel` handler.
+- Starting the client: the handler finds `node` with `process.which` and starts `node <client_path>` with
   `process.start {sandbox: 'none'}` under the `os` grant (`os_access.programs: ['node']`, network on for `ws://`).
-  The URL and token file path arrive as `EXTERNAL_CLIENT_URL` and `EXTERNAL_CLIENT_AUTH_FILE` (both in
-  `exec_environment`), so the mod never sees the token.
+- Passing the token: the URL and token file path reach the client as `EXTERNAL_CLIENT_URL` and
+  `EXTERNAL_CLIENT_AUTH_FILE` (both in `exec_environment`), so the mod never sees the token.
 - The client: `client.mjs` connects with `kind: 'text'` and prints to stderr, since a process the mod starts
   uses stdout for framed messages. It prints each `omd/view/updated` snapshot as text (components it can't show
   become the SDK's `unsupported()` error plus fallback text), sends one action on its own roster row, and prints the
@@ -55,13 +60,14 @@ EXTERNAL_CLIENT_URL=unix:///abs/omd.sock node client.mjs
 process, a pick and a pointer press update state, and the view lists one attached text client.
 
 ```sh
-python3 scripts/mod_host_check.py --omd-mod OMD_MOD --no-commands --scenarios external_client
+python3 scripts/mod_host_check.py --no-commands --scenarios external_client
 ```
 
-`OMD_MOD` is the path to an `omd-mod` built from the applied runtime patch. Without `--omd-mod`, the check uses
-the `omd-mod` on your `PATH`.
+It uses the `omd-mod` on your `PATH`. [Tests](../../../tests/README.md) covers the other test runners.
 
 ## Settings
+
+Change settings in `/mods`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |

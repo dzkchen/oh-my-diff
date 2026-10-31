@@ -2,21 +2,26 @@
 
 Use it when you implement or debug a client's messages: initialization and errors, every `omd/*` request, the
 host's notifications and server requests, action tokens, epochs and reconnecting, renderer fallbacks and
-delegation. How to build a client around it is in [External clients](external-clients.md).
+delegation. Transports, adapters and the SDK are in [External clients](external-clients.md); the steps to build a
+client are in [Build an external client](../../docs/mod-authors/build-a-client.md).
+
+In Mod API `1.0.0` every `omd/*` method is experimental. The host runs on Apple Silicon macOS.
 
 ## Initialize and errors
 
 A client sends `initialize {clientInfo, capabilities: {experimentalApi: true}}` and the `initialized` notification.
 `omd/*` methods are experimental and need that opt-in.
 
-Requests are not serialized by the host, so a client awaits the attach before any other `omd/*` call; before it
-every method fails with `client_not_attached`.
+Wait for `omd/client/attach` to return before any other `omd/*` call. Until then every method fails with
+`client_not_attached`, and the host doesn't queue requests.
 
 Errors are JSON-RPC errors whose message starts with the code. Besides the codes listed with each request, these
 exist:
 
-- `mod_host_inactive`, `session_unavailable`, `host_operation_unavailable` and `view_unavailable` (no mods, thread,
-  session runtime or published view in this host)
+- `mod_host_inactive`: no mods run in this host
+- `session_unavailable`: no thread runs in this host
+- `host_operation_unavailable`: this host has no session runtime
+- `view_unavailable`: this host hasn't published a view
 - `command_unavailable` and `command_unavailable_during_turn` for the action's command
 - `render_slot_invalid` and `render_props_invalid`
 - `resource_not_in_view` and `resource_unavailable`
@@ -28,7 +33,7 @@ Each request below is a method a client sends to the host.
 
 ### `omd/client/attach`
 
-```ts
+```text
 omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('svg'|'png'|'jpeg'|'cells'|'text')[], pointer: 'pixel'|'cell'|'half_cell'|'none', reducedMotion, cellPx?}, operations}
 // → {clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}, then omd/view/updated
 ```
@@ -40,7 +45,7 @@ omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('sv
 
 ### `omd/client/update`
 
-```ts
+```text
 omd/client/update {renderer?, viewport?: {width, height, unit}, focus?}
 // → {}
 ```
@@ -49,21 +54,21 @@ omd/client/update {renderer?, viewport?: {width, height, unit}, focus?}
 
 ### `omd/client/detach`
 
-```ts
+```text
 omd/client/detach {}
 // → {}
 ```
 
 ### `omd/view/read`
 
-```ts
+```text
 omd/view/read {}
 // → {epoch, revision, snapshot, actionToken}
 ```
 
 ### `omd/client/event`
 
-```ts
+```text
 omd/client/event {epoch, component, event}
 // → {delivered}
 ```
@@ -81,9 +86,10 @@ omd/client/event {epoch, component, event}
 Behavior:
 
 - `{delivered}` is answered in the order the connection sent its events and actions.
-- The owner (from `component_owners`) gets [`component_event`](terminal-input.md#component_event) with
-  `client: clientId` and only the kind's fields above. `origin`, `events`, `anchor`, `range`, `index` and any other
-  field a client sends are dropped.
+- The component's owner, as listed in the snapshot's `component_owners` (see
+  [Host notifications](#host-notifications-and-server-requests)), gets
+  [`component_event`](terminal-input.md#component_event) with `client: clientId` and only the kind's fields above.
+  `origin`, `events`, `anchor`, `range`, `index` and any other field a client sends are dropped.
 
 | Error | When |
 | --- | --- |
@@ -93,7 +99,7 @@ Behavior:
 
 ### `omd/action`
 
-```ts
+```text
 omd/action {actionToken, component, row?, value?}
 // → {status: 'completed', outcome, actionToken}
 ```
@@ -111,10 +117,14 @@ Errors:
 
 ### `omd/render`
 
-```ts
+```text
 omd/render {slot, props}
 // → {original, effective, tree, answeredBy}
 ```
+
+`omd/render` runs the mods' `render` interceptors over a component the client draws natively. `slot` names that
+component, one of the [render components](render-hooks.md#render-components) such as `tool_call`, and `props` are its
+native props. This `slot` is unrelated to the `slot` component type.
 
 - The result gives the client's native props before and after `render` interceptors, drawn with the envelope `{id:
   'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}`.
@@ -123,7 +133,7 @@ omd/render {slot, props}
 
 ### `omd/resource/read`
 
-```ts
+```text
 omd/resource/read {reference}
 // → {mediaType, data, sha256}
 ```
@@ -132,14 +142,14 @@ omd/resource/read {reference}
 
 ### `omd/recovery/read` and `omd/recovery/apply`
 
-```ts
+```text
 omd/recovery/read {}
 omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
 ```
 
 `omd/recovery/read` returns the host-owned `/omd` recovery state, and `omd/recovery/apply` returns the result:
 
-```ts
+```text
 {mods: [{id, path, scope, enabled, packaged, failing, error}], resettable, store_error, activation_error, reload_error}
 ```
 
@@ -150,19 +160,25 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
   `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with
   `client_surface_operation_unavailable`.
 - `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them.
-- A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and
-  `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload. Administered content that
-  no longer matches its pin reports `managed_content_stale: ...` instead and loads after `omd-mod package-sync`.
+- When a mod's source changes after trust, its last trusted code keeps running. The mod reports
+  `source_changed: ...`, and `reload_error` is `untrusted_source: ...`. The new source loads after `omd-mod trust`
+  and a reload. Administered content that no longer matches its pin reports `managed_content_stale: ...` instead and
+  loads after `omd-mod package-sync`.
 
 ## Host notifications and server requests
 
+A surface operation is a host operation the terminal normally serves, such as `terminal.notice` or
+`terminal.prompt`. The host mirrors some of them to clients (`omd/surface/mirrored`) and, with no terminal attached,
+delegates others (`omd/surface/call`, see [Delegation](#delegation)).
+
 The host sends these notifications:
 
-- `omd/view/updated {epoch, revision, snapshot, actionToken}`: the full, coalesced `ModViewSnapshot` (`view`,
-  `component_owners`, `layout_owner` (the mod whose view supplied `view.layout`), `progress`, `activity`,
-  `diagnostics`).
+- `omd/view/updated {epoch, revision, snapshot, actionToken}`: the full, coalesced `ModViewSnapshot`
 - `omd/roster/updated {roster}`
 - `omd/surface/mirrored {caller, operation, arguments}`
+
+The `ModViewSnapshot` fields are `view`, `component_owners`, `layout_owner` (the mod whose view supplied
+`view.layout`), `progress`, `activity` and `diagnostics`.
 
 The host also sends the server request `omd/surface/call {caller, operation, arguments, confirm?}`. A client
 answers it with the operation's result or an error whose message the mod receives. When the mod's call is cancelled
@@ -170,13 +186,13 @@ or outlives its callback budget first, the host drops the request and a late ans
 
 Other server requests (approvals, `requestUserInput`, permissions, elicitation) reach every subscribed client, and
 the first answer wins, an error included. An SDK client answers only what its `onServerRequest` returns a value for
-(`undefined` leaves the request unanswered), so a client that does not handle a request never resolves it before
-the user at the terminal.
+(`undefined` leaves the request unanswered). So a client that ignores a request leaves it for the user at the
+terminal to answer.
 
 ## Actions and tokens
 
 A client names a component and row, never a command. The host resolves the action from its own current view and
-runs it like Space/Enter in the TUI: `command` interceptors, then the command as a user action.
+runs it like Space/Enter in the terminal: `command` interceptors, then the command as a user action.
 
 - Tokens are random, per connection and bound to the view's epoch and revision.
 - A pushed revision or a use replaces the token, while progress and activity pushes keep it.
@@ -195,7 +211,7 @@ is closing`).
 - `epoch` is an opaque decimal string (empty, with revision 0 and a null snapshot, until the host publishes its
   first view).
 - `revision` grows within an `epoch`.
-- A new `epoch` means the host restarted and invalidates everything the client holds.
+- A new `epoch` means the host restarted and invalidates everything the client stored.
 
 Reconnecting is `initialize`, attach (a full snapshot, never deltas), then `thread/resume` per thread, which
 replays pending approvals. `thread/resume` also joins a loaded thread before its first turn.
@@ -205,7 +221,7 @@ replays pending approvals. `thread/resume` also joins a loaded thread before its
 - `turn/interrupt` cancels a turn.
 - `thread/rewritten` invalidates a thread's cached history.
 
-## Capabilities and fallback
+## Renderer capabilities and fallback
 
 The wire roster lists `{id, name, renderer, viewport, focused, attachedMs}` (camelCase renderer). Mods see it as
 `clients: ClientEntry[]` beside [`client`](terminal-operations.md#terminal-event-client) in the `terminal` input, in
@@ -217,13 +233,14 @@ A view serves every attached renderer, so draw for the least capable or branch o
 - An SVG `image` shows its alt text in terminals (SVG rules in
   [SVG assets](state-and-storage.md#svg-assets-svg_assets_v1)); a client listing `svg`, `png` or `jpeg` reads the
   resource with `omd/resource/read` and draws it.
-- `terminal.notify`, `terminal.notice` and `terminal.blit` are mirrored to attached clients in both modes, blits
-  only to clients listing `cells`; others draw a raster's `alt`.
+- `terminal.notify`, `terminal.notice` and `terminal.blit` are mirrored to attached clients whether the host is
+  headless or a terminal is attached. Blits go only to clients listing `cells`; others draw a raster's `alt`.
 
 Headless, the host answers those three itself with the terminal's validation:
 
 - A blit is checked against `component_owners` (`terminal_blit_not_owned`, `terminal_blit_unknown`) and the
-  raster's size and paced at one frame per 16 ms with the same 32-update backpressure.
+  raster's size, and paced at one frame per 16 ms. Once 32 updates are waiting for a raster, a blit gets
+  `{status: 'backpressure', retry_after_ms}`.
 - A notice fails with `terminal_notice_invalid` like in the terminal, and a `model`-audience notice is still queued
   for the model.
 
@@ -244,15 +261,17 @@ User-only operations are never delegated:
 - `routes.write`
 - `contract.select`
 
-`prompts.consent` is never delegated either. Whenever a client's action or event caused the call, these operations
-and a `terminal.pty` start fail in both modes (`client_surface_operation_unavailable: <operation> needs the
-terminal (/omd) or omd-mod`), so clients never reach grant-writing or user-only operations: use the terminal's
-`/omd` or `omd-mod enable|disable|reload|reset`.
+`prompts.consent` is never delegated either. When a client's action or event caused the call, these operations and
+a `terminal.pty` start fail, whether the host is headless or a terminal is attached. The error is
+`client_surface_operation_unavailable: <operation> needs the terminal (/omd) or omd-mod`, so clients never reach
+grant-writing or user-only operations. To change what runs, use `/omd` in the terminal or
+`omd-mod enable|disable|reload|reset`.
 
 - Headless, a `terminal.pty` start from a non-user context is `host_operation_user_only`.
 - An operation no attached client declared fails with `client_surface_operation_unavailable: no attached client
   serves <operation>`.
-- `app.request` runs on the headless host itself. A confirmed method first goes as `omd/surface/call
-  terminal.prompt {kind: 'confirm', title, message}` to the clients that declared `terminal.prompt` and runs only
-  on `{status: 'accepted'}`, returning `{status: 'declined'}` otherwise or when none did.
+- `app.request` runs on the headless host itself. For a method that needs confirmation, the host first sends
+  `omd/surface/call terminal.prompt {kind: 'confirm', title, message}` to the clients that declared
+  `terminal.prompt`. The method runs only on `{status: 'accepted'}`. Otherwise, or when no client declared
+  `terminal.prompt`, it returns `{status: 'declined'}`.
 - A call with `confirm` needs the user's consent in the client before it acts.

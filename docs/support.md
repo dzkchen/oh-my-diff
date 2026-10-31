@@ -14,7 +14,7 @@ host needs the macOS sandbox (Seatbelt) to run mods.
 | --- | --- | --- |
 | Codex | `0.165.x` | Everything. OMD builds on the Codex you install. |
 | Python | 3.12 or later | The installer and `omd update` |
-| Node | 22.18 or later | The setup and router of `omd_profiles`, `omd_claude_cli` and `omd_cursor` |
+| Node | 22.18 or later | The setup and model routing of `omd_profiles`, `omd_claude_cli` and `omd_cursor` |
 | Node | 24.18 or a later 24.x | `omd-mod-author`, to write mods |
 | pnpm | 11.14 or later | Writing mods. `omd_cursor` setup also needs `pnpm`. |
 
@@ -36,12 +36,12 @@ text.
 
 Mod API `1.0.0` is stable and supported through `2027-10-19`. Only this API version loads.
 
-- Every public operation, event, capability and other surface is marked frozen or experimental in
+- Every public operation, event, capability and other part of the API is marked frozen or experimental in
   [the conformance registry](../mods/conformance/contract.json).
 - A frozen entry keeps its shape through `2027-10-19`. A breaking change needs a new major version and a migration
   note in [Stability and migration](../mods/reference/stability-and-migration.md#migration-notes).
-- An experimental entry may change in any release. So may the `experimental_fields` of a frozen entry, which are
-  fields added after `1.0.0`.
+- An experimental entry may change in any release. So may a frozen entry's `experimental_fields`, which are fields
+  added after `1.0.0`.
 
 [Stability and migration](../mods/reference/stability-and-migration.md) lists the experimental surfaces and the
 migration notes.

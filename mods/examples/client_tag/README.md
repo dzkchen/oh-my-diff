@@ -1,12 +1,16 @@
 # client_tag
 
-A component module (`component_modules_v1`) that draws the text its node's props carry, above the composer. It's an
-example for mod authors. It isn't in the bundled collection or the curated directory.
+Draws a clickable tag above the prompt from a component module (`component_modules_v1`). The tag shows the text passed
+in its props. It's an example for mod authors. OMD+ and OMD Core don't install it, and it isn't in the curated
+directory.
 
-A click posts its cell to the mod. `component_post` stores it and the view shows the last click. It ports the `Tag`
-`ClientModule` example from Claude Code's mod type declarations (`mods/types/claude-code.d.ts` in
-[anthropics/claude-code](https://github.com/anthropics/claude-code)). It shows how the Claude Code `Client` API maps
-to an OMD component module:
+Read it if you're building a mod that uses
+[component modules](../../reference/terminal-input.md#component-modules-component_modules_v1).
+
+Clicking the tag sends the clicked cell's column and row to the mod. `component_post` stores them and the view shows the
+last click. It ports the `Tag` `ClientModule` example from Claude Code's mod type declarations
+(`mods/types/claude-code.d.ts` in [anthropics/claude-code](https://github.com/anthropics/claude-code)). It shows how the
+Claude Code `Client` API maps to an OMD component module:
 
 | Claude Code `Client` | OMD component module |
 | --- | --- |
@@ -31,7 +35,7 @@ and [Trust and permissions](../../../docs/trust-and-permissions.md) for what a g
 
 ## Use it
 
-Click the tag above the composer. The line below it shows the column and row of the last click.
+Click the tag above the prompt. The line below it shows the column and row of the last click.
 
 `scripts/client_acceptance.py` loads it alongside `external_client` and `approval_desk` against real hosts.
 

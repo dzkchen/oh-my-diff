@@ -1,8 +1,8 @@
 # omd_files
 
-A file manager in the workspace dock, modeled on yazi: parent, current and preview columns, tabs, find, a frecency
-jump, previews, rename, move, Trash and delete, and adding a file to the prompt. It's off by default in OMD+.
-OMD Core doesn't include it.
+Adds a file manager to the workspace dock, modeled on yazi. It has parent, current and preview columns, tabs, find, a
+jump list of the files you use most often and most recently (`z`), previews, rename, move, Trash and delete, and a key
+that adds a file to the prompt. It's off by default in OMD+. OMD Core doesn't include it.
 
 ```text
 ╭ / ──╮┏ /src ━━━━━━━━━━━┓╭ lib ───────────────╮
@@ -28,16 +28,16 @@ Turn on [`omd_frecency`](../omd_frecency/README.md) too for the `z` jump list.
 
 ## Use it
 
-Open the Files tab in the dock, and these keys apply while it has focus. `?` lists them. Esc returns to the chat.
+Open the Files tab in the dock, and these keys apply while it has focus. `?` lists them. `Esc` returns to the chat.
 
-| Key | Does |
+| Key | What it does |
 | --- | --- |
 | `h` / `l`, `Enter` | Parent directory / enter the directory or open the file in your editor |
 | `j` / `k` | Next / previous entry |
 | `g` `g` / `G` | First / last entry |
 | `J` / `K` | Scroll the preview |
 | `t` | New tab in the current directory (at most 9) |
-| `1`–`9` | Show that tab; a digit without a tab says so instead of switching dock tabs |
+| `1`–`9` | Show that tab. If it doesn't exist, it says so and doesn't switch dock tabs. |
 | `[` / `]`, `q` | With several tabs: previous / next tab, close this tab |
 | `/`, `n` / `N` | Find a name in the current directory (lowercase ignores case), next / previous match |
 | `z` | Jump to a file `omd_frecency` ranks, or type a path |
@@ -47,7 +47,7 @@ Open the Files tab in the dock, and these keys apply while it has focus. `?` lis
 | `@` | Add an `@` mention of the entry to the prompt, quoted (`@"my notes.md"`) when the path has spaces, quotes or trailing punctuation |
 | `.` | Show or hide dotfiles |
 
-The brackets and `q` stay with the workspace dock while there is one tab.
+With only one tab open, `[`, `]` and `q` act on the workspace dock instead.
 
 | Command | What it does |
 | --- | --- |
@@ -71,17 +71,22 @@ It has no settings.
 
 ## Needs and limits
 
-- [`omd_workspace`](../omd_workspace/README.md) turned on. Opening a file needs `editor` in `host.json`; without it a
-  text, Markdown, PDF or image file opens in its macOS app after you confirm.
-- `d` runs outside the session sandbox (the `os` grant, limited to the Trash commands below) because the Trash is
-  outside the workspace. It uses the first that runs: `/usr/bin/trash` (macOS 15 and later), a `trash` on `PATH`, then
-  Finder through `osascript`, which macOS may ask you to allow. Without any of them `d` says so; use `D`. Only macOS
-  can keep a program outside the sandbox off the network, so on Linux `d` always says so.
+- It asks to draw its tab in the workspace, add `/files`, list, read and watch workspace files, rename, move and delete
+  them, run the Trash commands outside the sandbox, ask `omd_frecency` for its ranking, add mentions to the prompt, run
+  timers and keep its state. The capabilities are `terminal`, `services`, `commands`, `fs.read`, `fs.write`, `exec`,
+  `os`, `composer`, `events`, `lifecycle`, `inventory` and `store` (see
+  [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
+- It needs [`omd_workspace`](../omd_workspace/README.md) turned on. Opening a file needs `editor` in `host.json`.
+  Without it, a text, Markdown, PDF or image file opens in its macOS app after you confirm.
+- `d` runs outside the session sandbox, because the Trash is outside the workspace. It uses the `os` grant, limited to
+  the Trash commands below. It tries `/usr/bin/trash` (macOS 15 and later), then a `trash` on `PATH`, then Finder
+  through `osascript`, which macOS may ask you to allow. If none of them works, `d` says so, and you can use `D`
+  instead. On Linux `d` always says so, because only macOS can keep a program outside the sandbox off the network.
 - Rename, move and `D` run in the session sandbox, so they work only inside the workspace and where the sandbox allows
   writes.
 - A directory lists its first 1,000 entries (fewer when names are long), and the current column shows the 150 around
   the selection.
-- The listing follows file changes on disk (a `workspace.watch`, not polling) and is listed again at the end of every
+- The listing follows file changes on disk (it watches instead of polling) and is listed again at the end of every
   turn, so ignored folders such as `dist/` stay current.
 - Each session thread keeps its own tabs and selection, and gets them back when you resume it.
 
@@ -89,5 +94,5 @@ It has no settings.
 
 - [Included mods](../../../docs/collection.md)
 - [`omd_git`](../omd_git/README.md), the Git panel in the same dock
-- [Terminal UI](../../reference/terminal-ui.md) and [workspace watches](../../reference/workspace-files.md#workspacewatch)
-  in the mod API reference
+- [Terminal UI](../../reference/terminal-ui.md) and
+  [workspace watches](../../reference/workspace-files.md#workspacewatch) in the mod API reference

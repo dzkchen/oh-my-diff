@@ -33,10 +33,10 @@ After the note comes a short summary of the last turn (at most eight items per l
 
 A line is left out when the host didn't record that fact.
 
-It does nothing in two cases:
+It submits nothing when:
 
-- A turn is running: it refuses with a short note.
-- The last turn completed, or none was recorded: it shows a note and submits nothing, unless you add a note.
+- A turn is running. It refuses with a short message.
+- The last turn completed, or no turn was recorded, and you added no note. It shows a short message instead.
 
 ## Settings
 
@@ -44,10 +44,11 @@ It has no settings.
 
 ## Needs and limits
 
-- It works after an error, `Ctrl-C`, `codex resume` or a crash. After a crash the last turn shows as `interrupted`.
+- It works after an error, `Ctrl+C`, `codex resume` or a crash. After a crash the last turn shows as `interrupted`.
 - Turns from before you turned the mod on have no summary.
 - While the mod is on, the host records turn activity and checks the workspace around every tool call.
-- It needs the `commands` and `sessions` permissions.
+- It asks to add `/continue` and read the session's recorded turn activity. The capabilities are `commands` and
+  `sessions` (see [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 
 ## More
 

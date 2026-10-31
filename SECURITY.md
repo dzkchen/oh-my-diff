@@ -15,10 +15,10 @@ Include:
 
 Fixes ship as a patch release, with a public advisory once you can update.
 
-## Supported versions
+## Response times and supported versions
 
-Which releases get security fixes, and how quickly replies come, is in
-[Support](docs/support.md#fixes-and-security-support).
+OMD is a one-person project, so replies to reports are best effort, with no promised response time.
+[Support](docs/support.md#fixes-and-security-support) says which releases get security fixes.
 
 ## What's in scope
 
@@ -30,7 +30,7 @@ Which releases get security fixes, and how quickly replies come, is in
 Where else to report:
 
 - Upstream Codex problems go to [OpenAI](https://github.com/openai/codex/security).
-- Someone else's mod goes to its author. Do tell us about a malicious mod so it can be blocked.
+- Someone else's mod goes to its author. Report a malicious mod here too, so it can be blocked.
 
 ## What isn't a vulnerability
 

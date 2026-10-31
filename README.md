@@ -20,32 +20,36 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-Oh My Diff (OMD) is [Codex CLI](https://github.com/openai/codex) with a host for TypeScript mods: new commands,
-tools, context and screens. You still run `codex`, with your settings, sign-in and sessions, and you can go back to
-plain Codex at any time with nothing to migrate.
+Oh My Diff (OMD) is [Codex CLI](https://github.com/openai/codex), OpenAI's coding agent for the terminal, with a
+host for TypeScript mods. A mod is a small program that adds commands, tools, context or screens to Codex. You still
+run `codex`, with your settings, sign-in and sessions, and you can go back to plain Codex at any time with nothing
+to migrate. OMD is in beta and runs only on Apple Silicon macOS.
 
 A mod can add a slash command, give the model a new tool, add context to a request, draw a status line, a panel or a
-dialog, or react when the agent runs a tool. Installing a mod doesn't turn it on, and OMD shows what a mod may do
-before you allow it. [How OMD works](docs/how-omd-works.md) explains the design, and
-[trust and permissions](docs/trust-and-permissions.md) explains what a mod can and can't do.
+dialog, or react when the agent runs a tool. A mod you install doesn't run until you turn it on, and OMD shows what
+the mod may do before you allow it. OMD+ turns some of its included mods on for you.
+[How OMD works](docs/how-omd-works.md) explains the design, and [trust and permissions](docs/trust-and-permissions.md)
+explains what a mod can and can't do.
 
 ## Install
 
 You need an Apple Silicon Mac, Codex `0.165.x` already installed, and Python 3.12 or later. The
 [install guide](docs/install.md) lists every requirement.
 
-There are two installs. Pick one; you can switch later by running the other command.
+There are two install profiles, OMD+ and OMD Core. Choose OMD+ unless you want only the mod host, the part of OMD
+that loads mods. You can switch later by running the other command.
 
-OMD+ (`--profile full`) is OMD plus the [included mods](docs/collection.md). A status line, compact tool output, a
-pinned plan, a model picker and more are on from the start, and the rest are a click away in `/mods`. Most people
-want this one.
+The OMD+ install profile (`--profile full`) is OMD plus the [included mods](docs/collection.md). A status line,
+compact tool output, a pinned plan, a model picker and more are on from the start, and the rest are a click away in
+`/mods`.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
 ```
 
-OMD Core (`--profile platform`) is only the mod host: the `/mods` screen, update notices and the OMD mark. Codex
-otherwise looks and behaves as it always has. Choose it to add only mods you pick yourself, or to write your own.
+The OMD Core install profile (`--profile platform`) is only the mod host: the `/mods` screen, update notices and the
+OMD logo. Codex otherwise looks and behaves as it always has. Choose it to add only mods you pick yourself, or to
+write your own.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile platform
@@ -57,14 +61,15 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/rele
 codex
 ```
 
-Type `/mods` to see which mods are on and to turn others on or off. Run `omd` in a shell for the commands you can use
-outside `codex`. If `codex` still starts plain Codex, see [troubleshooting](docs/troubleshooting.md).
+Codex starts and shows the OMD logo. Type `/mods` to see which mods are on and to turn others on or off. Outside
+`codex`, run `omd` in a shell for a short summary of the commands that install, update and manage mods. If `codex`
+still starts plain Codex, see [troubleshooting](docs/troubleshooting.md).
 
 ## Where to go next
 
 Use OMD:
 
-- [Install, update, switch profile or uninstall](docs/install.md)
+- [Install, update, switch install profile or uninstall](docs/install.md)
 - [Included mods](docs/collection.md) and [Manage mods](docs/manage-mods.md)
 - [Use Claude, Cursor or an API key](docs/use-other-providers.md)
 - [Troubleshooting](docs/troubleshooting.md)
@@ -84,11 +89,13 @@ The [docs index](docs/README.md) lists every page.
 
 ## Status
 
-OMD is in beta, so expect bugs and rough edges. Mod API `1.0.0` is stable; surfaces marked experimental can change
-([support policy](docs/support.md)). The API is young, so if a mod needs a capability that's missing,
+Expect bugs and rough edges while OMD is in beta. Mod API `1.0.0` is stable, and the parts marked experimental can
+change ([support policy](docs/support.md)).
+
+The API is young, so if a mod needs a capability that's missing,
 [request it](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml). For bugs and docs problems,
-[open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose). If you want to become a core contributor,
-open an issue and say so. New features are best written as mods.
+[open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose). To become a core contributor, open an
+issue and say so. New features are best written as mods.
 
 Oh My Diff is not affiliated with or endorsed by OpenAI.
 

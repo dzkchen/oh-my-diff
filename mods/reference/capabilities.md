@@ -1,15 +1,22 @@
 # Capabilities
 
 Use it when you choose a mod's `capabilities` or review what a trusted mod can do. The tables list what each
-manifest capability grants, and [Capability by operation](#capability-by-operation) lists the capability each host
+manifest capability allows, and [Capability by operation](#capability-by-operation) lists the capability each host
 operation needs. How the authority grants are scoped and ended is in [Authority grants](authority-grants.md).
 
-Capabilities name authority classes. A call or registration outside the package's trusted capabilities fails with
-`capability_denied: NAME` before any native work.
+Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
+[registry table](stability-and-migration.md#experimental-entries-in-the-registry)). Runs on Apple Silicon macOS.
 
-## Capabilities: core operations
+A capability is a name in `mod.json` `capabilities` that allows a class of host operations, events and
+registrations. User-facing pages call capabilities permissions. A call or registration outside the package's trusted
+capabilities fails with `capability_denied: NAME` before any native work.
 
-| Capability | Grants |
+## Process, workspace, model and data capabilities
+
+These capabilities allow processes, workspace files, models, agents, stored data, sessions and contracts, plus the
+`history` replacement and `tool_output` observers.
+
+| Capability | Allows |
 | --- | --- |
 | `exec` | `exec.run`, `exec.output_page`, `environment.read`, `environment.set`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
 | `pty` | `terminal.pty` (a writable pane also needs `fs.write`; `network: "loopback"` also needs `network`) |
@@ -20,19 +27,26 @@ Capabilities name authority classes. A call or registration outside the package'
 | `network` | `exec.run`, `process.start` and `terminal.pty` with `network: "loopback"` |
 | `unix_sockets` (experimental) | `exec.run` `unix_sockets` |
 | `model` | `routes.list`, `routes.select`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
-| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions` and `sessions_tools`), `task.status`, `workspace.integrate` |
+| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (also needs `sessions` and `sessions_tools`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.snapshot`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
-| `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot`, `model.fork` and `agents.spawn {parent_history}` (with `sessions`) |
+| `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot`, `model.fork` and `agents.spawn {parent_history}` (also needs `sessions`) |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, `contract.select`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 
-## Capabilities: terminal, threads and registrations
+## Terminal, thread and registration capabilities
 
-| Capability | Grants |
+These capabilities allow terminal, composer, thread, config, credential and package operations, and the registrations
+a mod makes: tools, commands, interceptors, replacements, lifecycle events and services.
+
+| Capability | Allows |
 | --- | --- |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`, `terminal.image_sample`; the `component_change` interceptor |
-| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `app.routes`, `session.info` and `tools.list` |
+| `threads` | `app.request` for the `threads` methods, the `app_notification` event, `turns.abort` |
+| `config` | `app.request` for the `config` methods, `config.describe`, `config_list` interceptors, the `config_change` event |
+| `config.write` | `app.request` for the `config.write` methods, `config.set`, `config_set` interceptors |
+| `inventory` | `app.request` for the `inventory` methods, `app.routes`, `session.info`, `tools.list` |
+| `account` | `app.request` for the `account` methods |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
@@ -41,17 +55,22 @@ Capabilities name authority classes. A call or registration outside the package'
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check`, `tools.original` (`tool_original_v1`) and the `tool_batch` replacement |
 | `input` | `input` and `mention` interceptors |
-| `middleware` | `host_operation`, `model_request` and `response_stream` interceptors and the middleware events |
+| `middleware` | `host_operation`, `model_request`, `response_stream` and `model_send` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
-| `context`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events; `compaction` also owns the `compaction` interceptor |
+| `context` | the `context` replacement and the `context` event |
+| `lifecycle` | the lifecycle events: `start`, `idle`, `stop`, `resume`, `tool_result`, `turn_start`, `turn_end`, `compaction_start`, `compaction_end`, `agent_end`, `tool_batch_end`, `instructions_loaded`, `thread_settings`, `worktree`, `mods_changed` |
+| `compaction` | the `compaction` replacement, the `compaction` event and the `compaction` interceptor |
+| `services` | `api.provide` and `api.services.call` |
+| `virtual_reads` | `api.virtualRead` |
 
-## Capabilities: authority grants
+## Authority grant capabilities
 
-Apart from `request_policy`, these capabilities are authority grants: the manifest declares their scope, and
-[Unrestricted processes and delegated approvals](authority-grants.md#unrestricted-processes-and-delegated-approvals) and
-[Structured access](authority-grants.md#structured-access-structured_access_v1) describe how they are bound and ended.
+Every capability in this table except `request_policy` is an authority grant. The manifest declares each grant's
+scope. [Unrestricted processes and delegated approvals](authority-grants.md#unrestricted-processes-and-delegated-approvals)
+and [Structured access](authority-grants.md#structured-access-structured_access_v1) describe how the grants are bound
+and ended.
 
-| Capability | Grants |
+| Capability | Allows |
 | --- | --- |
 | `os` | `sandbox: "none"` on `exec.run`, `process.start` and `terminal.pty` start (`unrestricted_process_v1`) |
 | `approve` | `{approve}` from the `approval` middleware inside the manifest's `approves` scope (`delegated_approval_v1`) |
@@ -60,18 +79,46 @@ Apart from `request_policy`, these capabilities are authority grants: the manife
 | `fs.external` (experimental) | `root` on `workspace.read`, `workspace.list`, `workspace.stat` and `workspace.transaction` for the manifest's `fs_access` roots |
 | `mcp` (experimental) | `mcp.connect`, `mcp.disconnect` for the manifest's `mcp_servers` |
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
-| `request_policy` | a declared [final-request policy](final-request-policy.md#declared-policies-request_policy) that refuses every model request except web search unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
+| `request_policy` | a declared [final-request policy](final-request-policy.md#declared-policies-request_policy) (needs `middleware`; `final_request_policy_v1`) |
 | `peers` (experimental) | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
-| `power` (experimental) | `power.hold` and `power.release`; lid-closed holds need the deployed broker (`power_hold_v1`) |
+| `power` (experimental) | `power.hold` and `power.release`; lid-closed holds need the deployed [authority broker](protected-authority.md) (`power_hold_v1`) |
 | `autonomous` (experimental) | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
 | `history_write` (experimental) | [`app.request thread/rewrite`](history.md#durable-transcript-rewriting-history_rewrite_v1) on the current thread and threads the mod started (`history_rewrite_v1`) |
 | `history_persist` | [`history_persist` interceptors](history.md#store-time-history-rewriting-history_persist_v1), which see and may replace every stored history text (`history_persist_v1`) |
 
+With `request_policy`, the host refuses every model request except web search unless the mod's required `model_send`
+interceptor serves it. The grant exposure text shows `request_policy`, but it isn't an authority grant and doesn't
+expire.
+
+### Who can issue or widen a grant
+
+Two parties can issue a grant or widen its capabilities or scope:
+
+- The user, by trusting the package's exact content and scope. The user trusts in the TUI trust dialog, with
+  `omd-mod trust` or `trust-all`, or through the [`trust` entry](packaging.md#package-requests) of an install or
+  update they confirm. With the [authority broker](protected-authority.md#authenticating-changes) deployed, the
+  broker authenticates each change.
+- An administrator, through a [managed `packages` entry](administrator-policy.md#managed-packages-entries): the policy
+  is the grant.
+
+A package's install scripts, rendering, services, dependencies and model text can't issue or widen a grant.
+
+### Authority errors
+
+| Error | When |
+| --- | --- |
+| `capability_denied: NAME` | A call or registration needs a capability the package wasn't trusted with. |
+| `grant_expired: NAME` | An authority grant passed its `--expires` time or was revoked. |
+| `capability_withheld: NAMESPACE` | An [admission policy](admission-and-interception.md#admission-and-api-policy-admission_api_policy_v1) withheld the namespace. |
+| `managed_capability_denied` | An [administrator policy](administrator-policy.md#policy-controls-and-refusals) `capabilities` list withholds the capability. |
+| `grant_not_brokered` | The broker doesn't store the same grant for the selection ([Protected authority](protected-authority.md#what-the-broker-protects)). |
+| `invalid_os_access`, `invalid_approves`, `invalid_http_access`, `invalid_fs_access`, `invalid_mcp_servers` | The manifest declares an authority grant without its scope field or prerequisites ([Authority grants](authority-grants.md)). |
+
 ## Capability by operation
 
-Every host operation in the
+This table lists every host operation in the
 [conformance registry](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/contract.json), the capability
-it needs and its status there. An operation marked experimental may change in any release; see
+it needs and its registry status. An operation marked experimental may change in any release; see
 [Stability and migration](stability-and-migration.md).
 
 | Operation | Capability | Status |

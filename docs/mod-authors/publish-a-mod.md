@@ -1,8 +1,16 @@
-# Publish a mod
+# Install, share and update a mod
 
 How to install a mod you wrote, share it through Git or npm, update it and roll it back. The examples use a mod
 `my_mod` in the folder `./my_mod`. For package sources, references and npm rules, see the
 [packaging reference](../../mods/reference/packaging.md).
+
+## Before you begin
+
+You need:
+
+- A mod whose `pnpm check` and `pnpm test` pass, such as the one from [Write your first mod](first-mod.md).
+- To share it through Git, a repository others can clone. To publish it to npm, an npm account that `pnpm publish`
+  can use.
 
 ## Install it from a folder
 
@@ -16,9 +24,10 @@ omd mods enable my_mod
 Each command shows the mod's permissions and asks `Proceed? [y/N]`. Installing never turns a mod on. Add
 `--scope project` to `omd install` to install it for the current project only.
 
-A folder install runs the folder itself, not `dist/`. After any edit, even whitespace, the mod stops until you
-review it again with `omd mods update my_mod`. Meanwhile `omd-mod status STORE` lists it under `rejected` as
-`untrusted_source`, where `STORE` is your mod store. To install a fixed version, use a Git tag or an npm package.
+A folder install runs the folder itself, not the release copy in `dist/` (see
+[Build a release copy](#build-a-release-copy)). After any edit, even whitespace, the mod stops until you review it
+again with `omd mods update my_mod`. Meanwhile `omd-mod status STORE` lists it under `rejected` as `untrusted_source`,
+where `STORE` is your mod store. To install a fixed version, use a Git tag or an npm package.
 
 In a shell with no terminal, the prompt can't show and the command stops with `package_approval_required`. Pass
 `--yes` only after you've read the permissions in `mod.json`.
@@ -29,15 +38,23 @@ In a shell with no terminal, the prompt can't show and the command stops with `p
 pnpm --dir my_mod run package
 ```
 
-This writes `my_mod/dist/my_mod-0.1.0/` with the checked source, a JavaScript build, a source map and a digest
-report. It fails with `package_target_exists` if that folder exists, so delete `dist/` or bump `version` before you
-build again. It writes a folder, not a tarball; for npm, check the tarball `pnpm pack` makes (see
-[Publish it to npm](#publish-it-to-npm)). You don't need this copy to install the mod.
+This writes `my_mod/dist/my_mod-0.1.0/` and prints its path and `sha256`. The folder contains:
+
+- the files the package digest covers: `mod.json`, the entrypoint, assets and lifecycle scripts
+- a JavaScript build with a source map for each `.ts` file
+- `package-report.json`, which records the digest
+
+The digest is the same one `omd-mod inspect` reports for your source folder, so use the copy to check which files a
+package of this version contains.
+
+It fails with `package_target_exists` if that folder exists, so delete `dist/` or bump `version` before you build
+again. It writes a folder, not a tarball. For npm, check the tarball `pnpm pack` makes (see
+[Publish it to npm](#publish-it-to-npm)). Installing, Git and npm don't need this copy.
 
 ## Share it through Git
 
-1. In `mod.json`, set `license`, and set `provenance.source` to the repository URL without `git+`, the tag or the
-   folder, such as `https://github.com/you/repo`.
+1. In `mod.json`, set `license`, and set `provenance.source` to the plain repository URL, such as
+   `https://github.com/you/repo`, with no `git+` prefix, tag or folder.
 2. Commit the mod and tag the commit.
 3. Others install the tag:
 
@@ -102,10 +119,11 @@ A rollback points the mod at the cached copy of the previous version. To edit it
 
 ## Let collaborators build without OMD
 
-A project created by a release install of OMD depends on that release's `mod-api.tgz` asset on GitHub, so
-collaborators can run `pnpm install` without OMD. Creating the project needs the network once to lock it. A
-development build links the SDK from its install with a `file:` path instead. Set `OMD_MOD_SDK_SPEC` before
-`omd-mod-author create` to use another spec.
+A project created with a release install of OMD depends on that release's `mod-api.tgz` asset on GitHub, so
+collaborators can run `pnpm install` without OMD. Creating the project needs the network once, to lock that
+dependency. A project created with a development build links the SDK from that build's install with a `file:` path
+instead. To use another SDK source, set `OMD_MOD_SDK_SPEC` to a pnpm dependency spec before you run
+`omd-mod-author create`.
 
 ## See also
 

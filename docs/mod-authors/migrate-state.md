@@ -7,6 +7,11 @@ that converts the old data.
 The example moves the [notes mod](notes-mod.md) from a plain array (`["one", "two"]`) to an object
 (`{ "notes": ["one", "two"] }`).
 
+## Before you begin
+
+You need the notes mod from [Build a notes mod](notes-mod.md), at `state_version` 1, installed or loaded into a mod
+store that already has saved notes. A store with no saved notes has nothing to migrate.
+
 ## Write the migration
 
 1. In `mod.json`, raise `state_version`:
@@ -42,26 +47,45 @@ The example moves the [notes mod](notes-mod.md) from a plain array (`["one", "tw
 ## Apply it to a store
 
 When a mod with store state gets a new `state_version`, the host keeps it off with `state_migration_required` until
-the handler runs. After `omd mods update notes`, run the handler:
+the handler runs. After `omd mods update notes`, run the handler. `STORE` is the path of your mod store, listed under
+[`omd-mod`](../commands.md#omd-mod) in Commands.
 
 ```sh
 omd-mod migrate STORE notes
 ```
 
+The second argument is a mod id from the store's selected mods, or a package folder (`.`, `..` or any path with a
+`/`). The command fails with:
+
+- `mod_ambiguous` when the id is installed in more than one scope. Pass the folder instead.
+- `migration_requires_saved_state` when the mod has no saved store state.
+
+On success it prints a JSON object with `"from": 1`, `"to": 2` and `backup`, the path of a copy of the old state.
+Keep that path.
 If `omd mods list` then shows the mod off, turn it on with `omd mods enable notes`.
 
-`STORE` is your mod store: `~/.local/share/oh-my-diff/stores/full` for OMD+ or
-`~/.local/share/oh-my-diff/stores/platform` for OMD Core. In a scratch store, run `pnpm watch STORE --once` and
-then `omd-mod migrate STORE notes`.
+In a scratch store, run `pnpm watch STORE --once` and then `omd-mod migrate STORE notes`.
 
-`omd-mod migrate` prints the old and new versions and the path of a backup of the old state.
+[Thread and checkout state](../../mods/reference/state-and-storage.md#state_scope-state_scopes_v1) migrate through
+the same handler, before the mod's next callback in that thread or checkout. An update that changes their
+`state_version` needs a handler too.
 
-The second argument is a mod ID among the store's selected mods, or a package folder (`.`, `..` or any path with a
-`/`). It fails with `mod_ambiguous` when the ID is installed in more than one scope (pass the folder instead), and with
-`migration_requires_saved_state` when the mod has no saved store state.
+## Check the migrated state
 
-Thread and checkout state migrate through the same handler, before the mod's next callback in that thread or
-checkout. An update that changes their `state_version` needs a handler too.
+1. Save this scenario as `/tmp/notes-state.json`. It reads the mod's saved state from the store:
+
+   ```json
+   { "schema": 1, "steps": [{ "type": "state", "mod": "notes" }] }
+   ```
+
+2. Run it against the store:
+
+   ```sh
+   omd-mod test STORE /tmp/notes-state.json
+   ```
+
+In the output's `steps` list, the step's `value` has the new shape, such as `{ "notes": ["one", "two"] }`. The mod
+must be on, or the step fails with `mod_disabled`.
 
 ## Restore the old state
 
@@ -79,4 +103,4 @@ omd mods enable notes
 ## See also
 
 - [State and storage reference](../../mods/reference/state-and-storage.md#durable-data-store-and-evidence)
-- [Publish a mod](publish-a-mod.md#update-and-roll-back): update and roll back a mod's code
+- [Install, share and update a mod](publish-a-mod.md#update-and-roll-back): update and roll back a mod's code

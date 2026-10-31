@@ -1,6 +1,7 @@
 # omd_inspector
 
-Shows a summary of your session: mode, install profile, mod counts, workflow contract, limits and paid API cost. It's
+Shows a summary of your session: whether OMD is running it, the install profile, mod counts, the workflow contract
+(the task checks [`omd_workflow`](../omd_workflow/README.md) enforces), task and worker limits, and paid API cost. It's
 on by default in OMD+. OMD Core doesn't include it.
 
 ## Turn it off

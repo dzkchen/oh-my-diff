@@ -1,7 +1,7 @@
 # token_weather
 
-Shows a weather forecast of your context window in one line above the prompt. It's a port of a Claude Code plugin
-in the curated directory. OMD+ doesn't install it, and it isn't in the bundled collection.
+Shows a weather forecast of your context window in one line above the prompt. It's a port of the Claude Code mod
+`token-weather`. It's in the curated directory, but OMD+ and OMD Core don't install it.
 
 ## Install it
 
@@ -12,9 +12,10 @@ omd install token_weather
 omd mods enable token_weather
 ```
 
-It asks for `terminal`, `threads`, `lifecycle` and `store`. See [Manage mods](../../../docs/manage-mods.md) for the
-other ways to install and turn on mods, and [Trust and permissions](../../../docs/trust-and-permissions.md) for what
-a grant allows.
+It asks to draw the line above the prompt, read the thread's token usage, follow turns and keep its readings. The
+capabilities are `terminal`, `threads`, `lifecycle` and `store`. See [Manage mods](../../../docs/manage-mods.md) for the
+other ways to install and turn on a mod, and
+[Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do) for what a capability allows.
 
 ## Use it
 
@@ -44,15 +45,19 @@ It has no settings.
 ## Needs and limits
 
 - The line appears after the first finished turn, not when the thread starts.
-- Readings are per thread. A subagent's usage isn't in the main thread's line.
+- Readings are per thread. Usage of subagents (helper agents the main agent starts) isn't in the main thread's line.
 - The percentage is of the full context window, not the auto-compact point.
 - It uses no timers or network.
+
+### Differences from upstream
+
+The forecast bands, symbols, number format and chart follow upstream.
+
+- Readings use the thread's token usage notification instead of `$.session.usage()`.
 
 ## More
 
 - [Terminal UI reference](../../reference/terminal-ui.md) for the line above the prompt.
 - Credit: reimplemented over the Oh My Diff mod API from the Claude Code mod
   [`token-weather` 0.1.0](https://github.com/anthropics/claude-code-playground/tree/e9ab132d4575390ecbadfc54649712432b1a3351/claude-code/mods/token-weather)
-  by Claude Code DevRel (Anthropic PBC), commit `e9ab132d4575390ecbadfc54649712432b1a3351`, licensed Apache-2.0. The
-  forecast bands, symbols, number format and chart follow upstream. Readings use the thread's token usage
-  notification instead of `$.session.usage()`.
+  by Claude Code DevRel (Anthropic PBC), commit `e9ab132d4575390ecbadfc54649712432b1a3351`, licensed Apache-2.0.

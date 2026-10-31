@@ -12,7 +12,7 @@ Turn it on in `/mods`, or run:
 omd-package mod enable omd_privacy
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn mods on and off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it
 
@@ -20,7 +20,9 @@ omd-package mod enable omd_privacy
 | --- | --- |
 | `/privacy` or `/privacy status` | Show active rules, scopes, path mode, exemptions, redaction counts and refusals |
 | `/privacy allow ID` | Stop redacting the value behind placeholder `ID` (the part after the second colon) |
-| `/privacy allow VALUE` | Stop redacting that value, exactly as typed after `allow` (inner spaces and tabs count). Only its fingerprint is saved to `exempt`. |
+| `/privacy allow VALUE` | Stop redacting that value, exactly as typed after `allow` (inner spaces and tabs count) |
+
+`/privacy allow VALUE` saves only the value's fingerprint to `exempt`.
 
 ## Settings
 
@@ -33,7 +35,7 @@ Change settings in `/mods`.
 | `scopes` | `prompt`, `context`, `tools`, `replies` | Text to scan: your prompts, instructions and context, tool calls and output, earlier replies |
 | `paths` | `ask` | When a shell command names a sensitive path: `ask`, `deny` or `off` |
 | `sensitive_paths` | 21 patterns (list below) | Path patterns that count as sensitive |
-| `exempt` | `path:.env.example`, `path:.env.sample`, `path:.env.template`, `path:*.pub` | Exemptions: `sha256:HEX`, `domain:NAME` or `path:PATTERN` |
+| `exempt` | `path:.env.example`, `path:.env.sample`, `path:.env.template`, `path:*.pub` | Values and paths that are never redacted: `sha256:HEX` (a value's fingerprint, as `/privacy allow` saves it), `domain:NAME` or `path:PATTERN` |
 | `unscanned` | `allow` | `deny` refuses requests that carry images, audio or files, which are never scanned |
 
 The `secrets` rules: `private_key`, `aws_access_key`, `github_token`, `gitlab_token`, `slack_token`, `stripe_key`,
@@ -52,12 +54,14 @@ The default `sensitive_paths`: `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.p
 - Images, audio and files aren't scanned unless `unscanned` is `deny`. Provider-side tools, other mods' network calls
   and processes you already allowed are out of reach.
 - The path check reads command text only. It misses paths built at run time. Globs and brace lists that could name a
-  sensitive path ask, except the catch-all `*` and `.*` (so `ls -la .*` stays quiet; `cat .*` isn't caught).
-- Web search isn't scanned: it sends your recent messages and its queries as they are. Realtime calls are refused
-  while it's on (`request_policy_unsupported_transport`). If the mod fails or times out, every other request is
-  refused, but web search still goes out unscanned. Turn the mod off in `/mods` to send again.
-- Saved state holds a salt and short fingerprints, never values. A fingerprint doesn't hide a guessable value, such as
-  an IP address.
+  sensitive path ask first. The catch-all patterns `*` and `.*` are the exception, so neither `ls -la .*` nor `cat .*`
+  asks.
+- Web search isn't scanned. It sends your recent messages and its queries as they are.
+- While the mod is on, Realtime calls are refused (`request_policy_unsupported_transport`).
+- If the mod fails or times out, every other request is refused, but web search still goes out unscanned. To send
+  again, turn the mod off in `/mods`.
+- Saved state contains a salt and short fingerprints, never values. A fingerprint doesn't hide a guessable value, such
+  as an IP address.
 
 ## More
 

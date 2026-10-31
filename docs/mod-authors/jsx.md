@@ -7,14 +7,18 @@ authoring reference.
 
 ## Before you begin
 
-The project needs TypeScript, which compiles the JSX:
+Create a mod named `tally` and add TypeScript, which compiles the JSX:
 
 ```sh
+omd-mod-author create ./tally tally
+cd tally
 pnpm add -D typescript@5.9.3
+rm mod.test.json debug.test.json
 ```
 
-Without it, commands fail with `jsx_requires_typescript`. The scaffold's `tsconfig.json` already has the JSX
-settings.
+The `rm` removes the scaffold's tests, which call `/hello`, a command this page replaces.
+[See what it builds](#see-what-it-builds) writes a new `mod.test.json`. Without TypeScript, commands fail with
+`jsx_requires_typescript`. The scaffold's `tsconfig.json` already has the JSX settings.
 
 ## Write the entry point as `index.tsx`
 
@@ -45,7 +49,7 @@ settings.
    }
    ```
 
-   Its `mod.json` lists the capabilities `commands`, `store` and `terminal`.
+   In `mod.json`, set `capabilities` to `["commands", "store", "terminal"]`.
 
 2. Run the checks:
 
@@ -61,7 +65,7 @@ never overwritten; the command fails with `jsx_entrypoint_conflict`.
 
 ## See what it builds
 
-A `terminal_mount` step in `mod.test.json` shows the components the JSX produced:
+A `terminal_mount` step shows the components the JSX produced. Save this as `mod.test.json` and run `pnpm test`:
 
 ```json
 {
@@ -88,18 +92,9 @@ In the `pnpm test` output, the `line` element is a plain component, with its chi
 }
 ```
 
-## Know how elements map to components
-
-Each terminal component type is an element (`<box>`, `<line>`, `<text>`, ...) whose props are the component's
-fields. Children become:
-
-| Element | Children become |
-| --- | --- |
-| `box`, `pane`, `dialog` | `children` |
-| `text`, `button`, `markdown`, `code` | `text` (strings and numbers) |
-| `line` | `spans` (strings and span objects) |
-
-Function components such as `Count` work. Fragments (`<>...</>`) don't.
+Each element's props are the component's fields. The
+[elements and children](../../mods/reference/authoring.md#elements-and-children) rules list which field each
+element's children fill and which JSX forms aren't supported.
 
 ## Split components into `.tsx` assets
 

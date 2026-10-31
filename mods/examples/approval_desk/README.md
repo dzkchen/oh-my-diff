@@ -1,15 +1,20 @@
 # approval_desk
 
 Shares approval history between the terminal and attached external clients over the client protocol
-(`omd-client/1`). It's an example for mod authors. It isn't in the bundled collection or the curated directory.
+(`omd-client/1`). It's an example for mod authors. OMD+ and OMD Core don't install it, and it isn't in the curated
+directory.
 
-It's an independent-author API `1.0.0` mod plus a client adapter, unrelated to `external_client`, and can run beside
-it. It shows:
+Read it if you're writing [approval middleware](../../reference/app-bridge-and-approvals.md) or an
+[external client](../../reference/external-clients.md).
+
+It's an API `1.0.0` mod that uses only the public mod API, like any outside author's mod
+([host primitives](../../reference/host-model.md#host-primitives)), plus a client adapter. It's unrelated to
+`external_client` and can run beside it. It shows:
 
 - Middleware: `approval` records every request (command, files or host) and returns null, so the native decision
   is unchanged. `approval_result` records the decision and its source, with a `terminal.notice` toast.
 - Wrapped sidebar: the `terminal` handler wraps the sidebar (`mode: 'wrap'` with a `slot`), so another mod's
-  sidebar stays below it. It holds:
+  sidebar stays below it. It contains:
   - a `multiselect` of approval kinds (`Alt+k` focuses it, `Space` toggles, `Enter` applies)
   - a controlled `input` note
   - a `list` of requests and decisions (`Enter` inspects one)
@@ -47,11 +52,10 @@ grant allows.
 `mod.test.json` runs offline: two approval requests, one decision, a kinds filter, a note and an inspect.
 
 ```sh
-python3 scripts/mod_host_check.py --omd-mod OMD_MOD --no-commands --scenarios approval_desk
+python3 scripts/mod_host_check.py --no-commands --scenarios approval_desk
 ```
 
-`OMD_MOD` is the path to an `omd-mod` built from the applied runtime patch. Without `--omd-mod`, the check uses
-the `omd-mod` on your `PATH`.
+It uses the `omd-mod` on your `PATH`. [Tests](../../../tests/README.md) covers the other test runners.
 
 `scripts/client_acceptance.py` runs the client against real hosts.
 

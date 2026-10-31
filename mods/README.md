@@ -1,13 +1,15 @@
 # @oh-my-diff/mod-api
 
 The TypeScript SDK for Oh My Diff (OMD) mods: the API types, the `omd-mod-author` command and the test helpers. OMD
-installs it together with `omd-mod` and `omd`. It isn't on npm.
+installs it together with `omd-mod` and `omd`. It isn't on npm. It's for anyone writing a mod.
 
 Start a mod:
 
 ```sh
 omd-mod-author create ./my_mod my_mod
 ```
+
+Then follow [the first-mod tutorial](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/first-mod.md).
 
 ## Learn
 
@@ -20,10 +22,14 @@ omd-mod-author create ./my_mod my_mod
 
 - [Run and debug a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/run-and-debug.md)
 - [Test a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/test-a-mod.md)
-- [Publish a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/publish-a-mod.md)
+- [Run the author tools from a source checkout](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/run-from-source.md)
+- [Install, share and update a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/publish-a-mod.md)
 - [Bundle a mod in a plugin](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/bundle-in-a-plugin.md)
 - [Change a mod's saved state](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/migrate-state.md)
 - [Write terminal components in JSX](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/jsx.md)
+- [Handle keys in a terminal view](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/handle-keys.md)
+- [Use a host integration from a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/use-a-host-integration.md)
+- [Build an external client](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/build-a-client.md)
 
 ## Look it up
 

@@ -3,6 +3,10 @@
 Use it when a mod restyles, wraps, replaces or hides a native terminal component such as a tool call, a message or
 a built-in list. How interceptor chains run in general is in [Interceptors](interceptors.md).
 
+Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
+[registry table](stability-and-migration.md#experimental-entries-in-the-registry)). Render hooks need the `terminal`
+capability and draw in the OMD terminal on Apple Silicon macOS.
+
 ## Render interceptor and hook results
 
 `api.intercept('render', {match: {component: 'tool_call'}}, async (e, next) => …)` draws one native terminal
@@ -14,37 +18,48 @@ component instance. `e` is `{component, id, surface, viewport: {columns, rows}, 
 | `lifecycle` | `live` while the component can still change and `final` once it cannot. |
 | `owner` | `null` for host components. |
 
-`next(e)` resolves to `{tree}`; the host's own drawing is `{type: 'native', style?}`. A hook can:
+`next(e)` resolves to `{tree}`. In that tree, the node `{type: 'native', style?}` is the host's own drawing. A hook
+can:
 
 - observe: return what `next` returned;
-- restyle: `style` takes `tone`, `bold`, `italic`, `underline`, `fg`, `bg`;
+- restyle: set `style` on the native node (`tone`, `bold`, `italic`, `underline`, `fg`, `bg`);
 - wrap: place the native node in a tree;
 - replace: return a tree without it;
 - hide: return `{tree: []}`.
 
-Trees hold `box` (without `style` or `flex`), `line`, `text`, `markdown`, `code`, `diff`, `list` and `native` components
-(64 components, depth 6, unique ids, 256 KiB); the native node appears at most once. Hooks compose as one continuation
-chain in interceptor order, so unrelated wrappers nest, and each hook sees the props the hook before it passed on.
+A tree contains `box` (without `style` or `flex`), `line`, `text`, `markdown`, `code`, `diff`, `list` and `native`
+components. It has at most 64 components, depth 6 and 256 KiB, its ids are unique, and the native node appears at
+most once. Hooks run as one continuation chain in interceptor order, so unrelated wrappers nest. Each hook sees the
+props the hook before it passed on.
 
 ## Render components
+
+Each native component a hook can match, with its `id` and props. The Rewritable column names the props a hook can
+change in the `e` it passes to `next`. Rewrites to other props have no effect.
 
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |
 | `user_message` (experimental) | content digest | `text`, `images`, `spoken` | none |
-| `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 48 KiB; streamed chunks and the final message; the streaming tail is `live`) | none |
-| `tool_call` | call ID (row ID for agent rows; `explore:<first call ID>` for an exploration group) | every agent tool row (`RenderToolCall`); see [`tool_call` props](#tool_call-props) | none |
-| `tool_result` (experimental) | call ID | `tool`, `success`, `text` (MCP results inside their call) | none |
+| `assistant_message` | content digest | `text`, `first`, `truncated` | none |
+| `tool_call` | call id (row id for agent rows; `explore:<first call id>` for an exploration group) | every agent tool row (`RenderToolCall`); see [`tool_call` props](#tool_call-props) | none |
+| `tool_result` (experimental) | call id | `tool`, `success`, `text` (MCP results inside their call) | none |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
 | `turn_duration` (experimental) | `turn-<completed ms>` | `seconds`, `completed_at_ms` | none |
 | `notice` (experimental) | content digest | `kind` (`info`/`warning`/`error`), `text`, `hint` | `text` |
 | `session_mode` (experimental) | `collaboration` | `mode`, `label`, `cycle_hint` | `label` |
-| `composer_hint` (experimental) | `placeholder` / `footer` | `slot`, `placeholder`, `input_enabled` / `mode`, `text`, `task_running` | `placeholder` |
-| `question` | item ID or content digest | `questions` (`id`, `header`, `question`, `secret`, option labels), then `current`, `queued` (live) or `answered`, `interrupted` (final) | none |
-| `list` | view ID | `view_id`, `title`, `subtitle`, `items`, `selected` | none |
+| `composer_hint` (experimental) | `placeholder` or `footer` | see below | `placeholder` |
+| `question` | item id or content digest | `questions` (`id`, `header`, `question`, `secret`, option labels), then the state props below | none |
+| `list` | view id | `view_id`, `title`, `subtitle`, `items`, `selected` | none |
+
+- `assistant_message` covers streamed chunks and the final message. The streaming tail is `live`. `truncated` is
+  true when the host cut `text` at 48 KiB.
+- `composer_hint` has id `placeholder` with props `slot`, `placeholder` and `input_enabled`, or id `footer` with
+  props `mode`, `text` and `task_running`.
+- A `question` adds `current` and `queued` while `live`, and `answered` and `interrupted` once `final`.
 
 ## `tool_call` props
 
-Every agent tool row (`RenderToolCall`) carries `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
+Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
 `interrupted`), `duration_ms` and `expanded`, and per kind:
 
 | `kind` | Props |
@@ -66,40 +81,41 @@ Group and file limits:
 
 ## Grouped members
 
-Grouped exploration and computer activity offer each member through `tool_call` as `exec` or `mcp`.
+For grouped exploration and computer activity, the host runs `tool_call` hooks on each member of the group, as kind
+`exec` or `mcp`.
 
 - When those member hooks replace the drawing, each member has its own focus, pointer region and `expanded` flag;
-  `next` draws a collapsed member as its compact row, and Find searches every member expanded.
+  `next` draws a collapsed member as its compact row, and transcript search (Find) searches every member expanded.
 - Native grouping remains when no member is replaced.
 - Aggregate exploration rendering remains available on the group when member rendering does not replace it.
 
 ## Render hook behavior
 
-Text props carry at most 48 KiB; a content digest is stable across resume and reflow, so equal content draws
+Text props are at most 48 KiB. A content digest stays the same across resume and reflow, so equal content draws
 identically. Tool rows are offered from live cells and committed history.
 
-- In the fullscreen transcript a hooked tool row needs no control row: F4 focuses it and Enter, →/← or a click
-  opens and closes it, and `expanded` is `true` while it is open and for every row of the full transcript (Ctrl+T),
-  so a hook that shortens rows returns `next(e)` then.
+- In the fullscreen transcript a hooked tool row needs no control row. F4 focuses it, and Enter, →/← or a click
+  opens and closes it. `expanded` is `true` while the row is open and for every row of the full transcript
+  (Ctrl+T). A hook that shortens rows returns `next(e)` when `expanded` is `true`.
 - Selection copies what is drawn; raw mode never runs hooks.
-- Approval overlays have no render hook: their identity, decision text, options, focus and grants stay native, and
-  `surface_styles.approval` only paints the frame.
+- Approvals are [native confirmations](glossary.md#trust-and-authority) and have no render hook. Their identity,
+  decision text, options, focus and grants stay native, and `surface_styles.approval` only paints the frame.
 - A question hook changes the presentation only; answers, focus and keys stay native.
 - The existing panes, `above_composer` band and named sites stay declarative views.
 
 ## Render callback runtime
 
-Render callbacks get no host operations and cannot write state (`render_side_effect_refused`; a write during
-activation stays local to that render); read `api.state` or atoms instead.
+Render callbacks get no host operations and can't write state. A write fails with `render_side_effect_refused`, and
+a write during activation stays local to that render. Read `api.state` or atoms instead.
 
 - Renders run in a runner that stays activated while the package revision, settings and persisted state stay
   unchanged. Changing state requires a new activation.
 - Stateless renders can reuse the runner across rows, including renders that call `next`. Activation-local state is
   restored before each reused render. Module variables may survive between renders, so never draw from them.
-- A tree lives until its input changes or a state key its hooks read changes. Live components redraw asynchronously
-  and keep their last tree until the new one arrives, fullscreen transcript cells redraw the same way, and inline
-  scrollback, which is written once, waits for each cell's hooks as it is inserted. A narrower or wider terminal is
-  a new input.
+- The host keeps a tree until its input changes or a state key its hooks read changes. Live components and
+  fullscreen transcript cells redraw asynchronously and show their last tree until the new one arrives. Inline
+  scrollback is written once, so it waits for each cell's hooks as the cell is inserted. A narrower or wider
+  terminal is a new input.
 - A hook that throws, times out or returns an invalid tree is skipped with the input it received, so the native
   drawing survives. A disabled or failed mod's hooks are gone at once, and every failed render joins the status
   `chains` log.
@@ -107,7 +123,8 @@ activation stays local to that render); read `api.state` or atoms instead.
 
 ## List rows (`terminal_lists_v1`)
 
-`terminal_lists_v1` lets a `render` hook on component `list` replace built-in list rows. The host keeps selection
-actions, session state, keyboard handling and native fallback when the mod is absent or fails.
+Use a `list` hook to redraw the rows of Codex's built-in lists, such as its pickers. `terminal_lists_v1` lets a
+`render` hook on component `list` replace built-in list rows. The host keeps selection actions, session state,
+keyboard handling and native fallback when the mod is absent or fails.
 
-Components accept an `{insert}` action.
+The same feature lets a component's `action` be `{insert: TEXT}`, which inserts the text in the composer.

@@ -24,13 +24,14 @@ If the line is already there, your shell cached the old `codex`. Run `hash -r` o
 
 ## A mod breaks `codex`
 
-Try these in order. The first three work from any shell, even when `codex` won't start.
+Try these in order. All three work from any shell, even when `codex` won't start. If `codex` starts but `/mods` is
+broken, `/omd` has an on/off switch for each mod.
 
 1. Turn the mod off. Its data is kept.
 
    ```sh
    omd mods disable ID            # a mod you installed
-   omd-package mod disable ID     # a mod that came with your profile
+   omd-package mod disable ID     # a mod that came with your install profile
    ```
 
 2. Turn it off and block this version. Turning it on or reinstalling it is refused until you run
@@ -40,7 +41,7 @@ Try these in order. The first three work from any shell, even when `codex` won't
    omd mods quarantine ID "reason"
    ```
 
-3. Run with no mods at all:
+3. Switch to `direct`, the recovery state with no mods at all:
 
    ```sh
    omd-package activate direct
@@ -48,31 +49,31 @@ Try these in order. The first three work from any shell, even when `codex` won't
 
    `omd-package activate full` (OMD+) or `omd-package activate platform` (OMD Core) brings the mods back.
 
-In `codex`, `/omd` has an on/off switch for each mod, even when `/mods` is broken.
-
-OMD turns a mod off by itself after five failed callbacks in a row
+OMD also turns a mod off by itself when five calls into its code (callbacks) fail in a row
 ([fault limit](../mods/reference/host-model.md#fault-limit)).
 
 ### Repair the mod store directly
 
-`omd-mod` works on the mod store without running any mod. The store is `~/.local/share/oh-my-diff/stores/full` for
-OMD+ and `~/.local/share/oh-my-diff/stores/platform` for OMD Core; replace `STORE` with that path.
+`omd-mod` is the low-level tool that works on the mod store directly, without running any mod. Replace `STORE` with
+your install profile's store path, listed under [`omd-mod` in Commands](commands.md#omd-mod). Use `package-disable`
+with the id of a mod you installed with `omd install`. Use `disable` with the folder of a mod that came with your
+install profile, `STORE/sources/ID`.
 
 ```sh
-omd-mod selection-status STORE         # what's selected, without running mods
-omd-mod package-disable STORE ID       # turn off an installed mod
-omd-mod disable STORE PATH             # turn off a mod trusted by its source folder
-omd-mod package-enable STORE ID        # turn it back on, data kept
+omd-mod selection-status STORE         # list what's selected, without running mods
+omd-mod package-disable STORE ID       # turn off a mod you installed with omd install
+omd-mod disable STORE PACKAGE          # turn off a mod by its folder; PACKAGE is the folder
+omd-mod package-enable STORE ID        # turn a mod you installed back on; its data is kept
 ```
 
-## Mod messages
+## Mod, update and terminal problems
 
 | Message or symptom | Cause | Fix |
 | --- | --- | --- |
-| A mod installed from a folder stopped, and `omd-mod status STORE` lists it under `rejected` as `untrusted_source` | The folder changed after you trusted it | Review it again with `omd mods update ID`. |
+| A mod installed from a folder stopped, and `omd-mod status STORE` lists it under `rejected` as `untrusted_source` | The folder changed after you trusted it, and trust covers the exact files (see [how trust is bound](trust-and-permissions.md#installing-doesnt-turn-a-mod-on)) | Review it again with `omd mods update ID`. |
 | `package_integrity_failure` | A curated mod's download doesn't match its pinned hash | Don't install it. Report it in an [issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose). |
 | `incompatible_api` | The mod was built for another mod API version | Ask its author for an update. Only API `1.0.0` loads. |
-| `capability_denied: NAME` | The mod called something it wasn't granted | Ask its author; `omd-mod-author explain DENIAL` shows what the code means. |
+| `capability_denied: NAME` | The mod called something it wasn't granted | Ask its author; `omd-mod-author explain 'capability_denied: NAME'` shows what the message means. |
 | `omd update` says enabled mods don't support the new mod API | Those mods will stop loading after the update | Update or remove them first, or pass `--yes` to update anyway. |
 | An update didn't apply | Other OMD sessions are open | It applies at your next `codex` start with no other session open. |
 | Alt shortcuts (Alt+a, Alt+s) do nothing in Kitty or Ghostty | The terminal sends Option as a character | Turn on Option-as-Alt: `macos_option_as_alt` in Kitty, `macos-option-as-alt` in Ghostty. |

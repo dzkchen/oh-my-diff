@@ -24,15 +24,15 @@ intentionally unselected native job may be skipped. `main` requires `PR gate` wi
 
 ### When native checks run
 
-`scripts/pr_ci.py` selects the native job. Changes outside Markdown, `docs/`, mod examples and first-party packages,
-plugins and Python and Node `tests/` select it. This conservative default includes unknown paths, API definitions,
-dependency locks, shared scripts and workflow changes. Every `runtime/` change selects it, Markdown copies included,
-to detect patch drift. Other package-only and documentation-only changes avoid Rust builds.
+`scripts/pr_ci.py` selects the native job. A pull request skips it only when every change is in Markdown, `docs/`,
+mod examples, first-party packages, plugins, or the Python and Node `tests/`. Anything else selects it, including
+unknown paths, API definitions, dependency locks, shared scripts and workflow changes. Every `runtime/` change
+selects it, Markdown copies included, to detect patch drift.
 
 The selection compares the merge commit with its first parent and examines both paths of a rename.
 
-The native job runs on macOS. It replays the patch and fails on drift, runs Rustfmt, and compiles the crates nightly
-tests plus `codex-cli` and `codex-exec`, tests included. Native tests run only in the nightly and release
+The native job runs on macOS. It replays the patch and fails on drift, runs Rustfmt, and compiles `codex-cli`,
+`codex-exec` and every crate the nightly tests, including their tests. Native tests run only in the nightly and release
 workflows, together with full validation.
 
 ## Validation
@@ -61,8 +61,9 @@ The `package` artifact (7 days) contains the archive, `omd-release.json`, `prove
 tarball and `SHA256SUMS`. Each job's logs are in `validation-report-JOB` (14 days). The `package` report contains
 `profile-acceptance.json`.
 
-The nightly runs the tests that `mise run mods:test` only assigns: `python3 -m unittest discover -s tests`, Cargo in
-the patched scratch tree and `python3 scripts/mod_host_check.py --scenarios`.
+The nightly also runs the tests that `mise run mods:test` lists but leaves to other runners:
+`python3 -m unittest discover -s tests`, Cargo in the patched scratch tree and
+`python3 scripts/mod_host_check.py --scenarios`.
 
 ## Nightly builds
 
@@ -78,35 +79,8 @@ Releases are in [Cut a release](release.md).
 Dependabot (`.github/dependabot.yml`) opens one grouped pull request a month for GitHub Actions updates. There are
 no dependency license or scheduled vulnerability checks.
 
-## Caching
-
-This section is for maintainers changing the workflows.
-
-### Download caches
-
-PR, nightly and release jobs use the same Cargo download-cache and V8 prebuilt-cache keys. PR runs only restore: a
-patch edit falls back to the newest cache for the same platform and upstream pin. Only nightly and release runs
-save, since a cache saved by a PR is visible to that PR alone. PR checks set `OMD_WORK_ROOT` to the path validation
-uses, so the V8 cache is restored where validation saved it. `build.py v8` reuses a cached V8 file only when it
-matches the pinned checksum and retries a failed download. PR jobs never save the mise cache (`cache_save: false`).
-
-### Compile cache
-
-Nightly jobs set `OMD_SCCACHE=1`, which makes `build.py` set `RUSTC_WRAPPER=sccache` (pinned in `mise.toml`) over a
-local 2 GB `SCCACHE_DIR`, not the GitHub backend. Each job restores that directory with `actions/cache/restore` and
-saves it with `if: always()` as `sccache-JOB-OS-HASH-RUN_ID-ATTEMPT`, where `HASH` covers `upstream.lock.json` and
-`runtime/patches/manifest.json`, so a failed run still keeps what it compiled. Restore falls back to the newest
-cache for the job. `sccache --show-stats` ends every job.
-
-A cache key includes the compile directory and every `CARGO_*` variable. So PR `native` uses the nightly work root
-and tree name (`/Users/runner/omd/omd-bnightly`), the same `CARGO_*` values and the same `build.py check` package
-set, and restores `sccache-lint-*`, which the nightly `lint` job fills with that exact check.
-
-Tagged releases leave `OMD_SCCACHE` empty and compile uncached. `scripts/build_provenance.py` accepts
-`RUSTC_WRAPPER=sccache` only for a build without `OMD_RELEASE_VERSION` and records the wrapper and its version.
-`CARGO_BUILD_JOBS` is set once in `validate.yml` and once in `pr.yml`.
-
 ## See also
 
+- [CI caching](ci-caching.md): the download and compile caches, for maintainers changing the workflows
 - [Change the patched Codex code](runtime.md)
 - [tests/README.md](../../tests/README.md): how tests are discovered and which runner runs each kind

@@ -4,55 +4,75 @@ Use it when a mod calls an operation the terminal serves (notifications, threads
 clipboard, opening files, prompts, panes, panels, notices and PTY sessions) or reads what the `terminal` event
 reports about the terminal itself. Raster updates (`terminal.blit`) are in [Graphics](graphics.md).
 
-Operations the TUI serves, such as `terminal.panel`, need a running TUI. From `omd-mod command` they fail with
-`host_operation_unavailable: requires a native task`. Call them with `api.host.tryCall` and fall back to returning
-text.
+Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
+[registry table](stability-and-migration.md#experimental-entries-in-the-registry)). They run in the OMD terminal on
+Apple Silicon macOS. Every `terminal.*` operation except `terminal.pty` needs
+the `terminal` capability; `terminal.pty` needs `pty`.
 
-## Notifications and commands
+Operations the terminal UI serves, such as `terminal.panel`, need a running `codex` terminal. `omd-mod command` has no
+terminal, so there they fail with `host_operation_unavailable: requires a native task`. Call them with
+`api.host.tryCall` and fall back to returning text.
 
-- `terminal.notify {title, body?}` uses the configured notification method with a focus condition and a 2 s rate
-  limit.
-- `commands.list`, `commands.describe` and `commands.invoke` are described in
-  [Commands and configuration](commands-and-composer.md#commands-and-configuration-command_config_middleware_v1).
-- `sessions.ports` (`session_ports_v1`, `sessions` capability) returns `{ports: [{port, pid, address}]}`: TCP
-  listeners owned by the current thread's background terminals and their child processes, read by the host outside
-  the mod sandbox (at most 32 ports, 3 s per probe).
+## Notifications and ports
 
-## Threads, imports and composer
+```text
+terminal.notify {title, body?} → {delivered, method, reason?}
+sessions.ports → {ports: [{port, pid, address}]}
+```
 
-`terminal.show_thread`, `terminal.import_file` (confirmed, at most 8 MiB), `composer.read`, `composer.write` and
-`composer.suggest` (see [Composer drafts and
-suggestions](commands-and-composer.md#composer-drafts-and-suggestions-composer_v2)). The import confirmation shows
-the resolved path.
+- `terminal.notify` uses the configured notification method with a focus condition and a 2 s rate limit. `method`
+  is `osc9`, `osc99`, `osc777`, `bel` or `none`, and `reason` says why nothing was delivered.
+- `sessions.ports` (`session_ports_v1`, `sessions` capability) returns the TCP listeners owned by the current
+  thread's background terminals and their child processes, read by the host outside the mod sandbox (at most 32
+  ports, 3 s per probe).
+
+`commands.list`, `commands.describe` and `commands.invoke` are in
+[Commands and configuration](commands-and-composer.md#commands-and-configuration-command_config_middleware_v1), and
+the `composer.*` operations in
+[Composer drafts and suggestions](commands-and-composer.md#composer-drafts-and-suggestions-composer_v2).
+
+## Threads and imports
+
+```text
+terminal.show_thread {thread_id} → {shown}
+terminal.import_file {path, max_bytes?, lifetime?} → ResourceRef | {status: 'declined'}
+```
+
+`terminal.show_thread` switches the terminal to `thread_id`. `terminal.import_file` imports a file the user confirms,
+at most 8 MiB, and returns its resource; the confirmation shows the resolved path. SVG text is labeled
+`image/svg+xml` and checked as an [SVG asset](state-and-storage.md#svg-assets-svg_assets_v1).
 
 ### Import lifetime
 
-`terminal.import_file` adds `lifetime: thread|package` (default thread).
+`lifetime` (`terminal_import_lifetime_v1`) is `thread` (the default) or `package`.
 
-- Package imports retain repository, owner, exact source and immutable content identity across settings/reload/new
-  threads.
+- A `package` import stays available across settings changes, reloads and new threads. It keeps its repository,
+  owner, exact source and content identity, and the content can't change.
 - A source change requires a new confirmed import. The original path is never reread.
 - Existing blob and resource quotas apply; removing the mod store removes retained assets.
 
-Keeping settings, selected assets and image-to-ASCII conversion in a mod lets outside authors use the same APIs for
-document viewers, image previews, warnings, watermarks and dashboards.
-
 ## Selection and clipboard
 
-`terminal.selection {}` (`terminal`) returns `{text, truncated}` for the current TUI selection, or `text: null`
-when there is none. It prefers the visible transcript overlay and never reads obscured transcript text, another
-client's selection or the OS clipboard.
+```text
+terminal.selection {} → {text, truncated}
+terminal.copy {text} → {status}
+```
 
-- UTF-8 text is capped at 64 KiB and further bounded by its JSON-encoded size so a selection followed by a copy
-  fits one callback's receipt budget. Any shortening sets `truncated: true`.
+`terminal.selection` returns the current selection in the Codex terminal UI, or `text: null` when there is none. It
+prefers the visible transcript overlay and never reads obscured transcript text, another client's selection or the OS
+clipboard.
+
+- UTF-8 text is capped at 64 KiB and further bounded by its JSON-encoded size so a selection followed by a copy fits one
+  callback's [host call transport budget](host-model.md#host-call-transport-budget). Any shortening sets
+  `truncated: true`.
 - `terminal.copy {text}` uses the native plain-text clipboard backend with the same 64 KiB limit. Its status is
   `confirmed`, `unconfirmed`, `pending` or `busy`; the native host waits for the matching clipboard worker's
   delivery result. `unconfirmed` means the backend cannot confirm delivery.
 
-Both operations require a local user callback and reject event/tool calls and attached-client requests. Invoke
-selection from a clicked component action, as the terminal example does; typing a slash command clears the
-transcript selection before its callback. Require `terminal_selection_v1` and `terminal_copy_v1` for these
-operations.
+List `terminal_selection_v1` and `terminal_copy_v1` in `required_features`. Both operations work only from a
+callback the local user started, such as a command or a clicked control. They reject calls from event and tool
+handlers and from attached clients. Call `terminal.selection` from a clicked component action, as the terminal
+example does, because typing a slash command clears the transcript selection before its callback runs.
 
 ### Copy-on-select and right-click paste
 
@@ -61,7 +81,11 @@ change them through `config.write`.
 
 ## `terminal.open`
 
-`terminal.open {url} | {path}` opens an http(s) URL or an existing HTML, Markdown, text, PDF or image file after a
+```text
+terminal.open {url} | {path} | {path, line?, editor: true} → {opened: true} | {status: 'declined'}
+```
+
+It opens an http(s) URL or an existing HTML, Markdown, text, PDF or image file after a
 native confirmation.
 
 `{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file in the argv the user sets as `editor`
@@ -69,30 +93,58 @@ in `host.json`, with `{path}` and `{line}` substituted.
 
 ## `terminal.prompt`
 
-`terminal.prompt {kind: 'confirm' | 'text', title, message, masked?}` asks the user; mods never answer prompts.
+```text
+terminal.prompt {kind: 'confirm', title, message} → {status: 'accepted'} | {status: 'declined'}
+terminal.prompt {kind: 'text', title, message, masked?} → {status: 'accepted', value} | {status: 'declined'}
+terminal.prompt {kind: 'choice', title, message, options, multiple?, other?} → {status: 'accepted', values, other?} | {status: 'declined'}
+```
 
-`{kind: 'choice', title, message, options: [{value, label}], multiple?, other?}` (`ui_composition_v1`) shows a
-native picker of up to 32 options: one value, several with `multiple`, or a typed answer through an `Other…` row
-with `other`. It returns `{status: 'accepted', values, other?}` or `declined` when cancelled.
+It asks the user; mods never answer prompts. `masked` hides typed text.
+
+`choice` (`ui_composition_v1`) shows a native picker of up to 32 `options` `{value, label}`: one value, several with
+`multiple`, or a typed answer through an `Other…` row with `other`. Cancelling returns `declined`.
+
+```ts
+const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title, message });
+```
+
+That call is from [`omd_git`](../first-party/omd_git/index.ts).
 
 ## `terminal.pane` and `terminal.panes`
 
-`terminal.pane {action, id, offset?}` (`ui_composition_v1`) opens, closes, focuses, scrolls or reveals one of the
-caller's own panes, dialogs or controls; another mod's component is `terminal_pane_not_owned`. Scrolling uses
+```text
+terminal.pane {action: 'open' | 'close' | 'focus' | 'reveal', id} → {applied: true}
+terminal.pane {action: 'scroll', id, offset} → {applied: true}
+terminal.panes {} → {panes: [{id, visible, collapsed, focused, scroll}]}
+```
+
+`terminal.pane` (`ui_composition_v1`) opens, closes, focuses, scrolls or reveals one of the caller's own panes,
+dialogs or controls; another mod's component is `terminal_pane_not_owned`. Scrolling uses
 `offset`; a pane shows 8 rows and stops scrolling once its last row is in view.
 
-`terminal.panes {}` (`ui_controls_v1`, experimental) returns the caller's own panes as
-`{panes: [{id, visible, collapsed, focused, scroll}]}`; a pane is `visible` while its header row was on screen in the
-last frame.
+`terminal.panes` (`ui_controls_v1`, experimental) returns the caller's own panes; a pane is `visible` while its
+header row was on screen in the last frame.
 
 ## `terminal.panel`
 
-`terminal.panel {title, subtitle?, tabs?, items, search?, query?, selected?, close_args?, action}` (`terminal_panel_v1`)
-opens Codex's own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at
-most 2,000 bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes);
-with tabs, every item names its `tab`. `items` holds 1–200
-`{id, tab?, label, description?, group?, keywords?, detail?, kind, value?, options?}` with unique ids without spaces (up
-to 128 bytes), labels up to 128 bytes and descriptions up to 256 bytes:
+```text
+terminal.panel {title, subtitle?, tabs?, items, search?, query?, selected?, close_args?, action} → {shown: true}
+```
+
+`terminal.panel` (`terminal_panel_v1`) opens Codex's own list panel in the bottom pane, where `/config` is. Only
+the user's own commands and panel actions open panels (`host_operation_user_only` elsewhere).
+
+| Argument | Meaning |
+| --- | --- |
+| `title` | At most 128 bytes |
+| `subtitle` | At most 2,000 bytes of plain text that keeps its line breaks |
+| `tabs` | Up to 8 `{id, title}`, titles up to 32 bytes; with tabs, every item names its `tab` |
+| `items` | 1–200 `{id, tab?, label, description?, group?, keywords?, detail?, kind, value?, options?}`: unique ids without spaces up to 128 bytes, labels up to 128 bytes, descriptions up to 256 bytes |
+| `search` | `true` lets `/` search every tab |
+| `action` | The caller's command that each change runs |
+| `query`, `selected`, `close_args` | Experimental, under [Panel navigation](#panel-navigation-terminal_panel_navigation_v1) |
+
+Item kinds:
 
 | `kind` | `value` | Space or Enter |
 | --- | --- | --- |
@@ -102,22 +154,39 @@ to 128 bytes), labels up to 128 bytes and descriptions up to 256 bytes:
 | `action` | none | Runs the action. |
 
 Each change runs the caller's command `action.command` with `args`, the item id and the new value joined by spaces
-(`set bars true`), and the panel shows the new value at once. Up and Down move and repeat while held, Left and Right
-switch tabs, `/` searches every tab when `search` is true: labels match fuzzily, best first, then items whose
-description, keywords or tab title contain the query; Esc clears the search or closes the panel. Outside a search, a
-letter moves to the next item whose label starts with it, `g` and `G` go to the first and last row, and Home, End, PgUp
-and PgDn work as in every Codex list.
+(`set bars true`), and the panel shows the new value at once.
 
-Experimental (`terminal_panel_navigation_v1`): an item's `group` (up to 32 bytes) gathers items under a header row with
-their count, in order of first appearance after any ungrouped items; Space or Enter on the header collapses or expands
-it. `keywords` (up to 256 bytes) is searched but not shown, and `detail` (up to 512 bytes) shows below the list while
-the item is selected. `query` (up to 128 bytes) opens the panel with that search, and `selected` names the item to
-select first. With `close_args`, closing the panel runs `action.command` with `close_args`, the selected item id (`-` on
-a header) and the search the user last chose an item with (cleared when the user ends a search without choosing one),
-joined by spaces, so a mod can reopen the panel where the user left it. A call with the title of the caller's open panel
-replaces it in place and keeps its tab (also across a tab-less panel such as a confirmation), selected item and search;
-another title opens a new panel over it, and Esc returns to the one below. Only the user's own commands and panel
-actions open panels (`host_operation_user_only` elsewhere). Returns `{shown: true}`.
+Keys in the panel:
+
+- Up and Down move and repeat while held, and Left and Right switch tabs.
+- `/` searches every tab when `search` is true: labels match fuzzily, best first, then items whose description,
+  keywords or tab title contain the query. Esc clears the search or closes the panel.
+- Outside a search, a letter moves to the next item whose label starts with it, `g` and `G` go to the first and last
+  row, and Home, End, PgUp and PgDn work as in every Codex list.
+
+A call with the same title as the caller's open panel replaces that panel in place. The new panel keeps the open panel's
+tab, selected item and search, even across a panel without tabs, such as a confirmation. Another title opens a new panel
+over it, and Esc returns to the one below.
+
+### Panel navigation (`terminal_panel_navigation_v1`)
+
+These fields are experimental:
+
+| Field | Meaning |
+| --- | --- |
+| Item `group` | Up to 32 bytes. Gathers items under a header row with their count, in order of first appearance after any ungrouped items; Space or Enter on the header collapses or expands it. |
+| Item `keywords` | Up to 256 bytes, searched but not shown. |
+| Item `detail` | Up to 512 bytes, shown below the list while the item is selected. |
+| `query` | Up to 128 bytes; opens the panel with that search. |
+| `selected` | The item to select first. |
+| `close_args` | Arguments for the command that runs when the panel closes |
+
+When the user closes the panel, the host runs `action.command` with `close_args`, the selected item id (`-` on a
+header) and the user's last search, joined by spaces. The last search is the one the user last chose an item with,
+and it is cleared when the user ends a search without choosing. A mod can use these to reopen the panel where the
+user left it.
+
+### Panels after a reload
 
 A package or settings change (`packages.apply`, `settings.write`) reloads mods, and the rest of that callback's
 panel calls fail with `callback_cancelled`. When a command that changed packages or settings finishes, every open
@@ -126,14 +195,20 @@ current state; keep anything the redraw needs, such as a result notice, in `api.
 
 ## `terminal.notice`
 
-`terminal.notice {text, kind?, placement?, ...}` (`ui_controls_v1`) shows a notice of at most 512 bytes attributed
-to the mod. `kind` is `info` (default), `warning` or `error`.
+```text
+terminal.notice {text, kind?, placement?: 'toast' | 'status', ttl_ms?, id?} → {shown: true}
+terminal.notice {id, placement?, clear: true} → {cleared}
+terminal.notice {text, kind?, placement: 'transcript', audience?, tool_call_id?} → {shown: true, model?}
+```
+
+`terminal.notice` (`ui_controls_v1`) shows a notice of at most 512 bytes attributed to the mod. `kind` is `info`
+(default), `warning` or `error`.
 
 | `placement` | Where |
 | --- | --- |
 | `placement: 'toast'` (default) | Below the composer notes. |
 | `placement: 'status'` | In the status row (first 40 characters). |
-| `placement: 'transcript'` | Appends a log notice to the transcript that never reaches the model unless `audience: 'model'`. |
+| `placement: 'transcript'` | Appends a log notice to the transcript. Only a notice with `audience: 'model'` reaches the model. |
 
 Toast and status notices:
 
@@ -144,15 +219,23 @@ Toast and status notices:
 Transcript notices:
 
 - `audience: 'model'` also adds the text as mod-provided context to the thread's next model request and every retry
-  of it until a response completes. At most 8 are queued per thread (`model_context_queue_full`); with
-  `model_request` interceptors' inserted sections, at most 8 per request, the rest waiting for the next one.
-- `tool_call_id` draws a transcript notice beneath that tool call's cell in the owned transcript, or as a notice
-  naming the call in inline mode or when no drawn cell holds the call.
+  of it until a response completes. At most 8 such notices are queued per thread. Another one fails with
+  `model_context_queue_full`. A request contains at most 8 of these notices and `model_request` interceptor sections
+  together, and the rest wait for the next request.
+- `tool_call_id` draws a transcript notice beneath that tool call's cell in the fullscreen transcript, or as a notice
+  naming the call in inline mode or when no drawn cell contains the call.
 
 ## `terminal.pty`
 
-`terminal.pty {action: 'start' | 'write' | 'read' | 'stop', session}` starts an interactive shell from a user
-command after confirmation, in the session sandbox without network (macOS) with a scratch `HOME`.
+```text
+terminal.pty {action: 'start', session, cwd?, program?, argv?, sha256?, write?, network?, sandbox?, files?} → {session, running: true} | {status: 'declined'}
+terminal.pty {action: 'write', session, text} → {written}
+terminal.pty {action: 'read', session} → {text, running, exit_code, files?}
+terminal.pty {action: 'stop', session} → {stopped: true}
+```
+
+`start` starts an interactive shell after the user confirms. Call it from a user command. The shell runs in the
+session sandbox, without network, with a scratch `HOME`.
 
 `start` accepts:
 
@@ -169,7 +252,7 @@ With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with 
 
 - The host hashes the resolved program and asks once per mod and binary ("Allow and remember"). It starts without
   asking while the hash matches and asks again when the binary changes, for example after a package manager upgrade.
-  Pins live in `program-pins.json` in the mod store and are shared with the other unsandboxed starts, as described in
+  Pins are in `program-pins.json` in the mod store and are shared with the other unsandboxed starts, as described in
   [Authority grants](authority-grants.md#os_access-manifest-field).
 - A declined prompt returns `{status: 'declined'}`. A start that reaches the spawn without that approval or a matching
   pin fails `pty_program_unpinned`.
@@ -178,10 +261,12 @@ With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with 
   included, plus `SSH_AUTH_SOCK`, `TERM=xterm-256color` and, on a 24-bit color terminal, `COLORTERM=truecolor`. 24-bit
   colors are drawn at the terminal's color depth.
 
+Each mod can have up to `pty_panes_per_mod` sessions, set in `host.json` `mod_limits` (default four, maximum
+sixteen). The host allows sixteen sessions in all.
+
 Sessions:
 
-- Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod` in `host.json` `mod_limits`: four by
-  default, up to sixteen, and sixteen in all).
+- Are bound to the calling mod, thread and admitted generation.
 - Render only in terminal components owned by that mod.
 - Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads. A stop
   hangs up the program (SIGHUP) and kills it 2 s later if it still runs.
@@ -195,18 +280,54 @@ Sessions:
 | Addition | Behavior |
 | --- | --- |
 | Keys | xterm encodings: F1-F12, PgUp/PgDn, Insert, Home/End, Shift+Tab, modified arrows (`CSI 1;m X`), Alt as an Esc prefix, Ctrl+Space and Ctrl+symbol control bytes, application-cursor mode. |
-| Mouse | When the program enables mouse reporting, clicks, releases, drags, motion and the wheel go to it in its encoding (SGR, UTF-8 or X10) with modifiers. Otherwise the wheel scrolls the pane's scrollback, or sends Up/Down on the alternate screen. |
 | Drawing | A focused pane draws its cursor; wide characters take two cells; italic, underline and dim are kept. |
-| Signals | Title changes (OSC 0/2), the bell and OSC 9 / OSC 777 notifications reach the owner as `component_event` `title {title}`, `bell` and `notify {text}` (1 KiB, ten a second). The exit arrives once as `exit {session, exit_code, files}`. A drawn `terminal` component whose session isn't running (never started, stopped, or ended by the host on a thread switch, reload or restart) reports `exit {session, exit_code: null}` once, so the owner can drop its layout. |
 | Links | OSC 8 `http`/`https` links become terminal hyperlinks. |
 | Replies | The pane answers device attributes (`CSI c`), status (`CSI 5n`) and cursor position (`CSI 6n`) queries, as a terminal does. |
-| Clipboard | An OSC 52 copy asks the user once per pane ("Allow for this pane"), then goes through the terminal's clipboard. A decline lasts for the pane. |
-| Session directory | `start {files: {NAME: text}}` (four files, 16 KiB each, names `[A-Za-z0-9._-]`) writes a private directory; every `{dir}` in `argv` is its path. The exit event and a `read` after the exit return its top-level regular files (64 KiB in all; symlinks and hard links are skipped), including files the program wrote. It is removed when the session stops or is replaced; one left behind when OMD quits is removed by the next start. Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach; sandboxed panes keep it in the scratch `HOME` they share, so other sandboxed panes can read it. Errors: `pty_files_invalid`. |
-| Focus | `autofocus: true` on the `terminal` component focuses it when it appears while nothing else has focus, and when its focus region is entered. A focused terminal shows a Ctrl+] hint until the first key; inside a focus region the first Ctrl+] leaves for the region and a second for the chat. A key for a terminal whose program has ended leaves it. When a focused terminal unmounts, focus returns to where it was before. |
+
+It also adds the mouse, signal, clipboard, session directory and focus behavior below.
+
+#### Pane mouse input
+
+When the program enables mouse reporting, clicks, releases, drags, motion and the wheel go to it in its encoding
+(SGR, UTF-8 or X10) with modifiers. Otherwise the wheel scrolls the pane's scrollback, or sends Up/Down on the
+alternate screen.
+
+#### Pane signals
+
+- Title changes (OSC 0/2), the bell and OSC 9 / OSC 777 notifications reach the owner as `component_event`
+  `title {title}`, `bell` and `notify {text}` (1 KiB, ten a second).
+- The exit arrives once as `exit {session, exit_code, files}`.
+- A drawn `terminal` component whose session isn't running (never started, stopped, or ended by the host on a thread
+  switch, reload or restart) reports `exit {session, exit_code: null}` once, so the owner can drop its layout.
+
+#### Pane clipboard
+
+An OSC 52 copy asks the user once per pane ("Allow for this pane"), then goes through the terminal's clipboard. A
+decline lasts for the pane.
+
+#### Session directory
+
+`start {files: {NAME: text}}` (four files, 16 KiB each, names `[A-Za-z0-9._-]`) writes a private directory. Every
+`{dir}` in `argv` is its path. Errors are `pty_files_invalid`.
+
+- The exit event and a `read` after the exit return its top-level regular files (64 KiB in all; symlinks and hard
+  links are skipped), including files the program wrote.
+- It is removed when the session stops or is replaced. One left behind when OMD quits is removed by the next start.
+- Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach. Sandboxed panes keep it
+  in the scratch `HOME` they share, so other sandboxed panes can read it.
+
+#### Pane focus
+
+- `autofocus: true` on the `terminal` component focuses it when it appears while nothing else has focus, and when
+  its focus region is entered.
+- A focused terminal shows a Ctrl+] hint until the first key. Inside a focus region the first Ctrl+] leaves for the
+  region and a second for the chat.
+- A key for a terminal whose program has ended leaves it.
+- When a focused terminal unmounts, focus returns to where it was before.
 
 ## Terminal identity (`terminal_identity_v1`)
 
-The `terminal` input carries a read-only `identity` (`terminal_identity_v1`):
+The `terminal` input has a read-only `identity` (`terminal_identity_v1`):
 
 - `codex_version` from the installed build;
 - `omd_version`, the installed OMD release, such as `1.2.0` or `1.3.0-rc.2` (experimental);
@@ -214,13 +335,13 @@ The `terminal` input carries a read-only `identity` (`terminal_identity_v1`):
 - effective `mode` (`omd`);
 - installed, enabled, active and failed mod counts.
 
-Upstream-style direct mode loads no mods.
+In [`direct` mode](glossary.md#stores-and-data), which runs plain Codex with no mods, no `terminal` handler runs.
 
 ## `terminal` event `client`
 
-The `terminal` event carries `client: {kind: 'terminal', graphics, pointer, reduced_motion, cell_px, columns,
+The `terminal` event has `client: {kind: 'terminal', graphics, pointer, reduced_motion, cell_px, columns,
 rows, sites?}` and, with external clients attached, `clients` (see
-[Capabilities and fallback](omd-client-protocol.md#capabilities-and-fallback)):
+[Renderer capabilities and fallback](omd-client-protocol.md#renderer-capabilities-and-fallback)):
 
 | Field | Meaning |
 | --- | --- |
@@ -229,12 +350,22 @@ rows, sites?}` and, with external clients attached, `clients` (see
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |
 | `cell_px` | The measured cell size or null. |
 | `columns` and `rows` | The terminal grid. |
-| `sites` | `terminal_site_area_v1` (an experimental field): `{[site]: {columns, rows}}` for each of the receiving mod's own `mod/site` sites the last frame drew as a layout leaf or an overlay, the cells its components got inside the frame's border, padding and title. Absent when the last frame drew none; sites stacked in the sidebar are not listed. |
-| `welcome` | `terminal_welcome_area_v1`: `{columns, rows}` of the blank area a `welcome` site gets this frame (the chat width beside any sidebar or dock, by the unused transcript height), or null when the welcome cannot show. Size welcome content from it; a change renders the view again. |
-| `chat` | `terminal_chat_area_v1`: `{x, y, columns, rows}` of the chat column this frame (the conversation and prompt box, beside any sidebar, dock or layout region), or null before the first fullscreen draw. Place art relative to the conversation with it; a change renders the view again. |
+| `sites` | `terminal_site_area_v1` (an experimental field): `{[site]: {columns, rows}}` for the mod's own drawn sites |
+| `welcome` | `terminal_welcome_area_v1`: `{columns, rows}` of the blank area a `welcome` site gets this frame, or null when the welcome cannot show |
+| `chat` | `terminal_chat_area_v1`: `{x, y, columns, rows}` of the chat column this frame, or null before the first fullscreen draw |
 | `colors` | `terminal_colors_v1`: the colors the terminal shows, `truecolor`, `256` or `16`. |
 
+- `sites` lists each of the receiving mod's own `owner/name` sites that the last frame drew as a layout leaf or an
+  overlay. Each entry is the cells its components got inside the frame's border, padding and title. `sites` is
+  absent when the last frame drew none, and sites stacked in the sidebar are not listed.
+- The `welcome` area is the chat width beside any sidebar or dock, by the unused transcript height. Size welcome
+  content from it.
+- The `chat` column is the conversation and composer, beside any sidebar, dock or layout region. Place art relative
+  to the conversation with it.
+- A change in `welcome` or `chat` renders the view again.
+
 `client` is null without a terminal client. When any of these change (the window or font is resized, animations are
-turned off) the view renders again with the new `client`; a burst of changes renders once per render in progress.
-A drawn site's area renders the view again the same way, except when it returns within a second to the area it had
-before the last change, as a view that sizes its own layout from `sites` would cause.
+turned off) the view renders again with the new `client`. If several changes arrive while a render is in progress,
+the host renders once more after it. A change in a drawn site's area also renders the view again. The exception is
+when the area returns within a second to the size it had before the last change. A view that sizes its own layout
+from `sites` can cause that loop, so the host skips the render.

@@ -1,19 +1,20 @@
 # omd-anchored-edit
 
 Edits files by line anchors. Each line shows as `LINE#HASH|content`, and an edit cites the anchors it changes. If a
-cited line has changed, the edit is rejected and nothing is written.
+cited line has changed, the edit is rejected and nothing is written. OMD+ puts it on disk but doesn't install it, so you
+add it yourself. OMD Core doesn't include it.
 
 The plugin adds guidance for the model. The tools come from its mod component, `omd_anchored_edit`.
 
 ## Turn it on
 
-Add the plugin, then enable its component with these capabilities:
+Add the plugin, then turn on its mod component with these capabilities:
 
 ```text
 tools,fs.read,fs.write,exec
 ```
 
-[Plugins](../../../../README.md) has the steps to add a plugin and enable a component.
+[Plugins](../../../../README.md) has the steps to add a plugin and turn on a component.
 
 ## Use it
 

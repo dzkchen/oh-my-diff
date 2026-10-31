@@ -2,12 +2,16 @@
 
 Use it when you plan, install, update, roll back, protect or inspect packages, from the shell with `omd-mod` or
 from a mod with `packages.*`. For the author-side commands, see [Authoring](authoring.md). To publish a mod to npm
-or Git step by step, see [Publish a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/publish-a-mod.md).
+or Git step by step, see
+[Install, share and update a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/publish-a-mod.md).
+
+Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
+[registry table](stability-and-migration.md#experimental-entries-in-the-registry)). `packages.*` operations need the
+`packages` capability. The commands run on Apple Silicon macOS.
 
 ## Package commands
 
-This section covers the package commands for install, update and remove; trust, credentials and runner; and selection,
-policy and protection.
+These `omd-mod` commands manage a package store.
 
 ### Install, update and remove
 
@@ -19,7 +23,7 @@ policy and protection.
 | `omd-mod package-rollback-plan STORE ID` | Preview the prior integrity-addressed package version |
 | `omd-mod package-rollback STORE ID CONFIRMATION` | Restore the prior cached package disabled, preserving explicit settings |
 | `omd-mod package-uninstall-plan STORE ID` | Preview removal and reject installed dependents |
-| `omd-mod package-uninstall STORE ID CONFIRMATION` | Remove the managed selection while retaining local source, state, cache, and history |
+| `omd-mod package-uninstall STORE ID CONFIRMATION` | Remove the installed package's selection while retaining local source, state, cache, and history |
 | `omd-mod plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE` | Compare a local plugin candidate and its skills/hooks against the installed cache without applying it |
 
 ### Trust, credentials and runner
@@ -31,7 +35,15 @@ policy and protection.
 | `omd-mod authorize-runner STORE` | With the [authority broker](protected-authority.md) deployed, grant the `omd-runner` beside this `omd-mod` as the store's runner (the installer runs it after each update); without the broker it does nothing |
 | [`omd-mod trust-program STORE MOD_ID PROGRAM`](authority-grants.md#os_access-manifest-field) | Pin an unsandboxed program for a mod ahead of time, for headless runs; MOD_ID must be an active mod whose `os_access` lists the program |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
-| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Also grants the `omd-runner` beside this `omd-mod` as the runner; imports no package-source provenance. |
+| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Capture the current configuration, or protect existing selections with that snapshot (see below) |
+
+`omd-mod broker-grants-import`:
+
+- Without `SNAPSHOT_JSON`, captures the exact current configuration.
+- With that unchanged snapshot, protects existing valid selections without changing capabilities, secret grants,
+  expiry, settings or activation, and reports stale selections as skipped.
+- Also grants the `omd-runner` beside this `omd-mod` as the runner.
+- Imports no package-source provenance.
 
 ### Selection, policy and protection
 
@@ -41,7 +53,7 @@ policy and protection.
 | `omd-mod package-sync STORE [--offline\|--rollback]` | Deploy the [administrator policy](administrator-policy.md)'s packages unattended, or reactivate the previous generation |
 | `omd-mod policy show\|clear\|rollback`, `policy check\|set FILE`, `policy explain STORE [PROJECT_DIR]` | Print, validate, store (administrator) or explain the [administrator policy](administrator-policy.md#inspecting-managed-state) |
 | `omd-mod package-enable STORE ID` | Re-enable an unchanged trusted package at the next turn boundary, retaining settings and state |
-| `omd-mod package-disable STORE ID` | Disable a managed package without deleting source, state, or cache |
+| `omd-mod package-disable STORE ID` | Disable an installed package without deleting source, state, or cache |
 | `omd-mod package-quarantine STORE ID REASON` | Disable the package and block its installed version and integrity; enable, reinstall and rollback of it are refused while data, cache and sources stay |
 | `omd-mod package-unblock STORE ID` | Lift the blocks; the package stays disabled |
 | `omd-mod revoke STORE MOD_ID_OR_PACKAGE` | Disable the mod and drop its grant (capabilities and secret environment cleared) |
@@ -49,14 +61,15 @@ policy and protection.
 
 ## Package requests
 
-This section covers the native `package-plan` and `package-apply` requests, `packages.preview` and `packages.apply`,
-package sources and package references.
+A package change is a JSON request. `omd-mod package-plan` and `package-apply` take the native request. The
+`packages.preview` and `packages.apply` operations and the `omd` CLI take the higher-level request, which names a
+package by `source` or by `reference`.
 
 ### Native `package-plan` and `package-apply` requests
 
 For native `package-plan` and `package-apply`, `REQUEST_JSON` is:
 
-```ts
+```text
 {action?, source, index?, scope?, offline?, trust, settings?}
 ```
 
@@ -65,9 +78,9 @@ For native `package-plan` and `package-apply`, `REQUEST_JSON` is:
 | `action` | `install` (the default) or `update` |
 | `trust` | `{packages: {ID: {capabilities, lifecycle?, dependencies?, secret_environment?}}}`: each package needs its exact capability and lifecycle grants, and dependencies need explicit trust too |
 | `index` | An index file to resolve `package` sources from; the store's `package-index.json` when omitted |
-| `scope` | The selection scope, `user` when omitted |
+| `scope` | The selection scope, `user` (the default) or `project` |
 | `offline` | `true` for an offline install, `false` when omitted |
-| `settings` | Maps package IDs to setting objects; an update preserves existing settings when omitted |
+| `settings` | Maps package ids to setting objects; an update preserves existing settings when omitted |
 
 Apply the identical request with the preview's `confirmation` string.
 
@@ -75,12 +88,14 @@ Apply the identical request with the preview's `confirmation` string.
 
 The higher-level `packages.preview`/`packages.apply` operations and `omd` CLI use:
 
-```ts
-{action, id?, source?, reference?, version?, index?, scope?}
+```text
+{action, id?, source?, reference?, version?, index?, scope?, expected_generation?}
 ```
 
 `action` is one of `install`, `update`, `remove`, `rollback`, `enable`, `disable` or `trust`. A request names a package
-with `source` or with a `reference` (and optional `version`), never both.
+with `source` or with a `reference` (and optional `version`), never both. `scope` is `user` or `project`.
+`expected_generation` is described under
+[`packages.apply`, `packages.preview` and `packages.reload`](#packagesapply-packagespreview-and-packagesreload).
 
 ### Package sources
 
@@ -102,13 +117,13 @@ A `reference` is the same choice as one string, shared by the `/mods` directory 
 | `ID[@VERSION]` | A release from the curated index |
 | `npm:NAME[@VERSION]` | An npm package; scoped names work (`npm:@author/omd-mod@1.2.3`) |
 | `git+URL[#REF[:DIRECTORY]]` | A Git repository; `REF` defaults to `HEAD`; `git+file:///path` and a local path work |
-| a folder | A local directory (absolute in the directory; `./`, `../`, `~/` or absolute in the CLI) |
+| a folder | A local directory (an absolute path in the `/mods` directory; `./`, `../`, `~/` or an absolute path in the `omd` CLI) |
 
 Local package files reached through a symlinked directory outside the package are refused (`package_path_escape`).
 
 ## npm packages
 
-This section covers version and tarball checks, package contents, and registries, tokens and proxies.
+A package can come from an npm registry.
 
 ### Version and tarball checks
 
@@ -122,7 +137,7 @@ The tarball must match the registry's sha512 `dist.integrity` and is extracted s
 | Entry types | Regular files only; symlinks, hardlinks and path escapes are rejected |
 | Tarball size | At most 4 MiB |
 | Unpacked size | At most 16 MiB |
-| Entries | At most 1024 |
+| Entries | At most 1,024 |
 
 ### Package contents
 
@@ -188,10 +203,37 @@ integrity against the manifest, entrypoint, and every declared lifecycle script.
 - Each dependency needs its own exact trust entry.
 - Index files do not grant capabilities or script execution.
 
-## Managed package manifests
+## Package assets
 
-A managed package manifest must declare `license` and `provenance`; the scaffold emits both with placeholders to
-change.
+A mod reads its own entrypoint and declared text assets with `api.assets.read`.
+
+```text
+api.assets.read(name) → {text, sha256}
+```
+
+`api.assets.read(name)` returns a selected package's UTF-8 entrypoint or declared text asset with its SHA-256. It
+reads only the caller's own hash-bound package. Installed package caches include declared assets, so a mod can pass
+its own source to a sandboxed `exec.run` process without a copy in the workspace.
+
+| Package limit | Value |
+| --- | --- |
+| Assets declared per package | At most 16 |
+| `mod.json` | At most 8 KiB |
+| Each other package file | At most 512 KiB (`file_limit` names the file) |
+| Entrypoint and declared text together | At most 1 MiB per callback (`package_text_input_limit`) |
+
+A package over the per-callback text limit is refused by inspection, install and `omd-mod-author check`.
+
+```ts
+const sent = api.host.tryCall('process.exchange', { session: session(m), send: [{ src: api.assets.read('github.mjs').text }], wait_ms: 0 });
+```
+
+That call is from [`omd_monitor`](../first-party/omd_monitor/index.ts).
+
+## Installed package manifests
+
+The manifest of a package installed through the package manager must declare `license` and `provenance`. The
+scaffold emits both with placeholders to change.
 
 ### `provenance.source` for Git installs
 
@@ -214,46 +256,53 @@ starts, resumes or forks while the package is active: `{"codex_config": {"tools.
 
 - Keys come from a closed host allowlist (`tools.update_plan.enabled`, `tool_output_token_limit.raise`) and must be
   `true`.
-- `tool_output_token_limit.raise` sets the thread's `tool_output_token_limit` to at least 65,536 tokens (about 256 KiB),
-  keeping a larger configured value. `exec_command` and `write_stdin` still default to 10,000 tokens unless the call
-  sets a larger `max_output_tokens`, which a `tool` interceptor can do. It makes no output smaller or safer: the
-  package must budget model-visible outputs itself, or every long output reaches the model whole.
+- `tool_output_token_limit.raise` sets the thread's `tool_output_token_limit` to at least 65,536 tokens (about
+  256 KiB). A larger configured value stays.
+- `exec_command` and `write_stdin` still default to 10,000 tokens unless the call sets a larger `max_output_tokens`.
+  A `tool` interceptor can set it.
+- The raise makes no output smaller or safer. The package must budget model-visible outputs itself, or every long
+  output reaches the model whole.
 - The package must list `codex_config_v1` in `required_features`.
 - Anything else fails inspection with `invalid_codex_config`.
 
 The host recomputes the keys whenever it reloads the active packages (at the next turn boundary after a change), so
-a package enabled mid-session applies to lead threads started after that reload; threads that already exist keep
-their configuration. It overrides an explicit `false` in the user's config for those threads and writes nothing to
-`config.toml`.
+a package enabled mid-session applies to lead threads started after that reload. Threads that already exist keep
+their configuration. For the threads it applies to, `codex_config` overrides an explicit `false` in the user's
+config, and the host writes nothing to `config.toml`.
 
 Install, update and trust previews and `omd-mod status` list a package's `codex_config` with its other authority.
 
 ## Package controls (`package_controls_v1`)
 
-`packages.list`, `packages.index`, `packages.preview`, `packages.apply` and `packages.reload` (`package_controls_v1`)
-install, update, remove, roll back, enable and disable packages from local directories, Git repositories, curated index
-releases and npm packages (sources and references are listed under [Package sources](#package-sources) and
-[Package references](#package-references)); `index` resolves dependencies. A request names its package with `source` or
-with a `reference` string and an optional `version`.
+The `packages.*` operations (`package_controls_v1`) let a mod install, update, remove, roll back, enable and disable
+packages. Packages come from local directories, Git repositories, curated index releases and npm packages.
+[Package sources](#package-sources) and [Package references](#package-references) list the forms. `index` resolves
+dependencies.
 
 ### `packages.list`
 
-`packages.list` reports every store selection: managed packages and trusted `omd-mod` selections (`source:
-'selection'`, which enable, disable and `trust` but do not update).
+```text
+packages.list {fields} | null → {packages, generation, reload_error}
+```
+
+`generation` is the store's package generation, which `packages.preview` and `packages.apply` take as
+`expected_generation`. `packages.list` reports every selection in the store: installed packages and trusted
+`omd-mod` selections. A trusted selection has `source: 'selection'`. You can enable, disable and `trust` it, but not
+update it.
 
 - `source` is also `npm` for npm packages.
 - `blocked` is the quarantine reason or `null`.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
 - `packages.list` reports each mod's `settings` and `settings_schema`.
-- `required` marks a selection the installer keeps on: `/mods` and `/omd` don't turn it off, `omd mods disable`
-  still does.
+- `required` marks a selection the installer keeps on. `/mods` and `/omd` don't turn it off, but `omd mods disable`
+  does.
 
 ### `packages.index`
 
 `packages.index {index?, query?, cursor?, limit?}` is read-only and returns:
 
-```ts
+```text
 {index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}], total, cursor}
 ```
 
@@ -264,28 +313,58 @@ page, and it is `null` on the last one. Paging requires `package_index_paging_v1
 
 ### Package state fields
 
-- `effective`, `pending: 'reload'` and `failed` describe the serving session, so a change shows as pending until
-  that session's next safe boundary, and a removed mod stays listed with `installed: false` until it stops.
+These `packages.list` fields say whether a package change has taken effect.
+
+- `effective`, `pending: 'reload'` and `failed` describe the session that serves the store. A change shows as
+  pending until that session's next safe boundary. A removed mod stays listed with `installed: false` until it stops.
 - `reload_error` names a rejected change while the previous mods keep running.
 
 ### `packages.apply`, `packages.preview` and `packages.reload`
 
-`apply` and `reload` run from user contexts. The `trust` action re-approves an edited selection's current source and
-capabilities and keeps it enabled.
+```text
+packages.preview {...request, expected_generation?} → {action, id, changes, grants_added}
+packages.apply {...request, expected_generation} → {status: 'applied', generation} | {status: 'declined'}
+packages.reload → {generation, failed, applies: 'next_boundary'}
+```
+
+The request is the one under
+[`packages.preview` and `packages.apply` requests](#packagespreview-and-packagesapply-requests).
+
+| Argument | Meaning |
+| --- | --- |
+| `expected_generation` | The `generation` from `packages.list`; required on `apply`, optional on `preview` |
+
+- `apply` returns the new generation, or `declined` when the user declines the confirmation.
+- `reload` returns the generation, the ids of mods that failed, and `next_boundary`, when the revalidation applies.
+
+| Error | When |
+| --- | --- |
+| `expected_generation_required` | `apply` without `expected_generation` |
+| `package_state_changed: list again` | `expected_generation` isn't the current generation |
+| `package_state_changed: preview again` | The packages changed between the confirmed preview and the apply |
+
+```ts
+const result = api.host.tryCall('packages.apply', { ...request, expected_generation: generation });
+```
+
+That call is from [`omd_mods`](../first-party/omd_mods/index.ts).
+
+`apply` and `reload` run only from [user contexts](host-model.md#callback-contexts). The `trust` action re-approves
+an edited selection's current source and capabilities and keeps it enabled.
 
 - `apply` shows a native confirmation naming every new grant, dependencies as `id:capability`, and applies exactly
   the confirmed plan or refuses if the package, lock or selection changed.
 - Installing never enables a package; see [Enablement on install and update](#enablement-on-install-and-update).
 - The preview lists per package `authority {from, to}`, `grant {from, to}` and `renewed_approval`.
 - Once a confirmed package mutation starts, it returns its definitive result even if its writes reload or disable
-  the calling mod. Queued calls still reject cancellation, changed source, originating generation or client
-  context.
+  the calling mod. A queued call is still rejected when it's cancelled or when the mod's source, the originating
+  generation or the client context changed.
 - An update resolves dependencies through the index the package came from and previews the capabilities it adds.
 - `packages.reload` makes every enabled selection revalidate at the next safe boundary, retrying failed mods.
 
 ## Enablement, rollback and history
 
-This section covers enablement on install and update, and rollback and cleanup.
+Installing and updating decide whether a package is on, and rollback returns it to an earlier install.
 
 ### Enablement on install and update
 

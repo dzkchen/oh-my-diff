@@ -57,11 +57,11 @@ my-plugin/
 ## Tell users how to turn the mod on
 
 Adding the plugin with `codex plugin add` installs its skills but doesn't run its mod. Each user inspects, trusts
-and enables the component in their mod store. The steps are in
-[Plugins](../../plugins/README.md). In your plugin's README, list the capabilities from `mod/mod.json` so users
-know what they grant.
+and turns on the component in their mod store. The steps are in
+[Turn on a component](../../plugins/README.md#turn-on-a-component). In your plugin's README, list the capabilities
+from `mod/mod.json` so users know what they grant.
 
 ## See also
 
 - [Plugin components reference](../../mods/reference/plugin-components.md)
-- [Overview](../how-omd-works.md#mods-plugins-skills-and-hooks): when to write a skill, hook, plugin or mod
+- [How OMD works](../how-omd-works.md#mods-plugins-skills-and-hooks): when to write a skill, hook, plugin or mod

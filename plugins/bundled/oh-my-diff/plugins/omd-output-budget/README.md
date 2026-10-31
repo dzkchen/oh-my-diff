@@ -1,21 +1,28 @@
 # omd-output-budget
 
-Keeps large shell and tool results out of the model's context. A result over its budget reaches the model as a
-bounded excerpt: the command header with its exit status, the first and last lines, and for a failed call the error
-and warning lines from the middle, with markers for what was left out. The complete output is kept by content hash,
-and the model can page it or search it instead of rerunning the command.
+Keeps large shell and tool results out of the model's context. OMD+ puts it on disk but doesn't install it, so you add
+it yourself. OMD Core doesn't include it.
+
+A result over its budget reaches the model as a bounded excerpt with:
+
+- the command header with its exit status
+- the first and last lines
+- for a failed call, the error and warning lines from the middle
+- markers for what was left out
+
+The complete output is kept by content hash, and the model can page it or search it instead of rerunning the command.
 
 The plugin adds guidance for the model. The budget and tools come from its mod component, `omd_output_budget`.
 
 ## Turn it on
 
-Add the plugin, then enable its component with these capabilities:
+Add the plugin, then turn on its mod component with these capabilities:
 
 ```text
 interception,tools,store,lifecycle
 ```
 
-[Plugins](../../../../README.md) has the steps to add a plugin and enable a component.
+[Plugins](../../../../README.md) has the steps to add a plugin and turn on a component.
 
 ## Use it
 
@@ -30,14 +37,18 @@ whole (`omd_tool_absorb` runs each call in it as its own budgeted call).
 - `fetch` downloads a documentation page with `curl` through the session's own command tool, so the session's
   sandbox, network permission and approvals apply. It keeps the page's text and returns its outline.
 
-Codex normally cuts a command's output to about 10,000 tokens before anything else sees it. While the component is
-enabled, threads it starts get a 65,536-token tool output limit. When the model leaves `max_output_tokens` unset on
-`exec_command` or `write_stdin`, the component raises it to 65,536 tokens. The kept output then covers up to about
-256 KB. Past that, Codex still cuts the middle, and the excerpt says so. An output longer than the 256 KiB an
-interceptor sees ends its excerpt with the kept output's real last lines. The component never changes the command
-itself.
+Output limits:
+
+- Codex normally cuts a command's output to about 10,000 tokens before anything else sees it.
+- While the component is on, threads it starts get a 65,536-token tool output limit. When the model leaves
+  `max_output_tokens` unset on `exec_command` or `write_stdin`, the component raises it to 65,536 tokens.
+- The kept output then covers up to about 256 KB. Past that, Codex still cuts the middle, and the excerpt says so.
+- An output longer than the 256 KiB an interceptor sees ends its excerpt with the kept output's real last lines.
+- The component never changes the command itself.
 
 ## Settings
+
+Change settings in `/mods`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -57,7 +68,7 @@ itself.
   backslashes, backticks or `$`.
 - If the host can't keep the full output, the model gets its head and tail, at most about 40 KB as Codex would send,
   marked as such.
-- Threads that already exist keep their tool output limit when you enable the component.
+- Threads that already exist keep their tool output limit when you turn on the component.
 
 ## More
 

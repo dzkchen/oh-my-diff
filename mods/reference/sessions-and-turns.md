@@ -1,17 +1,20 @@
-# Sessions and turns
+# Peers, power holds and mod-started turns
 
-Use it when a mod messages other live sessions, keeps the Mac awake, queues its own turns or continues a turn that
-would end, or submits prompts the user captured. Thread-scoped data, `turns.abort` and session reads are in
-[Threads, turns and sessions](threads-and-sessions-store.md).
+Use it when a mod messages other live sessions, keeps the Mac awake, queues or continues turns on its own, or submits
+prompts the user captured. Session on this page means a live session: one running `codex` process. Reading recorded
+sessions, thread-scoped data and `turns.abort` are in [Thread data and recorded sessions](threads-and-sessions-store.md).
+
+Mod API `1.0.0`: every entry on this page is experimental. Platform: Apple Silicon macOS; `lid_closed` power holds
+need the [authority broker](protected-authority.md).
 
 ## Peer sessions (`peer_sessions_v1`)
 
 Peer sessions are experimental: the `peers` capability, `peers.list`, `peers.send`, the `peer_send` and
 `peer_receive` interceptors and the `peer_message` and `peer_receipt` events.
 
-A mod with the `peers` authority grant declares `peer_access: {projects: "same" | "any"}`. While at least one
-loaded mod holds the grant, each lead thread registers a peer session in the mod store (`peers/`), live while its
-process holds the session lock.
+A mod with the `peers` authority grant declares `peer_access: {projects: "same" | "any"}` in its manifest. While at
+least one loaded mod has the grant, each lead thread registers a peer session in the mod store (`peers/`). The
+registration stays live as long as its process has the session lock.
 
 ### `peers.list` and `peers.send`
 
@@ -36,14 +39,14 @@ Sessions in other repositories appear only when both packages declare `"any"`. I
 
 ### Peer message authentication and delivery
 
-Every message and receipt is countersigned by the [authority broker](protected-authority.md) over the canonical digest
-of its sender identity (session, repository, package and source digest), recipient, correlation, data and expiry, so
-only pinned OMD binaries can mint one.
+The [authority broker](protected-authority.md) countersigns every message and receipt. The signature covers the
+canonical digest of the sender identity (session, repository, package and source digest), recipient, correlation,
+data and expiry, so only pinned OMD binaries can mint one.
 
 The recipient session:
 
-- verifies the tag;
-- drops replays of a message ID it already took;
+- verifies the broker's countersignature tag;
+- drops replays of a message id it already took;
 - answers expired messages with `expired`;
 - re-checks its own package's scope;
 - runs `peer_receive` interceptors, which may transform `data` or refuse;
@@ -71,16 +74,19 @@ registration.
 
 Power holds are experimental: the `power` capability, `power.hold` and `power.release`.
 
-A mod with the `power` authority grant keeps the Mac awake. `power.hold {reason, lid_closed?, max_duration_ms, lease?}`
-returns `{lease, lid_closed}`; passing a `lease` that is still live with the same `lid_closed` returns it unchanged,
-otherwise a new lease starts. `power.release {lease}` returns `{released}`, false when the lease already ended or
-belongs to another mod. Only event callbacks (lifecycle events, timers, channels) may hold
-(`host_operation_event_only` otherwise).
+A mod with the `power` authority grant can keep the Mac awake.
 
-Every lease holds an idle-sleep assertion, so the Mac doesn't sleep from inactivity while the lid is open; the display
-may still sleep. With `lid_closed: true` the lease also asks the authority broker to set `SleepDisabled`, which keeps a
-closed Mac running on battery. Leases from every mod and OMD process share that setting: the first records the previous
-value and the last one to end restores it, then sleeps the Mac if the lid is closed.
+- `power.hold {reason, lid_closed?, max_duration_ms, lease?}` returns `{lease, lid_closed}`. Passing a `lease` that
+  is still live with the same `lid_closed` returns it unchanged. Otherwise a new lease starts.
+- `power.release {lease}` returns `{released}`. It is false when the lease already ended or belongs to another mod.
+- Only event callbacks (lifecycle events, timers, channels) can call `power.hold`. Others fail with
+  `host_operation_event_only`.
+
+Every lease creates an idle-sleep assertion, so the Mac doesn't sleep from inactivity while the lid is open; the
+display may still sleep. With `lid_closed: true` the lease also asks the authority broker to set `SleepDisabled`,
+which keeps a closed Mac running on battery. Leases from every mod and OMD process share that setting. The first
+lease records the previous value. When the last lease ends, the host restores that value and sleeps the Mac if the
+lid is closed.
 
 A lease ends at `power.release`, after `max_duration_ms`, when the session stops and when OMD exits or crashes. A
 disabled, failed or changed mod loses its leases at the next host event in the session. If the broker or its helper
@@ -96,7 +102,7 @@ exits, the setting is restored and the lease ends, so holding again with that `l
 | --- | --- |
 | `power_unavailable` | `lid_closed` without the deployed broker, or a broker installed before power holds (run `omd-package broker install` again); lid-open holds still work |
 | `authority_power_unavailable` | The broker's power helper is not installed or could not change the setting |
-| `power_lease_limit` | The mod already holds 4 leases |
+| `power_lease_limit` | The mod already has 4 leases |
 | `host_operation_event_only` | `power.hold` from a tool, CLI or component callback |
 | `power_request_invalid` | `reason` or `max_duration_ms` is out of range |
 
@@ -107,9 +113,16 @@ Autonomous turns are experimental: the `autonomous` capability, `turns.queue`, `
 
 A mod with the `autonomous` authority grant declares:
 
-```ts
+```text
 autonomy: {max_queued (1-16), max_turns (1-100), max_continuations? (0-4), spend_microusd?}
 ```
+
+| Field | Range | Meaning |
+| --- | --- | --- |
+| `max_queued` | 1 to 16 | Entries the mod may have queued in a thread at once; more fail with `turn_queue_full` |
+| `max_turns` | 1 to 100 | Queued turns the host starts for the mod in a thread; later entries are denied with `turn_budget_exhausted` |
+| `max_continuations` | 0 to 4 | [`turn_stop`](#turn_stop-interceptors) continuations the mod may add per turn |
+| `spend_microusd` | optional | Model cost of the mod's queued turns in a thread; once reached, entries are denied with `spend_budget_exhausted` |
 
 ### `turns.queue`
 
@@ -127,7 +140,7 @@ It returns `{key, status: 'queued' | 'duplicate', paused?}`. A key already queue
 
 ### How queued turns start
 
-- The host starts the best entry (priority, then age) one second after the thread goes idle, through the engine's
+- The host starts the best entry (priority, then age) one second after the thread goes idle, through Codex's
   start-if-idle path. Typed input that arrives first wins, and the entry waits for the next idle.
 - The turn's message begins with `[Queued by mod <id> on <event> (key <key>); not typed by the user]`, and its
   trigger is `mod:<id>`.
@@ -156,29 +169,31 @@ or revoking its grant drops its entries.
 `turn_stop` interceptors run when the model would end a lead turn, and after a lead turn fails without being
 interrupted. They receive:
 
-```ts
+```text
 {thread_id, turn_id, outcome, error, message, continued, limit, provenance}
 ```
 
 `outcome` is `completed` or `error`.
 
-Answering `{continue: prompt}` keeps the same turn sampling with a labeled continuation, at most
-`max_continuations` per turn for that mod and 4 in total. Continuations cannot mark verifiers passed or submit
-receipts.
+Answering `{continue: prompt}` keeps the model sampling in the same turn, with the prompt added as a labeled
+continuation. A mod gets at most `max_continuations` continuations per turn, and a turn gets at most 4 in total.
+Continuations cannot mark verifiers passed or submit receipts.
 
 ## User prompt submissions (`user_submissions_v1`)
 
-A mod with `composer` can hold prompts the user captured and send them later as the user's own messages.
-`prompts.consent`, `prompts.submit`, `prompts.status` and `prompts.revoke` are experimental.
+A mod with the `composer` capability can send text the user gave it as the user's own message, later.
+`prompts.consent` records the user's consent to that exact text from a user action, and `prompts.submit` spends the
+consent from any callback. `prompts.consent`, `prompts.submit`, `prompts.status` and `prompts.revoke` are
+experimental.
 
 ### `prompts.consent`
 
-`prompts.consent {text, attachments?}` (61,440 bytes, at most 8 image resources) runs only in user contexts (a
-command, key binding or user component action). It records a single-use consent bound to the mod, the thread and
-the exact content.
+`prompts.consent {text, attachments?}` (61,440 bytes, at most 8 image resources) runs only in
+[user contexts](host-model.md#callback-contexts) (a command, key binding or user component action). It records a
+single-use consent bound to the mod, the thread and the exact content.
 
 - At most 64 consents are pending per mod and thread, and consents of mods that are no longer loaded are dropped.
-- Consents live in the mod store outside mod state and are not copied into forks.
+- Consents are stored in the mod store outside mod state and are not copied into forks.
 
 ### `prompts.submit`
 
@@ -197,7 +212,7 @@ The `reason` values are:
 - `busy`;
 - `no_active_turn`;
 - `session_starting`;
-- `input_held`, while the terminal holds its own queued input after a disconnect, an unconfirmed submission,
+- `input_held`, while the terminal keeps its own queued input after a disconnect, an unconfirmed submission,
   rate-limit recovery or an unavailable thread.
 
 ### `prompts.status` and `prompts.revoke`

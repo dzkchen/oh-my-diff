@@ -1,7 +1,7 @@
 # burn_meter
 
-Shows what the current thread has spent as a burning fuse above the prompt. It's a port of a Claude Code plugin in
-the curated directory. OMD+ doesn't install it, and it isn't in the bundled collection.
+Shows what the current thread has spent as a burning fuse above the prompt. It's a port of the Claude Code mod
+`burn-meter`. It's in the curated directory, but OMD+ and OMD Core don't install it.
 
 ## Install it
 
@@ -12,9 +12,10 @@ omd install burn_meter
 omd mods enable burn_meter
 ```
 
-It asks for `terminal`, `model`, `lifecycle`, `store`, `commands` and `account`. See
-[Manage mods](../../../docs/manage-mods.md) for the other ways to install and turn on mods, and
-[Trust and permissions](../../../docs/trust-and-permissions.md) for what a grant allows.
+It asks to draw the band and dialog, read each response's cost and your account's rate limits, follow turns, add `/burn`
+and keep its totals. The capabilities are `terminal`, `model`, `account`, `lifecycle`, `commands` and `store`. See
+[Manage mods](../../../docs/manage-mods.md) for the other ways to install and turn on a mod, and
+[Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do) for what a capability allows.
 
 ## Use it
 
@@ -46,17 +47,21 @@ It has no settings.
 - Spend, toasts and the per-turn chart are per thread. The lifetime total is shared by every thread.
 - The fire follows your shortest plan window, or grows with spend (full at $99) without one.
 - It moves only while the amount changes, and no animation runs while idle. With reduced motion it stays still.
-- The fire uses block characters, with no white flash on the bar's edge. Its width is capped at 96 columns, and the
-  band's fuse box is at most 64 columns wide.
-- `/burn` is a modal dialog. Upstream's pane stays open beside the prompt.
+- The fire's width is capped at 96 columns, and the band's fuse box is at most 64 columns wide.
 - Accounts without rate limits show no plan bars.
 - For budgets and breakdowns, see `omd_usage`. They can run together.
+
+### Differences from upstream
+
+The thresholds, comparisons, number formats, fire colors and the `/burn` commands follow upstream.
+
+- `/burn` is a modal dialog. Upstream's pane stays open beside the prompt.
+- The fire uses block characters, with no white flash on the bar's edge.
 
 ## More
 
 - [Terminal UI reference](../../reference/terminal-ui.md) for the band, dialog and component modules.
 - Credit: reimplemented over the Oh My Diff mod API from the Claude Code mod
   [`burn-meter` 0.1.0](https://github.com/OneWave-AI/claude-code-mods/tree/e6da26ca36a88eec3be25605d30fa20f2c1c0cec/burn-meter)
-  by OneWave AI, commit `e6da26ca36a88eec3be25605d30fa20f2c1c0cec`, licensed MIT. The thresholds, comparisons, number
-  formats, fire colors and the `/burn` commands follow upstream. The full MIT license text is in
+  by OneWave AI, commit `e6da26ca36a88eec3be25605d30fa20f2c1c0cec`, licensed MIT. The full MIT license text is in
   [`THIRD_PARTY_NOTICES.md`](../../../THIRD_PARTY_NOTICES.md).

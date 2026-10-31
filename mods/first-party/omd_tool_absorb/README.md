@@ -1,10 +1,13 @@
 # omd_tool_absorb
 
-When the model asks for the same read more than once in one response, this runs it once and answers the repeats
-with a pointer to the first output. It's off by default in OMD+. OMD Core doesn't include it.
+When the model asks for the same read (a file read or a read-only command such as `git status`) more than once in one
+response, this runs it once and answers the repeats with a pointer to the first output. It's off by default in OMD+. OMD
+Core doesn't include it.
 
-Distinct reads are left to Codex, which runs them in parallel. Inside a code-mode cell, a file read that was already
-done is reused while the file is unchanged.
+Distinct reads are left to Codex, which runs them in parallel. In Codex code mode, where the model runs tool calls from
+code cells (see the
+[`omd-code-execution` plugin](../../../plugins/bundled/oh-my-diff/plugins/omd-code-execution/README.md)), a file read
+that already ran is reused while the file is unchanged.
 
 ## Turn it on
 
@@ -14,7 +17,7 @@ Turn it on in `/mods`, or run:
 omd-package mod enable omd_tool_absorb
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn mods on and off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it
 
@@ -35,11 +38,11 @@ and which host call ran each read.
   choose a shell, ask for a terminal or ask for more permissions, are never merged.
 - Git still runs any external diff or text conversion program your repository configures, as it would without
   this mod.
-- In a code-mode cell it reuses only `cat`, `head`, `tail`, `wc` or `sed -n` on named files inside the repository,
-  each at most 1 MB, whose read finished with exit code 0 and at most 16 KB of output. Reuse happens only when every
-  file's SHA-256 is the same before and after the read, and only within the same cell of the session's own thread
-  (not in subagents). The cell gets the same structured result the first read got, including its chunk ID and wall
-  time.
+- In a code-mode cell, it reuses only `cat`, `head`, `tail`, `wc` or `sed -n` on named files inside the repository. Each
+  file must be at most 1 MB, and the read must have exited with code 0 and printed at most 16 KB. Reuse happens only
+  when every file's SHA-256 is the same before and after the read, and only within the same cell of the session's own
+  thread, not in subagents (helper agents the main agent starts). The cell gets the same structured result the first
+  read got, including its chunk id and wall time.
 - An identical read started while the first is still running, such as inside one `Promise.all`, waits up to about
   25 seconds for it and runs on its own after that. The first read's result is still kept for later repeats.
 - Relative paths resolve against the thread's current working directory.
@@ -52,18 +55,23 @@ It has no settings.
 
 ## Needs and limits
 
-- Each read still runs through Codex with its own call ID, permissions, approvals, sandbox, accounting and result
+- It asks to add `/absorb`, see and merge the model's tool calls, run merged reads through a tool of its own, check
+  files for changes, keep shared outputs in thread storage and follow turns. The capabilities are `commands`,
+  `interception`, `tools`, `fs.read`, `store`, `events`, `lifecycle` and `inventory` (see
+  [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
+- Each read still runs through Codex with its own call id, permissions, approvals, sandbox, accounting and result
   record, and the model gets each read's own output and success.
 - Distinct reads are never merged: merged reads run one after another, so merging them would only add latency.
-- A merged step holds about 1 MB of output. A read whose output doesn't fit still runs, and the model is told to
+- A merged step can contain about 1 MB of output. A read whose output doesn't fit still runs, and the model is told to
   run it again on its own. A single read's output is cut at 256 KB, and the cut is marked so the model can read the
   rest.
 - A duplicate read is answered with a pointer to the first one's output instead of a second copy. A duplicate of a
   read whose output didn't fit or that couldn't run gets that read's note.
 - Reads issued one at a time are left alone, and reads inside code-mode cells are never merged, since code mode
   already runs a cell's reads as one step. Models that work through code mode, such as the GPT models Codex `0.165.0`
-  uses, get only the code-mode reuse, which added about 14 ms to each code-mode file read it checks in our runs.
-- It needs an OMD host with `tool_batch_success_v1` and `code_mode_values_v1`. An older host refuses to turn it on.
+  uses, get only the code-mode reuse.
+- It needs an OMD host that supports per-call batch results and code-mode values (host features
+  `tool_batch_success_v1` and `code_mode_values_v1`). An older host refuses to turn it on.
 
 ## More
 

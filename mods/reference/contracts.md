@@ -1,54 +1,77 @@
 # Contracts and receipts
 
+A contract is a versioned document that gates task completion and workspace integration on receipts. Mods register
+documents; users select one.
+
 Use it when a mod registers a workflow contract, submits receipts, checks the completion or integration gate, or
 narrows operations for the rest of a session. The agents that produce receipts are in [Agents](agents.md).
 
-A contract is a versioned document that gates task completion and workspace integration on receipts. Mods register
-documents; users select one.
+Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
+[registry table](stability-and-migration.md#experimental-entries-in-the-registry)). Runs on Apple Silicon macOS.
 
 ## Registering a contract
 
 `api.contract(document)` registers a versioned schema-2 contract document:
 
-```ts
+```text
 {schema: 2, id, version, description, assurance, gates: {complete?, integrate?}, restrict?}
 ```
 
-A requirement names a receipt kind, a producer (`any`, `lead`, `host`, `integration` or `separate_agent`), bindings
-(`candidate`, `acceptance`) and whether blocking findings are allowed.
+Each gate, `complete` and `integrate`, lists requirements. A requirement names a receipt kind, a producer (`any`,
+`lead`, `host`, `integration` or `separate_agent`), bindings (`candidate`, `acceptance`) and whether blocking findings
+are allowed.
+
+- `assurance` is a label of 1 to 64 characters of `a-z`, `0-9`, `_`, `-` and `.`. Confirmations show it when a
+  selection lowers assurance.
+- `restrict` lists up to 16 host operations that the contract refuses for the session
+  (`contract_restricted_operation: OPERATION`).
+- One contract is weaker than another when its gates don't cover every requirement of the other, or its `restrict`
+  leaves out one of the other's operations.
 
 ## Selecting a contract
 
-- Users select a contract with `omd-contract select STORE REPOSITORY ID@VERSION`.
-- `omd-contract require` records a project floor in `.omd/contract-selection.json`.
+Users select a contract in one of three ways:
+
+- `omd-package contract select ID@VERSION` in the repository;
+- `omd-contract select STORE REPOSITORY ID@VERSION`;
+- from the terminal, through a mod that calls `contract.select {contract}` from a user action (capability
+  `contracts`).
+
+```text
+contract.select {contract} → {selected, applies: 'next_session'} | {status: 'declined'}
+```
+
+`contract.select` shows a native confirmation that names the `assurance` labels when the choice is weaker than the
+current contract, then writes the same user selection that the commands above write. It applies from the next session.
+
+- `omd-contract require` records a project floor in `.omd/contract-selection.json`, the weakest contract the
+  repository accepts. A weaker selection doesn't apply; the floor does.
 - Selections pin the document digest. A mod that changes a registered document makes the selection unavailable
   instead of silently weakening it.
 - A weaker selection needs the confirmation printed by `omd-contract plan`.
 - With no selection nothing is gated.
 - An unavailable selection fails closed.
 
-### Selecting a workflow contract
-
-Users select a workflow contract with `omd-package contract select ID@VERSION` (or `omd-contract select STORE
-REPOSITORY ID@VERSION`) in the repository, or from the terminal through a mod's `contract.select {contract}`
-(`contracts`, user actions only).
-
-The host shows a native confirmation that names any assurance the choice lowers, writes the same user selection and
-returns `{selected, applies: 'next_session'}` or `{status: 'declined'}`. It applies from the next session.
-
 ## `receipts.submit`
 
 `receipts.submit` records a receipt with a host-attested producer.
 
-- `agent` must be a completed, read-only agent handle owned by the caller in the same session, spawned on a
-  [snapshot](workspace-files.md#snapshots-workspacesnapshot) of the receipt's candidate.
+```text
+receipts.submit {kind, candidate_sha256, acceptance_sha256?, outcome: 'pass' | 'fail', evidence, agent?, execution?,
+                 findings?, resolves?} → Receipt
+```
+
+- `agent` must be an agent handle that:
+  - is completed and read-only;
+  - belongs to the caller in the same session;
+  - was spawned on a [snapshot](workspace-files.md#snapshots-workspacesnapshot) of the receipt's candidate.
 - `evidence` must be that agent's result reference.
 - A claimed `acceptance_sha256` must equal the evidence the agent was given.
 - An isolated-worktree agent cannot attest its own candidate.
 - Only a successful `workspace.integrate` can record an `integration` producer; an execution receipt cannot
   impersonate one.
 
-## Completion, integration and restriction
+## Completion and integration gates
 
 `task.complete {candidate_sha256, acceptance_sha256?}` checks the current workspace against the `complete` gate and
 returns `completed` or `refused` with the missing requirements.
@@ -57,37 +80,34 @@ returns `completed` or `refused` with the missing requirements.
 (`candidate_sha256` from `agents.result`) and records an integration receipt tied to the resulting parent candidate and
 the supplied acceptance digest.
 
-- It refuses before touching the parent when the contract cannot hold another receipt.
-- If the receipt cannot be recorded after the files are applied, the result is still `integrated` and carries
+- It refuses before touching the parent when the contract can't accept another receipt.
+- If the receipt can't be recorded after the files are applied, the result is still `integrated` and contains
   `receipt_error`.
 
 Pass `acceptance_sha256` to `task.complete` or `workspace.integrate` when the selected contract binds receipts to
 acceptance criteria.
 
-`contract.restrict` only narrows operations for the rest of the session.
-
 ## Blocking findings and the finding ledger
 
-For an active contract, blocking finding fingerprints remain open across later receipts and candidate changes.
-`contract.status.finding_ledger` reports each finding and its resolution.
+A receipt can report `findings`, each identified by a `fingerprint` and with a severity of `advice`, `warning` or
+`blocking`. For an active contract, blocking finding fingerprints remain open across later receipts and candidate
+changes. `contract.status.finding_ledger` reports each finding and its resolution.
 
 A passing `receipts.submit` from a completed, host-attested agent may include `resolves: [fingerprint, ...]` for at
-most 32 distinct open findings. The resolution must use:
+most 32 distinct open findings. A resolving receipt must meet all of these:
 
-- a changed candidate;
-- the original acceptance digest;
-- a different agent from the reporting agent.
+- The candidate changed since the finding.
+- The acceptance digest is the original one.
+- The agent:
+  - was spawned read-only from a frozen snapshot;
+  - is different from the reporting agent;
+  - was given `resolution_context: {acceptance_sha256, findings}` and the matching acceptance evidence.
+- The agent's JSON result has a top-level `resolution_assertion` with `outcome: "pass"`, `candidate_sha256`,
+  `acceptance_sha256` and the exact fingerprint set.
 
-The resolving agent must be spawned read-only from a frozen snapshot with `resolution_context: {acceptance_sha256,
-findings}` and the matching acceptance evidence. The host:
-
-- delivers the open finding details;
-- binds that context to the agent;
-- checks a matching top-level `resolution_assertion` in the agent's actual JSON result before accepting `resolves`.
-
-The assertion contains `outcome: "pass"`, `candidate_sha256`, `acceptance_sha256`, and the exact fingerprint set.
-This attests the independent result and its declared review context; interpretation of the finding and fix remains
-the agent's judgment.
+The host delivers the open finding details to the resolving agent, binds the context to it, and checks the
+assertion before accepting `resolves`. The host attests only that an independent agent produced the result with that
+review context. Whether the fix addresses the finding is the agent's judgment.
 
 - Submitting a clean later receipt does not erase an earlier blocker.
 - The ledger survives explicit resume and is replay-checked on restore.
@@ -97,14 +117,16 @@ the agent's judgment.
 
 ## Scoped restrictions
 
-`contract.restrict {operations?, scoped?, reason}` can also narrow matching arguments. Each scoped rule is
+`contract.restrict {operations?, scoped?, reason}` only narrows operations for the rest of the session. It can also
+narrow matching arguments. Each scoped rule is
 `{operation, when: {"/json/pointer": scalar}}`; all predicates must match.
 
 For example, restricting `agents.spawn` when `"/workspace"` equals `"isolated_worktree"` leaves read-only agents
 available.
 
 - There are at most 64 rules with 1–8 scalar predicates each.
-- Restrictions are monotone, and saved rules are validated again on restart.
+- Restrictions only narrow: a later restriction never widens an earlier one.
+- Saved rules are validated again on restart.
 
 ## Contract withdrawal and persistence
 

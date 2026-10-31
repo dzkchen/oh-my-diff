@@ -1,4 +1,4 @@
-# Runtime
+# Runtime: the Codex patch and host crates
 
 The patch that turns Codex into OMD, and the host crates it adds. To change anything here, follow
 [Change the patched Codex code](../docs/contributing/runtime.md). Never edit these files by hand.
@@ -18,6 +18,18 @@ OMD is one patch on Codex `rust-v0.165.0` (pinned in `upstream.lock.json`): [`pa
 
 `build.py sync` writes the patch, the copies and the crate notices.
 
+## Crates
+
+Most of the patch is new code in three crates:
+
+| Directory | Crate | Contains |
+| --- | --- | --- |
+| [`omd/`](omd) | `codex-omd` | The mod host, which loads mods, checks their permissions and runs their callbacks |
+| [`omd/runner/`](omd/runner) | `codex-omd-runner` | The `omd-runner` binary, which runs mod code on embedded V8 |
+| [`native/`](native) | `codex-omd-extension` | The native extension, which connects the host to Codex threads, turns, tools and the terminal UI |
+
+Rust tests are beside the code in `*_tests.rs` files.
+
 ## Modes
 
 | `OMD_MODE` | What runs |
@@ -25,7 +37,8 @@ OMD is one patch on Codex `rust-v0.165.0` (pinned in `upstream.lock.json`): [`pa
 | `omd` | The mod host |
 | `upstream_direct`, or unset | Plain upstream Codex behavior |
 
-Any other value fails to start.
+Any other value fails to start. The `direct` recovery state (`omd-package activate direct`) sets
+`OMD_MODE=upstream_direct`.
 
 ## The host has no features
 

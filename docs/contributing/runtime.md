@@ -22,16 +22,6 @@ OMD is one patch on upstream Codex. These files are generated, so never edit the
 Edit Rust in a scratch tree, a copy of upstream Codex at the pinned version with the patch applied, then write the
 change back with `build.py sync`.
 
-To apply the patch to your own exact pinned Codex checkout without changing it, run:
-
-```sh
-python3 scripts/normalize_upstream_lock.py /path/to/codex
-python3 scripts/apply_runtime_patch.py /path/to/codex
-```
-
-`runtime/patches/manifest.json` records every file's hash before and after the patch. Applying twice does nothing,
-and a file that matches neither hash is refused. `build.py setup` runs these same two scripts for you.
-
 ## Set up a scratch tree
 
 `NAME` is any label for your tree:
@@ -50,15 +40,8 @@ existing tree only prints the path.
   `normalized1650`. List it with `git -C TREE tag -l 'normalized*'` and compare a path with
   `git -C TREE diff normalized1650 -- codex-rs/PATH`.
 
-The crates the patch adds:
-
-| Directory | Crate | Contains |
-| --- | --- | --- |
-| `runtime/omd` | `codex-omd` | The mod host |
-| `runtime/omd/runner` | `codex-omd-runner` | The `omd-runner` binary that runs mods on embedded V8 |
-| `runtime/native` | `codex-omd-extension` | The native extension |
-
-Rust tests are beside the code in `*_tests.rs` files.
+The [runtime README](../../runtime/README.md#crates) lists the crates the patch adds. Rust tests are beside the code
+in `*_tests.rs` files.
 
 ## Fetch the V8 prebuilt
 
@@ -81,7 +64,7 @@ output goes there and a summary goes to the terminal.
 python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER
 ```
 
-A host started from the target finds `omd-runner` beside itself, so build both:
+Build both binaries, because a host started from the target looks for `omd-runner` beside itself:
 
 ```sh
 python3 .github/scripts/build.py cargo NAME LOG build --locked -p codex-cli -p codex-omd-runner
@@ -112,7 +95,8 @@ Run these in the scratch tree:
    python3 .github/scripts/build.py check NAME
    ```
 
-5. Native ownership, from the repository root:
+5. The native ownership check, which fails if native code names a feature or a first-party mod. Run it from the
+   repository root:
 
    ```sh
    mise run native:ownership
@@ -133,13 +117,18 @@ The pull request's native check runs the same replay and fails on any difference
 
 `runtime/release.lock.json` is rebuilt from signed binaries at release time, so a native change leaves it as is.
 
-## Update the source locks
+## Apply the patch to your own Codex checkout
 
-After you change `mods/first-party/` or `plugins/`, regenerate the source locks and commit the result:
+`build.py setup` is the recommended path. To apply the patch to your own exact pinned Codex checkout instead, run the
+same two scripts that `setup` runs:
 
 ```sh
-python3 .github/scripts/build.py locks
+python3 scripts/normalize_upstream_lock.py /path/to/codex
+python3 scripts/apply_runtime_patch.py /path/to/codex
 ```
+
+`runtime/patches/manifest.json` records every file's hash before and after the patch. Applying twice does nothing,
+and a file that matches neither hash is refused.
 
 ## Build on Linux
 
@@ -161,7 +150,7 @@ design.
 
 | Command | Does |
 | --- | --- |
-| `setup NAME` | Creates the scratch tree at the pin, normalized and patched |
+| `setup NAME` | Creates the scratch tree at the pin, tags the normalized source as `normalized<version>` and applies the patch |
 | `v8 NAME` | Downloads and verifies the V8 prebuilt |
 | `cargo NAME LOG ARGS` | Runs cargo in the tree, full log to `LOG` |
 | `check NAME` | Runs `cargo check --tests` of the crates a pull request compiles |

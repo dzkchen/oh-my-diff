@@ -2,12 +2,15 @@
 
 This tutorial builds `notes`, a mod that keeps short notes. The model saves them with a tool, you clear them with a
 command, and a line above the prompt shows how many are saved. Along the way you use tools, saved state, settings and
-the terminal surface.
+drawing in the terminal.
 
 ## Before you begin
 
 Finish [Write your first mod](first-mod.md) first. This tutorial uses the same tools and the same scratch-store
 setup.
+
+Steps 1 to 5 run offline. Step 6 is optional and needs `codex` signed in to a model, because the model calls the
+mod's tool.
 
 ## 1. Create the project
 
@@ -68,12 +71,11 @@ export default function activate(api: ModAPI) {
 - `api.state` stores one JSON value for the mod. It survives restarts.
 - `api.settings` contains the user's settings, here `max_notes`.
 - `api.command` adds `/notes:clear`.
-- The `terminal` handler returns what to draw. `above_composer` is the area above the prompt, and `slot` keeps
-  what other mods draw there.
+- The `terminal` handler returns what to draw. `above_composer` is the area above the prompt. With `mode: 'wrap'`,
+  your components go around what other mods draw there, and `slot` marks where their content goes.
 
 Return a refusal as a value, such as `{ error: 'empty note' }`. A thrown error counts as a failure, and five
-failures in a row in one host process turn the mod off
-([fault limit](../../mods/reference/host-model.md#fault-limit)).
+failures in a row turn the mod off at the [fault limit](../../mods/reference/host-model.md#fault-limit).
 
 ## 3. Declare permissions and settings
 
@@ -174,6 +176,8 @@ Run the command against the store, without `codex`:
 omd-mod command /tmp/notes-store notes clear null
 ```
 
+The last argument, `null`, is the command's input as JSON.
+
 It prints:
 
 ```json
@@ -182,9 +186,10 @@ It prints:
 }
 ```
 
-## 6. See it in `codex`
+## 6. See it in `codex` (optional)
 
-Start `codex` on the scratch store, as in the [first tutorial](first-mod.md#4-try-it-in-codex):
+Start `codex` on the scratch store without the offline flags, as in
+[Run it in a scratch store](run-and-debug.md#run-it-in-a-scratch-store), and sign in if it asks:
 
 ```sh
 OMD_MODE=omd OMD_MOD_STORE=/tmp/notes-store ~/.local/share/oh-my-diff/current/prefix/artifacts/codex
@@ -193,12 +198,10 @@ OMD_MODE=omd OMD_MOD_STORE=/tmp/notes-store ~/.local/share/oh-my-diff/current/pr
 The line `0 saved` shows above the prompt. Ask the model to save a note, for example "Save a note: buy milk". It
 finds `mod_notes_add` through tool search, and the line changes to `1 saved`. Type `/notes:clear` to empty the list.
 
-This step needs a signed-in model, because the model calls the tool.
-
 ## Next steps
 
 - [Change the saved state's shape](migrate-state.md) without losing notes.
 - [Test a mod](test-a-mod.md) with TypeScript tests that check what the mod draws.
 - [Run and debug a mod](run-and-debug.md): status, reports and the cost of a mod.
-- [Publish a mod](publish-a-mod.md).
+- [Install, share and update a mod](publish-a-mod.md).
 - The [capabilities reference](../../mods/reference/capabilities.md) lists every permission.

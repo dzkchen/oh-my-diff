@@ -10,7 +10,7 @@ best. For anything large, open an issue first.
   [Write your first mod](docs/mod-authors/first-mod.md).
 - Something a mod can't do yet: open a
   [mod or API request](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml). The patched Codex
-  code in `runtime/` only gets general building blocks that many mods can use, never a single feature.
+  code in `runtime/` only gets general building blocks that several unrelated mods can use, never one feature.
 - A bug or docs fix: send a pull request.
 - A security problem: report it privately as described in [SECURITY.md](SECURITY.md).
 
@@ -19,8 +19,9 @@ best. For anything large, open an issue first.
 | Path | Contains |
 | --- | --- |
 | `runtime/` | The Codex patch, the OMD host crates and the release locks ([runtime/README.md](runtime/README.md)) |
-| `mods/` | The published SDK at its top level (the `.d.ts` types, `author/` tooling, `REFERENCE.md` and `reference/` docs), checked data in `conformance/`, and packages in `first-party/`, `examples/` and `ports/` |
-| `plugins/`, `extensions/` | Bundled plugins and the curated directory |
+| `mods/` | The SDK (types, `author/` tooling and the reference), conformance data in `conformance/`, and mod packages in `first-party/`, `examples/` and `ports/` |
+| `plugins/` | Bundled plugins |
+| `extensions/` | The curated directory (`index.json`) |
 | `scripts/`, `tests/`, `install.sh` | Build, install and check tooling |
 | `docs/` | User, author and contributor guides |
 | `release/` | The changelog source and its `git-cliff` config |
@@ -47,13 +48,14 @@ Run only the checks for what you changed:
 | You changed | Run |
 | --- | --- |
 | A mod or the SDK | `mise run mods:check`, then a related test file with `mise exec -- node --test PATH` |
+| A first-party mod or plugin | The checks for a mod, then `python3 .github/scripts/build.py locks` to regenerate the source locks; commit the result |
 | The patched Codex code (`runtime/`) | The steps in [Change the patched Codex code](docs/contributing/runtime.md) |
 | A Python script or the installer | `python3 -m unittest tests.test_NAME` |
 | Docs or the changelog | `mise run release:check` |
 
 Tests are in `tests/` and beside the code. [tests/README.md](tests/README.md) explains how they're found and which
-runner runs each kind. Tests that run mods start the installed `omd-runner` beside `omd-mod`, or the one in
-`OMD_TEST_RUNNER`.
+runner runs each kind. Tests that run mods start the `omd-runner` named in `OMD_TEST_RUNNER`, or else the installed
+one beside `omd-mod`.
 
 Add a test only for behavior nothing else covers. A pull request runs a subset of checks, and the full suite runs
 nightly on GitHub. [How CI checks a change](docs/contributing/ci.md) says what runs when.
@@ -61,9 +63,7 @@ nightly on GitHub. [How CI checks a change](docs/contributing/ci.md) says what r
 ## Open a pull request
 
 1. Branch from `main`.
-2. Title it with a [Conventional Commits](https://www.conventionalcommits.org) prefix. With a squash merge or a merge
-   commit, the title is the pull request's one changelog line and the branch's own commits aren't listed. A rebase
-   merge lists each commit, so give each one a prefix too. Merged branches are kept.
+2. Title it with a [Conventional Commits](https://www.conventionalcommits.org) prefix, from the table below.
 3. Fill in the [pull request template](.github/pull_request_template.md): what changed and how you checked it.
 
 | Prefix | Changelog section |
@@ -72,6 +72,9 @@ nightly on GitHub. [How CI checks a change](docs/contributing/ci.md) says what r
 | `fix` | Fixed |
 | `test`, `build`, `ci`, `chore` | Not listed |
 | Anything else | Changed |
+
+With a squash merge or a merge commit, the title is the pull request's one changelog line, and the branch's own
+commits aren't listed. A rebase merge lists each commit, so give each one a prefix too. Merged branches are kept.
 
 Write no code comments except one line on genuinely abstract code. Don't commit secrets, credentials or personal
 paths.

@@ -1,9 +1,14 @@
 # box_model
 
 Draws bordered cards and flat filled panels with the terminal box model (`terminal_box_model_v1`). It's an example
-for mod authors. It isn't in the bundled collection or the curated directory.
+for mod authors. OMD+ and OMD Core don't install it, and it isn't in the curated directory.
 
-It's an independent-author API `1.0.0` mod and uses no first-party mod. The sidebar holds two panes. It shows:
+Read it if you're building a mod that draws with the
+[box model](../../reference/layout-and-styling.md#box-model-terminal_box_model_v1).
+
+It's an API `1.0.0` mod that uses only the public mod API, like any outside author's mod
+([host primitives](../../reference/host-model.md#host-primitives)), and it uses no first-party mod. The sidebar contains
+two panes. It shows:
 
 - Bordered card: an unstyled pane, drawn as a card in the theme border with its title in the top edge.
   - A `direction: 'row'` box lays out two rounded metric boxes with `flex` 1 and 2 and a one-cell `gap`.
@@ -29,7 +34,7 @@ install mods, and [Trust and permissions](../../../docs/trust-and-permissions.md
 
 ## Use it
 
-Run it in an `OMD_MODE=omd` session.
+Run it in an [`OMD_MODE=omd`](../../reference/host-model.md#omd_mode) session.
 
 | Command | What it does |
 | --- | --- |
@@ -41,11 +46,10 @@ Run it in an `OMD_MODE=omd` session.
 `mod.test.json` runs offline and checks the sidebar view, a counted pointer entry and the split layout.
 
 ```sh
-python3 scripts/mod_host_check.py --omd-mod OMD_MOD --no-commands --scenarios box_model
+python3 scripts/mod_host_check.py --no-commands --scenarios box_model
 ```
 
-`OMD_MOD` is the path to an `omd-mod` built from the applied runtime patch. Without `--omd-mod`, the check uses
-the `omd-mod` on your `PATH`.
+It uses the `omd-mod` on your `PATH`. [Tests](../../../tests/README.md) covers the other test runners.
 
 ## Settings
 

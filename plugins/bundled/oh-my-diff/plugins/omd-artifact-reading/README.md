@@ -1,13 +1,14 @@
 # omd-artifact-reading
 
-Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites where each answer came from.
+Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites where each answer came from. OMD+
+puts it on disk but doesn't install it, so you add it yourself. OMD Core doesn't include it.
 
-It works with no setup once you add the plugin. An optional mod component, `omd_github_read`, adds `github://`
-reads.
+Everything except PDFs works once you add the plugin. PDF reading also needs Ghostscript (`gs`). An optional mod
+component, `omd_github_read`, adds `github://` reads.
 
 ## Turn it on
 
-Add the plugin. [Plugins](../../../../README.md) has the steps to add a plugin and enable a component.
+Add the plugin. [Plugins](../../../../README.md) has the steps to add a plugin and turn on a component.
 
 ## Use it
 
@@ -20,14 +21,28 @@ Ask Codex to use `$omd-artifact-reading:omd-artifact-reading`.
 
 GitHub reads are optional and need the component.
 
-1. Enable the component with these capabilities:
+1. Turn on the mod component with these capabilities:
 
    ```text
    virtual_reads,exec
    ```
 
-2. Add this entry to `services` in the store's `host.json`. Use real canonical paths, digests and your platform's
-   certificate directory:
+2. Find the canonical paths and digests the entry needs. The host rejects a `program` that isn't its own canonical
+   path. It also compares `program_sha256` and each `read_hashes` value with the file's SHA-256. `ROOT` is the
+   plugin's installed folder, found as in [Turn on a component](../../../../README.md#turn-on-a-component):
+
+   ```sh
+   PYTHON=$(realpath "$(command -v python3)")
+   echo "$PYTHON"
+   shasum -a 256 "$PYTHON"
+   python3 -c 'import os, sys; print(os.path.realpath(sys.base_prefix))'
+   realpath "$ROOT/scripts/github_read.py"
+   shasum -a 256 "$(realpath "$ROOT/scripts/github_read.py")"
+   ```
+
+3. Add this entry to `services` in `host.json` in your store (`~/.local/share/oh-my-diff/stores/full/host.json` for
+   OMD+). Replace `EXACT_EXECUTABLE_SHA256` and `EXACT_SCRIPT_SHA256` with the first field of each `shasum` line,
+   the paths with the ones printed above, and `/private/etc/ssl` with your certificate directory if it differs:
 
    ```json
    {
@@ -44,7 +59,7 @@ GitHub reads are optional and need the component.
    }
    ```
 
-3. Read with the ordinary `read` tool, for example `{"uri":"github://octocat/Hello-World/pulls/1"}`.
+4. Read with the ordinary `read` tool, for example `{"uri":"github://octocat/Hello-World/pulls/1"}`.
 
 Supported paths:
 

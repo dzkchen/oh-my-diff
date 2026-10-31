@@ -1,7 +1,9 @@
 # omd-code-execution
 
-Guides the model to run JavaScript cells with session storage, and persistent Python and Bun cells, in Codex code
-mode. Cells call the session's tools through the native router, so its permissions and task controls apply.
+Guides the model to run code cells in Codex code mode, a Codex feature where the model writes small programs that call
+the session's tools. It covers JavaScript cells with session storage, and Python and Bun cells that keep their state
+between calls. Cells call tools through Codex's own tool router, so its permissions and task controls apply. OMD+ puts
+it on disk but doesn't install it, so you add it yourself. OMD Core doesn't include it.
 
 The plugin is guidance only. It has no mod component. The Python and Bun drivers ship in its `kernels/` folder.
 
@@ -57,7 +59,8 @@ Python, then chart it in Bun".
 - JavaScript cells run in a fresh V8 isolate each call. `store("key", value)` saves serializable state and
   `load("key")` reads it in a later call.
 - Python keeps module globals across cells. Bun keeps `globalThis` across cells.
-- A worker can call only the tools available in the cell that started it.
+- A Python or Bun worker (the kernel process that runs the cells) can call only the tools available in the cell that
+  started it.
 - Cell output is captured in the order it was written. Anything written after the cell ends is discarded.
 
 ## Needs and limits

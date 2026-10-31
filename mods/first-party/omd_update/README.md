@@ -5,13 +5,13 @@ and OMD Core.
 
 ## Turn it off
 
-`/mods` keeps it on, so turn it off from a shell:
+`/mods` can't turn it off, because OMD requires it. Turn it off from a shell:
 
 ```sh
 omd-package mod disable omd_update
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn mods on and off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it
 
@@ -26,7 +26,7 @@ A fresh session mentions a newer release once a day until you pick **Remind me i
 
 ## Settings
 
-Change these in `/update`, or with `omd update` in a shell (see the [install guide](../../../docs/install.md)).
+Change settings in `/update`, or with `omd update` in a shell (see the [install guide](../../../docs/install.md)).
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -38,11 +38,14 @@ Change these in `/update`, or with `omd update` in a shell (see the [install gui
 
 ## Needs and limits
 
+- It asks to add `/update`, check for update news when a session starts, read the update status OMD passes in its
+  environment, keep its state and draw its notice and panel. The capabilities are `commands`, `lifecycle`, `exec`,
+  `store` and `terminal` (see [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - A running session is never replaced. Updates install when OMD next starts with no other session open.
 - Automatic updates skip mods you installed yourself.
 - An update that fails once isn't retried automatically.
 - Nightly is opt-in. Stable and prerelease never offer it.
-- `--no-alt-screen` sessions show no welcome notice. `/update` still works.
+- Inline sessions (started with `--no-alt-screen`) don't show the update notice. `/update` still works.
 
 ## More
 

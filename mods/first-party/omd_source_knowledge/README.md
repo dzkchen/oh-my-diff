@@ -15,11 +15,11 @@ Turn it on in `/mods`, or run:
 omd-package mod enable omd_source_knowledge
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn mods on and off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it
 
-The agent calls its tools; you don't need to.
+The agent calls its tools. You don't need to.
 
 | Tool | What it does |
 | --- | --- |
@@ -30,13 +30,17 @@ The agent calls its tools; you don't need to.
 | `inspect` | Lists everything kept, including facts that are no longer valid and why |
 
 When it reuses a fact, it rereads a changed file and returns the current text of the fact's lines. A fact is marked
-invalid and left out when its file is gone, is no longer a small text file, is now shorter than the fact's lines, or
-when those lines are now blank, start or end with whitespace, or look like a credential. Lessons whose evidence was
-removed are left out too.
+invalid and left out when:
 
-Every call names the repository. Each call that adds, approves or removes notes also names the revision it expects. If
-the notes changed first, it's refused with `knowledge_revision_stale` and nothing is written. Reuse and `inspect` can
-move the revision too, when they record a fact that changed.
+- its file is gone, is no longer a small text file or is now shorter than the fact's lines
+- those lines are now blank, start or end with whitespace, or look like a credential
+
+Lessons whose evidence was removed are left out too.
+
+Every call names the repository. Calls that add, approve or remove notes also name the revision they expect, a number
+that goes up each time the notes change. If the notes changed in between, the call is refused with
+`knowledge_revision_stale` and nothing is written. Reuse and `inspect` can also raise the revision when they record a
+changed fact.
 
 ### Approve and remove
 
@@ -69,7 +73,7 @@ It has no settings.
 - Files over 48 KB aren't read, and one reuse rereads at most 48 KB of changed files. Facts past that are left out
   this time and rechecked next time.
 - Evidence must still be readable in the current thread when it's kept. Later tasks reuse the stored copy.
-- The repository and task names are whatever the agent passes; OMD doesn't verify them. The actor and reason of an
+- The agent passes the repository and task names, and OMD doesn't verify them. The actor and reason of an
   approval are stored as typed, and the mod can't confirm who ran the command. Only the current notes are kept, with
   no history of approvals or removals.
 

@@ -1,12 +1,13 @@
 # Administrator policy and managed deployment
 
 Use it when an organization restricts which mods run, pins and deploys packages with `package-sync`, or recovers
-from a managed failure. The policy file and its refusals work on macOS and Linux; storing the policy in the broker
-needs [protected authority](protected-authority.md).
+from a managed failure. Storing the policy in the broker needs [protected authority](protected-authority.md).
+
+Policy `schema` 1, read by the host on Apple Silicon macOS; it isn't part of the mod API.
 
 An organization restricts and deploys mods through one administrator policy. OMD reads it from the broker (key
-`mods`) when the broker is deployed and holds one, otherwise from the root-owned file `/Library/Application
-Support/OhMyDiff/policy.json` (`/etc/oh-my-diff/policy.json` on Linux).
+`mods`) when the broker is deployed and has one, otherwise from the root-owned file `/Library/Application
+Support/OhMyDiff/policy.json`.
 
 ## Installing and replacing the policy
 
@@ -21,22 +22,63 @@ Support/OhMyDiff/policy.json` (`/etc/oh-my-diff/policy.json` on Linux).
 OMD never contacts a vendor for policy and there is no remote disable: restrictions are an organization's own
 decision, made on the machine.
 
+## Policy fields
+
+The policy is one JSON object of at most 64 KiB. Unknown fields fail with `managed_policy_invalid`.
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `schema` | `1` | required | Policy format version. |
+| `managed_only` | boolean | `false` | Load only the packages the policy lists. |
+| `sideload` | boolean | `true` | Allow user packages without [broker-protected install provenance](#package-source-provenance). |
+| `sources` | string array | none (any source) | Source prefixes installs and loads must match. |
+| `updates` | `"user"` or `"managed"` | `"user"` | Who updates and rolls back installed packages. |
+| `deny` | mod id array | `[]` | Mod ids that never load. |
+| `capabilities` | capability array | none (every capability) | The most any unmanaged mod is granted. |
+| `index` | `{sha256, locations}` | none | A package index, read from the first absolute path in `locations` whose bytes match `sha256`. |
+| `registry` | URL | none | The npm registry for `npm:` sources that name none. |
+| `packages` | entry array | `[]` | Managed packages, described in [Managed `packages` entries](#managed-packages-entries). |
+
+`omd-mod policy check FILE` checks these rules before you install a file.
+
 ## Policy file example
 
+Replace each `SHA256` with the 64-character hex digest of the package or index, and `COMMIT` with a commit hash.
+
 ```json
-{"schema": 1,
- "managed_only": false, "sideload": true, "updates": "user",
- "sources": ["/Library/OhMyDiff/packages/", "npm:https://npm.example.com/@corp/"],
- "deny": ["old_tool"], "capabilities": ["commands", "interception", "store"],
- "index": {"sha256": "…", "locations": ["/Volumes/mirror/index.json", "/Library/OhMyDiff/index.json"]},
- "registry": "https://npm.example.com",
- "packages": [
-  {"id": "corp_guard", "source": "corp_guard@2.0.0", "sha256": "…", "capabilities": ["interception"],
-   "tier": "append", "settings": {"mode": "strict"}, "percent": 20},
-  {"id": "corp_guard", "source": "/Library/OhMyDiff/packages/corp_guard", "sha256": "…",
-   "capabilities": ["interception"], "tier": "append",
-   "mirrors": ["git+https://git.example.com/guard.git#0123…"]}]}
+{
+  "schema": 1,
+  "managed_only": false,
+  "sideload": true,
+  "updates": "user",
+  "sources": ["/Library/OhMyDiff/packages/", "npm:https://npm.example.com/@corp/"],
+  "deny": ["old_tool"],
+  "capabilities": ["commands", "interception", "store"],
+  "index": {"sha256": "SHA256", "locations": ["/Volumes/mirror/index.json", "/Library/OhMyDiff/index.json"]},
+  "registry": "https://npm.example.com",
+  "packages": [
+    {
+      "id": "corp_guard",
+      "source": "corp_guard@2.0.0",
+      "sha256": "SHA256",
+      "capabilities": ["interception"],
+      "tier": "append",
+      "settings": {"mode": "strict"},
+      "percent": 20
+    },
+    {
+      "id": "corp_guard",
+      "source": "/Library/OhMyDiff/packages/corp_guard",
+      "sha256": "SHA256",
+      "capabilities": ["interception"],
+      "tier": "append",
+      "mirrors": ["git+https://git.example.com/guard.git#COMMIT"]
+    }
+  ]
+}
 ```
+
+The two `corp_guard` entries are a rollout: 20% of accounts get `2.0.0` and the rest keep the folder package.
 
 ## Policy controls and refusals
 
@@ -44,20 +86,32 @@ The controls apply to user and project selections; packages the policy lists are
 
 | Field | Refusal |
 | --- | --- |
-| `deny` | `managed_denied`: the mod IDs are revoked. |
+| `deny` | `managed_denied`: the mod ids are revoked. |
 | `managed_only` | `managed_only`: only managed packages load. |
 | `capabilities` | `managed_capability_denied`: a capability outside the list, for example `approve.override`, is withheld from every unmanaged mod. |
 | `sideload: false` | `managed_sideload_denied`: user packages need broker-protected install provenance, and `trust` refuses. |
-| `sources` | `managed_source_denied`: installs and loads need an allowed source namespace: a folder path, `git+URL`, `index:PATH#ID` or `npm:REGISTRY/NAME`. Matching requires an exact reference or a `/` or `#` boundary; traversal segments are refused. Loads without protected provenance report `managed_source_unverified`. |
+| `sources` | `managed_source_denied` (rules below) |
 | `updates: "managed"` | `managed_updates_denied`: users can't update or roll back installed packages. |
 
-These refusals apply at every reload, so revoking takes effect immediately, and `/omd` lists them. Approval floors
-stay in Codex's managed requirements, which `approve.override` never overrides; the capability list withholds
-approval authority itself.
+`sources` rules:
+
+- Installs and loads need an allowed source namespace: a folder path, `git+URL`, `index:PATH#ID` or
+  `npm:REGISTRY/NAME`.
+- A match needs an exact reference or a `/` or `#` boundary. Traversal segments are refused.
+- Loads without protected provenance report `managed_source_unverified`.
+
+These refusals apply at every reload, so revoking takes effect immediately, and `/omd` lists them.
+
+Codex's managed requirements set the approval floor, and `approve.override` never overrides them. To withhold
+approval authority itself, leave `approve` and `approve.override` out of the `capabilities` list.
+
+An administrator's required `model_send` policy does not cover web search, which
+[final-request policies](final-request-policy.md) never see.
 
 ## Package-source provenance
 
-Package-source provenance binds the package ID, path and content hash in the broker's protected grants.
+Package-source provenance is the broker's record of where a user package came from. It binds the package id, path
+and content hash in the broker's protected grants, and the `sources` and `sideload` restrictions check it.
 
 - Only a verified online package install records it; editable locks, offline cache claims and broker grant import
   cannot establish origin.
@@ -74,21 +128,31 @@ Each `packages` entry pins a package's exact content (`sha256`) and its grant (`
 `secret_environment`); the policy is the grant, so a managed package needs no broker grant or user prompt. A policy
 can't grant install scripts.
 
-| Entry field | Meaning |
-| --- | --- |
-| `users` | Lists account names. |
-| `percent` | `percent` (1–100) admits a stable share of accounts per package ID. |
-| `projects` | Lists folders the session's repository must be inside, compared after resolving symlinks. |
-| `tier` | Places the package's interceptors: `prepend` outside every other mod, `append` inside. |
+| Entry field | Type | Meaning |
+| --- | --- | --- |
+| `id` | mod id | Required. The package's mod id. |
+| `source` | string | Required. A folder path, `ID@VERSION` from `index`, `git+URL` or `npm:` reference. |
+| `version` | string | Optional version applied to an `ID` or `npm:` source. |
+| `sha256` | hex digest | Required. The exact package content. |
+| `capabilities` | capability array | Required. The capabilities granted. |
+| `dependencies` | boolean | Default `false`. Grants the package's declared dependencies. |
+| `secret_environment` | string array | Secret environment variables granted. |
+| `settings` | object | Setting values; `policy explain` reports their origin as `managed`. |
+| `mirrors` | string array | Sources tried in order after `source`. |
+| `users` | string array | Account names the entry targets. |
+| `percent` | 1–100 | Targets a stable share of accounts per package id. |
+| `projects` | absolute path array | Lists folders the session's repository must be inside, compared after resolving symlinks. |
+| `tier` | `"prepend"` or `"append"` | Places the package's interceptors: `prepend` outside every other mod, `append` inside. |
 
-- For each ID the first entry that applies is the target and later entries are fallbacks, so a rollout lists the
+- For each id the first entry that applies is the target and later entries are fallbacks, so a rollout lists the
   new content first and the current content after it.
 - Managed selections take precedence over project and user ones (`shadowed_by_managed_scope`), and `/omd` and
   `omd-mod disable` refuse them (`managed_by_policy`).
 - Only the policy grants the managed scope and tiers: a `mods.json` selection that claims either is refused
   (`unsupported_scope`).
-- A handler that answers without `next`, other than with a deny, is invalid when a required interceptor of a
-  managed package sits beneath it, so other mods can skip optional transforms but never a managed guard.
+- When a managed package's required interceptor is beneath a handler, that handler may answer without `next` only
+  with a deny. Any other such answer is invalid. Other mods can skip optional transforms but never a managed
+  required interceptor.
 
 ## Deploying with `omd-mod package-sync`
 
@@ -99,7 +163,7 @@ Every applicable entry, across projects, comes from the content-addressed packag
 `source` and then each mirror in order, through the normal package resolver:
 
 - `ID@VERSION` uses the first `index` location whose bytes match its sha256.
-- `npm:` sources without a registry use `registry` and the user's own `.npmrc` tokens (the policy carries no
+- `npm:` sources without a registry use `registry` and the user's own `.npmrc` tokens (the policy contains no
   secrets).
 
 These are refused:
@@ -121,10 +185,11 @@ only, and `--rollback` makes the previous generation active again.
   doesn't target the account or project.
 - Content the policy no longer lists never runs, so removing an entry or changing its pin revokes it at once and an
   administrator's `policy rollback` with an unchanged cache restores the previous generation offline.
-- A target with nothing running (not deployed yet, a reset or unreadable `managed.json`, stale content or a package
-  that never inspected) fails every interception surface its policy `capabilities` reach closed with
-  `intercept_required_failed: ID: REASON` until `package-sync` deploys it, so tool calls stay blocked between
-  installing a policy and its first sync; a broken `mods.json` then drops only user and project mods.
+- A target can have nothing running: not deployed yet, a reset or unreadable `managed.json`, stale content, or a
+  package that never inspected. Then every interception surface its policy `capabilities` reach fails closed with
+  `intercept_required_failed: ID: REASON` until `package-sync` deploys it. Tool calls stay blocked between installing
+  a policy and its first sync.
+- In that state, a broken `mods.json` drops only user and project mods.
 - Managed reloads reject broken selections individually so a user mod cannot prevent policy updates.
 - If authority cannot be read or authenticated, interception fails closed until authority recovers.
 - Generated type-file errors appear in `reload_error` and do not prevent host startup or policy enforcement.
@@ -146,6 +211,5 @@ user and project mods; managed packages keep running while the policy lists them
 recovers from every customization.
 
 When a managed package fails, its required interceptors fail closed (`intercept_required_failed`) until an
-administrator changes or rolls back the policy. An administrator's required `model_send` policy does not cover web
-search, which final-request policies never see. `omd-mod reset STORE managed.json` then `package-sync` repairs an
+administrator changes or rolls back the policy. `omd-mod reset STORE managed.json` then `package-sync` repairs an
 unreadable deployment record, and until that sync the policy's targets fail closed as above.

@@ -4,9 +4,14 @@ Use it when a mod shows pictures or draws pixels and cells: the `image` componen
 rasters and `terminal.blit`, the underlay, and processes that feed a raster frames or raw pixel buffers. Which renderer
 a terminal or client offers is in the [`terminal` event `client`](terminal-operations.md#terminal-event-client).
 
+Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
+[registry table](stability-and-migration.md#experimental-entries-in-the-registry)); rasters and `terminal.blit` are
+experimental. They draw in the OMD terminal on Apple Silicon macOS and in
+[external clients](external-clients.md).
+
 ## `image` component
 
-An `image` places a Kitty graphics image in its cells, aspect-fit to the measured cell size.
+An `image` draws a picture in its cells, aspect-fit to the measured cell size. The renderer depends on the terminal:
 
 | Renderer | Where |
 | --- | --- |
@@ -20,16 +25,17 @@ delete every image.
 
 ## Image formats and pixel mapping
 
-Images decode at most 8 MiB, PNG or JPEG, 4,096 pixels a side (`terminal_raster_v1`). An SVG `image`
+An image is PNG or JPEG, at most 8 MiB and 4,096 pixels a side (`terminal_raster_v1`). An SVG `image`
 ([`svg_assets_v1`](state-and-storage.md#svg-assets-svg_assets_v1)) draws `[image unavailable: alt]` in the terminal,
 which has no SVG rasterizer; external renderers receive the same resource and draw it natively.
 
-Either way the image is aspect-fit into the component's cells from its top-left cell (Kitty with `client.cell_px`,
-or 8×16 when unknown; half-block cells count as 1×2 pixels), so a mod can map `pointer` cells, and `half` rows, on
-an `image` back to image pixels.
+The image is aspect-fit into the component's cells from its top-left cell. Kitty uses `client.cell_px` as the cell
+size, or 8×16 pixels when that is unknown. Half-block cells count as 1×2 pixels. With these sizes a mod can map
+`pointer` cells and `half` rows on an `image` back to image pixels.
 
 ## `terminal.image_sample`
 
+Use it to read a picture's colors at cell resolution, for example to draw it into a raster.
 `terminal.image_sample {resource, columns, rows}` (experimental) returns `{width,height,rgba}` (row-major RGBA bytes)
 for a caller-owned PNG/JPEG.
 
@@ -38,14 +44,12 @@ for a caller-owned PNG/JPEG.
 | Columns | integers 1..120 |
 | Rows | 1..60 |
 | Source size | at most 8 MiB |
-| Source dimensions | 4096 pixels per dimension |
+| Source dimensions | 4,096 pixels per dimension |
 | Decoder allocation | 64 MiB |
-
-A mod can implement ASCII ramps or image inspection without a new file read.
 
 ## Rasters (`terminal_raster_v1`)
 
-This section covers the `raster` component, `terminal.blit` cells and images, and the underlay.
+A raster is a keyed canvas of cells that a mod fills with `terminal.blit`.
 
 ### `raster` component
 
@@ -55,9 +59,9 @@ that shows `alt` until its first frame and clips to the component's width.
 - An omitted `width` fills the region's width.
 - An omitted `height` shares the rows left in a layout region like `terminal`, `document`, `diff` and `list` (12
   elsewhere).
-- A fill raster's size is the one it last rendered at, and a cells `terminal.blit` before its first render is
-  `terminal_blit_unknown`.
-- A mod holds at most 16 rasters: a blit to a 17th key is `terminal_blit_limit`; a raster's frames are dropped with
+- A raster with an omitted `width` or `height` has the size it last rendered at, and a cells `terminal.blit` before
+  its first render is `terminal_blit_unknown`.
+- A mod can have at most 16 rasters: a blit to a 17th key is `terminal_blit_limit`; a raster's frames are dropped with
   its component.
 
 ### `terminal.blit` cells
@@ -73,8 +77,9 @@ rect.height` little-endian u32 triplets `[codePoint, fg, bg]`, row by row:
 - A color is `0x00RRGGBB`, `0x01000000` for the theme default or `0x02000000 | index` for a 0–255 palette color;
   under `NO_COLOR` every cell draws in the default colors.
 - A cell takes 16 bytes of base64, about half a colored JSON cell, and the host decodes it without a JSON tree. The
-  runner has no `btoa`, so encode with a small helper such as the one in the `raster_wave` example.
-- A callback's host calls, arguments included, share its 1 MiB receipt budget: a packed cell takes 16 bytes of it and
+  runner has no `btoa`; the [`raster_wave`](../examples/raster_wave/index.ts) example has a base64 encoder.
+- A callback's host calls, arguments included, share its 1 MiB
+  [host call transport budget](host-model.md#host-call-transport-budget): a packed cell takes 16 bytes of it and
   a colored JSON cell about 29. Timer ticks are 16 ms apart, so a larger raster should redraw only the cells that
   change.
 - External clients receive `packed` updates as `cells`.
@@ -87,39 +92,41 @@ rect.height` little-endian u32 triplets `[codePoint, fg, bg]`, row by row:
 | `terminal_blit_limit` | A blit to a 17th key. |
 | `terminal_blit_packed_invalid` | `packed` is not base64, is not 12 bytes a cell once decoded, or has a code point or color outside the rules above; the message names the cell. |
 
-Cells and packed updates that reach a raster before its next 16 ms frame merge into that frame, later cells overwriting
-earlier ones, so one timer tick can draw a frame in several calls. Cells identical to what the raster already shows are
-dropped: a call that changes nothing returns `queued: 0` and draws no frame. The call returns
-`{frame, queued, frame_ms}`: the frame the update shows in and the frames pending (a picture, then the cells merged
-after it). Merged cells never take more than the raster, so the call returns
-`{status: 'backpressure', retry_after_ms: 250}` only while a pending frame stays undrawn for four ticks (an inactive tab
-or unplaced layout). Image and pixel frames keep the pacing below.
+Cells and packed updates that reach a raster before its next 16 ms frame merge into that frame, and later cells
+overwrite earlier ones. So one timer tick can draw a frame in several calls. The host drops cells identical to what
+the raster already shows. A call that changes nothing returns `queued: 0` and draws no frame.
+
+The call returns `{frame, queued, frame_ms}`. `frame` is the frame the update shows in, and `queued` counts the
+pending frames, such as a picture and the cells merged after it. Merged cells never need more room than the raster,
+so cell updates get `{status: 'backpressure', retry_after_ms: 250}` only while a pending frame stays undrawn for four
+ticks, for example in an inactive tab or an unplaced layout. Image and pixel frames follow the pacing in
+[Frame pacing](#frame-pacing-and-profiling).
 
 ### `terminal.blit` images
 
 `terminal.blit {key, image: {media_type: 'image/png' | 'image/jpeg', base64}}` (instead of `rect` and `cells`)
-shows a raster you own as one transient picture, aspect-fit from the top-left cell into the raster's width × height
+draws one transient picture in a raster you own, aspect-fit from the top-left cell into the raster's width × height
 cells by the same rule and renderers as `image` (Kitty placeholders, iTerm2 inline images, truecolor half-blocks,
 `alt` under `NO_COLOR`).
 
 - The newest frame replaces the previous one, a cells blit replaces the frame and a frame replaces the cells.
-- It is never stored as a resource, so prefer it to a new `image` resource per frame (which exhausts the record
-  quota) or to cells (two effective pixels a cell).
+- It is never stored as a resource. Prefer it to a new `image` resource per frame, which uses up the record quota,
+  and to cells, which give two effective pixels a cell.
 - External clients whose renderer `formats` include the media type receive the frame as sent, other clients with
   `cells` receive half-block cells.
 
 | Error | When |
 | --- | --- |
-| `terminal_blit_image_invalid` | A wrong media type, bad base64 or an image that does not decode within 4096 px per side. |
+| `terminal_blit_image_invalid` | A wrong media type, bad base64 or an image that does not decode within 4,096 px per side. |
 | `terminal_blit_invalid` | Not exactly one of `cells`, `packed`, `image` and `pixels` is passed. |
 
-Both refuse before queueing.
+The host returns both errors before it queues the frame.
 
 ### Underlay (`terminal_underlay_v1`)
 
 `underlay: {raster: KEY}` draws one of the mod's own cell rasters under the whole fullscreen screen, behind the
-conversation, the prompt box and the footer. It is experimental and exclusive: the first mod in composition order
-owns it, and later claims become `terminal.conflicts` entries. A raster key another mod already draws is refused the
+conversation, the composer and the footer. It is experimental and exclusive: the first mod in composition order
+gets it, and later claims become `terminal.conflicts` entries. A raster key another mod already draws is refused the
 same way: the underlay is dropped and the conflict names that mod.
 
 - The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
@@ -129,33 +136,35 @@ same way: the underlay is dropped and the conflict names that mod.
 - It is painted after the transcript and the bottom pane and before selection, layout regions, the sidebar,
   overlays, the `welcome` site and dialogs, so all of those draw over it.
 - Its background colors every cell whose background is the terminal default, and Codex's raised surface (menus,
-  list views, the prompt box, submitted prompts) gets the same color lifted the way Codex lifts the terminal
+  list views, the composer, submitted prompts) gets the same color lifted the way Codex lifts the terminal
   background. Text with the default color on a colored cell gets a readable foreground; explicit colors stay,
   except on a light terminal, where any that would be hard to read get a readable one.
-- Its glyphs land only in blank cells after each row's last character plus a 2-cell gutter: at full color in the
-  transcript, faintly (35 %) on the raised surface. Transcript images, the footer and OMD's own copies never get
-  them; the terminal's own selection (for example Shift-drag) copies what the screen shows.
+- The underlay's glyphs draw only in blank cells after each row's last character plus a 2-cell gutter. They draw at
+  full color in the transcript and at 35 % on the raised surface. Transcript images and the footer never show them,
+  and OMD's own copies never include them. The terminal's own selection (for example Shift-drag) copies what the
+  screen shows.
 - Image and pixel frames draw nothing. Nothing draws under `NO_COLOR`, with fewer than 256 colors (`colors: '16'`),
   below 60 columns, inline (`--no-alt-screen`) or in an external client.
 
 ## Raster processes (`process_raster_v1`)
 
-With `process_raster_v1` and the `terminal` capability, an `ndjson` process can take:
+With `process_raster_v1` and the `terminal` capability, `process.start` for an `ndjson`
+[managed process](managed-processes.md) accepts:
 
 - `raster: KEY` (one of the caller's raster ids);
 - optionally `keys: ID` (a `keys: true` component).
 
-Its stdout messages `{"blit": {media_type, base64}}` are drawn into that raster by the host as
-[`terminal.blit {key, image}`](#terminalblit-images) from the mod, with the same validation, but without a callback per
+The host draws each stdout message `{"blit": {media_type, base64}}` into that raster, as if the mod had called
+[`terminal.blit {key, image}`](#terminalblit-images). It applies the same validation but needs no callback per
 frame. The newest frame wins, and a frame the terminal cannot take yet is retried for up to 5 s.
 
 ### Pixel buffers (`raster_pixels_v1`)
 
 With `raster_pixels_v1` and `pixels: true` the host also creates a private raw buffer and sends `{"pixels":
-{"source": HANDLE, "path": PATH}}` on stdin before bound input. Without it the process gets no buffer and its raw
-publications stop it with `terminal_blit_source_not_owned`.
+{"source": HANDLE, "path": PATH}}` on stdin before any raster input. Without `pixels: true` the process gets no
+buffer, and the host stops the process with `terminal_blit_source_not_owned` when it publishes raw pixels.
 
-The child opens that file, writes exactly `width * height * channels` packed bytes at offset zero, and publishes:
+The process opens that file, writes exactly `width * height * channels` packed bytes at offset zero, and publishes:
 
 ```text
 {"blit": {"pixels": {"source": HANDLE, "format": "rgb" | "rgba", "width": W, "height": H, "sequence": N}}}
@@ -166,20 +175,20 @@ publication.
 
 ### Pixel publication acknowledgement
 
-The child must not modify the buffer until stdin acknowledges `{"pixels": {"source": HANDLE, "sequence": N,
+The process must not modify the buffer until stdin acknowledges `{"pixels": {"source": HANDLE, "sequence": N,
 "ready": true, "error": null}}`.
 
-- The host sends a successful acknowledgement when the next frame should start, not right after the copy: it aims
-  the next publication just before the following 16 ms tick, using the time the producer took from its previous
-  acknowledgement to publish.
-- A producer that renders on each acknowledgement shows fresh frames with one copy per shown frame.
+- The host sends a successful acknowledgement when the next frame should start, which can be later than the copy.
+  It times the acknowledgement so the next publication arrives just before the following 16 ms tick, based on how
+  long the process took to publish after its previous acknowledgement.
+- A process that renders on each acknowledgement shows fresh frames with one copy per shown frame.
 - An owned invalid descriptor or failed copy returns `ready: false` with an error at once.
 - A failed copy does not consume the sequence, so direct callers may retry the same publication.
 - Retrying an accepted publication reuses its copy without a second acknowledgement.
 
 ### Pixel publication retries and backpressure
 
-A managed producer's pending raw publication is retried while the process is active only for surface, layout and
+A process's pending raw publication is retried while the process is active only for surface, layout and
 callback admission errors (`terminal_blit_unknown`, `terminal_blit_not_owned`, `terminal_blit_limit`, `callback_*`,
 `client_surface_*`). Any other error, and confirmed owner revocation, stops the process.
 
@@ -190,11 +199,11 @@ callback admission errors (`terminal_blit_unknown`, `terminal_blit_not_owned`, `
 
 ### Pixel buffer safety and limits
 
-- The host retains the original descriptor, copies a bounded immutable frame, and never reopens a child-supplied
+- The host retains the original descriptor, copies a bounded immutable frame, and never reopens a process-supplied
   path. Replacing the pathname cannot redirect the read.
 - Handles are bound to the thread, mod generation, raster and process lifetime; stopping/reloading the process
   revokes them.
-- Frames are limited to 4096 pixels per side (64 MiB for RGBA), with one newest pending image per raster.
+- Frames are limited to 4,096 pixels per side (64 MiB for RGBA), with one newest pending image per raster.
 - General POSIX shared memory is not granted by the sandbox; the private file works under the existing process
   sandbox.
 
@@ -204,16 +213,16 @@ cells-only clients receive half-blocks. Host paths and handles never reach exter
 
 ### Frame pacing and profiling
 
-Frames are paced at 16 ms while experimental. Use `frame_ms` and `retry_after_ms` instead of hardcoded timing.
-Encoded producers keep their stdin and stdout shapes.
+Frames are paced at 16 ms while experimental, and the pacing may change; `terminal.blit` returns the current `frame_ms`,
+and backpressure returns `retry_after_ms`. Processes that publish encoded frames keep their stdin and stdout shapes.
 
 For local profiling, `OMD_FRAME_TRACE=/absolute/new/file.jsonl` enables per-stage wall and thread-CPU timings; the
 file must not already exist.
 
 ### Raster pointer, key and box input
 
-Other messages reach `process_event` and `process.exchange` as usual. Input on a bound raster is written to the
-process's stdin instead of [`component_event`](terminal-input.md#component_event) callbacks:
+Stdout messages other than `blit` reach `process_event` and `process.exchange` as usual. Input on a bound raster is
+written to the process's stdin instead of [`component_event`](terminal-input.md#component_event) callbacks:
 
 | Input | Stdin message |
 | --- | --- |
@@ -223,7 +232,7 @@ process's stdin instead of [`component_event`](terminal-input.md#component_event
 
 - A left press on the raster focuses the keys component.
 - Bindings are scoped to the owning conversation thread.
-- Input queues hold at most 128 messages and 256 KiB; consecutive motion and resize messages coalesce.
+- Input queues contain at most 128 messages and 256 KiB; consecutive motion and resize messages coalesce.
 - Overflow or a write blocked for two seconds stops the process and discards queued input.
 - The binding ends with the process.
 - An invalid key or another framing is `process_raster_invalid`; without `terminal`, `capability_denied: terminal`.

@@ -1,7 +1,7 @@
 # blast_radius
 
-Holds a risky shell command until you have seen what it would change. It's a port of a Claude Code plugin in the
-curated directory. OMD+ doesn't install it, and it isn't in the bundled collection.
+Pauses a risky shell command until you have seen what it would change. It's a port of the Claude Code mod
+`blast-radius`. It's in the curated directory, but OMD+ and OMD Core don't install it.
 
 ## Install it
 
@@ -12,9 +12,10 @@ omd install blast_radius
 omd mods enable blast_radius
 ```
 
-It asks for `interception`, `terminal` and `exec`. See [Manage mods](../../../docs/manage-mods.md) for the other
-ways to install and turn on mods, and [Trust and permissions](../../../docs/trust-and-permissions.md) for what a
-grant allows.
+It asks to pause the agent's shell commands, ask you to proceed or cancel, and run read-only commands in the sandbox to
+measure a command's effect. The capabilities are `interception`, `terminal` and `exec`. See
+[Manage mods](../../../docs/manage-mods.md) for the other ways to install and turn on a mod, and
+[Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do) for what a capability allows.
 
 ## Use it
 
@@ -55,16 +56,21 @@ It has no settings.
   still asks.
 - Prisma runs through the runner your command used (`npx`, `pnpm`, `pnpm exec`, `yarn`, `bunx` or none). Any other
   prefix isn't measured.
-- Rails uses `bundle exec rails db:migrate:status`, not upstream's `bin/rails`.
 - The report is one line, non-ASCII shown as `?`, cut at about 1,900 bytes.
-- There is no 10-minute timeout or queue of held calls.
 - Only `exec_command` is checked, not `write_stdin`.
+
+### Differences from upstream
+
+The command classification follows the upstream rules.
+
+- The pause, measurement and prompt use OMD's tool interceptor, `exec.run` and `terminal.prompt` instead of
+  upstream's pane.
+- Rails uses `bundle exec rails db:migrate:status`, not upstream's `bin/rails`.
+- There is no 10-minute timeout or queue of held calls.
 
 ## More
 
 - [Interceptors reference](../../reference/interceptors.md) for the tool interceptor this port uses.
 - Credit: reimplemented over the Oh My Diff mod API from the Claude Code mod
   [`blast-radius` 0.1.0](https://github.com/anthropics/claude-code-playground/tree/e9ab132d4575390ecbadfc54649712432b1a3351/claude-code/mods/blast-radius)
-  by Claude Code DevRel (Anthropic PBC), commit `e9ab132d4575390ecbadfc54649712432b1a3351`, licensed Apache-2.0. The
-  command classification follows the upstream rules. The hold, measurement and prompt use OMD's tool interceptor,
-  `exec.run` and `terminal.prompt` instead of upstream's pane.
+  by Claude Code DevRel (Anthropic PBC), commit `e9ab132d4575390ecbadfc54649712432b1a3351`, licensed Apache-2.0.

@@ -1,11 +1,12 @@
 # omd_logo
 
-Shows the OMD mark, the OMD version, your install profile (OMD+ or OMD Core), the Codex version and the mod count when
-a session starts, and adds the profile to the session title. It's on by default in OMD+ and OMD Core.
+Shows the OMD logo when a session starts, with the OMD version, your install profile (OMD+ or OMD Core), the Codex
+version and the mod count. It also adds the install profile to the session title. It's on by default in OMD+ and OMD
+Core.
 
 ## Turn it off
 
-`/mods` keeps it on, because OMD requires it. To turn it off, run:
+`/mods` can't turn it off, because OMD requires it. Turn it off from a shell:
 
 ```sh
 omd-package mod disable omd_logo
@@ -15,19 +16,21 @@ omd-package mod disable omd_logo
 
 ## Use it
 
-Nothing to run. The mark appears on a fresh session and goes away when your first message is accepted. Resumed
+Nothing to run. The logo appears on a fresh session and goes away when your first message is accepted. Resumed
 sessions don't show it.
 
 ## Settings
 
+Change settings in `/mods`.
+
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `icons` | `unicode` | `unicode` draws the full mark. `ascii` uses plain characters. |
+| `icons` | `unicode` | `unicode` draws the full logo. `ascii` uses plain characters. |
 
 ## Needs and limits
 
-- The mark gets smaller on narrow terminals, with the OMD version and profile under it (one per line when they don't
-  fit on one), and shows `OMD` below 15 columns.
+- On narrow terminals the logo gets smaller, with the OMD version and install profile under it, one per line when
+  they don't fit on one. Below 15 columns it shows only `OMD`.
 - It is skipped when there is no room, and in inline or raw output.
 - Turning the mod off brings back the standard Codex heading.
 

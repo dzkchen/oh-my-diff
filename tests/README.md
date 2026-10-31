@@ -20,11 +20,12 @@ The suite:
 
 - Runs every Git-tracked or untracked-but-not-ignored `*.test.{mjs,cjs,js}` and `*.spec.*` file under `mods/`,
   `tests/` and `plugins/`. New tests join automatically.
-- Fails discovery for test files in other locations or with other extensions. A test that shouldn't run by default
+- Discovery fails if a test file is in another location or has another extension. A test that shouldn't run by default
   needs its exact path and a reason under `optional` in `tests/suites.json`. It's reported as not executed.
 - Runs mods through `tests/mod_runner.mjs`, which starts the `omd-runner` in `OMD_TEST_RUNNER`, else the one beside
   `omd-mod` (`OMD_MOD_BIN`, or the installed `omd-mod` on `PATH`).
-- Assigns these to other runners without running them:
+
+The suite assigns these files to other runners without running them:
 
 | Files | Runner |
 | --- | --- |
@@ -33,6 +34,29 @@ The suite:
 | `mods/{examples,first-party}/<package>/mod.test.json` | Mod-host scenarios |
 
 The nightly runs those three; see [How CI checks a change](../docs/contributing/ci.md).
+
+## Run one test
+
+Run a mod, SDK or plugin test file with Node, a Python test module with `unittest`, and a Rust test through
+`build.py cargo` in a scratch tree:
+
+```sh
+mise exec -- node --test PATH
+python3 -m unittest tests.test_NAME
+python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER
+```
+
+[Change the patched Codex code](../docs/contributing/runtime.md#build-and-test-with-cargo) explains `NAME`, `LOG` and
+the scratch tree.
+
+Run one package's `mod.test.json` scenario through the real host:
+
+```sh
+python3 scripts/mod_host_check.py --no-commands --scenarios NAME
+```
+
+`NAME` is the package's directory name or mod id. It uses the `omd-mod` on your `PATH`; pass `--omd-mod PATH` for one
+built from the applied runtime patch.
 
 ## Type-check the mods
 

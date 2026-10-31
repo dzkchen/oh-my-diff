@@ -1,7 +1,7 @@
 # omd_tool_lines
 
-Shows each agent tool call as one transcript line: the tool, its short arguments and the result. It's on by default
-in OMD+. OMD Core doesn't include it.
+Shows each tool call the agent makes, such as a command it runs or a file it edits, as one transcript line: the tool,
+its short arguments and the result. It's on by default in OMD+. OMD Core doesn't include it.
 
 ```text
 • Shell cargo test -p codex-omd · ok · 214 lines · 41.3s
@@ -17,13 +17,14 @@ Turn it off in `/mods`, or run:
 omd-package mod disable omd_tool_lines
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn mods on and off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it
 
 | Command or key | What it does |
 | --- | --- |
-| Click a tool line, or `F4`, `Up` and `Down`, then `Enter` | Open or close the full output for that row. |
+| Click a tool line | Open or close the full output for that row. |
+| `F4`, then `Up` or `Down`, then `Enter` | The same, from the keyboard. |
 | `Ctrl+T` | Open the full transcript, where every row is shown in full. |
 
 ## Settings

@@ -1,7 +1,8 @@
 # omd_awake
 
-Keeps the Mac awake while a turn, a subagent or an automation run is working, also with the lid closed, and lets it
-sleep a short while after they finish. It's experimental: OMD+ and OMD Core don't install it.
+Keeps the Mac awake while a turn, a subagent (a helper agent the main agent starts) or an automation run is working,
+also with the lid closed, and lets it sleep a short while after they finish. It's experimental, and neither OMD+ nor OMD
+Core installs it.
 
 ## Turn it on
 
@@ -17,7 +18,10 @@ omd mods enable omd_awake
 It asks for the `power` grant (keep the Mac awake) and the `os` grant (check the network and rejoin Wi-Fi with
 `route` and `networksetup`).
 
-For lid-closed wake, deploy the authority broker once (it needs `sudo`):
+For the Mac to keep working with the lid closed, install the authority broker once. It's OMD's protected macOS
+service for grants and credentials (see
+[Trust and permissions](../../../docs/trust-and-permissions.md#protect-credentials-with-the-authority-broker)).
+Installing it needs `sudo`:
 
 ```sh
 omd-package broker install
@@ -37,10 +41,12 @@ streaming, and macOS keeps managing the fans. When the work finishes with the li
 sleep. Without the broker it only prevents idle sleep while the lid is open (like `caffeinate -i`), and the display
 can still turn off.
 
+While it keeps the Mac awake, the mod has a hold on sleep. The commands and status line call that holding.
+
 | Command | What it does |
 | --- | --- |
-| `/awake` | Show whether it's holding, and the settings |
-| `/awake on`, `/awake off` | Turn it on or off (it starts on) |
+| `/awake` | Show whether it's holding now, and the settings |
+| `/awake on`, `/awake off` | Turn keeping awake on or off without turning off the mod. It starts on. |
 | `/awake lid on\|off` | Keep running with the lid closed, or not |
 | `/awake hotspot NETWORK\|off` | Set or clear the Personal Hotspot network |
 | `/awake grace SECONDS` | Grace period, 0 to 3600 |
@@ -67,11 +73,11 @@ For example, `/awake battery 40` stops holding at 40% battery. A change applies 
 
 ### Network
 
-While a lid-closed hold is active and the lid is closed, it checks the network every 15 seconds. When the default
-route disappears, it turns Wi-Fi off and on so macOS rejoins known networks. Without `hotspot_ssid` it repeats that
-on every other check. With `hotspot_ssid` set it toggles Wi-Fi once, then joins that network with `networksetup` on
-every following check. It stops after 20 tries (about 5 minutes) and says so, and starts over once the network is
-back. With the lid open it never touches the network.
+While a lid-closed hold is active and the lid is closed, it checks the network every 15 seconds. When the Mac loses its
+network connection (the default route disappears), it turns Wi-Fi off and on so macOS rejoins known networks. Without
+`hotspot_ssid` it repeats that on every other check. With `hotspot_ssid` set it toggles Wi-Fi once, then joins that
+network with `networksetup` on every following check. It stops after 20 tries (about 5 minutes) and says so, and starts
+over once the network is back. With the lid open it never touches the network.
 
 The hotspot password comes from the Keychain, where macOS stored it when you first joined. It is never in the
 settings. If `hotspot_ssid` isn't a saved network when a lid-closed hold starts, the mod tells you to join it once
@@ -91,7 +97,7 @@ and macOS may refuse to join a network without the screen unlocked.
 | `max_hours` | `4` | Stop after this many hours of continuous work (1 to 24) |
 | `hotspot_ssid` | empty | Personal Hotspot network to join when Wi-Fi drops with the lid closed |
 
-Change them in `/mods` or with the `/awake` commands above.
+Change settings in `/mods` or with the `/awake` commands above.
 
 ## Needs and limits
 
@@ -99,7 +105,7 @@ Change them in `/mods` or with the `/awake` commands above.
   sooner with the lid closed. Never run lid-closed in a bag.
 - A subagent that is still running when a turn ends keeps the hold. One that a mod starts while no turn runs is held
   from the next turn.
-- A disabled mod's hold ends at the next host event in that session, or at its maximum duration.
+- If you turn the mod off, its hold ends at the next event in that session, or at its maximum duration.
 - Automation runs count when they run as turns in a session.
 
 ## More

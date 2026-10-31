@@ -1,8 +1,13 @@
 # Terminal UI
 
 Use it when a mod draws in the terminal. This page defines the terms the terminal pages share, lists every view
-field, describes the two screen modes and how the patches of several mods compose, and lists the experimental
-terminal entries. The details are on these pages:
+field, and describes the two screen modes and how the patches of several mods compose.
+
+Entries are frozen in Mod API `1.0.0` unless marked experimental; the
+[registry table](stability-and-migration.md#experimental-entries-in-the-registry) lists the experimental ones. The
+terminal runs on Apple Silicon macOS; [external clients](external-clients.md) draw the same view elsewhere.
+
+The details are on these pages:
 
 | Page | Covers |
 | --- | --- |
@@ -17,8 +22,9 @@ terminal entries. The details are on these pages:
 
 A mod's `terminal` handler receives the `terminal` event, `{event, ledger, identity?, presentation?, client?,
 clients?}`, and returns a `TerminalPatch` (the same type as `TerminalView`) or null. The host composes every mod's
-patch into one view. The terminal surface's host features are `terminal_surface_v1`, `terminal_media_v1`,
-`terminal_prompt_v1` and `terminal_pty_v1`; `terminal_pty_v2` is experimental.
+patch into one view. A package that draws in the terminal lists the [host features](glossary.md#mods-and-the-host)
+it uses in `required_features`. The terminal's features are `terminal_surface_v1`, `terminal_media_v1`,
+`terminal_prompt_v1` and `terminal_pty_v1`. `terminal_pty_v2` is experimental.
 
 | Term | Type in `api.d.ts` | Meaning | Details |
 | --- | --- | --- | --- |
@@ -26,7 +32,7 @@ patch into one view. The terminal surface's host features are `terminal_surface_
 | Site | `TerminalSiteName`, `TerminalRenderSite` | A named place a view fills: `sidebar`, `header`, `above_composer`, `below_composer`, `dialog`, `welcome` or a mod site `owner/name`, each with `mode` (`replace` or `wrap`), `components` and `overlay` | [Terminal patch composition](#terminal-patch-composition-ui_composition_v1) |
 | Layout | `LayoutNode` | A tree of `split` and `tabs` nodes over `transcript`, `composer` and `site:` leaves | [Layouts and component types](layout-and-styling.md#layouts-and-component-types) |
 | Component | `TerminalComponent` | One of 20 node types, such as `box`, `list` or `raster` | [Component types](layout-and-styling.md#component-types) |
-| Region | none | A focus region: the chat or one drawn `site:` leaf | [Focus regions](terminal-input.md#focus-regions-key-contexts-and-help-terminal_focus_v1) |
+| Region | none | A focus region is the chat or one drawn `site:` leaf. A layout region is the area a layout leaf draws in. | [Focus regions](terminal-input.md#focus-regions-key-contexts-and-help-terminal_focus_v1) |
 
 The `identity`, `client` and `clients` inputs are described in
 [Terminal operations](terminal-operations.md#terminal-identity-terminal_identity_v1), the `presentation` input in
@@ -71,34 +77,47 @@ only" means no page describes the field beyond its type.
 
 ## Alternate screen, inline mode and composer sites
 
-Terminal views are drawn on Codex's alternate screen, including its default fullscreen transcript. Inline
-`--no-alt-screen` sessions draw the sidebar, header and dialogs inside the current viewport, and `render` hooks and
-status segments apply to scrollback.
+By default Codex draws on the alternate screen, which this reference calls fullscreen mode, and terminal views draw
+there, including in the fullscreen transcript. Inline mode (`--no-alt-screen`) draws the sidebar, header and dialogs
+inside the current viewport. In inline mode, `render` hooks and status segments apply to scrollback.
 
 When any mod's view sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), the inline viewport omits the
-sidebar, header and named sites; dialogs, status segments, mod progress and diagnostics, the composer, approvals
-and scrollback remain, and the owned fullscreen viewport is unchanged.
+sidebar, header and named sites. Dialogs, status segments, mod progress and diagnostics, the composer, approvals and
+scrollback still draw. Fullscreen mode is unchanged.
 
-A launcher can narrow one session's TUI with three environment variables. `OMD_TUI_MOD_UI=ID[,ID…]` keeps sites,
-panels, header, footer, layout and status segments only from the listed mods; other mods keep their `dialog` site,
-`render` hooks, commands, keys and theme, and the status row holds only the listed mods' segments, without upstream
-`/statusline` items or the host summary unless a mod failed. `OMD_TUI_HEADER=off` drops the Codex session header and
-first-run help, and `OMD_TUI_COMPOSER=plain` draws the composer as a bare prompt line without its background,
-blank rows, placeholder or idle hint row. `omd mini` sets all three. They are read once at start, and agent tool
-processes don't inherit them or the launcher's `OH_MY_DIFF_*` variables (a mod's `exec_environment` still can).
+A program that launches `codex` can narrow one session's terminal UI (TUI) with three environment variables.
+`omd mini` sets all three.
 
-The `above_composer` and `below_composer` sites draw in both modes, host-sized to their wrapped
-components, directly above and below the bottom pane (composer, native hints and status row), with styles, links
-and focusable controls. `above_composer` is clipped to 8 rows and `below_composer` to 6, each scrolling to the
-focused control. Both are hidden while an approval or popup replaces the composer.
+| Variable | Effect |
+| --- | --- |
+| `OMD_TUI_MOD_UI=ID[,ID…]` | Keeps sites, panels, header, footer, layout and status segments only from the listed mods. |
+| `OMD_TUI_HEADER=off` | Drops the Codex session header and first-run help. |
+| `OMD_TUI_COMPOSER=plain` | Draws the composer as a bare prompt line without its background, blank rows, placeholder or idle hint row. |
+
+- With `OMD_TUI_MOD_UI` set, unlisted mods still contribute their `dialog` site, `render` hooks, commands, keys and
+  theme.
+- The status row contains only the listed mods' segments. It shows no upstream `/statusline` items, and shows the
+  host summary only when a mod failed.
+
+The variables are read once at start. Agent tool processes don't inherit them or the launcher's `OH_MY_DIFF_*`
+variables. A mod can still pass `OH_MY_DIFF_*` variables to its commands by listing them in its
+[`exec_environment`](authority-grants.md#exec_environment-names).
+
+The `above_composer` and `below_composer` sites draw in fullscreen and inline mode, directly above and below the bottom
+pane. The bottom pane is the composer, the native hints and the status row. The host sizes each site to its wrapped
+components, which can use styles, links and focusable controls. `above_composer` is clipped to 8 rows and
+`below_composer` to 6, each scrolling to the focused control. Both are hidden while an approval or popup replaces the
+composer.
 
 ## Terminal patch composition (`ui_composition_v1`)
 
 Every mod's `terminal` patch composes in the same order (`ui_composition_v1`):
 
-- Sites wrap or replace. A wrap encloses the site's replacement whichever composes first. A site's `overlay` is not
-  claimed, so the last patch that sets one wins. Only mod `owner` replaces or wraps its `owner/name` site; any other
-  mod's patch for it is refused and reported as a conflict. Native sites keep the rules above.
+- Sites wrap or replace. A wrap encloses the site's replacement, whichever of the two patches composes first. A
+  site's `overlay` is not claimed, so the last patch that sets one wins
+  ([Overlays](layout-and-styling.md#overlays)). Only mod `owner` replaces or wraps its `owner/name` site; any other
+  mod's patch for it is refused and reported as a conflict. Any mod can patch a native site, such as `sidebar` or
+  `welcome`, under the wrap, replace and overlay rules at the start of this item.
 - Presentation fields merge.
 - Exclusive fields (layout, panels, header, footer, placeholder, underlay, replaced sites, keys, glyphs and the status
   budget) go to the first claimant. Each later claim is reported in `omd-mod status` under `terminal.conflicts` as
@@ -112,67 +131,8 @@ the `terminal` event input are unchanged.
 
 - A patch from a callback that read the clock (`Date.now()` or `new Date()`) is reused for at most one second, so
   elapsed times and countdowns stay current on the next redraw.
-- A command's `{terminal}` result likewise stands for at most one second; after that the next view update runs the
+- The host shows a command's `{terminal}` result for at most one second. After that, the next view update runs the
   `terminal` handler.
 
-## Experimental session UI state
-
-`api.uiState.get()` / `.set(value)` requires `terminal`.
-
-- Values are bounded to 65,536 UTF-8 bytes of compact `JSON.stringify(value)` output, including quotes, keys and
-  escapes.
-- Strings and object keys must contain valid Unicode scalars (no lone surrogates).
-- The host checks the original serialized bytes before parsing; number reformatting does not change the limit.
-- Values are shared by host instances in the same process, store, repository, thread and package identity.
-- Commands and component events may write; other callbacks may read.
-- Writes commit only after successful validation and cancellation checks, with revision conflicts using the
-  existing receipt-replay rules.
-- Authority polling with unchanged configuration preserves UI state and command views.
-- State is cleared on explicit reload, revocation, package changes and session teardown, and is never written to
-  disk.
-- A reload during a command or component event (such as one its own `packages.apply` caused) does not cancel it,
-  and its `set` lands on the cleared state, even with the value it read; a change of repository during it cancels
-  it.
-
-Saved `api.state` is unchanged. Use UI state for open dialogs and filters, and saved state for preferences that
-must survive a restart (a power failure can lose the last commits; `store.*` data is fully synced).
-
-## Experimental command views
-
-Return `{terminal: patch}` with a `TerminalPatch` to replace your complete terminal contribution, or `{terminal:
-null}` to clear it.
-
-- The host validates capability, ownership and generation, composes it with other owners' last valid contributions
-  and displays it before asynchronously refreshing expired callbacks.
-- Keep a `terminal` handler that reconstructs the same contribution from UI state for subsequent view updates.
-- This opt-in path changes when other owners refresh; commands without `terminal` retain their synchronous preview
-  behavior.
-- Migration from durable dialog state consists of moving only transient presentation fields to `api.uiState` and
-  returning the view from the command; persisted settings, replay and module lifetimes are unchanged.
-
-## Experimental terminal entries
-
-These terminal entries are experimental in the conformance registry or in
-[Stability and migration](stability-and-migration.md#experimental-surfaces) and may change in any release.
-
-| Entry | Described in |
-| --- | --- |
-| `raster` component, `terminal.blit` | [Graphics](graphics.md#rasters-terminal_raster_v1) |
-| `terminal.image_sample` | [Graphics](graphics.md#terminalimage_sample) |
-| `process_raster_v1`, `raster_pixels_v1` | [Graphics](graphics.md#raster-processes-process_raster_v1) |
-| `underlay` (`terminal_underlay_v1`) | [Graphics](graphics.md#underlay-terminal_underlay_v1) |
-| Render sites `user_message`, `tool_result`, `turn_duration`, `notice`, `session_mode`, `composer_hint` | [Render hooks](render-hooks.md#render-components) |
-| View fields `foreground`, `background`, `panels`, `header`, `footer`, `placeholder`, `surface_styles`, `key_contexts`; the `header` site | [View fields](#view-fields) |
-| Layout leaf `title` (`terminal_layout_title_v1`) and `style.focus` | [Layout and styling](layout-and-styling.md#layouts-and-component-types) |
-| The `dock` component event fields `content`, `target`, `edge`, `columns`, `rows` (`terminal_layout_dock_v1`) | [Layout and styling](layout-and-styling.md#layout-region-sizing-split-resize-and-tab-select) |
-| `code` component `start` | [Layout and styling](layout-and-styling.md#code-highlighting-terminal_code_highlight_v1) |
-| Focus regions, `key_contexts`, the `region` and `help` key actions, `keys: 'all'` (`terminal_focus_v1`) | [Terminal input](terminal-input.md#focus-regions-key-contexts-and-help-terminal_focus_v1) |
-| The `view` and `focus` events | [Terminal input](terminal-input.md#component_event) |
-| The `component_change` and `composer_key` interceptors | [Terminal input](terminal-input.md#component_change-interceptor), [Commands and composer](commands-and-composer.md#composer_key-interceptor) |
-| `terminal.panes` | [Terminal operations](terminal-operations.md#terminalpane-and-terminalpanes) |
-| `terminal.panel` navigation fields (`terminal_panel_navigation_v1`) | [Terminal operations](terminal-operations.md#terminalpanel) |
-| The terminal pane extension (`terminal_pty_v2`): `autofocus`, `terminal.pty` `files`, and the `exit`, `title`, `bell` and `notify` component events | [Terminal operations](terminal-operations.md#terminal-pane-extension-terminal_pty_v2) |
-| `welcome: {hidden}` (`terminal_welcome_hidden_v1`) | [`welcome` site](layout-and-styling.md#welcome-site) |
-| `terminal` event `omd_version`, `welcome`, `chat`, `colors` and `sites` | [Terminal operations](terminal-operations.md#terminal-event-client) |
-| `builtins.invoke` | [Commands and composer](commands-and-composer.md#builtinsinvoke-and-apibuiltins) |
-| `api.uiState` and command views | [Experimental session UI state](#experimental-session-ui-state) |
+Session UI state is described under [`api.uiState`](state-and-storage.md#session-ui-state-apiuistate), and command
+`{terminal}` results under [Command views](commands-and-composer.md#command-views).

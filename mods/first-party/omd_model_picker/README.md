@@ -16,9 +16,12 @@ omd-package mod disable omd_model_picker
 ## Use it
 
 Open `/model` as usual. Selection and keys work as before. With `omd_profiles` on, the model list also shows up to 4
-of your profiles. `/profile` lists all of them, and `/profile use NAME` switches.
+of your account profiles (ChatGPT accounts, API keys and providers). `/profile` lists all of them, and
+`/profile use NAME` switches to one.
 
 ## Settings
+
+Change settings in `/mods`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -27,7 +30,7 @@ of your profiles. `/profile` lists all of them, and `/profile use NAME` switches
 
 ## Needs and limits
 
-- With `layout` set to `native`, no profiles are shown in `/model`.
+- With `layout` set to `native`, no account profiles are shown in `/model`.
 
 ## More
 

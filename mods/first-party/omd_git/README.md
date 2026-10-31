@@ -1,12 +1,12 @@
 # omd_git
 
-A Git panel in the workspace dock, modeled on lazygit, for staging files and hunks, branches, commits, the stash,
-push and pull. It's off by default in OMD+. OMD Core doesn't include it.
+Adds a Git panel to the workspace dock, modeled on lazygit, where you stage files and hunks, manage branches, commits
+and the stash, and push and pull. It's off by default in OMD+. OMD Core doesn't include it.
 
-The panel has framed, numbered panels for status, files, branches, commits and the stash, with the focused one
-expanded, a main view showing the selected diff and lazygit's options bar. You can add a selection to the prompt.
-When its dock tab is at least 85 columns wide the panels sit beside the main view, as in lazygit. Narrower, they
-stack above it, like lazygit's portrait mode.
+The Git tab has numbered boxes for Status, Files, Branches, Commits and Stash, with the focused one expanded. A main
+view shows the selected diff, and lazygit's options bar runs along the bottom. You can add a selection to the prompt.
+When the tab is at least 85 columns wide, the boxes go beside the main view, as in lazygit. Narrower, they stack above
+it, like lazygit's portrait mode.
 
 ```text
 ╭ [1] Status ─────────────────────────────╮
@@ -56,14 +56,14 @@ configuration apply.
 Open the Git tab in the dock (its number, or `[` / `]`), and the keys below apply while it has focus. `?` lists the
 keys of the panel you're in. Esc returns to the chat. For example, in Files, `Space` stages a file and `c` commits it.
 
-| Key | Where | Does |
+| Key | Where | What it does |
 | --- | --- | --- |
 | `1`–`5` | outside hunks | Status, Files, Branches, Commits, Stash |
 | `h` / `l` | outside hunks | Previous / next panel (in hunks `h` goes back to the files) |
 | `j` / `k` | everywhere | Next / previous item; the main view follows |
 | `J` / `K` | everywhere | Scroll the main view |
 | `R` | everywhere | Refresh, and look for a repository again |
-| `P` / `p` | everywhere | Push / pull, after you confirm (a branch without an upstream is pushed to `origin` and tracked; a detached HEAD isn't pushed). When the remote rejects the push and the branch has diverged from its upstream, as after an amend or reword, it offers `push --force-with-lease`; a branch that is only behind, or new here while `origin` has its name, is told to pull first |
+| `P` / `p` | everywhere | Push / pull, after you confirm (see below) |
 | `m` | everywhere | Continue or abort the rebase, merge, cherry-pick or revert in progress (shown in Status) |
 | `@` | everywhere | Add the selection to the prompt: an `@` mention for a file, the hunk as a diff block, or a branch, commit or stash reference |
 | `Space` | Files | Stage or unstage the file (a staged rename with its old path); on a conflicted file, mark it resolved after you confirm |
@@ -81,6 +81,13 @@ keys of the panel you're in. Esc returns to the chat. For example, in Files, `Sp
 | `A` / `r` | Commits | Amend the selected commit with the staged changes / reword it |
 | `Space` / `g` / `d` | Stash | Apply / pop / drop, after you confirm the drop |
 
+Pushing:
+
+- A branch without an upstream is pushed to `origin` and tracked. A detached HEAD isn't pushed.
+- When the remote rejects the push and the branch has diverged from its upstream, as after an amend or reword, `P`
+  offers `push --force-with-lease`.
+- A branch that is only behind, or that's new here while `origin` already has its name, is told to pull first.
+
 Amending or rewording an older commit rebases onto it with `--autostash`, and is refused while a rebase, merge,
 cherry-pick or revert is in progress. If the rebase stops, it is aborted and the error shows in the panel. A failed
 amend also undoes its fixup commit while HEAD is still that commit.
@@ -91,8 +98,8 @@ amend also undoes its fixup commit while HEAD is still that commit.
 | `/git refresh` | Reload the panel |
 
 The panel reloads when you act in it, when the session's directory changes and when files or the repository's Git
-metadata (HEAD, index, refs) change on disk. It uses a `workspace.watch` rather than polling, so a commit, checkout
-or fetch made in another terminal shows at once. A file edit reloads only the status; branches, commits and stashes
+metadata (HEAD, index, refs) change on disk. It watches for changes instead of polling, so a commit, checkout or
+fetch made in another terminal shows at once. A file edit reloads only the status. Branches, commits and stashes
 reload when HEAD or a ref changes. Without the watch, or in a repository other than the workspace's, it also reloads
 when a turn ends. It doesn't reload while its tab isn't in the dock, and it skips the watch event caused by your own
 action in the panel, because the panel has already reloaded.
@@ -103,11 +110,16 @@ It has no settings.
 
 ## Needs and limits
 
-- `git` on your `PATH` and [`omd_workspace`](../omd_workspace/README.md) turned on. Outside a Git repository, or
-  without `git`, the panel says so; `R` looks again.
+- It asks to draw its tab in the workspace, add `/git`, run `git` outside the sandbox with network access, watch the
+  repository for changes, add selections to the prompt, open a terminal pane for Git's password prompts and keep its
+  state. The capabilities are `terminal`, `services`, `commands`, `exec`, `os`, `fs.read`, `composer`, `pty`,
+  `lifecycle`, `inventory` and `store`, with `os` limited to `git` with network access (see
+  [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
+- It needs `git` on your `PATH` and [`omd_workspace`](../omd_workspace/README.md) turned on. Outside a Git repository,
+  or without `git`, the panel says so. `R` looks again.
 - Push and pull run in the background with your real home directory and SSH agent, so credential helpers, the macOS
   keychain, `~/.ssh` keys and agent-held keys work. When git needs a password, a passphrase or a host key answer, the
-  panel offers to rerun the command in a terminal pane in its main view: `i` types in it and Ctrl+] leaves it. Once
+  panel offers to rerun the command in a terminal pane in its main view: `i` types in it and `Ctrl+]` leaves it. Once
   git exits, `R` or the next refresh closes the pane and shows git's last line.
 - The first 200 changed files and branches and the last 100 commits are listed. The main view keeps about 28 KB or
   1,000 lines, and each line is cut at 200 bytes.

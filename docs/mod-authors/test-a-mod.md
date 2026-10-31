@@ -5,6 +5,17 @@ and never touch your mod store: each run builds a throwaway store. For every fie
 [offline scenarios](../../mods/reference/authoring.md#offline-scenarios) and
 [TypeScript tests](../../mods/reference/authoring.md#typescript-tests) in the reference.
 
+## Before you begin
+
+You need a mod project made with `omd-mod-author create`, such as the one from
+[Write your first mod](first-mod.md), with TypeScript added:
+
+```sh
+pnpm add -D typescript@5.9.3
+```
+
+The examples below use a mod with the id `my_mod`, and the [notes mod](notes-mod.md) from the second tutorial.
+
 ## Run the tests
 
 From the mod's folder:
@@ -15,12 +26,16 @@ pnpm test
 
 `pnpm test` runs, in order:
 
-1. `mod.test.json`, printing the trace as JSON.
-2. The type check, once TypeScript is in the project (`pnpm add -D typescript@5.9.3`).
-3. Every `*.test.ts` and `*.test.mjs` file next to `mod.test.json`, under `node --test`.
+1. The `mod.test.json` scenario.
+2. The type check, when TypeScript is in the project. A type error fails the run here, before the trace prints.
+3. The scenario's trace, printed as JSON.
+4. Every `*.test.ts` and `*.test.mjs` file next to `mod.test.json`, under `node --test`.
 
-Exit status 0 means everything passed. A failing step prints its error with the line in `index.ts`. `pnpm run run`
-runs the same scenario and prints the full trace.
+The type check runs only when the project has a `mod.test.json`. With only `*.test.ts` files, run `pnpm check` as
+well.
+
+Exit status 0 means everything passed. A failing step prints its error with the line in `index.ts`. The scaffold's
+`run` script (`pnpm run run`) runs the same scenario and prints the full trace.
 
 In CI, run `pnpm test`, or `omd-mod-author test DIR` without pnpm scripts. It needs no store, and it fails with
 `no_tests` when the project has neither `mod.test.json` nor a test file.
@@ -48,9 +63,9 @@ A scenario is a list of steps. Each step calls the mod and may compare the resul
 
 ## Mock host calls
 
-A host call the scenario doesn't mock fails the test. Mock it with `host_operations`, an ordered list of replies per
-operation. Each reply has exactly one of `result` or `error`. Take a mod with `commands` and `store` capabilities
-whose `index.ts` reads a saved greeting:
+A [host call](../../mods/reference/glossary.md#mods-and-the-host) the scenario doesn't mock fails the test. Mock it
+with `host_operations`, an ordered list of replies per operation. Each reply has exactly one of `result` or `error`.
+Take a mod with `commands` and `store` capabilities whose `index.ts` reads a saved greeting:
 
 ```ts
 import type { ModAPI } from '@oh-my-diff/mod-api';
@@ -110,6 +125,9 @@ test('shows the saved greeting', () => {
 
 `storeMock` writes the `store.get` replies for you, so this test is shorter than the JSON above.
 
+The authoring reference lists the helper for each [scenario field](../../mods/reference/authoring.md#scenario-helpers)
+and [step](../../mods/reference/authoring.md#scenario-steps).
+
 Use a TypeScript test when you need more than equality:
 
 - Check part of a value, such as text in a view, with `find`, `findAll` and `text`.
@@ -142,33 +160,6 @@ test('the count line shows the saved notes', () => {
 ```
 
 A step's `value` is typed as JSON, so cast it to `TerminalView` before passing it to `text` or `find`.
-
-## Map JSON to helpers
-
-Each helper writes one scenario field or step type.
-
-| Scenario field or step `type` | Helper |
-| --- | --- |
-| `virtual_time_ms` | `clock(ms)` |
-| `settings` | `settings(id, values)` |
-| `environment` | `environment(values)` |
-| `host_operations` | `hostOperations({...})`, or `storeMock({get, put, delete})` for `store.*` |
-| `packages` | `packages(...paths)` |
-| `tiers` | `tiers({prepend, append})` |
-| `invoke` | `invoke(mod, event, name, payload)` |
-| `event` | `emit(event, payload)` |
-| `advance_time` | `advance(ms)` |
-| `wait_until` | `waitUntil(check, until, {everyMs, maxMs})` |
-| `reload` | `reload()` |
-| `state` | `state(mod, {value})` |
-| `terminal_mount` | `mount(mod)` |
-| `terminal_interact` | `key`, `activate`, `input`, `select`, `pointer` |
-| `component` | `component(mod, module, {...})` |
-| `client_attach`, `client_detach` | `attach(name)`, `detach(id)` |
-| `intercept` | `intercept(surface, payload, {core})` |
-
-Step options are camel case in TypeScript: `expectError` for `expect_error` and `threadId` for `thread_id`.
-`tool_outcome`, `agent`, `status` and `tool_exposure` steps have no helper; write them as plain objects.
 
 ## Know what tests don't prove
 

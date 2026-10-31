@@ -13,7 +13,7 @@ Turn it on in `/mods`, or run:
 omd-package mod enable omd_usage
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn mods on and off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it
 
@@ -21,14 +21,16 @@ omd-package mod enable omd_usage
 | --- | --- |
 | `Alt+a` or `/omd_usage:hud toggle` | Open or close the Usage dialog. Its expanded view lists recent requests. |
 | `/omd_usage:hud` | Open the dialog, or refresh it when it's open. `close` closes it. |
-| `/omd_usage:budget 5` | Warn when spend reaches 80% and 100% of 5 USD: a notice appears once at each, and the dialog shows spend against the budget. `0` removes the budget. |
+| `/omd_usage:budget 5` | Warn when spend reaches 80% and 100% of 5 USD. `0` removes the budget. |
 | `/omd_usage:categories on` | Split each request by role (system, context, user, tool output). `off` turns it back off. |
+
+With a budget set, a notice appears once at 80% and once at 100%, and the dialog shows spend against the budget.
 
 Changes apply from your next message.
 
 ## Settings
 
-Change these in `/mods`.
+Change settings in `/mods`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -42,10 +44,10 @@ Change these in `/mods`.
   zero.
 - Totals cover the last 120 requests in the session, not lifetime spend. The budget also counts what older requests
   cost before they left that window.
-- Quota windows are listed per account (Codex, Claude, Cursor), each under the account that reported it. None is
-  tied to the route you're on.
+- Quota windows are listed per account (Codex, Claude, Cursor), each under the account that reported it. No window
+  depends on which model route (model setup) you're using.
 - Cache expiry shows only when the provider reports how long its cache lasts.
-- The budget is a warning. OMD's spending limits still decide what runs.
+- The budget only warns. OMD's own spending limits, such as a paid profile's allowance, still decide what runs.
 - Claude and OpenRouter usage need `omd_claude_cli` or `omd_profiles`. See
   [Use other providers](../../../docs/use-other-providers.md).
 
