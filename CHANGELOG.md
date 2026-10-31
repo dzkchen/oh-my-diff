@@ -69,7 +69,7 @@ Mods run on an embedded V8 runner instead of Node, with faster startup and a fra
 
 ### New
 
-- Mod runtime: mods run in `omd-runner`, an embedded V8 runner that ships with Oh My Diff, so Node.js is no longer needed to run mods; each runner uses about 6–15 MB instead of about 43 MB and starts about twice as fast (#266)
+- Mod runtime: mods run in `omd-runner`, an embedded V8 runner that ships with Oh My Diff, so Node.js is no longer needed to run mods (#266)
 - Package controls: `packages.index` pages with `cursor` and `limit`, and the `/mods` Directory reads large indexes in pages (#265)
 - Advisor: `routes.add` adds a ChatGPT-plan helper route for a mod after a confirmation, granted per repository (#265)
 - Claude CLI: `/claude login` runs in the background and `/claude code CODE` sends a pasted sign-in code (#265)

@@ -2,7 +2,9 @@
 import json
 import re
 from pathlib import Path
+import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.mod_compatibility import array_constant, host_contract
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -158,3 +160,7 @@ def check(contract, version, sets):
         if entry["native"] not in sets["events"] | sets["intercepts"]:
             problems.append(f"classic hook {entry['hook']}: {entry['native']} is not a host event or interceptor")
     return problems + check_surfaces(contract, sets)
+
+
+if __name__ == "__main__":
+    raise SystemExit("\n".join(check(json.loads(CONTRACT.read_text()), *host_sets())) or None)

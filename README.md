@@ -33,8 +33,9 @@ explains what a mod can and can't do.
 
 ## Install
 
-You need an Apple Silicon Mac, Codex `0.166.x` already installed, and Python 3.12 or later. The
-[install guide](docs/install.md) lists every requirement.
+You need an Apple Silicon Mac, the Codex version the [latest release](https://github.com/dzkchen/oh-my-diff/releases/latest)
+builds on already installed, and Python 3.12 or later. The installer prints the command that installs the right
+Codex if yours differs. The [install guide](docs/install.md) lists every requirement.
 
 There are two install profiles, OMD+ and OMD Core. Choose OMD+ unless you want only the mod host, the part of OMD
 that loads mods. You can switch later by running the other command.

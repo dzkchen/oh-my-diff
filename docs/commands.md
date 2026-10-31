@@ -155,7 +155,7 @@ The install command in [Install Oh My Diff](install.md#install) runs `install.sh
 | `--channel stable\|prerelease\|nightly` | `stable` | Which release to install |
 | `--root DIR` | `~/.local/share/oh-my-diff` | Where OMD keeps releases and mod stores |
 | `--bin-dir DIR` | `~/.local/bin` | Where the `codex`, `omd` and other commands go |
-| `--upstream PATH` | `codex` on your `PATH` | The Codex `0.166.x` executable OMD builds on |
+| `--upstream PATH` | `codex` on your `PATH` | The upstream Codex executable OMD builds on, at the version line the release needs |
 
 An existing command in the bin folder is renamed to `NAME.before-omd` and comes back on uninstall.
 

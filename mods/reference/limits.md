@@ -45,6 +45,7 @@ Each table covers one area, and the Owner column links the page with the exact r
 | Settings file | 64 KiB | [Settings](settings.md#settings-file-settings_file_v1) |
 | Setting `title` and `description` | 64 and 300 bytes | [Settings](settings.md#settings-defaults) |
 | Package files | 16 assets, 8 KiB `mod.json`, 512 KiB per file | [Packaging](packaging.md#package-assets) |
+| `required_features` and `optional_features` | 32 each | [Host model](host-model.md#host-primitives) |
 
 ### Authority, admission and credentials
 

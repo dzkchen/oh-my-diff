@@ -146,7 +146,6 @@ def sync_sources(manager, store, origin, packages):
 
 
 def keep_bundled_copies(manager, store):
-    """Turn off a Directory package that is on beside the bundled copy of the same mod; the host rejects both."""
     selected = [item for item in invoke(manager, "selection-status", store)["selections"] if item["selected"]]
     for item in selected:
         if item["packaged"] and any(other["path"] == str(store / "sources" / item["id"]) and other["scope"] == item["scope"]
@@ -268,13 +267,13 @@ def selected_text(record):
         lines += [f"mkdir -p {root}/sessions", "busy=",
                   f'for m in {root}/sessions/*; do [ -e "$m" ] && {{ kill -0 "${{m##*/}}" 2>/dev/null && busy=1 || rm -f "$m"; }}; done',
                   f": > {marker}",
-                  f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ {ready} || [ -e {root}/update/journal.json ] || [ {request} -nt {root}/update/seen ]; }}; then',
+                  f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ {ready} || [ -e {root}/update/journal.json ] || [ {root}/update/state.json -nt {root}/update/notice.json ] || {{ [ {request} -nt {root}/update/seen ] && grep -q \'"request":\' {request}; }}; }}; then',
                   f"  {installer} launch --root {root} --session $$",
                   f'  OH_MY_DIFF_UPDATED=1 exec {root}/current/bin/codex "$@"',
                   "fi",
                   "unset OH_MY_DIFF_UPDATED",
                   f"[ {root}/update/next -nt {marker} ] || ({installer} tick --root {root} </dev/null >/dev/null 2>&1 &)",
-                  f"OH_MY_DIFF_UPDATE=; [ -f {root}/update/state.json ] && read -r OH_MY_DIFF_UPDATE < {root}/update/state.json; export OH_MY_DIFF_UPDATE"]
+                  f"OH_MY_DIFF_UPDATE=; [ -f {root}/update/notice.json ] && read -r OH_MY_DIFF_UPDATE < {root}/update/notice.json; export OH_MY_DIFF_UPDATE"]
     lines.append("unset OMD_INSTALL_PROFILE OMD_MOD_STORE")
     lines.append(f"export OMD_INSTALL_PROFILE={'platform_only' if record['profile'] == 'platform' else 'full'}")
     if selection == "direct":

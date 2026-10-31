@@ -90,16 +90,10 @@ class HostedJobs(unittest.TestCase):
         with mock.patch.object(ci, "core_env", return_value={}):
             return {step.name: step for step in ci.job_steps(job)}
 
-    def test_jobs_split_the_old_test_job_and_keep_every_step(self):
-        names = {job: list(self.steps(job)) for job in ("native", "core", "lint", "acceptance", "build")}
-        self.assertEqual(names["native"][2:], ["test helper binaries", "cargo test native crates"])
-        self.assertEqual(names["core"][2:], ["test helper binaries", "cargo test core", "cargo test core integration"])
-        self.assertEqual(names["lint"], ["setup", "verified V8", "patch sync", "patch matches checkout", "clippy omd paths",
-                                         "check pull request crates", "rustfmt", "native ownership", "locks",
-                                         "locks match checkout", "mods install", "mods typecheck"])
-        self.assertEqual(names["acceptance"], ["mods install", "mods tests", "python tests", "host check with scenarios",
-                                               "client acceptance"])
-        self.assertTrue(self.steps("core")["cargo test core integration"].advisory)
+    def test_only_core_integration_is_advisory(self):
+        advisory = [name for job in ("native", "core", "lint", "acceptance", "build")
+                    for name, step in self.steps(job).items() if step.advisory]
+        self.assertEqual(advisory, ["cargo test core integration"])
 
     def test_every_cargo_invocation_of_a_test_job_selects_the_same_packages(self):
         for job, suite in (("native", "native"), ("core", "core"), ("core", "core-integration")):

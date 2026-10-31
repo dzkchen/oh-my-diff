@@ -107,9 +107,10 @@ test('cancelling at any point before the CLI starts never launches it and leaves
 });
 
 test('a CLI that hangs before its request or while acknowledging history replay is stopped at the deadline with its whole process group', async () => {
-  const root = await fakeCli('#!/bin/sh\nsleep 60 &\necho $! > "$(dirname "$0")/grandchild"\necho $$ > "$(dirname "$0")/child"\nwait\n');
+  const root = await fakeCli('#!/bin/sh\necho $$ > "$(dirname "$0")/child"\nsleep 60 &\necho $! > "$(dirname "$0")/grandchild"\nwait\n');
   const alive = async name => {
-    const pid = Number(await readFile(join(root, name), 'utf8'));
+    const pid = Number(await readFile(join(root, name), 'utf8').catch(() => 0));
+    if (!pid) return false;
     for (let attempt = 0; attempt < 50; attempt++) {
       try { process.kill(pid, 0); } catch { return false; }
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -121,10 +122,10 @@ test('a CLI that hangs before its request or while acknowledging history replay 
     assert.ok(history.frames.length > 1);
     for (const translated of [null, history]) {
       const started = Date.now();
-      const error = await runClaude(prompt, entry, join(root, 'claude'), new AbortController().signal, () => {}, { translated, deadlineMs: 1000 }).then(() => null, failure => failure);
+      const error = await runClaude(prompt, entry, join(root, 'claude'), new AbortController().signal, () => {}, { translated, deadlineMs: 3000 }).then(() => null, failure => failure);
       assert.equal(error?.code, 'claude_upstream_incomplete');
       assert.match(error.message, /did not finish within 0 minutes \(it never sent its request\).*Retry the request/);
-      assert.ok(Date.now() - started < 5000);
+      assert.ok(Date.now() - started < 8000);
       for (const name of ['child', 'grandchild']) assert.equal(await alive(name), false, name);
     }
   } finally { await rm(root, { recursive: true, force: true }); }

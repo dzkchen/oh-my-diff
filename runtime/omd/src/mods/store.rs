@@ -768,10 +768,6 @@ impl ModStore {
         })
     }
 
-    pub(super) fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
-        self.write_staged(name, bytes, || Ok(()))
-    }
-
     fn write_staged(
         &self,
         name: &str,

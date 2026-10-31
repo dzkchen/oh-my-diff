@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.pty_session import ROOT, Session, call, environment, fresh, git, provider
 
 BROKEN_MANIFEST = {"schema": 1, "id": "broken_fixture", "version": "1.0.0", "api": "1.0.0", "state_version": 1,
@@ -88,7 +89,10 @@ def driver(mode, url, repo, env, answer):
 def launch_client(tui, store):
     launched = store / "state-external_client.json"
     before = json.loads(launched.read_text())["value"].get("picked")
-    assert tui.command("/external_client:launch", "Launching the text client"), "launch command"
+    mark = len(tui.raw)
+    assert tui.command("/external_client:launch", "first run for this mod"), "first-run prompt for node"
+    tui.keys(b"\r")
+    assert tui.wait("Launching the text client", 30, mark), "launch command"
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and json.loads(launched.read_text())["value"].get("picked") == before:
         tui.pump(0.05)

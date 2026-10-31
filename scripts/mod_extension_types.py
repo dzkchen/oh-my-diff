@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
+import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,3 +77,7 @@ def check(registry):
     if not {"reader", "tool"} <= synthetic:
         problems.append("reader and tool synthetic fixtures are not classified")
     return problems
+
+
+if __name__ == "__main__":
+    raise SystemExit("\n".join(check(json.loads(REGISTRY.read_text()))) or None)

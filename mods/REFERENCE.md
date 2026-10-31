@@ -214,7 +214,8 @@ an independent author package that uses only this surface. Other independent exa
 and aren't production implementations.
 
 Each primitive (an operation, event or capability) advertises a [host feature](reference/glossary.md#mods-and-the-host) that a
-package can list in `required_features` (Mod API `1.0.0`). With no mod registered for a primitive the host allocates
+package can list in `required_features` or `optional_features` (Mod API `1.0.0`; at most 32 unique host features in each
+list, none in both). With no mod registered for a primitive the host allocates
 nothing for it and changes no decision.
 
 ### Callback budgets and the clock
@@ -437,6 +438,7 @@ Each table covers one area, and the Owner column links the page with the exact r
 | Settings file | 64 KiB | [Settings](reference/settings.md#settings-file-settings_file_v1) |
 | Setting `title` and `description` | 64 and 300 bytes | [Settings](reference/settings.md#settings-defaults) |
 | Package files | 16 assets, 8 KiB `mod.json`, 512 KiB per file | [Packaging](reference/packaging.md#package-assets) |
+| `required_features` and `optional_features` | 32 each | [Host model](reference/host-model.md#host-primitives) |
 
 #### Authority, admission and credentials
 
@@ -2933,7 +2935,11 @@ An approve outside the grant, an expired grant, an error, a timeout or an invali
 - A command that the user's own execpolicy rules forbid reaches the middleware with `host_decision: 'forbidden'`.
   Only a mod with `approve.override` (experimental) can approve it; anything else keeps it forbidden.
 - Managed requirements and other host denials never reach the middleware.
-- Permission-escalation requests are not delegable.
+- `permissions` requests (`request_permissions`) are not delegable: `approves.kinds` can't list them, so a mod's
+  `{approve}` counts as `ask`.
+- An `exec` or `stdin` grant also covers requests of that kind that ask to leave the sandbox or widen it.
+  `details.sandbox_permissions` (`use_default`, `require_escalated` or `with_additional_permissions`) and
+  `details.additional_permissions` show what a request asks for; return `{ask}` to leave escalated ones to the user.
 - `assessment: true` marks a `tools.check` assessment, which never runs or prompts.
 - `approval_result` reports the decision and its source.
 

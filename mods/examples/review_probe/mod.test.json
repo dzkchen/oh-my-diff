@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "evidence.read": [{"result": {"reference": {"reference": "evidence:1", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}, "text": "tests passed", "cursor": null, "bytes": 12}}],
+    "workspace.snapshot": [{"result": {"snapshot": {"reference": "snapshot:1", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "candidate_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
+    "agents.spawn": [{"error": "route_unavailable"}]
+  },
+  "steps": [
+    {"type": "event", "event": "turn_end", "payload": {"thread_id": "fixture-thread", "turn_id": "turn-1", "outcome": "completed",
+      "evidence": {"reference": "evidence:1", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}}},
+    {"type": "invoke", "mod": "example_review_probe", "event": "command", "name": "status", "payload": null,
+      "expect": {"status": "denied", "reason": "route_unavailable"}}
+  ]
+}
