@@ -32737,10 +32737,10 @@ index 06f63ede9ee18b94f52d66b1e804f741552b3de4..352c6350735a68e0e11f25347a4effab
      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
          f.write_str("EnvironmentAccessKey(..)")
 diff --git a/codex-rs/git-utils/src/baseline.rs b/codex-rs/git-utils/src/baseline.rs
-index 6ab104372c9fde209f69fe2c44cf2db9914001e2..81152f8b827820950851c67bf59a17dcdb545266 100644
+index 6ab104372c9fde209f69fe2c44cf2db9914001e2..f0c48bbf740fc1bacb993fdf1023eb3758ba09f6 100644
 --- a/codex-rs/git-utils/src/baseline.rs
 +++ b/codex-rs/git-utils/src/baseline.rs
-@@ -784,6 +784,56 @@ mod tests {
+@@ -784,6 +784,53 @@ mod tests {
          assert_eq!(git_stdout(&root, &["ls-files"]), "");
      }
 
@@ -32786,12 +32786,9 @@ index 6ab104372c9fde209f69fe2c44cf2db9914001e2..81152f8b827820950851c67bf59a17dc
 +        ensure_git_baseline_repository(&root)
 +            .await
 +            .expect("recover baseline");
-+        assert!(
-+            !diff_since_latest_init(&root)
-+                .await
-+                .expect("recovered diff")
-+                .has_changes()
-+        );
++        let recovered = diff_since_latest_init(&root).await.expect("recovered diff");
++        assert!(recovered.unified_diff.contains("+changed"));
++        assert!(!recovered.unified_diff.contains("-baseline"));
 +    }
 +
      #[cfg(unix)]
