@@ -360,7 +360,7 @@ When a project has `index.tsx`, `omd-mod-author` (check, test, run, debug, packa
 with the project's own TypeScript into a self-contained `index.ts`. It inlines the small JSX factory, so the host still
 sees one module with no value imports.
 
-- The project needs `typescript` installed (`pnpm add -D typescript@5.9.3`); without it the command fails with
+- The project needs `typescript` installed (the scaffold includes it); without it the command fails with
   `jsx_requires_typescript`.
 - Edit `index.tsx` and treat `index.ts` as generated output. A hand-written `index.ts` beside `index.tsx` is never
   overwritten and fails with `jsx_entrypoint_conflict`.

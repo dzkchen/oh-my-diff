@@ -8,7 +8,7 @@ prompt box, menus and the footer. It's off by default in OMD+. OMD Core doesn't 
 Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_theme
+omd mods enable omd_theme
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

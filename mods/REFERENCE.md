@@ -3,7 +3,7 @@
 This is every [mod API reference page](reference/README.md) in one file, for agents and search. Generated from
 the pages in the order of their contents table; edit the pages, not this file.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.165.0`.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.166.0`.
 `omd-mod status` reports the OMD release as `host.omd`. A package's `compatibility.releases` is matched against that
 version. The host loads only mods for this API version. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
@@ -396,7 +396,7 @@ Use it when you check whether a design fits the host. Each row gives one limit a
 states the exact rule and the error a call gets. The `host.json` limits an operator can change are under
 [Host limits](#host-limits).
 
-Values are those of Mod API `1.0.0` on Codex `0.165.0`; limits of experimental entries may change in any release.
+Values are those of Mod API `1.0.0` on Codex `0.166.0`; limits of experimental entries may change in any release.
 
 ### Limits by area
 
@@ -1074,7 +1074,7 @@ When a project has `index.tsx`, `omd-mod-author` (check, test, run, debug, packa
 with the project's own TypeScript into a self-contained `index.ts`. It inlines the small JSX factory, so the host still
 sees one module with no value imports.
 
-- The project needs `typescript` installed (`pnpm add -D typescript@5.9.3`); without it the command fails with
+- The project needs `typescript` installed (the scaffold includes it); without it the command fails with
   `jsx_requires_typescript`.
 - Edit `index.tsx` and treat `index.ts` as generated output. A hand-written `index.ts` beside `index.tsx` is never
   overwritten and fails with `jsx_entrypoint_conflict`.
@@ -1780,7 +1780,7 @@ a mod makes: tools, commands, interceptors, replacements, lifecycle events and s
 | `config` | `app.request` for the `config` methods, `config.describe`, `config_list` interceptors, the `config_change` event |
 | `config.write` | `app.request` for the `config.write` methods, `config.set`, `config_set` interceptors |
 | `inventory` | `app.request` for the `inventory` methods, `app.routes`, `session.info`, `tools.list` |
-| `account` | `app.request` for the `account` methods |
+| `account` | `app.request` for the `account` methods; lists ChatGPT workspaces (`accountSession/list`) and, from user actions only, switches them (`accountSession/switch`, confirmed natively on every call; browser sign-in stays native) |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
@@ -6294,8 +6294,10 @@ A custom summarizer calls [`model.fork`](reference/model-calls.md#modelfork) (th
 Interrupting the turn cancels a waiting chain. The installed result persists as the normal compaction checkpoint,
 so resume reads it.
 
-`compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `deferred` or `failed`), `by` and
-`provider_call`.
+`compaction_start {turn_id, trigger}` (`manual` or `auto`) fires before the `compaction` interceptors run, whatever
+they then decide. `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `deferred` or `failed`),
+`by` and `provider_call`. Both are observe-only events of the `lifecycle` capability: a handler cannot change or
+stop the compaction.
 
 #### Evidence across compaction
 
@@ -6358,8 +6360,8 @@ only" means no page describes the field beyond its type.
 | `title` | string | frozen | [Default styling](reference/layout-and-styling.md#default-styling) |
 | `foreground` | number | experimental | type only |
 | `background` | number | experimental | type only |
-| `sidebar_width` | number | frozen | type only |
-| `sidebar_side` | `left` or `right` | frozen | type only |
+| `sidebar_width` | number | frozen | [Default styling](reference/layout-and-styling.md#default-styling) |
+| `sidebar_side` | `left` or `right` | frozen | [Default styling](reference/layout-and-styling.md#default-styling) |
 | `sidebar_style` | `TerminalFrameStyle` | frozen | [Box model](reference/layout-and-styling.md#box-model-terminal_box_model_v1) |
 | `panels` | `{title, lines}[]` | experimental | type only |
 | `header` | `{title, lines}` | experimental | type only |
@@ -6506,7 +6508,8 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 ### `tool_call` props
 
 Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
-`interrupted`), `duration_ms` and `expanded`, and per kind:
+`interrupted`), `duration_ms` (null without a recorded start and completion, such as a patch row drawn live) and
+`expanded`, and per kind:
 
 | `kind` | Props |
 | --- | --- |
@@ -6813,6 +6816,11 @@ draw no frame.
 
 - The sidebar has no padding, one row between its components under the comfortable density, and no border unless
   `sidebar_style` sets one, and then shows the view `title`.
+- `sidebar_width` is the sidebar's width in columns, an integer from 0 to 60; a larger value refuses the patch
+  (`invalid_terminal_patch: sidebar_width`). The fullscreen sidebar is never narrower than 20 columns (the width
+  when unset) or wider than a third of the terminal, and it does not draw below 80 columns.
+- `sidebar_side` is `left` or `right` (default `right`). When several mods set either, the last one applied wins;
+  it is not a conflict.
 - A split's `gap` (0–4) leaves cells between its children.
 - Render hook trees refuse `style` and `flex`.
 - The sidebar opens only for a mod's `sidebar` components, `panels` or unplaced mod sites. The host's progress and
@@ -7482,7 +7490,8 @@ terminal.selection {} → {text, truncated}
 terminal.copy {text} → {status}
 ```
 
-`terminal.selection` returns the current selection in the Codex terminal UI, or `text: null` when there is none. It
+`terminal.selection` returns the current selection in the Codex terminal UI (a mouse selection or a
+select-mode mark), or `text: null` when there is none. It
 prefers the visible transcript overlay and never reads obscured transcript text, another client's selection or the OS
 clipboard.
 
@@ -8124,7 +8133,7 @@ only, and `--rollback` makes the previous generation active again.
 
 ### Recovery
 
-Recovery stays local and offline. `/omd`, `omd-package mod disable` and `omd-mod reset STORE mods.json` recover
+Recovery stays local and offline. `/omd`, `omd mods disable ID` and `omd-mod reset STORE mods.json` recover
 user and project mods; managed packages keep running while the policy lists them. Running the upstream `codex`
 recovers from every customization.
 

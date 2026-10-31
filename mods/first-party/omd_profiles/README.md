@@ -9,7 +9,7 @@ default in OMD+. OMD Core doesn't include it.
 Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_profiles
+omd mods enable omd_profiles
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

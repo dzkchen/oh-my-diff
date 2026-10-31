@@ -22,7 +22,7 @@ With [`omd_git`](../omd_git/README.md) on, its Git tab replaces Changes, so the 
 Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_workspace
+omd mods enable omd_workspace
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

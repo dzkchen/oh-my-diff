@@ -9,7 +9,7 @@ to carry on. It's on by default in OMD+. OMD Core doesn't include it.
 Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_auto_continue
+omd mods disable omd_auto_continue
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

@@ -1757,7 +1757,8 @@ utf8parse 0.2.2 | Apache-2.0 OR MIT | texts 7, 2
 uuid 1.20.0 | Apache-2.0 OR MIT | texts 1, 2
   Copyright (c) 2014 The Rust Project Developers
   Copyright (c) 2018 Ashley Mannix, Christopher Armstrong, Dylan DPC, Hunar Roop Kahlon
-v8 152.2.0 | MIT | no license file in the crate; authors: the Deno authors
+v8 152.2.0 | MIT | texts 8
+  Copyright (c) 2018-2019 the Deno authors
 vsimd 0.8.0 | MIT | no license file in the crate; authors: not declared
 vt100 0.16.2 | MIT | texts 6
   Copyright (c) 2016 Jesse Luehrs

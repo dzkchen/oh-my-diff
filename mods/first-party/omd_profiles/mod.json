@@ -61,6 +61,7 @@
     ]
   },
   "assets": [
+    "handoff.mjs",
     "profiles.ts",
     "router.mjs",
     "setup.mjs"

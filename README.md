@@ -33,7 +33,7 @@ explains what a mod can and can't do.
 
 ## Install
 
-You need an Apple Silicon Mac, Codex `0.165.x` already installed, and Python 3.12 or later. The
+You need an Apple Silicon Mac, Codex `0.166.x` already installed, and Python 3.12 or later. The
 [install guide](docs/install.md) lists every requirement.
 
 There are two install profiles, OMD+ and OMD Core. Choose OMD+ unless you want only the mod host, the part of OMD
@@ -41,7 +41,9 @@ that loads mods. You can switch later by running the other command.
 
 The OMD+ install profile (`--profile full`) is OMD plus the [included mods](docs/collection.md). A status line,
 compact tool output, a pinned plan, a model picker and more are on from the start, and the rest are a click away in
-`/mods`.
+`/mods`. Three of its defaults change how Codex behaves: an approval nobody answers within two minutes is
+declined, a large idle chat is compacted (cancelling a pending approval) and `/plan` is removed. Turn any of them off
+in `/mods`.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full

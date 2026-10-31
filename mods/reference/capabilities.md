@@ -46,7 +46,7 @@ a mod makes: tools, commands, interceptors, replacements, lifecycle events and s
 | `config` | `app.request` for the `config` methods, `config.describe`, `config_list` interceptors, the `config_change` event |
 | `config.write` | `app.request` for the `config.write` methods, `config.set`, `config_set` interceptors |
 | `inventory` | `app.request` for the `inventory` methods, `app.routes`, `session.info`, `tools.list` |
-| `account` | `app.request` for the `account` methods |
+| `account` | `app.request` for the `account` methods; lists ChatGPT workspaces (`accountSession/list`) and, from user actions only, switches them (`accountSession/switch`, confirmed natively on every call; browser sign-in stays native) |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |

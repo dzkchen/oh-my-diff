@@ -9,7 +9,7 @@ Install yazi first, following the [installation guide](https://yazi-rs.github.io
 `brew install yazi`). Without it `/yazi` says so. Then turn on `omd_yazi` in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_yazi
+omd mods enable omd_yazi
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

@@ -17,7 +17,6 @@ mod's tool.
 ```sh
 omd-mod-author create ./notes notes
 cd notes
-pnpm add -D typescript@5.9.3
 ```
 
 The scaffold is the `/hello` mod from the first tutorial. The next steps replace its code, manifest and test.

@@ -4,7 +4,7 @@ Use it when you check whether a design fits the host. Each row gives one limit a
 states the exact rule and the error a call gets. The `host.json` limits an operator can change are under
 [Host limits](#host-limits).
 
-Values are those of Mod API `1.0.0` on Codex `0.165.0`; limits of experimental entries may change in any release.
+Values are those of Mod API `1.0.0` on Codex `0.166.0`; limits of experimental entries may change in any release.
 
 ## Limits by area
 

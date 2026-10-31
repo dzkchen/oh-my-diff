@@ -10,7 +10,7 @@ The status line below the prompt (`omd_statusline`) shows the summary.
 Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_usage
+omd mods enable omd_usage
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
@@ -42,6 +42,9 @@ Change settings in `/mods`.
 - Costs come from what each provider reports. Requests on your ChatGPT plan count as included. Extra-usage credits
   spent past the plan's limit aren't reported per request. A cost the provider doesn't report shows as unknown, not
   zero.
+- When Codex reports native dollar usage for the lead thread (`account/usage/read`, read on open, refresh and, with a
+  budget set, every turn end), the dialog shows it in place of the lead's configured-rate estimate and the budget
+  counts it instead. Workers' estimates and billed spend still count. Missing native usage falls back to the estimate.
 - Totals cover the last 120 requests in the session, not lifetime spend. The budget also counts what older requests
   cost before they left that window.
 - Quota windows are listed per account (Codex, Claude, Cursor), each under the account that reported it. No window

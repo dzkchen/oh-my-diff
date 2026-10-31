@@ -19,8 +19,8 @@ It draws inside [`omd_workspace`](../omd_workspace/README.md), so turn that on f
 `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_workspace
-omd-package mod enable omd_files
+omd mods enable omd_workspace
+omd mods enable omd_files
 ```
 
 Turn on [`omd_frecency`](../omd_frecency/README.md) too for the `z` jump list.

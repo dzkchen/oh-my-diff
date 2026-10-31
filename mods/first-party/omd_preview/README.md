@@ -8,7 +8,7 @@ in the terminal with text characters. It's off by default in OMD+. OMD Core does
 Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_preview
+omd mods enable omd_preview
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

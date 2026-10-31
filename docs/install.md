@@ -6,7 +6,7 @@ How to install, update, switch install profile and uninstall Oh My Diff (OMD). I
 ## Before you begin
 
 - An Apple Silicon Mac. Other platforms are unsupported, and the installer refuses them.
-- Codex `0.165.x`. Don't update Codex until OMD supports the new version.
+- Codex `0.166.x`. Don't update Codex until OMD supports the new version.
 - Python 3.12 or later. macOS ships 3.9.
 
 Check your Codex version:
@@ -15,10 +15,10 @@ Check your Codex version:
 codex --version
 ```
 
-If Codex is missing or on another version, install `0.165.x`:
+If Codex is missing or on another version, install `0.166.x`:
 
 ```sh
-npm install -g @openai/codex@0.165
+npm install -g @openai/codex@0.166
 ```
 
 If your Python is older than 3.12, install a newer one:

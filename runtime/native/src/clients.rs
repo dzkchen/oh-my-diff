@@ -112,11 +112,9 @@ fn republish(core: &Core) {
     let _thread = codex_omd::StateThread::enter(lead.as_ref().map(|lead| lead.thread.to_string()));
     let ledger = lead.as_ref().map_or(Value::Null, Lead::ledger);
     if let Ok(mut runtime) = core.runtime.lock() {
-        core.views.quiet.store(true, Ordering::Release);
         publish(&mut runtime, &core.host, &core.views, event, ledger, || {
             true
         });
-        core.views.quiet.store(false, Ordering::Release);
     }
 }
 

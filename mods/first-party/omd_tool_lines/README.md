@@ -14,7 +14,7 @@ its short arguments and the result. It's on by default in OMD+. OMD Core doesn't
 Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_tool_lines
+omd mods disable omd_tool_lines
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

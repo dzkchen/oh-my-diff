@@ -9,7 +9,7 @@ Install lazygit first, following the [installation guide](https://github.com/jes
 (Homebrew: `brew install lazygit`). Without it `/lazygit` says so. Then turn on `omd_lazygit` in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_lazygit
+omd mods enable omd_lazygit
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

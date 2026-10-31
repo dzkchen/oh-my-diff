@@ -1665,6 +1665,25 @@ async fn channel_events_reach_subscribers_in_order() {
         before + 2,
         "each state-changing delivery republishes the view"
     );
+    let republish = || {
+        let mut runtime = core.runtime.lock().unwrap();
+        publish(
+            &mut runtime,
+            &core.host,
+            &core.views,
+            "idle",
+            Value::Null,
+            || true,
+        );
+    };
+    republish();
+    let settled = revision();
+    republish();
+    assert_eq!(
+        revision(),
+        settled,
+        "an unchanged publication keeps the revision"
+    );
     assert_eq!(
         command(core, "listener", "seen"),
         json!([["herald/ping", 1, 1], ["herald/ping", 2, {"n": 2}]])

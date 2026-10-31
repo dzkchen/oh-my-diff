@@ -8,11 +8,7 @@ and never touch your mod store: each run builds a throwaway store. For every fie
 ## Before you begin
 
 You need a mod project made with `omd-mod-author create`, such as the one from
-[Write your first mod](first-mod.md), with TypeScript added:
-
-```sh
-pnpm add -D typescript@5.9.3
-```
+[Write your first mod](first-mod.md). Its scaffold includes TypeScript.
 
 The examples below use a mod with the id `my_mod`, and the [notes mod](notes-mod.md) from the second tutorial.
 

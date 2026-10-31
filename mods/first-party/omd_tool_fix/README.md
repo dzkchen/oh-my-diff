@@ -11,7 +11,7 @@ change.
 Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_tool_fix
+omd mods enable omd_tool_fix
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

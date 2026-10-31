@@ -9,8 +9,8 @@ It uses the language servers that [`omd_lsp_sync`](../omd_lsp_sync/README.md) ru
 server on your `PATH`. Then turn on `omd_lsp_view` in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_lsp_sync
-omd-package mod enable omd_lsp_view
+omd mods enable omd_lsp_sync
+omd mods enable omd_lsp_view
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

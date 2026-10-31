@@ -627,7 +627,7 @@ test('Claude and Cursor accounts from their own mods are listed, metered from th
     ['anthropic', 'https://api.anthropic.com/v1/messages', 'claude-sonnet-4-5', 200000, [3, 15]]);
 });
 
-test('the port hand-off shows a foreign holder neither the local token nor the readiness nonce', async () => {
+test('the port hand-off shows a foreign holder neither the local token nor the readiness nonce, and a changed service grant takes the port', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'omd-profiles-'));
   const token = 'local-token-'.repeat(4);
   const seen = [];
@@ -672,6 +672,11 @@ test('the port hand-off shows a foreign holder neither the local token nor the r
     await new Promise(resolve => owner.on('exit', resolve));
     await served('nonce-b');
     assert.equal(later.exitCode, null);
+    writeFileSync(hostPath, JSON.stringify({ routes: [], services: [{ id: 'omd_profiles', credentials: ['work'] }] }));
+    const exited = new Promise(resolve => later.on('exit', resolve));
+    serve('nonce-c');
+    assert.equal(await exited, 0);
+    await served('nonce-c');
   } finally {
     for (const child of children) child.kill();
     rmSync(directory, { recursive: true, force: true });

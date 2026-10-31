@@ -44,7 +44,7 @@ files:
   [capabilities](../../mods/reference/glossary.md#trust-and-authority). The scaffold asks only for `commands`.
 - `mod.test.json`: an offline test that runs `/hello` with the argument `author`.
 - `debug.test.json`: a test that expects an error, so you can see how errors look.
-- `package.json` and `tsconfig.json`: the `pnpm` scripts and TypeScript settings.
+- `package.json` and `tsconfig.json`: the `pnpm` scripts, TypeScript and its settings.
 
 `index.ts` registers a `/hello` command:
 
@@ -64,10 +64,9 @@ for `debug.test.json` to catch.
 
 ## 2. Turn on type checking
 
-Add TypeScript to the project once. `omd-mod-author` asks for 5.9.3, the version the SDK pins:
+The scaffold includes TypeScript 5.9.3, the version the SDK pins:
 
 ```sh
-pnpm add -D typescript@5.9.3
 pnpm check
 ```
 

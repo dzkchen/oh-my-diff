@@ -9,7 +9,7 @@ verified on a live Cursor account. OMD Core doesn't include it.
 Turn it on in `/mods` and approve its trust dialog, or run:
 
 ```sh
-omd-package mod enable omd_cursor
+omd mods enable omd_cursor
 ```
 
 Turning it on asks permission to run `node` outside the sandbox (the `os` grant), because setup installs the SDK,

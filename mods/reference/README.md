@@ -6,7 +6,7 @@ Start with the contents below; the [glossary](glossary.md) defines the terms the
 
 ## Version
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.165.0`.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.166.0`.
 `omd-mod status` reports the OMD release as `host.omd`. A package's `compatibility.releases` is matched against that
 version. The host loads only mods for this API version. [`api.d.ts`](../api.d.ts) is the complete typed surface.
 

@@ -4,7 +4,7 @@ Use this guide to build an Oh My Diff (OMD) mod for a user, test it offline and 
 It's for coding agents and gives the rules, the order of work, where to look things up and the mistakes agents make
 most. The steps themselves are in the [mod author guides](#guides-to-follow).
 
-Everything here is for mod API `1.0.0` on Codex `0.165.0`, Apple Silicon macOS. Only that API version loads, so check
+Everything here is for mod API `1.0.0` on Codex `0.166.0`, Apple Silicon macOS. Only that API version loads, so check
 `api` in a mod's `mod.json` before you reuse older code. Tool versions are in [Support](support.md).
 
 ## Rules
@@ -37,8 +37,8 @@ See [Mods, plugins, skills and hooks](how-omd-works.md#mods-plugins-skills-and-h
 1. Check the tools: `command -v omd-mod-author omd-mod omd`, `node --version` (24.18 or a later 24.x, needed only by
    `omd-mod-author`) and `pnpm --version` (11.14 or later). If `omd-mod-author` is missing, OMD isn't installed. Tell
    the user and link [Install](install.md).
-2. Create the project with `omd-mod-author create ./ID ID`, then `cd ID` and run `pnpm add -D typescript@5.9.3`. To
-   start from a bigger mod, copy an example: `omd-mod-author example ./release_check release_check`, or
+2. Create the project with `omd-mod-author create ./ID ID`, then `cd ID` and run `pnpm install` (the scaffold includes
+   TypeScript). To start from a bigger mod, copy an example: `omd-mod-author example ./release_check release_check`, or
    `omd-mod-author examples ./examples` for the ones that ship with the tools.
 3. In `ID/`, write `index.ts` and list every capability it uses in `mod.json`.
 4. In `ID/`, replace `mod.test.json`, delete `debug.test.json` once `/hello` is gone, then run `pnpm check` and

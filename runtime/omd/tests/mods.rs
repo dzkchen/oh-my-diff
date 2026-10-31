@@ -3077,6 +3077,25 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
     assert_eq!(runtime.replacement_owner("context"), None);
 }
 
+#[cfg(unix)]
+#[test]
+fn reopening_an_unchanged_store_keeps_its_generated_types() {
+    use std::os::unix::fs::MetadataExt;
+    let (temp, _, _) = fixture(
+        "export default api => api.command('ok', () => 'ok')",
+        &["commands"],
+    );
+    let store = temp.path().join("store");
+    let inodes = || {
+        ["active-host.d.ts", "installed-contracts.d.ts"]
+            .map(|name| std::fs::metadata(store.join(name)).unwrap().ino())
+    };
+    drop(host(&temp));
+    let before = inodes();
+    drop(host(&temp));
+    assert_eq!(inodes(), before);
+}
+
 #[test]
 fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_owned() {
     let source = "export default api => {\n  api.command('fail', () => {\n    throw new Error('INTENTIONAL_AUTHOR_FAILURE sk- sk-authorsecret123456789');\n  });\n}";

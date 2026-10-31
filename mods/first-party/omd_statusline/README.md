@@ -8,7 +8,7 @@ default in OMD+. OMD Core doesn't include it.
 It replaces Codex's own status row. Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_statusline
+omd mods disable omd_statusline
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
@@ -28,8 +28,8 @@ Run `/statusline` to open the editor, in the same panel as `/config`. Its subtit
 
 Presets:
 
-- `compact`: `model context limits cost cache git omd`
-- `detailed`: `model effort provider context tokens cache cost limits`, then
+- `compact`: `model tier context limits cost cache git omd`
+- `detailed`: `model effort tier provider context tokens cache cost limits`, then
   `git changes pr ci session tools agents plan omd` on a second line
 
 A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLOR`.
@@ -37,6 +37,11 @@ A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLO
 ### Segments
 
 - `model`, `effort`, `provider`: the model (`requested→served` if they differ), reasoning effort, provider.
+- `tier`: the processing tier name (such as Fast), from the model catalog, or Flex. With no tier configured it shows
+  the model's catalog default; hidden when no tier applies, as in Codex's own model label.
+- `profile`: `profile: <name>` when the active user config layer is a `--profile` one. Not in a preset; add it to a
+  custom layout.
+- `workspace`: `workspace: <name>` for the selected ChatGPT workspace. Not in a preset; add it to a custom layout.
 - `context`: usage with a bar. `~` and muted after a compaction (a shorter summary replacing the earlier
   conversation), rewind or model switch. `⟳N` counts compactions.
 - `tokens`, `cache`: token use and cache state.
@@ -76,7 +81,7 @@ Then add `script:weather` to a custom layout. Commands run without a shell, so p
 `$HOME` are not expanded).
 
 - Your script gets one JSON object on stdin with `schema`, `segment`, `placement`, `viewport`, `now_ms`, `session`,
-  `model`, `context`, `tokens`, `cost`, `limits`, `git`, `github`, `plan`, and the counts `tools_running` and
+  `model`, `profile`, `workspace`, `context`, `tokens`, `cost`, `limits`, `git`, `github`, `plan`, and the counts `tools_running` and
   `agents`. Unknown fields are null.
 - The first non-empty stdout line is drawn. Colors, bold, italic, underline and `http(s)` links are kept.
 - It runs sandboxed: no network, private HOME, read-only workspace, 100-5000 ms deadline, 8 KiB output. A hang shows
@@ -104,7 +109,7 @@ omd-mod settings "$STORE" "$STORE/sources/omd_statusline" '{"preset": "detailed"
 | `thresholds` | `context=70,90 limits=70,90 cost=5,20` | Warning and alert levels (percent, or USD for `cost`) |
 | `tones` | empty | `segment=tone` overrides: `accent`, `success`, `attention`, `failure`, `muted`, `normal` |
 | `github` | `true` | Pull request and CI segments, once a token is connected |
-| `refresh_s` | `30` | Git refresh interval in seconds (5-3600) |
+| `refresh_s` | `60` | Git refresh interval in seconds (5-3600) |
 | `scripts` | empty | JSON array of your own segments (see [Scripts](#scripts)) |
 
 ## Needs and limits

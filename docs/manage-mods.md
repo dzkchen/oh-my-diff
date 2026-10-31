@@ -44,18 +44,11 @@ To install for the current project instead of for you, add `--scope project` (th
 
 In `codex`, use `/mods`. If `/mods` is broken, `/omd` has an on/off switch for each mod.
 
-From a shell, the command depends on where the mod came from:
-
-- For a mod you installed with `omd install`, use `omd mods enable ID` or `omd mods disable ID`. It finds the mod
-  by id, shows its permissions and asks before turning it on.
-- For a mod that came with your install profile, use `omd-package mod enable ID` or `omd-package mod disable ID`.
-  `omd-package` is the tool that manages your install profile and its mods. It changes the mod's trusted selection
-  without asking, reloads the mods, and puts the previous state back if the mod fails to load.
-
-For example, to turn on `omd_usage`, which comes with OMD+:
+From a shell, use `omd mods enable ID` or `omd mods disable ID`. It finds the mod by id, shows its permissions and
+asks before turning it on. For example, to turn on `omd_usage`, which comes with OMD+:
 
 ```sh
-omd-package mod enable omd_usage
+omd mods enable omd_usage
 ```
 
 A change applies at your next message. `omd mods list` shows which mods are installed and on. Turning a mod off

@@ -11,7 +11,7 @@ A language server is the program your editor uses to find errors and jump to def
 Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_lsp_sync
+omd mods enable omd_lsp_sync
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

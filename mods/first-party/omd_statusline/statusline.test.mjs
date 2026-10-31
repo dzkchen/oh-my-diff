@@ -16,8 +16,10 @@ const GIT = '/repo/.git/worktrees/line\n/repo/.git\n/work/line\n@@\ngit@github.c
 
 const host = (overrides = {}) => ({ operation, arguments: args }) => {
   if (operation in overrides) return overrides[operation](args);
-  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.165.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
+  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.166.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
   if (operation === 'app.request' && args.method === 'config/read') return { config: { model_reasoning_effort: 'high', model_context_window: 272_000 } };
+  if (operation === 'app.request' && args.method === 'account/read') return { account: null, requiresOpenaiAuth: true };
+  if (operation === 'app.request' && args.method === 'model/list') return { data: [], nextCursor: null };
   if (operation === 'app.request' && args.method === 'account/rateLimits/read') {
     return { rateLimits: { primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: (NOW + 7_200_000) / 1000 }, secondary: { usedPercent: 93, windowDurationMins: 10_080, resetsAt: (NOW + 86_400_000) / 1000 } } };
   }
@@ -100,4 +102,20 @@ test('a panel action after the UI state was cleared edits the saved settings and
   assert.deepEqual([edited.ui.draft.layout, edited.ui.draft.glyphs], ['model git', 'ascii']);
   const panel = edited.calls.findLast(item => item.operation === 'terminal.panel').arguments;
   assert.equal(panel.items.find(item => item.id === 'thresholds').value.length, 2000);
+});
+
+test('profile, tier and workspace segments follow the config layers, thread settings and account', () => {
+  const settings = { preset: 'custom', layout: 'model tier profile workspace' };
+  const answer = tier => host({ 'app.request': args => args.method === 'config/read'
+    ? { config: { service_tier: tier }, layers: [{ name: { type: 'user', file: '/home/.codex/work.toml', profile: 'work' } }, { name: { type: 'user', file: '/home/.codex/config.toml', profile: null } }] }
+    : args.method === 'model/list' ? { data: [{ model: 'gpt-6.1-sol', defaultServiceTier: 'priority', serviceTiers: [{ id: 'priority', name: 'Fast' }] }], nextCursor: null }
+      : args.method === 'account/read' ? { account: { type: 'chatgpt', email: null, planType: 'plus', workspaceName: 'Acme' }, requiresOpenaiAuth: true }
+        : { rateLimits: {} } });
+  const text = state => lines(view(state, settings))[0];
+  assert.equal(text(settled(answer('priority'))), 'gpt-6.1-sol · Fast · profile: work · workspace: Acme');
+  assert.equal(text(settled(answer('flex'))), 'gpt-6.1-sol · Flex · profile: work · workspace: Acme', 'Flex needs no catalog entry');
+  assert.equal(text(settled(answer('turbo'))), 'gpt-6.1-sol · profile: work · workspace: Acme', 'an unknown tier shows nothing');
+  assert.equal(text(settled(answer(null))), 'gpt-6.1-sol · Fast · profile: work · workspace: Acme', 'no configured tier takes the catalog default');
+  const notify = (state, threadSettings) => call({ event: 'app_notification', payload: { method: 'thread/settings/updated', params: { threadSettings }, thread_id: 'lead', coalesced: 0, dropped: 0 }, state }, answer('priority')).state;
+  assert.equal(text(notify(settled(answer('priority')), { serviceTier: null })), 'gpt-6.1-sol · profile: work · workspace: Acme');
 });

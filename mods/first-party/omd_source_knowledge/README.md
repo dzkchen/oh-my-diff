@@ -12,7 +12,7 @@ from that evidence. A lesson is used only after you approve it.
 Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_source_knowledge
+omd mods enable omd_source_knowledge
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

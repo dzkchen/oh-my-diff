@@ -8,7 +8,7 @@ doesn't include it.
 Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_plan_panel
+omd mods disable omd_plan_panel
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

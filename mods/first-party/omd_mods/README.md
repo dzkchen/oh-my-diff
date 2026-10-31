@@ -9,7 +9,7 @@ and OMD Core.
 requires: `omd_mods`, `omd_logo` and `omd_update`. Only a shell command can:
 
 ```sh
-omd-package mod disable omd_mods
+omd mods disable omd_mods
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

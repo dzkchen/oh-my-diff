@@ -7,12 +7,11 @@ authoring reference.
 
 ## Before you begin
 
-Create a mod named `tally` and add TypeScript, which compiles the JSX:
+Create a mod named `tally`. Its scaffold includes TypeScript, which compiles the JSX:
 
 ```sh
 omd-mod-author create ./tally tally
 cd tally
-pnpm add -D typescript@5.9.3
 rm mod.test.json debug.test.json
 ```
 

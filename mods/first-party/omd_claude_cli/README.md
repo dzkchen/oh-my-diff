@@ -8,7 +8,7 @@ Enterprise), or through your Anthropic Console login. It's off by default in OMD
 Turn it on in `/mods` and approve its trust dialog, or run:
 
 ```sh
-omd-package mod enable omd_claude_cli
+omd mods enable omd_claude_cli
 ```
 
 Turning it on asks permission to run `claude` and `node` outside the sandbox (the `os` grant), because

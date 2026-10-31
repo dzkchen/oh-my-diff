@@ -51,8 +51,8 @@ only" means no page describes the field beyond its type.
 | `title` | string | frozen | [Default styling](layout-and-styling.md#default-styling) |
 | `foreground` | number | experimental | type only |
 | `background` | number | experimental | type only |
-| `sidebar_width` | number | frozen | type only |
-| `sidebar_side` | `left` or `right` | frozen | type only |
+| `sidebar_width` | number | frozen | [Default styling](layout-and-styling.md#default-styling) |
+| `sidebar_side` | `left` or `right` | frozen | [Default styling](layout-and-styling.md#default-styling) |
 | `sidebar_style` | `TerminalFrameStyle` | frozen | [Box model](layout-and-styling.md#box-model-terminal_box_model_v1) |
 | `panels` | `{title, lines}[]` | experimental | type only |
 | `header` | `{title, lines}` | experimental | type only |

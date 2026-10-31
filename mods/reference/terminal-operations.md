@@ -58,7 +58,8 @@ terminal.selection {} → {text, truncated}
 terminal.copy {text} → {status}
 ```
 
-`terminal.selection` returns the current selection in the Codex terminal UI, or `text: null` when there is none. It
+`terminal.selection` returns the current selection in the Codex terminal UI (a mouse selection or a
+select-mode mark), or `text: null` when there is none. It
 prefers the visible transcript overlay and never reads obscured transcript text, another client's selection or the OS
 clipboard.
 

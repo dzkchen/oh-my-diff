@@ -22,7 +22,7 @@ is a recovery state in which the build behaves as plain Codex with no mods.
 OMD is the Codex CLI built from upstream source with one patch applied. The patch adds a mod host, the part of
 `codex` that loads mods and gives them building blocks such as tool interception and terminal panels. When no mod uses
 a building block, the host allocates nothing for it and changes no Codex decision. The repository contains no copy of
-Codex. It contains the patch (`runtime/patches/omd-0.165.0.patch`), a manifest of file hashes, and readable copies of
+Codex. It contains the patch (`runtime/patches/omd-0.166.0.patch`), a manifest of file hashes, and readable copies of
 the crates (Rust packages) the patch adds.
 
 The patch applies to one exact Codex release tag. While applying it, the build checks every file's hash against the
@@ -66,20 +66,17 @@ replaced Node with a runner that embeds the V8 JavaScript engine. It uses about 
 For a whole session:
 
 - Codex alone and OMD+ were both ready to type in about 0.3 s.
-- Codex alone used about 30 MB. OMD+ as installed used about 100 MB: about 40 MB for the Codex process, plus seven
-  `omd-runner` processes of 6–13 MB each that run the mods.
-- Turning on `omd_preview`, `omd_profiles`, `omd_usage`, `omd_mini` or `omd_advisor` added one more such process,
-  about 8–19 MB. Each of the other off-by-default mods added under 5 MB at idle. Programs a mod starts, such as
-  `omd_lsp_sync`'s language servers, use their own memory while they run.
+- OMD+ as installed used about 100 MB, including the `omd-runner` processes that run its mods (7–10 MB each).
+- Turning on `omd_preview`, `omd_profiles`, `omd_usage` or `omd_mini` added a runner of about 8–12 MB. Programs a
+  mod starts, such as `omd_lsp_sync`'s language servers, use their own memory while they run.
 
-The session figures above are historical. They were measured on one Apple M5 Mac with a scripted model and a 1.1.0
-pre-release build in October 2026, before `omd_workspace`, `omd_git`, `omd_files` and `omd_theme` existed. They
-haven't been re-measured on Codex `0.165.0`. Memory is the macOS memory footprint (the figure Activity Monitor shows),
-10 seconds after start. Your numbers will differ.
+These were measured on one Apple M5 Mac with a scripted model and release builds on Codex `0.165` and `0.166` in
+October 2026. Memory is the macOS memory footprint (the figure Activity Monitor shows), 10 seconds after start. Your
+numbers will differ.
 
 ## Mods, plugins, skills and hooks
 
-Codex `0.165.0` already has plugins, skills and hooks. A mod is for the changes they can't make.
+Codex `0.166.0` already has plugins, skills and hooks. A mod is for the changes they can't make.
 
 | Use | For |
 | --- | --- |
@@ -88,7 +85,7 @@ Codex `0.165.0` already has plugins, skills and hooks. A mod is for the changes 
 | A plugin | Tools or services Codex can call, optionally with an MCP server (a program that offers tools over the Model Context Protocol) |
 | A mod | Changing how `codex` itself behaves or looks: commands, screens, requests, tool calls |
 
-Codex `0.165.0` plugins bundle skills, prompts, MCP servers and hook files. Codex hooks are external commands or MCP
+Codex `0.166.0` plugins bundle skills, prompts, MCP servers and hook files. Codex hooks are external commands or MCP
 tools that return a decision: block a call, add context, or rewrite a tool's input.
 
 A hook can't store state between calls, stream output, draw on screen, choose which model answers or run an agent.

@@ -14,7 +14,7 @@ Compaction uses the provider, and savings and faster responses are not guarantee
 Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_idle_compact
+omd mods disable omd_idle_compact
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

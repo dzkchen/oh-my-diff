@@ -8,7 +8,7 @@ default in OMD+. OMD Core doesn't include it.
 To get plan mode back, turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_plan_removal
+omd mods disable omd_plan_removal
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

@@ -206,7 +206,7 @@ only, and `--rollback` makes the previous generation active again.
 
 ## Recovery
 
-Recovery stays local and offline. `/omd`, `omd-package mod disable` and `omd-mod reset STORE mods.json` recover
+Recovery stays local and offline. `/omd`, `omd mods disable ID` and `omd-mod reset STORE mods.json` recover
 user and project mods; managed packages keep running while the policy lists them. Running the upstream `codex`
 recovers from every customization.
 

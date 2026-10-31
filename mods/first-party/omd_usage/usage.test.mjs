@@ -143,3 +143,25 @@ test('the budget counts spend that left the rolling window or settled late, warn
   const budget = value => call(usageMod, { event: 'command', name: 'budget', payload: value, state: null, settings: {} }).calls.map(item => item.operation);
   assert.deepEqual([budget('Infinity'), budget('5')], [[], ['settings.write']]);
 });
+
+test('native thread dollars replace the configured-rate estimate and the budget follows them', () => {
+  const settings = { ...hud, budget_usd: 10 };
+  const usage = native => hostCall => hostCall.operation === 'task.status' ? { ledger: { thread_id: 'lead', cost: null }, limits: {}, worker_limits: {} }
+    : hostCall.operation === 'app.request' && hostCall.arguments.method === 'account/usage/read'
+      ? { summary: {}, threadUsage: { threadId: hostCall.arguments.params.threadId, estimatedUsageCreditsMicros: 0, groups: [], nativeUsageUsdMicros: native } } : { delivered: 1, dropped: 0 };
+  const estimated = feed(start(), [['model_response', response('e1', { route: 'api', credential: 'key', cost: { microusd: 4_000_000, basis: 'settled' } })]], settings);
+  const refresh = (state, native) => call(usageMod, { event: 'channel', payload: { channel: 'omd_usage/refresh', data: null, publisher: 'omd_usage' }, state, settings }, usage(native));
+  assert.match(dialog(estimated, settings).text, /~\$4\.00 configured-rate est\./);
+  const native = refresh(estimated, 7_500_000);
+  assert.equal(native.state.hud.native, 7.5);
+  assert.deepEqual(native.calls.find(item => item.operation === 'app.request').arguments, { method: 'account/usage/read', params: { threadId: 'lead' } });
+  assert.match(dialog(native.state, settings).text, /Lead: \$7\.50 native/);
+  assert.doesNotMatch(dialog(native.state, settings).text, /configured-rate/);
+  assert.match(dialog(native.state, settings).text, /\$7\.50 spent/);
+  assert.equal(refresh(native.state, null).state.hud.native, null, 'unknown native usage falls back to the estimate');
+  const worker = feed(native.state, [['model_response', response('w1', { scope: { thread_id: 'child', agent_id: 'agent-1', kind: 'subagent' }, route: 'api', credential: 'key', cost: { microusd: 2_000_000, basis: 'settled' } })]], settings);
+  assert.match(dialog(worker, settings).text, /\$9\.50 spent/, 'native usage replaces only the lead estimate');
+  const ended = call(usageMod, { event: 'turn_end', payload: { turn_id: 't1' }, state: { ...worker, open: false }, settings }, usage(9_000_000));
+  assert.equal(ended.state.hud.native, 9, 'a budget refreshes native usage with the dialog closed');
+  assert.ok(ended.calls.some(item => item.operation === 'terminal.notice'), 'the refreshed spend crosses the budget');
+});

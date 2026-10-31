@@ -25,7 +25,9 @@ pub(super) fn classify_error(
             Some(408 | 500..=599) | None => "transport",
             _ => "invalid_request",
         },
-        Some(Kind::ServerOverloaded | Kind::InternalServerError) => "transport",
+        Some(
+            Kind::ServerOverloaded | Kind::PolicyCapacityUnavailable | Kind::InternalServerError,
+        ) => "transport",
         Some(Kind::RateLimitExceeded) => "rate_limit",
         Some(Kind::UsageLimitExceeded | Kind::SessionBudgetExceeded) => "allowance",
         Some(Kind::Unauthorized) => "authorization",

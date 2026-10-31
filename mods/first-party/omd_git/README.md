@@ -41,8 +41,8 @@ workspace's Changes tab unless the workspace's `panels` setting lists `changes`.
 run:
 
 ```sh
-omd-package mod enable omd_workspace
-omd-package mod enable omd_git
+omd mods enable omd_workspace
+omd mods enable omd_git
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

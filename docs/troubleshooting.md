@@ -9,8 +9,8 @@ follow its fix.
 | --- | --- | --- |
 | `Python 3.12 or newer is required` | macOS ships Python 3.9 | Install Python 3.12 or later (`brew install python@3.12`) and rerun. |
 | `Oh My Diff supports Apple Silicon macOS only.` | Another platform | OMD doesn't run there. See [support](support.md). |
-| `upstream Codex 0.165.x is required` | Your Codex is another version | Install Codex `0.165.x`, or pass `--upstream /path/to/codex`. |
-| `An upstream Codex 0.165.x executable is required` | The installer found no `codex` on your `PATH` | Install Codex `0.165.x`, or pass `--upstream /path/to/codex`. |
+| `upstream Codex 0.166.x is required` | Your Codex is another version | Install Codex `0.166.x`, or pass `--upstream /path/to/codex`. |
+| `An upstream Codex 0.166.x executable is required` | The installer found no `codex` on your `PATH` | Install Codex `0.166.x`, or pass `--upstream /path/to/codex`. |
 | `move the upstream codex out of ~/.local/bin` | Your Codex is where the OMD launcher goes | Move your Codex elsewhere and pass its new path with `--upstream`. |
 | `No terminal is available` | The installer can't ask which profile you want | Add `--profile full` or `--profile platform`. |
 
@@ -30,8 +30,7 @@ broken, `/omd` has an on/off switch for each mod.
 1. Turn the mod off. Its data is kept.
 
    ```sh
-   omd mods disable ID            # a mod you installed
-   omd-package mod disable ID     # a mod that came with your install profile
+   omd mods disable ID
    ```
 
 2. Turn it off and block this version. Turning it on or reinstalling it is refused until you run

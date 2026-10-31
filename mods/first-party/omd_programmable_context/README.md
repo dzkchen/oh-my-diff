@@ -9,7 +9,7 @@ the model can propose changes to. It's off by default in OMD+. OMD Core doesn't 
 Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_programmable_context
+omd mods enable omd_programmable_context
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

@@ -9,7 +9,7 @@ Core.
 `/mods` can't turn it off, because OMD requires it. Turn it off from a shell:
 
 ```sh
-omd-package mod disable omd_logo
+omd mods disable omd_logo
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
