@@ -3,55 +3,47 @@
     "version": "1.3.0",
     "date": "2026-10-31",
     "title": "Oh My Diff 1.3.0",
-    "summary": "Per-model context windows, ordered subagent fallbacks with an Ollama profile, and release-readiness fixes across the host, mods and installer.",
+    "summary": "Oh My Diff now builds on Codex 0.166.0, with cross-provider subagents, a free panel workspace, Lazygit and Yazi panes, living themes and faster mods.",
     "sections": [
       {
         "label": "New",
         "items": [
-          "Power holds, feature removal and full Plan mode removal; experimental omd_awake (#320)",
-          "Event-driven monitors, output budget plugin and raised mod host caps (#324)",
-          "Packed raster cells and coalesced blits (#323)",
-          "Rank @ mentions by recent commits and recent saves (#327)",
-          "Panel workspace mod with region focus and settings files (#321)",
-          "Cross-provider subagents, subagent caps and wake, and delegate_task (#335)",
-          "Living themes behind the whole screen (#341)",
-          "Free workspace arrangement, pane docking, terminal command panels (#340)",
-          "Lazygit and yazi as opt-in mods with a full terminal pane (#342)"
+          "Subagents: a subagent can run on another provider's model (for example a Claude model through omd_claude_cli), counts against worker limits and wakes its parent when it finishes; mods get an opt-in `delegate_task` tool",
+          "Subagents: ordered fallback models with the reason each route was skipped, and an opt-in restart of a delegated task once its provider's usage limit resets",
+          "Profiles: a keyless Ollama profile for a local address, and `/profile window` sets how much of a thread a model sees",
+          "Workspace: the opt-in omd_workspace mod arranges chat and panels freely (presets, saved layouts, `/workspace move` and `swap`); drag a panel title to dock it, Ctrl+] switches between the chat and the last panel, Esc returns to the chat",
+          "Mods: opt-in omd_lazygit and omd_yazi run Lazygit and Yazi in a full terminal pane with keys, mouse, links and confirmed clipboard copy",
+          "Themes: the opt-in omd_theme draws animated scenes behind the whole screen; `/theme` picks the scene, motion and background",
+          "Monitors: the opt-in omd_monitor watches a background command, a file or a GitHub run and posts one message when it settles, so the agent doesn't poll",
+          "Output budget: the omd-output-budget plugin turns large shell, code-mode and MCP results into excerpts that keep the exit status and failure lines; the full output stays searchable",
+          "Mentions: omd_frecency ranks @ mentions by the branch's recent commits and recently saved files, an exact filename first",
+          "Statusline: new `tier`, `profile` and `workspace` segments",
+          "Mods: experimental omd_awake keeps the Mac awake while the agent works, optionally with the lid closed"
         ]
       },
       {
         "label": "Changed",
         "items": [
-          "Faster mod activation, runner start, state commits and /mods (#326)",
-          "Codex 0.165.0 pin (#330)",
-          "Faster mod callbacks, statusline, installer and CI (#334)",
-          "Restructure user, mod-author and contributor docs; split the mod reference by topic (#346)",
-          "Move to Codex rust-v0.166.0 with provider handoff, statusline, usage and scaffold updates (#345)",
-          "Release-readiness fixes for host, mods, installer and release tooling (#348)",
-          "Subagent fallbacks and restarts, Ollama profiles, per-model context windows (#347)"
+          "Upstream: Codex 0.166.0; OMD 1.3.0 is the first release that supports it",
+          "Plan mode is removed",
+          "Performance: mods activate, start and save state faster, and the statusline and `/mods` render faster",
+          "Sandbox: agent commands keep your Codex sandbox; OMD's protected paths (mod store, leases, secret files) are denied to every sandboxed command, file tools included",
+          "Logo: shows the OMD version and profile (OMD+ or OMD Core); the slash popup lists each mod command once",
+          "Mods: a mod can no longer replace or wrap a site another mod owns; layouts nest 6 levels and per-callback host limits rose (see the mod reference's migration notes)"
         ]
       },
       {
         "label": "Fixed",
         "items": [
-          "Keep the user's Codex sandbox for agent commands; prune redundant tests (#319)",
-          "Show each mod command once in the slash popup and the OMD version on the logo (#316)",
-          "Turn evidence fails in workspaces over 8 MiB (#317)",
-          "Typed sandbox denied paths, streamed workspace digest, label-first panel search (#322)",
-          "Review findings across broker, store, mods and CI",
-          "Monitor session ids, workspace key budget, frecency log paging, search index and evidence pruning",
-          "Installer recovery, request-policy transports, rewind stall and mod integration defects (#328)",
-          "Known issues across TUI, host writes, selection, sandbox and installer (#329)",
-          "Code-cache trust, merge-review cleanups and docs alignment (#331)",
-          "Nightly clippy findings and profile acceptance plugin list (#332)",
-          "Workspace snapshots tolerate links sessions restart their clock",
-          "Workspace snapshots reject raced symlinks and read links by their text (#337)",
-          "Subagent slot accounting, cross-provider grandchildren and delegate_task worktree results (#338)",
-          "Subagent caps, worker lifecycle, delegate_task and snapshot symlinks (#339)",
-          "Post-merge review of themes and workspace, native welcome.hidden",
-          "Hidden welcome keeps its owner's composing rule, welcome terminal lock scope",
-          "Git and Files panel review fixes (#344)",
-          "1.2.0 release validation and rethrown tool failures as mod diagnostics (#315)"
+          "Turns: repositories with more than 8 MiB of tracked files no longer show a `turn_evidence` snapshot size diagnostic every turn",
+          "Rewind no longer stalls for about 21 seconds",
+          "TUI: mod callbacks no longer stall the UI, and mod cards no longer take Tab or swallow pastes and images",
+          "Requests: web search works under final-request policies, and image generation and memory summarization are no longer refused",
+          "Git panel: a rejected push offers `--force-with-lease` only when the branch has diverged, unstaging a rename unstages its old path, and edits refresh only what changed",
+          "Subagents: idle cross-provider subagents no longer hold worker slots, and a reloaded agent keeps its own provider's settings",
+          "Workspace: snapshots record tracked symlinks by their link text and refuse a file swapped for a symlink mid-read",
+          "Installer: an aborted uninstall keeps the rollback point, rollback checks the generation it restores, a withdrawn installed release is reported and certificate errors get their own message",
+          "Mentions: an `@` mention after a malformed `@\"` is still recognised"
         ]
       }
     ],
