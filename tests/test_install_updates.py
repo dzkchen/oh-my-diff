@@ -109,6 +109,12 @@ class UpdateSelection(unittest.TestCase):
         self.write_settings()
         return self.module.check(types.SimpleNamespace(), self.root, self.current)
 
+    def test_required_upstream_minor_matches_the_pin_and_install_docs(self):
+        minor = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v").rsplit(".", 1)[0]
+        self.assertEqual(installer().UPSTREAM_MINOR, minor)
+        for name in ("README.md", "docs/install.md"):
+            self.assertIn(f"Codex `{minor}.x`", (ROOT / name).read_text(), name)
+
     def test_versions_order_by_semantic_precedence(self):
         ordered = ["0.1.0-alpha.1", "0.1.0-alpha.2", "0.1.0-alpha.10", "0.1.0-beta", "0.1.0", "0.1.1", "0.10.0"]
         self.assertEqual(sorted(reversed(ordered), key=self.module.version_key), ordered)

@@ -10,7 +10,7 @@ approve it.
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_source_knowledge
+omd mods enable omd_source_knowledge
 ```
 
 ## Use it

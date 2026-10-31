@@ -13,7 +13,7 @@ Shows each agent tool call as one transcript line: the tool, its short arguments
 It is on by default in OMD+. Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_tool_lines
+omd mods disable omd_tool_lines
 ```
 
 ## Use it

@@ -10,13 +10,12 @@ struct State {
     presentation: Value,
     sequence: u64,
     diagnostics: BTreeMap<String, String>,
+    state_fingerprint: u64,
 }
 
 pub(super) struct Views {
     state: Mutex<State>,
     published: Mutex<Option<Arc<ModViewSnapshot>>>,
-    /// Set while re-rendering for a roster change: an unchanged view keeps its revision.
-    pub(super) quiet: AtomicBool,
 }
 
 /// Keeps at most `limit` UTF-8 bytes, matching `ModViewSnapshot::read`.
@@ -79,7 +78,6 @@ impl Views {
                 ..State::default()
             }),
             published: Mutex::new(None),
-            quiet: AtomicBool::new(false),
         }
     }
 
@@ -108,8 +106,8 @@ impl Views {
         errors: Vec<(String, String)>,
         input: Value,
         rendered_ms: u64,
+        state_fingerprint: u64,
     ) {
-        let quiet = self.quiet.load(Ordering::Acquire);
         let errors = errors
             .into_iter()
             .take(16)
@@ -117,7 +115,8 @@ impl Views {
             .collect::<Vec<_>>();
         self.update(owner, |state| {
             let snapshot = &state.snapshot;
-            if !quiet
+            if state.state_fingerprint != state_fingerprint
+                || snapshot.input["ledger"] != input["ledger"]
                 || snapshot.view != terminal.view
                 || snapshot.conflicts != terminal.conflicts
                 || snapshot.contributors != terminal.contributors
@@ -127,6 +126,7 @@ impl Views {
             {
                 state.snapshot.revision = state.snapshot.revision.saturating_add(1);
             }
+            state.state_fingerprint = state_fingerprint;
             state.snapshot.rendered_ms = rendered_ms;
             state.snapshot.view = terminal.view;
             state.snapshot.conflicts = terminal.conflicts;

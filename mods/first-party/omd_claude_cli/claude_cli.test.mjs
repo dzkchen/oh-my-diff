@@ -509,6 +509,52 @@ test('the transport shows a foreign holder of its port neither the local token n
   }
 });
 
+test('a transport started after setup changed the route takes the port once the owner drains, and an unchanged one leaves the owner serving', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'omd-claude-handoff-'));
+  const token = 'local-token-'.repeat(4);
+  const probe = createServer();
+  await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+  const { port } = probe.address();
+  await new Promise(resolve => probe.close(resolve));
+  const claude = join(directory, 'claude');
+  await writeFile(claude, `#!/bin/sh\nif [ "$1" = --version ]; then echo '${CLI_VERSION}'; else echo '{"loggedIn":true,"apiProvider":"firstParty","authMethod":"claude.ai","subscriptionType":"pro"}'; fi\n`);
+  await chmod(claude, 0o755);
+  const route = name => {
+    const path = join(directory, `${name}.json`);
+    writeFileSync(path, JSON.stringify({ port, claude, accounts: [{ name, billing: 'subscription', config_dir: null, models: [] }] }));
+    return path;
+  };
+  const children = [];
+  const serve = (path, ready) => {
+    const child = spawn(process.execPath, [fileURLToPath(new URL('./transport.mjs', import.meta.url)), 'serve', path, directory, 'user'],
+      { env: { OMD_CLAUDE_LOCAL_TOKEN: token, OMD_READY_TOKEN: ready }, stdio: 'ignore' });
+    children.push(child);
+    return child;
+  };
+  const served = async expected => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (await fetch(`http://127.0.0.1:${port}/_omd/ready`).then(reply => reply.text(), () => '') === `OMD_READY:${expected}`) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.fail(`${expected} was never served`);
+  };
+  try {
+    const owner = serve(route('default'), 'nonce-a');
+    await served('nonce-a');
+    const exited = new Promise(resolve => owner.once('exit', resolve));
+    const later = serve(route('work'), 'nonce-b');
+    assert.equal(await exited, 0);
+    await served('nonce-b');
+    const same = serve(route('work'), 'nonce-c');
+    await served('nonce-c');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.deepEqual([later.exitCode, same.exitCode], [null, null]);
+  } finally {
+    for (const child of children) child.kill('SIGKILL');
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 

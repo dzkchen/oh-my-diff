@@ -8,7 +8,7 @@ prompt box, menus and the footer.
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_theme
+omd mods enable omd_theme
 ```
 
 While it is on, `/theme` opens its panel; Codex's own syntax-highlighting picker is the panel's first item

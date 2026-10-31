@@ -37,7 +37,6 @@ Works from any shell, even if `codex` won't start:
 
 ```sh
 omd mods disable some_mod               # off, data kept
-omd-package mod disable omd_usage       # an OMD+ mod
 omd mods quarantine some_mod "reason"   # off, and block this version
 omd-package activate direct             # no mods at all; back with: omd-package activate full (or platform)
 ```

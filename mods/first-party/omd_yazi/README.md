@@ -7,7 +7,7 @@ Runs the [yazi](https://yazi-rs.github.io) file manager inside the session. `/ya
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_yazi
+omd mods enable omd_yazi
 ```
 
 It runs `yazi` outside the sandbox with your real `HOME`, without network, and with your `EDITOR`, `VISUAL`, `XDG_CONFIG_HOME` and `YAZI_CONFIG_HOME`, so trusting the mod grants that (`os_access` lists only `yazi`). The first start asks once per `yazi` binary, and again when the binary changes. Install yazi first, following the [installation guide](https://yazi-rs.github.io/docs/installation) (Homebrew: `brew install yazi`); without it `/yazi` says so.

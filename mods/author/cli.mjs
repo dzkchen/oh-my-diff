@@ -66,7 +66,7 @@ function packageJson(name) {
     },
     devDependencies: {
       '@oh-my-diff/mod-api': sdkSpec,
-      ...(process.env.OMD_MOD_TYPESCRIPT_SPEC ? { typescript: process.env.OMD_MOD_TYPESCRIPT_SPEC } : {}),
+      typescript: process.env.OMD_MOD_TYPESCRIPT_SPEC || '5.9.3',
     },
   };
 }

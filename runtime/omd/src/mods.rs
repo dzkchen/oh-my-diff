@@ -5109,35 +5109,14 @@ impl ModHost {
         tool_validator: fn(&Value) -> Result<()>,
         active: &dyn Fn() -> bool,
     ) -> Result<BTreeMap<String, (Loaded, Result<Inspection>)>> {
-        // One at a time, since concurrent runner starts slow the first keystrokes; after a timeout the rest run together.
-        let mut inspected = BTreeMap::new();
-        let mut inspections = inspections.into_iter();
-        for (id, loaded, ready) in inspections.by_ref() {
+        let inspected = concurrently(inspections, active, |(id, loaded, ready), active| {
             let inspection = ready.and_then(|()| Self::inspect(&loaded, tool_validator, active));
-            if !active() {
-                return Err(failure("callback_cancelled"));
-            }
-            let timed_out = inspection
-                .as_ref()
-                .is_err_and(|error| timed_out(&error.to_string()));
-            inspected.insert(id, (loaded, inspection));
-            if timed_out {
-                break;
-            }
-        }
-        inspected.extend(concurrently(
-            inspections.collect(),
-            active,
-            |(id, loaded, ready), active| {
-                let inspection =
-                    ready.and_then(|()| Self::inspect(&loaded, tool_validator, active));
-                (id, (loaded, inspection))
-            },
-        ));
+            (id, (loaded, inspection))
+        });
         if !active() {
             return Err(failure("callback_cancelled"));
         }
-        Ok(inspected)
+        Ok(inspected.into_iter().collect())
     }
 
     fn inspect(
@@ -6755,6 +6734,18 @@ impl ModHost {
         self.generation
     }
 
+    /// Changes on a reload or when an active mod's state changes, so a view publication can tell an unchanged one.
+    pub fn state_fingerprint(&self) -> u64 {
+        use std::hash::Hash;
+        use std::hash::Hasher;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.generation.hash(&mut hasher);
+        for (id, loaded) in self.active() {
+            (id, loaded.state.to_string(), self.ui_revision(id)).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
     pub fn ui_revision(&self, id: &str) -> Option<u64> {
         self.loaded
             .get(id)?
@@ -6811,8 +6802,10 @@ impl ModHost {
             }
         }
         output.push_str("}\n");
-        self.store
-            .write_bytes("installed-contracts.d.ts", output.as_bytes())?;
+        crate::fsio::write_if_changed(
+            &self.store.root.join("installed-contracts.d.ts"),
+            output.as_bytes(),
+        )?;
         self.write_active_host_types()
     }
 
@@ -6835,8 +6828,10 @@ impl ModHost {
             literal(MOD_REPLACEMENT_POINTS),
             literal(MOD_HOST_OPERATIONS),
         );
-        self.store
-            .write_bytes("active-host.d.ts", output.as_bytes())?;
+        crate::fsio::write_if_changed(
+            &self.store.root.join("active-host.d.ts"),
+            output.as_bytes(),
+        )?;
         crate::tool_schema::write_types(&self.store.root)
     }
 

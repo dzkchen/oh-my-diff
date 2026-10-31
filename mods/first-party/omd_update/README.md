@@ -7,7 +7,7 @@ Tells you when a newer Oh My Diff release is out and lets you control how OMD up
 It is on by default in OMD+ and OMD Core, and `/mods` keeps it on. To turn it off, run:
 
 ```sh
-omd-package mod disable omd_update
+omd mods disable omd_update
 ```
 
 ## Use it

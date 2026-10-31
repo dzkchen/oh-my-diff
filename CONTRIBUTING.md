@@ -66,7 +66,7 @@ python3 .github/scripts/build.py locks                                       # r
   `omd-runner` and links it beside the test binaries, where hosts look for it.
 - **Layout:** the tree is `/private/tmp/omd-bNAME/codex` and its target `/private/tmp/omd-bNAME/target`; `OMD_WORK_ROOT`
   replaces `/private/tmp`. The pinned upstream source, without the patch, is the tree's `normalized<version>` tag
-  (`git -C TREE diff normalized1640 -- codex-rs/PATH`).
+  (`git -C TREE diff normalized1660 -- codex-rs/PATH`).
 - **Crate notices:** `sync` regenerates `runtime/crate-notices.txt` with `scripts/crate_notices.py TREE`; the patch sync
   check in CI fails when it is stale.
 - **Mods:** the tree's `mods/` links to your checkout, so mod edits are ordinary edits there. Run `build.py locks` after

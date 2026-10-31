@@ -27,7 +27,7 @@ transcript                 ││                            │
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_workspace
+omd mods enable omd_workspace
 ```
 
 Without it nothing changes. `/workspace off` hides the workspace and `/workspace on` brings it back, without `/mods`.

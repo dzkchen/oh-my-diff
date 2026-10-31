@@ -488,6 +488,11 @@ A consent never grants autonomous authority: anything not captured by the user s
 
 Observe-only events (capability `lifecycle` unless noted), all for the lead thread:
 
+- `turn_start {turn_id}` when a lead-thread turn starts.
+- `turn_end {turn_id, outcome, reason?, error?, evidence?}` when it ends: `outcome` is `completed`, `aborted` (with a
+  `reason`) or `error` (with the `error` object).
+- `compaction_start {turn_id, trigger}` when a compaction begins, with `trigger` `manual` or `auto`.
+- `compaction_end {turn_id, trigger, outcome, by, provider_call}` when it ends.
 - `tool_batch_end {turn_id, calls: [{call_id, tool, outcome}]}` after every call one model response dispatched has
   settled.
 - `instructions_loaded {kind, source, sha256, bytes, reason}` when the host loads AGENTS.md instructions

@@ -7,7 +7,7 @@ Runs [lazygit](https://github.com/jesseduffield/lazygit) inside the session. `/l
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_lazygit
+omd mods enable omd_lazygit
 ```
 
 It runs `lazygit` outside the sandbox with your real `HOME`, network, your SSH agent and your `EDITOR`, `VISUAL`, `GIT_EDITOR`, `XDG_CONFIG_HOME` and `CONFIG_DIR`, so trusting the mod grants that (`os_access` lists only `lazygit`). The first start asks once per `lazygit` binary, and again when the binary changes. Install lazygit first, following the [installation guide](https://github.com/jesseduffield/lazygit#installation) (Homebrew: `brew install lazygit`); without it `/lazygit` says so.

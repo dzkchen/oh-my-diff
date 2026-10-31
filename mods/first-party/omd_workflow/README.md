@@ -7,7 +7,7 @@ Keeps long tasks on track: the agent saves a checkpoint, and a task counts as do
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_workflow
+omd mods enable omd_workflow
 ```
 
 ## Use it

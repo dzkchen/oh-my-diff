@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { appendFile, lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { claim, handoff } from './handoff.mjs';
 
 const file = fileURLToPath(import.meta.url);
 export const SDK_VERSION = '1.0.35';
@@ -543,36 +544,19 @@ export async function serve(routePath) {
   process.env.TMPDIR = route.data;
   const routers = new Map(route.accounts.map((account, index) => [account.name, new Router(route, account, keys[index])]));
   const models = route.accounts.flatMap(account => account.models.map(model => ({ ...model, account: account.name })));
-  const identity = digest([route, keys]);
-  let nonce = ready;
   let active = 0;
   let stopping = false;
   const exit = () => process.exit(0);
+  const owner = handoff(token, ready, [route, keys], () => stop());
   const server = createServer(async (request, response) => {
-    if (request.method === 'GET' && request.url === '/_omd/ready') { response.writeHead(200).end(`OMD_READY:${nonce}`); return; }
-    const nonceRequest = request.method === 'POST' && request.url === '/_omd/nonce';
-    if (!nonceRequest && (request.method !== 'POST' || request.url !== '/v1/responses')) { response.writeHead(404).end(); return; }
-    if (!nonceRequest && request.headers.authorization !== `Bearer ${token}`) { response.writeHead(401).end(); return; }
+    if (await owner(request, response)) return;
+    if (request.method !== 'POST' || request.url !== '/v1/responses') { response.writeHead(404).end(); return; }
+    if (request.headers.authorization !== `Bearer ${token}`) { response.writeHead(401).end(); return; }
     const chunks = [];
-    let size = 0;
     try {
-      for await (const chunk of request) {
-        size += chunk.length;
-        if (nonceRequest && size > 1024) { response.writeHead(413).end(); request.destroy(); return; }
-        chunks.push(chunk);
-      }
+      for await (const chunk of request) chunks.push(chunk);
     } catch {
       response.destroy();
-      return;
-    }
-    if (nonceRequest) {
-      let handed;
-      let from;
-      try { [handed, from] = unseal(token, Buffer.concat(chunks).toString()).split(' '); } catch { response.writeHead(401).end(); return; }
-      nonce = handed.slice(0, 256);
-      response.writeHead(204).end();
-      // A transport started after setup changed the key or route takes the port once this one drains.
-      if (from !== identity) stop();
       return;
     }
     let payload;
@@ -605,45 +589,7 @@ export async function serve(routePath) {
   const stop = () => { stopping = true; server.close(); if (!active) exit(); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
-  await claim(server, route.port, token, ready, identity);
-}
-
-// Concurrent sessions share the store's fixed port: during the host's 3 s readiness window a later transport hands the owner its readiness nonce sealed with the shared local token, so only a token holder can read it, and takes the port once the owner has drained and exited. A holder that never serves the nonce fails the start.
-async function claim(server, port, token, ready, identity) {
-  const handoff = Date.now() + 3_000;
-  let handedOff = false;
-  for (;;) {
-    try {
-      await new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(port, '127.0.0.1', () => { server.off('error', reject); resolve(); });
-      });
-      return;
-    } catch (error) {
-      if (error.code !== 'EADDRINUSE') throw error;
-    }
-    if (Date.now() < handoff) {
-      await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST', body: seal(token, `${ready} ${identity}`), signal: AbortSignal.timeout(500) }).catch(() => {});
-      handedOff ||= await fetch(`http://127.0.0.1:${port}/_omd/ready`, { signal: AbortSignal.timeout(500) }).then(reply => reply.text(), () => '') === `OMD_READY:${ready}`;
-    } else if (!handedOff) throw new Error('provider_port_in_use');
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-}
-
-const sealKey = token => createHash('sha256').update(`omd-handoff\0${token}`).digest();
-
-function seal(token, text) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', sealKey(token), iv);
-  const data = Buffer.concat([cipher.update(text), cipher.final()]);
-  return Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64');
-}
-
-function unseal(token, text) {
-  const bytes = Buffer.from(text, 'base64');
-  const decipher = createDecipheriv('aes-256-gcm', sealKey(token), bytes.subarray(0, 12));
-  decipher.setAuthTag(bytes.subarray(12, 28));
-  return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString();
+  await claim(server, route.port, token, ready, [route, keys]);
 }
 
 if (process.argv[1] === file) {

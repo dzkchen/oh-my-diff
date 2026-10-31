@@ -9,7 +9,7 @@ code-mode cell, a file read that was already done is reused while the file is un
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_tool_absorb
+omd mods enable omd_tool_absorb
 ```
 
 ## Use it

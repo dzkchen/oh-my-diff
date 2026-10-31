@@ -7,7 +7,7 @@ Gets a second model's opinion on a decision, a stalled attempt or a claimed comp
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_advisor
+omd mods enable omd_advisor
 ```
 
 It runs on the worker route you set in `route`, which has no default. Pick one in `/mods` (Advisor, Advisor model), or choose Add a helper model there to use the model you're chatting with on your ChatGPT plan. Other worker routes come from `host.json` and need their own model access and allowance. Until `route` is set, the advisor reports `unavailable` with the routes it can use, and the status segment reads `Advisor: no route set`.

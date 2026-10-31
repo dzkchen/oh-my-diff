@@ -15,7 +15,7 @@ export type Settings = {
 };
 export const DEFAULTS: Settings = {
   placement: 'below', preset: 'compact', layout: PRESETS.detailed, hidden: '', glyphs: 'unicode', bars: true,
-  thresholds: 'context=70,90 limits=70,90 cost=5,20', tones: '', github: true, refresh_s: 30, scripts: '',
+  thresholds: 'context=70,90 limits=70,90 cost=5,20', tones: '', github: true, refresh_s: 60, scripts: '',
 };
 export type Script = { id: string; command: string[]; interval_s: number; timeout_ms: number };
 

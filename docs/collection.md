@@ -13,8 +13,8 @@ What ships with OMD+, and which mods are on.
 Type `/mods` in `codex`, or run:
 
 ```sh
-omd-package mod enable omd_usage
-omd-package mod disable omd_usage
+omd mods enable omd_usage
+omd mods disable omd_usage
 ```
 
 It applies at your next message. `omd mods list` shows the result.
@@ -80,15 +80,14 @@ Not installed with OMD+, and may change or go away. Install one yourself with `o
 
 ## What mods cost
 
-Measured on one Apple M5 Mac with a scripted model and a 1.1.0 pre-release build, October 2026. Memory is the macOS
-memory footprint (the figure Activity Monitor shows), 10 seconds after start. Your numbers will differ.
+Measured on one Apple M5 Mac with a scripted model and release builds on Codex 0.165 and 0.166, October 2026.
+Memory is the macOS memory footprint (the figure Activity Monitor shows), 10 seconds after start. Your numbers will
+differ.
 
 - Codex alone and OMD+ were both ready to type in about 0.3 s.
-- Codex alone used about 30 MB. OMD+ as installed used about 100 MB: about 40 MB for the Codex process, plus seven
-  `omd-runner` processes of 6–13 MB each that run the mods.
-- Turning on `omd_preview`, `omd_profiles`, `omd_usage`, `omd_mini` or `omd_advisor` adds one more such process,
-  about 8–19 MB. Each of the other off-by-default mods added under 5 MB at idle. Programs a mod starts, such as
-  `omd_lsp_sync`'s language servers, use their own memory while they run.
+- OMD+ as installed used about 100 MB, including the `omd-runner` processes that run its mods (7–10 MB each).
+- Turning on `omd_preview`, `omd_profiles`, `omd_usage` or `omd_mini` adds a runner of about 8–12 MB. Programs a
+  mod starts, such as `omd_lsp_sync`'s language servers, use their own memory while they run.
 
 ## Use Claude or another provider
 

@@ -7,7 +7,7 @@ Opens a response or a local Markdown, code or diff file as a themed page in your
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_preview
+omd mods enable omd_preview
 ```
 
 ## Use it

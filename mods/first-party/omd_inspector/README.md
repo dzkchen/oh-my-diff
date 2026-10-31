@@ -7,7 +7,7 @@ Shows a summary of your session: mode, install profile, mod counts, workflow con
 It is on by default in OMD+. Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_inspector
+omd mods disable omd_inspector
 ```
 
 ## Use it

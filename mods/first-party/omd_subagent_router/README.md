@@ -7,7 +7,7 @@ Runs subagents on the model you name, including another provider's, such as Clau
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_subagent_router
+omd mods enable omd_subagent_router
 ```
 
 A model from another provider also needs that provider set up, for example `omd_claude_cli` with `/claude login`.

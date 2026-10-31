@@ -7,7 +7,7 @@ Keeps a turn moving when nobody answers a prompt for two minutes.
 It is on by default in OMD+. Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_auto_continue
+omd mods disable omd_auto_continue
 ```
 
 ## Use it

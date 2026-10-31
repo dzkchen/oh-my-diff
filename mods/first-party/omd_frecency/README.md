@@ -7,7 +7,7 @@ Ranks `@` file mentions by how well they match, how often you use them, their Gi
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_frecency
+omd mods enable omd_frecency
 ```
 
 ## Use it

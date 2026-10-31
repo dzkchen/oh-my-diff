@@ -7,7 +7,7 @@ Shows what your session is using in a Usage dialog: context, cache, cost, quota,
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_usage
+omd mods enable omd_usage
 ```
 
 ## Use it

@@ -9,7 +9,7 @@ fit, it sends the call back to the model and says exactly what to change.
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_tool_fix
+omd mods enable omd_tool_fix
 ```
 
 ## Use it

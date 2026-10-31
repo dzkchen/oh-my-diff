@@ -7,7 +7,7 @@ Replaces secrets, and personal data you choose, with stable placeholders such as
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_privacy
+omd mods enable omd_privacy
 ```
 
 ## Use it

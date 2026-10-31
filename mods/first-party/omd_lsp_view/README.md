@@ -7,8 +7,8 @@ Look up hover text, definitions, references, symbols, errors, code actions and f
 It comes with OMD+ but starts off. Turn it on in `/mods` after [`omd_lsp_sync`](../omd_lsp_sync/README.md), which runs the language servers and needs one on your `PATH`:
 
 ```sh
-omd-package mod enable omd_lsp_sync
-omd-package mod enable omd_lsp_view
+omd mods enable omd_lsp_sync
+omd mods enable omd_lsp_view
 ```
 
 ## Use it

@@ -33,8 +33,8 @@ Stage: Space | All: a | Hunks: Enter | Commit: c | …
 It comes with OMD+ but starts off, and it draws inside [`omd_workspace`](../omd_workspace/README.md), so turn that on first. Its Git tab replaces the workspace's Changes tab unless the workspace's `panels` setting lists `changes`. Then turn on `omd_git` in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_workspace
-omd-package mod enable omd_git
+omd mods enable omd_workspace
+omd mods enable omd_git
 ```
 
 The panel runs `git` outside the sandbox, because the session sandbox keeps `.git` read-only, so turning it on asks you to trust that one program. It runs with your own `HOME`, so your Git identity, credential helper and SSH configuration apply.

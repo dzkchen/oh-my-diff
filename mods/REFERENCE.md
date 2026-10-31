@@ -47,25 +47,6 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and floating panes.
 
-### Migration notes
-
-- A site named `owner/name` is replaced or wrapped only by mod `owner`; a patch from any other mod is now refused and
-  reported under `terminal.conflicts`. This is a safety fix to the frozen `ui_composition_v1` (Mod API `1.0.0`): before,
-  any mod could wrap or replace another mod's site. A mod that composes into a site it does not own must ask its
-  owner for a native slot or its own site. Native sites (no `/`) compose as before.
-- A layout may nest 6 levels instead of 4. The raise is additive: every layout valid before stays valid.
-- Host calls per callback rise from 128 to 512 (`budget.hostCalls` starts at 512). The raise is additive: a mod that
-  counted calls or stayed under 128 keeps working. The other limits raised with it (the callback transport budget,
-  `process.exchange` and tool interceptor output, `api.state`, package files, view JSON, evidence pages and
-  registrations per mod) only admit more than before, with two visible changes: `evidence.read` without `max_bytes`
-  returns pages of up to 64 KiB instead of 16 KiB, and a `tool` replacement the model cannot take (over 64 KiB and
-  longer than the original, which for a retried call is the latest attempt's output) is dropped with a diagnostic
-  after the chain instead of being refused inside it. Either way the original output stands.
-- `exec.run` children now start in their own session without a controlling terminal: a program that prompted on
-  `/dev/tty` (git credentials, ssh passphrases, `sudo`) fails instead of drawing over the TUI and waiting. Pass input
-  through `stdin` or the program's non-interactive flags. Runs with `sandbox: "none"` also receive `SSH_AUTH_SOCK`,
-  so programs under an `os` grant can sign in through the user's SSH agent.
-
 ## Contents
 
 | Page | Covers |
@@ -1955,6 +1936,11 @@ A consent never grants autonomous authority: anything not captured by the user s
 
 Observe-only events (capability `lifecycle` unless noted), all for the lead thread:
 
+- `turn_start {turn_id}` when a lead-thread turn starts.
+- `turn_end {turn_id, outcome, reason?, error?, evidence?}` when it ends: `outcome` is `completed`, `aborted` (with a
+  `reason`) or `error` (with the `error` object).
+- `compaction_start {turn_id, trigger}` when a compaction begins, with `trigger` `manual` or `auto`.
+- `compaction_end {turn_id, trigger, outcome, by, provider_call}` when it ends.
 - `tool_batch_end {turn_id, calls: [{call_id, tool, outcome}]}` after every call one model response dispatched has
   settled.
 - `instructions_loaded {kind, source, sha256, bytes, reason}` when the host loads AGENTS.md instructions
@@ -3087,8 +3073,10 @@ A custom summarizer calls `model.fork` (the conversation on its own route) or `m
 Interrupting the turn cancels a waiting chain. The installed result persists as the normal compaction checkpoint,
 so resume reads it.
 
-`compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `deferred` or `failed`), `by` and
-`provider_call`.
+`compaction_start {turn_id, trigger}` (`manual` or `auto`) fires before the `compaction` interceptors run, whatever
+they then decide. `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `deferred` or `failed`),
+`by` and `provider_call`. Both are observe-only events of the `lifecycle` capability: a handler cannot change or
+stop the compaction.
 
 ## Commands, configuration and composer
 
@@ -4016,6 +4004,11 @@ draw no frame.
 
 - The sidebar has no padding, one row between its components under the comfortable density, and no border unless
   `sidebar_style` sets one, which then carries the view `title`.
+- `sidebar_width` is the sidebar's width in columns, an integer from 0 to 60; a larger value refuses the patch
+  (`invalid_terminal_patch: sidebar_width`). The fullscreen sidebar is never narrower than 20 columns (the width
+  when unset) or wider than a third of the terminal, and it does not draw below 80 columns.
+- `sidebar_side` is `left` or `right` (default `right`). When several mods set either, the last one applied wins;
+  it is not a conflict.
 - A split's `gap` (0–4) leaves cells between its children.
 - Render hook trees refuse `style` and `flex`.
 - The host's progress and mod diagnostics draw as cards above the prompt (four entries each, wrapped to
@@ -5946,7 +5939,7 @@ only, and `--rollback` makes the previous generation active again.
 
 #### Recovery
 
-Recovery stays local and offline. `/omd`, `omd-package mod disable` and `omd-mod reset STORE mods.json` recover
+Recovery stays local and offline. `/omd`, `omd mods disable ID` and `omd-mod reset STORE mods.json` recover
 user and project mods; managed packages keep running while the policy lists them. Running the upstream `codex`
 recovers from every customization.
 

@@ -60489,10 +60489,10 @@ index 0000000000000000000000000000000000000000..b8719f47aa44cb402e4095528b3a4410
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f6020cf5e7b5f84bb874166c09b334bc9cee657
+index 0000000000000000000000000000000000000000..c43a5dc35ff67feee797292c4623e4dd1453ebbd
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,907 @@
+@@ -0,0 +1,905 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -60607,11 +60607,9 @@ index 0000000000000000000000000000000000000000..6f6020cf5e7b5f84bb874166c09b334b
 +    let _thread = codex_omd::StateThread::enter(lead.as_ref().map(|lead| lead.thread.to_string()));
 +    let ledger = lead.as_ref().map_or(Value::Null, Lead::ledger);
 +    if let Ok(mut runtime) = core.runtime.lock() {
-+        core.views.quiet.store(true, Ordering::Release);
 +        publish(&mut runtime, &core.host, &core.views, event, ledger, || {
 +            true
 +        });
-+        core.views.quiet.store(false, Ordering::Release);
 +    }
 +}
 +
@@ -67920,10 +67918,10 @@ index 0000000000000000000000000000000000000000..252d5d7afd1bf085a73c07cea74d0ca1
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ed9f29b773815a0b1ef79a8f7680e969c3ba3e21
+index 0000000000000000000000000000000000000000..5997485f17664b130777c1b3eed16e260d9c7911
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2620 @@
+@@ -0,0 +1,2628 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -68496,7 +68494,15 @@ index 0000000000000000000000000000000000000000..ed9f29b773815a0b1ef79a8f7680e969
 +            .title
 +            .get_or_insert_with(|| "Mod recovery".into());
 +    }
-+    views.base(host, terminal, errors, input, rendered_ms);
++    let state_fingerprint = runtime.state_fingerprint();
++    views.base(
++        host,
++        terminal,
++        errors,
++        input,
++        rendered_ms,
++        state_fingerprint,
++    );
 +    let _ = host.persist_json("mod-status.json", &status);
 +    let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
 +    codex_features::set_removed(
@@ -78055,10 +78061,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..96276dffd74b10c065e813e5e3ad7c4901491b4e
+index 0000000000000000000000000000000000000000..b878bf7be50e23ef0bdfd4aaabbd8e2023e45a76
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5144 @@
+@@ -0,0 +1,5163 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -79725,6 +79731,25 @@ index 0000000000000000000000000000000000000000..96276dffd74b10c065e813e5e3ad7c49
 +        revision(),
 +        before + 2,
 +        "each state-changing delivery republishes the view"
++    );
++    let republish = || {
++        let mut runtime = core.runtime.lock().unwrap();
++        publish(
++            &mut runtime,
++            &core.host,
++            &core.views,
++            "idle",
++            Value::Null,
++            || true,
++        );
++    };
++    republish();
++    let settled = revision();
++    republish();
++    assert_eq!(
++        revision(),
++        settled,
++        "an unchanged publication keeps the revision"
 +    );
 +    assert_eq!(
 +        command(core, "listener", "seen"),
@@ -88017,7 +88042,7 @@ index 0000000000000000000000000000000000000000..88b18991e7021d169a8084ef7362a904
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..72ef2b3cf3f6352b0910cd8b1a45d70abfe18915
+index 0000000000000000000000000000000000000000..0dab24b5dc7d126b46966754b5a52b2ab7c75b25
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
 @@ -0,0 +1,233 @@
@@ -88033,13 +88058,12 @@ index 0000000000000000000000000000000000000000..72ef2b3cf3f6352b0910cd8b1a45d70a
 +    presentation: Value,
 +    sequence: u64,
 +    diagnostics: BTreeMap<String, String>,
++    state_fingerprint: u64,
 +}
 +
 +pub(super) struct Views {
 +    state: Mutex<State>,
 +    published: Mutex<Option<Arc<ModViewSnapshot>>>,
-+    /// Set while re-rendering for a roster change: an unchanged view keeps its revision.
-+    pub(super) quiet: AtomicBool,
 +}
 +
 +/// Keeps at most `limit` UTF-8 bytes, matching `ModViewSnapshot::read`.
@@ -88102,7 +88126,6 @@ index 0000000000000000000000000000000000000000..72ef2b3cf3f6352b0910cd8b1a45d70a
 +                ..State::default()
 +            }),
 +            published: Mutex::new(None),
-+            quiet: AtomicBool::new(false),
 +        }
 +    }
 +
@@ -88131,8 +88154,8 @@ index 0000000000000000000000000000000000000000..72ef2b3cf3f6352b0910cd8b1a45d70a
 +        errors: Vec<(String, String)>,
 +        input: Value,
 +        rendered_ms: u64,
++        state_fingerprint: u64,
 +    ) {
-+        let quiet = self.quiet.load(Ordering::Acquire);
 +        let errors = errors
 +            .into_iter()
 +            .take(16)
@@ -88140,7 +88163,8 @@ index 0000000000000000000000000000000000000000..72ef2b3cf3f6352b0910cd8b1a45d70a
 +            .collect::<Vec<_>>();
 +        self.update(owner, |state| {
 +            let snapshot = &state.snapshot;
-+            if !quiet
++            if state.state_fingerprint != state_fingerprint
++                || snapshot.input["ledger"] != input["ledger"]
 +                || snapshot.view != terminal.view
 +                || snapshot.conflicts != terminal.conflicts
 +                || snapshot.contributors != terminal.contributors
@@ -88150,6 +88174,7 @@ index 0000000000000000000000000000000000000000..72ef2b3cf3f6352b0910cd8b1a45d70a
 +            {
 +                state.snapshot.revision = state.snapshot.revision.saturating_add(1);
 +            }
++            state.state_fingerprint = state_fingerprint;
 +            state.snapshot.rendered_ms = rendered_ms;
 +            state.snapshot.view = terminal.view;
 +            state.snapshot.conflicts = terminal.conflicts;
@@ -112495,10 +112520,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..eb2a1a16f35e06168fe64262f0bb311cfaa7e783
+index 0000000000000000000000000000000000000000..4e27a78231b2ece91507ffb41d166ac9b3315210
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6982 @@
+@@ -0,0 +1,6977 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -117610,35 +117635,14 @@ index 0000000000000000000000000000000000000000..eb2a1a16f35e06168fe64262f0bb311c
 +        tool_validator: fn(&Value) -> Result<()>,
 +        active: &dyn Fn() -> bool,
 +    ) -> Result<BTreeMap<String, (Loaded, Result<Inspection>)>> {
-+        // One at a time, since concurrent runner starts slow the first keystrokes; after a timeout the rest run together.
-+        let mut inspected = BTreeMap::new();
-+        let mut inspections = inspections.into_iter();
-+        for (id, loaded, ready) in inspections.by_ref() {
++        let inspected = concurrently(inspections, active, |(id, loaded, ready), active| {
 +            let inspection = ready.and_then(|()| Self::inspect(&loaded, tool_validator, active));
-+            if !active() {
-+                return Err(failure("callback_cancelled"));
-+            }
-+            let timed_out = inspection
-+                .as_ref()
-+                .is_err_and(|error| timed_out(&error.to_string()));
-+            inspected.insert(id, (loaded, inspection));
-+            if timed_out {
-+                break;
-+            }
-+        }
-+        inspected.extend(concurrently(
-+            inspections.collect(),
-+            active,
-+            |(id, loaded, ready), active| {
-+                let inspection =
-+                    ready.and_then(|()| Self::inspect(&loaded, tool_validator, active));
-+                (id, (loaded, inspection))
-+            },
-+        ));
++            (id, (loaded, inspection))
++        });
 +        if !active() {
 +            return Err(failure("callback_cancelled"));
 +        }
-+        Ok(inspected)
++        Ok(inspected.into_iter().collect())
 +    }
 +
 +    fn inspect(
@@ -119256,6 +119260,18 @@ index 0000000000000000000000000000000000000000..eb2a1a16f35e06168fe64262f0bb311c
 +        self.generation
 +    }
 +
++    /// Changes on a reload or when an active mod's state changes, so a view publication can tell an unchanged one.
++    pub fn state_fingerprint(&self) -> u64 {
++        use std::hash::Hash;
++        use std::hash::Hasher;
++        let mut hasher = std::collections::hash_map::DefaultHasher::new();
++        self.generation.hash(&mut hasher);
++        for (id, loaded) in self.active() {
++            (id, loaded.state.to_string(), self.ui_revision(id)).hash(&mut hasher);
++        }
++        hasher.finish()
++    }
++
 +    pub fn ui_revision(&self, id: &str) -> Option<u64> {
 +        self.loaded
 +            .get(id)?
@@ -119312,8 +119328,10 @@ index 0000000000000000000000000000000000000000..eb2a1a16f35e06168fe64262f0bb311c
 +            }
 +        }
 +        output.push_str("}\n");
-+        self.store
-+            .write_bytes("installed-contracts.d.ts", output.as_bytes())?;
++        crate::fsio::write_if_changed(
++            &self.store.root.join("installed-contracts.d.ts"),
++            output.as_bytes(),
++        )?;
 +        self.write_active_host_types()
 +    }
 +
@@ -119336,8 +119354,10 @@ index 0000000000000000000000000000000000000000..eb2a1a16f35e06168fe64262f0bb311c
 +            literal(MOD_REPLACEMENT_POINTS),
 +            literal(MOD_HOST_OPERATIONS),
 +        );
-+        self.store
-+            .write_bytes("active-host.d.ts", output.as_bytes())?;
++        crate::fsio::write_if_changed(
++            &self.store.root.join("active-host.d.ts"),
++            output.as_bytes(),
++        )?;
 +        crate::tool_schema::write_types(&self.store.root)
 +    }
 +
@@ -147179,10 +147199,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c881089e59c85a2afc2761b9ef3c564260e1c6ef
+index 0000000000000000000000000000000000000000..b9687a83e4a14d877132acc5bc0b2e58bcd16db0
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5070 @@
+@@ -0,0 +1,5089 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -150260,6 +150280,25 @@ index 0000000000000000000000000000000000000000..c881089e59c85a2afc2761b9ef3c5642
 +        [json!({"text":"alpha"}), json!({"text":"beta"})]
 +    );
 +    assert_eq!(runtime.replacement_owner("context"), None);
++}
++
++#[cfg(unix)]
++#[test]
++fn reopening_an_unchanged_store_keeps_its_generated_types() {
++    use std::os::unix::fs::MetadataExt;
++    let (temp, _, _) = fixture(
++        "export default api => api.command('ok', () => 'ok')",
++        &["commands"],
++    );
++    let store = temp.path().join("store");
++    let inodes = || {
++        ["active-host.d.ts", "installed-contracts.d.ts"]
++            .map(|name| std::fs::metadata(store.join(name)).unwrap().ino())
++    };
++    drop(host(&temp));
++    let before = inodes();
++    drop(host(&temp));
++    assert_eq!(inodes(), before);
 +}
 +
 +#[test]

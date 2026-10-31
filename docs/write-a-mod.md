@@ -8,7 +8,7 @@ need changes after an update ([compatibility](../mods/conformance/COMPATIBILITY.
 
 ## Before you begin
 
-You need OMD [installed](install.md) and [pnpm](https://pnpm.io).
+You need OMD [installed](install.md), Node 24.18+ (24.x) and [pnpm](https://pnpm.io).
 
 ## 1. Create the mod
 
@@ -22,8 +22,8 @@ You get a folder with:
 - `index.ts`: the code, with a `/hello` command.
 - `mod.json`: the mod's name, version and requested permissions.
 - `mod.test.json` and `debug.test.json`: offline scenarios that run `/hello`.
-- `package.json` and `tsconfig.json`: the `pnpm` scripts (`check`, `test`, `run`, `debug`, `package`, `watch`) and
-  TypeScript settings.
+- `package.json` and `tsconfig.json`: the `pnpm` scripts (`check`, `test`, `run`, `debug`, `package`, `watch`),
+  TypeScript and its settings.
 
 ## 2. Test it
 
@@ -32,18 +32,14 @@ pnpm test
 ```
 
 It runs offline and prints a long JSON report. Exit 0 means it passed; look for `"display": "Hello author"` near
-the top. Once TypeScript is added (below), `pnpm test` also type-checks, after the scenario passes and before its
-report prints, so a type error fails the run.
+the top. `pnpm test` also type-checks, after the scenario passes and before its report prints, so a type error fails
+the run.
 
 Tests never call a real model. For mocks and helpers, see
 [Offline scenarios](../mods/reference/packaging.md#offline-scenarios) and
 [TypeScript tests](../mods/reference/authoring.md#typescript-tests).
 
-To type-check too, add TypeScript once, then run `pnpm check` (it prints `check: ok` when it passes):
-
-```sh
-pnpm add -D typescript@5.9.3
-```
+`pnpm check` type-checks without running a scenario and prints `check: ok` when it passes.
 
 ## 3. Try it in `codex`
 

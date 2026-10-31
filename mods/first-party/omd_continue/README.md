@@ -9,7 +9,7 @@ It isn't `/resume` (which picks a session), and it never runs on its own.
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_continue
+omd mods enable omd_continue
 ```
 
 OMD Core doesn't include it, but you can install it yourself.

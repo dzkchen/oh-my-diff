@@ -32,6 +32,8 @@ There are two installs. Pick one; you can switch later by rerunning the command 
 
 **OMD+ (recommended for most people)** is OMD plus the [mod collection](docs/collection.md): a status line, compact
 tool output, a pinned plan, a model picker and more are on from the start, and the rest are a click away in `/mods`.
+Three of its defaults change how Codex behaves: an approval nobody answers within two minutes is declined, a large
+idle chat is compacted (cancelling a pending approval) and `/plan` is removed. Turn any of them off in `/mods`.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
@@ -82,8 +84,8 @@ version. Updates are signed and checked before they install, and `omd update rol
 Mod API `1.0.0` is stable; surfaces marked experimental can change ([compatibility](mods/conformance/COMPATIBILITY.md)).
 The API is still young, so expect new capabilities. If you need a specific one, open an issue or a PR.
 
-This project is still in beta and under active development, expect bugs and some small annoyances (just open an issue and I will get on it ASAP :))
-If you are looking to become a core contributor, get in touch as well!
+OMD is in beta and under active development, so expect bugs; please report them in an issue. If you'd like to become
+a core contributor, get in touch.
 
 ## Help and contributing
 

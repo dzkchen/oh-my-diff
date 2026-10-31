@@ -7,7 +7,7 @@ Shows the `/model` and reasoning-effort pickers as compact lists with your curre
 It is on by default in OMD+. Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_model_picker
+omd mods disable omd_model_picker
 ```
 
 ## Use it

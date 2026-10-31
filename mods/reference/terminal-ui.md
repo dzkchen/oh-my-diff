@@ -650,6 +650,11 @@ draw no frame.
 
 - The sidebar has no padding, one row between its components under the comfortable density, and no border unless
   `sidebar_style` sets one, which then carries the view `title`.
+- `sidebar_width` is the sidebar's width in columns, an integer from 0 to 60; a larger value refuses the patch
+  (`invalid_terminal_patch: sidebar_width`). The fullscreen sidebar is never narrower than 20 columns (the width
+  when unset) or wider than a third of the terminal, and it does not draw below 80 columns.
+- `sidebar_side` is `left` or `right` (default `right`). When several mods set either, the last one applied wins;
+  it is not a conflict.
 - A split's `gap` (0–4) leaves cells between its children.
 - Render hook trees refuse `style` and `flex`.
 - The host's progress and mod diagnostics draw as cards above the prompt (four entries each, wrapped to

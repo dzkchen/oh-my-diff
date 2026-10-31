@@ -7,7 +7,7 @@ Runs your language servers in the background so the agent sees the errors each e
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_lsp_sync
+omd mods enable omd_lsp_sync
 ```
 
 It needs a language server on your `PATH`:

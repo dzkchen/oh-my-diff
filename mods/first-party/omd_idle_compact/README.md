@@ -7,7 +7,7 @@ Compacts a large idle conversation near an estimated prompt-cache deadline. The 
 It is on by default in OMD+. Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_idle_compact
+omd mods disable omd_idle_compact
 ```
 
 ## Use it

@@ -570,7 +570,15 @@ fn publish(
             .title
             .get_or_insert_with(|| "Mod recovery".into());
     }
-    views.base(host, terminal, errors, input, rendered_ms);
+    let state_fingerprint = runtime.state_fingerprint();
+    views.base(
+        host,
+        terminal,
+        errors,
+        input,
+        rendered_ms,
+        state_fingerprint,
+    );
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
     codex_features::set_removed(

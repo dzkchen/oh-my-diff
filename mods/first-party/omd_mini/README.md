@@ -3,7 +3,7 @@
 `omd_mini` is a scrollback-first presentation of the same OMD session, inspired by [OpenCode's mini mode](https://opencode.ai/v2/docs/cli/). It comes with OMD+ but starts off; turn it on in `/mods` or with the command below.
 
 ```text
-omd-package mod enable omd_mini   # once
+omd mods enable omd_mini   # once
 omd mini                          # new session
 omd mini resume <thread>          # any codex arguments pass through
 /omd_mini:switch                  # inside a session: reopen it in the other interface

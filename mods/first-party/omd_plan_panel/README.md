@@ -20,7 +20,7 @@ It shows Codex's own `update_plan` tool and adds no todo tool of its own.
 It is on by default in OMD+. Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_plan_panel
+omd mods disable omd_plan_panel
 ```
 
 ## Use it

@@ -7,7 +7,7 @@ Shows model, context, limits, cost and git state in a configurable status line n
 It is on by default in OMD+ and replaces Codex's own status row. Turn it off in `/mods`, or run:
 
 ```sh
-omd-package mod disable omd_statusline
+omd mods disable omd_statusline
 ```
 
 The native row and `/statusline` return, also if the mod fails. Your `tui.status_line` setting is never changed.
@@ -45,7 +45,7 @@ A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLO
 | `thresholds` | `context=70,90 limits=70,90 cost=5,20` | Warning and alert levels (percent, or USD for `cost`) |
 | `tones` | empty | `segment=tone` overrides: `accent`, `success`, `attention`, `failure`, `muted`, `normal` |
 | `github` | `true` | Pull request and CI segments, once a token is connected |
-| `refresh_s` | `30` | Git refresh interval in seconds (5-3600) |
+| `refresh_s` | `60` | Git refresh interval in seconds (5-3600) |
 | `scripts` | empty | JSON array of your own segments (see Scripts) |
 
 ## Segments

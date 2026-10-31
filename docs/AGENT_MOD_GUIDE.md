@@ -60,13 +60,7 @@ The ID is lowercase letters, digits and `_`, up to 24 characters. This writes:
 | `index.ts` | Code. `export default function activate(api)` registers everything. |
 | `mod.test.json` | Offline scenario run by `pnpm test` |
 | `debug.test.json` | A failing scenario that shows how errors look |
-| `package.json`, `tsconfig.json` | Scripts and the local SDK |
-
-Add TypeScript once so `pnpm check` checks types:
-
-```sh
-pnpm add -D typescript@5.9.3
-```
+| `package.json`, `tsconfig.json` | Scripts, the local SDK and TypeScript, so `pnpm check` checks types |
 
 Before step 4 replaces `index.ts`, run `pnpm debug` once: its scenario expects a deliberate error and shows it mapped
 to its `index.ts` line, then exits 0.

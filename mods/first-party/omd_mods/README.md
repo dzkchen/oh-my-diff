@@ -4,7 +4,7 @@ Adds `/mods`, a screen to turn mods on or off, change their settings and install
 
 ## Turn it off
 
-It is on by default in OMD+ and OMD Core. `/mods` cannot turn itself off or remove itself; use `/omd` or `omd-package mod disable omd_mods`. `/omd` stays available if `/mods` breaks.
+It is on by default in OMD+ and OMD Core. `/mods` cannot turn itself off or remove itself; use `/omd` or `omd mods disable omd_mods`. `/omd` stays available if `/mods` breaks.
 
 ## Use it
 

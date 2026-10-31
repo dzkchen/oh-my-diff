@@ -8,7 +8,7 @@ Cursor accounts that `omd_claude_cli` and `omd_cursor` hold, without restarting.
 It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_profiles
+omd mods enable omd_profiles
 ```
 
 It asks to run `node` outside the sandbox (`os`) for its setup script, which writes the profile router into the

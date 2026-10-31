@@ -7,7 +7,7 @@ Shows the OMD mark, the OMD version, your install profile (OMD+ or OMD Core), th
 It is on by default in OMD+ and OMD Core, and `/mods` keeps it on. To turn it off, run:
 
 ```sh
-omd-package mod disable omd_logo
+omd mods disable omd_logo
 ```
 
 ## Use it
