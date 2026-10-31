@@ -73,7 +73,7 @@ const parentOf = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf('/
 const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 const smart = (query: string, text: string) => (query === query.toLowerCase() ? text.toLowerCase() : text).includes(query);
 const natural = (a: Entry, b: Entry) => Number(b[1]) - Number(a[1]) || a[0].localeCompare(b[0], undefined, { sensitivity: 'base', numeric: true });
-const mention = (path: string) => (/[\s"\\]|[,.;:!?)\]}'"`]$/.test(path) ? `@${JSON.stringify(path)}` : `@${path}`);
+const mention = (path: string) => (/[\s\x22\\]|[,.;:!?)\]}\x27\x22\x60]$/.test(path) ? `@${JSON.stringify(path)}` : `@${path}`);
 const language = (path: string) => {
   const name = nameOf(path);
   const dot = name.lastIndexOf('.');

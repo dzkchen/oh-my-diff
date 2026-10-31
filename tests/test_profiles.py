@@ -237,6 +237,34 @@ class ProfileModeTests(unittest.TestCase):
             subprocess.run(["sh", launcher], check=True)
             self.assertEqual(calls(), 2)
 
+    def test_launcher_runs_the_installer_for_a_new_update_request_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            request = base / "store/data/user/omd_update/store.json"
+            for path in (base / "root/update", base / "root/current/bin", request.parent):
+                path.mkdir(parents=True)
+            (base / "root/current/bin/codex").write_text("#!/bin/sh\n")
+            (base / "root/current/bin/codex").chmod(0o755)
+            (base / "install.sh").write_text(f'echo "$@" >> {base}/calls\n')
+            record = {"binary": {"installed_path": str(base / "root/current/bin/codex")}, "store": str(base / "store"),
+                      "profile": "platform", "activation": {"selection": "platform"},
+                      "update": {"root": str(base / "root"), "installer": str(base / "install.sh"), "python": "python3"}}
+            launcher = base / "launcher"
+            launcher.write_text(profiles.selected_text(record))
+            calls = lambda: (base / "calls").read_text().count("launch") if (base / "calls").exists() else 0
+            for entries, expected in (('{"request":{"value":{"id":"1.0.0#1"}}}', 1), ("{}", 1)):
+                (base / "root/update/seen").touch()
+                os.utime(base / "root/update/seen", (0, 0))
+                request.write_text(f'{{"schema":1,"entries":{entries}}}')
+                subprocess.run(["sh", launcher], check=True)
+                self.assertEqual(calls(), expected)
+            (base / "root/update/state.json").write_text("{}")
+            subprocess.run(["sh", launcher], check=True)
+            self.assertEqual(calls(), 2, "state without a notice, as an older installer leaves it")
+            (base / "root/update/notice.json").write_text("{}")
+            subprocess.run(["sh", launcher], check=True)
+            self.assertEqual(calls(), 2)
+
     def test_launcher_rearms_a_stale_announcement_while_a_recycled_pid_holds_a_marker(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)

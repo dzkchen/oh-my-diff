@@ -10,6 +10,7 @@ commit_parsers = [
   { message = "^[Mm]erge", skip = true },
   { message = "^feat", group = "New" },
   { message = "^fix", group = "Fixed" },
+  { message = "^chore(\\([^)]*\\))?!?: Codex \\d", group = "Changed" },
   { message = "^(test|build|ci|chore)(\\(|!?:)", skip = true },
   { message = ".", group = "Changed" },
 ]

@@ -124,7 +124,7 @@ def build(artifact_dir, package_mode=False, version=None):
             "platform": {"label": profiles.PROFILE_LABELS["platform"],
                          "first_party_installed": list(profiles.PLATFORM_PACKAGES),
                          "first_party_default_active": list(profiles.PLATFORM_PACKAGES), "plugin_sources": []},
-            "full": {"label": profiles.PROFILE_LABELS["full"], "first_party_installed": sorted(mods["packages"]),
+            "full": {"label": profiles.PROFILE_LABELS["full"], "first_party_installed": list(profiles.profile_packages("full")),
                      "first_party_default_active": sorted(profiles.DEFAULT_ACTIVE),
                      "plugin_sources": plugins},
         },

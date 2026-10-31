@@ -74,6 +74,10 @@ test('scaffold commands and mapped failures work for custom and example-named ID
       assert.match(debugged.stdout, /INTENTIONAL_AUTHOR_FAILURE/);
       assert.match(debugged.stdout, /index\.ts:\d+:\d+/);
     }
+    const dashed = join(root, 'my-mod');
+    const created = author('create', dashed);
+    assert.equal(created.status, 0, created.stderr);
+    assert.equal(JSON.parse(readFileSync(join(dashed, 'mod.json'))).id, 'my_mod');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -157,6 +157,25 @@ fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() 
 }
 
 #[test]
+fn state_fingerprint_changes_only_when_mod_state_changes() {
+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('read', () => api.state.get()); }";
+    let (temp, _, _) = fixture(source, &["commands", "store"]);
+    let mut runtime = host(&temp);
+    let start = runtime.state_fingerprint();
+    let mut invoke = |name: &str| {
+        let generation = runtime.generation();
+        runtime
+            .invoke("fixture", generation, "command", name, Value::Null)
+            .unwrap();
+        runtime.state_fingerprint()
+    };
+    let counted = invoke("count");
+    assert_ne!(counted, start);
+    assert_eq!(invoke("read"), counted);
+    assert_ne!(invoke("count"), counted);
+}
+
+#[test]
 fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
     let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : key === 'os' ? api.host.tryCall('exec.run', { program: '/bin/echo', argv: [`${value}`], sandbox: 'none' }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
     let temp = TempDir::new().unwrap();
@@ -886,6 +905,17 @@ fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
         );
     }
     let mut manifest = base;
+    let features = |count: usize| (0..count).map(|i| format!("f{i}")).collect::<Vec<_>>();
+    manifest["compatibility"] = json!({"optional_features": features(33)});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let error = ModStore::inspect_package(&path).unwrap_err().to_string();
+    assert!(
+        error.contains("invalid_host_compatibility_declaration: optional_features has 33 (max 32)"),
+        "{error}"
+    );
+    manifest["compatibility"] = json!({"optional_features": features(32)});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    ModStore::inspect_package(&path).unwrap();
     manifest["compatibility"] = json!({"releases": [OMD_HOST_RELEASE]});
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     ModStore::inspect_package(&path).unwrap();
@@ -1281,7 +1311,7 @@ fn terminal_client_sites_reach_only_the_mod_that_owns_them() {
         let path = package(
             &root,
             id,
-            "export default api => api.on('terminal', ({ client }) => ({status: [client.columns + '|' + (Object.entries(client.sites ?? {}).map(([name, area]) => `${name}=${area.columns}x${area.rows}`).join(',') || 'none')]}))",
+            "export default api => api.on('terminal', ({ client }) => ({status: [client.columns + '|' + (Object.entries(client.sites ?? {}).sort().map(([name, area]) => `${name}=${area.columns}x${area.rows}`).join(',') || 'none')]}))",
             &["terminal"],
         );
         trust(&store, &path, &["terminal"]);

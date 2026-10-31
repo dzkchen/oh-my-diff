@@ -386,8 +386,8 @@ async function main() {
   if (['--help', '-h', 'help'].includes(action)) return void process.stdout.write(USAGE);
   const directory = resolve(rawDirectory);
   switch (action) {
-    case 'create': return createProject(directory, nameOrStore || basename(directory));
-    case 'example': return copyExample(directory, nameOrStore);
+    case 'create': return createProject(directory, nameOrStore || basename(directory).replaceAll('-', '_'));
+    case 'example': return copyExample(directory, nameOrStore).then(() => lock(directory));
     case 'examples': return copyExamples(directory);
     case 'check':
       checkProject(directory);

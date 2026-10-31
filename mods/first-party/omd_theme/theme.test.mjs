@@ -42,8 +42,8 @@ const ready = (prefs, extra) => {
 const decode = packed => Buffer.from(packed, 'base64');
 const tick = (state, key, ms, overrides) => call({ event: 'timer', payload: { key }, state, virtual_time_ms: ms }, overrides);
 
-const KEY = `omd_theme_t1-0-0-0-120-44`;
-const BEHIND_KEY = `omd_theme_t1-1-0-0-120-44`;
+const KEY = `fxe5hx-0-0-0-120-44`;
+const BEHIND_KEY = `fxe5hx-1-0-0-120-44`;
 
 test('the scene goes under the whole screen and hides the welcome mark on a fresh session', () => {
   const start = started();
@@ -68,6 +68,11 @@ test('each thread draws its own raster, so a hidden thread never paints over the
   assert.deepEqual(other.value.underlay, { raster: 'omd_theme_0199ab2' });
   const blits = tick(other.state, `f.${NOW}.-1.0.0.0.0`, NOW + 16).of('terminal.blit');
   assert.ok(blits.length > 0 && blits.every(blit => blit.key === 'omd_theme_0199ab2'));
+  const uuid = call({ event: 'terminal', state: started().state, payload: { event: 'startup', ledger: null,
+    presentation: { thread_id: '019a3f2e-7c41-7d22-9b0e-5f6a8c1d2e3f', phase: 'fresh', surface: 'fullscreen' }, client: client({ columns: 300, rows: 120 }), clients: [] } });
+  const first = tick(uuid.state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
+  const later = tick(first.state, first.of('events.schedule')[0].key.replace(/^(f\.\d+)\.\d+/, '$1.999999'), NOW + 86_400_000);
+  for (const { key } of [...first.of('events.schedule'), ...later.of('events.schedule')]) assert.ok(Buffer.byteLength(key) <= 64, key);
 });
 
 test('the frame chain blits the screen in bands, then only the changed rows, merged into bands', () => {
@@ -84,7 +89,7 @@ test('the frame chain blits the screen in bands, then only the changed rows, mer
     return Array.from({ length: bytes.length / 12 }, (_, at) => ({ glyph: bytes.readUInt32LE(at * 12), x: blit.rect.x + at % blit.rect.width }));
   });
   assert.ok(cells.some(cell => cell.x < 90 && cell.glyph !== 32) && cells.every(cell => cell.x < 90 || cell.glyph === 32));
-  assert.match(docked.of('events.schedule')[0].key, /\.omd_theme_t1-0-0-0-90-44\.0$/);
+  assert.match(docked.of('events.schedule')[0].key, /\.fxe5hx-0-0-0-90-44\.0$/);
   const [next] = first.of('events.schedule');
   assert.equal(next.key, `f.${NOW}.1.120.44.${KEY}.0`);
   assert.ok(next.delay_ms > 0 && next.delay_ms <= 250);
@@ -120,7 +125,10 @@ test('a turn darkens and pauses the scene, a still scene draws once, and both on
   assert.ok(still.of('terminal.blit').length > 0);
   const poll = still.of('events.schedule')[0];
   assert.deepEqual(poll, { key: `f.${NOW}.0.120.44.${KEY}.0`, delay_ms: 1500 });
-  assert.deepEqual(tick(quiet, poll.key, NOW + 1600).calls.map(item => item.operation), ['terminal.blit', 'events.schedule']);
+  const kept = tick(still.state, poll.key, NOW + 1600);
+  assert.deepEqual(kept.calls.map(item => item.operation), ['terminal.blit', 'events.schedule']);
+  const corner = decode(still.of('terminal.blit')[0].packed).subarray(0, 12);
+  for (const probe of [kept, tick(kept.state, poll.key, NOW + 3200)]) assert.deepEqual(decode(probe.of('terminal.blit')[0].packed), corner);
 });
 
 test('a wake that beats its state write waits, a narrow fresh session keeps polling, and stale stored choices fall back', () => {

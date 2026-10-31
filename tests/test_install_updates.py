@@ -4,6 +4,7 @@ from pathlib import Path
 import pty
 import select
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -109,11 +110,11 @@ class UpdateSelection(unittest.TestCase):
         self.write_settings()
         return self.module.check(types.SimpleNamespace(), self.root, self.current)
 
-    def test_required_upstream_minor_matches_the_pin_and_install_docs(self):
+    def test_required_upstream_minor_matches_the_pin_and_docs_name_no_codex_version(self):
         minor = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v").rsplit(".", 1)[0]
         self.assertEqual(installer().UPSTREAM_MINOR, minor)
-        for name in ("README.md", "docs/install.md"):
-            self.assertIn(f"Codex `{minor}.x`", (ROOT / name).read_text(), name)
+        for name in ("README.md", "docs/install.md", "docs/support.md", "docs/troubleshooting.md", "docs/commands.md"):
+            self.assertNotRegex((ROOT / name).read_text(), r"Codex `\d|codex@\d", name)
 
     def test_versions_order_by_semantic_precedence(self):
         ordered = ["0.1.0-alpha.1", "0.1.0-alpha.2", "0.1.0-alpha.10", "0.1.0-beta", "0.1.0", "0.1.1", "0.10.0"]
@@ -190,7 +191,7 @@ class UpdateSelection(unittest.TestCase):
         version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
         major, minor, _ = map(int, version.split("."))
         codex = self.root / "codex"
-        args = types.SimpleNamespace(upstream=codex, bin_dir=self.root / "bin")
+        args = types.SimpleNamespace(upstream=codex, bin_dir=self.root / "bin", root=self.root / "omd")
         for candidate, accepted in ((version, True), (f"{major}.{minor}.99", True),
                                     (f"{major}.{minor - 1}.0", False), (f"{major}.{minor + 1}.0", False)):
             with self.subTest(version=candidate):
@@ -200,8 +201,30 @@ class UpdateSelection(unittest.TestCase):
                     self.assertEqual(module.upstream_binary(args, None, module.UPSTREAM_MINOR)["version"],
                                      f"codex-cli {candidate}")
                 else:
-                    with self.assertRaisesRegex(ValueError, "upstream Codex"):
+                    with self.assertRaisesRegex(ValueError, f"npm install -g @openai/codex@{module.UPSTREAM_MINOR}"):
                         module.upstream_binary(args, None, module.UPSTREAM_MINOR)
+
+    def test_upstream_accepts_the_npm_layout_and_refuses_the_omd_launcher(self):
+        module = installer()
+        version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
+        script = self.root / "lib/node_modules/@openai/codex/bin/codex.js"
+        launcher = self.root / "omd/releases" / ("1" * 32) / "bin/codex"
+        for path in (script, launcher):
+            path.parent.mkdir(parents=True)
+            path.write_text(f"#!/bin/sh\nprintf '%s\\n' 'codex-cli {version}'\n")
+            path.chmod(0o755)
+        npm, bin_dir = self.root / "npm-bin", self.root / "bin"
+        for directory, target in ((npm, script), (bin_dir, launcher)):
+            directory.mkdir()
+            (directory / "codex").symlink_to(target)
+        args = types.SimpleNamespace(upstream=npm / "codex", bin_dir=bin_dir, root=self.root / "omd")
+        self.assertEqual(module.upstream_binary(args, None, module.UPSTREAM_MINOR)["path"], str(npm / "codex"))
+        args.upstream = None
+        with patch.dict(os.environ, {"PATH": f"{bin_dir}:{npm}"}):
+            self.assertEqual(module.upstream_binary(args, None, module.UPSTREAM_MINOR)["path"], str(npm / "codex"))
+        for upstream in (bin_dir / "codex", launcher):
+            with self.subTest(upstream=upstream), self.assertRaisesRegex(ValueError, "OMD launcher"):
+                module.upstream_binary(types.SimpleNamespace(**vars(args) | {"upstream": upstream}), None, module.UPSTREAM_MINOR)
 
     def test_install_warns_when_upstream_codex_precedes_the_launcher(self):
         upstream, bin_dir = self.root / "upstream", self.root / "bin"
@@ -333,6 +356,49 @@ class UpdateSelection(unittest.TestCase):
         offline = self.check()
         self.assertEqual((offline["available"]["version"], offline["error"]), ("0.2.0", "network is unreachable"))
         self.assertEqual(json.loads((self.root / "update/state.json").read_text())["installed"], "0.1.0")
+
+    def test_the_launcher_notice_fits_an_environment_read(self):
+        manifest = {"mod_api": "1.0.0", "body": "b" * 60_000, "signature": "s" * 4000}
+        self.module.save(self.root, installed="0.1.0", error="e" * 300, failed={"version": "0.2.0", "error": "é" * 300, "at": 1},
+                         blocked={"version": "0.3.0", "reasons": ["r" * 2000] * 4}, available={
+                             "version": "0.2.0", "prerelease": False, "notes": "—" * 1500, "page": "p", "user_mods": ["m"] * 50,
+                             "manifest": manifest})
+        text = (self.root / "update/notice.json").read_text().rstrip("\n")
+        self.assertLessEqual(len(text.encode()), 4096)
+        self.assertEqual(json.loads(text)["available"], {"version": "0.2.0", "prerelease": False, "page": "p", "mod_api": "1.0.0",
+                                                          "user_mods": ["m"] * 50})
+        (self.root / "update/notice.json").unlink()
+        (self.root / "update/state.json").write_text(json.dumps({"schema": 1, "installed": "0.1.0"}))
+        self.module.mod_request = lambda *arguments: None
+        self.module.launch(types.SimpleNamespace(session=os.getpid()), self.root, self.current)
+        self.assertTrue((self.root / "update/notice.json").is_file())
+
+    def test_a_withdrawn_installed_release_is_reported(self):
+        (self.current / "receipt.json").write_text(json.dumps({"schema": 1, "generation": self.current.name, "profile": "platform",
+                                                               "releases_url": "https://api.github.com/repos/example/omd/releases"}))
+        older = release("0.0.9")
+        self.published, fetched = [older], []
+        def fetch(address, limit):
+            fetched.append(address)
+            if address.endswith("/git/matching-refs/tags/v"):
+                return [{"ref": "refs/tags/v0.1.0"}]
+            if address.endswith("/tags/v0.0.9"):
+                return {key: value for key, value in older.items() if key != "manifest"}
+            raise urllib.error.HTTPError(address, 404, "not found", {}, None)
+        self.module.fetch_json = fetch
+        summary = lambda: self.module.update_summary(self.module.manual(types.SimpleNamespace(action="status", value=None),
+                                                                        self.root, self.current))
+        self.assertIsNone(self.check()["withdrawn"], "an --asset-url install was never published")
+        (self.current / self.module.RELEASE_MANIFEST).write_text("{}")
+        fetched.clear()
+        self.assertEqual(self.check()["withdrawn"], {"version": "0.1.0", "run": None})
+        self.assertEqual(sum(address.endswith("/tags/v0.1.0") for address in fetched), 1)
+        self.assertTrue(summary().endswith(". 0.1.0 was withdrawn"), summary())
+        (self.root / "releases" / ("1" * 32)).mkdir()
+        (self.root / "previous").symlink_to(self.root / "releases" / ("1" * 32))
+        self.check()
+        self.assertTrue(summary().endswith(". 0.1.0 was withdrawn; run omd update rollback"), summary())
+        self.assertEqual(self.check(pin="0.0.9")["withdrawn"], {"version": "0.1.0", "run": "omd update"})
 
     def test_unsigned_or_forged_manifests_are_refused_before_any_download(self):
         self.module.download = lambda *arguments: self.fail("downloaded an unverified release")
@@ -487,6 +553,13 @@ class UpdateSelection(unittest.TestCase):
             with patch.object(self.module, "opened", side_effect=urllib.error.URLError("no route")), \
                     self.assertRaisesRegex(ValueError, r"Network error while contacting GitHub \(no route\); check your connection"):
                 self.module.download("https://example.test/a", expected, target)
+            attempts.clear()
+            def untrusted(url, timeout):
+                attempts.append(url)
+                raise urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))
+            with patch.object(self.module, "opened", untrusted), self.assertRaisesRegex(ValueError, "Install Certificates.command"):
+                self.module.download("https://example.test/a", expected, target)
+            self.assertEqual(len(attempts), 1)
         self.assertFalse(target.exists())
 
     def test_downloads_retry_short_reads_and_stop_when_cancelled(self):

@@ -353,6 +353,7 @@ pub(super) fn detached(
         selection,
         adapter: None,
         state,
+        state_revision: 0,
         registered_state: std::sync::Arc::default(),
         ui: None,
         ui_state: Value::Null,

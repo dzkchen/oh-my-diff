@@ -83,7 +83,8 @@ an independent author package that uses only this surface. Other independent exa
 and aren't production implementations.
 
 Each primitive (an operation, event or capability) advertises a [host feature](glossary.md#mods-and-the-host) that a
-package can list in `required_features` (Mod API `1.0.0`). With no mod registered for a primitive the host allocates
+package can list in `required_features` or `optional_features` (Mod API `1.0.0`; at most 32 unique host features in each
+list, none in both). With no mod registered for a primitive the host allocates
 nothing for it and changes no decision.
 
 ## Callback budgets and the clock
