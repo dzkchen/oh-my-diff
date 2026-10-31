@@ -107,7 +107,7 @@ async function catalog(model) {
   const found = (Array.isArray(cache.models) ? cache.models : []).find(item => item?.slug === model);
   if (!Number.isInteger(found?.context_window)) return null;
   const efforts = (found.supported_reasoning_levels ?? []).map(level => level?.effort).filter(effort => typeof effort === 'string');
-  return { window: found.context_window, effort: found.default_reasoning_level ?? 'medium', efforts };
+  return { window: found.context_window, max: Number.isInteger(found.max_context_window) ? found.max_context_window : found.context_window, effort: found.default_reasoning_level ?? 'medium', efforts };
 }
 
 async function setup(recordPath, optionText) {

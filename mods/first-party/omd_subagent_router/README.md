@@ -57,7 +57,7 @@ route, for a worktree, or for a task the lead polls or integrates itself.
 | `status` | Reports a task by `handle`, or lists them all |
 | `cancel` | Stops a task, or discards a finished worktree result |
 | `integrate` | Applies a finished `worktree` task's changes to the workspace. `status` lists its `changed_paths` and `candidate_sha256` |
-| `targets` | Lists routes with their model, provider, health, and why one is skipped |
+| `targets` | Lists routes with their model, provider, health, the isolation each allows, and why one is skipped. With `model`, lists only routes and models matching it. A route lists at most 12 other models and counts the rest in `more_models` |
 
 Fields of `start`:
 
@@ -92,9 +92,19 @@ A target is skipped when:
 - a task on that provider failed for authorization, rate limit or allowance in the last 15 minutes.
 
 Windows and failures are kept in the mod's user store, so every thread sees them. A window with no reset time stops
-counting after an hour. The task or subagent then runs on `fallback_model`, else the lead's model, with a notice naming
-every skipped route and why. With no usable route left, `delegate_task` refuses and lists them. A subagent model the
+counting after an hour. The task or subagent then runs on the first usable model in `fallback_models`, else the lead's
+model, with a notice naming every skipped route and why. `start` also returns them in `skipped`. With no usable route
+left, `delegate_task` refuses and lists them. A subagent model the
 lead picked itself, and models on the built-in OpenAI provider, skip these checks.
+
+### Restart after a usage limit
+
+With `retry_after_limit` on, a task that fails for a rate limit, on a provider whose usage window has a reset time
+within 6 hours and at least 90% used (Claude, ChatGPT), doesn't wake the lead. `status` reports it `waiting` with the restart time. About
+30 s after the reset it starts again as a new task with the same brief, route and model, and that task's result wakes
+the lead, naming the task it restarted. A restart that fails isn't restarted again. If the route is gone or skipped by
+then, the lead is woken with the original failure. `cancel` stops a pending restart, and so does turning the setting off. The mod keeps the brief
+(up to 8,000 bytes) only while this setting is on. It never moves the task to another route or provider.
 
 ## Settings
 
@@ -104,7 +114,8 @@ Change settings in `/mods`. Effort values are empty, `none`, `minimal`, `low`, `
 | --- | --- | --- |
 | `research_model`, `review_model`, `worker_model` | empty | The model for that role when no directive names one. Empty keeps the lead's model. |
 | `research_effort`, `review_effort`, `worker_effort` | empty | Reasoning effort for that role, used only with that role's `*_model` setting |
-| `fallback_model` | empty | The model to try first when the chosen one is skipped, before the lead's model. Empty goes straight to the lead's model. |
+| `fallback_models` | empty | Comma-separated models to try in order when the chosen one is skipped, such as `opus, gpt-6.1-sol`. The lead's model comes last. Empty goes straight to the lead's model. |
+| `retry_after_limit` | `false` | Restarts a `delegate_task` task once, on the same route, when its provider's usage limit stopped it and the limit resets within 6 hours (see below) |
 
 A directive for a role replaces both its model and effort settings. An empty effort uses the effort the lead put in the
 spawn call if the model supports it, else the model's default. An effort the model lacks is ignored. `delegate_task`
@@ -119,7 +130,7 @@ ignores the effort settings, because the host sets a worker's effort from its ro
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - A model from another provider needs that provider set up, for example `omd_claude_cli` with `/claude login`. See
   [Use other providers](../../../docs/use-other-providers.md).
-- A skipped model (see [Routing health](#routing-health)) tries `fallback_model` first, then the lead's model. A model
+- A skipped model (see [Routing health](#routing-health)) tries `fallback_models` in order, then the lead's model. A model
   that matches nothing runs on the lead's model. Either way a warning shows above the prompt and in the transcript.
 - A subagent on another provider is allowed to run like any helper agent on that provider's route. It counts against
   `worker_limits` in `host.json`, by default 60 requests and 30 minutes per subagent (`omd_claude_cli` setup raises

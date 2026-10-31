@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, handoff } from './handoff.mjs';
-import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
+import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, loginCommand, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
@@ -26,11 +26,11 @@ export function cliEnv(values = {}) {
 }
 
 export const accountEnv = account => account?.config_dir ? { CLAUDE_CONFIG_DIR: account.config_dir } : {};
-export const loginHint = (billing, account) => `\`/claude login${billing === 'api' ? ' api' : ''}${account && account.name !== 'default' ? ` ${account.name}` : ''}\``;
+const loginHint = (billing, account) => `\`${loginCommand(billing, account?.name)}\``;
 
 export function checkCli(claude, billing = 'subscription', home = process.env.HOME, username = process.env.USER, account = null) {
-  checkVersion(claude);
-  return checkAuth(claude, billing, home, username, account);
+  const cliVersion = checkVersion(claude);
+  return { ...checkAuth(claude, billing, home, username, account), cliVersion };
 }
 
 function checkVersion(claude) {
@@ -38,6 +38,7 @@ function checkVersion(claude) {
   if (version.status !== 0 || !cliSupported(version.stdout)) {
     throw new Error(`claude_cli_unsupported: ${CLI_MINIMUM} or a newer 2.x is required; run claude update (or ${CLI_INSTALL})`);
   }
+  return version.stdout.trim();
 }
 
 function checkAuth(claude, billing, home, username, account) {

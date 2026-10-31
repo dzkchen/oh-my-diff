@@ -641,7 +641,7 @@ The registry marks these entries experimental in Mod API `1.0.0`:
 | Capabilities | `approve.override`, `autonomous`, `fs.external`, `history_write`, `mcp`, `peers`, `power`, `unix_sockets` |
 | Events | `config_change`, `contract`, `elicitation_result`, `focus`, `host_operation`, `instructions_loaded`, `migrate`, `mods_changed`, `peer_message`, `peer_receipt`, `prompt`, `prompt_expanded`, `session`, `tool_batch_end`, `tool_exposure`, `turn_queue`, `view`, `worktree` |
 | Interceptors | `agent_offers`, `agent_spawn`, `compaction`, `component_change`, `composer_key`, `elicitation`, `mention`, `peer_receive`, `peer_send`, `turn_stop` |
-| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access`, `workspace.unwatch` |
+| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access`, `workspace.unwatch` |
 | Components | `raster` |
 | Render sites | `composer_hint`, `notice`, `session_mode`, `tool_result`, `turn_duration`, `user_message` |
 | View fields | `background`, `footer`, `foreground`, `header`, `key_contexts`, `panels`, `placeholder`, `surface_styles`, `underlay` |
@@ -1762,7 +1762,7 @@ These capabilities allow processes, workspace files, models, agents, stored data
 | `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
 | `network` | `exec.run`, `process.start` and `terminal.pty` with `network: "loopback"` |
 | `unix_sockets` (experimental) | `exec.run` `unix_sockets` |
-| `model` | `routes.list`, `routes.select`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
+| `model` | `routes.list`, `routes.select`, `models.context_window`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
 | `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (also needs `sessions` and `sessions_tools`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.snapshot`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
@@ -1901,6 +1901,7 @@ it needs and its registry status. An operation marked experimental may change in
 | `mcp.disconnect` | `mcp` | experimental |
 | `model.complete` | `agents` | frozen |
 | `model.fork` | `agents`, `sessions` and `sessions_tools` | experimental |
+| `models.context_window` | `model` | experimental |
 | `mods.service` | `services` (internal service transport; mods use `api.services.call`) | experimental |
 | `packages.apply` | `packages` | frozen |
 | `packages.index` | `packages` | frozen |
@@ -5620,6 +5621,22 @@ A provider service is a mod-owned service process that a routed `host.json` serv
   configuration already defines it. The host does this at startup when the mod is active, and at each registration.
 - A grant with exactly one secret uses it as the bearer token.
 - A thread resumed after its provider is gone continues on the configured provider.
+
+#### `models.context_window` (`model_context_window_v1`)
+
+`models.context_window` (capability `model`, experimental) sets how much of a thread a model sees before Codex
+compacts it.
+
+- `models.context_window {model, tokens?}` returns `{model, tokens, max}`. A number sets the window for that model
+  slug, `null` clears it, and leaving `tokens` out only reads it.
+- It applies from each thread's next turn in this session. Other sessions on the same mod store read it when a turn
+  starts, so they use it from the turn after. It persists across restarts.
+- The window is capped at the model's `max_context_window`, or at its catalog window when it has no maximum. A
+  provider model's maximum is the `context_window` its `providers.models` entry published, so it can only be lowered.
+- `max` is that cap for a provider model and `null` for a Codex catalog model.
+- An explicit `model_context_window` in `config.toml` or `-c` wins over it.
+- `tokens` is a whole number from 1 to 10,000,000, and at most 64 models keep a window. Errors:
+  `model_context_window_invalid`, `model_context_window_limit`.
 
 #### `providers.models`
 

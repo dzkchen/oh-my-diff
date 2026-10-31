@@ -3,7 +3,7 @@ import { request as httpsRequest } from 'node:https';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { PROVIDER, profilesOf } from './profiles.ts';
+import { PROVIDER, loopback, profilesOf } from './profiles.ts';
 import { claim, handoff } from './handoff.mjs';
 
 const BODY_LIMIT = 64 * 1024 * 1024;
@@ -310,6 +310,10 @@ function post(url, headers, payload, signal) {
 // The native credential gateway adds the profile's token and only reaches the origin it was enrolled for.
 function through(profile) {
   const gateway = process.env.OMD_CREDENTIAL_GATEWAY;
+  if (!profile.credential) {
+    if (!loopback(profile.url)) throw Object.assign(new Error('credential_required'), { status: 503 });
+    return profile.url;
+  }
   if (!gateway) throw Object.assign(new Error('credential_gateway_unavailable'), { status: 503 });
   const target = new URL(profile.url);
   return `${gateway}/${profile.credential}${target.pathname}${target.search}`;

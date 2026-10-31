@@ -33133,7 +33133,7 @@ index a35deb042f67a19b64363fdee3f3bc94c61c845b..af563c1071bc12708019d68c421d8d45
 
  pub use catalog::CatalogModel;
 diff --git a/codex-rs/models-manager/src/manager.rs b/codex-rs/models-manager/src/manager.rs
-index 94e8a33ac57d3d8bcf38dc84cf5f457bfb974f3a..89a15ca2641acf2ac064085204228c72c0a0a868 100644
+index 94e8a33ac57d3d8bcf38dc84cf5f457bfb974f3a..1cd37f564a4ad89ce374dd00ecfc06afc256298e 100644
 --- a/codex-rs/models-manager/src/manager.rs
 +++ b/codex-rs/models-manager/src/manager.rs
 @@ -222,7 +222,15 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
@@ -33165,6 +33165,58 @@ index 94e8a33ac57d3d8bcf38dc84cf5f457bfb974f3a..89a15ca2641acf2ac064085204228c72
      let model_info = if let Some(remote) = remote {
          ModelInfo {
              slug: model.to_string(),
+@@ -1036,7 +1049,17 @@ fn construct_model_info(
+     } else {
+         model_info::model_info_from_slug(model)
+     };
+-    model_info::with_config_overrides(model_info, config)
++    let model_info = model_info::with_config_overrides(model_info, config);
++    let ceiling = model_info
++        .max_context_window
++        .or(model_info.context_window);
++    match (crate::runtime_models::context_window(model), ceiling) {
++        (Some(tokens), Some(ceiling)) if config.model_context_window.is_none() => ModelInfo {
++            context_window: Some(tokens.min(ceiling)),
++            ..model_info
++        },
++        _ => model_info,
++    }
+ }
+
+ #[cfg(test)]
+diff --git a/codex-rs/models-manager/src/manager_tests.rs b/codex-rs/models-manager/src/manager_tests.rs
+index 468aee2176e615e336e607dec88f330d4b9c8258..28db07ec9edbc991c6cfb62b4cdc5e1d1f9a55c5 100644
+--- a/codex-rs/models-manager/src/manager_tests.rs
++++ b/codex-rs/models-manager/src/manager_tests.rs
+@@ -1885,3 +1885,28 @@ fn bundled_models_json_roundtrips() {
+         "bundled models.json should contain at least one model"
+     );
+ }
++
++#[test]
++fn a_picked_context_window_applies_up_to_the_model_maximum() {
++    let slug = "omd-picked-window";
++    let remote = ModelInfo {
++        context_window: Some(272_000),
++        max_context_window: Some(872_000),
++        ..model_info::model_info_from_slug(slug)
++    };
++    let window = |tokens: i64, remote: &ModelInfo, config: &ModelsManagerConfig| {
++        crate::runtime_models::set_context_windows(vec![(slug.to_string(), tokens)]);
++        construct_model_info(slug, Some(remote.clone()), config).context_window
++    };
++    let config = ModelsManagerConfig::default();
++    assert_eq!(window(400_000, &remote, &config), Some(400_000));
++    assert_eq!(window(1_000_000, &remote, &config), Some(872_000));
++    assert_eq!(window(128_000, &remote, &config), Some(128_000));
++    let fixed = ModelInfo { max_context_window: None, ..remote.clone() };
++    assert_eq!(window(400_000, &fixed, &config), Some(272_000));
++    let explicit = ModelsManagerConfig { model_context_window: Some(200_000), ..config.clone() };
++    assert_eq!(window(400_000, &remote, &explicit), Some(200_000));
++    let unknown = ModelInfo { context_window: None, max_context_window: None, ..remote.clone() };
++    assert_eq!(window(400_000, &unknown, &config), None);
++    crate::runtime_models::set_context_windows(Vec::new());
++}
 diff --git a/codex-rs/protocol/src/error_tests.rs b/codex-rs/protocol/src/error_tests.rs
 index 8fb8ae872d245c4af84c5170ed67e644b88b2dcf..b24a13a90e2c1fa24ffbd091da85e6c138a08dc3 100644
 --- a/codex-rs/protocol/src/error_tests.rs
@@ -64636,10 +64688,10 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..92894fd7529a67f4fa7c51eca193c1b8bf7a3ce1
+index 0000000000000000000000000000000000000000..80aa1a4d63c79eab14184d4c6a933b74b9598604
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,781 @@
+@@ -0,0 +1,784 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -64648,6 +64700,7 @@ index 0000000000000000000000000000000000000000..92894fd7529a67f4fa7c51eca193c1b8
 +mod generic_host;
 +mod ledger;
 +mod managed_process;
++mod model_windows;
 +mod mods;
 +mod workspace_operations;
 +mod workspace_watch;
@@ -64850,6 +64903,7 @@ index 0000000000000000000000000000000000000000..92894fd7529a67f4fa7c51eca193c1b8
 +            .unwrap_or_default(),
 +    });
 +    let root = host.root.clone();
++    model_windows::load(&root);
 +    mods::install(registry, host).or_else(|error| inactive(&root, error))
 +}
 +
@@ -64944,6 +64998,7 @@ index 0000000000000000000000000000000000000000..92894fd7529a67f4fa7c51eca193c1b8
 +    }
 +
 +    fn refresh_session(&self, session: &Session) -> Result<(), String> {
++        model_windows::load(&self.root);
 +        let config = self.route_config().0;
 +        let limits = session
 +            .task
@@ -67965,6 +68020,158 @@ index 0000000000000000000000000000000000000000..252d5d7afd1bf085a73c07cea74d0ca1
 +                    )
 +                    .unwrap_err(),
 +                "process_program_or_arguments_invalid"
++            );
++        }
++    }
++}
+diff --git a/codex-rs/ext/omd/src/model_windows.rs b/codex-rs/ext/omd/src/model_windows.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538b8591963
+--- /dev/null
++++ b/codex-rs/ext/omd/src/model_windows.rs
+@@ -0,0 +1,146 @@
++use codex_models_manager::runtime_models;
++use codex_omd::fsio::Durability;
++use codex_omd::fsio::write_bytes;
++use serde_json::Value;
++use serde_json::json;
++use std::collections::BTreeMap;
++use std::path::Path;
++use std::sync::Mutex;
++use std::sync::PoisonError;
++use std::time::SystemTime;
++
++const FILE: &str = "model-windows.json";
++const MAX_MODELS: usize = 64;
++const MAX_SLUG_BYTES: usize = 128;
++const MAX_TOKENS: i64 = 10_000_000;
++
++type Stamp = Option<(u64, SystemTime)>;
++
++static SEEN: Mutex<Option<Stamp>> = Mutex::new(None);
++
++fn stamp(root: &Path) -> Stamp {
++    let metadata = std::fs::metadata(root.join(FILE)).ok()?;
++    Some((metadata.len(), metadata.modified().ok()?))
++}
++
++fn read(root: &Path) -> BTreeMap<String, i64> {
++    std::fs::read(root.join(FILE))
++        .ok()
++        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
++        .unwrap_or_default()
++}
++
++pub(crate) fn load(root: &Path) {
++    let current = stamp(root);
++    let mut seen = SEEN.lock().unwrap_or_else(PoisonError::into_inner);
++    if seen.as_ref() != Some(&current) {
++        runtime_models::set_context_windows(read(root).into_iter().collect());
++        *seen = Some(current);
++    }
++}
++
++pub(crate) fn call(root: &Path, arguments: Value) -> Result<Value, String> {
++    let Value::Object(mut input) = arguments else {
++        return Err("model_context_window_invalid: expected {model, tokens?}".into());
++    };
++    let model = match input.remove("model") {
++        Some(Value::String(model)) if !model.is_empty() && model.len() <= MAX_SLUG_BYTES => model,
++        _ => return Err("model_context_window_invalid: model is a slug of 1 to 128 bytes".into()),
++    };
++    let tokens = input.remove("tokens");
++    if let Some(field) = input.keys().next() {
++        return Err(format!(
++            "model_context_window_invalid: unknown field {field}"
++        ));
++    }
++    let mut seen = SEEN.lock().unwrap_or_else(PoisonError::into_inner);
++    let mut windows = read(root);
++    let changed = tokens.is_some();
++    match tokens {
++        None => {}
++        Some(Value::Null) => {
++            windows.remove(&model);
++        }
++        Some(value) => {
++            let tokens = value
++                .as_i64()
++                .filter(|tokens| (1..=MAX_TOKENS).contains(tokens))
++                .ok_or(
++                    "model_context_window_invalid: tokens is a whole number from 1 to 10000000",
++                )?;
++            if !windows.contains_key(&model) && windows.len() >= MAX_MODELS {
++                return Err(format!(
++                    "model_context_window_limit: at most {MAX_MODELS} models"
++                ));
++            }
++            windows.insert(model.clone(), tokens);
++        }
++    }
++    if changed {
++        let bytes = serde_json::to_vec(&windows).map_err(|error| error.to_string())?;
++        write_bytes(&root.join(FILE), &bytes, Durability::Volatile)
++            .map_err(|error| error.to_string())?;
++        *seen = Some(stamp(root));
++    }
++    runtime_models::set_context_windows(
++        windows
++            .iter()
++            .map(|(slug, tokens)| (slug.clone(), *tokens))
++            .collect(),
++    );
++    let max = runtime_models::find(&model)
++        .and_then(|(_, info)| info.max_context_window.or(info.context_window));
++    Ok(json!({"model": model, "tokens": windows.get(&model), "max": max}))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn picked_windows_persist_clear_and_validate() {
++        let root = tempfile::tempdir().expect("root");
++        let stored = || -> BTreeMap<String, i64> {
++            serde_json::from_slice(&std::fs::read(root.path().join(FILE)).expect("file"))
++                .expect("json")
++        };
++        let set = call(
++            root.path(),
++            json!({"model": "omd-window-test", "tokens": 400_000}),
++        )
++        .expect("set");
++        assert_eq!(
++            set,
++            json!({"model": "omd-window-test", "tokens": 400_000, "max": null})
++        );
++        assert_eq!(
++            stored(),
++            BTreeMap::from([("omd-window-test".to_string(), 400_000)])
++        );
++        assert_eq!(
++            call(root.path(), json!({"model": "omd-window-test"})).expect("read")["tokens"],
++            400_000
++        );
++        assert_eq!(
++            call(
++                root.path(),
++                json!({"model": "omd-window-test", "tokens": null})
++            )
++            .expect("clear")["tokens"],
++            Value::Null
++        );
++        assert_eq!(stored(), BTreeMap::new());
++        for bad in [
++            json!({"model": "", "tokens": 1}),
++            json!({"model": "m", "tokens": 0}),
++            json!({"model": "m", "tokens": 2.5}),
++            json!({"model": "m", "extra": 1}),
++        ] {
++            assert!(
++                call(root.path(), bad)
++                    .unwrap_err()
++                    .starts_with("model_context_window_invalid")
 +            );
 +        }
 +    }
@@ -75101,10 +75308,10 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7e4c3e528a928395b1c720da24eecac46b16caf3
+index 0000000000000000000000000000000000000000..89804dbb724f408e3fc745639ebd4f7f1a11980e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,854 @@
+@@ -0,0 +1,862 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -75152,6 +75359,7 @@ index 0000000000000000000000000000000000000000..7e4c3e528a928395b1c720da24eecac4
 +    "events.publish",
 +    "credentials.list",
 +    "routes.select",
++    "models.context_window",
 +    "turns.activity",
 +    "packages.list",
 +    "packages.index",
@@ -75635,6 +75843,13 @@ index 0000000000000000000000000000000000000000..7e4c3e528a928395b1c720da24eecac4
 +        "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
 +        "turns.activity" => activity::read(core, lead, request.arguments).await,
 +        "routes.select" => select_route(lead, caller.id, request.arguments),
++        "models.context_window" => {
++            let arguments = request.arguments;
++            blocking(Box::new(move || {
++                crate::model_windows::call(&host.root, arguments)
++            }))
++            .await
++        }
 +        "tools.list" => tool_specs::list(core, lead),
 +        "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
 +        "tools.original" => tool_output::stored(core, lead, caller, request.arguments).await,
@@ -90229,10 +90444,10 @@ index 0000000000000000000000000000000000000000..4fc977c8d82739f9d9bbd649799fceb5
 +}
 diff --git a/codex-rs/models-manager/src/runtime_models.rs b/codex-rs/models-manager/src/runtime_models.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd8063618e261356a37aff6188a9d70789435685
+index 0000000000000000000000000000000000000000..27026a1759486b9437c02b6b5de754b3e5e219af
 --- /dev/null
 +++ b/codex-rs/models-manager/src/runtime_models.rs
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,69 @@
 +//! Models that a runtime provider adds to this process's catalog.
 +
 +use codex_protocol::openai_models::ModelInfo;
@@ -90286,6 +90501,21 @@ index 0000000000000000000000000000000000000000..cd8063618e261356a37aff6188a9d707
 +        .iter()
 +        .find(|(_, model)| model.slug == slug)
 +        .cloned()
++}
++
++static WINDOWS: RwLock<Vec<(String, i64)>> = RwLock::new(Vec::new());
++
++pub fn set_context_windows(windows: Vec<(String, i64)>) {
++    *WINDOWS.write().unwrap_or_else(PoisonError::into_inner) = windows;
++}
++
++pub fn context_window(slug: &str) -> Option<i64> {
++    WINDOWS
++        .read()
++        .unwrap_or_else(PoisonError::into_inner)
++        .iter()
++        .find(|(model, _)| model == slug)
++        .map(|(_, tokens)| *tokens)
 +}
 diff --git a/codex-rs/omd/BUILD.bazel b/codex-rs/omd/BUILD.bazel
 new file mode 100644
@@ -112578,10 +112808,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0cadc645fce7028a845e7b5168b50e7e43542bec
+index 0000000000000000000000000000000000000000..c136e7f44ee3c2db0fbb8149e1d03f2213604ad0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6994 @@
+@@ -0,0 +1,6997 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -112954,6 +113184,7 @@ index 0000000000000000000000000000000000000000..0cadc645fce7028a845e7b5168b50e7e
 +    "pty_programs_v1",
 +    "route_reload_v1",
 +    "route_write_v1",
++    "model_context_window_v1",
 +    "power_hold_v1",
 +    "tool_original_v1",
 +    "builtins_features_v1",
@@ -113060,6 +113291,7 @@ index 0000000000000000000000000000000000000000..0cadc645fce7028a845e7b5168b50e7e
 +    "credentials.list",
 +    "credentials.request",
 +    "routes.select",
++    "models.context_window",
 +    "turns.activity",
 +    "turns.abort",
 +    "terminal.notify",
@@ -116288,6 +116520,7 @@ index 0000000000000000000000000000000000000000..0cadc645fce7028a845e7b5168b50e7e
 +        | "exec.output_page"
 +        | "terminal.image_sample" => true,
 +        "workspace.check_access" => arguments["write"] != true,
++        "models.context_window" => arguments.get("tokens").is_none(),
 +        "exec.run" => {
 +            arguments["write"] != true
 +                && arguments["network"]
@@ -120690,7 +120923,7 @@ index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7b
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..583b18730d19d1182b550fd0cec4413aa6619014
+index 0000000000000000000000000000000000000000..05421cce15d003d485d1cd1cc53cddf31efab975
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,487 @@
@@ -120749,7 +120982,7 @@ index 0000000000000000000000000000000000000000..583b18730d19d1182b550fd0cec4413a
 +            "workspace.watch" | "workspace.unwatch" => Ok("fs.read"),
 +            "events.publish" | "events.schedule" | "events.cancel" => Ok("events"),
 +            "credentials.list" | "credentials.request" => Ok("credentials"),
-+            "routes.select" => Ok("model"),
++            "routes.select" | "models.context_window" => Ok("model"),
 +            "turns.activity" => Ok("sessions"),
 +            "turns.abort" => Ok("threads"),
 +            "terminal.notify"
@@ -123425,10 +123658,10 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..f8e562f69ac855384a2ee07a5fd205a0ff606a5a
+index 0000000000000000000000000000000000000000..458376841a0df6e580f3456f204905deaa710a83
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,227 @@
 +{
 +  "operations": {
 +    "exec.run": {"arguments":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdin":{"type":"string"},"timeout_ms":{"type":"number"},"max_output_bytes":{"type":"number"},"output_artifact":{"anyOf":[{"const":false},{"const":true}]},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"unix_sockets":{"type":"array","items":{"type":"string"}},"snapshot":{"$ref":"#/$defs/1"},"guards":{"type":"array","items":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdout_sha256":{"type":"string"}},"required":["program","stdout_sha256"]}},"required_access":{"type":"object","properties":{"write":{"type":"array","items":{"type":"string"}}},"required":["write"]},"exclusive_workspace":{"type":"string"},"sandbox":{"const":"none"}},"required":["program"]},"result":{"allOf":[{"type":"object","properties":{"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"signal":{"anyOf":[{"type":"null"},{"type":"string"}]},"stdout":{"type":"string"},"stdout_sha256":{"type":"string"},"stdout_bytes":{"type":"number"},"output_artifact":{"$ref":"#/$defs/2"},"stderr":{"type":"string"},"stdout_truncated":{"type":"boolean"},"stdout_preview_truncated":{"type":"boolean"},"stderr_truncated":{"type":"boolean"},"stderr_preview_truncated":{"type":"boolean"},"timed_out":{"type":"boolean"},"duration_ms":{"type":"number"},"program":{"$ref":"#/$defs/3"},"guards_verified":{"type":"number"}},"required":["exit_code","signal","stdout","stdout_sha256","stdout_bytes","output_artifact","stderr","stdout_truncated","stdout_preview_truncated","stderr_truncated","stderr_preview_truncated","timed_out","duration_ms","program","guards_verified"]},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"evidence":{"$ref":"#/$defs/1"}},"required":[]}]}},
@@ -123514,6 +123747,7 @@ index 0000000000000000000000000000000000000000..f8e562f69ac855384a2ee07a5fd205a0
 +    "tools.original": {"arguments":{"type":"object","properties":{"call_id":{"type":"string"}},"required":["call_id"]},"result":{"type":"object","properties":{"reference":{"$ref":"#/$defs/1"},"sha256":{"type":"string"},"bytes":{"type":"number"}},"required":["reference","sha256","bytes"]}},
 +    "credentials.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/65"}}},
 +    "credentials.request": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"anyOf":[{"const":"chatgpt"},{"const":"api_key"}]},"label":{"type":"string"},"provider":{"type":"string"}},"required":["action","kind","label"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"provider"},"label":{"type":"string"},"provider":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"secret"},"label":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"anyOf":[{"const":"remove"},{"const":"refresh"}]},"profile":{"type":"string"}},"required":["action","profile"]}]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"completed"},{"const":"declined"}]},"profile":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/65"}]}},"required":["status","profile"]}},
++    "models.context_window": {"arguments":{"type":"object","properties":{"model":{"type":"string"},"tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["model"]},"result":{"type":"object","properties":{"model":{"type":"string"},"tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"max":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["model","tokens","max"]}},
 +    "routes.select": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"scope":{"anyOf":[{"const":"thread"},{"const":"next_request"}]}},"required":["route","scope"]},"result":{"type":"object","properties":{"route":{"$ref":"#/$defs/33"},"effective_at":{"const":"next_request"}},"required":["route","effective_at"]}},
 +    "turns.activity": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"thread_id":{"type":"string"},"turn_id":{"type":"string"},"last":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"turns":{"type":"array","items":{"type":"object","properties":{"turn_id":{"type":"string"},"started_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"ended_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"const":"error"},{"const":"unknown"},{"const":"completed"},{"const":"interrupted"},{"const":"running"},{"const":"aborted"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/52"},"unrecorded_end":{"type":"boolean"},"tool_calls":{"type":"array","items":{"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"started_at":{"type":"string"},"finished_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"type":"null"},{"type":"string"}]},"output_replaced":{"type":"object","properties":{"mod":{"type":"string"},"original_sha256":{"type":"string"},"replacement_sha256":{"type":"string"}},"required":["mod","original_sha256","replacement_sha256"]}},"required":["call_id","tool","started_at","finished_at","outcome"]}},"processes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"anyOf":[{"const":"exec"},{"const":"managed"}]},"command":{"type":"string"},"running":{"anyOf":[{"type":"null"},{"const":false},{"const":true}]},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["id","kind","command","running","exit_code"]}},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"before":{"anyOf":[{"type":"null"},{"type":"string"}]},"after":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"external"},{"const":"exec"},{"const":"tool"},{"const":"transaction"},{"const":"rescan"}]}},"required":["path","before","after","source"]}},"truncated":{"type":"boolean"}},"required":["turn_id","started_at","ended_at","outcome","reason","error","unrecorded_end","tool_calls","processes","files","truncated"]}},"recording":{"type":"boolean"}},"required":["turns","recording"]}},
 +    "turns.abort": {"arguments":{"type":"object","properties":{"turn_id":{"type":"string"}},"required":["turn_id"]},"result":{"type":"object","properties":{"accepted":{"type":"boolean"}},"required":["accepted"]}},

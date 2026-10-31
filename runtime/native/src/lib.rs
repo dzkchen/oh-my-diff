@@ -6,6 +6,7 @@ mod execution;
 mod generic_host;
 mod ledger;
 mod managed_process;
+mod model_windows;
 mod mods;
 mod workspace_operations;
 mod workspace_watch;
@@ -208,6 +209,7 @@ pub fn install(
             .unwrap_or_default(),
     });
     let root = host.root.clone();
+    model_windows::load(&root);
     mods::install(registry, host).or_else(|error| inactive(&root, error))
 }
 
@@ -302,6 +304,7 @@ impl Host {
     }
 
     fn refresh_session(&self, session: &Session) -> Result<(), String> {
+        model_windows::load(&self.root);
         let config = self.route_config().0;
         let limits = session
             .task

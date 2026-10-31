@@ -60,7 +60,7 @@ It has no settings.
 - Cursor keeps its own system prompt and context. Codex's base instructions aren't sent. Pending tool calls expire
   after ten minutes. Interrupting Codex, or sending a new message while tools are pending, cancels the Cursor run.
 - At most 16 models are listed across accounts, each account's default first. The catalog assumes a 200K-token
-  context window.
+  context window. `/profile window` (in `omd_profiles`) can lower it, so Codex compacts sooner; Cursor serves no more.
 - Cursor settles billed cost minutes after a run ends. The charge then appears in `/status`. A zero charge can mean
   plan-included usage, your own API key (BYOK) or credit-grant usage. The SDK doesn't say which.
 - Plan usage, shown beside the account in `omd_profiles`, is read at most once a minute after a run, so it can be a

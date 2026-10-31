@@ -48,6 +48,7 @@ the API version matches. Each list holds at most 32 features.
 | `key_contexts`, `region` and `help` key actions, `keys: 'all'`, layout leaf `style.focus` | `terminal_focus_v1` |
 | Layout leaf `title` | `terminal_layout_title_v1` |
 | The `dock` `component_event` | `terminal_layout_dock_v1` |
+| `models.context_window` | `model_context_window_v1` |
 | `power.hold`/`power.release` | `power_hold_v1` |
 | `tools.original` | `tool_original_v1` |
 | `api.builtins` `features.remove` | `builtins_features_v1` |

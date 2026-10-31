@@ -14,6 +14,7 @@ export const CLI_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash';
 // Variables that would make the CLI sign in, store or bill somewhere other than the account OMD selected.
 export const CLI_ENV_OVERRIDE = /^ANTHROPIC_|^CLAUDE_(CONFIG_DIR|SECURESTORAGE_CONFIG_DIR)$|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
 export const ACCOUNT = /^[a-z][a-z0-9_-]{0,23}$/;
+export const loginCommand = (billing: unknown, name?: unknown) => `/claude login${billing === 'api' ? ' api' : ''}${typeof name === 'string' && name !== 'default' ? ` ${name}` : ''}`;
 const NODE_MISSING = 'Node.js was not found on PATH. Install it (brew install node, or from nodejs.org), restart OMD, then try again';
 const nodeError = (error: string) => error.startsWith('exec_program_unavailable') ? NODE_MISSING : error;
 const ansi = /\x1b\[[0-9;?]*[A-Za-z]/g;
@@ -426,7 +427,7 @@ export default function activate(api: ModAPI): void {
     };
     return { display: [
       `CLI: ${error ? `check failed: ${error}` : wrong ? `${wrong}; /claude login and Claude requests are refused until then` : version ?? cliProblem(null)}`,
-      ...accounts.length ? accounts.map((account, index) => `Account ${account.name}: ${login(index)} · ${account.billing === 'api' ? 'Console API credits' : 'subscription'} · ${account.models} models`)
+      ...accounts.length ? accounts.map((account, index) => `Account ${account.name}: ${login(index)} · ${account.billing === 'api' ? 'Console API credits' : 'subscription'} · ${account.models} models${account.cli_version && version && !wrong && account.cli_version !== version ? `; read with Claude CLI ${account.cli_version}, run ${loginCommand(account.billing, account.name)} to refresh` : ''}`)
         : ['Accounts: none; run /claude login [api] [NAME]'],
       `Models: ${published === true ? `${(models as Row[]).length} published to /model${wrong ? ', unusable until the CLI is updated' : ''}` : 'none published'}`].join('\n') };
   }, { description: 'Sign in to Claude accounts (login [api] [NAME] | remove NAME | code CODE) or show their status', args_hint: '[login [api] [NAME] | remove NAME | code CODE]' });

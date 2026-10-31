@@ -92,10 +92,13 @@ export async function discover(claude, account = null) {
   const models = [];
   for (const option of offered) {
     if (option.value === 'default' || typeof option.resolvedModel !== 'string') continue;
-    const slug = option.resolvedModel.replace(/\[1m\]$/, '');
-    if (models.some(model => model.slug === slug)) continue;
-    const entry = { slug, model: slug, cli: option.resolvedModel, family: option.value.replace(/\[1m\]$/, '').replace(/^claude-([a-z]+).*$/, '$1'),
-      name: `Claude ${String(option.description ?? option.displayName).split(' · ')[0]}`,
+    const model = option.resolvedModel.replace(/\[1m\]$/, '');
+    const million = model !== option.resolvedModel;
+    const slug = million ? `${model}-1m` : model;
+    if (models.some(known => known.slug === slug)) continue;
+    const label = `Claude ${String(option.description ?? option.displayName).split(' · ')[0]}`;
+    const entry = { slug, model, cli: option.resolvedModel, family: option.value.replace(/\[1m\]$/, '').replace(/^claude-([a-z]+).*$/, '$1'),
+      name: million && !/1M/i.test(label) ? `${label} (1M context)` : label,
       description: String(option.description ?? ''), efforts: option.supportsEffort ? option.supportedEffortLevels ?? [] : [],
       thinking: option.supportsAdaptiveThinking === true };
     const probe = await offline(claude, cliArgs(entry, entry.efforts.at(-1)),
@@ -115,6 +118,7 @@ export const publishable = accounts => {
   return accounts.flatMap(account => account.models.filter(model => chosen.has(model)));
 };
 const routeName = name => name === 'default' ? 'claude' : `claude-${name}`;
+const widest = accounts => Math.max(...accounts.flatMap(account => account.models.map(model => model.window)));
 const rates = (billing, window) => ({ input_microusd_per_million: 0, cached_microusd_per_million: 0, output_microusd_per_million: 0,
   reservation_microusd: 0, max_output_tokens: 128000, input_token_ceiling: window,
   ...billing === 'api' ? { provider_billed: true } : { included_subscription: true } });
@@ -174,9 +178,9 @@ async function setup(name, action, login) {
       const status = checkCli(claude, action, home, username, account);
       const models = (await discover(claude, account)).map(model => name === 'default' ? model
         : { ...model, slug: `${model.slug}.${name}`, name: `${model.name} · ${name}`.slice(0, 64) });
-      const fallback = models.find(model => model.family === 'opus') ?? models[0];
+      const fallback = models.find(model => model.family === 'opus' && !model.cli.endsWith('[1m]')) ?? models[0];
       added = { ...account, plan: status.subscriptionType ?? null,
-        email: status.email ?? null, default: fallback.slug, models: [fallback, ...models.filter(model => model !== fallback)] };
+        email: status.email ?? null, cli_version: status.cliVersion, default: fallback.slug, models: [fallback, ...models.filter(model => model !== fallback)] };
     } catch (error) {
       await discard();
       throw error;
@@ -205,7 +209,7 @@ async function setup(name, action, login) {
       try { const real = await realpath(path); if (!readPaths.includes(real)) readPaths.push(real); } catch {}
     }
     const route = account => ({ name: routeName(account.name), roles: ['lead'], provider: PROVIDER, model: account.default, reasoning_effort: 'high',
-      responses_url: `${url}/responses`, rates: rates(account.billing, account.models[0].window) });
+      responses_url: `${url}/responses`, rates: rates(account.billing, widest([account])) });
     host.schema = 1;
     host.max_request_bytes = Math.max(host.max_request_bytes ?? 0, 16 * 1024 * 1024);
     const raise = (name, value, ceiling) => Math.max(host.worker_limits?.[name] ?? 0, Math.min(value, host.limits?.[name] ?? ceiling));
@@ -216,7 +220,7 @@ async function setup(name, action, login) {
       id: 'claude_cli', mod_id: PROVIDER, program: node, program_sha256: programSha,
       arguments: [join(mod, 'transport.mjs'), 'serve', routePath, home, username],
       secrets: { OMD_CLAUDE_LOCAL_TOKEN: 'claude_local_token' }, network: true, read_paths: readPaths,
-      route: { ...route(accounts[0]), rates: rates(accounts.some(account => account.billing === 'api') ? 'api' : 'subscription', accounts[0].models[0].window) } }] : []];
+      route: { ...route(accounts[0]), rates: rates(accounts.some(account => account.billing === 'api') ? 'api' : 'subscription', widest(accounts)) } }] : []];
     latest = { port, claude, accounts };
   };
   const writeRoute = async () => {
@@ -231,7 +235,7 @@ async function setup(name, action, login) {
   }
   const published = publishable(accounts);
   return { signed_out: signedOut, accounts: accounts.map(account => ({ name: account.name, billing: account.billing, plan: account.plan,
-    email: account.email, config_dir: account.config_dir, route: routeName(account.name), models: account.models.length })),
+    email: account.email, cli_version: account.cli_version, config_dir: account.config_dir, route: routeName(account.name), models: account.models.length })),
     models: published.map(model => ({ slug: model.slug, display: model.name, context_window: model.window, efforts: model.efforts,
       ...model.efforts.includes('high') ? { default_effort: 'high' } : {} })) };
 }
