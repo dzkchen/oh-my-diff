@@ -2,12 +2,12 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "3aaa46719c7d7700e1f6a2a5421102df95106a4068b04df34895f5cb5322d6df"
+    "sha256": "3be3361adbc6197f757b3d1a934a3c043391d90741b3b2bd4d8869227a5ad512"
   },
   "files": {
     "codex-rs/Cargo.lock": {
       "before": "360ea1e0ec391255ffc153a73548be524aa5d50c3476f247631cec184c21d4cb",
-      "after": "19fe6c4a2521bae249d454ac49689e8ee588a0efb7ff135918e5a0ce6e9b09bc"
+      "after": "c29b172a34c6fe23abd5afaf1c62874e13209aec813a7638ced74ae9ea35a9bc"
     },
     "codex-rs/Cargo.toml": {
       "before": "4f9c16fb73cc8487e40dcbfca545f69e7595e6806e1a59b81ea8045b15364e49",
@@ -1315,7 +1315,7 @@
     },
     "codex-rs/omd/Cargo.toml": {
       "before": null,
-      "after": "2f6f49db8688f220552be603f9a2117e0207ee4a667736d22abad8fb5ba883df"
+      "after": "ae9cd68eb07d2d76734c00ee067a140af7dbde6647877a565d69a2879384a51a"
     },
     "codex-rs/omd/README.md": {
       "before": null,
@@ -1327,7 +1327,7 @@
     },
     "codex-rs/omd/runner/Cargo.toml": {
       "before": null,
-      "after": "6651f7565d3a194ec52b8e88e35b605b45e4875b6b73aa9ec1746d493f105137"
+      "after": "9766ed7e24f29f2e4c83818b0dfa3b55ce08353fd27e0f5a0f68f4bad0f48936"
     },
     "codex-rs/omd/runner/build.rs": {
       "before": null,

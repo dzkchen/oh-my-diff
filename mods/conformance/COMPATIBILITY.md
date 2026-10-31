@@ -8,14 +8,14 @@ host. The support policy, platforms and terminals are in [Support](../../docs/su
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.166.0 | unreleased (`main`, host crate version `1.2.0`, not the released 1.2.0) | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.166.0 | 1.3.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.164.0 | 1.2.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.163.0 | 1.0.0 to 1.1.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 
 The `host` object in [compatibility.json](compatibility.json) describes `main`: Codex 0.166.0 with the host crate
-version `1.2.0` from `runtime/omd/Cargo.toml`. The released OMD 1.2.0 runs Codex 0.164.0, as the table shows.
+version `1.3.0` from `runtime/omd/Cargo.toml`.
 
 On the matrix's `as_of` date, OMD didn't lag upstream. Codex 0.166.0 was the newest stable Codex release then.
 
