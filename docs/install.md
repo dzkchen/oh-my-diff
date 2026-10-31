@@ -1,29 +1,73 @@
 # Install Oh My Diff
 
+How to install, update, switch install profile and uninstall Oh My Diff (OMD). If something fails, see
+[troubleshooting](troubleshooting.md).
+
 ## Before you begin
 
-- Apple Silicon Mac (no Linux or Intel).
-- Codex `0.165.x` (`codex --version`). Install: `npm install -g @openai/codex@0.165`. Don't update Codex until OMD
-  supports the new version.
-- Python 3.12+ (macOS ships 3.9): `brew install python@3.12`.
-- Only to write mods: Node 24.18+ (24.x) on `PATH` for `omd-mod-author`.
-- Only for the account mods (`omd_profiles`, `omd_claude_cli`, `omd_cursor`): Node 22.18+ on `PATH`.
+- An Apple Silicon Mac. Other platforms are unsupported, and the installer refuses them.
+- Codex `0.165.x`. Don't update Codex until OMD supports the new version.
+- Python 3.12 or later. macOS ships 3.9.
+
+Check your Codex version:
+
+```sh
+codex --version
+```
+
+If Codex is missing or on another version, install `0.165.x`:
+
+```sh
+npm install -g @openai/codex@0.165
+```
+
+If your Python is older than 3.12, install a newer one:
+
+```sh
+brew install python@3.12
+```
+
+Some mods and the mod author tools also need Node. [Support](support.md) lists which versions.
+
+## Choose an install profile
+
+An install profile sets which mods the installer adds. There are two:
+
+- OMD+ (`--profile full`) is OMD plus the [included mods](collection.md). Some start on, and you turn on the rest
+  with `/mods`.
+- OMD Core (`--profile platform`) is only the mod host, the part of OMD that loads mods. You get the `/mods` screen,
+  update notices and the OMD logo. Choose it to add only the mods you pick, or to write your own.
 
 ## Install
+
+For OMD+:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
 ```
 
-- `--profile full` is **OMD+**, the one most people want: OMD plus the [mod collection](collection.md). Some mods
-  start on; turn on the rest with `/mods`.
-- `--profile platform` is **OMD Core**: only OMD, the mod manager and update notices, for adding just the mods you
-  pick or writing your own.
+For OMD Core, use `--profile platform` instead. The [installer options](commands.md#installer-installsh) choose the
+release channel, the install folders and the Codex executable.
 
-Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`; your Codex settings,
+Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`. Your Codex settings,
 sign-in and sessions aren't touched.
 
-Check it: `omd update status`, then run `codex` and type `/mods`.
+To check it worked, run:
+
+```sh
+omd update status
+```
+
+It prints details of your install as JSON, then a summary line like this one:
+
+```text
+Oh My Diff VERSION (OMD+), stable channel, daily checks: not checked yet
+```
+
+The line names the installed version, the install profile, the release channel and the check cadence. It ends with
+`up to date`, `not checked yet`, `the last check failed: ERROR`, or the version you can update to.
+
+Then run `codex` and type `/mods`. The `/mods` screen lists your installed mods and which ones are on.
 
 ## Update
 
@@ -33,45 +77,56 @@ omd update rollback   # undo the last update
 omd update enable     # install updates automatically
 ```
 
-With other OMD sessions open, the update waits for your next `codex` start. Mods, settings and sign-in are kept.
+While other OMD sessions are open, the update waits for your next `codex` start. Mods, settings and sign-in are
+kept. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
+update anyway.
 
-## Switch profile
+To change how updates work, such as the release channel, the check cadence or a version pin, use `/update` in
+`codex` or the [`omd update` commands](commands.md#omd-itself).
 
-Rerun the install command with the other `--profile`. Each profile keeps its own mod choices.
+## Switch install profile
+
+Rerun the install command with the other `--profile`. Each install profile keeps its own mod choices.
+
+`direct` isn't an install profile. It's a recovery state in which `codex` behaves as plain Codex with no mods. If a
+mod breaks `codex`, switch to it with `omd-package`, the tool that manages your install profile and the mods it came
+with:
+
+```sh
+omd-package activate direct
+```
+
+[Troubleshooting](troubleshooting.md#a-mod-breaks-codex) lists the other ways to turn off a broken mod.
 
 ## Uninstall
+
+If you installed the authority broker, an optional macOS service that protects credentials, remove it first.
+[Trust and permissions](trust-and-permissions.md#protect-credentials-with-the-authority-broker) describes it.
+
+```sh
+omd-package broker uninstall
+```
+
+Then remove OMD:
 
 ```sh
 omd uninstall
 ```
 
-Removes OMD and its Codex plugins and restores commands it moved aside. Codex data stays. If you deployed the
-authority broker, run `omd-package broker uninstall` first. Mod settings stay in `~/.local/share/oh-my-diff/stores`;
-delete it to remove them.
+This removes OMD and its Codex plugins, and puts back any command in `~/.local/bin` that the installer renamed to
+`NAME.before-omd`. Codex data stays. Mod settings stay in `~/.local/share/oh-my-diff/stores`. Delete that folder to
+remove them.
 
-## Troubleshooting
+If the `omd` command is gone, run OMD's management script directly. It also takes `status` and `rollback`:
 
-| Message | Fix |
-| --- | --- |
-| `Python 3.12 or newer is required` | Install a newer Python and rerun. |
-| `upstream Codex 0.165.x is required` | Install Codex `0.165.x`, or pass `--upstream /path/to/codex`. |
-| `move the upstream codex out of ~/.local/bin` | Move your Codex elsewhere and pass `--upstream`. |
-| `codex on your PATH is ..., not OMD's` | Add the printed `export PATH=...` line to the end of `~/.zshrc` (bash: `~/.bash_profile`); open a new shell. In `~/.zshenv` it doesn't work: macOS and Homebrew reorder `PATH` after it. |
-| `codex` still starts plain Codex right after installing | Your shell cached the old `codex`: run `hash -r` or open a new terminal. |
-| `No terminal is available` | Add `--profile full` or `--profile platform`. |
-| A mod breaks `codex` | `omd mods disable ID` ([more](manage-mods.md#when-a-mod-misbehaves)). |
+```sh
+sh ~/.local/share/oh-my-diff/current/prefix/management/install.sh uninstall
+```
 
-## More
+To build OMD from source, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-- **Prereleases or nightly builds:** `--channel prerelease|nightly` on install, or
-  `omd update channel prerelease|nightly|stable`.
-- **Update settings:** `omd update checks on|off`, `cadence daily|weekly`, `pin VERSION|none`, `enable|disable`, or
-  `/update`.
-- **Locations:** `--root DIR` (default `~/.local/share/oh-my-diff`), `--bin-dir DIR` (default `~/.local/bin`). An
-  existing command there becomes `NAME.before-omd` and comes back on uninstall.
-- **Layout:** under the root, `releases/` holds the current and previous generation, `stores/` your mod choices and
-  `objects/` one copy of each package source and management file, hard-linked into `catalog/` and every release. `sessions/` holds one marker per open `codex`, cleared at the next launch
-  after it exits.
-- **Without `omd`:** `sh ~/.local/share/oh-my-diff/current/prefix/management/install.sh uninstall` (the script also
-  takes `status` and `rollback`).
-- **From source:** [CONTRIBUTING.md](../CONTRIBUTING.md).
+## Next steps
+
+- See what's in OMD+: [included mods](collection.md).
+- Install and turn on more mods: [Manage mods](manage-mods.md).
+- Use Claude, Cursor or an API key: [use other providers](use-other-providers.md).

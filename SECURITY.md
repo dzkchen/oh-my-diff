@@ -1,11 +1,11 @@
 # Security
 
-How to report a security problem in OMD.
+How to report a security problem in OMD, which versions get fixes and what's in scope.
 
 ## Report a vulnerability
 
-Use [GitHub's private reporting form](https://github.com/dzkchen/oh-my-diff/security/advisories/new). Please don't
-open a public issue.
+Use [GitHub's private reporting form](https://github.com/dzkchen/oh-my-diff/security/advisories/new). Don't open a
+public issue.
 
 Include:
 
@@ -13,12 +13,12 @@ Include:
 - steps to reproduce
 - what an attacker could do
 
-OMD is a one-person project, so replies are best effort. Fixes ship as a patch release, with a public advisory once you
-can update.
+Fixes ship as a patch release, with a public advisory once you can update.
 
-## Supported versions
+## Response times and supported versions
 
-Only the latest release gets security fixes. Run `omd update` to get it.
+OMD is a one-person project, so replies to reports are best effort, with no promised response time.
+[Support](docs/support.md#fixes-and-security-support) says which releases get security fixes.
 
 ## What's in scope
 
@@ -30,9 +30,9 @@ Only the latest release gets security fixes. Run `omd update` to get it.
 Where else to report:
 
 - Upstream Codex problems go to [OpenAI](https://github.com/openai/codex/security).
-- Someone else's mod goes to its author. Do tell us about a malicious mod so it can be blocked.
+- Someone else's mod goes to its author. Report a malicious mod here too, so it can be blocked.
 
 ## What isn't a vulnerability
 
-A mod you allow to run outside the sandbox can do anything your user account can. That's by design, so only turn
-on mods you trust.
+A mod you allow outside the sandbox can do what your user account can, by design. What mods can do and how grants
+work is in [Trust and permissions](docs/trust-and-permissions.md).

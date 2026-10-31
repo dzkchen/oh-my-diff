@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "api": "1.0.0",
   "state_version": 1,
-  "description": "Cursor models through your Cursor account and the official Cursor SDK as a Codex provider, with /cursor setup in the session. Experimental",
+  "description": "Cursor models through your Cursor account and the official Cursor SDK as a Codex provider, with /cursor setup in the session",
   "license": "MIT",
   "subscriptions": { "channels": ["omd_cursor/setup", "omd_cursor/removed"] },
   "provenance": {
