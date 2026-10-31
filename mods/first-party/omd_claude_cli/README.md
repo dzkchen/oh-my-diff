@@ -24,7 +24,7 @@ several accounts. [Manage mods](../../../docs/manage-mods.md) covers the other w
 | `/claude login api [NAME]` | Sign in with Console API credits |
 | `/claude remove NAME` | Drop an account's models and route; a named account is also signed out |
 | `/claude code CODE` | Send the code the sign-in page shows to a running login |
-| `/claude` (or `/claude status`) | Show the CLI version, each account's login and billing, and whether models are published. If the CLI is missing or older than `2.1.307`, it says so and what to run |
+| `/claude` (or `/claude status`) | Show the CLI version, each account's login and billing, and whether models are published. If the CLI is missing or older than `2.1.307`, it says so and what to run; if the CLI version changed since an account's models were read, it says to rerun `/claude login` |
 | `/model` | Pick a Claude model; the thread switches provider from its next turn and keeps its history |
 
 An account `NAME` starts with a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 24 characters.
@@ -56,7 +56,7 @@ Change settings in `/mods`.
 - You need Claude CLI `2.1.307` or later and Node 22.18 or later on your `PATH`. `/claude login` checks that both
   exist and says what to install. It enforces the CLI version but doesn't check the Node version. Any 2.x CLI from
   `2.1.307` on is accepted, so you can leave Claude Code's auto-update on. Run `/claude login` again after upgrading
-  the CLI.
+  the CLI; `/claude` tells you when an account's models were read with another CLI version.
 - Models are the ones your plan offers, read from the installed CLI at login. At most 16 are listed across accounts.
 - Plan usage shows no charge. Anthropic bills Console usage, and each request's cost (the CLI's list-price figure)
   counts against your OMD budget and allowance alerts.

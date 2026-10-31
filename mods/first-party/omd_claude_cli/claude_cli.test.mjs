@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { callback } from '../../../tests/mod_runner.mjs';
 import { CLI_MINIMUM, cliSupported, translateRequest, responseEvents } from './index.ts';
 import { publishable } from './setup.mjs';
-import { Capture, Relay, accountLogins, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withoutCliContext } from './transport.mjs';
+import { Capture, Relay, accountLogins, checkCli, cliEnv, extraUsageAllowed, limitHeaders, runClaude, upstreamFailure, usingOverage, withoutCliContext } from './transport.mjs';
 
 const CLI_VERSION = `${CLI_MINIMUM} (Claude Code)`;
 
@@ -417,6 +417,7 @@ else if (argv[0] === 'auth') {
     const dir = await realpath(join(store, 'routes/claude/accounts/work'));
     assert.deepEqual(result.accounts.map(account => [account.name, account.billing, account.email, account.config_dir, account.route]),
       [['default', 'subscription', 'me@example.com', null, 'claude'], ['work', 'api', 'work@example.com', dir, 'claude-work']]);
+    assert.deepEqual(result.accounts.map(account => account.cli_version), [CLI_VERSION, CLI_VERSION]);
     assert.deepEqual(result.models.map(model => model.slug), ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-5.work', 'claude-sonnet-5.work']);
     const written = await host();
     assert.deepEqual(written.routes.map(route => [route.name, route.provider, route.model, route.rates.included_subscription, route.rates.provider_billed]),
@@ -653,9 +654,41 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
     return { exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [signedIn, null] }), stderr: '' };
   }, 'claude').value.display;
   assert.match(listed, /me@example\.com[\s\S]*work: not signed in/);
+  assert.doesNotMatch(listed, /read with/);
+  const aged = [{ ...accounts[0], cli_version: '2.1.400 (Claude Code)' }, { ...accounts[1], cli_version: '2.1.400 (Claude Code)' }, { name: 'same', billing: 'api', config_dir: '/accounts/same', models: 1, cli_version: CLI_VERSION }];
+  const stale = modEvent('command', '', { accounts: aged, models: [], published: true }, () => ({ exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [null, null, null] }), stderr: '' }), 'claude').value.display;
+  assert.match(stale, /default: not signed in.*3 models; read with Claude CLI 2\.1\.400 \(Claude Code\), run \/claude login to refresh/);
+  assert.match(stale, /work: .*run \/claude login api work to refresh/);
+  assert.doesNotMatch(stale, /Account same.*read with/);
   const login = (args, state = null) => modEvent('command', args, state, () => ({ delivered: 1 }), 'claude');
   assert.deepEqual(login('login api work').calls[0].arguments, { channel: 'login', data: { billing: 'api', account: 'work' } });
   assert.deepEqual(login('login').calls[0].arguments, { channel: 'login', data: { billing: 'subscription', account: 'default' } });
   assert.equal(login('login Work').calls.length, 0);
   assert.deepEqual(login('remove work', { accounts }).calls[0].arguments, { channel: 'remove', data: { account: 'work' } });
+});
+
+test('recorded Claude streams replay into Codex events and plan-limit headers', () => {
+  const tools = [{ type: 'function', name: 'exec_command', description: 'Run a shell command',
+    parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } }];
+  const replay = name => {
+    const fixture = JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8'));
+    const streamed = [];
+    const capture = new Capture(event => streamed.push(event));
+    const wire = Buffer.from(fixture.sse);
+    for (let start = 0; start < wire.length; start += 7) capture.feed(wire.subarray(start, start + 7));
+    assert.equal(capture.complete, true);
+    const reverse = translateRequest({ ...prompt, model: fixture.model, tools }, fixture.model).reverse;
+    return { fixture, streamed, events: responseEvents(capture.message, { upstream_requests: 1 }, fixture.model, reverse, true, 0.001) };
+  };
+  const text = replay('text');
+  assert.equal(text.streamed.filter(event => event.type === 'response.output_text.delta').map(event => event.delta).join(''), 'OK');
+  assert.equal(text.events.at(-1).type, 'response.completed');
+  assert.equal(text.events.at(-1).response.usage.input_tokens, 52);
+  const tool = replay('tool');
+  const call = tool.events.find(event => event.type === 'response.output_item.done' && event.item.type === 'function_call').item;
+  assert.deepEqual([call.name, JSON.parse(call.arguments)], ['exec_command', { cmd: 'pwd' }]);
+  const limits = limitHeaders(tool.fixture.headers, 'note');
+  assert.equal(limits['x-claude-secondary-reset-at'], tool.fixture.headers['anthropic-ratelimit-unified-7d-reset']);
+  assert.ok(Number.isFinite(Number(limits['x-claude-secondary-used-percent'])));
+  assert.equal(usingOverage(tool.fixture.headers), false);
 });

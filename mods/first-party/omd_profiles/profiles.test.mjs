@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callback, runnerSync } from '../../../tests/mod_runner.mjs';
 import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter, chatEvents, anthropicEvents } from './router.mjs';
-import { origin, profileEntry } from './profiles.ts';
+import { URLS, origin, profileEntry, routeFor, serviceFor } from './profiles.ts';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
@@ -92,7 +92,8 @@ test('router adapts Responses requests to each protocol through the credential g
   const free = await listen(probe);
   await new Promise(resolve => probe.close(resolve));
   const profile = (name, protocol, path) => ({ name, protocol, url: `https://up.example${path}`, model: 'up-model', credential: name, max_output: 4096, reasoning: true });
-  const hostPath = hostFile(directory, [profile('a', 'responses', '/responses'), profile('b', 'responses', '/responses'), profile('c', 'chat', '/chat'), profile('d', 'anthropic', '/anthropic')]);
+  const hostPath = hostFile(directory, [profile('a', 'responses', '/responses'), profile('b', 'responses', '/responses'), profile('c', 'chat', '/chat'), profile('d', 'anthropic', '/anthropic'),
+    { ...profile('e', 'chat', ''), url: `http://127.0.0.1:${port}/key/direct/chat`, credential: '' }]);
   const token = 'local-token-'.repeat(4);
   const child = spawn(process.execPath, [router, 'serve', hostPath, String(free)], { env: { OMD_PROFILES_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready', OMD_CREDENTIAL_GATEWAY: `http://127.0.0.1:${port}/key` }, stdio: 'ignore' });
   try {
@@ -142,6 +143,10 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.deepEqual(done[2], { type: 'function_call', id: 'c1', call_id: 'c1', name: 'exec_command', arguments: '{"cmd":"ls"}' });
     const { omd_native_usage: _, ...normalized } = chat.events.at(-1).response.usage;
     assert.deepEqual(normalized, { input_tokens: 12, input_tokens_details: { cached_tokens: 2, cache_write_tokens: 3 }, output_tokens: 4, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 16, omd_reported_cost: { usd: 0.0012, basis: 'provider_billed' } });
+
+    delete seen['/chat'];
+    await ask('e').catch(() => {});
+    assert.equal(seen['/chat'], undefined, 'a keyless profile reaches only the local Ollama URL');
 
     const anthropic = await ask('d');
     assert.equal(seen['/anthropic'].headers['x-omd-credential-header'], 'x-api-key');
@@ -420,6 +425,15 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   assert.ok(invoke(added.state, 'command', 'add api_key key3', 'profile').state.accounts.some(account => account.name === 'key3'));
   assert.equal(calls.filter(call => call.operation === 'credentials.request').length, enrolling + 1);
   assert.match(prompted().at(-1).message, /use key3[\s\S]*\$5/);
+  answers.length = 0;
+  answers.push('llama3.3', '32768', 'accepted');
+  const local = { ...profileData('local'), protocol: 'chat', url: 'http://localhost:11434/v1/chat/completions', model: 'llama3.3', credential: '', kind: 'ollama', router: routed.router };
+  setup = [{ exit_code: 1, stdout: '', stderr: 'no cache' }, { exit_code: 0, stdout: JSON.stringify({ profiles: [local] }), stderr: '' }];
+  const keyless = [calls.filter(call => call.operation === 'credentials.request').length, prompted().length];
+  assert.ok(invoke(state, 'command', 'add ollama local', 'profile').state.accounts.some(account => account.name === 'local'));
+  assert.equal(calls.filter(call => call.operation === 'credentials.request').length, keyless[0]);
+  assert.deepEqual(prompted().slice(keyless[1]).map(prompt => prompt.title), ['Upstream model', 'Context window', 'Change model routes']);
+  assert.match(prompted().at(-1).message, /local, free/);
   answers.length = 0;
   answers.push('gpt-6.1-sol');
   setup = [new Error('exec_program_unavailable')];
@@ -716,4 +730,14 @@ test('/profile refresh addresses a credential whose label holds spaces', () => {
   assert.equal(refreshed.error, undefined);
   assert.deepEqual(calls.find(call => call.operation === 'credentials.request')?.args, { action: 'refresh', profile: 'cred-gh' });
   assert.equal(refreshed.value.display, `Refresh completed for ${label}.`);
+});
+
+test('a local Ollama profile needs no credential, price or allowance', () => {
+  const entry = { name: 'local', protocol: 'chat', url: URLS.ollama, model: 'llama3.3', window: 32768 };
+  const profile = { ...profileEntry(entry, []), router: 'http://127.0.0.1:9/v1' };
+  assert.deepEqual([profile.kind, profile.credential, profile.paid], ['ollama', '', null]);
+  assert.equal(routeFor(profile).rates.included_subscription, true);
+  assert.deepEqual(serviceFor([profile])[0].credentials, []);
+  assert.throws(() => profileEntry({ ...entry, protocol: 'responses' }, []), /profile_protocol_invalid/);
+  assert.throws(() => profileEntry({ ...entry, url: 'http://localhost:9/v1/chat/completions' }, []), /profile_url_and_upstream_model_required/);
 });
