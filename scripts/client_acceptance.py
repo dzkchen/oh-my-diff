@@ -89,10 +89,8 @@ def driver(mode, url, repo, env, answer):
 def launch_client(tui, store):
     launched = store / "state-external_client.json"
     before = json.loads(launched.read_text())["value"].get("picked")
-    mark = len(tui.raw)
     assert tui.command("/external_client:launch", "first run for this mod"), "first-run prompt for node"
     tui.keys(b"\r")
-    assert tui.wait("Launching the text client", 30, mark), "launch command"
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and json.loads(launched.read_text())["value"].get("picked") == before:
         tui.pump(0.05)

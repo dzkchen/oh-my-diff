@@ -637,10 +637,10 @@
       "extension_type": "mod",
       "files": {
         "index.ts": "ce262e18a1b871fd2b572de3b8db56c78db0af0d3fab91e6df4ad709d9223fbd",
-        "mod.json": "5aac482483877a452d79e0896b3c81365a4bc9d55a4b0e72595a9813a1dc373c"
+        "mod.json": "295815d8bce90596b8dbbd2f56c5da81339700594d483a09b3f5c77372aaf930"
       },
       "id": "omd_subagent_router",
-      "package_sha256": "b6d23c5bc400377da54e25b80e2a0101d3cecf16a5ded618766003f411d9ede2",
+      "package_sha256": "d45ec27d297193ee3ab6cdf8e3afbbb1b601b78631a5b7a3b50019c890a4f4e5",
       "source": "mods/first-party/omd_subagent_router",
       "version": "1.0.0"
     },

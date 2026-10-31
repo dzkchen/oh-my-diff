@@ -1440,8 +1440,10 @@ screen show it.
 A manifest's `codex_config` turns on Codex features the package depends on, for every lead thread the session
 starts, resumes or forks while the package is active: `{"codex_config": {"tools.update_plan.enabled": true}}`.
 
-- Keys come from a closed host allowlist (`tools.update_plan.enabled`, `tool_output_token_limit.raise`) and must be
-  `true`.
+- Keys come from a closed host allowlist (`tools.update_plan.enabled`, `tool_output_token_limit.raise`,
+  `agents.completion_wake`) and must be `true`.
+- `agents.completion_wake` starts a turn on an idle lead about 0.5 s after a subagent's result arrives, unless the
+  lead is interrupted or in Plan mode. Without it, results wait for the lead's next turn.
 - `tool_output_token_limit.raise` sets the thread's `tool_output_token_limit` to at least 65,536 tokens (about
   256 KiB). A larger configured value stays.
 - `exec_command` and `write_stdin` still default to 10,000 tokens unless the call sets a larger `max_output_tokens`.

@@ -1676,7 +1676,12 @@ pub struct ModPackage {
 
 pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
 pub const CODEX_CONFIG_TOOL_OUTPUT_RAISE: &str = "tool_output_token_limit.raise";
-const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN, CODEX_CONFIG_TOOL_OUTPUT_RAISE];
+pub const CODEX_CONFIG_COMPLETION_WAKE: &str = "agents.completion_wake";
+const CODEX_CONFIG_KEYS: &[&str] = &[
+    CODEX_CONFIG_UPDATE_PLAN,
+    CODEX_CONFIG_TOOL_OUTPUT_RAISE,
+    CODEX_CONFIG_COMPLETION_WAKE,
+];
 pub const RAISED_TOOL_OUTPUT_TOKENS: usize = 65_536;
 pub const TOOL_OUTPUT_BYTES: usize = 256 * 1024;
 
