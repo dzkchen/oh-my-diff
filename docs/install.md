@@ -6,19 +6,15 @@ How to install, update, switch install profile and uninstall Oh My Diff (OMD). I
 ## Before you begin
 
 - An Apple Silicon Mac. Other platforms are unsupported, and the installer refuses them.
-- Codex `0.166.x`. Don't update Codex until OMD supports the new version.
+- The Codex version line the [latest release](https://github.com/dzkchen/oh-my-diff/releases/latest) builds on. Don't
+  update Codex until OMD supports the new version.
 - Python 3.12 or later. macOS ships 3.9.
 
-Check your Codex version:
+If Codex is missing or on another version, the installer stops before changing anything and prints the command that
+installs the right one, such as:
 
 ```sh
-codex --version
-```
-
-If Codex is missing or on another version, install `0.166.x`:
-
-```sh
-npm install -g @openai/codex@0.166
+npm install -g @openai/codex@X.Y
 ```
 
 If your Python is older than 3.12, install a newer one:
@@ -65,7 +61,8 @@ Oh My Diff VERSION (OMD+), stable channel, daily checks: not checked yet
 ```
 
 The line names the installed version, the install profile, the release channel and the check cadence. It ends with
-`up to date`, `not checked yet`, `the last check failed: ERROR`, or the version you can update to.
+`up to date`, `not checked yet`, `the last check failed: ERROR`, or the version you can update to. If the installed
+release was withdrawn, it adds `VERSION was withdrawn` and, when one helps, the command to run: `omd update` or `omd update rollback`.
 
 Then run `codex` and type `/mods`. The `/mods` screen lists your installed mods and which ones are on.
 

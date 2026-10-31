@@ -36,7 +36,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550
         with:
-          install_args: node python@3.14.6 actionlint@1.7.12
+          install_args: node python@3.14.6 actionlint@1.7.12 git-cliff
           cache_save: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
         with:
@@ -48,8 +48,13 @@ jobs:
         run: |
           python3 -m scripts.mods_lock
           python3 -m scripts.plugin_lock
+      - name: Release metadata
+        run: python3 scripts/release.py check
       - name: Host-free Python tests
-        run: python3 -m unittest tests.test_pr_ci tests.test_native_ownership tests.test_mod_conformance tests.test_build_provenance
+        run: |
+          sudo install -d -m 1777 /private/tmp
+          python3 -m unittest tests.test_pr_ci tests.test_native_ownership tests.test_mod_conformance tests.test_build_provenance \
+            tests.test_release tests.test_install_updates tests.test_package
       - name: Workflow lint
         run: mise exec actionlint@1.7.12 -- actionlint
 

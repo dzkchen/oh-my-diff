@@ -9,7 +9,7 @@ type Density = 'sparse' | 'normal' | 'dense';
 type Prefs = { scene: string; speed: Speed; density: Density; calm: boolean; image: Sample | null; family: string };
 type Area = { x: number; y: number; columns: number; rows: number };
 type View = { columns: number; rows: number; reduced: boolean; color: boolean; colors: string; phase: string | null; surface: string | null; chat: Area | null; welcome: boolean; raster: string };
-type State = { prefs: Prefs | null; view: View | null; run: number; switched: { from: string; at: number } | null; busy: boolean };
+type State = { prefs: Prefs | null; view: View | null; run: number; switched: { from: string; at: number } | null; busy: boolean; keep?: { id: string; cell: string } };
 type Remembered = { selected?: string; query?: string };
 type Tick = { run: number; drawn: number; width: number; height: number; look: string; misses: number };
 
@@ -56,6 +56,7 @@ const palette = (prefs: Prefs) => prefs.scene === 'image' && prefs.image ? sampl
 const stepsFor = (prefs: Prefs, terminal: Terminal, topic: Topic, family = prefs.family) =>
   steps(terminal, topic, palette(prefs), prefs.scene === 'off' ? SCENES[0].id : prefs.scene, family || DEFAULT_FONT);
 const rasterFor = (thread: string | null | undefined) => thread ? `omd_theme_${thread.toLowerCase().replace(/[^a-z0-9]/g, '')}`.slice(0, 48) : RASTER;
+const digest = (text: string) => [...text].reduce((hash, char) => Math.imul(hash ^ char.charCodeAt(0), 0x01000193), 0x811c9dc5) >>> 0;
 const tickKey = (tick: Tick) => ['f', tick.run, tick.drawn, tick.width, tick.height, tick.look, tick.misses].join('.');
 const parseTick = (key: string): Tick | null => {
   const [tag, run, drawn, width, height, look, misses] = key.split('.');
@@ -144,7 +145,7 @@ export default function activate(api: ModAPI) {
     const prefs = s.prefs!;
     const { width, height } = size(view);
     const chat = chatArea(view, width, height);
-    const look = [view.raster, behind(s) ? 1 : 0, chat.x, chat.y, chat.columns, chat.rows].join('-');
+    const look = [digest(view.raster).toString(36), behind(s) ? 1 : 0, chat.x, chat.y, chat.columns, chat.rows].join('-');
     const same = tick.width === width && tick.height === height && tick.look === look;
     const quiet = still(s);
     const period = prefs.speed === 'slow' ? SLOW_MS : FRAME_MS;
@@ -157,13 +158,16 @@ export default function activate(api: ModAPI) {
       const canvas = place(art, width, height, chat.x, chat.y);
       return behind(s) ? shade(canvas, BEHIND, BEHIND_CAP) : shade(canvas, 0, WELCOME_CAP);
     };
-    const next = frame(k);
     if ((quiet || paused(s)) && same && tick.drawn === k) {
       const cell = { x: 0, y: 0, width: 1, height: 1 };
-      const kept = api.host.tryCall('terminal.blit', { key: view.raster, rect: cell, packed: pack(next, cell) });
+      const id = [tick.run, k, width, height, look].join('.');
+      const keep = s.keep?.id === id ? s.keep : { id, cell: pack(frame(k), cell) };
+      if (keep !== s.keep) write({ keep });
+      const kept = api.host.tryCall('terminal.blit', { key: view.raster, rect: cell, packed: keep.cell });
       again(poll, { ...shown, drawn: restarted(kept) ? -1 : k });
       return;
     }
+    const next = frame(k);
     const partial = !quiet && same && tick.drawn > 0;
     const rects = partial ? changed(frame(tick.drawn), next, BAND_CELLS) : bands({ x: 0, y: 0, width, height });
     let lost = false;

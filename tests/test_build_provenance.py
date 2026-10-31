@@ -40,6 +40,8 @@ class BuildProvenanceTests(unittest.TestCase):
                     provenance.cargo_configs(tree, {**environment, **refused})
             config = tree / '.cargo/config.toml'
             config.parent.mkdir()
+            config.write_text('[build]\njobs = 4\n')
+            self.assertEqual(list(provenance.cargo_configs(tree, environment)), ['.cargo/config.toml'])
             config.write_text('[build]\nrustc-wrapper = "sccache"\n')
             with self.assertRaisesRegex(ValueError, 'overrides'):
                 provenance.cargo_configs(tree, {**environment, 'RUSTC_WRAPPER': 'sccache'})

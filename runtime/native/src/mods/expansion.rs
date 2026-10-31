@@ -531,7 +531,10 @@ pub(super) async fn dispatch(
         "routes.select" => select_route(lead, caller.id, request.arguments),
         "models.context_window" => {
             let arguments = request.arguments;
-            blocking(Box::new(move || crate::model_windows::call(&host.root, arguments))).await
+            blocking(Box::new(move || {
+                crate::model_windows::call(&host.root, arguments)
+            }))
+            .await
         }
         "tools.list" => tool_specs::list(core, lead),
         "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,

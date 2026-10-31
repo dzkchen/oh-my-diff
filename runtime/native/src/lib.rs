@@ -422,6 +422,7 @@ impl Host {
             .cloned()
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn enroll_cross_provider(
         &self,
         thread: ThreadId,

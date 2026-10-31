@@ -20179,7 +20179,7 @@ index 587f4cdaebffca42c2d19451e8ba0e8db18c6598..b2aa8b7a22e8cc529838b6cd0738da66
              trace.record_agent_result_interaction(
                  outcome.turn_id.as_str(),
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 9f1660cf61a74e9a59f2459f6c3173064fc46eec..e9827ab8407c935f60ed05ff1a8ac2a0b426be2f 100644
+index 9f1660cf61a74e9a59f2459f6c3173064fc46eec..7ee846b8aa4b34aa5a1a485795485a1cd036b5b0 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -347,6 +347,13 @@ impl LocalAgentControl {
@@ -20205,7 +20205,7 @@ index 9f1660cf61a74e9a59f2459f6c3173064fc46eec..e9827ab8407c935f60ed05ff1a8ac2a0
              config
                  .permissions
                  .set_permission_profile_from_session_snapshot(runtime_permission_profile)
-@@ -371,15 +378,23 @@ impl LocalAgentControl {
+@@ -371,15 +378,25 @@ impl LocalAgentControl {
              config.model = Some(model);
          }
          if config.model_provider_id != stored_model_provider {
@@ -20225,7 +20225,9 @@ index 9f1660cf61a74e9a59f2459f6c3173064fc46eec..e9827ab8407c935f60ed05ff1a8ac2a0
 +                            "Model provider `{stored_model_provider}` not found"
 +                        ))
 +                    })?;
-+            provider.supports_websockets &= config.model_provider.supports_websockets;
++            if parent.is_some() {
++                provider.supports_websockets &= config.model_provider.supports_websockets;
++            }
 +            config.model_provider = provider;
 +            if stored_model_provider != config.configured_model_provider_id {
 +                config
@@ -23747,7 +23749,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..6d85f61cb50a95f0ed376bc6871715e0
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c349073f4c01c 100644
+index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526c690eeab 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -171,6 +171,7 @@ use codex_protocol::request_permissions::PermissionGrantScope;
@@ -24027,7 +24029,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
          self.maybe_mirror_event_text_to_realtime(&legacy_source)
              .await;
          self.maybe_clear_realtime_handoff_for_event(&legacy_source)
-@@ -2596,6 +2799,132 @@ impl Session {
+@@ -2596,6 +2799,138 @@ impl Session {
          }
      }
 
@@ -24127,11 +24129,17 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
 +        if parent.as_ref() != Some(author) {
 +            return;
 +        }
-+        let pending = match self.active_turn.lock().await.as_mut() {
-+            Some(active) => active.turn_state.lock().await.take_any_pending_user_input(),
-+            None => None,
++        let turn_state = self
++            .active_turn
++            .lock()
++            .await
++            .as_ref()
++            .map(|active| Arc::clone(&active.turn_state));
++        let Some(turn_state) = turn_state else {
++            return;
 +        };
-+        let Some((sender, question_ids)) = pending else {
++        let Some((sender, question_ids)) = turn_state.lock().await.take_any_pending_user_input()
++        else {
 +            return;
 +        };
 +        let answer = "Your parent replied; its message follows.".to_string();
@@ -24160,7 +24168,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
      /// Forwards terminal turn events from spawned MultiAgentV2 children to their direct parent.
      async fn maybe_notify_parent_of_terminal_turn(
          &self,
-@@ -3405,7 +3734,11 @@ impl Session {
+@@ -3405,7 +3740,11 @@ impl Session {
              match active.as_mut() {
                  Some(at) => {
                      let mut ts = at.turn_state.lock().await;
@@ -24173,7 +24181,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
                  }
                  None => None,
              }
-@@ -3806,6 +4139,10 @@ impl Session {
+@@ -3806,6 +4145,10 @@ impl Session {
          let policy: codex_utils_output_truncation::TruncationPolicy =
              model_info.truncation_policy.into();
          for envelope in &mut items {
@@ -24184,7 +24192,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
              if matches!(
                  envelope.item,
                  ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
-@@ -4099,6 +4436,7 @@ impl Session {
+@@ -4099,6 +4442,7 @@ impl Session {
          let inherited_environments = inherited_environments.unwrap_or_else(|| environments.clone());
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -24192,7 +24200,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -4106,6 +4444,27 @@ impl Session {
+@@ -4106,6 +4450,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -24220,7 +24228,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4444,10 +4803,19 @@ impl Session {
+@@ -4444,10 +4809,19 @@ impl Session {
                  ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
              )
          }) {
@@ -24244,7 +24252,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
          }
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
-@@ -4677,6 +5045,10 @@ impl Session {
+@@ -4677,6 +5051,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -24255,7 +24263,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4686,6 +5058,7 @@ impl Session {
+@@ -4686,6 +5064,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -24263,7 +24271,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
                  })
                  .await
              {
-@@ -4774,6 +5147,10 @@ impl Session {
+@@ -4774,6 +5153,10 @@ impl Session {
                  }
              }
          }
@@ -24274,7 +24282,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4783,6 +5160,7 @@ impl Session {
+@@ -4783,6 +5166,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -24282,7 +24290,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
                  })
                  .await
              {
-@@ -4978,7 +5356,7 @@ impl Session {
+@@ -4978,7 +5362,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -24291,7 +24299,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..8469b955c0f4731cc1d151c9006c3490
          {
              error!("failed to record rollout items: {e:#}");
              return false;
-@@ -4988,7 +5366,12 @@ impl Session {
+@@ -4988,7 +5372,12 @@ impl Session {
 
      pub(crate) async fn clone_history(&self) -> ContextManager {
          let state = self.state.lock().await;
@@ -26224,19 +26232,20 @@ index 5d3defeefee1a2dcfcc1add69f3e5434342531df..2410a131d89f99665f896724bb40704a
 
      assert_eq!(
 diff --git a/codex-rs/core/src/state/turn.rs b/codex-rs/core/src/state/turn.rs
-index 0fe0fea1bb119ba993113ac55dd52916bab64f28..ea5355a01e6da100d539d7c3d5d7852966ef1b07 100644
+index 0fe0fea1bb119ba993113ac55dd52916bab64f28..cd877038872d179ac511ea1d28b61a5eebdd262d 100644
 --- a/codex-rs/core/src/state/turn.rs
 +++ b/codex-rs/core/src/state/turn.rs
-@@ -90,7 +90,7 @@ pub(crate) struct RunningTask {
+@@ -90,7 +90,8 @@ pub(crate) struct RunningTask {
  pub(crate) struct TurnState {
      pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
      pending_request_permissions: HashMap<String, PendingRequestPermissions>,
 -    pending_user_input: HashMap<String, oneshot::Sender<AcceptedUserInputResponse>>,
-+    pending_user_input: HashMap<String, (oneshot::Sender<AcceptedUserInputResponse>, Vec<String>)>,
++    pending_user_input:
++        indexmap::IndexMap<String, (oneshot::Sender<AcceptedUserInputResponse>, Vec<String>)>,
      pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
      pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
      pub(crate) pending_input: TurnInputQueue,
-@@ -163,15 +163,25 @@ impl TurnState {
+@@ -163,15 +164,26 @@ impl TurnState {
          &mut self,
          key: String,
          tx: oneshot::Sender<AcceptedUserInputResponse>,
@@ -26253,17 +26262,42 @@ index 0fe0fea1bb119ba993113ac55dd52916bab64f28..ea5355a01e6da100d539d7c3d5d78529
          key: &str,
      ) -> Option<oneshot::Sender<AcceptedUserInputResponse>> {
 -        self.pending_user_input.remove(key)
-+        self.pending_user_input.remove(key).map(|(tx, _)| tx)
++        self.pending_user_input.shift_remove(key).map(|(tx, _)| tx)
 +    }
 +
 +    pub(crate) fn take_any_pending_user_input(
 +        &mut self,
 +    ) -> Option<(oneshot::Sender<AcceptedUserInputResponse>, Vec<String>)> {
-+        let key = self.pending_user_input.keys().next()?.clone();
-+        self.pending_user_input.remove(&key)
++        self.pending_user_input
++            .shift_remove_index(0)
++            .map(|(_, pending)| pending)
      }
 
      pub(crate) fn insert_pending_elicitation(
+@@ -220,3 +232,23 @@ impl TurnState {
+         self.mailbox_delivery_phase = phase;
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn forwarded_answers_take_the_oldest_pending_question() {
++        let mut state = TurnState::default();
++        for index in 0..8 {
++            let (tx, _rx) = oneshot::channel();
++            state.insert_pending_user_input(format!("call-{index}"), tx, vec![index.to_string()]);
++        }
++        state.remove_pending_user_input("call-0");
++        for index in 1..8 {
++            let (_, ids) = state.take_any_pending_user_input().unwrap();
++            assert_eq!(ids, [index.to_string()]);
++        }
++        assert!(state.take_any_pending_user_input().is_none());
++    }
++}
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
 index 2d2f7e66e37ce959be99a334311d2a94bad42b59..38c125de9e0c9bc7acf0ce7ef27375c1790b0013 100644
 --- a/codex-rs/core/src/tasks/mod.rs
@@ -26620,7 +26654,7 @@ index b56485d7419e07ec28a5fbb20bfc7b22e7ada62a..68546acdd207b44c46222818300d61ff
  #[path = "thread_manager_tests.rs"]
  mod tests;
 diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
-index b46fe16e2eab3397da7eb221d2d3093fca97ebcb..5a4fbdfed7d8d4f0c0c0396b26cbd92fb673a398 100644
+index b46fe16e2eab3397da7eb221d2d3093fca97ebcb..6ec7c4a9fba196d1fe2025f429874c2946e62b6a 100644
 --- a/codex-rs/core/src/thread_manager_tests.rs
 +++ b/codex-rs/core/src/thread_manager_tests.rs
 @@ -76,6 +76,44 @@ impl codex_extension_api::ThreadInstructionsProvider for ParentInstructionsProvi
@@ -26646,7 +26680,7 @@ index b46fe16e2eab3397da7eb221d2d3093fca97ebcb..5a4fbdfed7d8d4f0c0c0396b26cbd92f
 +    builder.turn_lifecycle_contributor(Arc::new(Toggle(Arc::clone(&disabled))));
 +    let manager = ThreadManager::with_models_provider_and_home_for_tests(
 +        CodexAuth::from_api_key("dummy"),
-+        test_config().await.model_provider.clone(),
++        test_config().await.model_provider,
 +        tempdir().expect("tempdir").keep(),
 +        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
 +    )
@@ -30013,7 +30047,7 @@ index bb6dd3e1ca7133c9422cf96ce7b592c9850f750f..64dad16e14818338cb030cc682c4fcf5
          Some(FileSystemSandboxContext {
              sandbox_override: attempt.sandbox_override,
 diff --git a/codex-rs/core/src/tools/runtimes/apply_patch_tests.rs b/codex-rs/core/src/tools/runtimes/apply_patch_tests.rs
-index d39b0331a58973a842af4c97190f73933b653f31..28039948713ec519182cf2a082bd6c34f1b6bece 100644
+index d39b0331a58973a842af4c97190f73933b653f31..7491ddc72818c31b8216cf999cdf8184b2482cfe 100644
 --- a/codex-rs/core/src/tools/runtimes/apply_patch_tests.rs
 +++ b/codex-rs/core/src/tools/runtimes/apply_patch_tests.rs
 @@ -6,6 +6,7 @@ use codex_protocol::config_types::WindowsSandboxLevel;
@@ -30067,7 +30101,7 @@ index d39b0331a58973a842af4c97190f73933b653f31..28039948713ec519182cf2a082bd6c34
 +    let permissions = PermissionProfile::workspace_write();
 +    let manager = SandboxManager::new();
 +    let sandbox_policy_cwd = PathUri::from_abs_path(&path);
-+    let denied_paths = [secret.clone()];
++    let denied_paths = [secret];
 +    let attempt = SandboxAttempt {
 +        sandbox_override: SandboxOverride::NoOverride,
 +        sandbox: SandboxType::MacosSeatbelt,
@@ -30856,7 +30890,7 @@ index 8e0a8e7354b93641c9449f1f95240ac5c6205f90..42ea1d53bd9f3c1d7c5d276ea7ec7d72
                          workspace_roots: environment.workspace_roots().to_vec(),
                          user_home_dir: None,
 diff --git a/codex-rs/core/tests/suite/client.rs b/codex-rs/core/tests/suite/client.rs
-index d20e1dfb2617407c910ffbdd74992ad083a2faf6..28a07a57f8132b9366fe5c8bcab7948d31991018 100644
+index d20e1dfb2617407c910ffbdd74992ad083a2faf6..80e2d749c9e22203f5e2ee5a65b43757e5b7acd4 100644
 --- a/codex-rs/core/tests/suite/client.rs
 +++ b/codex-rs/core/tests/suite/client.rs
 @@ -3531,11 +3531,8 @@ async fn token_count_includes_rate_limits_snapshot() {
@@ -30873,6 +30907,24 @@ index d20e1dfb2617407c910ffbdd74992ad083a2faf6..28a07a57f8132b9366fe5c8bcab7948d
 
      codex
          .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+@@ -3546,7 +3543,7 @@ async fn token_count_includes_rate_limits_snapshot() {
+         .unwrap();
+
+     let token_event = wait_for_event(
+-        &codex,
++        codex,
+         |msg| matches!(msg, EventMsg::TokenCount(ev) if ev.info.is_some()),
+     )
+     .await;
+@@ -3623,7 +3620,7 @@ async fn token_count_includes_rate_limits_snapshot() {
+         Some(1704069000)
+     );
+
+-    wait_for_event(&codex, |msg| matches!(msg, EventMsg::TurnComplete(_))).await;
++    wait_for_event(codex, |msg| matches!(msg, EventMsg::TurnComplete(_))).await;
+ }
+
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 diff --git a/codex-rs/core/tests/suite/compact.rs b/codex-rs/core/tests/suite/compact.rs
 index c480acee0cf1a7ad51326d82241cc36f48ac4ac4..77be32ddcc8f8c08971e826dd86fd2eb3b69ac85 100644
 --- a/codex-rs/core/tests/suite/compact.rs
@@ -33757,7 +33809,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5a6489a82fd4690203cf60c5e27d145c92ef72d1 100644
+index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582f95daa81 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -33875,7 +33927,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5a6489a82fd4690203cf60c5e27d145c
              tui.clipboard.advance(tui.frame_requester());
          }
          Ok(AppRunControl::Continue)
-@@ -1250,7 +1293,107 @@ impl App {
+@@ -1250,7 +1293,109 @@ impl App {
          Ok(())
      }
 
@@ -33940,10 +33992,12 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5a6489a82fd4690203cf60c5e27d145c
 +            && self.chat_widget.no_modal_or_popup_active()
 +    }
 +
-+    fn mod_render_snapshot(&self) -> codex_omd::ModViewSnapshot {
-+        let mut snapshot = crate::mod_ui::snapshot();
++    fn mod_render_snapshot(&self) -> Arc<codex_omd::ModViewSnapshot> {
++        let mut snapshot = crate::mod_ui::shared_snapshot();
 +        if !self.mod_overlays_allowed() {
-+            snapshot.view.sites.remove("dialog");
++            if snapshot.view.sites.contains_key("dialog") {
++                Arc::make_mut(&mut snapshot).view.sites.remove("dialog");
++            }
 +            crate::mod_ui::close_help();
 +        }
 +        snapshot
@@ -33983,7 +34037,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5a6489a82fd4690203cf60c5e27d145c
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1269,33 +1412,56 @@ impl App {
+@@ -1269,33 +1414,56 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -34047,7 +34101,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5a6489a82fd4690203cf60c5e27d145c
              Ok(rendered_area)
          })
      }
-@@ -1305,6 +1471,7 @@ impl App {
+@@ -1305,6 +1473,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -35455,7 +35509,7 @@ index 075a6256623bf8b6c86274f91eb4ba0e0e120db2..7f522f25483308ee218affc5940ab6a5
      let mut app = crate::app::test_support::make_test_app().await;
      let config = serde_json::from_value(serde_json::json!({
 diff --git a/codex-rs/tui/src/app/owned_transcript_tests.rs b/codex-rs/tui/src/app/owned_transcript_tests.rs
-index c3ec487f6d67f545c5504a109b525f7137fad7c3..0630309ea94721aae5df6ab827f3246bdf3fb153 100644
+index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3c5f6db27 100644
 --- a/codex-rs/tui/src/app/owned_transcript_tests.rs
 +++ b/codex-rs/tui/src/app/owned_transcript_tests.rs
 @@ -34,6 +34,10 @@ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
@@ -35806,7 +35860,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..0630309ea94721aae5df6ab827f3246b
 +        assert!(text.contains("APPROVAL COMMAND"), "owned={owned}: {text}");
 +        assert!(!text.contains("THEME COVER"), "owned={owned}: {text}");
 +        assert!(
-+            crate::mod_ui::dialog_visible(&crate::mod_ui::snapshot()),
++            crate::mod_ui::dialog_visible(&crate::mod_ui::shared_snapshot()),
 +            "dialog state retained"
 +        );
 +        app.handle_key_event(
@@ -44386,14 +44440,14 @@ index 09ea01548a65dc37217065cf1848428c1711f4ed..7158aabd2475d2bdfbdee6261d172c57
              animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
              effects: Default::default(),
 diff --git a/codex-rs/tui/src/startup_draft_layout.rs b/codex-rs/tui/src/startup_draft_layout.rs
-index da417ce52bc963b1fc5633e7a49e39bb92546951..b3af39cf7795bfdd01d77648229b4a0e1fb7a07c 100644
+index da417ce52bc963b1fc5633e7a49e39bb92546951..e9d2a002bdcb04f9bbf29a2be2319e99d912b8d6 100644
 --- a/codex-rs/tui/src/startup_draft_layout.rs
 +++ b/codex-rs/tui/src/startup_draft_layout.rs
 @@ -64,16 +64,44 @@ impl Renderable for OwnedStartupLayout<'_> {
          paragraph.render(header, buf);
          let message = match self.pump.session_action {
              StartupDraftSessionAction::New | StartupDraftSessionAction::NewFromCommandCenter => {
-+                let snapshot = crate::mod_ui::snapshot();
++                let snapshot = crate::mod_ui::shared_snapshot();
 +                let composer = self.pump.bottom_pane.empty_state_composer();
 +                let available = Rect {
 +                    y: header.bottom(),
@@ -51894,10 +51948,10 @@ index 0000000000000000000000000000000000000000..6f5862b167dc93a5474bdfff4787e7d8
 +}
 diff --git a/codex-rs/core/src/session/persisted_text.rs b/codex-rs/core/src/session/persisted_text.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..46b8aeebd24ee65fe7107ee43c96b1451f8923ea
+index 0000000000000000000000000000000000000000..addc1168cf8bc476894a27faaa3e8b9b6075abd9
 --- /dev/null
 +++ b/codex-rs/core/src/session/persisted_text.rs
-@@ -0,0 +1,626 @@
+@@ -0,0 +1,627 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -52075,7 +52129,8 @@ index 0000000000000000000000000000000000000000..46b8aeebd24ee65fe7107ee43c96b145
 +fn event_msg(event: &mut EventMsg, visit: &mut Visit<'_>) {
 +    match event {
 +        EventMsg::UserMessage(event) => {
-+            if visit("event:user_message", Some("user"), None, &mut event.message) {
++            let redacted = visit("event:user_message", Some("user"), None, &mut event.message);
++            if redacted {
 +                event.text_elements.clear();
 +            }
 +        }
@@ -52758,10 +52813,10 @@ index 0000000000000000000000000000000000000000..0b6340a08e39bff9dab0e903dd3d004f
 +}
 diff --git a/codex-rs/core/src/tools/approval_gate.rs b/codex-rs/core/src/tools/approval_gate.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5befd77f7ba8710884e7beb6e24f23ef827e57dd
+index 0000000000000000000000000000000000000000..3b9dbaee423a0a69055587c163f88252e4b90403
 --- /dev/null
 +++ b/codex-rs/core/src/tools/approval_gate.rs
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,252 @@
 +use std::sync::Arc;
 +
 +use codex_extension_api::ApprovalGate;
@@ -52844,10 +52899,7 @@ index 0000000000000000000000000000000000000000..5befd77f7ba8710884e7beb6e24f23ef
 +        return ApprovalGate::Continue;
 +    }
 +    let turn = ctx.review_context.turn();
-+    let policy = serde_json::to_value(turn.approval_policy())
-+        .ok()
-+        .and_then(|value| value.as_str().map(str::to_owned))
-+        .unwrap_or_default();
++    let policy = turn.approval_policy().to_string();
 +    let details = details(action);
 +    let mut ask = None;
 +    let mut approve = None;
@@ -64636,10 +64688,10 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4aef3fde545e580ea6a594583b5a8366f33a4e1
+index 0000000000000000000000000000000000000000..80aa1a4d63c79eab14184d4c6a933b74b9598604
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,783 @@
+@@ -0,0 +1,784 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -65064,6 +65116,7 @@ index 0000000000000000000000000000000000000000..a4aef3fde545e580ea6a594583b5a836
 +            .cloned()
 +    }
 +
++    #[expect(clippy::too_many_arguments)]
 +    fn enroll_cross_provider(
 +        &self,
 +        thread: ThreadId,
@@ -67973,10 +68026,10 @@ index 0000000000000000000000000000000000000000..252d5d7afd1bf085a73c07cea74d0ca1
 +}
 diff --git a/codex-rs/ext/omd/src/model_windows.rs b/codex-rs/ext/omd/src/model_windows.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a69a128678641842c3c2cebccae2a72b1e4a2047
+index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538b8591963
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/model_windows.rs
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,146 @@
 +use codex_models_manager::runtime_models;
 +use codex_omd::fsio::Durability;
 +use codex_omd::fsio::write_bytes;
@@ -68028,7 +68081,9 @@ index 0000000000000000000000000000000000000000..a69a128678641842c3c2cebccae2a72b
 +    };
 +    let tokens = input.remove("tokens");
 +    if let Some(field) = input.keys().next() {
-+        return Err(format!("model_context_window_invalid: unknown field {field}"));
++        return Err(format!(
++            "model_context_window_invalid: unknown field {field}"
++        ));
 +    }
 +    let mut seen = SEEN.lock().unwrap_or_else(PoisonError::into_inner);
 +    let mut windows = read(root);
@@ -68042,19 +68097,29 @@ index 0000000000000000000000000000000000000000..a69a128678641842c3c2cebccae2a72b
 +            let tokens = value
 +                .as_i64()
 +                .filter(|tokens| (1..=MAX_TOKENS).contains(tokens))
-+                .ok_or("model_context_window_invalid: tokens is a whole number from 1 to 10000000")?;
++                .ok_or(
++                    "model_context_window_invalid: tokens is a whole number from 1 to 10000000",
++                )?;
 +            if !windows.contains_key(&model) && windows.len() >= MAX_MODELS {
-+                return Err(format!("model_context_window_limit: at most {MAX_MODELS} models"));
++                return Err(format!(
++                    "model_context_window_limit: at most {MAX_MODELS} models"
++                ));
 +            }
 +            windows.insert(model.clone(), tokens);
 +        }
 +    }
 +    if changed {
 +        let bytes = serde_json::to_vec(&windows).map_err(|error| error.to_string())?;
-+        write_bytes(&root.join(FILE), &bytes, Durability::Volatile).map_err(|error| error.to_string())?;
++        write_bytes(&root.join(FILE), &bytes, Durability::Volatile)
++            .map_err(|error| error.to_string())?;
 +        *seen = Some(stamp(root));
 +    }
-+    runtime_models::set_context_windows(windows.iter().map(|(slug, tokens)| (slug.clone(), *tokens)).collect());
++    runtime_models::set_context_windows(
++        windows
++            .iter()
++            .map(|(slug, tokens)| (slug.clone(), *tokens))
++            .collect(),
++    );
 +    let max = runtime_models::find(&model)
 +        .and_then(|(_, info)| info.max_context_window.or(info.context_window));
 +    Ok(json!({"model": model, "tokens": windows.get(&model), "max": max}))
@@ -68068,16 +68133,46 @@ index 0000000000000000000000000000000000000000..a69a128678641842c3c2cebccae2a72b
 +    fn picked_windows_persist_clear_and_validate() {
 +        let root = tempfile::tempdir().expect("root");
 +        let stored = || -> BTreeMap<String, i64> {
-+            serde_json::from_slice(&std::fs::read(root.path().join(FILE)).expect("file")).expect("json")
++            serde_json::from_slice(&std::fs::read(root.path().join(FILE)).expect("file"))
++                .expect("json")
 +        };
-+        let set = call(root.path(), json!({"model": "omd-window-test", "tokens": 400_000})).expect("set");
-+        assert_eq!(set, json!({"model": "omd-window-test", "tokens": 400_000, "max": null}));
-+        assert_eq!(stored(), BTreeMap::from([("omd-window-test".to_string(), 400_000)]));
-+        assert_eq!(call(root.path(), json!({"model": "omd-window-test"})).expect("read")["tokens"], 400_000);
-+        assert_eq!(call(root.path(), json!({"model": "omd-window-test", "tokens": null})).expect("clear")["tokens"], Value::Null);
++        let set = call(
++            root.path(),
++            json!({"model": "omd-window-test", "tokens": 400_000}),
++        )
++        .expect("set");
++        assert_eq!(
++            set,
++            json!({"model": "omd-window-test", "tokens": 400_000, "max": null})
++        );
++        assert_eq!(
++            stored(),
++            BTreeMap::from([("omd-window-test".to_string(), 400_000)])
++        );
++        assert_eq!(
++            call(root.path(), json!({"model": "omd-window-test"})).expect("read")["tokens"],
++            400_000
++        );
++        assert_eq!(
++            call(
++                root.path(),
++                json!({"model": "omd-window-test", "tokens": null})
++            )
++            .expect("clear")["tokens"],
++            Value::Null
++        );
 +        assert_eq!(stored(), BTreeMap::new());
-+        for bad in [json!({"model": "", "tokens": 1}), json!({"model": "m", "tokens": 0}), json!({"model": "m", "tokens": 2.5}), json!({"model": "m", "extra": 1})] {
-+            assert!(call(root.path(), bad).unwrap_err().starts_with("model_context_window_invalid"));
++        for bad in [
++            json!({"model": "", "tokens": 1}),
++            json!({"model": "m", "tokens": 0}),
++            json!({"model": "m", "tokens": 2.5}),
++            json!({"model": "m", "extra": 1}),
++        ] {
++            assert!(
++                call(root.path(), bad)
++                    .unwrap_err()
++                    .starts_with("model_context_window_invalid")
++            );
 +        }
 +    }
 +}
@@ -75213,10 +75308,10 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cde25086787a5aa9824586508c987eda89c0a9d6
+index 0000000000000000000000000000000000000000..89804dbb724f408e3fc745639ebd4f7f1a11980e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,859 @@
+@@ -0,0 +1,862 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -75750,7 +75845,10 @@ index 0000000000000000000000000000000000000000..cde25086787a5aa9824586508c987eda
 +        "routes.select" => select_route(lead, caller.id, request.arguments),
 +        "models.context_window" => {
 +            let arguments = request.arguments;
-+            blocking(Box::new(move || crate::model_windows::call(&host.root, arguments))).await
++            blocking(Box::new(move || {
++                crate::model_windows::call(&host.root, arguments)
++            }))
++            .await
 +        }
 +        "tools.list" => tool_specs::list(core, lead),
 +        "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
@@ -84290,10 +84388,10 @@ index 0000000000000000000000000000000000000000..7cd10346f6f9f54ccc951a322abe3e79
 +}
 diff --git a/codex-rs/ext/omd/src/mods/mentions.rs b/codex-rs/ext/omd/src/mods/mentions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d13571d71
+index 0000000000000000000000000000000000000000..ac3eef4f0eaf7b0adc3629c4338e39529c661cad
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/mentions.rs
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,264 @@
 +use super::*;
 +use codex_extension_api::ContentItemKind;
 +use codex_extension_api::ContextualUserFragment;
@@ -84357,7 +84455,7 @@ index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d
 +            let name = if rest.starts_with('"') {
 +                let mut quoted = serde_json::Deserializer::from_str(rest).into_iter::<String>();
 +                let Some(Ok(name)) = quoted.next() else {
-+                    break;
++                    continue;
 +                };
 +                consumed = index + 1 + quoted.byte_offset();
 +                name
@@ -84522,6 +84620,11 @@ index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d
 +            mentioned(&input, directory.path()),
 +            ["report!", "notes \"quoted\".txt"]
 +        );
++        let input = [UserInput::Text {
++            text: r#"compare @"draft notes and @report"#.into(),
++            text_elements: Vec::new(),
++        }];
++        assert_eq!(mentioned(&input, directory.path()), ["report"]);
 +    }
 +
 +    #[test]
@@ -112705,10 +112808,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e0d827f8c67c3c0b3c00eed6e6e6e8ba2054a388
+index 0000000000000000000000000000000000000000..c136e7f44ee3c2db0fbb8149e1d03f2213604ad0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6980 @@
+@@ -0,0 +1,6997 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -114694,8 +114797,19 @@ index 0000000000000000000000000000000000000000..e0d827f8c67c3c0b3c00eed6e6e6e8ba
 +                MOD_HOST_FEATURES.join(", ")
 +            )));
 +        }
-+        if !identifier_list(&self.compatibility.required_features, 16)
-+            || !identifier_list(&self.compatibility.optional_features, 16)
++        for (field, values) in [
++            ("required_features", &self.compatibility.required_features),
++            ("optional_features", &self.compatibility.optional_features),
++        ] {
++            if values.len() > 32 {
++                return Err(failure(format!(
++                    "invalid_host_compatibility_declaration: {field} has {} (max 32)",
++                    values.len()
++                )));
++            }
++        }
++        if !identifier_list(&self.compatibility.required_features)
++            || !identifier_list(&self.compatibility.optional_features)
 +            || self
 +                .compatibility
 +                .required_features
@@ -115337,11 +115451,9 @@ index 0000000000000000000000000000000000000000..e0d827f8c67c3c0b3c00eed6e6e6e8ba
 +    Ok(())
 +}
 +
-+fn identifier_list(values: &[String], limit: usize) -> bool {
++fn identifier_list(values: &[String]) -> bool {
 +    let unique: BTreeSet<_> = values.iter().collect();
-+    values.len() <= limit
-+        && unique.len() == values.len()
-+        && values.iter().all(|value| identifier(value))
++    unique.len() == values.len() && values.iter().all(|value| identifier(value))
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize)]
@@ -115598,6 +115710,7 @@ index 0000000000000000000000000000000000000000..e0d827f8c67c3c0b3c00eed6e6e6e8ba
 +    code_cache: Option<Arc<code_cache::CacheRoot>>,
 +    adapter: Option<Value>,
 +    state: Value,
++    state_revision: u64,
 +    /// The state the inspection ran with; `state` follows later callbacks.
 +    registered_state: Arc<Value>,
 +    ui: Option<(String, Arc<Mutex<UiState>>)>,
@@ -115927,6 +116040,12 @@ index 0000000000000000000000000000000000000000..e0d827f8c67c3c0b3c00eed6e6e6e8ba
 +            telemetry: ModTelemetry::default(),
 +            ..self.clone()
 +        }
++    }
++
++    fn set_state(&mut self, state: Value) {
++        static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++        self.state = state;
++        self.state_revision = REVISIONS.fetch_add(1, Ordering::Relaxed) + 1;
 +    }
 +
 +    fn clear_ui(&mut self) {
@@ -117021,6 +117140,7 @@ index 0000000000000000000000000000000000000000..e0d827f8c67c3c0b3c00eed6e6e6e8ba
 +                code_cache: caching.then(cache_root),
 +                selection,
 +                state: Value::Null,
++                state_revision: 0,
 +                registered_state: Arc::default(),
 +                ui: None,
 +                ui_state: Value::Null,
@@ -117040,7 +117160,7 @@ index 0000000000000000000000000000000000000000..e0d827f8c67c3c0b3c00eed6e6e6e8ba
 +                if let Some(Err(error)) = &adapter {
 +                    return Err(failure(error.to_string()));
 +                }
-+                loaded.state = self.inspection_state(&loaded.package, &loaded.selection.scope)?;
++                loaded.set_state(self.inspection_state(&loaded.package, &loaded.selection.scope)?);
 +                Ok(())
 +            })();
 +            inspections.push((id, loaded, ready));
@@ -118473,7 +118593,7 @@ index 0000000000000000000000000000000000000000..e0d827f8c67c3c0b3c00eed6e6e6e8ba
 +                    .record(self.generation, event, name, elapsed, "ok");
 +                current.telemetry.faults = 0;
 +                if state != previous_state {
-+                    current.state = state;
++                    current.set_state(state);
 +                }
 +                Ok(value)
 +            }
@@ -119455,7 +119575,7 @@ index 0000000000000000000000000000000000000000..e0d827f8c67c3c0b3c00eed6e6e6e8ba
 +        let mut hasher = std::collections::hash_map::DefaultHasher::new();
 +        self.generation.hash(&mut hasher);
 +        for (id, loaded) in self.active() {
-+            (id, loaded.state.to_string(), self.ui_revision(id)).hash(&mut hasher);
++            (id, loaded.state_revision, self.ui_revision(id)).hash(&mut hasher);
 +        }
 +        hasher.finish()
 +    }
@@ -127013,10 +127133,10 @@ index 0000000000000000000000000000000000000000..a555c242ce131b4382a16a7d798d1091
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..100c399823819f399f74cb3a3324f72c600d829a
+index 0000000000000000000000000000000000000000..4ad2097c4f174931cf583751b887dabebfd92ca7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,400 @@
 +use super::*;
 +
 +pub const SETTINGS_FILE_EXTENSIONS: [&str; 3] = ["json", "yaml", "yml"];
@@ -127372,6 +127492,7 @@ index 0000000000000000000000000000000000000000..100c399823819f399f74cb3a3324f72c
 +        selection,
 +        adapter: None,
 +        state,
++        state_revision: 0,
 +        registered_state: std::sync::Arc::default(),
 +        ui: None,
 +        ui_state: Value::Null,
@@ -130017,10 +130138,10 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6a9de102d4fef33021f9f5c538ac226619935546
+index 0000000000000000000000000000000000000000..72a08ef77e0805667d5da27b8d101e4248ec2ca7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1547 @@
+@@ -0,0 +1,1543 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -130789,10 +130910,6 @@ index 0000000000000000000000000000000000000000..6a9de102d4fef33021f9f5c538ac2266
 +            }
 +            Ok(())
 +        })
-+    }
-+
-+    pub(super) fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
-+        self.write_staged(name, bytes, || Ok(()))
 +    }
 +
 +    fn write_staged(
@@ -147388,10 +147505,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b9687a83e4a14d877132acc5bc0b2e58bcd16db0
+index 0000000000000000000000000000000000000000..694b74038df1138e16a30070032e335bbcd3d9e7
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5089 @@
+@@ -0,0 +1,5119 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -147548,6 +147665,25 @@ index 0000000000000000000000000000000000000000..b9687a83e4a14d877132acc5bc0b2e58
 +    assert_eq!(invoke(&mut first, "count").unwrap(), json!(105));
 +    let mut resumed = host(&temp);
 +    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(106));
++}
++
++#[test]
++fn state_fingerprint_changes_only_when_mod_state_changes() {
++    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('read', () => api.state.get()); }";
++    let (temp, _, _) = fixture(source, &["commands", "store"]);
++    let mut runtime = host(&temp);
++    let start = runtime.state_fingerprint();
++    let mut invoke = |name: &str| {
++        let generation = runtime.generation();
++        runtime
++            .invoke("fixture", generation, "command", name, Value::Null)
++            .unwrap();
++        runtime.state_fingerprint()
++    };
++    let counted = invoke("count");
++    assert_ne!(counted, start);
++    assert_eq!(invoke("read"), counted);
++    assert_ne!(invoke("count"), counted);
 +}
 +
 +#[test]
@@ -148280,6 +148416,17 @@ index 0000000000000000000000000000000000000000..b9687a83e4a14d877132acc5bc0b2e58
 +        );
 +    }
 +    let mut manifest = base;
++    let features = |count: usize| (0..count).map(|i| format!("f{i}")).collect::<Vec<_>>();
++    manifest["compatibility"] = json!({"optional_features": features(33)});
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    let error = ModStore::inspect_package(&path).unwrap_err().to_string();
++    assert!(
++        error.contains("invalid_host_compatibility_declaration: optional_features has 33 (max 32)"),
++        "{error}"
++    );
++    manifest["compatibility"] = json!({"optional_features": features(32)});
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    ModStore::inspect_package(&path).unwrap();
 +    manifest["compatibility"] = json!({"releases": [OMD_HOST_RELEASE]});
 +    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 +    ModStore::inspect_package(&path).unwrap();
@@ -148675,7 +148822,7 @@ index 0000000000000000000000000000000000000000..b9687a83e4a14d877132acc5bc0b2e58
 +        let path = package(
 +            &root,
 +            id,
-+            "export default api => api.on('terminal', ({ client }) => ({status: [client.columns + '|' + (Object.entries(client.sites ?? {}).map(([name, area]) => `${name}=${area.columns}x${area.rows}`).join(',') || 'none')]}))",
++            "export default api => api.on('terminal', ({ client }) => ({status: [client.columns + '|' + (Object.entries(client.sites ?? {}).sort().map(([name, area]) => `${name}=${area.columns}x${area.rows}`).join(',') || 'none')]}))",
 +            &["terminal"],
 +        );
 +        trust(&store, &path, &["terminal"]);
@@ -158975,10 +159122,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bd3192f9b5fa87d43ceafc0fbade92bb680e29fc
+index 0000000000000000000000000000000000000000..f80963dabce69dcf90fe27f71f49e0fa96332258
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2480 @@
+@@ -0,0 +1,2478 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -159596,36 +159743,34 @@ index 0000000000000000000000000000000000000000..bd3192f9b5fa87d43ceafc0fbade92bb
 +}
 +
 +fn open(arguments: &Value) -> Result<Value, String> {
-+    if arguments["editor"] == true {
++    let mut command = if arguments["editor"] == true {
 +        let (path, line) = editor_target(arguments)?;
 +        let mut argv = configured_editor()?.into_iter().map(|arg| {
 +            arg.replace("{path}", &path.to_string_lossy())
 +                .replace("{line}", &line.to_string())
 +        });
 +        let program = argv.next().ok_or("terminal_open_editor_unconfigured")?;
-+        return std::process::Command::new(program)
-+            .args(argv)
-+            .stdin(std::process::Stdio::null())
-+            .stdout(std::process::Stdio::null())
-+            .stderr(std::process::Stdio::null())
-+            .spawn()
-+            .map(|_| json!({"opened": true}))
-+            .map_err(|error| format!("terminal_open_failed: {error}"));
-+    }
-+    let target = open_target(arguments)?;
-+    let program = if cfg!(target_os = "macos") {
-+        "open"
++        let mut command = std::process::Command::new(program);
++        command.args(argv);
++        command
 +    } else {
-+        "xdg-open"
++        let target = open_target(arguments)?;
++        let mut command = std::process::Command::new(if cfg!(target_os = "macos") {
++            "open"
++        } else {
++            "xdg-open"
++        });
++        command.arg(&target);
++        command
 +    };
-+    std::process::Command::new(program)
-+        .arg(&target)
++    let mut child = command
 +        .stdin(std::process::Stdio::null())
 +        .stdout(std::process::Stdio::null())
 +        .stderr(std::process::Stdio::null())
 +        .spawn()
-+        .map(|_| json!({"opened": true}))
-+        .map_err(|error| format!("terminal_open_failed: {error}"))
++        .map_err(|error| format!("terminal_open_failed: {error}"))?;
++    std::thread::spawn(move || child.wait());
++    Ok(json!({"opened": true}))
 +}
 +
 +fn import_target(arguments: &Value) -> Result<std::path::PathBuf, String> {
@@ -168551,7 +168696,7 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f23d7edecc3371a1b654e82da3da92d66e966816
+index 0000000000000000000000000000000000000000..76157c5a6184321ce87a5ff8c9ea8e295d552423
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
 @@ -0,0 +1,1879 @@
@@ -169469,7 +169614,7 @@ index 0000000000000000000000000000000000000000..f23d7edecc3371a1b654e82da3da92d6
 +fn color(color: vt100::Color, level: StdoutColorLevel) -> Option<Color> {
 +    match color {
 +        vt100::Color::Default => None,
-+        vt100::Color::Idx(index) => Some(Color::Indexed(index)),
++        vt100::Color::Idx(index) => Some(crate::terminal_palette::indexed_color(index)),
 +        vt100::Color::Rgb(r, g, b) => Some(best_color_for_level((r, g, b), level)),
 +    }
 +}
@@ -171133,10 +171278,10 @@ index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..57e2c7f46b69ef3fb5041a26ec18178a7a844b04
+index 0000000000000000000000000000000000000000..ee88b91564b94686a3d16d18a8f7e4f7f3e6c792
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,606 @@
+@@ -0,0 +1,617 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -171695,14 +171840,17 @@ index 0000000000000000000000000000000000000000..57e2c7f46b69ef3fb5041a26ec18178a
 +        )
 +    );
 +    assert_eq!(row(2), format!("prompt{}", " ".repeat(58)));
-+    let tinted = Color::Rgb(0x44, 0x55, 0x66);
++    let tinted = crate::terminal_palette::rgb_color((0x44, 0x55, 0x66));
 +    assert_eq!(buffer[(63, 2)].bg, Color::Red);
 +    assert!((0..64).all(|x| buffer[(x, 0)].bg == tinted));
 +    assert_eq!(buffer[(10, 1)].bg, Color::Reset, "pictures stay untouched");
 +    assert!((0..63).all(|x| buffer[(x, 2)].bg == tinted));
 +    assert!((0..5).all(|x| buffer[(x, 0)].fg != Color::Reset));
 +    assert_eq!(buffer[(5, 0)].fg, Color::Reset);
-+    assert_eq!(buffer[(7, 0)].fg, Color::Rgb(0x11, 0x22, 0x33));
++    assert_eq!(
++        buffer[(7, 0)].fg,
++        crate::terminal_palette::rgb_color((0x11, 0x22, 0x33))
++    );
 +    let colors = crate::terminal_probe::DefaultColors {
 +        fg: (230, 230, 230),
 +        bg: (10, 10, 10),
@@ -171725,20 +171873,28 @@ index 0000000000000000000000000000000000000000..57e2c7f46b69ef3fb5041a26ec18178a
 +    let glass = (0..64).map(|x| menu[(x, 2)].symbol()).collect::<String>();
 +    assert_eq!(glass, format!("menu  {}", "x".repeat(58)));
 +    let (r, g, b) = crate::color::blend((0x11, 0x22, 0x33), lifted, 0.35);
-+    assert_eq!(menu[(10, 2)].fg, Color::Rgb(r, g, b));
++    assert_eq!(
++        menu[(10, 2)].fg,
++        crate::terminal_palette::rgb_color((r, g, b))
++    );
 +    let light = crate::terminal_probe::DefaultColors {
 +        fg: (20, 20, 20),
 +        bg: (240, 240, 240),
 +    };
 +    let code = crate::terminal_palette::with_test_default_colors(light, || {
 +        let mut code = Buffer::empty(screen);
-+        code.set_string(0, 0, "fn", Style::default().fg(Color::Rgb(30, 30, 30)));
++        code.set_string(
++            0,
++            0,
++            "fn",
++            Style::default().fg(crate::terminal_palette::rgb_color((30, 30, 30))),
++        );
 +        underlay_tint(&snapshot, screen, &[], &mut code, level);
 +        code
 +    });
 +    assert_eq!(
 +        code[(0, 0)].fg,
-+        Color::Rgb(255, 255, 255),
++        crate::terminal_palette::rgb_color((255, 255, 255)),
 +        "dark text set for a light terminal stays readable"
 +    );
 +    retain(&BTreeSet::new());
@@ -172566,7 +172722,7 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..48179ea29e6c95eb43f4036025d27ad6288698ce
+index 0000000000000000000000000000000000000000..b17e1bce7e4a9ade75845d58cefd79ba69f0de82
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
 @@ -0,0 +1,1749 @@
@@ -174188,7 +174344,7 @@ index 0000000000000000000000000000000000000000..48179ea29e6c95eb43f4036025d27ad6
 +
 +/// Never waits for a busy runtime, except within the keystroke budget for a surface never looked up.
 +pub(crate) fn intercepts(surface: &str) -> bool {
-+    if !crate::omd::mod_paths().is_some_and(|paths| paths.store.is_some()) {
++    if crate::omd::mod_paths().is_none_or(|paths| paths.store.is_none()) {
 +        return false;
 +    }
 +    let wait = if KNOWN_INTERCEPTS.locked().contains_key(surface) {
@@ -177346,10 +177502,10 @@ index 0000000000000000000000000000000000000000..010703e1cda8c601ee75f9c257a5faf5
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..08b1e3022c51981cf7678041728641e30f7641bd
+index 0000000000000000000000000000000000000000..b1ad60a56b99ef7e286d8166e7ea504d32136794
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5924 @@
+@@ -0,0 +1,5927 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -178962,8 +179118,8 @@ index 0000000000000000000000000000000000000000..08b1e3022c51981cf7678041728641e3
 +    fresh
 +}
 +
-+pub(crate) fn snapshot() -> ModViewSnapshot {
-+    with_cache(|cache| cache.snapshot.as_ref().clone()).unwrap_or_default()
++pub(crate) fn shared_snapshot() -> Arc<ModViewSnapshot> {
++    with_cache(|cache| Arc::clone(&cache.snapshot)).unwrap_or_default()
 +}
 +
 +fn dialog_key(dialog: &ModRenderSite) -> String {
@@ -179169,8 +179325,9 @@ index 0000000000000000000000000000000000000000..08b1e3022c51981cf7678041728641e3
 +}
 +
 +/// Leaves only dialogs, progress and diagnostics in the inline viewport once a mod hides its sites.
-+pub(crate) fn inline_snapshot(mut snapshot: ModViewSnapshot) -> ModViewSnapshot {
++pub(crate) fn inline_snapshot(mut snapshot: Arc<ModViewSnapshot>) -> Arc<ModViewSnapshot> {
 +    if snapshot.view.inline_sites.is_some() {
++        let snapshot = Arc::make_mut(&mut snapshot);
 +        snapshot
 +            .view
 +            .sites
@@ -180848,7 +181005,9 @@ index 0000000000000000000000000000000000000000..08b1e3022c51981cf7678041728641e3
 +}
 +
 +pub(crate) fn paint_named(name: &str, area: Rect, buffer: &mut Buffer, base: Option<Color>) {
-+    let Some(paint) = snapshot().view.surface_styles.get(name).cloned() else {
++    let Some(paint) =
++        with_cache(|cache| cache.snapshot.view.surface_styles.get(name).cloned()).flatten()
++    else {
 +        return;
 +    };
 +    paint_surface(area, buffer, &paint, base);
@@ -183527,7 +183686,7 @@ index 0000000000000000000000000000000000000000..9f178f292257e36d63b98bfe1e5d0c40
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845a60ef595
+index 0000000000000000000000000000000000000000..665e397f5ae37540a3e0daa810b44435e40378fb
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
 @@ -0,0 +1,2782 @@
@@ -184261,7 +184420,7 @@ index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845
 +        buffer[(4, 2)].set_bg(crate::terminal_palette::rgb_color((200, 0, 0)));
 +        buffer[(5, 2)].set_char('Y').set_bg(Color::Blue);
 +        buffer[(1, 1)].set_char('+').set_fg(Color::Red);
-+        buffer[(6, 1)].set_bg(Color::Indexed(4));
++        buffer[(6, 1)].set_bg(crate::terminal_palette::indexed_color(4));
 +        shade_dock_zone(Rect::new(1, 1, 6, 3), &mut buffer);
 +        let accent = crate::style::accent_color();
 +        let Color::Rgb(r, g, b) = accent else {
@@ -184292,7 +184451,7 @@ index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845
 +        assert_eq!(buffer[(0, 0)].bg, Color::Reset);
 +        assert_eq!(buffer[(7, 4)].bg, Color::Reset);
 +        assert!(!buffer[(5, 2)].modifier.contains(Modifier::REVERSED));
-+        assert_eq!(buffer[(6, 1)].bg, Color::Indexed(4));
++        assert_eq!(buffer[(6, 1)].bg, crate::terminal_palette::indexed_color(4));
 +        assert!(buffer[(6, 1)].modifier.contains(Modifier::REVERSED));
 +    });
 +}
@@ -184364,10 +184523,10 @@ index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845
 +        "dialog":{"components":[{"type":"dialog","id":"ask","label":"Ask","title":"Ask","children":[{"type":"text","id":"body","label":"Body","text":"DIALOGTEXT"}]}]}
 +    }});
 +    let shown = snapshot(view.clone());
-+    assert!(header_rows(area, &inline_snapshot(shown)) > 0);
++    assert!(header_rows(area, &inline_snapshot(Arc::new(shown))) > 0);
 +    let mut hidden = view;
 +    hidden["inline_sites"] = serde_json::json!("hidden");
-+    let mut hidden = inline_snapshot(snapshot(hidden));
++    let mut hidden = Arc::unwrap_or_clone(inline_snapshot(Arc::new(snapshot(hidden))));
 +    assert_eq!(header_rows(area, &hidden), 0);
 +    assert_eq!(chat_area(area, &hidden, 0), area);
 +    let mut buffer = Buffer::empty(area);
@@ -184473,7 +184632,7 @@ index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845
 +                "composer":{"top":"#eeeeee","bottom":"#dddddd","foreground":"#1c1c1c","border":"#888888"}}
 +        });
 +        preview(snapshot(value));
-+        let current = super::snapshot();
++        let current = super::shared_snapshot();
 +        let header = header_rows(area, &current);
 +        let chat = chat_area(area, &current, header);
 +        assert!(chat.width < area.width);
@@ -184491,7 +184650,7 @@ index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845
 +        assert_ne!(buffer[(composer.x + 1, composer.y + 1)].bg, Color::Reset);
 +        assert!(rows(&buffer, area).contains("status retained"));
 +
-+        let mut dialog = current;
++        let mut dialog = Arc::unwrap_or_clone(current);
 +        dialog.component_owners.extend(
 +            [("theme_apply", "theme"), ("theme_close", "theme")]
 +                .map(|(id, owner)| (id.to_owned(), owner.to_owned())),
@@ -184503,7 +184662,7 @@ index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845
 +            ]}]
 +        })).unwrap());
 +        preview(dialog);
-+        let current = super::snapshot();
++        let current = super::shared_snapshot();
 +        assert!(dialog_visible(&current));
 +        render(area, chat, &mut buffer, &current);
 +        assert!(focus("theme_close"));
@@ -184535,7 +184694,7 @@ index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845
 +        );
 +        render(area, chat, &mut buffer, &current);
 +        assert!(focus("theme_close"));
-+        let mut closed = current.clone();
++        let mut closed = current.as_ref().clone();
 +        closed.view.sites.remove("dialog");
 +        render(area, chat, &mut buffer, &closed);
 +        reopen_dialogs();
@@ -184549,7 +184708,7 @@ index 0000000000000000000000000000000000000000..0cf9e8446373c8cee0f6cc2456123845
 +        preview(ModViewSnapshot::default());
 +        let mut native = Buffer::empty(area);
 +        paint_named("composer", composer, &mut native, None);
-+        render(area, area, &mut native, &super::snapshot());
++        render(area, area, &mut native, &super::shared_snapshot());
 +        assert_eq!(rows(&native, area).trim(), "");
 +        assert_eq!(native[(1, 1)].bg, Color::Reset);
 +    });

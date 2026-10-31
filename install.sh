@@ -34,6 +34,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -56,20 +57,19 @@ TARGET = "aarch64-apple-darwin"
 UPDATE_MOD = "omd_update"
 CADENCES = {"daily": 86_400, "weekly": 604_800}
 POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "prerelease", "nightly"), "cadence": ("daily", "weekly")}
-RELEASE_URL = ""
-RELEASE_SHA256 = ""
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
 UPSTREAM_MINOR = "0.166"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
+NOTICE_BYTES = 4096
 MAX_MEMBER_BYTES = 1_000_000_000
 NETWORK_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException)
 DOWNLOAD_ATTEMPTS = 3
 DOWNLOAD_WAIT = "Waiting for the background update check or download to finish…"
 BROKER_DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
 WEBSITE = "https://www.ohmydiff.me"
-DOCS = "https://github.com/dzkchen/oh-my-diff/blob/main/docs/install.md"
+DOCS = "https://github.com/dzkchen/oh-my-diff/blob/v{}/docs/install.md"
 MARK = ("╭─╮ ╭╮╭╮ ┌─╮", "│ │ │╰╯│ │ │", "╰─╯ ╵  ╵ └─╯")
 MARK_ASCII = (".-. |\\/| |-.", "| | |  | | |", "'-' |  | |-'")
 LIVE = sys.stderr.isatty() and os.environ.get("TERM") != "dumb"
@@ -207,21 +207,22 @@ def upstream_binary(args, current, minor=None):
     def accept(path):
         if path.name != "codex" or not path.is_file() or not os.access(path, os.X_OK):
             fail("--upstream must name an executable called codex")
-        if path == args.bin_dir / "codex":
-            fail(f"{path} is replaced by the OMD launcher; move the upstream codex out of {args.bin_dir} and pass its new path with --upstream")
+        if path.parent.resolve() == args.bin_dir or path.resolve().is_relative_to(args.root):
+            fail(f"{path} is or becomes the OMD launcher; pass an upstream codex outside {args.bin_dir} with --upstream")
         version = run([path, "--version"]).strip()
         if minor and not re.fullmatch(rf"codex-cli {re.escape(minor)}\.\d+", version):
-            fail(f"upstream Codex {minor}.x is required; found {version}")
+            fail(f"upstream Codex {minor}.x is required; found {version}. Install it with npm install -g @openai/codex@{minor}")
         return {"path": str(path), "version": version}
 
     def found():
         located = shutil.which("codex", path=environment(Path("/nonexistent/codex"), args.bin_dir)["PATH"])
         if not located:
-            fail(f"An upstream Codex {minor or UPSTREAM_MINOR}.x executable is required; pass --upstream /path/to/codex")
-        return Path(located).resolve()
+            fail(f"An upstream Codex {minor or UPSTREAM_MINOR}.x executable is required; install it with "
+                 f"npm install -g @openai/codex@{minor or UPSTREAM_MINOR}, or pass --upstream /path/to/codex")
+        return Path(os.path.abspath(located))
 
     if args.upstream:
-        return first_passing([lambda: args.upstream.expanduser().resolve()], accept)
+        return first_passing([lambda: Path(os.path.abspath(args.upstream.expanduser()))], accept)
     recorded = Path(receipt(current)["upstream"]["path"]) if current else None
     return first_passing(([lambda: recorded] if recorded and recorded.is_file() else []) + [found], accept)
 
@@ -265,12 +266,19 @@ def opened(url, timeout):
     return response
 
 
+def untrusted(error):
+    return isinstance(getattr(error, "reason", error), ssl.SSLCertVerificationError)
+
+
 def unreachable(error):
+    if untrusted(error):
+        return ("Python could not verify GitHub's certificate; if this Python came from python.org, run Install Certificates.command "
+                "in its Applications folder (or point SSL_CERT_FILE at certifi's bundle) and try again.")
     return f"Network error while contacting GitHub ({getattr(error, 'reason', None) or error}); check your connection and try again."
 
 
 def retryable(error):
-    return error.code in (429, 500, 502, 503, 504) if isinstance(error, urllib.error.HTTPError) else True
+    return error.code in (429, 500, 502, 503, 504) if isinstance(error, urllib.error.HTTPError) else not untrusted(error)
 
 
 def download(url, expected, destination, progress=None, stopped=threading.Event()):
@@ -426,8 +434,7 @@ def install(args, root, current):
         fail("Pass --asset-url and --asset-sha256 together; nothing was installed.")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         fail("Oh My Diff supports Apple Silicon macOS only.")
-    url = args.asset_url or RELEASE_URL
-    expected = args.asset_sha256 or RELEASE_SHA256
+    url, expected = args.asset_url, args.asset_sha256
     channel = args.channel or (policy(installation(root, current)[2])["channel"] if current else "stable")
     manifest = None
     if not url:
@@ -488,7 +495,8 @@ def installed(result):
     headline += ", but codex can't start until the authority broker is pinned." if unpinned else "."
     say(f"  {paint('+', '36')} {paint(headline, '1')}")
     say()
-    rows = [("Mods", "/mods and /omd inside codex"), ("Update", "omd update"), ("Website", WEBSITE), ("Docs", DOCS)]
+    rows = [("Mods", "/mods and /omd inside codex"), ("Update", "omd update"), ("Website", WEBSITE),
+            ("Docs", DOCS.format(result["version"]))]
     if unpinned:
         rows.insert(0, ("Fix", "omd-package broker pin, then open a new terminal and run codex"))
     elif shadowing := result.get("codex_on_path"):
@@ -836,7 +844,7 @@ def version_key(value):
     return int(found[1]), int(found[2]), int(found[3]), not found[4], pre
 
 
-def releases(url, channel="stable", pin=""):
+def releases(url, channel="stable", pin="", installed=None, missing=None):
     if pin and not version_key(pin):
         fail("pinned version is malformed")
     parsed = urllib.parse.urlsplit(url)
@@ -853,7 +861,8 @@ def releases(url, channel="stable", pin=""):
                 version = tag.removeprefix("refs/tags/v") if isinstance(tag, str) and tag.startswith("refs/tags/v") else None
                 if version_key(version) and on_channel(channel, {"version": version, "prerelease": "-" in version}):
                     versions.append(version)
-        listed = tag_documents(base, sorted(set(versions), key=version_key, reverse=True)[:5])
+        versions = sorted(set(versions), key=version_key, reverse=True)[:5]
+        listed = tag_documents(base, sorted({*versions, installed} - {None}, key=version_key, reverse=True), missing)
     else:
         listed = fetch_json(url, 2_000_000)
         if not isinstance(listed, list):
@@ -862,13 +871,15 @@ def releases(url, channel="stable", pin=""):
     yield from found if matching else sorted(found, key=lambda item: version_key(item["version"]), reverse=True)
 
 
-def tag_documents(base, versions):
+def tag_documents(base, versions, missing=None):
     for version in versions:
         try:
             yield fetch_json(base + "/tags/v" + urllib.parse.quote(version, safe=""), 2_000_000)
         except urllib.error.HTTPError as error:
             if error.code != 404:
                 raise
+            if missing is not None:
+                missing.append(version)
             error.close()
 
 
@@ -981,8 +992,24 @@ def state(root):
     return read_json(root / "update/state.json", {})
 
 
+def notice(saved):
+    value = {key: saved.get(key) for key in ("installed", "checked_at", "blocked", "error", "pending", "failed", "last", "held",
+                                             "request_done", "withdrawn")}
+    available = saved.get("available")
+    value["available"] = available and {key: available.get(key) for key in ("version", "prerelease", "notes", "page", "user_mods")} | {
+        "mod_api": available["manifest"]["mod_api"]}
+    for owner, key in ((value["available"] or {}, "notes"), (value, "blocked"), (value, "failed"),
+                       (value["available"] or {}, "user_mods"), (value, "error")):
+        if len(json.dumps(value, sort_keys=True)) <= NOTICE_BYTES:
+            break
+        owner.pop(key, None)
+    return value
+
+
 def save(root, **changes):
-    write_json(update_dir(root) / "state.json", state(root) | changes)
+    saved = state(root) | changes
+    write_json(update_dir(root) / "state.json", saved)
+    write_json(root / "update/notice.json", notice(saved))
 
 
 def blockers(args, current, manifest):
@@ -1008,7 +1035,10 @@ def probe(args, root, current):
     result = {"available": None, "blocked": None, "error": None}
     try:
         pin = str(settings.get("pin") or "").strip()
-        listed = releases(release_source(details.get("releases_url") or RELEASES_URL), channel=settings["channel"], pin=pin)
+        published = "-" not in record["version"] and (current / RELEASE_MANIFEST).is_file()
+        missing = []
+        listed = releases(release_source(details.get("releases_url") or RELEASES_URL), channel=settings["channel"], pin=pin,
+                          installed=record["version"] if published else None, missing=missing)
         if pin:
             listed = list(listed)
             if not any(item["version"] == pin for item in listed):
@@ -1028,6 +1058,9 @@ def probe(args, root, current):
             result["available"] = {key: item[key] for key in ("version", "prerelease", "notes", "page")} | {
                 "manifest": manifest, "user_mods": user_mods(record, store, manifest["mod_api"])}
             break
+        result["withdrawn"] = {"version": record["version"], "run": "omd update" if result["available"] else
+                               "omd update rollback" if (root / "previous").resolve() not in (current, root / "previous") else None
+                               } if published and record["version"] in missing else None
     except (OSError, ValueError) as error:
         return {"error": text(str(error), 300)}
     return result
@@ -1062,7 +1095,7 @@ def newer(known, version):
 
 def settled(root, version, **changes):
     save(root, schema=1, command="omd update", installed=version, available=newer(state(root).get("available"), version),
-         pending=None, **changes)
+         pending=None, withdrawn=None, **changes)
 
 
 def flocked(path, waiting=None):
@@ -1165,7 +1198,7 @@ def manual(args, root, current):
         available = saved.get("available")
         return {"installed": record["version"], "profile": details["profile"], "policy": policy(store),
                 "open_sessions": len(sessions(root, None))} | {
-            key: saved.get(key) for key in ("checked_at", "blocked", "error", "pending", "failed", "held", "last")} | {
+            key: saved.get(key) for key in ("checked_at", "blocked", "error", "pending", "failed", "held", "last", "withdrawn")} | {
             "available": available and available | {"manifest": {key: value for key, value in available["manifest"].items()
                                                                  if key not in ("body", "signature")}}}
     result = check(args, root, current)
@@ -1287,8 +1320,10 @@ def update_summary(status):
               f"the last check failed: {status['error']}" if status["error"] else
               "up to date" if status["checked_at"] else "not checked yet")
     pinned = f", pinned to {rules['pin']}" if rules["pin"] else ""
+    pulled = (f". {status['withdrawn']['version']} was withdrawn" + (f"; run {status['withdrawn']['run']}" if status["withdrawn"]["run"] else "")
+              if status["withdrawn"] else "")
     return (f"Oh My Diff {status['installed']} ({PROFILE_LABELS[status['profile']]}), {rules['channel']} channel, "
-            f"{checks}{pinned}: {latest}")
+            f"{checks}{pinned}: {latest}{pulled}")
 
 
 def main():

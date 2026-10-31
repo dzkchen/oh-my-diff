@@ -161,9 +161,8 @@ test('delegate_task start routes the role model to a worker route, scopes the wo
 
 test('delegate_task wait waits once and ends with the running text when the task is still going', () => {
   const running = delegate({ action: 'start', task: 'Review', mode: 'wait' }, { answer: { 'agents.wait': () => ({ status: 'running' }) } });
-  assert.equal(running.of('agents.wait').length, 1);
   assert.match(running.value.text, /end your turn/);
-  assert.ok(!source.includes('timeout_ms'));
+  assert.deepEqual(running.of('agents.wait'), [{ handle: 'h1' }]);
   const done = delegate({ action: 'start', task: 'Review', mode: 'wait' }, { answer: { 'agents.wait': () => ({ status: 'completed', text: 'All clear', consumed: false }) } });
   assert.equal(done.value.result, 'All clear');
   assert.deepEqual(done.of('agents.result'), [{ handle: 'h1', consume: true }]);

@@ -33,7 +33,7 @@ A mod can also list `compatibility.releases`, `required_features` and `optional_
 ### Features to require
 
 Listing one of these features in `required_features` makes an older host refuse the mod before it turns on, even when
-the API version matches.
+the API version matches. Each list holds at most 32 features.
 
 | If you use | Require |
 | --- | --- |

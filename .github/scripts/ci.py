@@ -2,20 +2,25 @@
 import argparse
 import dataclasses
 import datetime
+import functools
+import http.server
 import json
 import os
 import re
 import resource
 from pathlib import Path
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import build
 from scripts import authority_broker, install_support as support, package as release_package, profile_acceptance, release_lock
+from scripts.release import REPOSITORY
 
 WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 TREE = "nightly"
@@ -243,17 +248,12 @@ def package(version=None):
     support.output([sys.executable, "-m", "scripts.package", "pack", "--artifact-dir", artifact_dir, "--output", archive])
     if archive.stat().st_size > 150_000_000:
         raise ValueError("nightly archive exceeds the curl installer download limit")
-    upstream = work / "upstream-bin/codex"
-    upstream.parent.mkdir(parents=True)
     pin = build.pin()
-    support.output(["curl", "--fail", "--silent", "--show-error", "--location", "--retry", "3",
-                    f"https://github.com/openai/codex/releases/download/{pin['tag']}/codex-aarch64-apple-darwin.tar.gz",
-                    "--output", upstream.with_suffix(".tar.gz")])
-    support.output(["tar", "-xzf", upstream.with_suffix(".tar.gz"), "-C", upstream.parent])
-    (upstream.parent / "codex-aarch64-apple-darwin").rename(upstream)
+    upstream = upstream_codex(pin["tag"], work / "upstream-bin")
     support.output([sys.executable, "-m", "scripts.profile_acceptance", "--artifact-dir", artifact_dir,
                     "--upstream", upstream, "--output", WORK / "profile-acceptance.json"])
     archive_acceptance(archive, upstream)
+    update_acceptance(archive, version, upstream)
     provenance = {"schema": 1, "version": version, "commit": support.output(["git", "rev-parse", "HEAD"]),
                   "upstream_commit": pin["commit"], "upstream_tag": pin["tag"],
                   "patch_sha256": json.loads((build.ROOT / "runtime/patches/manifest.json").read_text())["patch"]["sha256"], "profile": "release",
@@ -265,6 +265,65 @@ def package(version=None):
     shutil.copy2(artifact_dir / "mod-api.tgz", output / "mod-api.tgz")
     checksums = [f"{support.digest(path)}  {path.name}" for path in sorted(output.iterdir()) if path.is_file()]
     (output / "SHA256SUMS").write_text("\n".join(checksums) + "\n")
+
+
+def upstream_codex(tag, directory):
+    directory.mkdir(parents=True)
+    support.output(["curl", "--fail", "--silent", "--show-error", "--location", "--retry", "3",
+                    f"https://github.com/openai/codex/releases/download/{tag}/codex-aarch64-apple-darwin.tar.gz",
+                    "--output", directory / "codex.tar.gz"])
+    support.output(["tar", "-xzf", directory / "codex.tar.gz", "-C", directory])
+    return (directory / "codex-aarch64-apple-darwin").rename(directory / "codex")
+
+
+def update_acceptance(archive, version, upstream):
+    archive, upstream = archive.resolve(), upstream.resolve()
+    with tempfile.TemporaryDirectory(prefix="omd-nightly-update-", dir="/private/tmp") as temporary:
+        base = Path(temporary)
+        home = base / "home"
+        home.mkdir()
+        for name in ("omd-release.json", "omd-release.json.sig"):
+            support.output(["curl", "--fail", "--silent", "--show-error", "--location", "--retry", "3",
+                            f"https://github.com/{REPOSITORY}/releases/latest/download/{name}", "--output", base / name])
+        latest = authority_broker.signed_releases([base / "omd-release.json"])[0]
+        download = f"https://github.com/{REPOSITORY}/releases/download/v{latest['version']}"
+        support.output(["curl", "--fail", "--silent", "--show-error", "--location", "--retry", "3",
+                        f"{download}/install.sh", "--output", base / "previous-install.sh"])
+        previous = upstream_codex(latest["upstream_tag"], base / "previous-upstream")
+        cert, key = base / "cert.pem", base / "key.pem"
+        support.output(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=localhost",
+                        "-addext", "subjectAltName=DNS:localhost", "-keyout", key, "-out", cert])
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(
+            http.server.SimpleHTTPRequestHandler, directory=archive.parent))
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        environment = profile_acceptance.isolated_environment(base, home, upstream)
+
+        def installer(codex, *arguments, env=environment, script=build.ROOT / "install.sh"):
+            return support.output(["sh", script, *arguments, "--root", base / "managed",
+                                   "--bin-dir", base / "bin", "--upstream", codex], env=env)
+
+        def installed(codex, expected):
+            status = json.loads(installer(codex, "status"))["profile"]
+            if status["version"] != expected or any(item["error"] or not item["pinned_source_current"] for item in status["packages"]):
+                raise ValueError(f"expected a healthy {expected} installation:\n{json.dumps(status, indent=2)}")
+
+        try:
+            installer(previous, "install", "--profile", "full", "--asset-url", f"{download}/{latest['archive']}",
+                      "--asset-sha256", latest["sha256"], script=base / "previous-install.sh")
+            installed(previous, latest["version"])
+            installer(upstream, "install", "--profile", "full", "--asset-url", f"https://localhost:{server.server_port}/{archive.name}",
+                      "--asset-sha256", support.digest(archive), env=environment | {"SSL_CERT_FILE": str(cert)})
+            installed(upstream, version)
+            if not (base / "managed/update/notice.json").is_file():
+                raise ValueError("the update wrote no update/notice.json")
+            installer(previous, "rollback")
+            installed(previous, latest["version"])
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 def archive_acceptance(archive, upstream):

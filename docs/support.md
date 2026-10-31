@@ -12,7 +12,7 @@ host needs the macOS sandbox (Seatbelt) to run mods.
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Codex | `0.166.x` | Everything. OMD builds on the Codex you install. |
+| Codex | The version line the OMD release builds on; the installer names it | Everything. OMD builds on the Codex you install. |
 | Python | 3.12 or later | The installer and `omd update` |
 | Node | 22.18 or later | The setup and model routing of `omd_profiles`, `omd_claude_cli` and `omd_cursor` |
 | Node | 24.18 or a later 24.x | `omd-mod-author`, to write mods |

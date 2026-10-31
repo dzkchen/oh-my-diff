@@ -49,7 +49,9 @@ pub(crate) fn call(root: &Path, arguments: Value) -> Result<Value, String> {
     };
     let tokens = input.remove("tokens");
     if let Some(field) = input.keys().next() {
-        return Err(format!("model_context_window_invalid: unknown field {field}"));
+        return Err(format!(
+            "model_context_window_invalid: unknown field {field}"
+        ));
     }
     let mut seen = SEEN.lock().unwrap_or_else(PoisonError::into_inner);
     let mut windows = read(root);
@@ -63,19 +65,29 @@ pub(crate) fn call(root: &Path, arguments: Value) -> Result<Value, String> {
             let tokens = value
                 .as_i64()
                 .filter(|tokens| (1..=MAX_TOKENS).contains(tokens))
-                .ok_or("model_context_window_invalid: tokens is a whole number from 1 to 10000000")?;
+                .ok_or(
+                    "model_context_window_invalid: tokens is a whole number from 1 to 10000000",
+                )?;
             if !windows.contains_key(&model) && windows.len() >= MAX_MODELS {
-                return Err(format!("model_context_window_limit: at most {MAX_MODELS} models"));
+                return Err(format!(
+                    "model_context_window_limit: at most {MAX_MODELS} models"
+                ));
             }
             windows.insert(model.clone(), tokens);
         }
     }
     if changed {
         let bytes = serde_json::to_vec(&windows).map_err(|error| error.to_string())?;
-        write_bytes(&root.join(FILE), &bytes, Durability::Volatile).map_err(|error| error.to_string())?;
+        write_bytes(&root.join(FILE), &bytes, Durability::Volatile)
+            .map_err(|error| error.to_string())?;
         *seen = Some(stamp(root));
     }
-    runtime_models::set_context_windows(windows.iter().map(|(slug, tokens)| (slug.clone(), *tokens)).collect());
+    runtime_models::set_context_windows(
+        windows
+            .iter()
+            .map(|(slug, tokens)| (slug.clone(), *tokens))
+            .collect(),
+    );
     let max = runtime_models::find(&model)
         .and_then(|(_, info)| info.max_context_window.or(info.context_window));
     Ok(json!({"model": model, "tokens": windows.get(&model), "max": max}))
@@ -89,16 +101,46 @@ mod tests {
     fn picked_windows_persist_clear_and_validate() {
         let root = tempfile::tempdir().expect("root");
         let stored = || -> BTreeMap<String, i64> {
-            serde_json::from_slice(&std::fs::read(root.path().join(FILE)).expect("file")).expect("json")
+            serde_json::from_slice(&std::fs::read(root.path().join(FILE)).expect("file"))
+                .expect("json")
         };
-        let set = call(root.path(), json!({"model": "omd-window-test", "tokens": 400_000})).expect("set");
-        assert_eq!(set, json!({"model": "omd-window-test", "tokens": 400_000, "max": null}));
-        assert_eq!(stored(), BTreeMap::from([("omd-window-test".to_string(), 400_000)]));
-        assert_eq!(call(root.path(), json!({"model": "omd-window-test"})).expect("read")["tokens"], 400_000);
-        assert_eq!(call(root.path(), json!({"model": "omd-window-test", "tokens": null})).expect("clear")["tokens"], Value::Null);
+        let set = call(
+            root.path(),
+            json!({"model": "omd-window-test", "tokens": 400_000}),
+        )
+        .expect("set");
+        assert_eq!(
+            set,
+            json!({"model": "omd-window-test", "tokens": 400_000, "max": null})
+        );
+        assert_eq!(
+            stored(),
+            BTreeMap::from([("omd-window-test".to_string(), 400_000)])
+        );
+        assert_eq!(
+            call(root.path(), json!({"model": "omd-window-test"})).expect("read")["tokens"],
+            400_000
+        );
+        assert_eq!(
+            call(
+                root.path(),
+                json!({"model": "omd-window-test", "tokens": null})
+            )
+            .expect("clear")["tokens"],
+            Value::Null
+        );
         assert_eq!(stored(), BTreeMap::new());
-        for bad in [json!({"model": "", "tokens": 1}), json!({"model": "m", "tokens": 0}), json!({"model": "m", "tokens": 2.5}), json!({"model": "m", "extra": 1})] {
-            assert!(call(root.path(), bad).unwrap_err().starts_with("model_context_window_invalid"));
+        for bad in [
+            json!({"model": "", "tokens": 1}),
+            json!({"model": "m", "tokens": 0}),
+            json!({"model": "m", "tokens": 2.5}),
+            json!({"model": "m", "extra": 1}),
+        ] {
+            assert!(
+                call(root.path(), bad)
+                    .unwrap_err()
+                    .starts_with("model_context_window_invalid")
+            );
         }
     }
 }

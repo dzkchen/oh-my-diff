@@ -174,6 +174,10 @@ An approve outside the grant, an expired grant, an error, a timeout or an invali
 - A command that the user's own execpolicy rules forbid reaches the middleware with `host_decision: 'forbidden'`.
   Only a mod with `approve.override` (experimental) can approve it; anything else keeps it forbidden.
 - Managed requirements and other host denials never reach the middleware.
-- Permission-escalation requests are not delegable.
+- `permissions` requests (`request_permissions`) are not delegable: `approves.kinds` can't list them, so a mod's
+  `{approve}` counts as `ask`.
+- An `exec` or `stdin` grant also covers requests of that kind that ask to leave the sandbox or widen it.
+  `details.sandbox_permissions` (`use_default`, `require_escalated` or `with_additional_permissions`) and
+  `details.additional_permissions` show what a request asks for; return `{ask}` to leave escalated ones to the user.
 - `assessment: true` marks a `tools.check` assessment, which never runs or prompts.
 - `approval_result` reports the decision and its source.

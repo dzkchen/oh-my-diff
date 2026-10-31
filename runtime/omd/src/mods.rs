@@ -1983,8 +1983,19 @@ impl ModPackage {
                 MOD_HOST_FEATURES.join(", ")
             )));
         }
-        if !identifier_list(&self.compatibility.required_features, 16)
-            || !identifier_list(&self.compatibility.optional_features, 16)
+        for (field, values) in [
+            ("required_features", &self.compatibility.required_features),
+            ("optional_features", &self.compatibility.optional_features),
+        ] {
+            if values.len() > 32 {
+                return Err(failure(format!(
+                    "invalid_host_compatibility_declaration: {field} has {} (max 32)",
+                    values.len()
+                )));
+            }
+        }
+        if !identifier_list(&self.compatibility.required_features)
+            || !identifier_list(&self.compatibility.optional_features)
             || self
                 .compatibility
                 .required_features
@@ -2626,11 +2637,9 @@ fn validate_settings(package: &ModPackage, settings: &BTreeMap<String, Value>) -
     Ok(())
 }
 
-fn identifier_list(values: &[String], limit: usize) -> bool {
+fn identifier_list(values: &[String]) -> bool {
     let unique: BTreeSet<_> = values.iter().collect();
-    values.len() <= limit
-        && unique.len() == values.len()
-        && values.iter().all(|value| identifier(value))
+    unique.len() == values.len() && values.iter().all(|value| identifier(value))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2887,6 +2896,7 @@ struct Loaded {
     code_cache: Option<Arc<code_cache::CacheRoot>>,
     adapter: Option<Value>,
     state: Value,
+    state_revision: u64,
     /// The state the inspection ran with; `state` follows later callbacks.
     registered_state: Arc<Value>,
     ui: Option<(String, Arc<Mutex<UiState>>)>,
@@ -3216,6 +3226,12 @@ impl Loaded {
             telemetry: ModTelemetry::default(),
             ..self.clone()
         }
+    }
+
+    fn set_state(&mut self, state: Value) {
+        static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        self.state = state;
+        self.state_revision = REVISIONS.fetch_add(1, Ordering::Relaxed) + 1;
     }
 
     fn clear_ui(&mut self) {
@@ -4310,6 +4326,7 @@ impl ModHost {
                 code_cache: caching.then(cache_root),
                 selection,
                 state: Value::Null,
+                state_revision: 0,
                 registered_state: Arc::default(),
                 ui: None,
                 ui_state: Value::Null,
@@ -4329,7 +4346,7 @@ impl ModHost {
                 if let Some(Err(error)) = &adapter {
                     return Err(failure(error.to_string()));
                 }
-                loaded.state = self.inspection_state(&loaded.package, &loaded.selection.scope)?;
+                loaded.set_state(self.inspection_state(&loaded.package, &loaded.selection.scope)?);
                 Ok(())
             })();
             inspections.push((id, loaded, ready));
@@ -5762,7 +5779,7 @@ impl ModHost {
                     .record(self.generation, event, name, elapsed, "ok");
                 current.telemetry.faults = 0;
                 if state != previous_state {
-                    current.state = state;
+                    current.set_state(state);
                 }
                 Ok(value)
             }
@@ -6744,7 +6761,7 @@ impl ModHost {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.generation.hash(&mut hasher);
         for (id, loaded) in self.active() {
-            (id, loaded.state.to_string(), self.ui_revision(id)).hash(&mut hasher);
+            (id, loaded.state_revision, self.ui_revision(id)).hash(&mut hasher);
         }
         hasher.finish()
     }
