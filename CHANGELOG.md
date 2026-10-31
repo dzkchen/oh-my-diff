@@ -2,6 +2,53 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.3.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.3.0) — 2026-10-31
+
+Per-model context windows, ordered subagent fallbacks with an Ollama profile, and release-readiness fixes across the host, mods and installer.
+
+### New
+
+- Power holds, feature removal and full Plan mode removal; experimental omd_awake (#320)
+- Event-driven monitors, output budget plugin and raised mod host caps (#324)
+- Packed raster cells and coalesced blits (#323)
+- Rank @ mentions by recent commits and recent saves (#327)
+- Panel workspace mod with region focus and settings files (#321)
+- Cross-provider subagents, subagent caps and wake, and delegate_task (#335)
+- Living themes behind the whole screen (#341)
+- Free workspace arrangement, pane docking, terminal command panels (#340)
+- Lazygit and yazi as opt-in mods with a full terminal pane (#342)
+
+### Changed
+
+- Faster mod activation, runner start, state commits and /mods (#326)
+- Codex 0.165.0 pin (#330)
+- Faster mod callbacks, statusline, installer and CI (#334)
+- Restructure user, mod-author and contributor docs; split the mod reference by topic (#346)
+- Move to Codex rust-v0.166.0 with provider handoff, statusline, usage and scaffold updates (#345)
+- Release-readiness fixes for host, mods, installer and release tooling (#348)
+- Subagent fallbacks and restarts, Ollama profiles, per-model context windows (#347)
+
+### Fixed
+
+- Keep the user's Codex sandbox for agent commands; prune redundant tests (#319)
+- Show each mod command once in the slash popup and the OMD version on the logo (#316)
+- Turn evidence fails in workspaces over 8 MiB (#317)
+- Typed sandbox denied paths, streamed workspace digest, label-first panel search (#322)
+- Review findings across broker, store, mods and CI
+- Monitor session ids, workspace key budget, frecency log paging, search index and evidence pruning
+- Installer recovery, request-policy transports, rewind stall and mod integration defects (#328)
+- Known issues across TUI, host writes, selection, sandbox and installer (#329)
+- Code-cache trust, merge-review cleanups and docs alignment (#331)
+- Nightly clippy findings and profile acceptance plugin list (#332)
+- Workspace snapshots tolerate links sessions restart their clock
+- Workspace snapshots reject raced symlinks and read links by their text (#337)
+- Subagent slot accounting, cross-provider grandchildren and delegate_task worktree results (#338)
+- Subagent caps, worker lifecycle, delegate_task and snapshot symlinks (#339)
+- Post-merge review of themes and workspace, native welcome.hidden
+- Hidden welcome keeps its owner's composing rule, welcome terminal lock scope
+- Git and Files panel review fixes (#344)
+- 1.2.0 release validation and rethrown tool failures as mod diagnostics (#315)
+
 ## [1.2.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.2.0) — 2026-10-24
 
 Oh My Diff now builds on Codex 0.164.0.

@@ -1,5 +1,106 @@
 [
   {
+    "version": "1.3.0",
+    "date": "2026-10-31",
+    "title": "Oh My Diff 1.3.0",
+    "summary": "Per-model context windows, ordered subagent fallbacks with an Ollama profile, and release-readiness fixes across the host, mods and installer.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Power holds, feature removal and full Plan mode removal; experimental omd_awake (#320)",
+          "Event-driven monitors, output budget plugin and raised mod host caps (#324)",
+          "Packed raster cells and coalesced blits (#323)",
+          "Rank @ mentions by recent commits and recent saves (#327)",
+          "Panel workspace mod with region focus and settings files (#321)",
+          "Cross-provider subagents, subagent caps and wake, and delegate_task (#335)",
+          "Living themes behind the whole screen (#341)",
+          "Free workspace arrangement, pane docking, terminal command panels (#340)",
+          "Lazygit and yazi as opt-in mods with a full terminal pane (#342)"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Faster mod activation, runner start, state commits and /mods (#326)",
+          "Codex 0.165.0 pin (#330)",
+          "Faster mod callbacks, statusline, installer and CI (#334)",
+          "Restructure user, mod-author and contributor docs; split the mod reference by topic (#346)",
+          "Move to Codex rust-v0.166.0 with provider handoff, statusline, usage and scaffold updates (#345)",
+          "Release-readiness fixes for host, mods, installer and release tooling (#348)",
+          "Subagent fallbacks and restarts, Ollama profiles, per-model context windows (#347)"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Keep the user's Codex sandbox for agent commands; prune redundant tests (#319)",
+          "Show each mod command once in the slash popup and the OMD version on the logo (#316)",
+          "Turn evidence fails in workspaces over 8 MiB (#317)",
+          "Typed sandbox denied paths, streamed workspace digest, label-first panel search (#322)",
+          "Review findings across broker, store, mods and CI",
+          "Monitor session ids, workspace key budget, frecency log paging, search index and evidence pruning",
+          "Installer recovery, request-policy transports, rewind stall and mod integration defects (#328)",
+          "Known issues across TUI, host writes, selection, sandbox and installer (#329)",
+          "Code-cache trust, merge-review cleanups and docs alignment (#331)",
+          "Nightly clippy findings and profile acceptance plugin list (#332)",
+          "Workspace snapshots tolerate links sessions restart their clock",
+          "Workspace snapshots reject raced symlinks and read links by their text (#337)",
+          "Subagent slot accounting, cross-provider grandchildren and delegate_task worktree results (#338)",
+          "Subagent caps, worker lifecycle, delegate_task and snapshot symlinks (#339)",
+          "Post-merge review of themes and workspace, native welcome.hidden",
+          "Hidden welcome keeps its owner's composing rule, welcome terminal lock scope",
+          "Git and Files panel review fixes (#344)",
+          "1.2.0 release validation and rethrown tool failures as mod diagnostics (#315)"
+        ]
+      }
+    ],
+    "commits": [
+      "f3e6eb4",
+      "661f45f",
+      "25c26f1",
+      "83f6973",
+      "4a70df6",
+      "22c42a3",
+      "b66e2c8",
+      "a265f14",
+      "c539d05",
+      "d4cfb5a",
+      "5559077",
+      "de639b3",
+      "6c8e030",
+      "b595fad",
+      "200e502",
+      "aa33b04",
+      "6f70d2c",
+      "735d0eb",
+      "825c4a8",
+      "0efc199",
+      "bd6c0de",
+      "ab42a9c",
+      "e9a30b1",
+      "f101985",
+      "eaffd18",
+      "54f4a48",
+      "4e9bbf9",
+      "6d66ea0",
+      "07be5c6",
+      "a49c02c",
+      "a13f146",
+      "d09c5d4",
+      "6114c90",
+      "bd8f330",
+      "eb70e37",
+      "4387ba4",
+      "6472928",
+      "1b9a3db",
+      "7995bfb",
+      "4bdb60d",
+      "05cebb5",
+      "9789bc2"
+    ]
+  },
+  {
     "version": "1.2.0",
     "date": "2026-10-24",
     "title": "Oh My Diff 1.2.0",
