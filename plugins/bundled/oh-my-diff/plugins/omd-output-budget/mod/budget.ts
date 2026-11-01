@@ -1,3 +1,4 @@
+import type { Json } from '@oh-my-diff/mod-api';
 export type Terms = Record<string, number>;
 export type Indexed = { id: string; terms: Terms; length: number };
 
@@ -218,4 +219,69 @@ export function outline(text: string): string[] {
     if (headings.length === 20) break;
   }
   return headings;
+}
+
+const MODIFIERS = '(?:(?:public|private|protected|static|final|abstract|synchronized|native|default|async|override|readonly|get|set)\\s+)';
+const DEFINITIONS: Record<string, RegExp> = {
+  py: /^\s*(?:async\s+def|def|class)\s+\w/,
+  js: new RegExp(`^\\s*(?:export\\s+(?:default\\s+)?)?(?:declare\\s+)?(?:async\\s+)?(?:function\\*?\\s*\\w|(?:abstract\\s+)?class\\s+\\w|interface\\s+\\w|type\\s+\\w+.*=|enum\\s+\\w|(?:const|let|var)\\s+\\w+\\s*(?::[^=]+)?=\\s*(?:async\\s*)?(?:function\\b|\\([^)]*\\)\\s*(?::[^=]+)?=>|\\w+\\s*=>))|^\\s+${MODIFIERS}*(?!(?:if|for|while|switch|catch|return|function|new|await|typeof)\\b)[\\w$]+\\s*(?:<[^>]*>)?\\([^)]*\\)\\s*(?::\\s*[^{]+)?\\{\\s*$`),
+  go: /^(?:func\s|type\s+\w+\s+(?:struct|interface)\b)/,
+  rs: /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe|extern\s+"[^"]*")\s+)*(?:fn|struct|enum|trait|impl|mod|union|macro_rules!)[\s<!]/,
+  java: new RegExp(`^\\s*${MODIFIERS}*(?:class|interface|enum|record|@interface)\\s+\\w|^\\s*${MODIFIERS}+[\\w<>\\[\\],.?\\s]+\\s+\\w+\\s*\\([^;]*$`),
+  rb: /^\s*(?:def|class|module)\s+\S/,
+};
+const LANGUAGES: Record<string, string> = { py: 'py', pyi: 'py', js: 'js', jsx: 'js', mjs: 'js', cjs: 'js', ts: 'js', tsx: 'js', mts: 'js', cts: 'js', go: 'go', rs: 'rs', java: 'java', rb: 'rb' };
+const READER = /^\s*(?:cd\s+[^;&|]+&&\s*)?(cat|head|sed|nl)\s+([^|;&<>]*)$/;
+const CODE_PATH = /^['"]?([^\s'"]+\.([A-Za-z]+))['"]?$/;
+
+export function codeRead(tool: string, args: Record<string, Json> | null): { lang: string; path: string; first: number } | null {
+  if (!args) return null;
+  const known = (path: unknown, first: number) => {
+    const lang = typeof path === 'string' ? LANGUAGES[/\.([A-Za-z]+)$/.exec(path)?.[1] ?? ''] : undefined;
+    return lang ? { lang, path: path as string, first } : null;
+  };
+  const command = typeof args.cmd === 'string' ? args.cmd : Array.isArray(args.command) ? args.command.at(-1) : null;
+  if (typeof command === 'string') {
+    const match = READER.exec(command);
+    if (!match) return null;
+    const words = match[2].trim().split(/\s+/);
+    const paths = words.filter(word => CODE_PATH.test(word) && LANGUAGES[CODE_PATH.exec(word)![2]]);
+    if (paths.length !== 1) return null;
+    const range = match[1] === 'sed' ? /^['"]?(\d+)(?:,\d+)?p['"]?$/.exec(words.find(word => /\dp['"]?$/.test(word)) ?? '') : null;
+    if (match[1] === 'sed' && !range) return null;
+    return known(CODE_PATH.exec(paths[0])![1], range ? Number(range[1]) : 1);
+  }
+  const path = args.path ?? args.file_path ?? args.filePath;
+  const offset = args.offset ?? args.start_line ?? args.line;
+  return /(?:^|_)(?:read|view|open)(?:_file)?$/i.test(tool) ? known(path, typeof offset === 'number' && offset > 0 ? Math.floor(offset) : 1) : null;
+}
+
+export function codeExcerpt(output: string, limit: number, id: string, total: number, file: { lang: string; path: string; first: number }): string {
+  const { header, body } = split(output);
+  const lines = rows(body);
+  const numbered = /^\s*\d+(?:\t|: | {2})/.test(lines[0] ?? '') && /^\s*\d+(?:\t|: | {2})/.test(lines[1] ?? lines[0]);
+  const at = (index: number) => Number((numbered && /^\s*(\d+)/.exec(lines[index])?.[1]) || file.first + index);
+  const pattern = DEFINITIONS[file.lang];
+  const footer = `\n[omd_output_budget: ${total} bytes (${lines.length} lines) of ${file.path}; showed an outline of its definitions and lines ${at(0)}-{last}; full output ${id}. `
+    + `Read ranges by line, e.g. sed -n 'START,ENDp' ${file.path}, or mod_omd_output_budget_read {"id":"${id}","line":N}]`;
+  const room = Math.max(512, limit - size(header) - size(footer) - 120);
+  let used = 0;
+  const shown: string[] = [];
+  for (const raw of lines) {
+    const text = line(raw);
+    if (used + size(text) + 1 > room * 0.5) break;
+    shown.push(text);
+    used += size(text) + 1;
+  }
+  const outline: string[] = [];
+  let skipped = 0;
+  lines.slice(shown.length).forEach((raw, offset) => {
+    const text = numbered ? raw.replace(/^\s*\d+(?:\t|: | {2})/, '') : raw;
+    if (!pattern.test(text)) return;
+    const entry = `${at(shown.length + offset)}: ${clip(text.replace(/\s+$/, '').replace(/^(\s{0,12})\s*/, '$1'), 160)}`;
+    if (used + size(entry) + 1 > room) skipped += 1;
+    else { outline.push(entry); used += size(entry) + 1; }
+  });
+  const last = shown.length ? at(shown.length - 1) : at(0) - 1;
+  return `${header}${shown.join('\n')}\n[omd_output_budget: outline of definitions after line ${last}${skipped ? ` (${skipped} more omitted)` : ''}]\n${outline.join('\n')}${footer.replace('{last}', String(last))}`;
 }

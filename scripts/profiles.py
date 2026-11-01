@@ -29,7 +29,8 @@ DEFAULT_ACTIVE = ("omd_auto_continue", "omd_idle_compact", "omd_inspector", "omd
                   "omd_plan_panel", "omd_plan_removal", "omd_statusline", "omd_tool_lines", "omd_update")
 PACKAGES = tuple(sorted(support.mods_lock()["packages"]))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
-EXPERIMENTAL_PACKAGES = ("omd_awake", "omd_monitor")
+EXPERIMENTAL_PACKAGES = ("omd_awake", "omd_edit_guard", "omd_env_bootstrap", "omd_monitor", "omd_observation_mask", "omd_plan_anchor",
+                         "omd_verify_stop")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"

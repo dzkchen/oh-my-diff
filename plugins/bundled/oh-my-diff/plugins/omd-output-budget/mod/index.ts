@@ -1,5 +1,5 @@
 import type { Json, ModAPI, ResourceRef } from '@oh-my-diff/mod-api';
-import { base64, clip, count, excerpt, fallback, htmlText, limitFor, lineCount, matches, outline, query, rank, size, split, terms } from './budget.ts';
+import { base64, clip, codeExcerpt, codeRead, count, excerpt, fallback, htmlText, limitFor, lineCount, matches, outline, query, rank, size, split, terms } from './budget.ts';
 
 type Entry = { id: string; reference: ResourceRef; bytes: number; kind: 'tool' | 'doc'; label: string; terms: Record<string, number>; length: number };
 type Value = Exclude<Json, null>;
@@ -113,9 +113,13 @@ export default function activate(api: ModAPI) {
     if (!kept) return unkept('the output index is busy');
     const { header, body } = split(result.output);
     const code = /Process exited with code (\d+)|Exit code: (\d+)/.exec(header);
+    const failed = code ? (code[1] ?? code[2]) !== '0' : !result.success;
+    const cut = CODEX_CUT.test(body.slice(0, 200));
+    const file = failed || cut || original.value.bytes > visible ? null : codeRead(e.tool, args);
+    if (file) return send(codeExcerpt(result.output, limit, id, original.value.bytes, file));
     return send(excerpt(result.output, limit, id, original.value.bytes, {
-      note: CODEX_CUT.test(body.slice(0, 200)) ? 'Codex had already cut its middle' : '',
-      failed: code ? (code[1] ?? code[2]) !== '0' : !result.success,
+      note: cut ? 'Codex had already cut its middle' : '',
+      failed,
       end: original.value.bytes > visible ? ending(original.value.reference, original.value.bytes) : undefined,
     }));
   });

@@ -62,12 +62,12 @@
     "plugins/omd-code-execution/kernels/bun.mjs": "2dd608e4d3274ef6e50cc6d130d7576be0b47ad6431d3229e52153d665f28b39",
     "plugins/omd-code-execution/kernels/python.py": "7e1d638bf3da282fe9b6870f15c9ee61e172dd3edd4caae146290becf0084bc2",
     "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "b77bb900ba2977c99bd2d9c7a7ac8c26c2d67925322d4f81102e4d180b7c407a",
-    "plugins/omd-output-budget/.codex-plugin/omd.json": "eddf441fd817a5243738928318dfbfea1ef3ba232b5cfe1a2bbf8d187d53e613",
+    "plugins/omd-output-budget/.codex-plugin/omd.json": "5f371bc0f06c83cbe7f5be44b255090c4d88dbe5a6d16ed1075b26570d4a8c7e",
     "plugins/omd-output-budget/.codex-plugin/plugin.json": "20d4254569b8a1f74b34e71ab803bbfdf5a4be56401d8907a4ac7c0fafb2fbec",
-    "plugins/omd-output-budget/README.md": "ca019b43cd652157f4ff76d18978af0aca94662108bbfd5050565a6776d4f31e",
-    "plugins/omd-output-budget/mod/budget.ts": "a29962d517662769cd9ea6f7fd74b42c2d80d61580caab71a5f808bfb0463ab3",
-    "plugins/omd-output-budget/mod/index.ts": "4a1c6d865a05f87d9094e05e24b157f86197abc084b5f201030e417451743418",
+    "plugins/omd-output-budget/README.md": "d018094e2c6e8e494d4a86b7e30930a86d63339d481e10a86180a60139327ae8",
+    "plugins/omd-output-budget/mod/budget.ts": "18076dd74ddc6b3b16388250c483d15f4466535d75a7a574d00f826561ff1d16",
+    "plugins/omd-output-budget/mod/index.ts": "c2ead06a00b1ebb440a3a31013def2abc8de0289b79dc4fd080472a964a9fc0d",
     "plugins/omd-output-budget/mod/mod.json": "46b2d6661d6b88e2c5c2bec21c4a30dc20dae8ad8ebf76ac46258f7604ee8f1b",
-    "plugins/omd-output-budget/skills/omd-output-budget/SKILL.md": "b39704bfa570f8d30e0c2d4d2bbdecaee35f86eb3c0c1708cb4faf8bb7ef3e1c"
+    "plugins/omd-output-budget/skills/omd-output-budget/SKILL.md": "0c7780577dbc50663fca87bf8ef7348770e2a8c8f1cd09ff3423eef16be9f6e0"
   }
 }
