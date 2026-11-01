@@ -16,7 +16,10 @@ It needs no authority grant and works in `codex exec`. Checks run in the session
 ## Use it
 
 It checks the files of each successful `apply_patch` (added, updated and moved files) and of mod edit tools
-(`*_edit`, `*_write`, `*_create`) with `path`, `file_path` or `files[].path`:
+(`*_edit`, `*_write`, `*_create`) with `path`, `file_path` or `files[].path`. In a Git repository it also checks the
+files a shell command wrote (a command with a redirect, heredoc, `tee`, `sed -i`, `cp`, `mv` or `write`): changed and
+untracked files whose content differs from the last time it looked. Files already changed before the first shell
+command are not checked:
 
 | Files | Checker |
 | --- | --- |
@@ -37,7 +40,8 @@ it parses. Nothing is added when every check passes.
 - A checker missing from `PATH` is skipped. Files over 1 MB are skipped, and each check has 3 seconds.
 - At most 8 files per edit and 800 bytes of error per file are reported.
 - A file that already failed at `HEAD` and wasn't seen parsing is never reported, even for a new error.
-- Shell edits (`sed -i`, redirects) aren't checked. TypeScript, Rust and other compiled languages aren't checked.
+- Shell edits outside a Git repository, or beyond the first 200 changed files, aren't checked. TypeScript, Rust and
+  other compiled languages aren't checked.
 - In code mode a cell receives its tool's own result, so an error from an edit inside a cell is added to the output
   of the cell or the next tool call the model sees.
 

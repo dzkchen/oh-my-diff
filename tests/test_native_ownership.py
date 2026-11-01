@@ -82,6 +82,21 @@ class NativeOwnershipTests(unittest.TestCase):
             findings = inspect(root)
             self.assertEqual({item["name"] for item in findings}, {"files_preview_v1"})
 
+    def test_a_package_id_made_of_host_words_is_reported_whole(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mod = root / "runtime/omd/src/mods.rs"
+            config = root / "runtime/native/src/config.rs"
+            package = root / "mods/first-party/omd_edit_guard/mod.json"
+            for path in (mod, config, package):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            package.write_text('{"id": "omd_edit_guard"}')
+            mod.write_text('pub const MOD_HOST_FEATURES: &[&str] = &["edit-guard_v1", "edit", "guard"];\n' + "\n".join(
+                f'pub const {surface}: &[&str] = &[];' for surface in (
+                    "MOD_HOST_OPERATIONS", "MOD_CAPABILITIES", "MOD_EVENTS", "MOD_REPLACEMENT_POINTS", "MOD_MIDDLEWARE_EVENTS")))
+            config.write_text("struct HostConfig {\n}\n")
+            self.assertEqual({item["name"] for item in inspect(root)}, {"edit-guard_v1"})
+
     def test_added_patch_lines_are_scanned_outside_tests_and_mirrors(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -187,6 +187,22 @@
       "support_status": "experimental"
     },
     {
+      "id": "omd_loop_guard",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Tells the model when it repeats a tool call that keeps returning the same error or output, so it changes approach instead of looping",
+      "source": "mods/first-party/omd_loop_guard",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.3.0; mod API 1.0.0; continuation_middleware_v1, state_scopes_v1, store_thread_v1, store_v1",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "OMD 1.3.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
       "id": "omd_env_bootstrap",
       "version": "1.0.0",
       "extension_type": "mod",

@@ -3134,7 +3134,8 @@ cover every thread of that session, including threads in its worktrees.
   is reported in the default mode. Its next turn runs in the default mode with the disabled mode's instructions
   cleared and a warning (a `warning` notification for app-server clients). This applies to the turn at whose boundary
   the mod loads too.
-- Tools limited to collaboration modes lose the disabled ones and are not offered when none remain.
+- The tool list is unchanged, so a thread's prompt prefix stays cacheable; a tool call allowed only in a disabled mode
+  is refused (`request_user_input` without plan mode, unless the default mode may ask).
 
 #### `builtins.invoke`, key bindings and command routing
 

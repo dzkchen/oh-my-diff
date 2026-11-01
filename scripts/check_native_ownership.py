@@ -6,9 +6,10 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 REVIEWED_IDENTIFIERS = {"claude", "anthropic", "lsp", "git"}
-HOST_WORDS = {"artifact", "auto", "budget", "cli", "code", "compact", "context", "continue", "cursor", "edit", "execution",
-              "fix", "idle", "lines", "model", "mods", "output", "panel", "picker", "plan", "preview", "read", "reading",
-              "removal", "source", "subagent", "sync", "tool", "update", "usage", "view", "workspace"}
+HOST_WORDS = {"anchor", "artifact", "auto", "bootstrap", "budget", "cli", "code", "compact", "context", "continue", "cursor",
+              "edit", "env", "execution", "fix", "guard", "idle", "lines", "loop", "model", "mods", "output", "panel",
+              "picker", "plan", "preview", "read", "reading", "removal", "source", "stop", "subagent", "sync", "tool",
+              "update", "usage", "verify", "view", "workspace"}
 GENERIC_LITERALS = {
     "files": "generic file-list field and variable name",
     "git": "Git executable used for tracked-path discovery",
@@ -82,12 +83,15 @@ def words(name):
 
 
 def feature(name, vocabulary):
-    return sorted(words(name) & vocabulary)
+    lowered = name.lower().replace("-", "_")
+    return sorted((words(name) & vocabulary) | {entry for entry in vocabulary if "_" in entry and entry in lowered})
 
 
 def identifiers(root):
-    derived = {word for name in package_identifiers(root) for word in words(name)}
-    return (derived - HOST_WORDS - {"omd", ""}) | REVIEWED_IDENTIFIERS
+    names = package_identifiers(root)
+    derived = {word for name in names for word in words(name)}
+    compounds = {name.lower().replace("-", "_").removeprefix("omd_") for name in names}
+    return (derived - HOST_WORDS - {"omd", ""}) | {name for name in compounds if "_" in name} | REVIEWED_IDENTIFIERS
 
 
 def inspect(root):

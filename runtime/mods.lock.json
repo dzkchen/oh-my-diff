@@ -155,11 +155,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "bdf81b458d24f64ddc60d67200977ee4b7aef20238d5b0750da184b399e74e9a",
+        "index.ts": "784c0257a5f33dd60b2569b77da60cff3daa771000a5bea4ba67c3d2b33514d4",
         "mod.json": "f7d1f669572e61e1cd0bb1db067cb82da46526cfb52a3d06a6da6026455331fd"
       },
       "id": "omd_edit_guard",
-      "package_sha256": "ad18c3559e278b8cb34bf99eda44be0b432a30af5e1a5c38ef83178c313fd17c",
+      "package_sha256": "5b7cf6ff9c7d6826145e2d84a5eeadf91e70e3ea50e94d4f932d85b6f643abfa",
       "source": "mods/first-party/omd_edit_guard",
       "version": "1.0.0"
     },
@@ -334,6 +334,22 @@
       "id": "omd_logo",
       "package_sha256": "5d8d965eb4a7176c3121a2fc2a1d804b2d5aedbcefafb481bbcc82fadf2fdedb",
       "source": "mods/first-party/omd_logo",
+      "version": "1.0.0"
+    },
+    "omd_loop_guard": {
+      "api": "1.0.0",
+      "capabilities": [
+        "interception",
+        "store"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "4bb00687ff797c4fcc94ff1b11225fdd4729db1ca48937cad854c9e979ae414e",
+        "mod.json": "eaedcc447176abdf13b37c80b16224b267a80804c7ec977aafa859964dcaf0e2"
+      },
+      "id": "omd_loop_guard",
+      "package_sha256": "4148a254500ce23e204386793f78a15516ace4ca3c0697f7f2035678b1959fa7",
+      "source": "mods/first-party/omd_loop_guard",
       "version": "1.0.0"
     },
     "omd_lsp_sync": {

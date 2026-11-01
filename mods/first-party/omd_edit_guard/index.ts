@@ -1,6 +1,6 @@
 import type { Json, ModAPI } from '../../api.d.ts';
 
-type State = { known: string[]; held: string[] };
+type State = { known: string[]; held: string[]; hashes?: Record<string, string> };
 
 const SEEN = 512;
 const FILES = 8;
@@ -28,6 +28,13 @@ if [ "$t" != 1 ]; then
   "$@" "$b" >/dev/null 2>&1 || exit 4
 fi
 printf '%s' "$out"; exit 3`;
+const SHELL = /^(exec_command|shell|shell_command|local_shell)$/;
+const WRITES = /(?<![0-9&>])>>?\s*(?!&|\/dev\/null)\S|<<|\btee\b|\b(sed|perl) -[a-z]*i|\bmv\b|\bcp\b|write|open\(/;
+const CHANGED = `git rev-parse --git-dir >/dev/null 2>&1 || exit 4
+{ git -c core.quotepath=off ls-files -m | sed 's/^/M /'; git -c core.quotepath=off ls-files -o --exclude-standard | sed 's/^/A /'; } | head -200 | while IFS= read -r l; do p=\${l#??}
+  case $p in *.py|*.pyw|*.json|*.js|*.mjs|*.cjs|*.sh|*.bash|*.rb|*.php|*.go) [ -f "$p" ] && printf '%s %s %s\\n' "\${l%% *}" "$(git hash-object -- "$p")" "$p";; esac
+done
+exit 0`;
 const NOISE = /^\s+at .*$|^Node\.js v.*$|^\(Use `node .*$|^\(node:\d+\) Warning:.*$|^Errors parsing .*$|^No syntax errors.*$/gm;
 
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
@@ -58,13 +65,28 @@ function relative(path: string, root: string, cwd: string): string | null {
 }
 
 export default function activate(api: ModAPI) {
+  const changed = () => {
+    const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', CHANGED], timeout_ms: 3000, max_output_bytes: 65_536 });
+    if (!run.ok || run.value.timed_out || run.value.exit_code !== 0) return null;
+    return run.value.stdout.split('\n').filter(Boolean).map(line => line.split(' ')).map(([kind, hash, ...path]) => [path.join(' '), kind, hash] as const);
+  };
+  const shellEdits = (state: State): [string, boolean, boolean][] => {
+    const files = changed();
+    if (!files) return [];
+    const hashes = state.hashes;
+    state.hashes = Object.fromEntries([...Object.entries(hashes ?? {}), ...files.map(([path, , hash]) => [path, hash])].slice(-SEEN));
+    return hashes ? files.filter(([path, , hash]) => hashes[path] !== hash).map(([path, kind]) => [path, kind === 'A', true]) : [];
+  };
   const check = (tool: string, args: Json, state: State) => {
-    const found = edits(tool, args);
+    const shell = SHELL.test(tool) && WRITES.test(strings(args).join('\n'));
+    const patched = edits(tool, args).map(([path, added]): [string, boolean, boolean] => [path, added, false]);
+    if (patched.length && state.hashes) shellEdits(state);
+    const found = [...patched, ...(shell ? shellEdits(state) : [])];
     if (!found.length) return [];
     const { root, cwd } = api.session();
     const reports: string[] = [];
-    for (const [given, added] of found.slice(0, FILES)) {
-      const path = relative(given, root, cwd);
+    for (const [given, added, rooted] of found.slice(0, FILES)) {
+      const path = rooted ? given : relative(given, root, cwd);
       const checker = path && CHECKERS.find(([pattern]) => pattern.test(path))?.[1];
       if (!path || !checker) continue;
       const known = added || state.known.includes(path);
@@ -79,10 +101,11 @@ export default function activate(api: ModAPI) {
 
   // A code-mode cell gets the executed result, so errors from its edits are appended to the model-visible cell output.
   api.intercept('tool', async (e, next) => {
-    const result = await next(e);
     const caller = next.origin?.caller;
-    if (caller !== 'model' && caller !== 'code_mode') return result;
     const state: State = { known: [], held: [], ...(api.state.get() as Partial<State> | null) };
+    if (!state.hashes && SHELL.test(e.tool) && (caller === 'model' || caller === 'code_mode')) shellEdits(state);
+    const result = await next(e);
+    if (caller !== 'model' && caller !== 'code_mode') return result;
     const reports = result.success ? check(e.tool, e.arguments, state) : [];
     const held = caller === 'code_mode' ? [...state.held, ...reports].slice(-FILES) : [];
     api.state.set({ ...state, held } as unknown as Json);

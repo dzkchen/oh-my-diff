@@ -7,14 +7,20 @@ const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 const ROOT = '/repo';
 
-function run(tool, state = null, exits = {}, caller = 'model') {
+function run(tool, state = null, exits = {}, caller = 'model', listings = [], cwd = ROOT) {
   const runs = [];
+  const listed = [];
   const input = { tool: tool.tool, arguments: tool.arguments, call_id: tool.call_id, thread_id: 't', agent_id: null, schema: null, raw_arguments: '', batch: null };
   const payload = { surface: 'tool', input, original: input, origin: { caller } };
   const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event: 'intercept', name: '0', payload }, call => {
-    if (call.operation === 'session.info') return { thread_id: 't', root: ROOT, cwd: ROOT };
+    if (call.operation === 'session.info') return { thread_id: 't', root: ROOT, cwd };
     if (call.operation === 'continuation.next') return { result: { output: 'Success.', success: tool.success }, trace: [] };
     assert.equal(call.operation, 'exec.run');
+    if (call.arguments.argv.length === 2) {
+      listed.push(call.arguments.argv[1]);
+      const stdout = listings.shift();
+      return stdout === null ? { exit_code: 1, stdout: '', stderr: '', timed_out: false } : { exit_code: 0, stdout: stdout ?? '', stderr: '', timed_out: false };
+    }
     const [, , , path, extension, known, ...checker] = call.arguments.argv;
     runs.push({ path, extension, known, checker, timeout: call.arguments.timeout_ms });
     const [exit_code, stdout] = exits[path] ?? [0, ''];
@@ -22,7 +28,7 @@ function run(tool, state = null, exits = {}, caller = 'model') {
   });
   assert.equal(output.error, undefined, output.error);
   const text = output.value?.result?.output ?? 'Success.';
-  return { append: text === 'Success.' ? null : text.replace('Success.\n\n', ''), state: output.state, runs };
+  return { append: text === 'Success.' ? null : text.replace('Success.\n\n', ''), state: output.state, runs, listed };
 }
 
 const patch = (body, success = true) => ({ call_id: 'p', tool: 'apply_patch', arguments: `*** Begin Patch\n${body}\n*** End Patch`, success, text: 'Success.', tail: null, bytes: 8 });
@@ -49,6 +55,30 @@ test('mod edit tools are checked by their path arguments', () => {
   const edit = { call_id: 'e', tool: 'mod_omd_anchored_edit_edit', arguments: { files: [{ path: 'a.rb', edits: [] }, { path: 'b.go', edits: [] }] }, success: true, text: '', tail: null, bytes: 0 };
   assert.deepEqual(run(edit).runs.map(entry => [entry.path, entry.checker[0]]), [['a.rb', 'ruby'], ['b.go', 'gofmt']]);
   assert.equal(run({ ...edit, tool: 'exec_command', arguments: { cmd: 'cat a.py' } }).runs.length, 0);
+});
+
+test('files a shell command wrote are found through git and checked once per new content; files dirty before are not', () => {
+  const write = cmd => ({ call_id: 's', tool: 'exec_command', arguments: { cmd }, success: true });
+  const first = run(write("python3 - <<'PY'\nopen('a.py','w').write(s)\nPY"), null, { 'a.py': [3, 'a.py:1:4: SyntaxError: x'] }, 'model',
+    ['M 1 old.py\n', 'M 1 old.py\nM 2 a.py\nA 3 new dir/b.json\n']);
+  assert.equal(first.listed.length, 2);
+  assert.deepEqual(first.runs.map(({ path, known }) => [path, known]), [['a.py', '0'], ['new dir/b.json', '1']]);
+  assert.equal(first.append, '[omd_edit_guard] This edit introduced a syntax error. Fix it now, before anything else:\na.py:1:4: SyntaxError: x');
+  const same = run(write('echo x > notes.txt'), first.state, {}, 'model', ['M 1 old.py\nM 2 a.py\nA 3 new dir/b.json\n']);
+  assert.deepEqual([same.listed.length, same.runs.length], [1, 0]);
+  assert.deepEqual(run(write('pytest 2>&1 >/dev/null'), first.state).listed, []);
+  const nested = run(write('echo > sub/a.py'), null, {}, 'model', ['', 'M 4 sub/a.py\n'], `${ROOT}/sub`);
+  assert.deepEqual(nested.runs.map(({ path }) => path), ['sub/a.py']);
+  const failed = run(write('echo > a.py'), null, {}, 'model', [null, 'M 1 old.py\n']);
+  assert.deepEqual([failed.runs.length, failed.state.hashes], [0, { 'old.py': '1' }]);
+});
+
+test('a file an apply_patch already checked is not checked again by the next shell write', () => {
+  const baseline = run({ call_id: 's', tool: 'exec_command', arguments: { cmd: 'echo > x.txt' }, success: true }, null, {}, 'model', ['', '']).state;
+  const patched = run(patch('*** Update File: a.py'), baseline, { 'a.py': [3, 'a.py:1: SyntaxError'] }, 'model', ['M 9 a.py\n']);
+  assert.equal(patched.runs.length, 1);
+  const shell = run({ call_id: 's', tool: 'exec_command', arguments: { cmd: 'echo > x.txt' }, success: true }, patched.state, {}, 'model', ['M 9 a.py\n']);
+  assert.equal(shell.runs.length, 0);
 });
 
 test('errors from a code-mode cell\'s edits are held and appended to the cell\'s own output', () => {

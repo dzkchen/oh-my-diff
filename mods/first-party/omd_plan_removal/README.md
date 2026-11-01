@@ -25,7 +25,8 @@ It has no settings.
 
 - Clients that connect to Codex no longer see plan mode. A request for plan mode, or an old session that was in plan
   mode, runs in the default mode and shows a warning.
-- The agent's question tool (`request_user_input`) is offered only when the default mode is allowed to use it.
+- The agent's question tool (`request_user_input`) stays in the tool list, so the shared prompt cache still hits, but
+  a call is refused unless the default mode is allowed to ask.
 - Permissions, approvals and your session data are unchanged.
 - Changes apply at the next turn. Turning the mod off brings plan mode back then.
 
