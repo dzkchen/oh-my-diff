@@ -1,9 +1,9 @@
 # omd_loop_guard
 
 Stops the agent from looping on a call that keeps giving the same answer. When the same tool call with the same
-arguments returns the same error three times, or the same output four times, it adds one note to that result telling
-the model that repeating it won't help and to change the command or the approach. Neither OMD+ nor OMD Core installs
-it.
+arguments returns the same error three times, or the same output four times, it adds one note to that result telling the
+model that repeating it won't help and to change the command or the approach. It's experimental, and no install profile
+includes it.
 
 ## Turn it on
 

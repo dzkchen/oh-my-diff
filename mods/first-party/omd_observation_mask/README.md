@@ -1,9 +1,9 @@
 # omd_observation_mask
 
-Long agent runs resend every earlier tool output with each model request. This mod hides older large outputs from
-the requests and keeps the model's reasoning, its tool calls and the newest outputs. Each hidden output becomes a
-one-line note: the tool, its size, its exit code, its first line and how to read it in full. It also works in
-`codex exec`. It's experimental, and neither OMD+ nor OMD Core installs it.
+Long agent runs resend every earlier tool output with each model request. This mod hides older large outputs from the
+requests and keeps the model's reasoning, its tool calls and the newest outputs. Each hidden output becomes a one-line
+note: the tool, its size, its exit code, its first line and how to read it in full. It also works in `codex exec`. It's
+experimental, and no install profile includes it.
 
 The idea follows "The Complexity Trap" (JetBrains, arXiv 2508.21433), which reports that on SWE-bench Verified,
 replacing old tool outputs with a placeholder cut cost roughly in half while keeping a similar solve rate, and did

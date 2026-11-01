@@ -73,14 +73,10 @@ test('a backgrounded check settles through write_stdin, and a later edit voids a
   assert.equal(stop(run('tool_output', '', shell("sed -i 's/a/b/' lib.rs", exited(0)), done).state).stopped, false);
 });
 
-test('a check the environment cannot run (missing module or command, no network) stops instead of continuing', () => {
+test('a check the environment cannot run (missing module or command, no network) stops, unless a later check ran', () => {
   const missing = exited(1, "Traceback (most recent call last):\nModuleNotFoundError: No module named 'asgiref'");
   assert.equal(stop(feed(patch('*** Update File: a.py'), shell('python tests/runtests.py auth_tests', missing))).stopped, true);
   assert.equal(stop(feed(shell('pytest -q', exited(127, 'zsh: command not found: pytest')), patch('*** Update File: a.py'))).stopped, true);
-});
-
-test('only the most recent check decides whether checks can run', () => {
-  const missing = exited(1, "ModuleNotFoundError: No module named 'asgiref'");
   const later = feed(patch('*** Update File: a.py'), shell('python tests/runtests.py auth_tests', missing), shell('pytest tests/test_a.py', exited(1, 'FAILED tests/test_a.py::test_x')));
   assert.match(stop(later).value.continue, /The last check failed:\nFAILED tests\/test_a\.py::test_x/);
 });

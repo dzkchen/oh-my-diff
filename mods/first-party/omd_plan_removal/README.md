@@ -1,14 +1,14 @@
 # omd_plan_removal
 
-Removes Codex's plan mode, so there's no `/plan` command and `Shift+Tab` can't switch into plan mode. It's on by
-default in OMD+. OMD Core doesn't include it.
+Removes Codex's plan mode, so there's no `/plan` command and `Shift+Tab` can't switch into plan mode.
+It comes with OMD+, turned off. OMD Core doesn't include it.
 
-## Turn it off
+## Turn it on
 
-To get plan mode back, turn it off in `/mods`, or run:
+Turn it on in `/mods`, or run:
 
 ```sh
-omd mods disable omd_plan_removal
+omd mods enable omd_plan_removal
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.

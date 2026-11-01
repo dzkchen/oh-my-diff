@@ -1,7 +1,7 @@
 # omd_plan_anchor
 
-Keeps the agent's current plan near the end of its context in long runs, without breaking the provider's prompt
-cache. It's experimental, and neither OMD+ nor OMD Core installs it.
+Keeps the agent's current plan near the end of its context in long runs, without breaking the provider's prompt cache.
+It's experimental, and no install profile includes it.
 
 ## Turn it on
 

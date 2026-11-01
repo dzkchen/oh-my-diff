@@ -20,7 +20,6 @@ The status words on this page:
 | [`omd_inspector`](../mods/first-party/omd_inspector/README.md) | OMD+ | `/inspect`: the session's mode, profile and active mods |
 | [`omd_model_picker`](../mods/first-party/omd_model_picker/README.md) | OMD+ | A compact `/model` and reasoning-effort picker |
 | [`omd_tool_lines`](../mods/first-party/omd_tool_lines/README.md) | OMD+ | One short line per tool call; open it for the full output |
-| [`omd_plan_removal`](../mods/first-party/omd_plan_removal/README.md) | OMD+ | Removes `/plan` and plan mode |
 | [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) | OMD+ | Pins Codex's current plan above the prompt |
 | [`omd_statusline`](../mods/first-party/omd_statusline/README.md) | OMD+ | A configurable status line; `/statusline` edits it |
 | [`omd_idle_compact`](../mods/first-party/omd_idle_compact/README.md) | OMD+ | Replaces a large idle conversation with a shorter summary just before the provider's prompt cache expires |
@@ -55,6 +54,7 @@ All of these come with OMD+ only. [Support](support.md#versions) lists the Node 
 | [`omd_yazi`](../mods/first-party/omd_yazi/README.md) | Runs the yazi file manager in the session; the files you pick become `@path` mentions; `/yazi` | `yazi` on your `PATH`, allowed to run outside the sandbox; uses the experimental terminal pane API |
 | [`omd_git`](../mods/first-party/omd_git/README.md) | A lazygit-style Git panel in the workspace dock: stage files and hunks, branches, commits, stash, push and pull; `/git` | `omd_workspace` turned on and `git` on your `PATH` |
 | [`omd_files`](../mods/first-party/omd_files/README.md) | A yazi-style file manager in the workspace dock: Miller columns, tabs, find, frecency jump, previews and file operations; `/files` | `omd_workspace` turned on; `omd_frecency` for the jump list |
+| [`omd_plan_removal`](../mods/first-party/omd_plan_removal/README.md) | Removes `/plan` and plan mode, also for apps that connect to Codex such as T3 Code | |
 | [`omd_theme`](../mods/first-party/omd_theme/README.md) | Living scenes drawn in character tiles behind the whole screen, prompt box and menus; `/theme` picks a scene and prints terminal background steps | |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.

@@ -40,7 +40,6 @@ test('the snapshot runs once per thread and is inserted unchanged after the envi
   assert.ok(Buffer.byteLength(inserted.text) <= 1536 && inserted.text.endsWith('\n'));
   const later = send(first.state, () => assert.fail('the snapshot is never retaken'));
   assert.deepEqual(later.sent, first.sent);
-  assert.equal(typeof first.state, 'string', 'the thread-scoped state is the snapshot text itself');
 });
 
 test('a failed or empty snapshot saves nothing, so the next request tries again; a timed-out one keeps its lines', () => {

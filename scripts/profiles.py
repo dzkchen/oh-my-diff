@@ -26,7 +26,7 @@ PRODUCT = "oh-my-diff-install-v1"
 SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 DEFAULT_ACTIVE = ("omd_auto_continue", "omd_idle_compact", "omd_inspector", "omd_logo", "omd_model_picker", "omd_mods",
-                  "omd_plan_panel", "omd_plan_removal", "omd_statusline", "omd_tool_lines", "omd_update")
+                  "omd_plan_panel", "omd_statusline", "omd_tool_lines", "omd_update")
 PACKAGES = tuple(sorted(support.mods_lock()["packages"]))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 EXPERIMENTAL_PACKAGES = ("omd_awake", "omd_edit_guard", "omd_env_bootstrap", "omd_loop_guard", "omd_monitor", "omd_observation_mask", "omd_plan_anchor",
@@ -265,10 +265,11 @@ def selected_text(record):
         # While another session is open, a staged release is announced once; ready.json newer than announced, or an announcement over an hour old, re-arms it.
         marker = f"{root}/sessions/$$"
         ready = f'{{ [ -e {root}/update/ready.json ] && {{ [ -z "$busy" ] || [ {root}/update/ready.json -nt {root}/update/announced ] || [ -n "$(find {root}/update/announced -mmin +60 2>/dev/null)" ]; }}; }}'
-        lines += [f"mkdir -p {root}/sessions", "busy=",
+        lines += [f"mkdir -p {root}/sessions", "busy=", "unattended=",
+                  'case "$1" in app-server|exec|e|mcp-server|-V|--version) unattended=1;; esac',
                   f'for m in {root}/sessions/*; do [ -e "$m" ] && {{ kill -0 "${{m##*/}}" 2>/dev/null && busy=1 || rm -f "$m"; }}; done',
                   f": > {marker}",
-                  f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ {ready} || [ -e {root}/update/journal.json ] || [ {root}/update/state.json -nt {root}/update/notice.json ] || {{ [ {request} -nt {root}/update/seen ] && grep -q \'"request":\' {request}; }}; }}; then',
+                  f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/journal.json ] || {{ [ -z "$unattended" ] && {{ {ready} || [ {root}/update/state.json -nt {root}/update/notice.json ] || {{ [ {request} -nt {root}/update/seen ] && grep -q \'"request":\' {request}; }}; }}; }}; }}; then',
                   f"  {installer} launch --root {root} --session $$",
                   f'  OH_MY_DIFF_UPDATED=1 exec {root}/current/bin/codex "$@"',
                   "fi",

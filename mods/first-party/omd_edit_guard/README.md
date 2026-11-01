@@ -2,7 +2,7 @@
 
 Catches syntax errors as soon as an edit introduces them. After each file edit it runs a fast syntax check on the
 changed files and, when one fails, adds the error with file and line to the tool output so the model fixes it at once.
-It's experimental, and neither OMD+ nor OMD Core installs it.
+It's experimental, and no install profile includes it.
 
 ## Turn it on
 
