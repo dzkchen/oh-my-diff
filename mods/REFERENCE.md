@@ -693,6 +693,15 @@ clients, rich children inside buttons (a button uses its typed `text`), audio, t
 
 ### Migration notes
 
+These changes ship in the release after OMD 1.3.0.
+
+- A `builtins` mode disable (`capabilities:builtins`, frozen in Mod API `1.0.0`) no longer removes tools limited to
+  the disabled mode from the tool list. The list stays as stock Codex sends it, so a new thread's first request keeps
+  hitting the provider's shared prompt cache, and a call to such a tool is refused instead
+  (`request_user_input` without plan mode, unless the default mode may ask). The model may now try the call and gets
+  an error result. A mod that relied on the tool being absent needs no change; one that inspected the tool list
+  sees the tool.
+
 These changes ship in OMD 1.3.0.
 
 - Only mod `owner` can replace or wrap a site named `owner/name`. The host refuses a patch to that site from any other
@@ -3130,11 +3139,12 @@ cover every thread of that session, including threads in its worktrees.
   Nothing is written to `config.toml`; disabling the mod brings back the rows and the saved values. A feature that
   managed requirements pin on stays on. Keys must be Codex feature keys (`invalid_builtins` otherwise).
 - `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed.
-- A disabled mode is absent from `collaborationMode/list`. A thread that requests a disabled mode, or is still in one,
-  is reported in the default mode. Its next turn runs in the default mode with the disabled mode's instructions
-  cleared and a warning (a `warning` notification for app-server clients). This applies to the turn at whose boundary
-  the mod loads too.
-- Tools limited to collaboration modes lose the disabled ones and are not offered when none remain.
+- A disabled mode is absent from `collaborationMode/list`. A thread that requests a disabled mode (`turn/start`,
+  `thread/settings/update` or a recovered turn), or is still in one, is reported in the default mode. Its next turn
+  runs in the default mode with the disabled mode's instructions cleared and a warning (a `warning` notification for
+  app-server clients). This applies to the turn at whose boundary the mod loads too.
+- The tool list is unchanged, so a thread's prompt prefix stays cacheable; a tool call allowed only in a disabled mode
+  is refused (`request_user_input` without plan mode, unless the default mode may ask).
 
 #### `builtins.invoke`, key bindings and command routing
 

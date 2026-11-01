@@ -139,6 +139,102 @@
       "support_status": "experimental"
     },
     {
+      "id": "omd_observation_mask",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Hides older large tool outputs from model requests in cache-friendly batches; a recall tool returns the full text",
+      "source": "mods/first-party/omd_observation_mask",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.3.0; mod API 1.0.0; history_v1, tool_original_v1, continuation_middleware_v1, model_turn_interception_v1, store_v1, store_thread_v1, state_scopes_v1; conflicts with omd_programmable_context (one history owner)",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "OMD 1.3.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
+      "id": "omd_verify_stop",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Keeps a turn going when the agent stops after editing code without a passing test or check, and once more when its last check failed",
+      "source": "mods/first-party/omd_verify_stop",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.3.0; mod API 1.0.0; autonomous_turns_v1, lifecycle_events_v1, state_scopes_v1, store_thread_v1, store_v1, tool_feedback_v1, workspace_fs_v1; needs the autonomous grant",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "OMD 1.3.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
+      "id": "omd_edit_guard",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Syntax-checks each file an edit changes in the session sandbox and tells the model at once when the edit introduced a syntax error",
+      "source": "mods/first-party/omd_edit_guard",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.3.0; mod API 1.0.0; exec_v1, state_scopes_v1, store_thread_v1, store_v1, continuation_middleware_v1",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "OMD 1.3.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
+      "id": "omd_loop_guard",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Tells the model when it repeats a tool call that keeps returning the same error or output, so it changes approach instead of looping",
+      "source": "mods/first-party/omd_loop_guard",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.3.0; mod API 1.0.0; continuation_middleware_v1, state_scopes_v1, store_thread_v1, store_v1",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "OMD 1.3.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
+      "id": "omd_env_bootstrap",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Snapshots the workspace once per thread (OS, files, languages, toolchains, test commands, git) and keeps it in the cached prompt prefix",
+      "source": "mods/first-party/omd_env_bootstrap",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.3.0; mod API 1.0.0; model_turn_interception_v1, exec_v1, package_text_assets_v1, package_imports_v1, store_v1",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "OMD 1.3.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
+      "id": "omd_plan_anchor",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Repeats the open update_plan steps at the end of a tool result every few calls so the plan stays near the end of the context",
+      "source": "mods/first-party/omd_plan_anchor",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.3.0; mod API 1.0.0; store_v1, codex_config_v1; turns on update_plan",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "OMD 1.3.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
       "id": "omd_continue",
       "version": "1.0.0",
       "extension_type": "mod",

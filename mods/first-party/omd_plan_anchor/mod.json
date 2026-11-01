@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "omd_plan_anchor",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Repeats the open update_plan steps at the end of a tool result every few calls, so the plan stays near the end of the context",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_plan_anchor"},
+  "capabilities": ["interception", "store"],
+  "codex_config": {"tools.update_plan.enabled": true},
+  "compatibility": {"required_features": ["codex_config_v1", "continuation_middleware_v1", "state_scopes_v1", "store_thread_v1", "store_v1"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "every": {"type": "number", "default": 8, "title": "Tool calls between reminders", "description": "Tool calls after the plan was last shown before it is repeated (2 to 50)"}
+    },
+    "additionalProperties": false
+  }
+}

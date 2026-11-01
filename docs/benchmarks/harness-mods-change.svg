@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 370" width="760" height="370" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Change against stock Codex, by suite</title><desc id="d">Estimated cost: terminal -21.4%, SWE-bench -25.7%; Input tokens: terminal -15.9%, SWE-bench -30.7%; Output tokens: terminal -30.7%, SWE-bench -29.5%; Tool calls per run: terminal -26.6%, SWE-bench -23.3%; Wall time: terminal -16.2%, SWE-bench -5.1%</desc>
+<style>
+.bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.sub{fill:#52514e}.mut{fill:#898781}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.zero{stroke:#52514e}
+.s1{fill:#2a78d6}.s2{fill:#eb6834}.s3{fill:#1baf7a}.neg{fill:#a8a79f}.on{fill:#ffffff}.rule{stroke:#0b0b0b}
+@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.ink{fill:#f0efec}.sub{fill:#c3c2b7}.mut{fill:#898781}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.zero{stroke:#c3c2b7}
+.s1{fill:#3987e5}.s2{fill:#d95926}.s3{fill:#199e70}.neg{fill:#77766f}.rule{stroke:#f0efec}}
+</style>
+<rect class="bg" width="760" height="370" rx="8"/>
+<text class="ink" x="24.0" y="34.0" font-size="15" text-anchor="start" font-weight="600">Change against stock Codex, by suite</text>
+<text class="sub" x="24.0" y="54.0" font-size="12" text-anchor="start">86 runs per arm; a longer bar is a bigger cut; tool calls are the mean per run</text>
+<rect class="s1" x="24" y="68" width="12" height="12" rx="3"/>
+<text class="sub" x="42.0" y="78.5" font-size="12" text-anchor="start">Terminal tasks (13)</text>
+<rect class="s2" x="191.39999999999998" y="68" width="12" height="12" rx="3"/>
+<text class="sub" x="209.4" y="78.5" font-size="12" text-anchor="start">SWE-bench Verified (30)</text>
+<line class="grid" x1="204.0" y1="96" x2="204.0" y2="326"/>
+<text class="mut" x="204.0" y="342.0" font-size="11" text-anchor="middle">−40%</text>
+<line class="grid" x1="329.0" y1="96" x2="329.0" y2="326"/>
+<text class="mut" x="329.0" y="342.0" font-size="11" text-anchor="middle">−30%</text>
+<line class="grid" x1="454.0" y1="96" x2="454.0" y2="326"/>
+<text class="mut" x="454.0" y="342.0" font-size="11" text-anchor="middle">−20%</text>
+<line class="grid" x1="579.0" y1="96" x2="579.0" y2="326"/>
+<text class="mut" x="579.0" y="342.0" font-size="11" text-anchor="middle">−10%</text>
+<line class="zero" x1="704" y1="96" x2="704" y2="326"/>
+<text class="mut" x="704.0" y="342.0" font-size="11" text-anchor="middle">0%</text>
+<text class="sub" x="160.0" y="124.0" font-size="12" text-anchor="end">Estimated cost</text>
+<path class="s1" d="M436.3857180567193,104H700.0Q704.0,104 704.0,108V114Q704.0,118 700.0,118H436.3857180567193Z"><title>Terminal tasks (13), Estimated cost: -21.4%</title></path>
+<text class="ink" x="430.4" y="115.0" font-size="11" text-anchor="end" font-weight="600">−21%</text>
+<path class="s2" d="M382.4754188888343,120H700.0Q704.0,120 704.0,124V130Q704.0,134 700.0,134H382.4754188888343Z"><title>SWE-bench Verified (30), Estimated cost: -25.7%</title></path>
+<text class="ink" x="376.5" y="131.0" font-size="11" text-anchor="end" font-weight="600">−26%</text>
+<text class="sub" x="160.0" y="170.0" font-size="12" text-anchor="end">Input tokens</text>
+<path class="s1" d="M504.6986252745022,150H700.0Q704.0,150 704.0,154V160Q704.0,164 700.0,164H504.6986252745022Z"><title>Terminal tasks (13), Input tokens: -15.9%</title></path>
+<text class="ink" x="498.7" y="161.0" font-size="11" text-anchor="end" font-weight="600">−16%</text>
+<path class="s2" d="M320.39161544961803,166H700.0Q704.0,166 704.0,170V176Q704.0,180 700.0,180H320.39161544961803Z"><title>SWE-bench Verified (30), Input tokens: -30.7%</title></path>
+<text class="ink" x="314.4" y="177.0" font-size="11" text-anchor="end" font-weight="600">−31%</text>
+<text class="sub" x="160.0" y="216.0" font-size="12" text-anchor="end">Output tokens</text>
+<path class="s1" d="M320.1547748755853,196H700.0Q704.0,196 704.0,200V206Q704.0,210 700.0,210H320.1547748755853Z"><title>Terminal tasks (13), Output tokens: -30.7%</title></path>
+<text class="ink" x="314.2" y="207.0" font-size="11" text-anchor="end" font-weight="600">−31%</text>
+<path class="s2" d="M335.5507149086209,212H700.0Q704.0,212 704.0,216V222Q704.0,226 700.0,226H335.5507149086209Z"><title>SWE-bench Verified (30), Output tokens: -29.5%</title></path>
+<text class="ink" x="329.6" y="223.0" font-size="11" text-anchor="end" font-weight="600">−29%</text>
+<text class="sub" x="160.0" y="262.0" font-size="12" text-anchor="end">Tool calls per run</text>
+<path class="s1" d="M371.20779220779207,242H700.0Q704.0,242 704.0,246V252Q704.0,256 700.0,256H371.20779220779207Z"><title>Terminal tasks (13), Tool calls per run: -26.6%</title></path>
+<text class="ink" x="365.2" y="253.0" font-size="11" text-anchor="end" font-weight="600">−27%</text>
+<path class="s2" d="M413.3356242840778,258H700.0Q704.0,258 704.0,262V268Q704.0,272 700.0,272H413.3356242840778Z"><title>SWE-bench Verified (30), Tool calls per run: -23.3%</title></path>
+<text class="ink" x="407.3" y="269.0" font-size="11" text-anchor="end" font-weight="600">−23%</text>
+<text class="sub" x="160.0" y="308.0" font-size="12" text-anchor="end">Wall time</text>
+<path class="s1" d="M501.82096759769865,288H700.0Q704.0,288 704.0,292V298Q704.0,302 700.0,302H501.82096759769865Z"><title>Terminal tasks (13), Wall time: -16.2%</title></path>
+<text class="ink" x="495.8" y="299.0" font-size="11" text-anchor="end" font-weight="600">−16%</text>
+<path class="s2" d="M639.7583418185225,304H700.0Q704.0,304 704.0,308V314Q704.0,318 700.0,318H639.7583418185225Z"><title>SWE-bench Verified (30), Wall time: -5.1%</title></path>
+<text class="ink" x="633.8" y="315.0" font-size="11" text-anchor="end" font-weight="600">−5%</text>
+</svg>

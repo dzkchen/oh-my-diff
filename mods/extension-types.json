@@ -577,6 +577,42 @@
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Draws animated scenes under the whole screen through the generic raster underlay, packed blits and timers; replaces /theme only while on; adds no model tool."
+    },
+    {
+      "path": "mods/first-party/omd_observation_mask",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns which older tool outputs the sent request hides behind a frozen note, batched so the cached prefix changes rarely, through the exclusive history replacement plus a recall tool over tools.original evidence; experimental, installed by no profile."
+    },
+    {
+      "path": "mods/first-party/omd_verify_stop",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns whether a turn that edited source without a passing check after the last edit continues with a verification checklist, through the turn_stop interceptor over its own tool-output tracking; experimental, installed by no profile."
+    },
+    {
+      "path": "mods/first-party/omd_edit_guard",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns the syntax check after each edit and the newly-introduced-error note appended to the edit's output, through sandboxed exec.run and a tool interceptor that appends to the edit's result; experimental, installed by no profile."
+    },
+    {
+      "path": "mods/first-party/omd_loop_guard",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns when a repeated tool call with an unchanged result gets a change-approach note, through a tool interceptor over call and result hashes in its thread state; experimental, installed by no profile."
+    },
+    {
+      "path": "mods/first-party/omd_env_bootstrap",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns the one-time environment snapshot inserted into the cached prefix of a thread's requests, through a model_request interceptor and one sandboxed exec.run; experimental, installed by no profile."
+    },
+    {
+      "path": "mods/first-party/omd_plan_anchor",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns when the open plan steps are restated after a tool result, through a tool interceptor that keeps the last accepted update_plan in its thread-scoped state; experimental, installed by no profile."
     }
   ],
   "synthetic_fixtures": [

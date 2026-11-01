@@ -23781,7 +23781,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..6d85f61cb50a95f0ed376bc6871715e0
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526c690eeab 100644
+index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e7b15e271 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -171,6 +171,7 @@ use codex_protocol::request_permissions::PermissionGrantScope;
@@ -23991,7 +23991,37 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage()
-@@ -2067,6 +2228,20 @@ impl Session {
+@@ -2053,20 +2214,42 @@ impl Session {
+             permission_profile_changed,
+             mcp_inputs_changed,
+             credential_masking_warning,
++            disabled_mode,
+         ) = {
+             let mut state = self.state.lock().await;
+-            let updated = match self.apply_session_settings(&state.session_configuration, &updates)
+-            {
+-                Ok(updated) => updated,
+-                Err(err) => {
+-                    warn!("rejected session settings update: {err}");
+-                    return Err(err);
+-                }
+-            };
++            let mut updated =
++                match self.apply_session_settings(&state.session_configuration, &updates) {
++                    Ok(updated) => updated,
++                    Err(err) => {
++                        warn!("rejected session settings update: {err}");
++                        return Err(err);
++                    }
++                };
++            let mut collaboration_mode = updated.step_settings.collaboration_mode.clone();
++            let disabled_mode = self
++                .clamp_disabled_mode(&mut collaboration_mode)
++                .then(|| updated.step_settings.collaboration_mode.mode.display_name());
++            if disabled_mode.is_some() {
++                Arc::make_mut(&mut updated.step_settings).collaboration_mode = collaboration_mode;
++            }
+
              if !should_commit(&state.session_configuration, &updated) {
                  return Ok(None);
              }
@@ -24012,7 +24042,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
 
              let credential_masking_warning = updated
                  .original_config_do_not_use
-@@ -2089,6 +2264,11 @@ impl Session {
+@@ -2089,6 +2272,11 @@ impl Session {
              let root_service_tier_changed = updated.parent_thread_id.is_none()
                  && state.session_configuration.step_settings.service_tier
                      != updated.step_settings.service_tier;
@@ -24024,7 +24054,33 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
              let mcp_inputs_changed = self.mcp_inputs_differ(&state.session_configuration, &updated);
              if mcp_inputs_changed {
                  self.mark_mcp_runtime_dirty();
-@@ -2178,6 +2358,27 @@ impl Session {
+@@ -2131,6 +2319,7 @@ impl Session {
+                 permission_profile_changed,
+                 mcp_inputs_changed,
+                 credential_masking_warning,
++                disabled_mode,
+             )
+         };
+         if windows_sandbox_changed {
+@@ -2155,6 +2344,17 @@ impl Session {
+             })
+             .await;
+         }
++        if let Some(name) = disabled_mode {
++            self.send_event_raw(Event {
++                id: INITIAL_SUBMIT_ID.to_owned(),
++                msg: EventMsg::Warning(WarningEvent {
++                    message: format!(
++                        "The {name} collaboration mode is disabled by an installed mod; the default mode is used instead."
++                    ),
++                }),
++            })
++            .await;
++        }
+         if mcp_inputs_changed {
+             self.schedule_mcp_prewarm();
+         }
+@@ -2178,6 +2378,36 @@ impl Session {
          self.resume_config_snapshot().await.0
      }
 
@@ -24032,8 +24088,16 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
 +        &self,
 +        mut snapshot: ThreadConfigSnapshot,
 +    ) -> ThreadConfigSnapshot {
-+        if snapshot.collaboration_mode.mode == codex_protocol::config_types::ModeKind::Default {
-+            return snapshot;
++        self.clamp_disabled_mode(&mut snapshot.collaboration_mode);
++        snapshot
++    }
++
++    pub(crate) fn clamp_disabled_mode(
++        &self,
++        collaboration_mode: &mut codex_protocol::config_types::CollaborationMode,
++    ) -> bool {
++        if collaboration_mode.mode == codex_protocol::config_types::ModeKind::Default {
++            return false;
 +        }
 +        let disabled = self
 +            .services
@@ -24042,17 +24106,18 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
 +            .iter()
 +            .flat_map(|contributor| contributor.disabled_collaboration_modes())
 +            .collect::<Vec<_>>();
-+        if crate::thread_manager::mode_is_disabled(&disabled, snapshot.collaboration_mode.mode) {
-+            snapshot.collaboration_mode.mode = codex_protocol::config_types::ModeKind::Default;
-+            snapshot.collaboration_mode.settings.developer_instructions = None;
++        if !crate::thread_manager::mode_is_disabled(&disabled, collaboration_mode.mode) {
++            return false;
 +        }
-+        snapshot
++        collaboration_mode.mode = codex_protocol::config_types::ModeKind::Default;
++        collaboration_mode.settings.developer_instructions = None;
++        true
 +    }
 +
      pub(crate) async fn resume_config_snapshot(&self) -> (ThreadConfigSnapshot, Option<String>) {
          let configuration = self.state.lock().await.session_configuration.clone();
          let selected_service_tier = configuration.step_settings.service_tier.clone();
-@@ -2578,6 +2779,8 @@ impl Session {
+@@ -2578,6 +2808,8 @@ impl Session {
          self.send_event_raw(event).await;
          self.maybe_notify_parent_of_terminal_turn(turn_context, &legacy_source)
              .await;
@@ -24061,7 +24126,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
          self.maybe_mirror_event_text_to_realtime(&legacy_source)
              .await;
          self.maybe_clear_realtime_handoff_for_event(&legacy_source)
-@@ -2596,6 +2799,138 @@ impl Session {
+@@ -2596,6 +2828,138 @@ impl Session {
          }
      }
 
@@ -24200,7 +24265,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
      /// Forwards terminal turn events from spawned MultiAgentV2 children to their direct parent.
      async fn maybe_notify_parent_of_terminal_turn(
          &self,
-@@ -3405,7 +3740,11 @@ impl Session {
+@@ -3405,7 +3769,11 @@ impl Session {
              match active.as_mut() {
                  Some(at) => {
                      let mut ts = at.turn_state.lock().await;
@@ -24213,7 +24278,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
                  }
                  None => None,
              }
-@@ -3806,6 +4145,10 @@ impl Session {
+@@ -3806,6 +4174,10 @@ impl Session {
          let policy: codex_utils_output_truncation::TruncationPolicy =
              model_info.truncation_policy.into();
          for envelope in &mut items {
@@ -24224,7 +24289,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
              if matches!(
                  envelope.item,
                  ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
-@@ -4099,6 +4442,7 @@ impl Session {
+@@ -4099,6 +4471,7 @@ impl Session {
          let inherited_environments = inherited_environments.unwrap_or_else(|| environments.clone());
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -24232,7 +24297,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -4106,6 +4450,27 @@ impl Session {
+@@ -4106,6 +4479,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -24260,7 +24325,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4444,10 +4809,19 @@ impl Session {
+@@ -4444,10 +4838,19 @@ impl Session {
                  ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
              )
          }) {
@@ -24284,7 +24349,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
          }
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
-@@ -4677,6 +5051,10 @@ impl Session {
+@@ -4677,6 +5080,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -24295,7 +24360,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4686,6 +5064,7 @@ impl Session {
+@@ -4686,6 +5093,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -24303,7 +24368,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
                  })
                  .await
              {
-@@ -4774,6 +5153,10 @@ impl Session {
+@@ -4774,6 +5182,10 @@ impl Session {
                  }
              }
          }
@@ -24314,7 +24379,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4783,6 +5166,7 @@ impl Session {
+@@ -4783,6 +5195,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -24322,7 +24387,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
                  })
                  .await
              {
-@@ -4978,7 +5362,7 @@ impl Session {
+@@ -4978,7 +5391,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -24331,7 +24396,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..dc4c9b8d05e1fde0d3aeeac8cd89d526
          {
              error!("failed to record rollout items: {e:#}");
              return false;
-@@ -4988,7 +5372,12 @@ impl Session {
+@@ -4988,7 +5401,12 @@ impl Session {
 
      pub(crate) async fn clone_history(&self) -> ContextManager {
          let state = self.state.lock().await;
@@ -25710,7 +25775,7 @@ index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6d
          &sess,
          &turn_context,
 diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
-index a25dd60102b48b8a889a3ae80326e29dca7145ff..4784db27f283508a103e191c9572dffc1f4b15ae 100644
+index a25dd60102b48b8a889a3ae80326e29dca7145ff..785e9002859ccf41119a7dde8acaa6e63dfb4d71 100644
 --- a/codex-rs/core/src/session/turn_context.rs
 +++ b/codex-rs/core/src/session/turn_context.rs
 @@ -80,6 +80,8 @@ pub(crate) struct TurnEnvironment {
@@ -25746,8 +25811,23 @@ index a25dd60102b48b8a889a3ae80326e29dca7145ff..4784db27f283508a103e191c9572dffc
          );
          FileSystemSandboxContext {
              sandbox_override: SandboxOverride::NoOverride,
+@@ -1506,8 +1512,12 @@ impl Session {
+     }
+
+     async fn default_turn_configuration(&self) -> SessionConfiguration {
+-        let state = self.state.lock().await;
+-        state.session_configuration.clone()
++        let mut configuration = self.state.lock().await.session_configuration.clone();
++        let mut mode = configuration.step_settings.collaboration_mode.clone();
++        if self.clamp_disabled_mode(&mut mode) {
++            Arc::make_mut(&mut configuration.step_settings).collaboration_mode = mode;
++        }
++        configuration
+     }
+ }
+
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..0de1cdec3b4a0691479786b9bf310e2bcd5ea10c 100644
+index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..4c98273cde1c275c352430a96a8133b5e8f77615 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -236,13 +236,14 @@ pub(super) async fn handle(
@@ -25766,7 +25846,7 @@ index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..0de1cdec3b4a0691479786b9bf310e2b
      let result = match mode {
          TurnInputMode::StartOrSteer => start_or_steer(session, request, submission_id).await,
          TurnInputMode::StartIfIdle => {
-@@ -298,6 +299,145 @@ pub(super) async fn handle(
+@@ -298,6 +299,112 @@ pub(super) async fn handle(
      result
  }
 
@@ -25775,44 +25855,11 @@ index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..0de1cdec3b4a0691479786b9bf310e2b
 +    mut request: TurnInputRequest,
 +    submission_id: &str,
 +) -> CodexResult<TurnInputRequest> {
-+    let contributors = session.services.extensions.turn_lifecycle_contributors();
 +    if let SubmittedTurnInput::UserInput {
 +        content, client_id, ..
 +    } = &mut request.input
 +    {
 +        intercept_user_text(session, content, client_id.as_deref(), submission_id).await?;
-+    }
-+    // Mods reload while intercepting input, so read their disabled modes afterwards.
-+    let disabled = contributors
-+        .iter()
-+        .flat_map(|contributor| contributor.disabled_collaboration_modes())
-+        .collect::<Vec<_>>();
-+    if !disabled.is_empty() {
-+        let requested = match &request.thread_settings.collaboration_mode {
-+            Some(mode) => mode.clone(),
-+            None => session.collaboration_mode().await,
-+        };
-+        let name = requested.mode.display_name();
-+        if crate::thread_manager::mode_is_disabled(&disabled, requested.mode) {
-+            request.thread_settings.collaboration_mode =
-+                Some(codex_protocol::config_types::CollaborationMode {
-+                    mode: codex_protocol::config_types::ModeKind::Default,
-+                    settings: codex_protocol::config_types::Settings {
-+                        developer_instructions: None,
-+                        ..requested.settings
-+                    },
-+                });
-+            session
-+                .send_event_raw(Event {
-+                    id: submission_id.to_string(),
-+                    msg: EventMsg::Warning(codex_protocol::protocol::WarningEvent {
-+                        message: format!(
-+                            "The {name} collaboration mode is disabled by an installed mod; this turn uses the default mode."
-+                        ),
-+                    }),
-+                })
-+                .await;
-+        }
 +    }
 +    Ok(request)
 +}
@@ -25912,7 +25959,7 @@ index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..0de1cdec3b4a0691479786b9bf310e2b
  #[tracing::instrument(
      name = "codex.turn_input",
      level = "trace",
-@@ -723,6 +863,7 @@ impl Session {
+@@ -723,6 +830,7 @@ impl Session {
          if !has_trigger_turn
              && !self.has_outstanding_durable_sleep()
              && !self.should_wake_on_agent_messages().await
@@ -25920,10 +25967,19 @@ index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..0de1cdec3b4a0691479786b9bf310e2b
          {
              return None;
          }
-@@ -773,6 +914,21 @@ impl Session {
-         Some(configuration.clone())
-     }
-
+@@ -770,7 +878,27 @@ impl Session {
+             *active = None;
+             return None;
+         }
+-        Some(configuration.clone())
++        let mut configuration = configuration.clone();
++        let mut mode = configuration.step_settings.collaboration_mode.clone();
++        if self.clamp_disabled_mode(&mut mode) {
++            Arc::make_mut(&mut configuration.step_settings).collaboration_mode = mode;
++        }
++        Some(configuration)
++    }
++
 +    async fn completion_wake_due(&self) -> bool {
 +        if !self.input_queue.completion_wake_due() || self.is_interrupted() {
 +            return false;
@@ -25937,13 +25993,11 @@ index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..0de1cdec3b4a0691479786b9bf310e2b
 +                    .collaboration_mode
 +                    .mode,
 +            )
-+    }
-+
+     }
+
      async fn should_wake_on_agent_messages(&self) -> bool {
-         if !self.features.enabled(Feature::WakeOnAgentMessages)
-             || self.is_interrupted()
 diff --git a/codex-rs/core/src/session/turn_input_tests.rs b/codex-rs/core/src/session/turn_input_tests.rs
-index c8df7c18d28d5a8733abe833eec67edd6566ab01..3da1a6634e2874dfed523a33016bdba6fe85f575 100644
+index c8df7c18d28d5a8733abe833eec67edd6566ab01..821a9d032bebc01b37bb3e4d86b2a519a866e9be 100644
 --- a/codex-rs/core/src/session/turn_input_tests.rs
 +++ b/codex-rs/core/src/session/turn_input_tests.rs
 @@ -899,6 +899,58 @@ async fn agent_message_wake_reservation_preserves_existing_boundaries(
@@ -26005,25 +26059,16 @@ index c8df7c18d28d5a8733abe833eec67edd6566ab01..3da1a6634e2874dfed523a33016bdba6
  #[tokio::test]
  async fn steer_only_requires_active_turn() {
      let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
-@@ -1238,3 +1290,75 @@ async fn scored_prompt_keeps_its_submission_item_id() {
+@@ -1238,3 +1290,108 @@ async fn scored_prompt_keeps_its_submission_item_id() {
      assert_eq!(ui_ids.len(), 3);
      session.abort_all_tasks(TurnAbortReason::Interrupted).await;
  }
 +
 +#[tokio::test]
-+async fn disabled_collaboration_modes_clamp_to_default_at_turn_start() {
-+    struct DisablesPlanOnInput(std::sync::atomic::AtomicBool);
++async fn disabled_collaboration_modes_clamp_to_default() {
++    struct DisablesPlan(Arc<std::sync::atomic::AtomicBool>);
 +
-+    impl codex_extension_api::TurnLifecycleContributor for DisablesPlanOnInput {
-+        fn intercept_user_input<'a>(
-+            &'a self,
-+            _input: codex_extension_api::UserInputInterceptInput<'a>,
-+        ) -> codex_extension_api::ExtensionFuture<'a, codex_extension_api::UserInputDecision>
-+        {
-+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
-+            Box::pin(async { codex_extension_api::UserInputDecision::Keep })
-+        }
-+
++    impl codex_extension_api::TurnLifecycleContributor for DisablesPlan {
 +        fn disabled_collaboration_modes(&self) -> Vec<String> {
 +            if self.0.load(std::sync::atomic::Ordering::SeqCst) {
 +                vec!["plan".to_string()]
@@ -26034,8 +26079,9 @@ index c8df7c18d28d5a8733abe833eec67edd6566ab01..3da1a6634e2874dfed523a33016bdba6
 +    }
 +
 +    let (mut session, turn_context) = make_session_and_context().await;
++    let disabled = Arc::new(std::sync::atomic::AtomicBool::new(false));
 +    let mut builder = codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
-+    builder.turn_lifecycle_contributor(Arc::new(DisablesPlanOnInput(Default::default())));
++    builder.turn_lifecycle_contributor(Arc::new(DisablesPlan(Arc::clone(&disabled))));
 +    session.services.extensions = Arc::new(builder.build());
 +    let session = Arc::new(session);
 +    let requested = |mode| CollaborationMode {
@@ -26046,40 +26092,81 @@ index c8df7c18d28d5a8733abe833eec67edd6566ab01..3da1a6634e2874dfed523a33016bdba6
 +            developer_instructions: Some("plan first".to_string()),
 +        },
 +    };
-+    let request = |mode| {
-+        TurnInputRequest::user_input(vec![UserInput::Text {
-+            text: "hello".to_string(),
-+            text_elements: Vec::new(),
-+        }])
-+        .with_thread_settings(ThreadSettingsOverrides {
-+            collaboration_mode: Some(requested(mode)),
-+            ..Default::default()
-+        })
++    let plan = || ThreadSettingsOverrides {
++        collaboration_mode: Some(requested(ModeKind::Plan)),
++        ..Default::default()
++    };
++    let assert_default = |mode: CollaborationMode| {
++        assert_eq!(mode.mode, ModeKind::Default);
++        assert_eq!(mode.settings.developer_instructions, None);
 +    };
 +
-+    let clamped = intercept_user_input(&session, request(ModeKind::Plan), "sub-1")
++    thread_settings::update(session.as_ref(), plan())
 +        .await
-+        .expect("intercept");
-+    let mode = clamped.thread_settings.collaboration_mode.expect("mode");
-+    assert_eq!(mode.mode, ModeKind::Default);
-+    assert_eq!(mode.settings.developer_instructions, None);
-+    assert_eq!(mode.settings.model, turn_context.model_info().slug);
-+    let mut snapshot = session.thread_config_snapshot().await;
-+    snapshot.collaboration_mode = requested(ModeKind::Plan);
-+    let reported = session.with_available_collaboration_mode(snapshot);
-+    assert_eq!(reported.collaboration_mode.mode, ModeKind::Default);
-+    assert_eq!(
-+        reported.collaboration_mode.settings.developer_instructions,
-+        None
++        .expect("plan while enabled");
++    assert_eq!(session.collaboration_mode().await.mode, ModeKind::Plan);
++    disabled.store(true, std::sync::atomic::Ordering::SeqCst);
++
++    assert_default(
++        session
++            .with_available_collaboration_mode(session.thread_config_snapshot().await)
++            .collaboration_mode,
 +    );
 +
-+    let kept = intercept_user_input(&session, request(ModeKind::Default), "sub-2")
++    session
++        .input_queue
++        .enqueue_mailbox_communication(
++            InterAgentCommunication::new(
++                AgentPath::root(),
++                AgentPath::root(),
++                Vec::new(),
++                "wake".to_string(),
++                /*trigger_turn*/ true,
++            )
++            .into(),
++            Default::default(),
++        )
++        .await;
++    let (turn_state, _) = session
++        .reserve_pending_work_turn()
 +        .await
-+        .expect("intercept");
-+    assert_eq!(
-+        kept.thread_settings.collaboration_mode,
-+        Some(requested(ModeKind::Default))
-+    );
++        .expect("wake reserved");
++    let wake = session
++        .pending_work_turn_configuration(&turn_state)
++        .await
++        .expect("wake configuration");
++    assert_default(wake.step_settings.collaboration_mode.clone());
++    *session.active_turn.lock().await = None;
++    assert_default(session.new_default_turn().await.collaboration_mode());
++
++    thread_settings::update(
++        session.as_ref(),
++        ThreadSettingsOverrides {
++            effort: Some(Some(ReasoningEffort::High)),
++            ..Default::default()
++        },
++    )
++    .await
++    .expect("effort update");
++    let mode = session.collaboration_mode().await;
++    assert_eq!(mode.settings.reasoning_effort, Some(ReasoningEffort::High));
++    assert_default(mode);
++
++    thread_settings::update(session.as_ref(), plan())
++        .await
++        .expect("settings update");
++    assert_default(session.collaboration_mode().await);
++
++    handle_recovery(
++        &session,
++        plan(),
++        TurnStartOptions::default(),
++        "sub-1".to_string(),
++    )
++    .await
++    .expect("recovery");
++    assert_default(session.collaboration_mode().await);
++    session.abort_all_tasks(TurnAbortReason::Interrupted).await;
 +}
 diff --git a/codex-rs/core/src/session_prefix.rs b/codex-rs/core/src/session_prefix.rs
 index cfbc04e9b205550cdcdc59f05ccf982c12f48786..07dc93b5f7a25f00f9d73f8c42455337d236a540 100644
@@ -30297,20 +30384,18 @@ index 3c2cf95933bed8b46894e0e2d9edafc7a1f4f080..58dfbe793c76cdb7244dc7d443fc8f73
          manager: &manager,
          sandbox_cwd: &cwd_uri,
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..ee4e16089c9163d28e96a893e0d02f229cc4300a 100644
+index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..0fc28b52bf8b1748dfa65f6f7df539358eb57e01 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
-@@ -113,7 +113,9 @@ struct CoreToolPlanContext<'a> {
+@@ -113,6 +113,7 @@ struct CoreToolPlanContext<'a> {
      tool_suggest_candidates: Option<&'a crate::tools::router::ToolSuggestCandidates>,
      wait_for_environment_tool_config: Option<&'a Arc<crate::WaitForEnvironmentToolConfig>>,
      default_agent_type_description: &'a str,
 +    agent_roles: &'a std::collections::BTreeMap<String, crate::config::AgentRoleConfig>,
      wait_agent_timeouts: WaitAgentTimeoutOptions,
-+    disabled_modes: &'a [String],
  }
 
- #[instrument(level = "trace", skip_all)]
-@@ -131,10 +133,35 @@ pub(crate) fn build_tool_router(
+@@ -131,6 +132,24 @@ pub(crate) fn build_tool_router(
  ) -> CodexResult<ToolRouter> {
      let default_agent_type_description =
          crate::agent::role::spawn_tool_spec::build(&std::collections::BTreeMap::new());
@@ -30335,28 +30420,15 @@ index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..ee4e16089c9163d28e96a893e0d02f22
      let wait_for_environment_tool_config = session
          .services
          .thread_extension_data
-         .get::<crate::WaitForEnvironmentToolConfig>();
-+    let disabled_modes = session
-+        .services
-+        .extensions
-+        .turn_lifecycle_contributors()
-+        .iter()
-+        .flat_map(|contributor| contributor.disabled_collaboration_modes())
-+        .collect::<Vec<_>>();
-     let context = CoreToolPlanContext {
-         tool_policy: &session.tool_policy,
-         turn_context,
-@@ -144,7 +171,9 @@ pub(crate) fn build_tool_router(
+@@ -144,6 +163,7 @@ pub(crate) fn build_tool_router(
          tool_suggest_candidates,
          wait_for_environment_tool_config: wait_for_environment_tool_config.as_ref(),
          default_agent_type_description: &default_agent_type_description,
 +        agent_roles: &agent_roles,
          wait_agent_timeouts: wait_agent_timeout_options(turn_context),
-+        disabled_modes: &disabled_modes,
      };
      let mut registry = ToolRegistry::with_tool_policy(Arc::clone(&session.tool_policy));
-     add_core_tool_sources(&context, &mut registry);
-@@ -172,19 +201,23 @@ pub(crate) fn build_tool_router(
+@@ -172,19 +192,23 @@ pub(crate) fn build_tool_router(
          &mut registry,
      );
      append_dynamic_tool_runtimes(dynamic_tools, &mut registry);
@@ -30382,17 +30454,15 @@ index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..ee4e16089c9163d28e96a893e0d02f22
  }
 
  /// Use the effective mode because the model can override the thread's configured mode.
-@@ -311,7 +344,9 @@ pub(crate) fn build_core_tool_registry(
+@@ -311,6 +335,7 @@ pub(crate) fn build_core_tool_registry(
          tool_suggest_candidates,
          wait_for_environment_tool_config,
          default_agent_type_description: &default_agent_type_description,
 +        agent_roles: &turn_context.config.agent_roles,
          wait_agent_timeouts: wait_agent_timeout_options(turn_context),
-+        disabled_modes: &[],
      };
      let mut registry = ToolRegistry::default();
-     add_core_tool_sources(&context, &mut registry);
-@@ -838,14 +873,10 @@ fn wait_agent_timeout_options(turn_context: &TurnContext) -> WaitAgentTimeoutOpt
+@@ -838,14 +863,10 @@ fn wait_agent_timeout_options(turn_context: &TurnContext) -> WaitAgentTimeoutOpt
      }
  }
 
@@ -30410,7 +30480,7 @@ index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..ee4e16089c9163d28e96a893e0d02f22
      } else {
          agent_type_description
      }
-@@ -1067,6 +1098,11 @@ fn register_code_mode_executors(
+@@ -1067,6 +1088,11 @@ fn register_code_mode_executors(
          exec_prompt_tool_specs.iter(),
          code_mode_input_schema_max_bytes,
      );
@@ -30422,30 +30492,7 @@ index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..ee4e16089c9163d28e96a893e0d02f22
      let deferred_tools = collect_code_mode_exec_prompt_tool_definitions(
          deferred_exec_prompt_tool_specs.iter().map(Arc::as_ref),
          code_mode_input_schema_max_bytes,
-@@ -1313,11 +1349,18 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
-         );
-     }
-
--    if turn_context.config.experimental_request_user_input_enabled {
-+    let available_modes = request_user_input_available_modes(features)
-+        .into_iter()
-+        .filter(|mode| {
-+            serde_json::to_value(mode)
-+                .ok()
-+                .and_then(|name| name.as_str().map(str::to_owned))
-+                .is_none_or(|name| !context.disabled_modes.contains(&name))
-+        })
-+        .collect::<Vec<_>>();
-+    if turn_context.config.experimental_request_user_input_enabled && !available_modes.is_empty() {
-         registry.add_with_exposure(
--            RequestUserInputHandler {
--                available_modes: request_user_input_available_modes(features),
--            },
-+            RequestUserInputHandler { available_modes },
-             ToolExposure::DirectModelOnly,
-         );
-     }
-@@ -1466,8 +1509,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
+@@ -1466,8 +1492,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
                  ToolExposure::Direct
              };
              let tool_namespace = turn_context.config.multi_agent_v2.tool_namespace.as_deref();
@@ -30455,7 +30502,7 @@ index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..ee4e16089c9163d28e96a893e0d02f22
              let hide_spawn_agent_metadata =
                  turn_context.config.multi_agent_v2.hide_spawn_agent_metadata;
              registry.register_trusted_with_exposure(
-@@ -1481,7 +1523,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
+@@ -1481,7 +1506,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
                                  .features
                                  .enabled(Feature::ModelCatalogInContext),
                              agent_type_description,
@@ -30464,7 +30511,7 @@ index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..ee4e16089c9163d28e96a893e0d02f22
                              hide_agent_type_model_reasoning: hide_spawn_agent_metadata,
                              expose_spawn_agent_model_overrides: turn_context
                                  .config
-@@ -1553,8 +1595,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
+@@ -1553,8 +1578,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
                  exposure,
              );
          } else {
@@ -30474,7 +30521,7 @@ index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..ee4e16089c9163d28e96a893e0d02f22
              let exposure = if context.model_info.supports_search_tool {
                  ToolExposure::Deferred
              } else {
-@@ -1569,7 +1610,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
+@@ -1569,7 +1593,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
                          .features
                          .enabled(Feature::ModelCatalogInContext),
                      agent_type_description,
@@ -30484,15 +30531,15 @@ index 2602fcb9bbbd9f916444d0c338a161b9fa9b5413..ee4e16089c9163d28e96a893e0d02f22
                      expose_spawn_agent_model_overrides: true,
                      usage_hint_text: turn_context.config.multi_agent_v2.usage_hint_text.clone(),
 diff --git a/codex-rs/core/src/tools/spec_plan_tests.rs b/codex-rs/core/src/tools/spec_plan_tests.rs
-index 58351c7cac85a10d39d054af25bd26e632db3d52..a28608a7548efc224cb362ea7d36e770ecde2b3b 100644
+index 58351c7cac85a10d39d054af25bd26e632db3d52..de6946deb504cf11870031eb0abbedd99fc45bb6 100644
 --- a/codex-rs/core/src/tools/spec_plan_tests.rs
 +++ b/codex-rs/core/src/tools/spec_plan_tests.rs
-@@ -920,6 +920,39 @@ async fn request_user_input_tool_respects_experimental_config_gate() {
+@@ -920,6 +920,51 @@ async fn request_user_input_tool_respects_experimental_config_gate() {
      disabled.assert_registered_lacks(&["request_user_input"]);
  }
 
 +#[tokio::test]
-+async fn request_user_input_is_not_offered_when_no_allowed_mode_remains() {
++async fn disabled_modes_keep_the_tool_list() {
 +    struct DisablesPlan;
 +
 +    impl codex_extension_api::TurnLifecycleContributor for DisablesPlan {
@@ -30501,33 +30548,45 @@ index 58351c7cac85a10d39d054af25bd26e632db3d52..a28608a7548efc224cb362ea7d36e770
 +        }
 +    }
 +
-+    let (mut session, turn) = make_session_and_context().await;
-+    let mut builder = codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
-+    builder.turn_lifecycle_contributor(Arc::new(DisablesPlan));
-+    session.services.extensions = Arc::new(builder.build());
-+    let turn = Arc::new(turn);
-+    let step_context = StepContext::for_test(Arc::clone(&turn));
++    async fn visible_specs(disable_plan: bool) -> Vec<ToolSpec> {
++        let (mut session, turn) = make_session_and_context().await;
++        if disable_plan {
++            let mut builder =
++                codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++            builder.turn_lifecycle_contributor(Arc::new(DisablesPlan));
++            session.services.extensions = Arc::new(builder.build());
++        }
++        let turn = Arc::new(turn);
++        let step_context = StepContext::for_test(Arc::clone(&turn));
++        let router = super::build_tool_router(
++            &session,
++            step_context.turn.as_ref(),
++            &step_context.settings.model_info,
++            &step_context.environments,
++            &step_context.mcp,
++            /*apps_enabled*/ false,
++            &turn.extension_data,
++            /*tool_suggest_candidates*/ None,
++            session.dynamic_tools().await.as_ref(),
++        )
++        .expect("build tool router");
++        ToolPlanProbe::from_router(router).visible_specs
++    }
 +
-+    let router = super::build_tool_router(
-+        &session,
-+        step_context.turn.as_ref(),
-+        &step_context.settings.model_info,
-+        &step_context.environments,
-+        &step_context.mcp,
-+        /*apps_enabled*/ false,
-+        &turn.extension_data,
-+        /*tool_suggest_candidates*/ None,
-+        session.dynamic_tools().await.as_ref(),
-+    )
-+    .expect("build tool router");
-+
-+    ToolPlanProbe::from_router(router).assert_registered_lacks(&["request_user_input"]);
++    let stock = visible_specs(false).await;
++    let disabled = visible_specs(true).await;
++    assert_eq!(disabled, stock);
++    assert!(
++        disabled
++            .iter()
++            .any(|spec| spec.name() == "request_user_input")
++    );
 +}
 +
  #[tokio::test]
  async fn update_plan_tool_respects_config_gate() {
      let disabled = probe(|_| {}).await;
-@@ -3398,3 +3431,234 @@ async fn hosted_web_search_and_standalone_image_generation_follow_runtime_gates(
+@@ -3398,3 +3443,234 @@ async fn hosted_web_search_and_standalone_image_generation_follow_runtime_gates(
 
  #[path = "spec_plan_strict_third_party_tests.rs"]
  mod strict_third_party;

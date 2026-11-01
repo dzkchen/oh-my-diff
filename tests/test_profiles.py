@@ -234,6 +234,9 @@ class ProfileModeTests(unittest.TestCase):
             self.assertEqual(calls(), 1)
             other.kill()
             other.wait()
+            for unattended in (["app-server"], ["--version"], ["exec", "hi"]):
+                subprocess.run(["sh", launcher, *unattended], check=True)
+                self.assertEqual(calls(), 1, unattended)
             subprocess.run(["sh", launcher], check=True)
             self.assertEqual(calls(), 2)
 

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "omd_observation_mask",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Hides older large tool outputs from model requests in cache-friendly batches, keeping each call and a recall tool for the full text",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_observation_mask"},
+  "capabilities": ["history", "interception", "middleware", "tools", "store", "commands"],
+  "compatibility": {"required_features": ["history_v1", "tool_original_v1", "continuation_middleware_v1", "model_turn_interception_v1", "store_v1", "store_thread_v1", "state_scopes_v1"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "keep_recent": {"type": "number", "default": 10, "title": "Recent outputs kept", "description": "Newest tool outputs always sent in full (at least 1)"},
+      "min_bytes": {"type": "number", "default": 1024, "title": "Minimum size", "description": "Outputs smaller than this many bytes are never hidden"},
+      "batch_bytes": {"type": "number", "default": 32768, "title": "Batch size", "description": "Bytes of hideable outputs to collect before hiding them at once; 0 hides each as soon as it is old enough"}
+    },
+    "additionalProperties": false
+  }
+}

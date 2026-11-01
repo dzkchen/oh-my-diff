@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "omd_env_bootstrap",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Snapshots the workspace once per thread (OS, files, languages, toolchains, test commands, git) and keeps it in the cached prompt prefix",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_env_bootstrap"},
+  "capabilities": ["middleware", "exec", "store"],
+  "assets": ["snapshot.ts"],
+  "compatibility": {"required_features": ["model_turn_interception_v1", "exec_v1", "package_text_assets_v1", "package_imports_v1", "state_scopes_v1", "store_thread_v1", "store_v1"]}
+}

@@ -182,11 +182,12 @@ cover every thread of that session, including threads in its worktrees.
   Nothing is written to `config.toml`; disabling the mod brings back the rows and the saved values. A feature that
   managed requirements pin on stays on. Keys must be Codex feature keys (`invalid_builtins` otherwise).
 - `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed.
-- A disabled mode is absent from `collaborationMode/list`. A thread that requests a disabled mode, or is still in one,
-  is reported in the default mode. Its next turn runs in the default mode with the disabled mode's instructions
-  cleared and a warning (a `warning` notification for app-server clients). This applies to the turn at whose boundary
-  the mod loads too.
-- Tools limited to collaboration modes lose the disabled ones and are not offered when none remain.
+- A disabled mode is absent from `collaborationMode/list`. A thread that requests a disabled mode (`turn/start`,
+  `thread/settings/update` or a recovered turn), or is still in one, is reported in the default mode. Its next turn
+  runs in the default mode with the disabled mode's instructions cleared and a warning (a `warning` notification for
+  app-server clients). This applies to the turn at whose boundary the mod loads too.
+- The tool list is unchanged, so a thread's prompt prefix stays cacheable; a tool call allowed only in a disabled mode
+  is refused (`request_user_input` without plan mode, unless the default mode may ask).
 
 ### `builtins.invoke`, key bindings and command routing
 

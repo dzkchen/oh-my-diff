@@ -336,7 +336,7 @@ export default function activate(api: ModAPI) {
     const counts = mods ? `${mods.active} of ${mods.installed} mods on${mods.failed ? `, ${mods.failed} failed` : ''}` : 'Mods are loading';
     const lines = identity?.install_profile === 'platform_only'
       ? ['Oh My Diff Core: the mod host without built-in task features', `${counts}. /mods turns mods on, /omd fixes a broken one.`, 'Write your own with omd-mod-author create DIR ID.']
-      : ['Oh My Diff: most mods start off.', `${counts}. /mods turns more on, /omd fixes a broken one.`];
+      : ['Oh My Diff', `${counts}. /mods turns more on, /omd fixes a broken one.`];
     return lines.map((text, index) => ({ type: 'text', id: `omd_mods_welcome_${index}`, label: 'Getting started', text: wrap(text), tone: index ? 'muted' : 'normal' }));
   };
   api.on('terminal', (input): TerminalPatch | null => {

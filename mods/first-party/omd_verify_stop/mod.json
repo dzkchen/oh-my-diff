@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "omd_verify_stop",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Keeps a turn going once when the agent stops after editing code without a passing test or check, and once more when its last check failed. Experimental",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_verify_stop"},
+  "capabilities": ["autonomous", "outputs", "lifecycle", "store", "fs.read"],
+  "autonomy": {"max_queued": 1, "max_turns": 1, "max_continuations": 2},
+  "compatibility": {"required_features": ["autonomous_turns_v1", "lifecycle_events_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "tool_feedback_v1", "workspace_fs_v1"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "max_continuations": {"type": "number", "default": 2, "title": "Continuations per turn", "description": "Times a turn is continued, 0 to 2: the first asks for verification, the second for a fix after a failed check; 0 turns it off"}
+    },
+    "additionalProperties": false
+  }
+}

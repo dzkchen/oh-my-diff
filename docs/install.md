@@ -127,3 +127,4 @@ To build OMD from source, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 - See what's in OMD+: [included mods](collection.md).
 - Install and turn on more mods: [Manage mods](manage-mods.md).
 - Use Claude, Cursor or an API key: [use other providers](use-other-providers.md).
+- Use OMD's mods in T3 Code: [use OMD with T3 Code](use-with-t3-code.md).
