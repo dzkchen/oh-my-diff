@@ -1,7 +1,17 @@
 # omd_plan_anchor
 
 Keeps the agent's current plan near the end of its context in long runs, without breaking the provider's prompt
-cache.
+cache. It's experimental, and neither OMD+ nor OMD Core installs it.
+
+## Turn it on
+
+```sh
+omd install omd_plan_anchor
+omd mods enable omd_plan_anchor
+```
+
+It needs no authority grant. Turn it on in the shell or `/mods` before a `codex exec` run: a headless run can't show the trust dialog, so a mod that
+isn't trusted yet stays off.
 
 ## Use it
 
@@ -15,7 +25,8 @@ written or shown) ends with its open steps:
 ```
 
 Completed steps are counted, not listed, and at most 8 open steps are shown. Nothing is added when there is no plan
-or every step is completed.
+or every step is completed. A result that was truncated or is over 200,000 characters gets no reminder and the next
+result is tried instead. A rejected `update_plan` call keeps the previous plan.
 
 ## Settings
 
@@ -32,5 +43,4 @@ or every step is completed.
 - The reminder is part of the tool result, so it is recorded in the conversation and later requests reuse the cached
   prefix. A request section can't do this: inserted sections join an early context message and would change the
   cached prefix every time the plan changes.
-- Only the model's own calls get the reminder; code-mode cells don't. Plans are kept per thread for the 32 most
-  recent threads.
+- Only the model's own calls get the reminder; code-mode cells don't. Each thread keeps its own plan.

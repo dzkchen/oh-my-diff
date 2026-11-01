@@ -84,6 +84,15 @@ clients, rich children inside buttons (a button uses its typed `text`), audio, t
 
 ## Migration notes
 
+These changes ship in the release after OMD 1.3.0.
+
+- A `builtins` mode disable (`capabilities:builtins`, frozen in Mod API `1.0.0`) no longer removes tools limited to
+  the disabled mode from the tool list. The list stays as stock Codex sends it, so a new thread's first request keeps
+  hitting the provider's shared prompt cache, and a call to such a tool is refused instead
+  (`request_user_input` without plan mode, unless the default mode may ask). The model may now try the call and gets
+  an error result. A mod that relied on the tool being absent needs no change; one that inspected the tool list
+  sees the tool.
+
 These changes ship in OMD 1.3.0.
 
 - Only mod `owner` can replace or wrap a site named `owner/name`. The host refuses a patch to that site from any other

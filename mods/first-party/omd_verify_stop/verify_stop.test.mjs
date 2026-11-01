@@ -78,3 +78,24 @@ test('a check the environment cannot run (missing module or command, no network)
   assert.equal(stop(feed(patch('*** Update File: a.py'), shell('python tests/runtests.py auth_tests', missing))).stopped, true);
   assert.equal(stop(feed(shell('pytest -q', exited(127, 'zsh: command not found: pytest')), patch('*** Update File: a.py'))).stopped, true);
 });
+
+test('only the most recent check decides whether checks can run', () => {
+  const missing = exited(1, "ModuleNotFoundError: No module named 'asgiref'");
+  const later = feed(patch('*** Update File: a.py'), shell('python tests/runtests.py auth_tests', missing), shell('pytest tests/test_a.py', exited(1, 'FAILED tests/test_a.py::test_x')));
+  assert.match(stop(later).value.continue, /The last check failed:\nFAILED tests\/test_a\.py::test_x/);
+});
+
+test('a > inside quoted code is not a redirect, and in-place edits of docs are not code edits', () => {
+  for (const cmd of ['node -e "const f = x => x.toString()"', 'python -c "print(a > b.c)"', "sed -i 's/a/b/' README.md", "perl -pi -e 's/a/b/' docs/guide.rst"]) {
+    assert.equal(stop(feed(shell(cmd, exited(0)))).stopped, true, cmd);
+  }
+  const written = stop(feed(shell('echo "x = 1" > scratch.py && cp a.py b.py', exited(0))));
+  assert.match(written.value.continue, /edited scratch\.py, b\.py/);
+  assert.match(written.value.continue, /created: scratch\.py\)/);
+});
+
+test('moving scratch files out after a passing check is not an edit, but an in-place edit through xargs or find is', () => {
+  const passed = () => feed(patch('*** Update File: a.py'), shell('pytest -q', exited(0)));
+  for (const cmd of ['mv repro.py /tmp/', 'cp coverage.json /tmp/cov.json', 'git diff > patch']) assert.equal(stop(run('tool_output', '', shell(cmd, exited(0)), passed()).state).stopped, true, cmd);
+  for (const cmd of ['grep -rl foo src | xargs sed -i "s/foo/bar/"', 'find . -name "*.py" -exec sed -i s/a/b/ {} +', 'env FOO=1 sed -i s/a/b/ x.py']) assert.equal(stop(run('tool_output', '', shell(cmd, exited(0)), passed()).state).stopped, false, cmd);
+});

@@ -1,7 +1,18 @@
 # omd_env_bootstrap
 
 Gives the model a short snapshot of the workspace before its first request, so it doesn't spend its first turns
-exploring. Built for headless runs such as `codex exec`.
+exploring. Built for headless runs such as `codex exec`. It's experimental, and neither OMD+ nor OMD Core installs
+it.
+
+## Turn it on
+
+```sh
+omd install omd_env_bootstrap
+omd mods enable omd_env_bootstrap
+```
+
+It needs no authority grant. Turn it on in the shell or `/mods` before a `codex exec` run: a headless run can't show the trust dialog, so a mod that
+isn't trusted yet stays off.
 
 ## Use it
 
@@ -26,10 +37,15 @@ affect.
 
 ## Needs and limits
 
-- Capabilities `middleware`, `exec` and `store`.
+- Capabilities `middleware`, `exec` and `store`. The snapshot is kept in the thread's own state.
 - The snapshot runs in the sandbox's private `HOME`, so version managers that need the user's home (mise, rustup,
   pyenv shims) show `?` instead of a version.
-- A failed or empty snapshot is not retried, and that thread gets no snapshot.
-- Each subagent thread takes its own snapshot. Snapshots are kept for the 32 most recent threads.
+- A failed or empty snapshot saves nothing, and the next request tries again; the request that first gets one adds it
+  and changes the cached prefix once. A snapshot that runs out of time keeps the lines it printed.
+- Each subagent thread takes its own snapshot.
 - A thread that already had requests before the mod was turned on gets the snapshot from its next request, which
   changes its cached prefix once.
+
+## More
+
+- [Benchmark](../../../docs/benchmarks/harness-mods.md) of this mod with the other harness mods

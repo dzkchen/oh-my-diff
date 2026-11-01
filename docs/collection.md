@@ -63,21 +63,20 @@ Each mod's README in [`mods/first-party`](../mods/first-party) lists its setting
 
 No install profile installs these. Install one with `omd install ID`, then turn it on with `omd mods enable ID`.
 
-On a 43-task benchmark (30 SWE-bench Verified tasks and 13 terminal tasks, two attempts each, gpt-6.1-sol at medium
-effort, Codex 0.166 in `codex exec`), OMD+ with `omd_observation_mask`, `omd_verify_stop`, `omd_edit_guard`,
-`omd_env_bootstrap` and the `omd-output-budget` component cost 25% less than Codex, used 29% fewer input tokens and
-took 8% less time, with the same or a higher pass rate. `omd_plan_anchor` and `omd_plan_removal` were off.
-
 | Mod | What it does | What it needs |
 | --- | --- | --- |
 | [`omd_awake`](../mods/first-party/omd_awake/README.md) | `/awake` replaces Codex's Prevent sleep while running: keeps the Mac awake while turns or subagents run, also with the lid closed, and lets it sleep once they finish | macOS; lid-closed needs the authority broker (`omd-package broker install`) |
 | [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in, and `/monitor allow owner/repo` |
 | [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs from model requests in cache-friendly batches; the model reads one back with a recall tool; `/mask` | Can't be on with `omd_programmable_context` |
 | [`omd_verify_stop`](../mods/first-party/omd_verify_stop/README.md) | When the agent stops after editing code without a passing test or check, asks it once to verify, and once more to fix a failed check | The autonomous grant |
-| [`omd_edit_guard`](../mods/first-party/omd_edit_guard/README.md) | Syntax-checks each file an edit or shell command changes and tells the model at once when the edit broke it (Python, JSON, JavaScript, shell, Ruby, PHP, Go) | The checker on your `PATH` |
+| [`omd_edit_guard`](../mods/first-party/omd_edit_guard/README.md) | Syntax-checks each file an edit or shell command changes and tells the model at once when the edit broke it (Python, JSON, JavaScript, shell, Ruby, PHP, Go) | The checker on the sandbox's `PATH` |
 | [`omd_loop_guard`](../mods/first-party/omd_loop_guard/README.md) | Tells the agent when a tool call keeps returning the same error or output, so it changes approach instead of looping | |
 | [`omd_env_bootstrap`](../mods/first-party/omd_env_bootstrap/README.md) | Snapshots the workspace once per thread (OS, files, languages, toolchains, test commands, git) and keeps it in the cached prompt prefix | |
-| [`omd_plan_anchor`](../mods/first-party/omd_plan_anchor/README.md) | Repeats the open plan steps at the end of a tool result every few calls | Adds `update_plan` to the tool list, which costs a new thread's first prompt-cache hit |
+| [`omd_plan_anchor`](../mods/first-party/omd_plan_anchor/README.md) | Repeats the open plan steps at the end of a tool result every few calls | Adds `update_plan` to the tool list, so a new thread's first request misses Codex's shared prompt cache: about 12K tokens, once per new thread |
+
+In a [small benchmark](benchmarks/harness-mods.md), `omd_observation_mask`, `omd_verify_stop`, `omd_edit_guard` and
+`omd_env_bootstrap`, with the `omd-output-budget` component, cut estimated cost by about a quarter against stock Codex
+with no measurable change in pass rate. The other mods in this table weren't measured.
 
 ## Ports
 

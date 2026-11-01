@@ -11,8 +11,6 @@ const PREFIX = /^(?:\(|(?:ba|z)?sh\s+-l?c\s+|['"]|\w+=\S*\s+|(?:timeout\s+\S+|ti
 const FAILED = /\b[1-9]\d* (?:failed|errors?)\b|^(?:FAILED|FAIL|ERROR)\b|Traceback \(most recent call last\)|panicked at|^error(?:\[E\d+\])?:|npm ERR!/m;
 const BLOCKED = /No module named|ModuleNotFoundError|command not found|: not found$|Could not find a version that satisfies|Temporary failure in name resolution|Could not resolve host|ENOTFOUND|Network is unreachable/m;
 const RUN = /^(python3?|node|ruby|php|go\s+run|cargo\s+run|bash|sh)\s+[\w./-]+/;
-const SHELL_EDIT = /\b(sed|perl)\s+-[a-z]*i/;
-const REDIRECT = /(?:^|[^>&\d])>{1,2}\s*([\w./-]+\.\w+)/g;
 const EXIT = /^(?:Process exited with code|Exit code:) (\d+)/m;
 const RUNNING = /^Process running with session ID (\d+)/m;
 const PATCH = /^\*\*\* (Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$/gm;
@@ -26,6 +24,30 @@ const RUNNERS: [RegExp, string, string][] = [
   [/\.rb$/, 'Gemfile', 'bundle exec rspec <spec>'], [/\.php$/, 'composer.json', 'vendor/bin/phpunit <test>'],
   [/\.(java|kt)$/, 'pom.xml', 'mvn test'], [/\.(java|kt)$/, 'build.gradle', './gradlew test'], [/./, 'Makefile', 'make test'],
 ];
+
+const EDIT_TOOL = /^apply_patch$|(^|_)(edit|write|create|replace)(_file|_editor)?$/;
+const QUOTED = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
+const REDIRECT = /(?<![\d=<>&-])>>?\s*(?!&)([^\s;&|<>()]+)/g;
+const WRITER = /(?:^|\s)(tee|cp|mv|sed|perl)\s+(.*)$/s;
+const IN_PLACE = /(?:^|\s)-[a-zA-Z]*i[\w.]*(?=\s|$)/;
+const UNSEEN_WRITE = /<<|\.write\(|write_text\(|writeFile/;
+function writes(cmd: string): { created: string[]; changed: string[]; unseen: boolean } {
+  const plain = cmd.replace(QUOTED, "''");
+  const created = [...plain.matchAll(REDIRECT)].map(match => match[1]).filter(path => path !== '/dev/null');
+  const changed: string[] = [];
+  let unseen = UNSEEN_WRITE.test(cmd);
+  for (const part of plain.split(/&&|\|\||[;|\n]/)) {
+    const [, tool, rest = ''] = WRITER.exec(part.trim()) ?? [];
+    const words = rest.split(/\s+/).filter(word => word && !word.startsWith('-'));
+    const files = (tool === 'sed' && !/(?:^|\s)-[ef]\b/.test(rest) ? words.slice(1) : words).filter(word => word !== "''");
+    if (tool === 'tee') created.push(...files);
+    else if ((tool === 'cp' || tool === 'mv') && files.length > 1) changed.push(files[files.length - 1]);
+    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unseen ||= !files.length; }
+  }
+  const named = (paths: string[]) => paths.filter(path => /^[\w./-]+$/.test(path));
+  unseen ||= named(created).length < created.length || named(changed).length < changed.length;
+  return { created: named(created), changed: named(changed), unseen };
+}
 
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
 const field = (value: Json, key: string): Json => value && typeof value === 'object' && !Array.isArray(value) ? value[key] ?? null : null;
@@ -51,10 +73,11 @@ export default function activate(api: ModAPI) {
     if (kind !== 'Delete') add(state.files, path);
   };
   const checked = (state: State, code: number, output: string) => {
+    state.blocked = false;
     if (code === 0) return void (state.passed = ++state.seq);
     state.failed = ++state.seq;
     state.failure = [...output.replace(HEADER, '').trim()].slice(-FAILURE_CHARS).join('');
-    if (BLOCKED.test(output)) state.blocked = true;
+    state.blocked = BLOCKED.test(output);
   };
 
   api.on('turn_start', () => save(fresh()));
@@ -64,7 +87,7 @@ export default function activate(api: ModAPI) {
     const text = event.tail ?? event.text;
     if (event.tool === 'apply_patch') {
       if (event.success) for (const match of strings(event.arguments).join('\n').matchAll(PATCH)) edit(state, (match[2] ?? match[3]).trim(), match[1] ?? 'Update');
-    } else if (/(^|_)(edit|write|create)(_file)?$/.test(event.tool)) {
+    } else if (EDIT_TOOL.test(event.tool)) {
       const files = field(event.arguments, 'files');
       const paths = [field(event.arguments, 'path'), field(event.arguments, 'file_path'), ...(Array.isArray(files) ? files.map(file => field(file, 'path')) : [])];
       if (event.success) paths.forEach(path => typeof path === 'string' && edit(state, path));
@@ -80,8 +103,10 @@ export default function activate(api: ModAPI) {
       const parts = segments(cmd);
       const check = parts.some(part => CHECK.test(part));
       if (!state.edited && (check || parts.some(part => RUN.test(part)))) state.probed = true;
-      if (SHELL_EDIT.test(cmd)) state.edited = ++state.seq;
-      for (const match of cmd.matchAll(REDIRECT)) if (!NOT_CODE.test(match[1]) && !match[1].startsWith('/')) edit(state, match[1], 'Add');
+      const { created, changed } = writes(cmd);
+      created.filter(path => !path.startsWith('/') && /\.\w+$/.test(path)).forEach(path => edit(state, path, 'Add'));
+      changed.filter(path => !path.startsWith('/')).forEach(path => edit(state, path));
+      if (!created.length && !changed.length && /\b(?:sed|perl)\s+(?:\S+\s+)*?-[a-zA-Z]*i[\w.]*(?:\s|$)/.test(cmd.replace(QUOTED, "''"))) state.edited = ++state.seq;
       const code = EXIT.exec(event.text)?.[1];
       const session = RUNNING.exec(event.text)?.[1];
       if (session) state.pending[session] = check;

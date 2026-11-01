@@ -1,9 +1,9 @@
 import type { HistoryItem, Json, ModAPI, ResourceRef } from '../../api.d.ts';
 
-type Kept = { tool: string; reference: ResourceRef | null; bytes: number; failed: boolean };
+type Kept = { tool: string; reference: ResourceRef | null; bytes: number; failed_edit: boolean };
 type State = {
   masked: Record<string, string>; kept: string[]; pinned: string[]; calls: Record<string, Kept>;
-  advances: number; hidden_bytes: number; saved_bytes: number; pending_bytes: number; last_saved_bytes: number;
+  advances: number; hidden_bytes: number; pending_bytes: number; last_saved_bytes: number;
 };
 
 const scope = 'thread';
@@ -13,10 +13,36 @@ const ADVANCE = 256;
 const PINS = 256;
 const CALLS = 400;
 const LINE = 120;
-const EDIT = /patch|edit|write|replace/i;
 const HEADER = /^(Chunk ID:|Wall time:|Process exited with code|Exit code:|Original token count:|Output:)/;
 
-const size = (value: Json | undefined, fallback: number) => typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback;
+const EDIT_TOOL = /^apply_patch$|(^|_)(edit|write|create|replace)(_file|_editor)?$/;
+const QUOTED = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
+const REDIRECT = /(?<![\d=<>&-])>>?\s*(?!&)([^\s;&|<>()]+)/g;
+const WRITER = /(?:^|\s)(tee|cp|mv|sed|perl)\s+(.*)$/s;
+const IN_PLACE = /(?:^|\s)-[a-zA-Z]*i[\w.]*(?=\s|$)/;
+const UNSEEN_WRITE = /<<|\.write\(|write_text\(|writeFile/;
+function writes(cmd: string): { created: string[]; changed: string[]; unseen: boolean } {
+  const plain = cmd.replace(QUOTED, "''");
+  const created = [...plain.matchAll(REDIRECT)].map(match => match[1]).filter(path => path !== '/dev/null');
+  const changed: string[] = [];
+  let unseen = UNSEEN_WRITE.test(cmd);
+  for (const part of plain.split(/&&|\|\||[;|\n]/)) {
+    const [, tool, rest = ''] = WRITER.exec(part.trim()) ?? [];
+    const words = rest.split(/\s+/).filter(word => word && !word.startsWith('-'));
+    const files = (tool === 'sed' && !/(?:^|\s)-[ef]\b/.test(rest) ? words.slice(1) : words).filter(word => word !== "''");
+    if (tool === 'tee') created.push(...files);
+    else if ((tool === 'cp' || tool === 'mv') && files.length > 1) changed.push(files[files.length - 1]);
+    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unseen ||= !files.length; }
+  }
+  const named = (paths: string[]) => paths.filter(path => /^[\w./-]+$/.test(path));
+  unseen ||= named(created).length < created.length || named(changed).length < changed.length;
+  return { created: named(created), changed: named(changed), unseen };
+}
+const command = (args: Json) => {
+  const value = args && typeof args === 'object' && !Array.isArray(args) ? args.cmd ?? args.command : null;
+  return typeof value === 'string' ? value : Array.isArray(value) ? value.join(' ') : '';
+};
+const size = (value: Json | undefined, fallback: number) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 const isOutput = (item: HistoryItem): item is HistoryItem & { call_id: string } => item.type.endsWith('call_output') && typeof item.call_id === 'string';
 const sum = (items: { bytes: number }[]) => items.reduce((total, item) => total + item.bytes, 0);
 const tokens = (bytes: number) => Math.round(bytes / 4);
@@ -37,7 +63,7 @@ export default function activate(api: ModAPI) {
   const batchBytes = size(api.settings.batch_bytes, 32_768);
 
   const load = (): State => ({
-    masked: {}, kept: [], pinned: [], calls: {}, advances: 0, hidden_bytes: 0, saved_bytes: 0, pending_bytes: 0, last_saved_bytes: 0,
+    masked: {}, kept: [], pinned: [], calls: {}, advances: 0, hidden_bytes: 0, pending_bytes: 0, last_saved_bytes: 0,
     ...(api.state.get() as Partial<State> | null ?? {}),
   });
   const save = (state: State) => api.state.set(state as unknown as Json);
@@ -58,7 +84,7 @@ export default function activate(api: ModAPI) {
       let hidden = 0;
       for (const item of pending.slice(0, ADVANCE)) {
         const record = state.calls[item.call_id] ?? null;
-        if (record?.failed && EDIT.test(record.tool)) {
+        if (record?.failed_edit) {
           kept.push(item.call_id);
         } else {
           masked[item.call_id] = stub(item, record);
@@ -70,7 +96,7 @@ export default function activate(api: ModAPI) {
     const replace = outputs.filter(item => item.editable && Object.hasOwn(next.masked, item.call_id))
       .map(item => ({ index: item.index, text: next.masked[item.call_id], saved: item.bytes - next.masked[item.call_id].length }));
     const saved = replace.reduce((total, item) => total + Math.max(0, item.saved), 0);
-    save({ ...next, saved_bytes: next.saved_bytes + saved, last_saved_bytes: saved });
+    if (next.advances !== state.advances || next.pending_bytes !== state.pending_bytes || saved !== state.last_saved_bytes) save({ ...next, last_saved_bytes: saved });
     return replace.length ? { replace: replace.map(({ index, text }) => ({ index, text })) } : null;
   });
 
@@ -79,7 +105,9 @@ export default function activate(api: ModAPI) {
     const bytes = result.bytes ?? new TextEncoder().encode(result.output).length;
     if (e.agent_id || next.origin.caller === 'code_mode' || bytes < minBytes) return result;
     const original = api.host.tryCall('tools.original', { call_id: e.call_id });
-    const record: Kept = { tool: e.tool, reference: original.ok ? original.value.reference : null, bytes, failed: !result.success };
+    const found = writes(command(e.arguments));
+    const edit = EDIT_TOOL.test(e.tool) || found.changed.length > 0;
+    const record: Kept = { tool: e.tool, reference: original.ok ? original.value.reference : null, bytes, failed_edit: !result.success && edit };
     const state = load();
     save({ ...state, calls: Object.fromEntries([...Object.entries(state.calls).filter(([id]) => id !== e.call_id), [e.call_id, record]].slice(-CALLS)) });
     return result;
@@ -125,7 +153,7 @@ export default function activate(api: ModAPI) {
       display: [
         `Observation masking: keeps the newest ${keepRecent} tool outputs and outputs under ${minBytes} bytes; hides older ones in batches of at least ${batchBytes} bytes`,
         `${Object.keys(state.masked).length} outputs hidden in ${state.advances} batches (each batch breaks the prompt cache once) · about ${tokens(state.hidden_bytes)} tokens hidden`,
-        `about ${tokens(state.saved_bytes)} tokens not resent in total, ${tokens(state.last_saved_bytes)} in the last request · ${tokens(state.pending_bytes)} tokens waiting for the next batch`,
+        `about ${tokens(state.last_saved_bytes)} tokens not resent with each request · ${tokens(state.pending_bytes)} tokens waiting for the next batch`,
         `${state.kept.length} failed edits kept · ${state.pinned.length} pinned · ${other ? `${other.count} prompt-prefix changes from other sources, last at ${other.last}` : 'no prompt-prefix changes from other sources'}`,
       ].join('\n'),
     };

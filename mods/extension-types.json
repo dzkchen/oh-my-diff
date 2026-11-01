@@ -594,7 +594,7 @@
       "path": "mods/first-party/omd_edit_guard",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the syntax check after each edit and the newly-introduced-error note appended to the edit's output, through sandboxed exec.run and a tool_output observer; experimental, installed by no profile."
+      "why_mod": "Owns the syntax check after each edit and the newly-introduced-error note appended to the edit's output, through sandboxed exec.run and a tool interceptor that appends to the edit's result; experimental, installed by no profile."
     },
     {
       "path": "mods/first-party/omd_loop_guard",
@@ -612,7 +612,7 @@
       "path": "mods/first-party/omd_plan_anchor",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns when the open plan steps are restated after a tool result, through a tool interceptor over the update_plan arguments in its thread store; experimental, installed by no profile."
+      "why_mod": "Owns when the open plan steps are restated after a tool result, through a tool interceptor that keeps the last accepted update_plan in its thread-scoped state; experimental, installed by no profile."
     }
   ],
   "synthetic_fixtures": [

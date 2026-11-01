@@ -40,7 +40,13 @@ test('the snapshot runs once per thread and is inserted unchanged after the envi
   assert.ok(Buffer.byteLength(inserted.text) <= 1536 && inserted.text.endsWith('\n'));
   const later = send(first.state, () => assert.fail('the snapshot is never retaken'));
   assert.deepEqual(later.sent, first.sent);
+  assert.equal(typeof first.state, 'string', 'the thread-scoped state is the snapshot text itself');
+});
+
+test('a failed or empty snapshot saves nothing, so the next request tries again; a timed-out one keeps its lines', () => {
   const failed = send(null, () => { throw new Error('exec_program_unavailable'); });
-  assert.deepEqual(failed.sent, sections);
-  assert.deepEqual(send(failed.state, () => assert.fail('a failed snapshot is not retried')).sent, sections);
+  assert.deepEqual([failed.sent, failed.state], [sections, null]);
+  assert.deepEqual(send(null, () => ({ exit_code: null, stdout: '', timed_out: true })).state, null);
+  assert.match(send(null, () => ({ exit_code: null, stdout: 'os: Linux\ncwd: /a\n', timed_out: true })).state, /\nos: Linux\ncwd: \/a\n$/);
+  assert.equal(send(failed.state, () => ({ exit_code: 0, stdout: 'os: Linux\n', timed_out: false })).sent[3].id, 'mod:omd_env_bootstrap');
 });

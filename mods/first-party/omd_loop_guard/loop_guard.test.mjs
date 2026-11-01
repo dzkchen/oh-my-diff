@@ -76,3 +76,11 @@ test('a call keeps counting after 64 other calls were tracked, whatever its hash
   assert.equal(Object.keys(state.calls).length, 64);
   assert.ok(Object.keys(state.calls).every(key => key.startsWith('k')));
 });
+
+test('a > inside quoted code is not an edit, so it does not restart other counts', () => {
+  for (const cmd of ['node -e "const f = x => x.toString()"', 'python -c "print(a > b.c)"']) {
+    let { state } = repeat(2, { cmd: 'pytest' }, 'FAILED', false);
+    ({ state } = run(state, { cmd }, 'ok', true));
+    assert.ok(run(state, { cmd: 'pytest' }, 'FAILED', false).note, cmd);
+  }
+});

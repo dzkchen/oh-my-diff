@@ -8,11 +8,11 @@ const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url),
 const request = { source: readFileSync(new URL('./index.ts', import.meta.url), 'utf8'), filename: fileURLToPath(new URL('./index.ts', import.meta.url)), entrypoint: 'index.ts',
   api: manifest.api, capabilities: manifest.capabilities, settings: { every: 3 }, hook_budget_ms: 10_000 };
 
-function call(state, tool, args, caller = 'model', thread = 't1') {
+function call(state, tool, args, caller = 'model', thread = 't1', success = true) {
   const input = { tool, arguments: args, call_id: 'c', thread_id: thread, agent_id: null, schema: null, raw_arguments: JSON.stringify(args), batch: null };
   const output = callback({ ...request, state, event: 'intercept', name: '0', payload: { surface: 'tool', input, original: input, origin: { caller, thread_id: thread } } }, ({ operation }) => {
     assert.equal(operation, 'continuation.next');
-    return { result: { output: 'ok', success: true, truncated: false, bytes: 2 }, trace: [] };
+    return { result: { output: 'ok', success, truncated: false, bytes: 2 }, trace: [] };
   });
   assert.equal(output.error, undefined);
   return { state: output.state, output: output.value?.result?.output ?? 'ok' };
@@ -25,7 +25,8 @@ test('open plan steps are appended to every third model tool result after the pl
   assert.deepEqual(outputs.map(output => output !== 'ok'), [false, false, true, false, false, true]);
   assert.equal(outputs[2], 'ok\n\n[omd_plan_anchor: current plan, 1/3 done; call update_plan when it changes]\n- [>] Fix the parser\n- [ ] Run the suite');
   assert.equal(call(state, 'exec_command', { cmd: 'ls' }, 'code_mode').output, 'ok');
-  assert.equal(call(state, 'exec_command', { cmd: 'ls' }, 'model', 't2').output, 'ok', 'plans are per thread');
+  const rejected = call(state, 'update_plan', { plan: [{ step: 'Other', status: 'pending' }] }, 'model', 't1', false);
+  assert.deepEqual(rejected.state, state, 'a rejected update keeps the plan');
   ({ state } = call(state, 'update_plan', { plan: [{ step: 'Fix the parser', status: 'completed' }] }));
   for (let index = 0; index < 4; index++) assert.equal(call(state, 'exec_command', { cmd: 'ls' }).output, 'ok', 'a finished plan is not repeated');
 });

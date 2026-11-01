@@ -1,11 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { callback } from './mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
-const directory = new URL('../mods/first-party/omd_observation_mask/', import.meta.url);
-const source = readFileSync(new URL('index.ts', directory), 'utf8');
-const manifest = JSON.parse(readFileSync(new URL('mod.json', directory), 'utf8'));
+const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 const settings = { keep_recent: 2, min_bytes: 1000, batch_bytes: 10_000 };
 
 function run(event, name, payload, { state = null, store = new Map(), host = {} } = {}) {
@@ -36,7 +35,7 @@ test('nothing is hidden until older large outputs reach a batch, then all of the
   const below = run('history', '', view([4000, 4000, 500, 4000, 4000]));
   assert.equal(below.value, null);
   assert.equal(below.state.pending_bytes, 8000);
-  const calls = { c0: { tool: 'exec_command', reference: { reference: 'r0', sha256: 's' }, bytes: 4000, failed: false } };
+  const calls = { c0: { tool: 'exec_command', reference: { reference: 'r0', sha256: 's' }, bytes: 4000, failed_edit: false } };
   const { value, state } = run('history', '', view([4000, 4000, 500, 4000, 4000, 4000]), { state: { ...below.state, calls } });
   const edits = replaced(value);
   assert.deepEqual(Object.keys(edits).map(Number), [1, 3, 7], 'short outputs and the newest two stay');
@@ -60,7 +59,7 @@ test('hidden outputs keep identical stubs and the boundary only moves at the nex
 });
 
 test('failed edits and pinned outputs are never hidden, and a pin restores a hidden output', () => {
-  const calls = { c1: { tool: 'apply_patch', reference: null, bytes: 6000, failed: true } };
+  const calls = { c1: { tool: 'apply_patch', reference: null, bytes: 6000, failed_edit: true } };
   const first = run('history', '', view([6000, 6000, 6000, 1, 1]), { state: { calls } });
   assert.deepEqual(Object.keys(replaced(first.value)).map(Number), [1, 5]);
   assert.deepEqual(first.state.kept, ['c1']);
@@ -71,7 +70,7 @@ test('failed edits and pinned outputs are never hidden, and a pin restores a hid
 });
 
 test('recall reads the kept original in pages and names a missing one', () => {
-  const state = { calls: { c0: { tool: 'exec_command', reference: { reference: 'r0', sha256: 's' }, bytes: 70000, failed: false } } };
+  const state = { calls: { c0: { tool: 'exec_command', reference: { reference: 'r0', sha256: 's' }, bytes: 70000, failed_edit: false } } };
   const host = { 'evidence.read': ({ reference, cursor, max_bytes }) => ({ reference, text: `page ${cursor ?? 0}/${max_bytes}`, cursor: 32768, bytes: 70000 }) };
   assert.deepEqual(run('tool', 'recall', { call_id: 'c0' }, { state, host }).value,
     { call_id: 'c0', tool: 'exec_command', bytes: 70000, text: 'page 0/32768', next_cursor: 32768 });
@@ -79,15 +78,18 @@ test('recall reads the kept original in pages and names a missing one', () => {
 });
 
 test('large outputs of the thread\'s own calls are kept for recall; small, subagent and code-mode ones are not', () => {
-  const call = (bytes, { agent = null, caller = 'model', success = true } = {}) => {
-    const input = { tool: 'exec_command', arguments: { cmd: 'pytest' }, call_id: 'k', thread_id: 't', agent_id: agent, schema: null, raw_arguments: '{}', batch: null };
+  const call = (bytes, { agent = null, caller = 'model', success = true, cmd = 'pytest' } = {}) => {
+    const input = { tool: 'exec_command', arguments: { cmd }, call_id: 'k', thread_id: 't', agent_id: agent, schema: null, raw_arguments: '{}', batch: null };
     const host = {
       'continuation.next': () => ({ result: { output: 'x', success, bytes }, trace: [] }),
       'tools.original': ({ call_id }) => ({ reference: { reference: `ref-${call_id}`, sha256: 's' }, sha256: 's', bytes }),
     };
     return run('intercept', '0', { surface: 'tool', input, original: input, origin: { caller } }, { host }).state?.calls?.k;
   };
-  assert.deepEqual(call(5000, { success: false }), { tool: 'exec_command', reference: { reference: 'ref-k', sha256: 's' }, bytes: 5000, failed: true });
+  assert.deepEqual(call(5000, { success: false }), { tool: 'exec_command', reference: { reference: 'ref-k', sha256: 's' }, bytes: 5000, failed_edit: false });
+  assert.equal(call(5000, { success: false, cmd: "sed -i 's/a/b/' a.py" }).failed_edit, true);
+  assert.equal(call(5000, { success: false, cmd: 'node -e "x => x.y"' }).failed_edit, false);
+  assert.equal(call(5000, { success: false, cmd: 'pytest 2>&1 | tee out.log' }).failed_edit, false, 'a failing run saved to a log can still be hidden');
   assert.equal(call(999), undefined);
   assert.equal(call(5000, { agent: 'sub' }), undefined);
   assert.equal(call(5000, { caller: 'code_mode' }), undefined);
