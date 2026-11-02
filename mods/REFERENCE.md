@@ -693,7 +693,7 @@ clients, rich children inside buttons (a button uses its typed `text`), audio, t
 
 ### Migration notes
 
-These changes ship in the release after OMD 1.3.0.
+These changes ship in OMD 1.4.0.
 
 - A `builtins` mode disable (`capabilities:builtins`, frozen in Mod API `1.0.0`) no longer removes tools limited to
   the disabled mode from the tool list. The list stays as stock Codex sends it, so a new thread's first request keeps
