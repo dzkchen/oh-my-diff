@@ -41,10 +41,34 @@ export default function activate(api: ModAPI) {
     return `${before.length ? `Earlier side questions:\n${before.join('\n')}\n\n` : ''}btw: ${latest.question}\n\n${latest.answer}`;
   };
 
-  api.command('aside', value => {
+  const panel = (notice = '') => {
+    const past = history();
+    const shown = api.host.tryCall('terminal.panel', {
+      title: 'Side conversation', subtitle: clip(notice || 'Saved in this thread. Select an exchange to read it, or ask a follow-up.', 2000),
+      action: { command: 'asidepanel' },
+      items: [
+        { id: 'ask', kind: 'text', label: 'Ask a follow-up', value: '' },
+        ...past.map((entry, index) => ({ id: `exchange:${index}`, kind: 'action' as const, label: clip(entry.question, 128), detail: clip(`You: ${entry.question}\n\nAssistant: ${entry.answer}`, 2000) })).reverse(),
+      ],
+    });
+    return shown.ok ? null : { display: `Could not open /btw: ${shown.error}` };
+  };
+
+  api.command('asidepanel', value => {
+    const raw = String(value ?? '');
+    if (raw.startsWith('ask ')) {
+      const result = answer(raw.slice(4));
+      return panel(result?.display ?? '');
+    }
+    const entry = history()[Number(raw.slice('exchange:'.length))];
+    if (raw.startsWith('exchange:') && entry) return { display: `You: ${entry.question}\n\nAssistant: ${entry.answer}` };
+    return panel();
+  }, { description: 'Side conversation panel', immediate: true });
+
+  const answer = (value: unknown) => {
     const question = typeof value === 'string' ? clip(value.trim(), QUESTION_BYTES) : '';
     const past = history();
-    if (!question) return { display: past.length ? show(past.slice(0, -1), past[past.length - 1]) : 'No side questions in this thread yet. Ask one with /btw <question>.' };
+    if (!question) return panel();
     let route = configured;
     if (!route) {
       const added = api.host.tryCall('routes.add', {});
@@ -65,5 +89,6 @@ export default function activate(api: ModAPI) {
     }
     const saved = route === configured || api.host.tryCall('settings.write', { values: { route } });
     return { display: saved === true || saved.ok ? display : `${display}\n\nbtw couldn't save its model (${saved.error}); ${PICK}` };
-  }, { description: 'Ask a side question without adding it to the conversation; alone, shows the last answer', args_hint: '[question]', immediate: true });
+  };
+  api.command('aside', answer, { description: 'Open the saved side conversation or ask a question', args_hint: '[question]', immediate: true });
 }

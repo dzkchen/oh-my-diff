@@ -159268,10 +159268,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9d5b6d420
+index 0000000000000000000000000000000000000000..c634031cce3e79b32eada5b1252bd30fdcdfbf77
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2479 @@
+@@ -0,0 +1,2618 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -159326,6 +159326,49 @@ index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9
 +    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
 +    let store = paths.store.ok_or("mod store is not configured")?;
 +    Ok((store, paths.repository))
++}
++
++#[derive(Clone, Debug, PartialEq)]
++struct PtyApproval {
++    path: std::path::PathBuf,
++    value: Value,
++}
++
++impl PtyApproval {
++    fn new(
++        store: &std::path::Path,
++        repository: &std::path::Path,
++        caller: &str,
++        arguments: &Value,
++    ) -> Result<Self, String> {
++        use sha2::Digest;
++        let repository = repository
++            .canonicalize()
++            .map_err(|error| error.to_string())?;
++        let argv = crate::mod_pty::argv(arguments)?;
++        let program = codex_omd::host::resolve_program(&argv[0], &repository)
++            .ok_or("pty_program_unavailable")?;
++        let hash = codex_omd::host::program_hash(&program)?;
++        let value = json!({"repository": repository, "caller": caller, "arguments": arguments, "program": program, "sha256": hash});
++        let digest = sha2::Sha256::digest(value.to_string().as_bytes());
++        Ok(Self {
++            path: store.join("pty-approvals").join(format!("{digest:x}.json")),
++            value,
++        })
++    }
++
++    fn stored(&self) -> bool {
++        std::fs::read(&self.path)
++            .ok()
++            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++            .as_ref()
++            == Some(&self.value)
++    }
++
++    fn save(&self) -> std::io::Result<()> {
++        std::fs::create_dir_all(self.path.parent().expect("approval parent"))?;
++        codex_omd::fsio::write_json(&self.path, &self.value)
++    }
 +}
 +
 +fn materialize(
@@ -159643,7 +159686,7 @@ index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9
 +    Route(Box<codex_omd::plan_routes::PlanRoute>),
 +    RouteWrite(Box<codex_omd::route_writes::RouteWrite>),
 +    Contract(Option<String>),
-+    Pty(crate::mod_pty::Binding, Option<Pin>),
++    Pty(crate::mod_pty::Binding, Option<Pin>, Option<PtyApproval>),
 +}
 +
 +#[derive(Clone)]
@@ -160364,6 +160407,7 @@ index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9
 +                    hash,
 +                    stored,
 +                }),
++                None,
 +            ));
 +            if stored {
 +                self.run_mod_surface_call(tui, app_server, call, held).await;
@@ -160372,16 +160416,42 @@ index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9
 +            }
 +            return;
 +        }
++        if let Some(binding) = &binding
++            && call.arguments["action"] == "start"
++            && call.arguments["sandbox"].is_null()
++        {
++            let approval = store_paths().and_then(|(store, repository)| {
++                PtyApproval::new(&store, &repository, &call.caller, &call.arguments)
++            });
++            match approval {
++                Ok(approval) => {
++                    let stored = approval.stored();
++                    let held = Some(Confirmed::Pty(binding.clone(), None, Some(approval)));
++                    if stored {
++                        self.run_mod_surface_call(tui, app_server, call, held).await;
++                    } else {
++                        match crate::mod_pty::start_prompt(&call.caller, &call.arguments) {
++                            Ok(prompt) => self.confirm_mod_surface_call(call, None, format!("{prompt} Approval is remembered for this workspace and this command and access until its executable changes."), held),
++                            Err(error) => { let _ = call.reply.send(Err(error)); }
++                        }
++                    }
++                }
++                Err(error) => {
++                    let _ = call.reply.send(Err(error));
++                }
++            }
++            return;
++        }
 +        match confirmation(&call) {
 +            Ok(Some((title, prompt, held))) => {
 +                let held = match binding {
-+                    Some(binding) => Some(Confirmed::Pty(binding, None)),
++                    Some(binding) => Some(Confirmed::Pty(binding, None, None)),
 +                    None => held,
 +                };
 +                self.confirm_mod_surface_call(call, title, prompt, held)
 +            }
 +            Ok(None) => {
-+                let held = binding.map(|binding| Confirmed::Pty(binding, None));
++                let held = binding.map(|binding| Confirmed::Pty(binding, None, None));
 +                self.run_mod_surface_call(tui, app_server, call, held).await
 +            }
 +            Err(error) => {
@@ -160442,8 +160512,10 @@ index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9
 +        held: Option<Confirmed>,
 +    ) {
 +        let caller = call.caller.clone();
-+        let allow = if matches!(held, Some(Confirmed::Pty(_, Some(_))))
-+            || call.operation == codex_omd::program_trust::OPERATION
++        let allow = if matches!(
++            held,
++            Some(Confirmed::Pty(_, Some(_), _) | Confirmed::Pty(_, _, Some(_)))
++        ) || call.operation == codex_omd::program_trust::OPERATION
 +        {
 +            "Allow and remember"
 +        } else {
@@ -160725,7 +160797,7 @@ index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9
 +            return;
 +        }
 +        let (pty, pin) = match &held {
-+            Some(Confirmed::Pty(binding, pin)) if crate::mod_pty::current(binding) => {
++            Some(Confirmed::Pty(binding, pin, _)) if crate::mod_pty::current(binding) => {
 +                (Some(binding.clone()), pin.clone())
 +            }
 +            _ => (None, None),
@@ -160734,6 +160806,19 @@ index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9
 +            let _ = call.reply.send(Err("pty_context_changed".into()));
 +            return;
 +        }
++        let approval = match &held {
++            Some(Confirmed::Pty(_, _, Some(approval))) => {
++                let current = store_paths().and_then(|(store, repository)| {
++                    PtyApproval::new(&store, &repository, &call.caller, &call.arguments)
++                });
++                if current.as_ref() != Ok(approval) {
++                    let _ = call.reply.send(Err("pty_approval_changed".into()));
++                    return;
++                }
++                Some(approval)
++            }
++            _ => None,
++        };
 +        let result = match call.operation.as_str() {
 +            "app.request" => {
 +                spawn_app_request(
@@ -160818,6 +160903,13 @@ index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9
 +                            self.app_event_tx.clone(),
 +                        )
 +                        .await;
++                        if started.is_ok()
++                            && let Some(approval) = approval
++                        {
++                            if let Err(error) = approval.save() {
++                                tracing::warn!("terminal approval not saved: {error}");
++                            }
++                        }
 +                        match (
 +                            started,
 +                            pin,
@@ -161749,6 +161841,53 @@ index 0000000000000000000000000000000000000000..74f089763e94f94494b5162b8c1576c9
 +        ] {
 +            assert!(image_sample_dimensions(&value).is_err(), "{value}");
 +        }
++    }
++}
++
++#[cfg(test)]
++mod pty_approval_tests {
++    use super::*;
++
++    #[test]
++    fn pty_approval_survives_restart_and_is_scoped_to_workspace_command_and_access() {
++        let store = tempfile::tempdir().unwrap();
++        let repository = tempfile::tempdir().unwrap();
++        let other = tempfile::tempdir().unwrap();
++        let arguments = json!({"action": "start", "session": "shell", "program": "/bin/sh"});
++        let approval =
++            PtyApproval::new(store.path(), repository.path(), "workspace", &arguments).unwrap();
++        assert!(!approval.stored());
++        approval.save().unwrap();
++        assert!(
++            PtyApproval::new(store.path(), repository.path(), "workspace", &arguments)
++                .unwrap()
++                .stored()
++        );
++        assert!(
++            !PtyApproval::new(store.path(), other.path(), "workspace", &arguments)
++                .unwrap()
++                .stored()
++        );
++        assert!(
++            !PtyApproval::new(store.path(), repository.path(), "other", &arguments)
++                .unwrap()
++                .stored()
++        );
++        for (field, value) in [
++            ("write", json!(true)),
++            ("network", json!("loopback")),
++            ("argv", json!(["-l"])),
++        ] {
++            let mut changed = arguments.clone();
++            changed[field] = value;
++            assert!(
++                !PtyApproval::new(store.path(), repository.path(), "workspace", &changed)
++                    .unwrap()
++                    .stored()
++            );
++        }
++        std::fs::write(&approval.path, b"invalid").unwrap();
++        assert!(!approval.stored());
 +    }
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs

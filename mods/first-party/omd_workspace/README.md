@@ -250,3 +250,5 @@ api.services.call('omd.workspace', 'register', { id: 'git', title: 'Git', site: 
 - [Included mods](../../../docs/collection.md)
 - [`omd_git`](../omd_git/README.md) and [`omd_files`](../omd_files/README.md), which draw panels inside the workspace
 - [Terminal UI reference](../../reference/terminal-ui.md)
+
+Shell and terminal start approvals are remembered across restarts for the workspace, mod, command, executable and requested access. Changing the command, executable or access asks again. Failed starts and declined requests are not remembered.

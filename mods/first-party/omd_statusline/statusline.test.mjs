@@ -119,3 +119,14 @@ test('profile, tier and workspace segments follow the config layers, thread sett
   const notify = (state, threadSettings) => call({ event: 'app_notification', payload: { method: 'thread/settings/updated', params: { threadSettings }, thread_id: 'lead', coalesced: 0, dropped: 0 }, state }, answer('priority')).state;
   assert.equal(text(notify(settled(answer('priority')), { serviceTier: null })), 'gpt-6.1-sol · profile: work · workspace: Acme');
 });
+
+test('usage resets are refreshed while idle and empty snapshots clear old limits', () => {
+  const start = call({ event: 'start', payload: null });
+  const before = call({ event: 'timer', payload: { key: 'time:settle' }, state: start.state }).state;
+  assert.equal(before.limits[0].used, 42);
+  const reset = host({ 'app.request': () => ({ rateLimits: { primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: (NOW + 18_000_000) / 1000 } } }) });
+  const after = call({ event: 'timer', payload: { key: 'time:limits' }, state: before, virtual_time_ms: NOW + 60_000 }, reset).state;
+  assert.equal(after.limits[0].used, 0);
+  const empty = call({ event: 'timer', payload: { key: 'time:limits' }, state: after }, host({ 'app.request': () => ({ rateLimits: {} }) })).state;
+  assert.deepEqual(empty.limits, []);
+});
