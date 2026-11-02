@@ -57,14 +57,13 @@ jobs:
           key: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-${{ hashFiles('runtime/patches/manifest.json') }}
           restore-keys: v8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-
       - name: Restore sccache
+        id: sccache
         if: env.OMD_SCCACHE != ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-
-            sccache-${{ github.job }}-${{ runner.os }}-
+          key: sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}
+          restore-keys: sccache-${{ github.job }}-${{ runner.os }}-
       - name: Validate
         run: python3 .github/scripts/ci.py validate --job "$GITHUB_JOB" ${OMD_RELEASE_VERSION:+--release}
       - name: Pack host binaries
@@ -93,15 +92,17 @@ jobs:
         continue-on-error: true
         run: sccache --show-stats && sccache --stop-server
       - name: Save sccache
-        if: always() && env.OMD_SCCACHE != ''
+        if: (success() || failure()) && env.OMD_SCCACHE != '' && steps.sccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}
 
   core:
     runs-on: macos-15
     timeout-minutes: 360
+    env:
+      SCCACHE_CACHE_SIZE: 3G
     steps: *rust-job
 
   lint:

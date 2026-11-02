@@ -16,10 +16,11 @@ PR, nightly and release jobs use the same Cargo download-cache and V8 prebuilt-c
 ## Compile cache
 
 Nightly jobs set `OMD_SCCACHE=1`, which makes `build.py` set `RUSTC_WRAPPER=sccache` (pinned in `mise.toml`) over a
-local 2 GB `SCCACHE_DIR`, not the GitHub backend. Each job restores that directory with `actions/cache/restore` and
-saves it with `if: always()` as `sccache-JOB-OS-HASH-RUN_ID-ATTEMPT`, where `HASH` covers `upstream.lock.json` and
-`runtime/patches/manifest.json`. Because the job always saves, a failed run still keeps what it compiled. Restore
-falls back to the newest cache for the job. `sccache --show-stats` ends every job.
+local 2 GB `SCCACHE_DIR` (3 GB for `core`, which builds `codex-core` in two feature sets), not the GitHub backend.
+Each job restores that directory with `actions/cache/restore` and, unless that was an exact hit, saves it as
+`sccache-JOB-OS-HASH`, where `HASH` covers `upstream.lock.json` and `runtime/patches/manifest.json`. A failed run still
+saves what it compiled; a cancelled one doesn't. One cache per job and source version keeps the nightly inside the
+10 GB Actions cache budget. Restore falls back to the newest cache for the job. `sccache --show-stats` ends every job.
 
 PR `native` restores `sccache-lint-*`, which the nightly `lint` job fills with the same check. For the keys to match,
 PR `native` uses the nightly work root and tree name (`/Users/runner/omd/omd-bnightly`), the same `CARGO_*` values
