@@ -430,7 +430,7 @@ export default function activate(api: ModAPI) {
     const { entries, at } = shown(v);
     const name = current(v)?.[0];
     const tabs = v.tabs.length > 1;
-    const tall = Math.max(3, height - 3 - (tabs ? 1 : 0));
+    const tall = Math.min(MAX_HEIGHT, Math.max(3, height - 3 - (tabs ? 1 : 0)));
     const dir = tab(v).dir;
     const up = v.parent.findIndex(([entry]) => entry === nameOf(dir));
     const left: TerminalComponent = { type: 'document', id: PARENT, label: 'Parent', lines: filled(rows(v.parent, nameOf(dir)), tall), keys: true, height: tall, ...(up >= 0 ? { selected: { start: up, end: up } } : {}) };

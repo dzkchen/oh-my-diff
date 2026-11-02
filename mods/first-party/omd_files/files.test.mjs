@@ -101,6 +101,15 @@ test('three columns list the parent, the current directory and a preview, natura
 test('the layout follows the site area the host reports, and falls back to the terminal size', () => {
   const state = started();
   assert.ok(columns(state, { rows: 80 }).every(node => (node.height ?? 1) <= 40));
+  for (const rows of [0, 30, 43, 44, 80, 200]) {
+    for (const columnsCount of [50, 120]) {
+      for (const view of [state, key(state, 't').state]) {
+        const documents = columns(view, { sites: { columns: columnsCount, rows } });
+        const height = Math.min(40, Math.max(3, rows - 3 - (view.view.tabs.length > 1 ? 1 : 0)));
+        assert.ok(documents.every(node => node.height === height));
+      }
+    }
+  }
   const sized = box(state, { sites: { columns: 120, rows: 30 } });
   assert.deepEqual(sized.children.map(column => [column.id, column.children[0].height]), [['omd_files_parent_column', 27], ['omd_files_current_column', 27], ['omd_files_preview_column', 27]]);
   const narrow = box(state, { sites: { columns: 50, rows: 20 } });
