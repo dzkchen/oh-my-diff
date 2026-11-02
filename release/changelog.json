@@ -1,5 +1,26 @@
 [
   {
+    "version": "1.4.1",
+    "date": "2026-11-02",
+    "title": "Oh My Diff 1.4.1",
+    "summary": "A leaner OMD+ with untested mods and plugins moved to Experimental, remembered sandboxed terminal starts, and fixes for /btw, the files browser, the status line and themes.",
+    "sections": [
+      {
+        "label": "Changed",
+        "items": [
+          "Fix files, statusline, theme and btw mod issues (#360)",
+          "Move experimental plugins out of the bundled marketplace and drop the OMD+ profile (#361)"
+        ]
+      }
+    ],
+    "commits": [
+      "3bd45bb",
+      "6ba66e2",
+      "539d057",
+      "c550c8d"
+    ]
+  },
+  {
     "version": "1.4.0",
     "date": "2026-11-02",
     "title": "Oh My Diff 1.4.0",

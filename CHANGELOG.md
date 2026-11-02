@@ -2,6 +2,15 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.4.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.1) — 2026-11-02
+
+A leaner OMD+ with untested mods and plugins moved to Experimental, remembered sandboxed terminal starts, and fixes for /btw, the files browser, the status line and themes.
+
+### Changed
+
+- Fix files, statusline, theme and btw mod issues (#360)
+- Move experimental plugins out of the bundled marketplace and drop the OMD+ profile (#361)
+
 ## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
 
 Experimental harness mods that cut token use, /btw side questions, and a tool list that matches stock Codex so new threads keep the provider's prompt cache.
