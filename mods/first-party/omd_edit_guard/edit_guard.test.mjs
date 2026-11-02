@@ -81,20 +81,20 @@ test('files a shell command names are checked directly; a write it cannot name i
   assert.equal(first.listed.length, 2);
   assert.deepEqual(first.runs.map(({ path }) => path), ['a.py', 'new dir/b.json']);
   assert.equal(first.append, `${INTRODUCED}a.py:1:4: SyntaxError: x\n\n${NEW_FILE}b.json: bad`);
-  assert.equal(run(write('grep -rl foo src | xargs sed -i "s/foo/bar/"')).listed.length, 2, 'an in-place edit later in a pipeline');
-  for (const cmd of ['pytest 2>&1 >/dev/null', 'pytest > out.log', 'node -e "const f = x => x.toString()"', 'python -c "print(a > b.c)"']) {
+  for (const cmd of ['grep -rl foo src | xargs sed -i "s/foo/bar/"', 'find . -name "*.py" -exec sed -i s/a/b/ {} +', `cat > "src/app.py" <<'EOF'\nx\nEOF`, "echo x > 'lib/a.py'", 'cargo test | tee "$OUT"', 'cp a.py "b c.py"']) assert.equal(run(write(cmd)).listed.length, 2, cmd);
+  for (const cmd of ['pytest 2>&1 >/dev/null', 'ls 2>/dev/null', 'pytest > out.log', 'node -e "const f = x => x.toString()"', 'python -c "print(a > b.c)"', `python3 - <<'PY'\nprint(1)\nPY`, `python3 - <<PY\nif x > y.py:\n  pass\nPY`]) {
     const quiet = run(write(cmd));
     assert.deepEqual([quiet.listed, quiet.runs], [[], []], cmd);
   }
-  const direct = run(write('echo > a.py && sed -i s/a/b/ lib.py'), null, { 'a.py': [6, 'a.py: bad'] });
-  assert.deepEqual([direct.listed, direct.runs.map(({ path }) => path), direct.append], [[], ['a.py', 'lib.py'], `${NEW_FILE}a.py: bad`]);
+  const direct = run(write('echo > a.py && sed -i s/a/b/ lib.py; cp x.py b.py; env FOO=1 sed -i s/a/b/ c.py'), null, { 'a.py': [6, 'a.py: bad'] });
+  assert.deepEqual([direct.listed, direct.runs.map(({ path }) => path), direct.append], [[], ['a.py', 'lib.py', 'b.py', 'c.py'], `${NEW_FILE}a.py: bad`]);
   assert.deepEqual(run(write('echo > a.py'), null, {}, 'model', [], `${ROOT}/sub`).runs.map(({ path }) => path), ['sub/a.py']);
   for (const tool of [write('cd pkg && sed -i s/a/b/ mod.py'), { ...write('sed -i s/a/b/ mod.py'), arguments: { cmd: 'sed -i s/a/b/ mod.py', workdir: 'pkg' } }]) {
     const moved = run(tool, null, {}, 'model', [[], [['M', 'pkg/mod.py', '5']]]);
     assert.deepEqual([moved.listed.length, moved.runs.map(({ path }) => path)], [2, ['pkg/mod.py']], tool.arguments.cmd);
   }
   assert.deepEqual(run({ ...write('ls'), arguments: { cmd: 'ls', justification: 'echo > a.py' } }).runs, [], 'only the command is parsed');
-  assert.deepEqual(run(write("python3 - <<'PY'\nPY"), null, {}, 'model', [null]).listed.length, 1, 'outside a repository it lists once and checks nothing');
+  assert.deepEqual(run(write("cat > \"$f\" <<'PY'\nPY"), null, {}, 'model', [null]).listed.length, 1, 'outside a repository it lists once and checks nothing');
 });
 
 test('errors from a code-mode cell\'s edits are held and appended to the next model-visible output', () => {

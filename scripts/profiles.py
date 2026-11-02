@@ -40,6 +40,9 @@ CODEX_VALUE_OPTIONS = {"-c", "--config", "--enable", "--disable", "-m", "--model
                        "--remote-auth-token-env", "--listen", "--ws-auth", "--ws-token-file", "--ws-token-sha256",
                        "--ws-shared-secret-file", "--ws-issuer", "--ws-audience", "--ws-max-clock-skew-seconds",
                        "--ws-allowed-origin"}
+UNATTENDED_COMMANDS = ("exec", "e", "review", "login", "logout", "mcp", "plugin", "app-server", "remote-control", "app", "completion", "update", "doctor",
+                       "sandbox", "debug", "apply", "a", "queue", "archive", "delete", "migrate-rollouts", "migrate-nfs-db", "unarchive", "exec-server",
+                       "features", "help", "stdio-to-uds", "responses-api-proxy")
 CODEX_FLAGS = {"--oss", "--approve-for-me", "--not-so-yolo", "--dangerously-bypass-approvals-and-sandbox", "--yolo",
                "--dangerously-bypass-hook-trust", "--search", "--no-daemon", "--strict-config"}
 MANAGEMENT_FILES = ("scripts/profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
@@ -265,8 +268,8 @@ def selected_text(record):
         # While another session is open, a staged release is announced once; ready.json newer than announced, or an announcement over an hour old, re-arms it.
         marker = f"{root}/sessions/$$"
         ready = f'{{ [ -e {root}/update/ready.json ] && {{ [ -z "$busy" ] || [ {root}/update/ready.json -nt {root}/update/announced ] || [ -n "$(find {root}/update/announced -mmin +60 2>/dev/null)" ]; }}; }}'
-        lines += [f"mkdir -p {root}/sessions", "busy=", "unattended=",
-                  'for a; do case "$a" in app-server|exec|e|mcp-server|-V|--version) unattended=1;; esac; done',
+        lines += [f"mkdir -p {root}/sessions", "busy=", "unattended=", "skip=",
+                  f'for a; do if [ -n "$skip" ]; then skip=; continue; fi; case "$a" in -V|--version|-h|--help|{"|".join(UNATTENDED_COMMANDS)}) unattended=1; break;; {"|".join(sorted(CODEX_VALUE_OPTIONS | {"-i", "--image"}))}) skip=1;; -*) ;; *) break;; esac; done',
                   f'for m in {root}/sessions/*; do [ -e "$m" ] && {{ kill -0 "${{m##*/}}" 2>/dev/null && busy=1 || rm -f "$m"; }}; done',
                   f": > {marker}",
                   f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/journal.json ] || {{ [ -z "$unattended" ] && {{ {ready} || [ {root}/update/state.json -nt {root}/update/notice.json ] || {{ [ {request} -nt {root}/update/seen ] && grep -q \'"request":\' {request}; }}; }}; }}; }}; then',

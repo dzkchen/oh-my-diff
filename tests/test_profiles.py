@@ -234,15 +234,21 @@ class ProfileModeTests(unittest.TestCase):
             self.assertEqual(calls(), 1)
             other.kill()
             other.wait()
-            for unattended in (["app-server"], ["--version"], ["exec", "hi"], ["-c", "model=x", "app-server"], ["--profile", "ci", "exec", "hi"]):
+            for unattended in (["app-server"], ["--version"], ["exec", "hi"], ["-c", "model=x", "app-server"], ["--profile", "ci", "exec", "hi"], ["completion", "zsh"], ["login", "status"], ["-m", "x", "mcp", "list"]):
                 subprocess.run(["sh", launcher, *unattended], check=True)
                 self.assertEqual(calls(), 1, unattended)
+            for interactive in (["-p", "exec"], ["--search", "fix", "exec"], ["resume", "exec"]):
+                before = calls()
+                subprocess.run(["sh", launcher, *interactive], check=True)
+                self.assertEqual(calls(), before + 1, interactive)
+                self.assertNotIn("--unattended", (base / "calls").read_text().splitlines()[-1])
             (base / "root/update/journal.json").write_text("{}")
             subprocess.run(["sh", launcher, "app-server"], check=True)
             self.assertIn("--unattended", (base / "calls").read_text().splitlines()[-1])
             (base / "root/update/journal.json").unlink()
+            before = calls()
             subprocess.run(["sh", launcher], check=True)
-            self.assertEqual(calls(), 3)
+            self.assertEqual(calls(), before + 1)
             self.assertNotIn("--unattended", (base / "calls").read_text().splitlines()[-1])
 
     def test_launcher_runs_the_installer_for_a_new_update_request_only(self):

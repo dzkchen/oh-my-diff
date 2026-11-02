@@ -32,23 +32,29 @@ const QUOTED = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
 const REDIRECT = /(?<![\d=<>&-])>>?\s*(?!&)([^\s;&|<>()]+)/g;
 const WRITER = /(?:^|\s)(tee|cp|mv|sed|perl)\s+(.*)$/s;
 const IN_PLACE = /(?:^|\s)-[a-zA-Z]*i[\w.]*(?=\s|$)/;
-const UNSEEN_WRITE = /<<|\.write\(|write_text\(|writeFile/;
-function writes(cmd: string): { created: string[]; changed: string[]; unseen: boolean } {
-  const plain = cmd.replace(QUOTED, "''");
+const UNSEEN_WRITE = /\.write\(|write_text\(|writeFile/;
+const HEREDOC = /<<-?\s*(['"]?)(\w+)\1([^\n]*)[\s\S]*?^\s*\2$/gm;
+const SHELL = /^(exec_command|shell|shell_command|local_shell)$/;
+const command = (tool: string, args: Json) => {
+  const value = typeof args === 'string' ? (SHELL.test(tool) ? args : null) : args && typeof args === 'object' && !Array.isArray(args) ? args.cmd ?? args.command : null;
+  return typeof value === 'string' ? value : Array.isArray(value) ? value.filter(item => typeof item === 'string').join(' ') : '';
+};
+function writes(cmd: string): { created: string[]; changed: string[]; unnamed: boolean; unseen: boolean } {
+  const plain = cmd.replace(HEREDOC, '<<$2$3').replace(QUOTED, "''");
   const created = [...plain.matchAll(REDIRECT)].map(match => match[1]).filter(path => path !== '/dev/null');
   const changed: string[] = [];
-  let unseen = UNSEEN_WRITE.test(cmd);
+  let unnamed = false;
   for (const part of plain.split(/&&|\|\||[;|\n]/)) {
     const [, tool, rest = ''] = WRITER.exec(part.trim()) ?? [];
     const words = rest.split(/\s+/).filter(word => word && !word.startsWith('-'));
     const files = (tool === 'sed' && !/(?:^|\s)-[ef]\b/.test(rest) ? words.slice(1) : words).filter(word => word !== "''");
-    if (tool === 'tee') created.push(...files);
-    else if ((tool === 'cp' || tool === 'mv') && files.length > 1) changed.push(files[files.length - 1]);
-    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unseen ||= !files.length; }
+    if (tool === 'tee') created.push(...words);
+    else if ((tool === 'cp' || tool === 'mv') && words.length > 1) changed.push(words[words.length - 1]);
+    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unnamed ||= !files.length; }
   }
   const named = (paths: string[]) => paths.filter(path => /^[\w./-]+$/.test(path));
-  unseen ||= named(created).length < created.length || named(changed).length < changed.length;
-  return { created: named(created), changed: named(changed), unseen };
+  unnamed ||= named(created).length < created.length || named(changed).length < changed.length;
+  return { created: named(created), changed: named(changed), unnamed, unseen: UNSEEN_WRITE.test(cmd) };
 }
 
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
@@ -57,18 +63,17 @@ const add = (list: string[], path: string) => { if (!list.includes(path)) list.p
 
 const segments = (cmd: string) => cmd.split(/&&|\|\||;|\n/).map(part => part.trim().replace(PREFIX, ''));
 
-function command(args: Json): string | null {
-  const value = field(args, 'cmd') ?? field(args, 'command');
-  return typeof value === 'string' ? value : Array.isArray(value) ? value.join(' ') : null;
-}
-
 export default function activate(api: ModAPI) {
   const cap = Math.min(Math.max(Math.round(Number(api.settings.max_continuations ?? 2)) || 0, 0), 2);
   const load = (): State => ({ ...fresh(), ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
 
+  const forget = (state: State, path: string) => {
+    state.added = state.added.filter(entry => entry !== path);
+    state.files = state.files.filter(entry => entry !== path);
+  };
   const edit = (state: State, path: string, kind = 'Update') => {
-    if (kind === 'Delete' && state.added.includes(path)) return void state.added.splice(state.added.indexOf(path), 1);
+    if (kind === 'Delete' && state.added.includes(path)) return forget(state, path);
     if (NOT_CODE.test(path)) return;
     state.edited = ++state.seq;
     if (kind === 'Add') add(state.added, path);
@@ -100,16 +105,19 @@ export default function activate(api: ModAPI) {
       if (state.pending[session]) checked(state, Number(code), text);
       delete state.pending[session];
     } else {
-      const cmd = command(event.arguments);
-      if (cmd === null) return null;
+      const cmd = command(event.tool, event.arguments);
+      if (!cmd) return null;
       const parts = segments(cmd);
       const check = parts.some(part => CHECK.test(part));
       if (!state.edited && (check || parts.some(part => RUN.test(part)))) state.probed = true;
-      const { created, changed } = writes(cmd);
-      created.filter(path => !path.startsWith('/') && /\.\w+$/.test(path)).forEach(path => edit(state, path, 'Add'));
-      changed.filter(path => !path.startsWith('/')).forEach(path => edit(state, path));
-      if (!created.length && !changed.length && ((SCRIPT_WRITE.test(cmd) && !SCRATCH.test(cmd)) || /\b(?:sed|perl)\s+(?:\S+\s+)*?-[a-zA-Z]*i[\w.]*(?:\s|$)/.test(cmd.replace(QUOTED, "''")))) state.edited = ++state.seq;
       const code = EXIT.exec(event.text)?.[1];
+      if (parts.length > 1 || (code === undefined ? event.success : Number(code) === 0)) {
+        const { created, changed, unnamed } = writes(cmd);
+        created.filter(path => !path.startsWith('/') && /\.\w+$/.test(path)).forEach(path => edit(state, path, 'Add'));
+        changed.filter(path => !path.startsWith('/')).forEach(path => edit(state, path));
+        if (unnamed || (!created.length && !changed.length && SCRIPT_WRITE.test(cmd) && !SCRATCH.test(cmd))) state.edited = ++state.seq;
+        for (const part of parts) if (/^rm\s/.test(part)) part.split(/\s+/).slice(1).filter(word => !word.startsWith('-')).forEach(path => forget(state, path.replace(/^\.\//, '')));
+      }
       const session = RUNNING.exec(event.text)?.[1];
       if (session) state.pending[session] = check;
       else if (check) checked(state, (code === undefined ? !event.success : Number(code) !== 0) || (cmd.includes('|') && FAILED.test(text)) ? 1 : 0, text);

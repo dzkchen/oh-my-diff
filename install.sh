@@ -259,7 +259,10 @@ def opened(url, timeout):
         fail("release URLs must use HTTPS without embedded credentials")
     request = urllib.request.Request(url, headers={"User-Agent": "oh-my-diff-installer/1",
                                                    "Accept": "application/vnd.github+json"})
-    response = urllib.request.urlopen(request, timeout=timeout)
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as error:
+        raise urllib.error.HTTPError(url, error.code, error.reason, error.headers, None) from None
     if urllib.parse.urlparse(response.url).scheme != "https":
         response.close()
         fail("release URL redirected away from HTTPS")

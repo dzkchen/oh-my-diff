@@ -30,7 +30,6 @@ trap 'rm -rf "$d"' EXIT
 git show "HEAD:./$f" > "$d/base$x" 2>/dev/null || exit 6
 "$@" "$d/base$x" >/dev/null 2>&1 && exit 3
 exit 5`;
-const SHELL = /^(exec_command|shell|shell_command|local_shell)$/;
 const CHANGED = `git rev-parse --git-dir >/dev/null 2>&1 || exit 4
 l=$({ git -c core.quotepath=off ls-files -m | sed 's/^/M /'; git -c core.quotepath=off ls-files -o --exclude-standard | sed 's/^/A /'; } | grep -E '[.](pyw?|json|[cm]?js|sh|bash|rb|php|go)$' | head -200 | while IFS= read -r l; do [ -f "\${l#??}" ] && printf '%s\\n' "$l"; done)
 [ -n "$l" ] || exit 0
@@ -43,31 +42,33 @@ const QUOTED = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
 const REDIRECT = /(?<![\d=<>&-])>>?\s*(?!&)([^\s;&|<>()]+)/g;
 const WRITER = /(?:^|\s)(tee|cp|mv|sed|perl)\s+(.*)$/s;
 const IN_PLACE = /(?:^|\s)-[a-zA-Z]*i[\w.]*(?=\s|$)/;
-const UNSEEN_WRITE = /<<|\.write\(|write_text\(|writeFile/;
-function writes(cmd: string): { created: string[]; changed: string[]; unseen: boolean } {
-  const plain = cmd.replace(QUOTED, "''");
+const UNSEEN_WRITE = /\.write\(|write_text\(|writeFile/;
+const HEREDOC = /<<-?\s*(['"]?)(\w+)\1([^\n]*)[\s\S]*?^\s*\2$/gm;
+const SHELL = /^(exec_command|shell|shell_command|local_shell)$/;
+const command = (tool: string, args: Json) => {
+  const value = typeof args === 'string' ? (SHELL.test(tool) ? args : null) : args && typeof args === 'object' && !Array.isArray(args) ? args.cmd ?? args.command : null;
+  return typeof value === 'string' ? value : Array.isArray(value) ? value.filter(item => typeof item === 'string').join(' ') : '';
+};
+function writes(cmd: string): { created: string[]; changed: string[]; unnamed: boolean; unseen: boolean } {
+  const plain = cmd.replace(HEREDOC, '<<$2$3').replace(QUOTED, "''");
   const created = [...plain.matchAll(REDIRECT)].map(match => match[1]).filter(path => path !== '/dev/null');
   const changed: string[] = [];
-  let unseen = UNSEEN_WRITE.test(cmd);
+  let unnamed = false;
   for (const part of plain.split(/&&|\|\||[;|\n]/)) {
     const [, tool, rest = ''] = WRITER.exec(part.trim()) ?? [];
     const words = rest.split(/\s+/).filter(word => word && !word.startsWith('-'));
     const files = (tool === 'sed' && !/(?:^|\s)-[ef]\b/.test(rest) ? words.slice(1) : words).filter(word => word !== "''");
-    if (tool === 'tee') created.push(...files);
-    else if ((tool === 'cp' || tool === 'mv') && files.length > 1) changed.push(files[files.length - 1]);
-    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unseen ||= !files.length; }
+    if (tool === 'tee') created.push(...words);
+    else if ((tool === 'cp' || tool === 'mv') && words.length > 1) changed.push(words[words.length - 1]);
+    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unnamed ||= !files.length; }
   }
   const named = (paths: string[]) => paths.filter(path => /^[\w./-]+$/.test(path));
-  unseen ||= named(created).length < created.length || named(changed).length < changed.length;
-  return { created: named(created), changed: named(changed), unseen };
+  unnamed ||= named(created).length < created.length || named(changed).length < changed.length;
+  return { created: named(created), changed: named(changed), unnamed, unseen: UNSEEN_WRITE.test(cmd) };
 }
 
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
 const field = (value: Json, key: string): Json => value && typeof value === 'object' && !Array.isArray(value) ? value[key] ?? null : null;
-const command = (args: Json) => {
-  const value = typeof args === 'string' ? args : field(args, 'cmd') ?? field(args, 'command');
-  return typeof value === 'string' ? value : Array.isArray(value) ? value.filter(item => typeof item === 'string').join(' ') : '';
-};
 const clip = (text: string, bytes: number) => {
   while (new TextEncoder().encode(text).length > bytes) text = text.slice(0, Math.floor(text.length * 0.9));
   return text;
@@ -124,11 +125,12 @@ export default function activate(api: ModAPI) {
   api.intercept('tool', async (e, next) => {
     const caller = next.origin?.caller;
     if (caller !== 'model' && caller !== 'code_mode') return next(e);
-    const cmd = SHELL.test(e.tool) ? command(e.arguments) : null;
+    const cmd = SHELL.test(e.tool) ? command(e.tool, e.arguments) : null;
     const write = cmd === null ? null : writes(cmd);
     const elsewhere = cmd !== null && (/(?:^|[\s;&|(])(?:cd|pushd)\s/.test(cmd) || typeof field(e.arguments, 'workdir') === 'string');
-    const named = write && !write.unseen && !elsewhere ? [...write.created, ...write.changed] : [];
-    const before = write && (write.unseen || (elsewhere && write.created.length + write.changed.length > 0)) ? listing() : null;
+    const hidden = write && (write.unnamed || write.unseen);
+    const named = write && !hidden && !elsewhere ? [...write.created, ...write.changed] : [];
+    const before = write && (hidden || (elsewhere && write.created.length + write.changed.length > 0)) ? listing() : null;
     const result = await next(e);
     const after = before && result.success ? listing() : null;
     const found: [string, boolean][] = !result.success ? []

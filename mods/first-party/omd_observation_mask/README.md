@@ -64,7 +64,9 @@ that doesn't cache prompts.
   `commands` (see [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - The full text of each output of at least `min_bytes` is kept as the mod's evidence when the call finishes. The host
   keeps the newest 1,024 of these per repository (256 MB at most), so recalling a very old output can fail. The
-  model is then told to run the call again. It remembers the newest 400 kept outputs of a thread.
+  model is then told to run the call again. It remembers the newest 400 kept outputs of a thread and those of every
+  hidden output.
+- At most 400 outputs of a thread are hidden; later ones are sent in full.
 - Code-mode calls inside a cell aren't kept on their own: the whole cell's output is hidden and recalled as one.
 - Only one mod can edit model-bound history, so it can't run alongside another mod that does, such as
   `omd_programmable_context`.

@@ -235,8 +235,18 @@ def patch_test_path(path):
     return name.endswith("_tests.rs") or name == "tests.rs" or "/tests/" in path or ".snap" in name
 
 
+def identifier_pattern(identifiers):
+    forms = set()
+    for identifier in identifiers:
+        parts = tuple(re.split(r"[^A-Za-z0-9]+", identifier))
+        for form in {parts} | ({parts[1:]} if parts[0] == "omd" and len(parts) > 2 else set()):
+            forms.add(rf"(?<![A-Za-z0-9]){'[_-]'.join(map(re.escape, form))}(?![A-Za-z0-9])")
+            forms.add(rf"(?<![A-Za-z0-9]){''.join(part.capitalize() for part in form)}(?![A-Za-z0-9])")
+    return re.compile("|".join(sorted(forms, key=lambda form: (-len(form), form))))
+
+
 def patched(root, identifiers):
-    pattern = re.compile("|".join(rf"\b{re.escape(identifier)}\b" for identifier in sorted(identifiers)))
+    pattern = identifier_pattern(identifiers)
     findings = []
     for patch in sorted((root / PATCH_DIRECTORY).glob("*.patch")):
         path, line = None, 0
@@ -260,15 +270,15 @@ def patched(root, identifiers):
 def first_party(root):
     identifiers = package_identifiers(root)
     findings = patched(root, identifiers) if identifiers else []
+    pattern = identifier_pattern(identifiers) if identifiers else None
     paths = list(native_files(root)) + [root / name for name in RUNNER_SCRIPTS]
     for path in paths:
         if not path.exists():
             continue
         text = production(path)
-        for identifier in sorted(identifiers):
-            for match in re.finditer(rf"\b{re.escape(identifier)}\b", text):
-                findings.append({"path": str(path.relative_to(root)), "line": text.count("\n", 0, match.start()) + 1,
-                                 "surface": "first_party_id", "name": identifier, "feature": identifier})
+        for match in pattern.finditer(text) if pattern else ():
+            findings.append({"path": str(path.relative_to(root)), "line": text.count("\n", 0, match.start()) + 1,
+                             "surface": "first_party_id", "name": match.group(), "feature": match.group()})
     return findings
 
 

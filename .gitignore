@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 /runtime/**/target/
 .DS_Store
-/.omd/
+.omd/
 /.omd-tmp/
 /.docs/
 /.pnpm-store/

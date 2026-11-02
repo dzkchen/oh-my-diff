@@ -12,6 +12,7 @@ const PAGE = 32_768;
 const ADVANCE = 256;
 const PINS = 256;
 const CALLS = 400;
+const MASKED = 400;
 const LINE = 120;
 const HEADER = /^(Chunk ID:|Wall time:|Process exited with code|Exit code:|Original token count:|Output:)/;
 
@@ -20,28 +21,30 @@ const QUOTED = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
 const REDIRECT = /(?<![\d=<>&-])>>?\s*(?!&)([^\s;&|<>()]+)/g;
 const WRITER = /(?:^|\s)(tee|cp|mv|sed|perl)\s+(.*)$/s;
 const IN_PLACE = /(?:^|\s)-[a-zA-Z]*i[\w.]*(?=\s|$)/;
-const UNSEEN_WRITE = /<<|\.write\(|write_text\(|writeFile/;
-function writes(cmd: string): { created: string[]; changed: string[]; unseen: boolean } {
-  const plain = cmd.replace(QUOTED, "''");
+const UNSEEN_WRITE = /\.write\(|write_text\(|writeFile/;
+const HEREDOC = /<<-?\s*(['"]?)(\w+)\1([^\n]*)[\s\S]*?^\s*\2$/gm;
+const SHELL = /^(exec_command|shell|shell_command|local_shell)$/;
+const command = (tool: string, args: Json) => {
+  const value = typeof args === 'string' ? (SHELL.test(tool) ? args : null) : args && typeof args === 'object' && !Array.isArray(args) ? args.cmd ?? args.command : null;
+  return typeof value === 'string' ? value : Array.isArray(value) ? value.filter(item => typeof item === 'string').join(' ') : '';
+};
+function writes(cmd: string): { created: string[]; changed: string[]; unnamed: boolean; unseen: boolean } {
+  const plain = cmd.replace(HEREDOC, '<<$2$3').replace(QUOTED, "''");
   const created = [...plain.matchAll(REDIRECT)].map(match => match[1]).filter(path => path !== '/dev/null');
   const changed: string[] = [];
-  let unseen = UNSEEN_WRITE.test(cmd);
+  let unnamed = false;
   for (const part of plain.split(/&&|\|\||[;|\n]/)) {
     const [, tool, rest = ''] = WRITER.exec(part.trim()) ?? [];
     const words = rest.split(/\s+/).filter(word => word && !word.startsWith('-'));
     const files = (tool === 'sed' && !/(?:^|\s)-[ef]\b/.test(rest) ? words.slice(1) : words).filter(word => word !== "''");
-    if (tool === 'tee') created.push(...files);
-    else if ((tool === 'cp' || tool === 'mv') && files.length > 1) changed.push(files[files.length - 1]);
-    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unseen ||= !files.length; }
+    if (tool === 'tee') created.push(...words);
+    else if ((tool === 'cp' || tool === 'mv') && words.length > 1) changed.push(words[words.length - 1]);
+    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unnamed ||= !files.length; }
   }
   const named = (paths: string[]) => paths.filter(path => /^[\w./-]+$/.test(path));
-  unseen ||= named(created).length < created.length || named(changed).length < changed.length;
-  return { created: named(created), changed: named(changed), unseen };
+  unnamed ||= named(created).length < created.length || named(changed).length < changed.length;
+  return { created: named(created), changed: named(changed), unnamed, unseen: UNSEEN_WRITE.test(cmd) };
 }
-const command = (args: Json) => {
-  const value = args && typeof args === 'object' && !Array.isArray(args) ? args.cmd ?? args.command : null;
-  return typeof value === 'string' ? value : Array.isArray(value) ? value.join(' ') : '';
-};
 const size = (value: Json | undefined, fallback: number) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 const isOutput = (item: HistoryItem): item is HistoryItem & { call_id: string } => item.type.endsWith('call_output') && typeof item.call_id === 'string';
 const sum = (items: { bytes: number }[]) => items.reduce((total, item) => total + item.bytes, 0);
@@ -81,8 +84,9 @@ export default function activate(api: ModAPI) {
       const present = new Set(outputs.map(item => item.call_id));
       const masked = Object.fromEntries(Object.entries(state.masked).filter(([id]) => present.has(id)));
       const kept = state.kept.filter(id => present.has(id));
+      const batch = pending.slice(0, Math.max(0, Math.min(ADVANCE, MASKED - Object.keys(masked).length)));
       let hidden = 0;
-      for (const item of pending.slice(0, ADVANCE)) {
+      for (const item of batch) {
         const record = state.calls[item.call_id] ?? null;
         if (record?.failed_edit) {
           kept.push(item.call_id);
@@ -91,7 +95,7 @@ export default function activate(api: ModAPI) {
           hidden += item.bytes;
         }
       }
-      next = { ...next, masked, kept, advances: state.advances + 1, hidden_bytes: state.hidden_bytes + hidden, pending_bytes: sum(pending.slice(ADVANCE)) };
+      if (batch.length) next = { ...next, masked, kept, advances: state.advances + 1, hidden_bytes: state.hidden_bytes + hidden, pending_bytes: sum(pending.slice(batch.length)) };
     }
     const replace = outputs.filter(item => item.editable && Object.hasOwn(next.masked, item.call_id))
       .map(item => ({ index: item.index, text: next.masked[item.call_id], saved: item.bytes - next.masked[item.call_id].length }));
@@ -105,11 +109,13 @@ export default function activate(api: ModAPI) {
     const bytes = result.bytes ?? new TextEncoder().encode(result.output).length;
     if (e.agent_id || next.origin.caller === 'code_mode' || bytes < minBytes) return result;
     const original = api.host.tryCall('tools.original', { call_id: e.call_id });
-    const found = writes(command(e.arguments));
+    const found = writes(command(e.tool, e.arguments));
     const edit = EDIT_TOOL.test(e.tool) || found.changed.length > 0;
     const record: Kept = { tool: e.tool, reference: original.ok ? original.value.reference : null, bytes, failed_edit: !result.success && edit };
     const state = load();
-    save({ ...state, calls: Object.fromEntries([...Object.entries(state.calls).filter(([id]) => id !== e.call_id), [e.call_id, record]].slice(-CALLS)) });
+    const others = Object.entries(state.calls).filter(([id]) => id !== e.call_id);
+    const recent = new Set(others.filter(([id]) => !Object.hasOwn(state.masked, id)).slice(1 - CALLS).map(([id]) => id));
+    save({ ...state, calls: Object.fromEntries([...others.filter(([id]) => recent.has(id) || Object.hasOwn(state.masked, id)), [e.call_id, record]]) });
     return result;
   });
 

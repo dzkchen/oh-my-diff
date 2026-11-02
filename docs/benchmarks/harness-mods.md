@@ -38,7 +38,7 @@ local arm64 images.
 
 | | Stock arm | Mods arm |
 | --- | --- | --- |
-| Codex | Homebrew `0.166.0` | OMD `1.2.0` built on Codex `0.166.0` |
+| Codex | Homebrew `0.166.0` | An OMD development build between `1.2.0` and `1.3.0`, on Codex `0.166.0` |
 | Mods | none | the four mods and the output-budget component |
 | Model | gpt-6.1-sol, medium effort | gpt-6.1-sol, medium effort |
 | Runner | `codex exec`, three runs concurrently | `codex exec`, three runs concurrently |
@@ -129,7 +129,7 @@ breaking the cache. Reasoning tokens fell the most, from 40.6K to 15.7K, a reduc
 ## Attribution to individual mods is unknown
 
 I ran the mods as one set, without ablation, so the result applies to the set as a whole. The traces show which
-mods acted. `omd_verify_stop` and the output-budget component acted often. `omd_observation_mask`, `omd_edit_guard`
+mods acted. `omd_verify_stop` and the output-budget component acted often. `omd_observation_mask` and `omd_edit_guard`
 almost never did: the runs were short, few outputs were large, and edits rarely broke syntax. `omd_plan_anchor` was
 off in this arm.
 The reduction in tool calls is consistent with `omd_env_bootstrap` answering the first questions an agent asks about

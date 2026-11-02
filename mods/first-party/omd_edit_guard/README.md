@@ -17,12 +17,12 @@ that isn't trusted yet stays off.
 
 ## Use it
 
-It checks the files of each successful `apply_patch` (added, updated and moved files) and of mod edit tools
-(`*_edit`, `*_write`, `*_create`, `*_replace`) with `path`, `file_path` or `files[].path`. It also checks the files a
-shell command writes by name (a redirect, `tee`, `sed -i`, `perl -i`, `cp`, `mv`). For a write it can't name (a
-heredoc, `.write(`, `write_text(`, `writeFile`, a quoted or variable path), it lists changed and untracked files in the
-Git repository before and after the command and checks those whose content changed. It lists them too when the command
-changes directory (`cd`, `pushd`) or runs in another `workdir`, since a named path is then relative to that
+It checks the files of each successful `apply_patch` (added, updated and moved files) and of mod edit tools (`*_edit`,
+`*_write`, `*_create`, `*_replace`) with `path`, `file_path` or `files[].path`. It also checks the files a shell
+command writes by name (a redirect, `tee`, `sed -i`, `perl -i`, `cp`, `mv`). For a write it can't name (`.write(`,
+`write_text(`, `writeFile`, a quoted or variable path, `sed -i` with no file), it lists changed and untracked files in
+the Git repository before and after the command and checks those whose content changed. It lists them too when the
+command changes directory (`cd`, `pushd`) or runs in another `workdir`, since a named path is then relative to that
 directory:
 
 | Files | Checker |

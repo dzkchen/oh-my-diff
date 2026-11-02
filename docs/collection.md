@@ -73,7 +73,7 @@ No install profile installs these. Install one with `omd install ID`, then turn 
 | [`omd_edit_guard`](../mods/first-party/omd_edit_guard/README.md) | Syntax-checks each file an edit or shell command changes and tells the model at once when the edit broke it (Python, JSON, JavaScript, shell, Ruby, PHP, Go) | The checker on the sandbox's `PATH` |
 | [`omd_loop_guard`](../mods/first-party/omd_loop_guard/README.md) | Tells the agent when a tool call keeps returning the same error or output, so it changes approach instead of looping | |
 | [`omd_env_bootstrap`](../mods/first-party/omd_env_bootstrap/README.md) | Snapshots the workspace once per thread (OS, files, languages, toolchains, test commands, git) and keeps it in the cached prompt prefix | |
-| [`omd_plan_anchor`](../mods/first-party/omd_plan_anchor/README.md) | Repeats the open plan steps at the end of a tool result every few calls | Works only where Codex already offers `update_plan`; gpt-6.1-sol in Codex 0.166 doesn't |
+| [`omd_plan_anchor`](../mods/first-party/omd_plan_anchor/README.md) | Repeats the open plan steps at the end of a tool result every few calls | `update_plan` turned on: [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) or `[tools.update_plan] enabled = true`, which costs each new thread's first-request prompt cache |
 
 In a [small benchmark](benchmarks/harness-mods.md), `omd_observation_mask`, `omd_verify_stop`, `omd_edit_guard` and
 `omd_env_bootstrap`, with the `omd-output-budget` component, cost an estimated 25% less than stock Codex (95% CI 19%

@@ -53,7 +53,7 @@ export default function activate(api: ModAPI) {
       route = added.value.route;
     }
     api.host.tryCall('terminal.notice', { id: 'omd_btw', text: 'btw: answering...', placement: 'status', ttl_ms: 60_000 });
-    const reply = api.host.tryCall('model.fork', { prompt: question, system: SYSTEM, context: earlier(past), route, timeout_ms: 180_000 });
+    const reply = api.host.tryCall('model.fork', { prompt: question, system: SYSTEM, context: earlier(past), route, timeout_ms: 60_000 });
     api.host.tryCall('terminal.notice', { id: 'omd_btw', placement: 'status', clear: true });
     const text = reply.ok ? reply.value.text.trim() : '';
     let display: string;
