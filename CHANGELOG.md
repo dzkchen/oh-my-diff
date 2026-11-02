@@ -2,6 +2,30 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
+
+Experimental harness mods that cut token use, /btw side questions, and a tool list that matches stock Codex so new threads keep the provider's prompt cache.
+
+### New
+
+- Harness mods: experimental omd_observation_mask, omd_verify_stop, omd_edit_guard, omd_env_bootstrap, omd_loop_guard and omd_plan_anchor; in a pilot benchmark the first four with the output-budget component cut estimated cost by about 25% with no loss in pass rate (see docs/benchmarks/harness-mods.md)
+- Side questions: the opt-in omd_btw adds `/btw`, which answers a quick question on a helper route without interrupting the turn and remembers earlier side questions
+- T3 Code: a guide for using OMD with T3 Code
+
+### Changed
+
+- Plan mode: a mod that turns off a builtin mode no longer removes tools, so the tool list matches stock Codex and a new thread's first request keeps the provider's shared prompt cache (about 12K tokens)
+- OMD+: new installs ship omd_plan_removal and omd_plan_panel turned off, so plan mode works in Codex and T3 Code
+- Output budget: a large code-file read becomes a head excerpt plus a line-numbered outline
+- Launcher: `codex exec`, `codex app-server`, `codex completion`, `login`, `mcp` and other non-interactive commands never install or announce an OMD update; only the actual subcommand counts, so `codex -p exec` stays interactive
+- Directory: the curated directory lists all four bundled plugins
+
+### Fixed
+
+- Installer: download errors name the requested URL and HTTP status, never a signed redirect URL
+- Output budget: its component loads again
+- /btw: the answering notice stays until the answer arrives
+
 ## [1.3.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.3.0) — 2026-10-31
 
 Oh My Diff now builds on Codex 0.166.0, with cross-provider subagents, a free panel workspace, Lazygit and Yazi panes, living themes and faster mods.
