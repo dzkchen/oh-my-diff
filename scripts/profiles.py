@@ -25,12 +25,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-install-v1"
 SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
-DEFAULT_ACTIVE = ("omd_auto_continue", "omd_idle_compact", "omd_inspector", "omd_logo", "omd_model_picker", "omd_mods",
-                  "omd_statusline", "omd_tool_lines", "omd_update")
+DEFAULT_ACTIVE = ("omd_auto_continue", "omd_logo", "omd_mods", "omd_statusline", "omd_tool_lines", "omd_update")
 PACKAGES = tuple(sorted(support.mods_lock()["packages"]))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
-EXPERIMENTAL_PACKAGES = ("omd_awake", "omd_edit_guard", "omd_env_bootstrap", "omd_loop_guard", "omd_monitor", "omd_observation_mask", "omd_plan_anchor",
-                         "omd_verify_stop")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
@@ -56,7 +53,9 @@ def invoke(*arguments):
 
 def profile_packages(profile):
     if profile == "full":
-        return tuple(identifier for identifier in PACKAGES if identifier not in EXPERIMENTAL_PACKAGES)
+        experimental = {entry["id"] for entry in json.loads((ROOT / "extensions/index.json").read_text())["packages"]
+                        if entry["support_status"] == "experimental"}
+        return tuple(identifier for identifier in PACKAGES if identifier not in experimental)
     return PLATFORM_PACKAGES
 
 
@@ -475,6 +474,20 @@ def route_setup(prefix, record, name, identifier, options):
     return json.loads(result.stdout)
 
 
+def add_package(prefix, record, identifier):
+    package = support.mods_lock()["packages"][identifier]
+    manager = record["manager"]["installed_path"]
+    target = Path(record["store"]) / "sources" / identifier
+    shutil.rmtree(target, ignore_errors=True)
+    shutil.copytree(prefix / "sources" / identifier, target)
+    verify(manager, target, package["package_sha256"])
+    invoke(manager, "trust-all", record["store"], json.dumps([{"path": str(target), "sha256": package["package_sha256"],
+                                                              "capabilities": package["capabilities"]}]))
+    record["packages"][identifier] = {"version": package["version"], "sha256": package["package_sha256"],
+                                      "files": package["files"], "capabilities": package["capabilities"]}
+    write(prefix, record)
+
+
 def route(prefix, bin_dir, name, args):
     record = load(prefix)
     check(record, bin_dir)
@@ -482,6 +495,8 @@ def route(prefix, bin_dir, name, args):
     if record["profile"] != "full":
         raise ValueError(f"the {name} route is available only in OMD+")
     if args.setup:
+        if identifier not in record["packages"]:
+            add_package(prefix, record, identifier)
         details = route_setup(prefix, record, name, identifier, {
             "add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "text_only", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
             "remove": args.remove, "allowance": args.allowance})
@@ -691,6 +706,8 @@ def install(args):
                                             "revision": entry["published"]["revision"], "subdirectory": entry["source"]},
                                  "description": entry["capability"], "support": entry["support_status"]}]
                    for identifier, entry in curated.items() if "published" in entry}
+        routed = previous.get("providers", {}) if previous and previous["profile"] == args.profile else {}
+        wanted = set(profile_packages(args.profile)) | {identifier for identifier in ROUTES.values() if identifier in routed}
         for identifier in PACKAGES:
             package = packages[identifier]
             for name in package["files"]:
@@ -702,7 +719,7 @@ def install(args):
                                         "source": {"kind": "local", "path": str(shelf)},
                                         "description": curated[identifier]["capability"],
                                         "support": curated[identifier]["support_status"]}]
-            if identifier not in profile_packages(args.profile):
+            if identifier not in wanted:
                 continue
             installed[identifier] = {"version": package["version"], "sha256": package["package_sha256"],
                                      "files": package["files"], "capabilities": package["capabilities"]}

@@ -1,17 +1,17 @@
 # omd_model_picker
 
-Shows the `/model` and reasoning-effort pickers as compact lists with your current choice marked. It's on by default
-in OMD+. OMD Core doesn't include it.
+Shows the `/model` and reasoning-effort pickers as compact lists with your current choice marked. It's experimental, and no install profile includes it.
 
-## Turn it off
+## Turn it on
 
-Turn it off in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
-omd mods disable omd_model_picker
+omd install omd_model_picker
+omd mods enable omd_model_picker
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 ## Use it
 

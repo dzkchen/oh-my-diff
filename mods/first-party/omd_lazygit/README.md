@@ -1,7 +1,6 @@
 # omd_lazygit
 
-Runs [lazygit](https://github.com/jesseduffield/lazygit), a terminal Git interface, inside the session. It's off by
-default in OMD+. OMD Core doesn't include it.
+Runs [lazygit](https://github.com/jesseduffield/lazygit), a terminal Git interface, inside the session. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
@@ -9,6 +8,7 @@ Install lazygit first, following the [installation guide](https://github.com/jes
 (Homebrew: `brew install lazygit`). Without it `/lazygit` says so. Then turn on `omd_lazygit` in `/mods`, or run:
 
 ```sh
+omd install omd_lazygit
 omd mods enable omd_lazygit
 ```
 

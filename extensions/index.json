@@ -24,7 +24,7 @@
         "Node 24.18.0",
         "Claude CLI 2.1.307 (live login and requests)"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_privacy",
@@ -88,7 +88,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_plan_panel",
@@ -104,7 +104,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_awake",
@@ -136,7 +136,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "experimental"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_observation_mask",
@@ -152,7 +152,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "experimental"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_verify_stop",
@@ -248,7 +248,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_btw",
@@ -264,7 +264,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_tool_lines",
@@ -312,7 +312,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_statusline",
@@ -344,7 +344,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_preview",
@@ -361,7 +361,7 @@
         "mod API 1.0.0",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_lsp_view",
@@ -377,7 +377,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_frecency",
@@ -425,7 +425,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_tool_fix",
@@ -480,7 +480,7 @@
       "version": "0.1.0+codex.20260927032203",
       "extension_type": "plugin",
       "capability": "Source-anchored URL, issue, PDF, and notebook reading; optional plugin-owned GitHub virtual reader through the ordinary read interface",
-      "source": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
+      "source": "plugins/experimental/oh-my-diff-experimental/plugins/omd-artifact-reading",
       "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Bundled Codex plugin marketplace at Codex 0.166.0 and OMD 1.4.0; mod API 1.0.0; virtual_reads_v1, service_requests_v1, plugin_dispatch_v1; PDF rendering requires an installed Ghostscript; the optional mod component needs explicit trust and grants",
@@ -491,7 +491,7 @@
         "plugin 0.1.0+codex.20260927032203",
         "Ghostscript 10.07.0 (PDF fixture)"
       ],
-      "support_status": "reviewed_candidate",
+      "support_status": "experimental",
       "components": [
         {
           "extension_type": "skill",
@@ -504,7 +504,7 @@
       "version": "1.0.0",
       "extension_type": "plugin",
       "capability": "Keeps large shell and tool results out of the context: bounded excerpts that keep exit status and failure lines, full outputs kept by content hash, paged reads, ranked search and documentation fetch",
-      "source": "plugins/bundled/oh-my-diff/plugins/omd-output-budget",
+      "source": "plugins/experimental/oh-my-diff-experimental/plugins/omd-output-budget",
       "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Bundled Codex plugin marketplace at Codex 0.166.0 and OMD 1.4.0; mod API 1.0.0; tool_original_v1, continuation_middleware_v1, store_thread_v1; the optional mod component needs explicit trust and grants",
@@ -537,7 +537,7 @@
         "mod API 1.0.0",
         "plugin 0.2.0-preview.1"
       ],
-      "support_status": "experimental",
+      "support_status": "reviewed_candidate",
       "components": [
         {
           "extension_type": "skill",
@@ -550,7 +550,7 @@
       "version": "0.2.0",
       "extension_type": "plugin",
       "capability": "Guides the model to run JavaScript cells with session storage, and persistent Python and Bun cells, in Codex code mode through Codex's own tool router",
-      "source": "plugins/bundled/oh-my-diff/plugins/omd-code-execution",
+      "source": "plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution",
       "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Bundled Codex plugin marketplace at Codex 0.166.0 and OMD 1.4.0; code mode on; Python and Bun cells need kernel entries in the Codex config",
@@ -559,7 +559,7 @@
         "OMD 1.4.0 (offline checks)",
         "plugin 0.2.0"
       ],
-      "support_status": "reviewed_candidate",
+      "support_status": "experimental",
       "components": [
         {
           "extension_type": "skill",
@@ -578,7 +578,7 @@
         "mod API 1.0.0",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
+      "support_status": "experimental",
       "extension_type": "mod",
       "capability": "Opt-in account and provider profiles: switch a thread between ChatGPT accounts, API keys and OpenAI- or Anthropic-compatible providers at its next turn, with a usage meter, Alt+s cycling and in-session add and remove",
       "source": "mods/first-party/omd_profiles",
@@ -598,7 +598,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_advisor",
@@ -614,7 +614,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_inspector",
@@ -630,7 +630,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_workflow",
@@ -646,7 +646,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_source_knowledge",
@@ -662,7 +662,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_programmable_context",
@@ -678,7 +678,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_mini",
@@ -694,7 +694,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_cursor",
@@ -712,7 +712,7 @@
         "Node 24.18.0",
         "@cursor/sdk 1.0.35 (fake SDK fixture)"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "burn_meter",
@@ -749,7 +749,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_git",
@@ -765,7 +765,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_files",
@@ -781,7 +781,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_theme",
@@ -813,7 +813,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_yazi",
@@ -829,7 +829,7 @@
         "OMD 1.4.0 (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "token_weather",

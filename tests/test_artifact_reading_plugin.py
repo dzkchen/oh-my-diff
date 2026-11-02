@@ -10,7 +10,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading"
+PLUGIN = ROOT / "plugins/experimental/oh-my-diff-experimental/plugins/omd-artifact-reading"
 READER = PLUGIN / "scripts/read_artifact.py"
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZQAAAABJRU5ErkJggg==")
 

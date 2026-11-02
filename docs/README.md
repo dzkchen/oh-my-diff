@@ -12,7 +12,7 @@ the [README](../README.md). These docs describe the `main` branch, which can be 
 | Find, install, turn on or remove a mod | [Manage mods](manage-mods.md) |
 | Use Claude, Cursor or an API key | [Use other providers](use-other-providers.md) |
 | Use OMD's mods in T3 Code | [Use OMD with T3 Code](use-with-t3-code.md) |
-| Add the four Codex plugins that come with OMD+ | [Plugins](../plugins/README.md) |
+| Add the Codex plugin that comes with OMD+, or an experimental one | [Plugins](../plugins/README.md) |
 | Fix an install error or a mod that breaks `codex` | [Troubleshooting](troubleshooting.md) |
 | Look up a shell command | [Commands](commands.md) |
 | Check platforms, versions and the support policy | [Support](support.md) |

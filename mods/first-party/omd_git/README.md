@@ -1,7 +1,7 @@
 # omd_git
 
 Adds a Git panel to the workspace dock, modeled on lazygit, where you stage files and hunks, manage branches, commits
-and the stash, and push and pull. It's off by default in OMD+. OMD Core doesn't include it.
+and the stash, and push and pull. It's experimental, and no install profile includes it.
 
 The Git tab has numbered boxes for Status, Files, Branches, Commits and Stash, with the focused one expanded. A main
 view shows the selected diff, and lazygit's options bar runs along the bottom. You can add a selection to the prompt.
@@ -41,7 +41,9 @@ workspace's Changes tab unless the workspace's `panels` setting lists `changes`.
 run:
 
 ```sh
+omd install omd_workspace
 omd mods enable omd_workspace
+omd install omd_git
 omd mods enable omd_git
 ```
 

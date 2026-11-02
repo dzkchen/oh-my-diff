@@ -1,15 +1,26 @@
 # Plugins
 
-OMD+ comes with four Codex plugins that let Codex read cited sources, run code cells, edit by line anchor and keep
-large output out of the context. OMD+ puts them on disk but doesn't install them, so you pick which to add. This
-page shows how to add, use and remove them and how to turn on a plugin's mod component. OMD Core includes none.
+OMD+ comes with one Codex plugin, `omd-anchored-edit`, which edits files by line anchor. OMD+ puts it on disk but
+doesn't install it, so you add it yourself. This page shows how to add, use and remove a plugin and how to turn on a
+plugin's mod component. OMD Core includes none.
 
 | Plugin | What it does |
 | --- | --- |
-| [`omd-artifact-reading`](bundled/oh-my-diff/plugins/omd-artifact-reading/README.md) | Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites the source |
-| [`omd-code-execution`](bundled/oh-my-diff/plugins/omd-code-execution/README.md) | Guides the model to run JavaScript cells with session storage, and persistent Python and Bun cells, in Codex code mode |
 | [`omd-anchored-edit`](bundled/oh-my-diff/plugins/omd-anchored-edit/README.md) | Edits files by `LINE#HASH` line anchors |
-| [`omd-output-budget`](bundled/oh-my-diff/plugins/omd-output-budget/README.md) | Keeps large shell and tool results out of the context, with paged reads, search and doc fetch |
+
+## Experimental plugins
+
+These haven't been tested fully yet, so no install profile stages them. They're in
+[`plugins/experimental`](experimental) of the OMD repository. To add one, register that folder from a checkout as a
+marketplace with `codex plugin marketplace add PATH/plugins/experimental/oh-my-diff-experimental`, then
+`codex plugin add PLUGIN@oh-my-diff-experimental`. In the component and removal commands on this page, use
+`oh-my-diff-experimental` in place of the marketplace name `oh-my-diff`.
+
+| Plugin | What it does |
+| --- | --- |
+| [`omd-artifact-reading`](experimental/oh-my-diff-experimental/plugins/omd-artifact-reading/README.md) | Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites the source |
+| [`omd-code-execution`](experimental/oh-my-diff-experimental/plugins/omd-code-execution/README.md) | Guides the model to run JavaScript cells with session storage, and persistent Python and Bun cells, in Codex code mode |
+| [`omd-output-budget`](experimental/oh-my-diff-experimental/plugins/omd-output-budget/README.md) | Keeps large shell and tool results out of the context, with paged reads, search and doc fetch |
 
 ## Add a plugin
 
@@ -20,20 +31,17 @@ page shows how to add, use and remove them and how to turn on a plugin's mod com
    omd-package plugins
    ```
 
-2. Add the plugins you want:
+2. Add the plugin:
 
    ```sh
-   codex plugin add omd-artifact-reading@oh-my-diff
-   codex plugin add omd-code-execution@oh-my-diff
    codex plugin add omd-anchored-edit@oh-my-diff
-   codex plugin add omd-output-budget@oh-my-diff
    ```
 
 3. If the plugin has a mod component, [turn on the component](#turn-on-a-component).
 
 ## Turn on a component
 
-`omd-artifact-reading`, `omd-anchored-edit` and `omd-output-budget` contain a `mod/` folder. That folder is a mod
+`omd-anchored-edit`, `omd-artifact-reading` and `omd-output-budget` contain a `mod/` folder. That folder is a mod
 component: an ordinary mod that the plugin contains. Adding the plugin doesn't run it. You inspect it, trust it with
 the capabilities it asks for, and turn it on in your mod store, like any other mod you trust. Each plugin's README
 lists its component's capabilities.
@@ -71,7 +79,7 @@ $omd-artifact-reading:omd-artifact-reading
 ```
 
 Some plugins need more setup. Code execution needs code mode turned on, and its Python and Bun cells need kernel
-entries in your Codex config. See [`omd-code-execution`](bundled/oh-my-diff/plugins/omd-code-execution/README.md).
+entries in your Codex config. See [`omd-code-execution`](experimental/oh-my-diff-experimental/plugins/omd-code-execution/README.md).
 
 ## Remove a plugin
 

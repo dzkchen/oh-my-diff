@@ -6,7 +6,7 @@ Core doesn't include it.
 
 Distinct reads are left to Codex, which runs them in parallel. In Codex code mode, where the model runs tool calls from
 code cells (see the
-[`omd-code-execution` plugin](../../../plugins/bundled/oh-my-diff/plugins/omd-code-execution/README.md)), a file read
+[`omd-code-execution` plugin](../../../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/README.md)), a file read
 that already ran is reused while the file is unchanged.
 
 ## Turn it on

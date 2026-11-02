@@ -1,7 +1,7 @@
 # omd-output-budget
 
-Keeps large shell and tool results out of the model's context. OMD+ puts it on disk but doesn't install it, so you add
-it yourself. OMD Core doesn't include it.
+Keeps large shell and tool results out of the model's context. It's experimental: no install profile stages it. [Experimental plugins](../../../../README.md#experimental-plugins)
+has the steps to add it.
 
 A result over its budget reaches the model as a bounded excerpt with:
 

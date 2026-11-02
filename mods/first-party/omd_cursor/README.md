@@ -1,14 +1,15 @@
 # omd_cursor
 
 Lets a session use Cursor models through your Cursor account and the official
-[Cursor TypeScript SDK](https://cursor.com/docs/sdk/typescript). It's off by default in OMD+, and it isn't yet
-verified on a live Cursor account. OMD Core doesn't include it.
+[Cursor TypeScript SDK](https://cursor.com/docs/sdk/typescript). It's experimental, and no install profile includes it. It isn't yet
+verified on a live Cursor account.
 
 ## Turn it on
 
-Turn it on in `/mods` and approve its trust dialog, or run:
+Install it from the Available group in `/mods`, turn it on and approve its trust dialog, or run:
 
 ```sh
+omd install omd_cursor
 omd mods enable omd_cursor
 ```
 

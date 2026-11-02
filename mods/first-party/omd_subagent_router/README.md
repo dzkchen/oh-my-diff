@@ -2,17 +2,18 @@
 
 Runs subagents, the helper agents the main agent (the lead) starts for part of a task, on the model you name. That can
 be another provider's model, such as Claude subagents under a GPT lead. It also adds a `delegate_task` tool that runs
-background workers. It's off by default in OMD+. OMD Core doesn't include it.
+background workers. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_subagent_router
 omd mods enable omd_subagent_router
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 Turning it on asks for the `autonomous` grant. The mod uses it to queue a wake prompt, a turn that tells the lead a
 background task finished (at most 4 queued and 20 turns). While it's on, an idle lead also wakes about 0.5 s after a

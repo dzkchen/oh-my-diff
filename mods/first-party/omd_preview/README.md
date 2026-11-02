@@ -1,17 +1,18 @@
 # omd_preview
 
 Opens a response or a local Markdown, code or diff file as a themed page in your browser, and draws Mermaid diagrams
-in the terminal with text characters. It's off by default in OMD+. OMD Core doesn't include it.
+in the terminal with text characters. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_preview
 omd mods enable omd_preview
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 ## Use it
 

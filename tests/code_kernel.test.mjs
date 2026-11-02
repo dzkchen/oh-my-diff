@@ -26,7 +26,7 @@ for (const language of ['python', 'javascript']) {
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const python = language === 'python';
-    const script = new URL(`../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
+    const script = new URL(`../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
     const child = spawn(python ? 'python3' : process.env.OMD_TEST_BUN ?? process.execPath, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
     const exited = once(child, 'exit');
     const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
@@ -93,7 +93,7 @@ test('tool bridge preserves UTF-8 split across TCP chunks', async () => {
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
   try {
     const lines = readline.createInterface({ input: child.stdout });
     child.stdin.write(JSON.stringify({ port: server.address().port, token: 'fixture', code: 'console.log(await tool("read", {}))' }) + '\n');
@@ -113,7 +113,7 @@ test('tool bridge preserves UTF-8 split across TCP chunks', async () => {
 for (const language of ['python', 'javascript']) {
   test(`${language} kernel keeps output written outside a cell off the result line and caps floods`, { timeout: 30_000 }, async t => {
     const python = language === 'python';
-    const script = new URL(`../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
+    const script = new URL(`../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
     const child = spawn(python ? 'python3' : process.env.OMD_TEST_BUN ?? process.execPath, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
     const exited = once(child, 'exit');
     const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
@@ -149,7 +149,7 @@ for (const language of ['python', 'javascript']) {
 }
 
 test('javascript kernel survives a background child writing while the result frame is sent', { timeout: 30_000 }, async t => {
-  const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = once(child, 'exit');
   const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   t.after(async () => {
@@ -177,7 +177,7 @@ test('javascript kernel survives a background child writing while the result fra
 });
 
 test('javascript kernel waits out a full stdout pipe instead of dropping output or exiting', { timeout: 30_000 }, async t => {
-  const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = once(child, 'exit');
   const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   t.after(async () => {
@@ -197,7 +197,7 @@ test('javascript kernel waits out a full stdout pipe instead of dropping output 
 for (const language of ['python', 'javascript']) {
   test(`${language} kernel survives stray errors and exit requests`, { timeout: 30_000 }, async t => {
     const python = language === 'python';
-    const script = new URL(`../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
+    const script = new URL(`../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
     const child = spawn(python ? 'python3' : process.env.OMD_TEST_BUN ?? process.execPath, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
     const exited = once(child, 'exit');
     const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();

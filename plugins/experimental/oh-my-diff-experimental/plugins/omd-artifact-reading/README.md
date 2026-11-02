@@ -1,7 +1,7 @@
 # omd-artifact-reading
 
-Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites where each answer came from. OMD+
-puts it on disk but doesn't install it, so you add it yourself. OMD Core doesn't include it.
+Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites where each answer came from. It's experimental: no install profile stages it. [Experimental plugins](../../../../README.md#experimental-plugins)
+has the steps to add it.
 
 Everything except PDFs works once you add the plugin. PDF reading also needs Ghostscript (`gs`). An optional mod
 component, `omd_github_read`, adds `github://` reads.

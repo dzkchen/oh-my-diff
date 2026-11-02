@@ -26,7 +26,7 @@ each as one mod.
 | [`omd_verify_stop`](../../mods/first-party/omd_verify_stop/README.md) | When a turn ends after code edits without a passing check, continues it once with a checklist, and once more with the output of a failed check. | Agentless gained 5 points from reproduction tests ([arXiv 2407.01489](https://arxiv.org/abs/2407.01489)) |
 | [`omd_edit_guard`](../../mods/first-party/omd_edit_guard/README.md) | Checks the syntax of each edited file and appends only the errors that the edit introduced. | SWE-agent's edit-time linter added 3 points ([arXiv 2405.15793](https://arxiv.org/abs/2405.15793)) |
 | [`omd_env_bootstrap`](../../mods/first-party/omd_env_bootstrap/README.md) | Takes one snapshot of the workspace per thread, of at most 1.5 KB, and keeps it in the cached prompt prefix. | An environment snapshot added 1.7 to 4 points on Terminal-Bench 2 ([arXiv 2603.28052](https://arxiv.org/abs/2603.28052)) |
-| [`omd-output-budget`](../../plugins/bundled/oh-my-diff/plugins/omd-output-budget/README.md) component | Replaces a large tool result with an excerpt: the head, the tail, error lines and, for a code file, an outline with line numbers. | |
+| [`omd-output-budget`](../../plugins/experimental/oh-my-diff-experimental/plugins/omd-output-budget/README.md) component | Replaces a large tool result with an excerpt: the head, the tail, error lines and, for a code file, an outline with line numbers. | |
 
 ## Setup
 

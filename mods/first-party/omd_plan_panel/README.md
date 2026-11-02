@@ -1,17 +1,17 @@
 # omd_plan_panel
 
-Pins the current plan above the prompt, so you can see progress at a glance. It's off by default in OMD+. OMD Core
-doesn't include it.
+Pins the current plan above the prompt, so you can see progress at a glance. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_plan_panel
 omd mods enable omd_plan_panel
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 ## Use it
 
