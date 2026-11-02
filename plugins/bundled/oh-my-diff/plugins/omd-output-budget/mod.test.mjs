@@ -126,6 +126,19 @@ test('a large build log becomes a bounded excerpt keeping exit status, ends and 
   assert.equal(intercept(host(), exec('cargo build', { max_output_tokens: 500 }), result).sent.arguments.max_output_tokens, 500);
 });
 
+test('a large source file read becomes its first lines plus an outline of later definitions with file line numbers', () => {
+  const source = Array.from({ length: 400 }, (_, index) => index % 40 === 0 ? `class Model${index}:` : index % 40 === 20 ? `    def method_${index}(self, value):` : `        value = value + ${index}  # padding padding padding padding`).join('\n');
+  const text = intercept(host(), exec("sed -n '101,500p' pkg/models.py"), { output: shell(source, 0), success: true }).value.output;
+  assert.ok(size(text) <= BUDGET.result_bytes, String(size(text)));
+  assert.match(text, /^Chunk ID: a1\n[\s\S]*Output:\nclass Model0:\n/);
+  assert.match(text, /^461: class Model360:$/m);
+  assert.match(text, /^481:     def method_380\(self, value\):$/m);
+  assert.doesNotMatch(text, /padding padding[^\n]*\n\d+: /, 'the outline lists only definitions');
+  assert.match(text, /of pkg\/models\.py; showed an outline of its definitions and lines 101-\d+; full output out_[0-9a-f]{12}\. Read ranges by line/);
+  const prose = intercept(host(), exec('cat notes.md'), { output: shell(source, 0), success: true }).value.output;
+  assert.match(prose, /lines \d+-\d+ omitted/, 'non-code reads keep the head and tail excerpt');
+});
+
 test('the full output stays retrievable by line across evidence pages and searchable', () => {
   const world = host();
   world.pageBytes = 4096;

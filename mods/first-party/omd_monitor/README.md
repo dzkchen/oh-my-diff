@@ -2,7 +2,7 @@
 
 Lets the agent wait on a background command, a file change, or a GitHub run or deployment without checking again and
 again. It sets up one monitor, keeps working, and gets one message when the thing finishes, fails or times out. It's
-experimental, and neither OMD+ nor OMD Core installs it.
+experimental, and no install profile includes it.
 
 ## Turn it on
 

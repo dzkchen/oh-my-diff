@@ -44,6 +44,7 @@ the API version matches. Each list holds at most 32 features.
 | Timers of 16-999 ms | `timers_16ms_v1` |
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
 | `routes.write` | `route_write_v1` |
+| `routes.add` without `mod` | `routes_add_self_v1` |
 | `api.settingsFile` | `settings_file_v1` |
 | `key_contexts`, `region` and `help` key actions, `keys: 'all'`, layout leaf `style.focus` | `terminal_focus_v1` |
 | Layout leaf `title` | `terminal_layout_title_v1` |

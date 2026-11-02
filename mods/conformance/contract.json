@@ -1601,7 +1601,7 @@
       "group": "coordination",
       "decision": "Package controls",
       "observe": "`packages.list` (every store selection with the session's effective, pending, failed and quarantined state), `packages.index` (curated index search) and `packages.preview`",
-      "alter": "`packages.apply` installs, updates, removes, rolls back, enables, disables or re-trusts an edited selection after a native confirmation; `packages.reload` revalidates every selection; `settings.write` saves schema-checked settings for the caller, or with `packages` for another mod, and redraws at once",
+      "alter": "`packages.apply` installs, updates, removes, rolls back, enables, disables or re-trusts an edited selection after a native confirmation; `packages.reload` revalidates every selection; `settings.write` saves schema-checked settings for the caller, or with `packages` for another mod, and redraws at once; `routes.add` adds a confirmed ChatGPT-plan worker route for the caller with `agents`, or with `packages` for another mod",
       "replace": null,
       "timing": "user contexts; changes apply at the next boundary",
       "ownership": "mod: request; host: previewed plan, confirmation, trust and lock",

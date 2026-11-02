@@ -10,7 +10,29 @@ pub struct ModHostCall {
 }
 
 impl ModHostCall {
+    fn package_target(&self) -> Option<&'static str> {
+        match self.operation.as_str() {
+            "routes.add" => Some("mod"),
+            "settings.write" => Some("id"),
+            _ => None,
+        }
+    }
+
+    pub fn alternative_capabilities(&self) -> &'static [&'static str] {
+        if self.package_target().is_some() {
+            &["packages"]
+        } else {
+            &[]
+        }
+    }
+
     pub fn capability(&self) -> Result<&'static str> {
+        if self
+            .package_target()
+            .is_some_and(|field| self.arguments[field].is_string())
+        {
+            return Ok("packages");
+        }
         let operation = self.operation.as_str();
         match operation {
             "exec.run" | "exec.output_page" => Ok("exec"),
@@ -83,8 +105,8 @@ impl ModHostCall {
             "config.describe" => Ok("config"),
             "config.set" => Ok("config.write"),
             "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
-            | "packages.reload" | "routes.add" | "routes.write" => Ok("packages"),
-            "settings.write" if self.arguments["id"].is_string() => Ok("packages"),
+            | "packages.reload" | "routes.write" => Ok("packages"),
+            "routes.add" => Ok("agents"),
             "settings.write" => Ok("commands"),
             "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
             "mcp.connect" | "mcp.disconnect" => Ok("mcp"),

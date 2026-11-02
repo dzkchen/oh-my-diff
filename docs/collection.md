@@ -20,8 +20,6 @@ The status words on this page:
 | [`omd_inspector`](../mods/first-party/omd_inspector/README.md) | OMD+ | `/inspect`: the session's mode, profile and active mods |
 | [`omd_model_picker`](../mods/first-party/omd_model_picker/README.md) | OMD+ | A compact `/model` and reasoning-effort picker |
 | [`omd_tool_lines`](../mods/first-party/omd_tool_lines/README.md) | OMD+ | One short line per tool call; open it for the full output |
-| [`omd_plan_removal`](../mods/first-party/omd_plan_removal/README.md) | OMD+ | Removes `/plan` and plan mode |
-| [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) | OMD+ | Pins Codex's current plan above the prompt |
 | [`omd_statusline`](../mods/first-party/omd_statusline/README.md) | OMD+ | A configurable status line; `/statusline` edits it |
 | [`omd_idle_compact`](../mods/first-party/omd_idle_compact/README.md) | OMD+ | Replaces a large idle conversation with a shorter summary just before the provider's prompt cache expires |
 | [`omd_auto_continue`](../mods/first-party/omd_auto_continue/README.md) | OMD+ | When an approval or a question gets no answer within the wait you set (two minutes by default), declines the approval or answers the question so the turn continues |
@@ -37,6 +35,8 @@ All of these come with OMD+ only. [Support](support.md#versions) lists the Node 
 | [`omd_privacy`](../mods/first-party/omd_privacy/README.md) | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
 | [`omd_usage`](../mods/first-party/omd_usage/README.md) | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
 | [`omd_continue`](../mods/first-party/omd_continue/README.md) | `/continue [note]` resumes interrupted work in the current session | |
+| [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) | Pins Codex's current plan above the prompt | |
+| [`omd_btw`](../mods/first-party/omd_btw/README.md) | Replaces `/btw`: side questions answered from the conversation without entering it, remembered across questions and resumes | |
 | [`omd_lsp_sync`](../mods/first-party/omd_lsp_sync/README.md) | Tells the agent about the errors each of its edits introduces; also go to definition, references and rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | [`omd_lsp_view`](../mods/first-party/omd_lsp_view/README.md) | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
 | [`omd_claude_cli`](../mods/first-party/omd_claude_cli/README.md) | Claude models in `/model`, using your Claude plan or API credits | Claude CLI 2.1.307 or later and Node; see [use other providers](use-other-providers.md#use-claude) |
@@ -55,6 +55,7 @@ All of these come with OMD+ only. [Support](support.md#versions) lists the Node 
 | [`omd_yazi`](../mods/first-party/omd_yazi/README.md) | Runs the yazi file manager in the session; the files you pick become `@path` mentions; `/yazi` | `yazi` on your `PATH`, allowed to run outside the sandbox; uses the experimental terminal pane API |
 | [`omd_git`](../mods/first-party/omd_git/README.md) | A lazygit-style Git panel in the workspace dock: stage files and hunks, branches, commits, stash, push and pull; `/git` | `omd_workspace` turned on and `git` on your `PATH` |
 | [`omd_files`](../mods/first-party/omd_files/README.md) | A yazi-style file manager in the workspace dock: Miller columns, tabs, find, frecency jump, previews and file operations; `/files` | `omd_workspace` turned on; `omd_frecency` for the jump list |
+| [`omd_plan_removal`](../mods/first-party/omd_plan_removal/README.md) | Removes `/plan` and plan mode, also for apps that connect to Codex such as T3 Code | |
 | [`omd_theme`](../mods/first-party/omd_theme/README.md) | Living scenes drawn in character tiles behind the whole screen, prompt box and menus; `/theme` picks a scene and prints terminal background steps | |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
@@ -67,6 +68,17 @@ No install profile installs these. Install one with `omd install ID`, then turn 
 | --- | --- | --- |
 | [`omd_awake`](../mods/first-party/omd_awake/README.md) | `/awake` replaces Codex's Prevent sleep while running: keeps the Mac awake while turns or subagents run, also with the lid closed, and lets it sleep once they finish | macOS; lid-closed needs the authority broker (`omd-package broker install`) |
 | [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in, and `/monitor allow owner/repo` |
+| [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs from model requests in cache-friendly batches; the model reads one back with a recall tool; `/mask` | Can't be on with `omd_programmable_context` |
+| [`omd_verify_stop`](../mods/first-party/omd_verify_stop/README.md) | When the agent stops after editing code without a passing test or check, asks it once to verify, and once more to fix a failed check | The autonomous grant |
+| [`omd_edit_guard`](../mods/first-party/omd_edit_guard/README.md) | Syntax-checks each file an edit or shell command changes and tells the model at once when the edit broke it (Python, JSON, JavaScript, shell, Ruby, PHP, Go) | The checker on the sandbox's `PATH` |
+| [`omd_loop_guard`](../mods/first-party/omd_loop_guard/README.md) | Tells the agent when a tool call keeps returning the same error or output, so it changes approach instead of looping | |
+| [`omd_env_bootstrap`](../mods/first-party/omd_env_bootstrap/README.md) | Snapshots the workspace once per thread (OS, files, languages, toolchains, test commands, git) and keeps it in the cached prompt prefix | |
+| [`omd_plan_anchor`](../mods/first-party/omd_plan_anchor/README.md) | Repeats the open plan steps at the end of a tool result every few calls | Works only where Codex already offers `update_plan`; gpt-6.1-sol in Codex 0.166 doesn't |
+
+In a [small benchmark](benchmarks/harness-mods.md), `omd_observation_mask`, `omd_verify_stop`, `omd_edit_guard` and
+`omd_env_bootstrap`, with the `omd-output-budget` component, cost an estimated 25% less than stock Codex (95% CI 19%
+to 31%) with no measurable change in pass rate. It was one model on 43 tasks, a pilot rather than a release
+measurement. The other mods in this table weren't measured.
 
 ## Ports
 

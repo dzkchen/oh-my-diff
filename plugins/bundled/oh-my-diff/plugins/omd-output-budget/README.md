@@ -10,6 +10,12 @@ A result over its budget reaches the model as a bounded excerpt with:
 - for a failed call, the error and warning lines from the middle
 - markers for what was left out
 
+A large source file read (`cat`, `head`, `nl` or `sed -n 'A,Bp'` of one Python, JavaScript/TypeScript, Go, Rust, Java
+or Ruby file, or a read tool given its `path`) instead keeps its first lines and lists the file's later classes,
+functions and methods with their line numbers, so the model reads the range it needs. Definitions are found by a
+pattern per file extension, so the outline is approximate. A failed read, a read Codex had already cut, or a command
+reading more than one file gets the usual excerpt.
+
 The complete output is kept by content hash, and the model can page it or search it instead of rerunning the command.
 
 The plugin adds guidance for the model. The budget and tools come from its mod component, `omd_output_budget`.

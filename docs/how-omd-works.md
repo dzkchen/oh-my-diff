@@ -10,9 +10,8 @@ The installer puts a `codex` launcher in `~/.local/bin` that starts the OMD buil
 Your settings, sign-in, sessions and history in `~/.codex` are the ones Codex uses, so you can go back to plain Codex
 with nothing to migrate.
 
-What changes is that `codex` loads mods. For example, `omd_plan_panel` pins Codex's current plan above the prompt, and
-`omd_tool_lines` shows each tool call as one short line that you open for the full output. Both are on by default in
-OMD+.
+What changes is that `codex` loads mods. For example, `omd_tool_lines` shows each tool call as one short line that
+you open for the full output, and `omd_statusline` adds a status line you can edit. Both are on by default in OMD+.
 
 If a mod breaks `codex`, run `omd-package activate direct`. `omd-package` manages your install profile, and `direct`
 is a recovery state in which the build behaves as plain Codex with no mods.

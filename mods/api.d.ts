@@ -397,7 +397,8 @@ export interface HostOperations {
   'sessions.read': { arguments: { session_id: string; revision: string; handle: string; cursor?: number; max_bytes?: number }; result: { session: SessionSummary; records: SessionRecord[]; cursor: number | null; bytes: number; projection: string; projection_truncated: boolean } };
   'sessions.snapshot': { arguments: { call_ids?: string[] }; result: { evidence: ResourceRef; provenance: { sha256: string; bytes: number; items: number; revision: number } } };
   'routes.list': { arguments: null; result: RouteInfo[] };
-  'routes.add': { arguments: { mod: string }; result: { route: string } | Declined };
+  /** Without `mod` (routes_add_self_v1): a plan route for the caller, needing only `agents`. */
+  'routes.add': { arguments: { mod?: string }; result: { route: string } | Declined };
   /** Requires route_write_v1: replaces the caller's lead routes and service grants in `host.json` after the user confirms. */
   'routes.write': { arguments: { routes: HostRoute[]; services?: ServiceGrantUpdate[] }; result: { routes: string[]; services: string[]; unchanged?: true } | Declined };
   'task.status': { arguments: null; result: { ledger: Ledger; limits: Json; worker_limits: Json } };

@@ -416,6 +416,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_colors_v1",
     "terminal_pty_v2",
     "terminal_welcome_hidden_v1",
+    "routes_add_self_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -1399,11 +1400,12 @@ fn source_use(
                 .cloned()
                 .collect()
         } else {
-            let required = ModHostCall {
+            let call = ModHostCall {
                 operation: operation.clone(),
                 arguments: Value::Null,
-            }
-            .capabilities()?;
+            };
+            let mut required = call.capabilities()?;
+            required.extend(call.alternative_capabilities());
             if operation == "model.fork"
                 && required.iter().any(|capability| {
                     !package

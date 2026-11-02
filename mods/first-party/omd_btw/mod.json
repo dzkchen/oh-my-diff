@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "omd_btw",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "/btw answers a side question from the whole conversation without adding it to the conversation, and remembers earlier side questions",
+  "license": "MIT",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party/omd_btw"
+  },
+  "capabilities": [
+    "terminal",
+    "commands",
+    "builtins",
+    "agents",
+    "sessions",
+    "sessions_tools",
+    "store"
+  ],
+  "compatibility": {
+    "required_features": [
+      "builtins_v1",
+      "model_complete_v2",
+      "routes_add_self_v1",
+      "state_scopes_v1",
+      "store_thread_v1",
+      "store_v1",
+      "ui_controls_v1"
+    ]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "route": {
+        "title": "Side question model",
+        "description": "The model route /btw answers on; Add a helper model uses the model you chat with on your ChatGPT plan",
+        "choices": "routes",
+        "type": "string",
+        "default": ""
+      }
+    },
+    "additionalProperties": false
+  }
+}

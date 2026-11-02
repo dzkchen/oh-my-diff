@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "omd_loop_guard",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Tells the model when it repeats a tool call that keeps returning the same error or output, so it changes approach instead of looping",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_loop_guard"},
+  "capabilities": ["interception", "store"],
+  "compatibility": {"required_features": ["continuation_middleware_v1", "state_scopes_v1", "store_thread_v1", "store_v1"]},
+  "settings_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+}

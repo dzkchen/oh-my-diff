@@ -1353,6 +1353,7 @@ def main():
     parser.add_argument("--root", type=Path, default=Path.home() / ".local/share/oh-my-diff")
     parser.add_argument("--bin-dir", type=Path)
     parser.add_argument("--session", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--unattended", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.action and args.command != "update":
         parser.error("only update takes an action")
@@ -1380,7 +1381,7 @@ def main():
         if args.command == "uninstall" and finished:
             print(json.dumps(finished, indent=2))
         elif args.command == "launch":
-            if current:
+            if current and not args.unattended:
                 launch(args, root, current)
         elif args.command == "update" and args.action != "rollback":
             result = manual(args, root, current)

@@ -1743,6 +1743,19 @@ fn writable_pty_panes_also_need_workspace_write_authority() {
 }
 
 #[test]
+fn a_plan_route_for_another_mod_needs_packages_and_for_the_caller_only_agents() {
+    let call = |arguments: Value| codex_omd::ModHostCall {
+        operation: "routes.add".into(),
+        arguments,
+    };
+    assert_eq!(
+        call(json!({"mod": "other"})).capabilities().unwrap(),
+        ["packages"]
+    );
+    assert_eq!(call(json!({})).capabilities().unwrap(), ["agents"]);
+}
+
+#[test]
 fn contract_select_writes_the_user_selection_and_needs_the_plan_confirmation_to_lower_assurance() {
     let document = |id: &str, producer: &str| {
         ContractDocument::parse(&json!({"schema":2,"id":id,"version":1,"description":"d",

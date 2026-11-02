@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" width="760" height="300" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Context in the first model request</title><desc id="d">Stock Codex tools: 24 ± 0 count; With the mods tools: 24 ± 0 count; Stock Codex tool schemas: 38,991 ± 0 chars; With the mods tool schemas: 38,991 ± 0 chars; Stock Codex instructions: 33,760 ± 1,366 chars; With the mods instructions: 32,248 ± 1,765 chars; Stock Codex first-call context: 15,832 ± 456 tokens; With the mods first-call context: 15,755 ± 523 tokens</desc>
+<style>
+.bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.sub{fill:#52514e}.mut{fill:#898781}.axis{stroke:#c3c2b7}.err{stroke:#52514e;fill:none}
+.s1{fill:#2a78d6}.neg{fill:#a8a79f}
+@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.ink{fill:#f0efec}.sub{fill:#c3c2b7}.mut{fill:#898781}.axis{stroke:#383835}.err{stroke:#c3c2b7}
+.s1{fill:#3987e5}.neg{fill:#77766f}}
+</style>
+<rect class="bg" width="760" height="300" rx="8"/>
+<text class="ink" x="24.0" y="34.0" font-size="15" text-anchor="start" font-weight="600">Context in the first model request, all 86 runs per arm</text>
+<text class="sub" x="24.0" y="54.0" font-size="12" text-anchor="start">Mean ± standard deviation. Tools and instructions from the Codex session log; context is provider-reported input tokens</text>
+<text class="ink" x="113.0" y="88.0" font-size="13" text-anchor="middle" font-weight="600">Tools</text>
+<text class="mut" x="113.0" y="104.0" font-size="11" text-anchor="middle">(count)</text>
+<line class="axis" x1="38.0" y1="270" x2="188.0" y2="270"/>
+<rect class="neg" x="63.0" y="140.4" width="44" height="129.6" rx="2"><title>Stock Codex, Tools: 24 ± 0 count</title></rect>
+<text class="ink" x="85.0" y="134.4" font-size="11" text-anchor="middle" font-weight="600">24</text>
+<text class="sub" x="85.0" y="286.0" font-size="11" text-anchor="middle">Stock</text>
+<rect class="s1" x="119.0" y="140.4" width="44" height="129.6" rx="2"><title>With the mods, Tools: 24 ± 0 count</title></rect>
+<text class="ink" x="141.0" y="134.4" font-size="11" text-anchor="middle" font-weight="600">24</text>
+<text class="sub" x="141.0" y="286.0" font-size="11" text-anchor="middle">Mods</text>
+<text class="ink" x="291.0" y="88.0" font-size="13" text-anchor="middle" font-weight="600">Tool schemas</text>
+<text class="mut" x="291.0" y="104.0" font-size="11" text-anchor="middle">(chars)</text>
+<line class="axis" x1="216.0" y1="270" x2="366.0" y2="270"/>
+<rect class="neg" x="241.0" y="140.4" width="44" height="129.6" rx="2"><title>Stock Codex, Tool schemas: 38,991 ± 0 chars</title></rect>
+<text class="ink" x="263.0" y="134.4" font-size="11" text-anchor="middle" font-weight="600">39.0K</text>
+<text class="sub" x="263.0" y="286.0" font-size="11" text-anchor="middle">Stock</text>
+<rect class="s1" x="297.0" y="140.4" width="44" height="129.6" rx="2"><title>With the mods, Tool schemas: 38,991 ± 0 chars</title></rect>
+<text class="ink" x="319.0" y="134.4" font-size="11" text-anchor="middle" font-weight="600">39.0K</text>
+<text class="sub" x="319.0" y="286.0" font-size="11" text-anchor="middle">Mods</text>
+<text class="ink" x="469.0" y="88.0" font-size="13" text-anchor="middle" font-weight="600">Instructions</text>
+<text class="mut" x="469.0" y="104.0" font-size="11" text-anchor="middle">(chars)</text>
+<line class="axis" x1="394.0" y1="270" x2="544.0" y2="270"/>
+<rect class="neg" x="419.0" y="145.4" width="44" height="124.6" rx="2"><title>Stock Codex, Instructions: 33,760 ± 1,366 chars</title></rect>
+<path class="err" d="M441.0,140.4V150.5M436.0,140.4H446.0M436.0,150.5H446.0"/>
+<text class="ink" x="441.0" y="134.4" font-size="11" text-anchor="middle" font-weight="600">33.8K</text>
+<text class="sub" x="441.0" y="286.0" font-size="11" text-anchor="middle">Stock</text>
+<rect class="s1" x="475.0" y="151.0" width="44" height="119.0" rx="2"><title>With the mods, Instructions: 32,248 ± 1,765 chars</title></rect>
+<path class="err" d="M497.0,144.5V157.5M492.0,144.5H502.0M492.0,157.5H502.0"/>
+<text class="ink" x="497.0" y="138.5" font-size="11" text-anchor="middle" font-weight="600">32.2K</text>
+<text class="sub" x="497.0" y="286.0" font-size="11" text-anchor="middle">Mods</text>
+<text class="ink" x="647.0" y="88.0" font-size="13" text-anchor="middle" font-weight="600">First-call context</text>
+<text class="mut" x="647.0" y="104.0" font-size="11" text-anchor="middle">(tokens)</text>
+<line class="axis" x1="572.0" y1="270" x2="722.0" y2="270"/>
+<rect class="neg" x="597.0" y="144.0" width="44" height="126.0" rx="2"><title>Stock Codex, First-call context: 15,832 ± 456 tokens</title></rect>
+<path class="err" d="M619.0,140.4V147.6M614.0,140.4H624.0M614.0,147.6H624.0"/>
+<text class="ink" x="619.0" y="134.4" font-size="11" text-anchor="middle" font-weight="600">15.8K</text>
+<text class="sub" x="619.0" y="286.0" font-size="11" text-anchor="middle">Stock</text>
+<rect class="s1" x="653.0" y="144.6" width="44" height="125.4" rx="2"><title>With the mods, First-call context: 15,755 ± 523 tokens</title></rect>
+<path class="err" d="M675.0,140.4V148.8M670.0,140.4H680.0M670.0,148.8H680.0"/>
+<text class="ink" x="675.0" y="134.4" font-size="11" text-anchor="middle" font-weight="600">15.8K</text>
+<text class="sub" x="675.0" y="286.0" font-size="11" text-anchor="middle">Mods</text>
+</svg>

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 242" width="760" height="242" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Mean model time per request</title><desc id="d">Stock Codex: 5.6 seconds; Mods, morning round: 6.0 seconds; OMD+ with mods, nightly: 7.1 seconds</desc>
+<style>
+.bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.sub{fill:#52514e}.mut{fill:#898781}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.zero{stroke:#52514e}
+.s1{fill:#2a78d6}.s2{fill:#eb6834}.s3{fill:#1baf7a}.neg{fill:#a8a79f}.on{fill:#ffffff}.rule{stroke:#0b0b0b}
+@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.ink{fill:#f0efec}.sub{fill:#c3c2b7}.mut{fill:#898781}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.zero{stroke:#c3c2b7}
+.s1{fill:#3987e5}.s2{fill:#d95926}.s3{fill:#199e70}.neg{fill:#77766f}.rule{stroke:#f0efec}}
+</style>
+<rect class="bg" width="760" height="242" rx="8"/>
+<text class="ink" x="24.0" y="34.0" font-size="15" text-anchor="start" font-weight="600">Mean model time per request</text>
+<text class="sub" x="24.0" y="54.0" font-size="12" text-anchor="start">Seconds per request on the 23 tuning tasks; the nightly round ran in the evening, the others overnight</text>
+<line class="zero" x1="220.0" y1="80" x2="220.0" y2="196"/>
+<text class="mut" x="220.0" y="212.0" font-size="11" text-anchor="middle">0 s</text>
+<line class="grid" x1="340.0" y1="80" x2="340.0" y2="196"/>
+<text class="mut" x="340.0" y="212.0" font-size="11" text-anchor="middle">2 s</text>
+<line class="grid" x1="460.0" y1="80" x2="460.0" y2="196"/>
+<text class="mut" x="460.0" y="212.0" font-size="11" text-anchor="middle">4 s</text>
+<line class="grid" x1="580.0" y1="80" x2="580.0" y2="196"/>
+<text class="mut" x="580.0" y="212.0" font-size="11" text-anchor="middle">6 s</text>
+<line class="grid" x1="700.0" y1="80" x2="700.0" y2="196"/>
+<text class="mut" x="700.0" y="212.0" font-size="11" text-anchor="middle">8 s</text>
+<text class="sub" x="204.0" y="103.0" font-size="12" text-anchor="end">Stock Codex</text>
+<path class="neg" d="M220.0,88H552.0Q556.0,88 556.0,92V106Q556.0,110 552.0,110H220.0Z"><title>Stock Codex: 5.6 s</title></path>
+<text class="ink" x="562.0" y="103.0" font-size="11" text-anchor="start" font-weight="600">5.6 s</text>
+<text class="sub" x="204.0" y="139.0" font-size="12" text-anchor="end">Mods, morning round</text>
+<path class="s1" d="M220.0,124H576.0Q580.0,124 580.0,128V142Q580.0,146 576.0,146H220.0Z"><title>Mods, morning round: 6.0 s</title></path>
+<text class="ink" x="586.0" y="139.0" font-size="11" text-anchor="start" font-weight="600">6.0 s</text>
+<text class="sub" x="204.0" y="175.0" font-size="12" text-anchor="end">OMD+ with mods, nightly</text>
+<path class="s2" d="M220.0,160H642.0Q646.0,160 646.0,164V178Q646.0,182 642.0,182H220.0Z"><title>OMD+ with mods, nightly: 7.1 s</title></path>
+<text class="ink" x="652.0" y="175.0" font-size="11" text-anchor="start" font-weight="600">7.1 s</text>
+</svg>

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "omd_edit_guard",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Syntax-checks each file an edit changes and tells the model at once when the edit introduced a syntax error",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_edit_guard"},
+  "capabilities": ["interception", "exec", "store", "inventory"],
+  "compatibility": {"required_features": ["exec_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "continuation_middleware_v1"]},
+  "settings_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+}

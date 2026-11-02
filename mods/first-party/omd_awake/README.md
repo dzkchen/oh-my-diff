@@ -1,8 +1,8 @@
 # omd_awake
 
 Keeps the Mac awake while a turn, a subagent (a helper agent the main agent starts) or an automation run is working,
-also with the lid closed, and lets it sleep a short while after they finish. It's experimental, and neither OMD+ nor OMD
-Core installs it.
+also with the lid closed, and lets it sleep a short while after they finish. It's experimental, and no install profile
+includes it.
 
 ## Turn it on
 
