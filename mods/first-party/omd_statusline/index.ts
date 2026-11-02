@@ -102,7 +102,13 @@ export default function activate(api: ModAPI) {
     update(next => { next.scripts[id] = { spec, at: now, status, spans }; });
   };
 
+  const refreshLimits = () => {
+    const rates = api.usage.rateLimits();
+    if (rates.available) update(data => limits(data, rates.value));
+  };
+
   const timers = [
+    api.time.every('limits', 60_000, refreshLimits),
     api.time.every('git', config.refresh_s * 1000, refreshGit),
     ...config.github ? [api.time.every('github', 30_000, () => pollGithub())] : [],
     api.time.every('tick', 60_000, () => {
@@ -121,6 +127,7 @@ export default function activate(api: ModAPI) {
     update(data => { data.beat = Date.now(); data.armed = armedFor; });
   };
   const refresh = (force: boolean) => {
+    refreshLimits();
     refreshGit();
     pollGithub(force);
     for (const script of configured.scripts) runScript(script.id, force);
@@ -128,8 +135,6 @@ export default function activate(api: ModAPI) {
   const soon = api.time.after('refresh_soon', 1000, () => refresh(false));
   // Subprocess and network refreshes wait until startup has settled so they never compete with the first commands.
   const settle = api.time.after('settle', 2000, () => {
-    const rates = api.usage.rateLimits();
-    if (rates.available) update(data => limits(data, rates.value));
     workspace();
     refresh(true);
   });
@@ -144,7 +149,7 @@ export default function activate(api: ModAPI) {
       const at = number(slot.resetsAt);
       windows.push({ minutes: number(slot.windowDurationMins), used, resets: at === null ? null : at < 1e12 ? at * 1000 : at });
     }
-    if (windows.length) data.limits = windows;
+    if ('rateLimits' in object(value)) data.limits = windows;
     const credits = object(snapshot.credits);
     if (Object.keys(credits).length) data.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? 'credits' : 'none';
   };

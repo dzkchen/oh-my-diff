@@ -101,6 +101,16 @@ test('three columns list the parent, the current directory and a preview, natura
 test('the layout follows the site area the host reports, and falls back to the terminal size', () => {
   const state = started();
   assert.ok(columns(state, { rows: 80 }).every(node => (node.height ?? 1) <= 40));
+  for (const rows of [0, 30, 43, 44, 80, 200]) {
+    for (const columnsCount of [50, 120]) {
+      for (const view of [state, key(state, 't').state]) {
+        const documents = columns(view, { sites: { columns: columnsCount, rows } });
+        const tabs = view.view.tabs.length > 1 ? 1 : 0;
+        const height = Math.min(40, Math.max(3, columnsCount < 60 ? Math.floor((rows - 5 - tabs) / 2) : rows - 3 - tabs));
+        assert.ok(documents.every(node => node.height === height));
+      }
+    }
+  }
   const sized = box(state, { sites: { columns: 120, rows: 30 } });
   assert.deepEqual(sized.children.map(column => [column.id, column.children[0].height]), [['omd_files_parent_column', 27], ['omd_files_current_column', 27], ['omd_files_preview_column', 27]]);
   const narrow = box(state, { sites: { columns: 50, rows: 20 } });
@@ -158,8 +168,9 @@ test('tabs open with t and switch by number, brackets and q, and a tab whose dir
   const two = keys(state, ['t', 'j', 'l', 'l']);
   const view = draw(two);
   assert.deepEqual(view.key_contexts[0].when, { focus: 'omd_files/main' });
-  assert.ok(view.key_contexts[0].keys['9'] && view.key_contexts[0].keys[']']);
-  assert.ok(Object.keys(view.key_contexts[0].keys).length <= 32);
+  const bindings = Object.assign({}, ...view.key_contexts.map(context => context.keys));
+  assert.ok(bindings['9'] && bindings[']'] && bindings.Down && bindings.Up && bindings.Left && bindings.Right);
+  assert.ok(view.key_contexts.every(context => Object.keys(context.keys).length <= 32));
   assert.match(view.sites['omd_files/main'].components[0].spans.map(span => span.text).join(''), /^1 \/ {2}2 lib {2}$/);
   assert.match(text(columns(key(two, '1').state)[1]), /^▶ docs\//);
   assert.match(text(columns(key(two, '[').state)[1]), /^▶ docs\//);
@@ -253,4 +264,19 @@ test('the saved state stays within 64 KiB for long listings and previews', () =>
   assert.ok(bytes <= 65_536, `${bytes} bytes`);
   assert.equal(columns(state)[2].type, 'code');
   assert.match(status(state), /^1\/\d+\+ /);
+});
+
+test('arrow keys navigate entries and directories', () => {
+  const state = keys(started(), ['Down', 'Right']);
+  assert.equal(columns(state)[1].label, 'src');
+  const back = keys(state, ['Down', 'Up', 'Left']);
+  assert.equal(columns(back)[1].label, '/');
+  assert.match(text(columns(back)[1]), /▶ src/);
+});
+
+test('a narrow dock stacks the preview below the list', () => {
+  const layout = box(started(), { sites: { columns: 38, rows: 44 } });
+  assert.equal(layout.style.direction, 'column');
+  assert.equal(layout.children.length, 2);
+  assert.equal(layout.children[0].children[0].height, 19);
 });

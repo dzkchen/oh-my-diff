@@ -50,7 +50,7 @@ const drawable = (s: State) => !!s.prefs && !!s.view && s.prefs.scene !== 'off' 
   && !blocked(s.view) && s.view.columns >= MIN_COLUMNS;
 const still = (s: State) => !!s.view?.reduced || s.prefs?.speed === 'off';
 const paused = (s: State) => s.busy && !!s.prefs?.calm;
-const behind = (s: State) => s.view?.phase !== 'fresh' || s.view?.welcome === false;
+const behind = (s: State) => s.view?.phase !== 'fresh';
 const fontName = (value: string) => clip(value.replace(/["\\\n\r]/g, '').trim(), 128);
 const palette = (prefs: Prefs) => prefs.scene === 'image' && prefs.image ? samplePalette(prefs.image) : (scene(prefs.scene) ?? SCENES[0]).palette!;
 const stepsFor = (prefs: Prefs, terminal: Terminal, topic: Topic, family = prefs.family) =>
@@ -189,7 +189,7 @@ export default function activate(api: ModAPI) {
     const client = input.client;
     const view: View | null = client ? { columns: client.columns, rows: client.rows, reduced: client.reduced_motion, color: client.graphics !== 'text', colors: client.colors ?? 'truecolor',
       phase: input.presentation?.phase ?? null, surface: input.presentation?.surface ?? null, chat: client.chat ?? null, welcome: client.welcome !== null,
-      raster: rasterFor(input.presentation?.thread_id) } : s.view;
+      raster: s.view?.raster ?? rasterFor(input.presentation?.thread_id ?? `fresh${s.run}`) } : s.view;
     if (JSON.stringify(view) !== JSON.stringify(s.view)) write({ view });
     const prefs = s.prefs;
     if (!prefs || !view) return null;

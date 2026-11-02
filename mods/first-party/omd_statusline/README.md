@@ -47,7 +47,7 @@ A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLO
 - `tokens`, `cache`: token use and cache state.
 - `cost`: session cost, never an invoice. `~` or `est.` marks an estimate, `included` marks subscription use, and `+?`
   means some cost is still unsettled or unknown. `omd_usage` (`Alt+a`) breaks it down by request.
-- `limits`: account rate-limit windows with reset countdowns.
+- `limits`: account rate-limit windows with reset countdowns. Refreshes every minute and on `/statusline refresh`, so an account usage reset is picked up even while idle.
 - `git`, `changes`: branch and diff summary.
 - `pr`, `ci`: GitHub pull request and checks.
 - `session`: thread id and elapsed time.

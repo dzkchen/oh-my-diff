@@ -188,3 +188,20 @@ test('the panel applies choices at once and keeps Codex\'s picker and the termin
   const image = call({ event: 'command', name: 'scenes', payload: 'image /tmp/sky  one.png', state }, { store, 'terminal.import_file': args => { imported = args.path; return { status: 'declined' }; } });
   assert.deepEqual([imported, image.value.display], ['/tmp/sky  one.png','Image import declined; the scene is unchanged']);
 });
+
+ test('typing on a fresh thread does not change the scene brightness', () => {
+  const state = ready(null, { welcome: null });
+  const result = tick(state, `f.${NOW}.1.120.44.${KEY}.0`, NOW + 125);
+  assert.match(result.of('events.schedule')[0].key, new RegExp(KEY));
+});
+
+ test('the first prompt keeps the populated canvas when the thread receives its id', () => {
+  const fresh = call({ event: 'terminal', state: started().state, payload: { event: 'startup', ledger: null,
+    presentation: { thread_id: null, phase: 'fresh', surface: 'fullscreen' }, client: client(), clients: [] } });
+  const frame = tick(fresh.state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
+  const sent = draw(frame.state, { phase: 'started' });
+  assert.deepEqual(sent.value.underlay, fresh.value.underlay);
+  const next = tick(sent.state, frame.of('events.schedule')[0].key, NOW + 141);
+  assert.ok(next.of('terminal.blit').length > 0);
+  assert.ok(next.of('terminal.blit').every(blit => blit.key === fresh.value.underlay.raster));
+});
