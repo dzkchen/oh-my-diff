@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 326" width="760" height="326" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" role="img" aria-labelledby="t d">
+<title id="t">OMD+ with the mods on the nightly build, change against stock Codex</title><desc id="d">Estimated cost: terminal −19%, SWE-bench −22%; Input tokens: terminal −18%, SWE-bench −29%; Output tokens: terminal −32%, SWE-bench −30%; Wall time: terminal +2%, SWE-bench +31%</desc>
+<style>
+.bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.sub{fill:#52514e}.mut{fill:#898781}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.zero{stroke:#52514e}
+.s1{fill:#2a78d6}.s2{fill:#eb6834}.s3{fill:#1baf7a}.neg{fill:#a8a79f}.on{fill:#ffffff}.rule{stroke:#0b0b0b}
+@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.ink{fill:#f0efec}.sub{fill:#c3c2b7}.mut{fill:#898781}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.zero{stroke:#c3c2b7}
+.s1{fill:#3987e5}.s2{fill:#d95926}.s3{fill:#199e70}.neg{fill:#77766f}.rule{stroke:#f0efec}}
+</style>
+<rect class="bg" width="760" height="326" rx="8"/>
+<text class="ink" x="24.0" y="34.0" font-size="15" text-anchor="start" font-weight="600">OMD+ with the mods on the nightly build, change against stock Codex</text>
+<text class="sub" x="24.0" y="54.0" font-size="12" text-anchor="start">23 tuning tasks, one attempt each; bars left of zero are reductions, bars right of zero are increases</text>
+<rect class="s1" x="24.0" y="68" width="12" height="12" rx="3"/>
+<text class="sub" x="42.0" y="78.5" font-size="12" text-anchor="start">Terminal tasks (13)</text>
+<rect class="s2" x="191.4" y="68" width="12" height="12" rx="3"/>
+<text class="sub" x="209.4" y="78.5" font-size="12" text-anchor="start">SWE-bench Verified (10)</text>
+<line class="grid" x1="200.0" y1="96" x2="200.0" y2="280"/>
+<text class="mut" x="200.0" y="296.0" font-size="11" text-anchor="middle">−40%</text>
+<line class="grid" x1="325.0" y1="96" x2="325.0" y2="280"/>
+<text class="mut" x="325.0" y="296.0" font-size="11" text-anchor="middle">−20%</text>
+<line class="zero" x1="450.0" y1="96" x2="450.0" y2="280"/>
+<text class="mut" x="450.0" y="296.0" font-size="11" text-anchor="middle">0%</text>
+<line class="grid" x1="575.0" y1="96" x2="575.0" y2="280"/>
+<text class="mut" x="575.0" y="296.0" font-size="11" text-anchor="middle">+20%</text>
+<line class="grid" x1="700.0" y1="96" x2="700.0" y2="280"/>
+<text class="mut" x="700.0" y="296.0" font-size="11" text-anchor="middle">+40%</text>
+<text class="sub" x="180.0" y="124.0" font-size="12" text-anchor="end">Estimated cost</text>
+<path class="s1" d="M450.0,104H335.2Q331.2,104 331.2,108V114Q331.2,118 335.2,118H450.0Z"><title>Terminal tasks (13), Estimated cost: −19%</title></path>
+<text class="ink" x="325.2" y="115.0" font-size="11" text-anchor="end" font-weight="600">−19%</text>
+<path class="s2" d="M450.0,120H316.5Q312.5,120 312.5,124V130Q312.5,134 316.5,134H450.0Z"><title>SWE-bench Verified (10), Estimated cost: −22%</title></path>
+<text class="ink" x="306.5" y="131.0" font-size="11" text-anchor="end" font-weight="600">−22%</text>
+<text class="sub" x="180.0" y="170.0" font-size="12" text-anchor="end">Input tokens</text>
+<path class="s1" d="M450.0,150H341.5Q337.5,150 337.5,154V160Q337.5,164 341.5,164H450.0Z"><title>Terminal tasks (13), Input tokens: −18%</title></path>
+<text class="ink" x="331.5" y="161.0" font-size="11" text-anchor="end" font-weight="600">−18%</text>
+<path class="s2" d="M450.0,166H272.8Q268.8,166 268.8,170V176Q268.8,180 272.8,180H450.0Z"><title>SWE-bench Verified (10), Input tokens: −29%</title></path>
+<text class="ink" x="262.8" y="177.0" font-size="11" text-anchor="end" font-weight="600">−29%</text>
+<text class="sub" x="180.0" y="216.0" font-size="12" text-anchor="end">Output tokens</text>
+<path class="s1" d="M450.0,196H254.0Q250.0,196 250.0,200V206Q250.0,210 254.0,210H450.0Z"><title>Terminal tasks (13), Output tokens: −32%</title></path>
+<text class="ink" x="244.0" y="207.0" font-size="11" text-anchor="end" font-weight="600">−32%</text>
+<path class="s2" d="M450.0,212H266.5Q262.5,212 262.5,216V222Q262.5,226 266.5,226H450.0Z"><title>SWE-bench Verified (10), Output tokens: −30%</title></path>
+<text class="ink" x="256.5" y="223.0" font-size="11" text-anchor="end" font-weight="600">−30%</text>
+<text class="sub" x="180.0" y="262.0" font-size="12" text-anchor="end">Wall time</text>
+<path class="s1" d="M450.0,242H458.5Q462.5,242 462.5,246V252Q462.5,256 458.5,256H450.0Z"><title>Terminal tasks (13), Wall time: +2%</title></path>
+<text class="ink" x="468.5" y="253.0" font-size="11" text-anchor="start" font-weight="600">+2%</text>
+<path class="s2" d="M450.0,258H639.8Q643.8,258 643.8,262V268Q643.8,272 639.8,272H450.0Z"><title>SWE-bench Verified (10), Wall time: +31%</title></path>
+<text class="ink" x="649.8" y="269.0" font-size="11" text-anchor="start" font-weight="600">+31%</text>
+</svg>

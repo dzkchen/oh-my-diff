@@ -20,7 +20,6 @@ The status words on this page:
 | [`omd_inspector`](../mods/first-party/omd_inspector/README.md) | OMD+ | `/inspect`: the session's mode, profile and active mods |
 | [`omd_model_picker`](../mods/first-party/omd_model_picker/README.md) | OMD+ | A compact `/model` and reasoning-effort picker |
 | [`omd_tool_lines`](../mods/first-party/omd_tool_lines/README.md) | OMD+ | One short line per tool call; open it for the full output |
-| [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) | OMD+ | Pins Codex's current plan above the prompt |
 | [`omd_statusline`](../mods/first-party/omd_statusline/README.md) | OMD+ | A configurable status line; `/statusline` edits it |
 | [`omd_idle_compact`](../mods/first-party/omd_idle_compact/README.md) | OMD+ | Replaces a large idle conversation with a shorter summary just before the provider's prompt cache expires |
 | [`omd_auto_continue`](../mods/first-party/omd_auto_continue/README.md) | OMD+ | When an approval or a question gets no answer within the wait you set (two minutes by default), declines the approval or answers the question so the turn continues |
@@ -36,6 +35,8 @@ All of these come with OMD+ only. [Support](support.md#versions) lists the Node 
 | [`omd_privacy`](../mods/first-party/omd_privacy/README.md) | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
 | [`omd_usage`](../mods/first-party/omd_usage/README.md) | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
 | [`omd_continue`](../mods/first-party/omd_continue/README.md) | `/continue [note]` resumes interrupted work in the current session | |
+| [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) | Pins Codex's current plan above the prompt | |
+| [`omd_btw`](../mods/first-party/omd_btw/README.md) | Replaces `/btw`: side questions answered from the conversation without entering it, remembered across questions and resumes | |
 | [`omd_lsp_sync`](../mods/first-party/omd_lsp_sync/README.md) | Tells the agent about the errors each of its edits introduces; also go to definition, references and rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | [`omd_lsp_view`](../mods/first-party/omd_lsp_view/README.md) | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
 | [`omd_claude_cli`](../mods/first-party/omd_claude_cli/README.md) | Claude models in `/model`, using your Claude plan or API credits | Claude CLI 2.1.307 or later and Node; see [use other providers](use-other-providers.md#use-claude) |

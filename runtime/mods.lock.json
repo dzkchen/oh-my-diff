@@ -74,6 +74,27 @@
       "source": "mods/first-party/omd_awake",
       "version": "1.0.0"
     },
+    "omd_btw": {
+      "api": "1.0.0",
+      "capabilities": [
+        "terminal",
+        "commands",
+        "builtins",
+        "agents",
+        "sessions",
+        "sessions_tools",
+        "store"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "77c666e8f0bc095303dcda9e14ded2c110f799d2b5257b8dec98840cd1c00a6b",
+        "mod.json": "516227428f5d092400aba6b696cd84b5a27cf75c60e1c10893e306ce3050fa0d"
+      },
+      "id": "omd_btw",
+      "package_sha256": "f11a10e2380702e1cce191f0f1083b959b05316b9ac5cc2966904f9e9c6c48f4",
+      "source": "mods/first-party/omd_btw",
+      "version": "1.0.0"
+    },
     "omd_claude_cli": {
       "api": "1.0.0",
       "capabilities": [

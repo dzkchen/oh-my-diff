@@ -1,14 +1,14 @@
 # omd_plan_panel
 
-Pins the current plan above the prompt, so you can see progress at a glance. It's on by default in OMD+. OMD Core
+Pins the current plan above the prompt, so you can see progress at a glance. It's off by default in OMD+. OMD Core
 doesn't include it.
 
-## Turn it off
+## Turn it on
 
-Turn it off in `/mods`, or run:
+Turn it on in `/mods`, or run:
 
 ```sh
-omd mods disable omd_plan_panel
+omd mods enable omd_plan_panel
 ```
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
@@ -47,6 +47,8 @@ Change settings in `/mods`.
 ## Needs and limits
 
 - It turns on Codex's `update_plan` tool for sessions where the panel is active. Nothing is written to `config.toml`.
+  That changes the tool list Codex sends, so the first request of each new thread can't reuse the provider's prompt
+  cache that stock Codex requests share (about 12K tokens), which is why it's off by default.
 - It shows only your session's own plan. Subagents (helper agents the main agent starts for part of a task) don't
   show or overwrite it.
 - Plans survive compaction (when Codex replaces the earlier conversation with a shorter summary), `/resume` and

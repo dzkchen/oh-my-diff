@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 270" width="760" height="270" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Tool calls per run, by suite</title><desc id="d">Terminal tasks (13): stock Codex 5.9, with the mods 4.3 tool calls per run; SWE-bench Verified (30): stock Codex 14.6, with the mods 11.2 tool calls per run</desc>
+<style>
+.bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.sub{fill:#52514e}.mut{fill:#898781}.grid{stroke:#e1e0d9}.axis{stroke:#c3c2b7}.zero{stroke:#52514e}
+.s1{fill:#2a78d6}.s2{fill:#eb6834}.s3{fill:#1baf7a}.neg{fill:#a8a79f}.on{fill:#ffffff}.rule{stroke:#0b0b0b}
+@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.ink{fill:#f0efec}.sub{fill:#c3c2b7}.mut{fill:#898781}.grid{stroke:#2c2c2a}.axis{stroke:#383835}.zero{stroke:#c3c2b7}
+.s1{fill:#3987e5}.s2{fill:#d95926}.s3{fill:#199e70}.neg{fill:#77766f}.rule{stroke:#f0efec}}
+</style>
+<rect class="bg" width="760" height="270" rx="8"/>
+<text class="ink" x="24.0" y="34.0" font-size="15" text-anchor="start" font-weight="600">Tool calls per run, by suite</text>
+<text class="sub" x="24.0" y="54.0" font-size="12" text-anchor="start">Mean over each arm's runs: 26 terminal runs and 60 SWE-bench runs per arm</text>
+<rect class="neg" x="24.0" y="68" width="12" height="12" rx="3"/>
+<text class="sub" x="42.0" y="78.5" font-size="12" text-anchor="start">Stock Codex</text>
+<rect class="s1" x="138.6" y="68" width="12" height="12" rx="3"/>
+<text class="sub" x="156.6" y="78.5" font-size="12" text-anchor="start">With the mods</text>
+<line class="zero" x1="200.0" y1="96" x2="200.0" y2="224"/>
+<text class="mut" x="200.0" y="240.0" font-size="11" text-anchor="middle">0</text>
+<line class="grid" x1="320.0" y1="96" x2="320.0" y2="224"/>
+<text class="mut" x="320.0" y="240.0" font-size="11" text-anchor="middle">4</text>
+<line class="grid" x1="440.0" y1="96" x2="440.0" y2="224"/>
+<text class="mut" x="440.0" y="240.0" font-size="11" text-anchor="middle">8</text>
+<line class="grid" x1="560.0" y1="96" x2="560.0" y2="224"/>
+<text class="mut" x="560.0" y="240.0" font-size="11" text-anchor="middle">12</text>
+<line class="grid" x1="680.0" y1="96" x2="680.0" y2="224"/>
+<text class="mut" x="680.0" y="240.0" font-size="11" text-anchor="middle">16</text>
+<text class="sub" x="184.0" y="131.0" font-size="12" text-anchor="end">Terminal tasks (13)</text>
+<path class="neg" d="M200.0,106H373.0Q377.0,106 377.0,110V120Q377.0,124 373.0,124H200.0Z"><title>Terminal tasks (13), Stock Codex: 5.9 tool calls per run</title></path>
+<text class="ink" x="383.0" y="119.0" font-size="11" text-anchor="start" font-weight="600">5.9</text>
+<path class="s1" d="M200.0,128H325.0Q329.0,128 329.0,132V142Q329.0,146 325.0,146H200.0Z"><title>Terminal tasks (13), With the mods: 4.3 tool calls per run</title></path>
+<text class="ink" x="335.0" y="141.0" font-size="11" text-anchor="start" font-weight="600">4.3 (−27%)</text>
+<text class="sub" x="184.0" y="195.0" font-size="12" text-anchor="end">SWE-bench Verified (30)</text>
+<path class="neg" d="M200.0,170H634.0Q638.0,170 638.0,174V184Q638.0,188 634.0,188H200.0Z"><title>SWE-bench Verified (30), Stock Codex: 14.6 tool calls per run</title></path>
+<text class="ink" x="644.0" y="183.0" font-size="11" text-anchor="start" font-weight="600">14.6</text>
+<path class="s1" d="M200.0,192H532.0Q536.0,192 536.0,196V206Q536.0,210 532.0,210H200.0Z"><title>SWE-bench Verified (30), With the mods: 11.2 tool calls per run</title></path>
+<text class="ink" x="542.0" y="205.0" font-size="11" text-anchor="start" font-weight="600">11.2 (−23%)</text>
+</svg>

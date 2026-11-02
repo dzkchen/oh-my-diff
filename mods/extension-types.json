@@ -159,6 +159,12 @@
       "why_mod": "A user-typed /continue command that submits a resume instruction with the host-recorded turn activity."
     },
     {
+      "path": "mods/first-party/omd_btw",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Routes the built-in /btw to a mod command that answers through model.fork and keeps the exchanges in thread state."
+    },
+    {
       "path": "mods/examples/workspace",
       "extension_type": "mod",
       "role": "author_example",

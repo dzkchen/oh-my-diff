@@ -701,6 +701,8 @@ These changes ship in the release after OMD 1.3.0.
   (`request_user_input` without plan mode, unless the default mode may ask). The model may now try the call and gets
   an error result. A mod that relied on the tool being absent needs no change; one that inspected the tool list
   sees the tool.
+- `routes.add` without `mod` (frozen in Mod API `1.0.0`) gives the caller itself a plan route and needs only
+  `agents`; naming a mod still needs `packages`. The change is additive: every call valid before stays valid.
 
 These changes ship in OMD 1.3.0.
 
@@ -1774,7 +1776,7 @@ These capabilities allow processes, workspace files, models, agents, stored data
 | `network` | `exec.run`, `process.start` and `terminal.pty` with `network: "loopback"` |
 | `unix_sockets` (experimental) | `exec.run` `unix_sockets` |
 | `model` | `routes.list`, `routes.select`, `models.context_window`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
-| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (also needs `sessions` and `sessions_tools`), `task.status`, `workspace.integrate` |
+| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (also needs `sessions` and `sessions_tools`), `routes.add` for the mod itself, `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.snapshot`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot`, `model.fork` and `agents.spawn {parent_history}` (also needs `sessions`) |
@@ -1798,7 +1800,7 @@ a mod makes: tools, commands, interceptors, replacements, lifecycle events and s
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
-| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `routes.add`, `routes.write`, `settings.write` for another mod |
+| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `routes.add` and `settings.write` for another mod, `routes.write` |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check`, `tools.original` (`tool_original_v1`) and the `tool_batch` replacement |
 | `input` | `input` and `mention` interceptors |
@@ -1936,7 +1938,7 @@ it needs and its registry status. An operation marked experimental may change in
 | `providers.register` | `model` | frozen |
 | `providers.unregister` | `model` | frozen |
 | `receipts.submit` | `contracts` | frozen |
-| `routes.add` | `packages` | frozen |
+| `routes.add` | `agents` for the mod itself; `packages` for another mod | frozen |
 | `routes.list` | `model` | frozen; experimental fields: `data` |
 | `routes.select` | `model` | frozen |
 | `routes.write` | `packages` | experimental |
@@ -5489,9 +5491,10 @@ api.host.call('routes.select', { route: 'fast_lead', scope: 'next_request' });
 
 ### `routes.add`
 
-`routes.add {mod}` (capability `packages`, user only) gives a mod a worker route on the user's ChatGPT plan. It asks
-the user, then adds the worker route `plan-MODEL-MOD` for the conversation's model and effort. The route is open only
-to `mod`, and the host adds this repository to its grant.
+`routes.add {mod?}` (user only) gives a mod a worker route on the user's ChatGPT plan. Without `mod` it is for the
+caller itself and needs `agents`; naming a mod needs `packages`. It asks the user, then adds the worker route
+`plan-MODEL-MOD` for the conversation's model and effort. The route is open only to that mod, and the host adds this
+repository to its grant.
 
 It returns `{route}`, or `{status: 'declined'}`. It refuses with `routes_add_needs_chatgpt` without a ChatGPT sign-in
 or when the conversation's provider doesn't use it.

@@ -16,7 +16,7 @@ isn't trusted yet stays off.
 ## Use it
 
 On a thread's first model request the mod runs the shell script in `snapshot.ts` once through the session's sandbox (read-only, no
-network, at most 3 seconds) and adds about 1.5 KB of context:
+network, at most 3 seconds) and adds at most 1.5 KB of context (about 650 bytes on the benchmark's repositories):
 
 ```text
 os: Linux x86_64

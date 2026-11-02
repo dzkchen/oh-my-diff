@@ -1399,11 +1399,14 @@ fn source_use(
                 .cloned()
                 .collect()
         } else {
-            let required = ModHostCall {
+            let mut required = ModHostCall {
                 operation: operation.clone(),
                 arguments: Value::Null,
             }
             .capabilities()?;
+            if matches!(operation.as_str(), "routes.add" | "settings.write") {
+                required.push("packages");
+            }
             if operation == "model.fork"
                 && required.iter().any(|capability| {
                     !package

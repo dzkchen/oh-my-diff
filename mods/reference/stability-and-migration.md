@@ -92,6 +92,8 @@ These changes ship in the release after OMD 1.3.0.
   (`request_user_input` without plan mode, unless the default mode may ask). The model may now try the call and gets
   an error result. A mod that relied on the tool being absent needs no change; one that inspected the tool list
   sees the tool.
+- `routes.add` without `mod` (frozen in Mod API `1.0.0`) gives the caller itself a plan route and needs only
+  `agents`; naming a mod still needs `packages`. The change is additive: every call valid before stays valid.
 
 These changes ship in OMD 1.3.0.
 

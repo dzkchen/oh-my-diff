@@ -2379,6 +2379,17 @@ fn task_scoped_tools_follow_owned_step_selection_and_fail_closed() {
 }
 
 #[test]
+fn a_plan_route_call_activates_under_either_capability_that_can_authorize_it() {
+    for capability in ["packages", "agents"] {
+        let (temp, _, _) = fixture(
+            "export default api => api.command('route',()=>api.host.call('routes.add',{}))",
+            &["commands", capability],
+        );
+        assert_eq!(activation_error(&temp, "fixture"), "", "{capability}");
+    }
+}
+
+#[test]
 fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     for capabilities in [
         vec!["commands", "agents"],

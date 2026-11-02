@@ -251,6 +251,22 @@
       "support_status": "reviewed_candidate"
     },
     {
+      "id": "omd_btw",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Replaces /btw with side questions answered from a fork of the conversation, kept in thread state and replayed to later side questions",
+      "source": "mods/first-party/omd_btw",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.3.0; mod API 1.0.0; builtins_v1, model_complete_v2, state_scopes_v1, store_thread_v1, store_v1, ui_controls_v1",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "OMD 1.3.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
       "id": "omd_tool_lines",
       "version": "1.0.0",
       "extension_type": "mod",
