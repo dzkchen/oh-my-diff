@@ -25,7 +25,6 @@ Experimental harness mods that cut token use, /btw side questions, and a tool li
 - Installer: download errors name the requested URL and HTTP status, never a signed redirect URL
 - Output budget: its component loads again
 - /btw: the answering notice stays until the answer arrives
-- Leave experimental mods out of the first-party together scenario (#359)
 
 ## [1.3.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.3.0) — 2026-10-31
 
