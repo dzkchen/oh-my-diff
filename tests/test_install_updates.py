@@ -553,6 +553,10 @@ class UpdateSelection(unittest.TestCase):
             with patch.object(self.module, "opened", side_effect=urllib.error.URLError("no route")), \
                     self.assertRaisesRegex(ValueError, r"Network error while contacting GitHub \(no route\); check your connection"):
                 self.module.download("https://example.test/a", expected, target)
+            missing = urllib.error.HTTPError("https://example.test/a", 404, "Not Found", {}, None)
+            with patch.object(self.module, "opened", side_effect=missing), self.assertRaisesRegex(
+                    ValueError, r"^https://example.test/a returned HTTP 404 \(Not Found\); check the version and release URL\.$"):
+                self.module.download("https://example.test/a", expected, target)
             attempts.clear()
             def untrusted(url, timeout):
                 attempts.append(url)

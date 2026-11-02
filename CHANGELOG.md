@@ -2,6 +2,47 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.3.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.3.0) — 2026-10-31
+
+Oh My Diff now builds on Codex 0.166.0, with cross-provider subagents, a free panel workspace, Lazygit and Yazi panes, living themes and faster mods.
+
+### New
+
+- Subagents: a subagent can run on another provider's model (for example a Claude model through omd_claude_cli) and counts against worker limits; with omd_subagent_router an idle lead wakes when a subagent's result arrives, and mods get an opt-in `delegate_task` tool
+- Subagents: ordered fallback models with the reason each route was skipped, and an opt-in restart of a delegated task once its provider's usage limit resets
+- Profiles: a keyless Ollama profile for a local address, and `/profile window` sets how much of a thread a model sees
+- Workspace: the opt-in omd_workspace mod arranges chat and panels freely (presets, saved layouts, `/workspace move` and `swap`); drag a panel title to dock it, Ctrl+] switches between the chat and the last panel, Esc returns to the chat
+- Mods: opt-in omd_lazygit and omd_yazi run Lazygit and Yazi in a full terminal pane with keys, mouse, links and confirmed clipboard copy
+- Themes: the opt-in omd_theme draws animated scenes behind the whole screen; `/theme` picks the scene, motion and background
+- Monitors: the opt-in omd_monitor watches a background command, a file or a GitHub run and posts one message when it settles, so the agent doesn't poll
+- Output budget: the omd-output-budget plugin turns large shell, code-mode and MCP results into excerpts that keep the exit status and failure lines; the full output stays searchable
+- Mentions: omd_frecency ranks @ mentions by the branch's recent commits and recently saved files, an exact filename first
+- Statusline: new `tier`, `profile` and `workspace` segments
+- Mods: experimental omd_awake keeps the Mac awake while the agent works, optionally with the lid closed
+
+### Changed
+
+- Upstream: Codex 0.166.0; OMD 1.3.0 is the first release that supports it
+- Plan mode: in OMD+, omd_plan_removal now removes Plan mode completely; a thread that still holds it runs in the default mode
+- Performance: mods activate, start and save state faster, and the statusline and `/mods` render faster
+- Sandbox: agent commands keep your Codex sandbox; OMD's protected paths (mod store, leases, secret files) are denied to every sandboxed command, file tools included
+- Logo: shows the OMD version and profile (OMD+ or OMD Core); the slash popup lists each mod command once
+- Mods: a mod can no longer replace or wrap a site another mod owns; layouts nest 6 levels and per-callback host limits rose (see the mod reference's migration notes)
+
+### Fixed
+
+- Turns: repositories with more than 8 MiB of tracked files no longer show a `turn_evidence` snapshot size diagnostic every turn
+- Rewind no longer stalls for about 21 seconds
+- TUI: mod callbacks no longer stall the UI, and mod cards no longer take Tab or swallow pastes and images
+- Requests: web search works under final-request policies, and image generation and memory summarization are no longer refused
+- Git panel: a rejected push offers `--force-with-lease` only when the branch has diverged, unstaging a rename unstages its old path, and edits refresh only what changed
+- Subagents: idle cross-provider subagents no longer hold worker slots, and a reloaded agent keeps its own provider's settings
+- Workspace: snapshots record tracked symlinks by their link text and refuse a file swapped for a symlink mid-read
+- Installer: an aborted uninstall keeps the rollback point, rollback checks the generation it restores, a withdrawn installed release is reported and certificate errors get their own message
+- Mentions: an `@` mention after a malformed `@"` is still recognised
+- Packed baseline test expects upstream's empty recovery baseline (#351)
+- Release gate failures in core and client acceptance (#352)
+
 ## [1.2.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.2.0) — 2026-10-24
 
 Oh My Diff now builds on Codex 0.164.0.

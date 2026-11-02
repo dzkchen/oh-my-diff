@@ -274,6 +274,9 @@ def unreachable(error):
     if untrusted(error):
         return ("Python could not verify GitHub's certificate; if this Python came from python.org, run Install Certificates.command "
                 "in its Applications folder (or point SSL_CERT_FILE at certifi's bundle) and try again.")
+    if isinstance(error, urllib.error.HTTPError):
+        hint = "check the version and release URL" if error.code == 404 else "try again later"
+        return f"{error.url} returned HTTP {error.code} ({error.reason}); {hint}."
     return f"Network error while contacting GitHub ({getattr(error, 'reason', None) or error}); check your connection and try again."
 
 
