@@ -1,19 +1,17 @@
 # omd_monitor
 
 Lets the agent wait on a background command, a file change, or a GitHub run or deployment without checking again and
-again. It sets up one monitor, keeps working, and gets one message when the thing finishes, fails or times out. It's
-experimental, and no install profile includes it.
+again. It sets up one monitor, keeps working, and gets one message when the thing finishes, fails or times out. It's off by default in OMD+. OMD Core doesn't include it.
 
 ## Turn it on
 
-Install it from the Available group in `/mods`, or run:
+Turn it on in `/mods`, or run:
 
 ```sh
-omd install omd_monitor
 omd mods enable omd_monitor
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 It asks for these grants:
 

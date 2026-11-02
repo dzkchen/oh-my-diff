@@ -1,17 +1,18 @@
 # omd_btw
 
 Replaces Codex's `/btw` with side questions that remember each other. Ask something about the work in progress, and
-the answer shows below the conversation without entering it. It's off by default in OMD+. OMD Core doesn't include it.
+the answer shows below the conversation without entering it. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_btw
 omd mods enable omd_btw
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 The first `/btw` asks to add a helper model: the model you're chatting with, on your ChatGPT plan. Allow it and the
 answer follows; later side questions use it without asking. To pick another model, open Btw in `/mods`, then Side

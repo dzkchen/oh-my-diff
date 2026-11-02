@@ -1,13 +1,14 @@
 # omd_claude_cli
 
 Lets a session use Claude models through the official Claude CLI and your Claude plan (Pro, Max, Team or
-Enterprise), or through your Anthropic Console login. It's off by default in OMD+. OMD Core doesn't include it.
+Enterprise), or through your Anthropic Console login. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods` and approve its trust dialog, or run:
+Install it from the Available group in `/mods`, turn it on and approve its trust dialog, or run:
 
 ```sh
+omd install omd_claude_cli
 omd mods enable omd_claude_cli
 ```
 

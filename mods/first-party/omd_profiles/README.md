@@ -1,20 +1,19 @@
 # omd_profiles
 
 Switches one session between your accounts without restarting: ChatGPT accounts, API keys, compatible providers such
-as OpenRouter, and the Claude and Cursor accounts you sign in to with `omd_claude_cli` and `omd_cursor`. It's off by
-default in OMD+. OMD Core doesn't include it.
+as OpenRouter, and the Claude and Cursor accounts you sign in to with `omd_claude_cli` and `omd_cursor`. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+In OMD+, run:
 
 ```sh
-omd mods enable omd_profiles
+omd-package profiles --setup
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+This installs the mod into your OMD+ store, runs its setup and turns it on.
 
-Turning it on asks for two grants. `os` lets it run `node` outside the sandbox for its setup script, which writes the
+It asks for two grants. `os` lets it run `node` outside the sandbox for its setup script, which writes the
 profile router into your mod store's `host.json`. `builtins` lets it run other mods' commands, so it can start a Claude
 or Cursor sign-in.
 [Trust and permissions](../../../docs/trust-and-permissions.md) explains what these grants allow.

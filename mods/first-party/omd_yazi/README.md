@@ -1,7 +1,6 @@
 # omd_yazi
 
-Runs the [yazi](https://yazi-rs.github.io) file manager inside the session. It's off by default in OMD+. OMD Core
-doesn't include it.
+Runs the [yazi](https://yazi-rs.github.io) file manager inside the session. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
@@ -9,6 +8,7 @@ Install yazi first, following the [installation guide](https://yazi-rs.github.io
 `brew install yazi`). Without it `/yazi` says so. Then turn on `omd_yazi` in `/mods`, or run:
 
 ```sh
+omd install omd_yazi
 omd mods enable omd_yazi
 ```
 

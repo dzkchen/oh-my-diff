@@ -1,17 +1,18 @@
 # omd_mini
 
 Runs the same OMD session in a minimal interface. The conversation prints into your terminal's own scrollback, with a
-bare prompt and one status line. It's off by default in OMD+. OMD Core doesn't include it.
+bare prompt and one status line. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_mini
 omd mods enable omd_mini
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 ## Use it
 

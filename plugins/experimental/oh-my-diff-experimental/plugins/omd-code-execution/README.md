@@ -2,8 +2,8 @@
 
 Guides the model to run code cells in Codex code mode, a Codex feature where the model writes small programs that call
 the session's tools. It covers JavaScript cells with session storage, and Python and Bun cells that keep their state
-between calls. Cells call tools through Codex's own tool router, so its permissions and task controls apply. OMD+ puts
-it on disk but doesn't install it, so you add it yourself. OMD Core doesn't include it.
+between calls. Cells call tools through Codex's own tool router, so its permissions and task controls apply. It's experimental: no install profile stages it. [Experimental plugins](../../../../README.md#experimental-plugins)
+has the steps to add it.
 
 The plugin is guidance only. It has no mod component. The Python and Bun drivers ship in its `kernels/` folder.
 
@@ -21,7 +21,7 @@ The plugin is guidance only. It has no mod component. The Python and Bun drivers
    plugin folder and the digests with:
 
    ```sh
-   ROOT=$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/oh-my-diff/omd-code-execution/* | tail -1)
+   ROOT=$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/oh-my-diff-experimental/omd-code-execution/* | tail -1)
    shasum -a 256 "$ROOT/kernels/python.py" "$ROOT/kernels/bun.mjs"
    ```
 

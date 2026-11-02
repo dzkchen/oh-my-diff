@@ -19,7 +19,7 @@ omd mods catalog QUERY       # search the curated directory
 omd mods inspect REFERENCE   # preview a mod without installing it
 ```
 
-The curated directory has the OMD+ mods and three ports, mods adapted from Claude Code mods (`burn_meter`,
+The curated directory has the OMD+ mods, the experimental mods and three ports, mods adapted from Claude Code mods (`burn_meter`,
 `token_weather` and `blast_radius`). The [included mods](collection.md) page describes each one.
 
 ## Install a mod

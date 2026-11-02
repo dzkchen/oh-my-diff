@@ -1,17 +1,18 @@
 # omd_advisor
 
 Gets a second model's opinion on a decision, a stalled attempt or a claimed completion, and flags output you should
-know about. It's off by default in OMD+. OMD Core doesn't include it.
+know about. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_advisor
 omd mods enable omd_advisor
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 Then pick the model the advisor runs on. That's the `route` setting, which has no default. In `/mods`, open Advisor,
 then Advisor model. Or choose Add a helper model there to use the model you're chatting with on your ChatGPT plan.

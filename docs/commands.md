@@ -76,7 +76,7 @@ set.
 | `omd update channel stable\|prerelease\|nightly` | Which releases to follow |
 | `omd update pin VERSION\|none` | Stay on one version, or stop pinning |
 | `omd uninstall` | Remove OMD; Codex settings and sessions stay |
-| `omd mini` | Start Codex in the [scrollback-first interface](../mods/first-party/omd_mini/README.md) (OMD+ with `omd_mini` on) |
+| `omd mini` | Start Codex in the [scrollback-first interface](../mods/first-party/omd_mini/README.md) (experimental: `omd install omd_mini`, then turn it on) |
 
 ### Shell commands from mods
 
@@ -93,7 +93,7 @@ Manages the install profile. It prints JSON, except `status` without `--json`.
 | `omd-package status [--json]` | The install profile and its mods |
 | `omd-package activate full\|platform\|direct` | Switch to OMD+ or OMD Core, or to `direct`, the recovery state that runs plain Codex behavior with no mods |
 | `omd-package mod enable\|disable ID` | Turn a mod your profile installed on or off, without asking. It changes the trusted selection, reloads the mods and restores the previous state if the mod fails to load |
-| `omd-package profiles [--setup] [--model NAME]` | Set up `omd_profiles` or start a session on an account profile; `--help` lists the other flags |
+| `omd-package profiles [--setup] [--model NAME]` | Install and set up the experimental `omd_profiles` mod (`--setup`) or start a session on an account profile; `--help` lists the other flags |
 | `omd-package mini` | The same as `omd mini` |
 | `omd-package contract list\|status\|plan\|select\|clear [ID@VERSION]` | List, show or select the workflow contract for this repository |
 | `omd-package plugins` | Register the OMD+ plugin marketplace with Codex ([plugins](../plugins/README.md)) |

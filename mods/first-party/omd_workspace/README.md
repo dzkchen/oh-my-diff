@@ -1,7 +1,7 @@
 # omd_workspace
 
 Shows your Git changes, a shell, your own terminal programs and other mods' panels around the chat, in the
-arrangement you pick. It's off by default in OMD+. OMD Core doesn't include it.
+arrangement you pick. It's experimental, and no install profile includes it.
 
 When it's on, it draws the whole screen. The chat is the main view, and `0` (`key_main`) returns to it. By default the
 panels are numbered tabs of one dock to the right of the chat:
@@ -19,13 +19,14 @@ With [`omd_git`](../omd_git/README.md) on, its Git tab replaces Changes, so the 
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_workspace
 omd mods enable omd_workspace
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 Without it nothing changes. `/workspace off` hides the workspace and `/workspace on` brings it back, without `/mods`.
 

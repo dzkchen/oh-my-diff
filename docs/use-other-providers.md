@@ -41,7 +41,7 @@ covers billing, several accounts and limits.
 
 ## Use an API key or another provider
 
-1. Turn on `omd_profiles` in `/mods`.
+1. Install and turn on the experimental `omd_profiles` mod (OMD+ only): run `omd-package profiles --setup`.
 2. Add an account:
 
    ```text

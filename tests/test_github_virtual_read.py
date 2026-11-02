@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading/scripts/github_read.py"
+SOURCE = ROOT / "plugins/experimental/oh-my-diff-experimental/plugins/omd-artifact-reading/scripts/github_read.py"
 spec = importlib.util.spec_from_file_location("github_read", SOURCE)
 github = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(github)

@@ -25,10 +25,10 @@ function main() {
     if (parsed.errors.length) throw new Error(ts.formatDiagnostics(parsed.errors, { getCanonicalFileName: name => name, getCurrentDirectory: () => dirname(filename), getNewLine: () => '\n' }));
     for (const file of parsed.fileNames) if (parsed.options.checkJs || !/\.[cm]?jsx?$/.test(file)) coverage.set(file.slice(root.length), config);
   }
-  const files = [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'mods', 'plugins/bundled'], { cwd: root, encoding: 'utf8' }).split('\0'))]
+  const files = [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'mods', 'plugins/bundled', 'plugins/experimental'], { cwd: root, encoding: 'utf8' }).split('\0'))]
     .filter(file => existsSync(resolve(root, file)));
   const syntaxOnly = new Map([
-    ['plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/bun.mjs', 'Bun runtime kernel'],
+    ['plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/bun.mjs', 'Bun runtime kernel'],
     ['mods/examples/approval_desk/client.mjs', 'standalone browser client example'],
     ['mods/examples/external_client/client.mjs', 'standalone browser client example'],
     ['mods/first-party/omd_preview/render.mjs', 'preview renderer sidecar'],

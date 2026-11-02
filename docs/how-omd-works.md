@@ -91,8 +91,8 @@ A hook can't store state between calls, stream output, draw on screen, choose wh
 `pre_tool_use` hooks run before a tool call, and when two of them rewrite the same call, the last one to finish wins.
 A mod is loaded by the host, stores state, draws in the terminal, and combines with other mods in a defined order.
 
-A plugin can also contain a mod. The [plugins page](../plugins/README.md) lists the four plugins that OMD+ puts on
-disk for you to add, and their mod components.
+A plugin can also contain a mod. The [plugins page](../plugins/README.md) lists the plugin that OMD+ puts on disk
+for you to add, the experimental ones, and their mod components.
 
 ## See also
 

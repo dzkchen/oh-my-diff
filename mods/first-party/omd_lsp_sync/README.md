@@ -1,20 +1,21 @@
 # omd_lsp_sync
 
 Runs your language servers in the background so the agent sees the errors each edit introduces, and can go to
-definitions, find references and rename. It's off by default in OMD+. OMD Core doesn't include it.
+definitions, find references and rename. It's experimental, and no install profile includes it.
 
 A language server is the program your editor uses to find errors and jump to definitions, such as
 `pyright-langserver` for Python.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_lsp_sync
 omd mods enable omd_lsp_sync
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 It needs a language server on your `PATH`:
 

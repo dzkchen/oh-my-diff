@@ -1,7 +1,7 @@
 # omd_source_knowledge
 
 Lets the agent keep notes about a repository for later tasks, each checked against the file it points at before it's
-reused. It's off by default in OMD+. OMD Core doesn't include it.
+reused. It's experimental, and no install profile includes it.
 
 A fact points at exact lines of a file and is checked against the file each time it's reused. The agent can also keep
 a copy of a small structured result from the current thread, such as a test report, as evidence, and propose lessons
@@ -9,13 +9,14 @@ from that evidence. A lesson is used only after you approve it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_source_knowledge
 omd mods enable omd_source_knowledge
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 ## Use it
 

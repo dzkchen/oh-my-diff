@@ -2,22 +2,22 @@
 
 When a large conversation sits idle, it compacts the conversation (replaces the earlier messages with a shorter
 summary) shortly before the provider's prompt cache is estimated to expire. Your next message then sends that summary
-instead of the whole history, which the provider no longer has cached. It's on by default in OMD+. OMD Core doesn't
-include it.
+instead of the whole history, which the provider no longer has cached. It's experimental, and no install profile includes it.
 
 The conversation continues from a shorter summary. That loses detail and changes the start of the conversation that
 the provider can reuse from its cache.
 Compaction uses the provider, and savings and faster responses are not guaranteed.
 
-## Turn it off
+## Turn it on
 
-Turn it off in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
-omd mods disable omd_idle_compact
+omd install omd_idle_compact
+omd mods enable omd_idle_compact
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 ## Use it
 

@@ -2,20 +2,21 @@
 
 Gives the model a Python workspace that lasts through the session, where it can load files, keep results and hand work
 to child agents. It also stores a versioned set of notes, memories, skills and agent specs (the session harness) that
-the model can propose changes to. It's off by default in OMD+. OMD Core doesn't include it.
+the model can propose changes to. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_programmable_context
 omd mods enable omd_programmable_context
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 It needs the `omd-code-execution` plugin's `python` kernel. Set that up first, as its
-[README](../../../plugins/bundled/oh-my-diff/plugins/omd-code-execution/README.md) describes.
+[README](../../../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/README.md) describes.
 
 ## Use it
 
@@ -102,7 +103,7 @@ Change settings in `/mods`.
 
 ## More
 
-- [`omd-code-execution` plugin](../../../plugins/bundled/oh-my-diff/plugins/omd-code-execution/README.md)
+- [`omd-code-execution` plugin](../../../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/README.md)
 - [Plugins](../../../plugins/README.md)
 - [Included mods](../../../docs/collection.md)
 - Credit: behavior inspired by [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) (`e75f59efc6f7`,

@@ -84,6 +84,29 @@ class ProfileModeTests(unittest.TestCase):
             self.assertEqual(refreshed.call_count, 1)
             self.assertIn('model="home"', launched.call_args.args[1])
 
+    def test_route_setup_installs_its_experimental_mod_into_the_store(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            (base / "sources/omd_profiles").mkdir(parents=True)
+            (base / "sources/omd_profiles/index.ts").write_text("new")
+            (base / "store/sources/omd_profiles").mkdir(parents=True)
+            (base / "store/sources/omd_profiles/index.ts").write_text("stale")
+            record = {"profile": "full", "store": str(base / "store"), "manager": {"installed_path": "m"}, "packages": {},
+                      "activation": {"selection": "full"}}
+            locked = {"packages": {"omd_profiles": {"version": "1.0.0", "package_sha256": "abc", "files": ["index.ts"],
+                                                    "capabilities": ["os"]}}}
+            calls = []
+            arguments = argparse.Namespace(setup=True, add=None, remove=None, allowance=None)
+            with patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"), \
+                    patch.object(profiles.support, "mods_lock", return_value=locked), patch.object(profiles, "verify"), \
+                    patch.object(profiles, "invoke", side_effect=lambda *items: calls.append(items)), \
+                    patch.object(profiles, "route_setup", return_value={"provider": {}}), \
+                    patch.object(profiles, "selected_text", return_value=""), patch.object(profiles, "select_mod"):
+                profiles.route(base, base, "profiles", arguments)
+            self.assertEqual((base / "store/sources/omd_profiles/index.ts").read_text(), "new")
+            self.assertEqual(calls[0][1], "trust-all")
+            self.assertEqual(json.loads((base / "install.json").read_text())["packages"]["omd_profiles"]["sha256"], "abc")
+
     def test_omd_launcher_routes_uninstall_to_the_installer_that_owns_it(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)

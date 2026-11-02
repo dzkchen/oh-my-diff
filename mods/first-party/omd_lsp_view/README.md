@@ -1,7 +1,7 @@
 # omd_lsp_view
 
 Looks up hover text, definitions, references, symbols, errors, code actions and formatting from your language servers,
-in a popup or a card above the prompt. It's off by default in OMD+. OMD Core doesn't include it.
+in a popup or a card above the prompt. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
@@ -9,7 +9,9 @@ It uses the language servers that [`omd_lsp_sync`](../omd_lsp_sync/README.md) ru
 server on your `PATH`. Then turn on `omd_lsp_view` in `/mods`, or run:
 
 ```sh
+omd install omd_lsp_sync
 omd mods enable omd_lsp_sync
+omd install omd_lsp_view
 omd mods enable omd_lsp_view
 ```
 

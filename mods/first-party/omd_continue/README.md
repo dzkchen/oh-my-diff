@@ -1,17 +1,17 @@
 # omd_continue
 
-Resumes interrupted work in the current session with `/continue [note]`. It's off by default in OMD+. OMD Core
-doesn't include it.
+Resumes interrupted work in the current session with `/continue [note]`. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
-Turn it on in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
+omd install omd_continue
 omd mods enable omd_continue
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 ## Use it
 

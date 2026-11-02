@@ -1,18 +1,18 @@
 # omd_inspector
 
 Shows a summary of your session: whether OMD is running it, the install profile, mod counts, the workflow contract
-(the task checks [`omd_workflow`](../omd_workflow/README.md) enforces), task and worker limits, and paid API cost. It's
-on by default in OMD+. OMD Core doesn't include it.
+(the task checks [`omd_workflow`](../omd_workflow/README.md) enforces), task and worker limits, and paid API cost. It's experimental, and no install profile includes it.
 
-## Turn it off
+## Turn it on
 
-Turn it off in `/mods`, or run:
+Install it from the Available group in `/mods`, or run:
 
 ```sh
-omd mods disable omd_inspector
+omd install omd_inspector
+omd mods enable omd_inspector
 ```
 
-[Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
+[Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 ## Use it
 
