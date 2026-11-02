@@ -28,7 +28,8 @@
         "items": [
           "Installer: download errors name the requested URL and HTTP status, never a signed redirect URL",
           "Output budget: its component loads again",
-          "/btw: the answering notice stays until the answer arrives"
+          "/btw: the answering notice stays until the answer arrives",
+          "Leave experimental mods out of the first-party together scenario (#359)"
         ]
       }
     ],
@@ -39,7 +40,8 @@
       "510b804",
       "4b2944c",
       "09a835c",
-      "c9b93fa"
+      "c9b93fa",
+      "616c5a8"
     ]
   },
   {
