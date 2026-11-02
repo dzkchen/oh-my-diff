@@ -12,8 +12,8 @@ omd install omd_loop_guard
 omd mods enable omd_loop_guard
 ```
 
-It needs no authority grant and works in `codex exec`. Turn it on in the shell or `/mods` before a `codex exec` run: a headless run can't show the trust dialog, so a mod that
-isn't trusted yet stays off.
+It needs no authority grant and works in `codex exec`. Turn it on in the shell or `/mods` before a `codex exec` run: a
+headless run can't show the trust dialog, so a mod that isn't trusted yet stays off.
 
 ## Use it
 

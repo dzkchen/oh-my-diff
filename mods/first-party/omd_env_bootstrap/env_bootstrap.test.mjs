@@ -42,10 +42,12 @@ test('the snapshot runs once per thread and is inserted unchanged after the envi
   assert.deepEqual(later.sent, first.sent);
 });
 
-test('a failed or empty snapshot saves nothing, so the next request tries again; a timed-out one keeps its lines', () => {
+test('a failed or empty snapshot is retried once, then never again in that thread; a timed-out one keeps its lines', () => {
   const failed = send(null, () => { throw new Error('exec_program_unavailable'); });
-  assert.deepEqual([failed.sent, failed.state], [sections, null]);
-  assert.deepEqual(send(null, () => ({ exit_code: null, stdout: '', timed_out: true })).state, null);
+  assert.deepEqual([failed.sent, failed.state], [sections, 1]);
+  const empty = send(failed.state, () => ({ exit_code: null, stdout: '', timed_out: true }));
+  assert.deepEqual([empty.sent, empty.state], [sections, 2]);
+  assert.deepEqual(send(empty.state, () => assert.fail('no third attempt')).calls, ['continuation.next']);
   assert.match(send(null, () => ({ exit_code: null, stdout: 'os: Linux\ncwd: /a\n', timed_out: true })).state, /\nos: Linux\ncwd: \/a\n$/);
   assert.equal(send(failed.state, () => ({ exit_code: 0, stdout: 'os: Linux\n', timed_out: false })).sent[3].id, 'mod:omd_env_bootstrap');
 });

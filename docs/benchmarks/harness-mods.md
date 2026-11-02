@@ -1,8 +1,9 @@
-# Four harness mods reduce Codex's estimated cost by a quarter on 43 tasks
+# A pilot run of four harness mods against stock Codex on 43 tasks
 
 On 43 coding tasks, with two attempts each, Codex running four experimental Oh My Diff (OMD) mods and one plugin
-component cost an estimated $6.24, compared with $8.32 for stock Codex, a reduction of 25%. It consumed 29% fewer
-input tokens, produced 30% fewer output tokens and finished 8% sooner. The pass rate did not change measurably:
+component cost an estimated $6.24, compared with $8.32 for stock Codex, 25% less (95% CI 19% to 31%). It consumed
+29% fewer input tokens (21% to 36%) and produced 30% fewer output tokens (23% to 36%). Wall time was 8% lower, an
+interval (−17% to +2%) that includes no change. The pass rate did not change measurably:
 terminal tasks passed at 0.962 in both arms, and SWE-bench tasks rose from 0.767 to 0.800, within a 95% confidence
 interval that includes zero.
 
@@ -87,14 +88,19 @@ reduced cost by 21% and passed all 23 tasks.
 
 | | Stock Codex | With the mods | Change |
 | --- | ---: | ---: | ---: |
-| Estimated cost | $8.32 | $6.24 | −25% |
-| Input tokens | 24.4M | 17.3M | −29% |
-| Output tokens | 227K | 159K | −30% |
-| Wall time | 5,614 s | 5,177 s | −8% |
+| Estimated cost | $8.32 | $6.24 | −25% (95% CI −31% to −19%) |
+| Input tokens | 24.4M | 17.3M | −29% (95% CI −36% to −21%) |
+| Output tokens | 227K | 159K | −30% (95% CI −36% to −23%) |
+| Wall time | 5,614 s | 5,177 s | −8% (95% CI −17% to +2%) |
 | Terminal pass@1 | 0.962 | 0.962 | no change |
 | SWE-bench pass@1 | 0.767 | 0.800 | +0.033 (95% CI −0.067 to +0.133) |
 
-Token counts, cost and wall time are totals over each arm's 86 runs.
+Token counts, cost and wall time are totals over each arm's 86 runs. Their intervals come from a paired bootstrap
+over tasks of the ratio of the two arms' totals.
+
+The mods were tuned on 23 of the 43 tasks, so the final run could overstate what they do on unseen work. On the 20
+tasks never used for tuning, estimated cost fell by 26% (95% CI 16% to 35%), against 24% (16% to 31%) on the 23
+tuning tasks.
 
 ![Change against stock Codex by suite. Terminal tasks: cost −21%, input tokens −16%, output tokens −31%, tool calls per run −27%, wall time −16%. SWE-bench Verified: cost −26%, input tokens −31%, output tokens −29%, tool calls per run −23%, wall time −5%.](harness-mods-change.svg)
 
@@ -124,7 +130,8 @@ breaking the cache. Reasoning tokens fell the most, from 40.6K to 15.7K, a reduc
 
 I ran the mods as one set, without ablation, so the result applies to the set as a whole. The traces show which
 mods acted. `omd_verify_stop` and the output-budget component acted often. `omd_observation_mask`, `omd_edit_guard`
-and `omd_plan_anchor` almost never did: the runs were short, few outputs were large, and edits rarely broke syntax.
+almost never did: the runs were short, few outputs were large, and edits rarely broke syntax. `omd_plan_anchor` was
+off in this arm.
 The reduction in tool calls is consistent with `omd_env_bootstrap` answering the first questions an agent asks about
 a workspace. The snapshot was present in every run's first request, but no run omitted it, so its share of the saving
 is unknown.
@@ -142,14 +149,14 @@ Three findings from the traces led to code changes after the final run. None of 
 - Another experimental mod, [`omd_loop_guard`](../../mods/first-party/omd_loop_guard/README.md), notifies the agent
   when the same call repeatedly returns the same error or output.
 - `omd_plan_removal` no longer changes the tool list, and OMD+ installs it disabled, so plan mode works in Codex and in
-  applications such as [T3 Code](../use-with-t3-code.md). `omd_plan_anchor` still adds `update_plan` and remains
-  experimental.
+  applications such as [T3 Code](../use-with-t3-code.md). `omd_plan_anchor` no longer adds `update_plan` either, so
+  it now does nothing on gpt-6.1-sol.
 
 ## OMD+ with the mods on the nightly build
 
 After those changes, I ran the 23 tuning tasks once more, with one attempt each, on the OMD nightly of 2026-11-01
 (`v1.3.1-nightly.20261101150218`, Codex `0.166.0`). In this round the arm was a full OMD+ install with its default
-mods enabled, plus the five mods above, `omd_loop_guard` and the output-budget component. I disabled two OMD+ defaults
+mods enabled, plus the four mods above, `omd_loop_guard` and the output-budget component. I disabled two OMD+ defaults
 that change the tool list, since the nightly predates the fix for them:
 
 - `omd_plan_removal`, which OMD+ now installs disabled.
@@ -178,9 +185,11 @@ cannot determine how much of the model-time slowdown is attributable to OMD.
 
 ![Mean model time per request on the 23 tuning tasks: 5.6 seconds for stock Codex, 6.0 seconds for the mods in the morning round and 7.1 seconds for OMD+ with the mods on the nightly build.](harness-mods-model-time.svg)
 
-Tool calls took 49 seconds longer in total over the 23 runs (168 against 119), which is OMD's own overhead: the edit
-and shell-change checks run inside tool calls. `omd_verify_stop` acted in 4 runs and the output-budget component in 3.
-The other mods did not act, and the snapshot was present in all 23 first requests.
+Tool calls took 49 seconds longer in total over the 23 runs (168 against 119). That is consistent with OMD's own
+overhead, since the edit and shell-change checks run inside tool calls, but the local checks running alongside may
+account for part of it. `omd_edit_guard` now lists Git only for shell writes it can't name. `omd_verify_stop` acted in 4
+runs and the output-budget component in 3. The other mods did not act, and the snapshot was present in all 23 first
+requests.
 
 ## Limitations
 

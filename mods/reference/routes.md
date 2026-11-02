@@ -100,7 +100,7 @@ api.host.call('routes.select', { route: 'fast_lead', scope: 'next_request' });
 ## `routes.add`
 
 `routes.add {mod?}` (user only) gives a mod a worker route on the user's ChatGPT plan. Without `mod` it is for the
-caller itself and needs `agents`; naming a mod needs `packages`. It asks the user, then adds the worker route
+caller itself and needs `agents` (`routes_add_self_v1`); naming a mod needs `packages`. It asks the user, then adds the worker route
 `plan-MODEL-MOD` for the conversation's model and effort. The route is open only to that mod, and the host adds this
 repository to its grant.
 

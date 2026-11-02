@@ -20,14 +20,15 @@ const CHECKERS: [RegExp, string[]][] = [
   [/\.php$/, ['php', '-l']],
   [/\.go$/, ['gofmt', '-l', '-e']],
 ];
-// $1 file, $2 extension; exit 0 parses, 3 fails while its HEAD version parses, 5 fails otherwise, 4 skipped.
+// $1 file, $2 extension; exit 0 parses, 3 fails while its HEAD version parses, 5 fails at HEAD too, 6 fails with no HEAD version, 4 skipped.
 const SCRIPT = `f=$1 x=$2; shift 2
 [ -f "$f" ] && [ "$(wc -c < "$f")" -le 1048576 ] && command -v "$1" >/dev/null 2>&1 || exit 4
 out=$("$@" "$f" 2>&1) && exit 0
 printf '%s' "$out"
 d=$(mktemp -d "\${TMPDIR:-/tmp}/omd_edit_guard.XXXXXX") || exit 5
 trap 'rm -rf "$d"' EXIT
-git show "HEAD:./$f" > "$d/base$x" 2>/dev/null && "$@" "$d/base$x" >/dev/null 2>&1 && exit 3
+git show "HEAD:./$f" > "$d/base$x" 2>/dev/null || exit 6
+"$@" "$d/base$x" >/dev/null 2>&1 && exit 3
 exit 5`;
 const SHELL = /^(exec_command|shell|shell_command|local_shell)$/;
 const CHANGED = `git rev-parse --git-dir >/dev/null 2>&1 || exit 4
@@ -63,21 +64,21 @@ function writes(cmd: string): { created: string[]; changed: string[]; unseen: bo
 
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
 const field = (value: Json, key: string): Json => value && typeof value === 'object' && !Array.isArray(value) ? value[key] ?? null : null;
+const command = (args: Json) => {
+  const value = typeof args === 'string' ? args : field(args, 'cmd') ?? field(args, 'command');
+  return typeof value === 'string' ? value : Array.isArray(value) ? value.filter(item => typeof item === 'string').join(' ') : '';
+};
 const clip = (text: string, bytes: number) => {
   while (new TextEncoder().encode(text).length > bytes) text = text.slice(0, Math.floor(text.length * 0.9));
   return text;
 };
 
-function edits(tool: string, args: Json): [string, boolean][] {
-  if (tool === 'apply_patch') {
-    const found = new Map<string, boolean>();
-    for (const match of strings(args).join('\n').matchAll(PATCH)) found.set((match[2] ?? match[3]).trim(), match[1] !== 'Update');
-    return [...found];
-  }
+function edits(tool: string, args: Json): string[] {
+  if (tool === 'apply_patch') return [...new Set([...strings(args).join('\n').matchAll(PATCH)].map(match => (match[2] ?? match[3]).trim()))];
   if (!EDIT_TOOL.test(tool)) return [];
   const files = field(args, 'files');
   const paths = [field(args, 'path'), field(args, 'file_path'), ...(Array.isArray(files) ? files.map(file => field(file, 'path')) : [])];
-  return paths.filter((path): path is string => typeof path === 'string').map(path => [path, false]);
+  return paths.filter((path): path is string => typeof path === 'string');
 }
 
 function relative(path: string, root: string, cwd: string): string | null {
@@ -97,24 +98,25 @@ export default function activate(api: ModAPI) {
     return new Map(list.split('\n').filter(Boolean).map((line, index) => [line.slice(2), `${line[0]} ${ids[index] ?? ''}`]));
   };
 
-  const check = (found: [string, boolean, boolean][], state: State) => {
+  const check = (found: [string, boolean][], state: State) => {
     const { root, cwd } = api.session();
-    const targets = found.flatMap(([given, added, rooted]) => {
+    const targets = found.flatMap(([given, rooted]) => {
       const path = rooted ? given : relative(given, root, cwd);
       const checker = path && CHECKERS.find(([pattern]) => pattern.test(path))?.[1];
-      return path && checker ? [{ path, added, checker }] : [];
+      return path && checker ? [{ path, checker }] : [];
     }).slice(0, FILES);
     const reports: string[] = [];
-    for (const { path, added, checker } of targets) {
+    for (const { path, checker } of targets) {
       const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', SCRIPT, 'sh', path, path.slice(path.lastIndexOf('.')), ...checker], timeout_ms: 3000, max_output_bytes: 16_384 });
       if (!run.ok || run.value.timed_out) continue;
       const code = run.value.exit_code;
       const known = state.known.includes(path);
       const text = () => clip(run.value.stdout.replaceAll(`${root}/`, '').replace(NOISE, '').replace(/\n{2,}/g, '\n').trim(), FILE_BYTES);
       state.known = state.known.filter(entry => entry !== path);
-      if (code === 0 || code === 3 || (code === 5 && known)) state.known = [...state.known, path].slice(-SEEN);
-      if (code === 3 || (code === 5 && known)) reports.push(text());
-      else if (code === 5 && added) reports.push(`${NEW}${text()}`);
+      const failed = code === 5 || code === 6;
+      if (code === 0 || code === 3 || (failed && known)) state.known = [...state.known, path].slice(-SEEN);
+      if (code === 3 || (failed && known)) reports.push(text());
+      else if (code === 6) reports.push(`${NEW}${text()}`);
     }
     return reports;
   };
@@ -122,13 +124,16 @@ export default function activate(api: ModAPI) {
   api.intercept('tool', async (e, next) => {
     const caller = next.origin?.caller;
     if (caller !== 'model' && caller !== 'code_mode') return next(e);
-    const write = SHELL.test(e.tool) ? writes(strings(e.arguments).join('\n')) : null;
-    const before = write && (write.created.length || write.changed.length || write.unseen) ? listing() : null;
+    const cmd = SHELL.test(e.tool) ? command(e.arguments) : null;
+    const write = cmd === null ? null : writes(cmd);
+    const elsewhere = cmd !== null && (/(?:^|[\s;&|(])(?:cd|pushd)\s/.test(cmd) || typeof field(e.arguments, 'workdir') === 'string');
+    const named = write && !write.unseen && !elsewhere ? [...write.created, ...write.changed] : [];
+    const before = write && (write.unseen || (elsewhere && write.created.length + write.changed.length > 0)) ? listing() : null;
     const result = await next(e);
     const after = before && result.success ? listing() : null;
-    const found: [string, boolean, boolean][] = !result.success ? []
-      : after && before ? [...after].filter(([path, id]) => before.get(path) !== id).map(([path, id]) => [path, id.startsWith('A'), true])
-        : edits(e.tool, e.arguments).map(([path, added]) => [path, added, false]);
+    const found: [string, boolean][] = !result.success ? []
+      : after && before ? [...after].filter(([path, id]) => before.get(path) !== id).map(([path]) => [path, true])
+        : [...named, ...edits(e.tool, e.arguments)].map(path => [path, false]);
     const loaded: State = { known: [], held: [], ...(api.state.get() as Partial<State> | null) };
     const state = { ...loaded };
     const reports = found.length ? check(found, state) : [];
@@ -138,7 +143,7 @@ export default function activate(api: ModAPI) {
     const introduced = all.filter(entry => !entry.startsWith(NEW));
     const fresh = all.filter(entry => entry.startsWith(NEW)).map(entry => entry.slice(NEW.length));
     const notes = [
-      ...(introduced.length ? [`[omd_edit_guard] This edit introduced a syntax error. Fix it now, before anything else:\n${introduced.join('\n')}`] : []),
+      ...(introduced.length ? [`[omd_edit_guard] This edit introduced a syntax error (the file parsed before). Fix it now, unless it is newer syntax than this checker's version accepts:\n${introduced.join('\n')}`] : []),
       ...(fresh.length ? [`[omd_edit_guard] A new file fails its syntax check. Fix it if the error is real; leave it if the file uses syntax this checker doesn't accept (JSONC, JSX, a newer language version):\n${fresh.join('\n')}`] : []),
     ];
     if (!notes.length) return result;

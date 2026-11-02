@@ -95,3 +95,9 @@ test('moving scratch files out after a passing check is not an edit, but an in-p
   for (const cmd of ['mv repro.py /tmp/', 'cp coverage.json /tmp/cov.json', 'git diff > patch']) assert.equal(stop(run('tool_output', '', shell(cmd, exited(0)), passed()).state).stopped, true, cmd);
   for (const cmd of ['grep -rl foo src | xargs sed -i "s/foo/bar/"', 'find . -name "*.py" -exec sed -i s/a/b/ {} +', 'env FOO=1 sed -i s/a/b/ x.py']) assert.equal(stop(run('tool_output', '', shell(cmd, exited(0)), passed()).state).stopped, false, cmd);
 });
+
+test('an edit made by an interpreter script counts as an edit', () => {
+  const state = feed(shell(`python3 -c "p='src/app.py'; open(p,'w').write('x = 1')"`, exited(0)));
+  assert.equal(stop(state).stopped, false);
+  for (const cmd of [`python3 - <<'EOF'\nprint(1)\nEOF`, `python3 -c "import sys; sys.stdout.write('x')"`, `node -e "process.stdout.write('x')"`, `python3 -c "open('/tmp/repro.py','w').write('x')"`]) assert.equal(stop(feed(shell(cmd, exited(0)))).stopped, true, cmd);
+});

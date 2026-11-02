@@ -35,10 +35,10 @@ function run(tool, state = null, exits = {}, caller = 'model', listings = [], cw
 
 const patch = (body, success = true) => ({ call_id: 'p', tool: 'apply_patch', arguments: `*** Begin Patch\n${body}\n*** End Patch`, success });
 const write = cmd => ({ call_id: 's', tool: 'exec_command', arguments: { cmd }, success: true });
-const INTRODUCED = '[omd_edit_guard] This edit introduced a syntax error. Fix it now, before anything else:\n';
+const INTRODUCED = "[omd_edit_guard] This edit introduced a syntax error (the file parsed before). Fix it now, unless it is newer syntax than this checker's version accepts:\n";
 const NEW_FILE = "[omd_edit_guard] A new file fails its syntax check. Fix it if the error is real; leave it if the file uses syntax this checker doesn't accept (JSONC, JSX, a newer language version):\n";
 
-test('each checkable file of a patch runs its checker once, with no state in its arguments', () => {
+test('each checkable file of a patch runs its checker once', () => {
   const { runs, append } = run(patch(`*** Add File: new.py\n+x\n*** Update File: ${ROOT}/src/app.mjs\n*** Move to: src/moved.js\n*** Update File: notes.md\n*** Update File: ../out.py`));
   assert.equal(append, null);
   assert.deepEqual(runs.map(({ path, extension, checker }) => [path, extension, checker[0]]), [['new.py', '.py', 'python3'], ['src/app.mjs', '.mjs', 'node'], ['src/moved.js', '.js', 'node']]);
@@ -62,10 +62,10 @@ test('an error whose HEAD version parses is reported without host noise and stay
   assert.equal(run(patch('*** Update File: b.js'), null, { 'b.js': [5, 'b.js:1: SyntaxError'] }).append, null, 'broken at HEAD and never seen parsing');
 });
 
-test('a new file the checker rejects is reported once as possibly valid, not as an introduced error', () => {
-  const added = run(patch('*** Add File: tsconfig.json\n+{ // c\n+}'), null, { 'tsconfig.json': [5, 'tsconfig.json: Expecting property name'] });
+test('a file with no HEAD version that the checker rejects gets the softer note, not an introduced error', () => {
+  const added = run(patch('*** Add File: tsconfig.json\n+{ // c\n+}'), null, { 'tsconfig.json': [6, 'tsconfig.json: Expecting property name'] });
   assert.equal(added.append, `${NEW_FILE}tsconfig.json: Expecting property name`);
-  assert.equal(run(patch('*** Update File: tsconfig.json'), added.state, { 'tsconfig.json': [5, 'tsconfig.json: Expecting property name'] }).append, null);
+  assert.equal(run(write('echo "x = (" >> broken.py'), null, { 'broken.py': [5, 'broken.py: bad'] }).append, null, 'appending to a file broken at HEAD');
 });
 
 test('mod edit tools are checked by their path arguments', () => {
@@ -75,17 +75,26 @@ test('mod edit tools are checked by their path arguments', () => {
   assert.deepEqual([read.runs.length, read.listed.length], [0, 0]);
 });
 
-test('files a write-like shell command changed are found by listing Git before and after it', () => {
-  const first = run(write("python3 - <<'PY'\nopen('a.py','w').write(s)\nPY"), null, { 'a.py': [3, 'a.py:1:4: SyntaxError: x'], 'new dir/b.json': [5, 'b.json: bad'] }, 'model',
+test('files a shell command names are checked directly; a write it cannot name is found by listing Git before and after it', () => {
+  const first = run(write("python3 - <<'PY'\nopen('a.py','w').write(s)\nPY"), null, { 'a.py': [3, 'a.py:1:4: SyntaxError: x'], 'new dir/b.json': [6, 'b.json: bad'] }, 'model',
     [[['M', 'old.py', '1']], [['M', 'old.py', '1'], ['M', 'a.py', '2'], ['A', 'new dir/b.json', '3']]]);
   assert.equal(first.listed.length, 2);
   assert.deepEqual(first.runs.map(({ path }) => path), ['a.py', 'new dir/b.json']);
   assert.equal(first.append, `${INTRODUCED}a.py:1:4: SyntaxError: x\n\n${NEW_FILE}b.json: bad`);
   assert.equal(run(write('grep -rl foo src | xargs sed -i "s/foo/bar/"')).listed.length, 2, 'an in-place edit later in a pipeline');
-  for (const cmd of ['pytest 2>&1 >/dev/null', 'node -e "const f = x => x.toString()"', 'python -c "print(a > b.c)"']) assert.deepEqual(run(write(cmd)).listed, [], cmd);
-  const nested = run(write('echo > sub/a.py'), null, {}, 'model', [[], [['M', 'sub/a.py', '4']]], `${ROOT}/sub`);
-  assert.deepEqual(nested.runs.map(({ path }) => path), ['sub/a.py']);
-  assert.deepEqual(run(write('echo > a.py'), null, {}, 'model', [null]).listed.length, 1, 'outside a repository it lists once and checks nothing');
+  for (const cmd of ['pytest 2>&1 >/dev/null', 'pytest > out.log', 'node -e "const f = x => x.toString()"', 'python -c "print(a > b.c)"']) {
+    const quiet = run(write(cmd));
+    assert.deepEqual([quiet.listed, quiet.runs], [[], []], cmd);
+  }
+  const direct = run(write('echo > a.py && sed -i s/a/b/ lib.py'), null, { 'a.py': [6, 'a.py: bad'] });
+  assert.deepEqual([direct.listed, direct.runs.map(({ path }) => path), direct.append], [[], ['a.py', 'lib.py'], `${NEW_FILE}a.py: bad`]);
+  assert.deepEqual(run(write('echo > a.py'), null, {}, 'model', [], `${ROOT}/sub`).runs.map(({ path }) => path), ['sub/a.py']);
+  for (const tool of [write('cd pkg && sed -i s/a/b/ mod.py'), { ...write('sed -i s/a/b/ mod.py'), arguments: { cmd: 'sed -i s/a/b/ mod.py', workdir: 'pkg' } }]) {
+    const moved = run(tool, null, {}, 'model', [[], [['M', 'pkg/mod.py', '5']]]);
+    assert.deepEqual([moved.listed.length, moved.runs.map(({ path }) => path)], [2, ['pkg/mod.py']], tool.arguments.cmd);
+  }
+  assert.deepEqual(run({ ...write('ls'), arguments: { cmd: 'ls', justification: 'echo > a.py' } }).runs, [], 'only the command is parsed');
+  assert.deepEqual(run(write("python3 - <<'PY'\nPY"), null, {}, 'model', [null]).listed.length, 1, 'outside a repository it lists once and checks nothing');
 });
 
 test('errors from a code-mode cell\'s edits are held and appended to the next model-visible output', () => {
@@ -94,4 +103,9 @@ test('errors from a code-mode cell\'s edits are held and appended to the next mo
   const cell = { call_id: 'x', tool: 'exec', arguments: 'await tools.apply_patch(...)', success: true };
   assert.equal(run(cell, nested.state).append, `${INTRODUCED}a.py:1:7: SyntaxError: invalid syntax`);
   assert.equal(run(cell, run(cell, nested.state).state).append, null);
+});
+
+test('the shell-write parser is the same in every harness mod that carries a copy', () => {
+  const parser = text => text.slice(text.indexOf('const EDIT_TOOL'), text.indexOf('\n}\n', text.indexOf('function writes(')));
+  for (const mod of ['omd_loop_guard', 'omd_observation_mask', 'omd_verify_stop']) assert.equal(parser(readFileSync(new URL(`../${mod}/index.ts`, import.meta.url), 'utf8')), parser(source), mod);
 });

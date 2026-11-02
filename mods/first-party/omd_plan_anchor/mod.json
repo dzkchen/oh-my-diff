@@ -8,9 +8,8 @@
   "description": "Repeats the open update_plan steps at the end of a tool result every few calls, so the plan stays near the end of the context",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_plan_anchor"},
-  "capabilities": ["interception", "store"],
-  "codex_config": {"tools.update_plan.enabled": true},
-  "compatibility": {"required_features": ["codex_config_v1", "continuation_middleware_v1", "state_scopes_v1", "store_thread_v1", "store_v1"]},
+  "capabilities": ["interception", "lifecycle", "store"],
+  "compatibility": {"required_features": ["continuation_middleware_v1", "lifecycle_events_v1", "state_scopes_v1", "store_thread_v1", "store_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {

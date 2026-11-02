@@ -2,6 +2,7 @@ import type { ModAPI } from '../../api.d.ts';
 import SNAPSHOT from './snapshot.ts';
 
 const BYTES = 1536;
+const TRIES = 2;
 const encoder = new TextEncoder();
 
 const clip = (text: string) => {
@@ -12,11 +13,17 @@ const clip = (text: string) => {
 
 export default function activate(api: ModAPI) {
   api.intercept('model_request', async (event, next) => {
-    let text = api.state.get();
+    const saved = api.state.get();
+    let text = saved;
     if (typeof text !== 'string') {
+      const failed = typeof saved === 'number' ? saved : 0;
+      if (failed >= TRIES) return next(event);
       const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-s'], stdin: SNAPSHOT, timeout_ms: 3000, max_output_bytes: 8192 });
       const lines = run.ok ? run.value.stdout.split('\n').filter(line => /^[a-z]+(?: \(\d+\))?:\s*\S/.test(line)).join('\n') : '';
-      if (!lines) return next(event);
+      if (!lines) {
+        api.state.set(failed + 1);
+        return next(event);
+      }
       text = clip(`Workspace snapshot taken before the first model request; it is not refreshed, so verify anything your own changes may affect.\n${lines}\n`);
       api.state.set(text);
     }

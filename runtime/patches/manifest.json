@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "a447638c7564c71cb0fa94702810d034b7a6bbe9846525e795222f8cf72d4e9d"
+    "sha256": "8908878cbe41fa6171dc13f9821114d5f6aad20a527664f4c95be0d54601e4e6"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -591,7 +591,7 @@
     },
     "codex-rs/core/src/session/mod.rs": {
       "before": "17be0b1a7962343f5904cfa4514bced6c4ca5642ca39c7426d6be9d1f9f5c4a0",
-      "after": "6ff9ca212e70ccc3b02ee2879249559692cca324cdc92c58d06a4ed05a1de63f"
+      "after": "ca0557db9830453cfdc26ac6952b3b9009af1709bc41a614df065ac173d40fc9"
     },
     "codex-rs/core/src/session/persisted_text.rs": {
       "before": null,
@@ -639,11 +639,11 @@
     },
     "codex-rs/core/src/session/turn_context.rs": {
       "before": "818853cc5b06456ac741b4fbc3f2a8b551298f9cee0ef5b6ba90a6bac4598e7e",
-      "after": "29492918dbeeb31f2cef719def0bb3970ef416eac968c2533b7a906dda1a6d45"
+      "after": "032af613ce38a456f9af4173c0394ddcc2462115910c983817f1f198bdf6aee1"
     },
     "codex-rs/core/src/session/turn_input.rs": {
       "before": "e19a05c5bad17113870a3f27d4dc14f2457f448002c26564b4b00ad03151c6b8",
-      "after": "9246247c38c9ca7920622d93928399fcbcff20489d16c9fdc59059a50886e219"
+      "after": "2362781577b68e3d656c4157589b3b58faffeaa567233dbed323d9050368fc16"
     },
     "codex-rs/core/src/session/turn_input_tests.rs": {
       "before": "1c29fe9893dbc3af5c0588783163fdc78c1ac1ed03e60feff234f6e966e05fef",
@@ -1503,7 +1503,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "5985930a03728d2fb5315e41923050f628ff2a67052fcc571bee742e3671ada9"
+      "after": "63e114122f01e8bdab84f1dce4c99e895ad10ab378f58354437640ffb92bf0a0"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1511,7 +1511,7 @@
     },
     "codex-rs/omd/src/mods/bridge.rs": {
       "before": null,
-      "after": "1ff0ea40313e94504b6ec28086937f1c5c6985625090cab83231a7895eca83c0"
+      "after": "357d7403b738fdd0db5706f8493c541c80f0ca9dbc6d6fc0727639e3bd448130"
     },
     "codex-rs/omd/src/mods/chain.rs": {
       "before": null,

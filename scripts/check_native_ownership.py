@@ -83,8 +83,8 @@ def words(name):
 
 
 def feature(name, vocabulary):
-    lowered = name.lower().replace("-", "_")
-    return sorted((words(name) & vocabulary) | {entry for entry in vocabulary if "_" in entry and entry in lowered})
+    joined = "_" + "_".join(re.split(r"[^a-z0-9]+", name.lower())) + "_"
+    return sorted((words(name) & vocabulary) | {entry for entry in vocabulary if "_" in entry and f"_{entry}_" in joined})
 
 
 def identifiers(root):

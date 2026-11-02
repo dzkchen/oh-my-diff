@@ -10,13 +10,14 @@ omd install omd_env_bootstrap
 omd mods enable omd_env_bootstrap
 ```
 
-It needs no authority grant. Turn it on in the shell or `/mods` before a `codex exec` run: a headless run can't show the trust dialog, so a mod that
-isn't trusted yet stays off.
+It needs no authority grant. Turn it on in the shell or `/mods` before a `codex exec` run: a headless run can't show the
+trust dialog, so a mod that isn't trusted yet stays off.
 
 ## Use it
 
-On a thread's first model request the mod runs the shell script in `snapshot.ts` once through the session's sandbox (read-only, no
-network, at most 3 seconds) and adds at most 1.5 KB of context (about 650 bytes on the benchmark's repositories):
+On a thread's first model request the mod runs the shell script in `snapshot.ts` once through the session's sandbox
+(read-only, no network, at most 3 seconds) and adds at most 1.5 KB of context (about 650 bytes on the benchmark's
+repositories):
 
 ```text
 os: Linux x86_64
@@ -39,8 +40,8 @@ affect.
 - Capabilities `middleware`, `exec` and `store`. The snapshot is kept in the thread's own state.
 - The snapshot runs in the sandbox's private `HOME`, so version managers that need the user's home (mise, rustup,
   pyenv shims) show `?` instead of a version.
-- A failed or empty snapshot saves nothing, and the next request tries again; the request that first gets one adds it
-  and changes the cached prefix once. A snapshot that runs out of time keeps the lines it printed.
+- A failed or empty snapshot is retried on the next request, then not again in that thread; the request that first
+  gets one adds it and changes the cached prefix once. A snapshot that runs out of time keeps the lines it printed.
 - Each subagent thread takes its own snapshot.
 - A thread that already had requests before the mod was turned on gets the snapshot from its next request, which
   changes its cached prefix once.

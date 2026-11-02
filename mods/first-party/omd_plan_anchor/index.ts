@@ -8,6 +8,10 @@ export default function activate(api: ModAPI) {
   const every = () => Math.min(50, Math.max(2, Math.round(Number(api.settings.every) || 8)));
   const save = (plan: Plan) => api.state.set(plan as unknown as Json);
 
+  api.on('turn_start', () => {
+    if (api.state.get() !== null) api.state.set(null);
+  });
+
   api.intercept('tool', { before: ['omd_output_budget'] }, async (e, next) => {
     if (!e.thread_id) return next(e);
     const result = await next(e);
@@ -26,6 +30,6 @@ export default function activate(api: ModAPI) {
     save({ ...plan, since: 0 });
     const lines = open.slice(0, STEPS).map(item => `- [${MARK[item.status] ?? ' '}] ${item.step}`);
     const more = open.length > STEPS ? `\n- … ${open.length - STEPS} more open` : '';
-    return { output: `${result.output}\n\n[omd_plan_anchor: current plan, ${plan.steps.length - open.length}/${plan.steps.length} done; call update_plan when it changes]\n${lines.join('\n')}${more}`, success: result.success };
+    return { ...result, output: `${result.output}\n\n[omd_plan_anchor: current plan, ${plan.steps.length - open.length}/${plan.steps.length} done; call update_plan when it changes]\n${lines.join('\n')}${more}` };
   });
 }

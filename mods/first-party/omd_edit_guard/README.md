@@ -12,16 +12,18 @@ omd mods enable omd_edit_guard
 ```
 
 It needs no authority grant and works in `codex exec`. Checks run in the session sandbox.
-Turn it on in the shell or `/mods` before a `codex exec` run: a headless run can't show the trust dialog, so a mod that
-isn't trusted yet stays off.
+Turn it on in the shell or `/mods` before a `codex exec` run: a headless run can't show the trust dialog, so a mod
+that isn't trusted yet stays off.
 
 ## Use it
 
 It checks the files of each successful `apply_patch` (added, updated and moved files) and of mod edit tools
-(`*_edit`, `*_write`, `*_create`, `*_replace`) with `path`, `file_path` or `files[].path`. In a Git repository it also
-checks the files a write-like shell command changed (a redirect, heredoc, `tee`, `sed -i`, `perl -i`, `cp`, `mv`,
-`.write(`, `write_text(` or `writeFile`): it lists changed and untracked files before and after the command and checks
-those whose content the command changed:
+(`*_edit`, `*_write`, `*_create`, `*_replace`) with `path`, `file_path` or `files[].path`. It also checks the files a
+shell command writes by name (a redirect, `tee`, `sed -i`, `perl -i`, `cp`, `mv`). For a write it can't name (a
+heredoc, `.write(`, `write_text(`, `writeFile`, a quoted or variable path), it lists changed and untracked files in the
+Git repository before and after the command and checks those whose content changed. It lists them too when the command
+changes directory (`cd`, `pushd`) or runs in another `workdir`, since a named path is then relative to that
+directory:
 
 | Files | Checker |
 | --- | --- |
@@ -34,9 +36,10 @@ those whose content the command changed:
 | `.go` | `gofmt -l -e` |
 
 It reports an error as introduced by the edit when the file's `HEAD` version parses or it saw the file parse earlier in
-the thread; a file it reported stays reported until it parses. A new file that fails gets a softer note instead (again
-after each shell command that writes it, while it stays untracked), since the file may use syntax the checker rejects (JSONC, JSX in a `.js` file, a newer Python than the sandbox's
-`python3`). Nothing is added when every check passes.
+the thread; a file it reported stays reported until it parses. The note tells the model to ignore it if the new code
+uses syntax newer than the checker's version (macOS's `python3` is 3.9). A file with no `HEAD` version that fails gets a
+softer note instead, again after each edit while it fails, since the file may use syntax the checker rejects (JSONC, JSX
+in a `.js` file, a newer Python than the sandbox's `python3`). Nothing is added when every check passes.
 
 ## Needs and limits
 
@@ -44,8 +47,8 @@ after each shell command that writes it, while it stays untracked), since the fi
   missing checker is skipped without a message. Files over 1 MB are skipped, and each check has 3 seconds.
 - At most 8 checkable files per edit and 800 bytes of error per file are reported.
 - A file that already failed at `HEAD` and wasn't seen parsing is never reported, even for a new error.
-- Shell commands are matched by pattern, so a write made another way (`python fix.py`, `npm run format`) isn't
-  checked. Shell edits outside a Git repository, or beyond the first 200 changed checkable files, aren't checked
+- Shell commands are matched by pattern, so a write made another way (`python fix.py`, `npm run format`) isn't checked.
+  Shell writes it can't name outside a Git repository, or beyond the first 200 changed checkable files, aren't checked
   either. TypeScript, Rust and other compiled languages aren't checked.
 - In code mode a cell receives its tool's own result, so an error from an edit inside a cell is added to the output
   of the cell or the next tool call the model sees.

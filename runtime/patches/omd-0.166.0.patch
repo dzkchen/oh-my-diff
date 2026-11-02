@@ -23781,7 +23781,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..6d85f61cb50a95f0ed376bc6871715e0
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e7b15e271 100644
+index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..2ab0188a82c62ddc036b9164b773c9cb912e91f2 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -171,6 +171,7 @@ use codex_protocol::request_permissions::PermissionGrantScope;
@@ -23991,7 +23991,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage()
-@@ -2053,20 +2214,42 @@ impl Session {
+@@ -2053,20 +2214,39 @@ impl Session {
              permission_profile_changed,
              mcp_inputs_changed,
              credential_masking_warning,
@@ -24014,13 +24014,10 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
 +                        return Err(err);
 +                    }
 +                };
-+            let mut collaboration_mode = updated.step_settings.collaboration_mode.clone();
++            let requested_mode = updated.step_settings.collaboration_mode.mode;
 +            let disabled_mode = self
-+                .clamp_disabled_mode(&mut collaboration_mode)
-+                .then(|| updated.step_settings.collaboration_mode.mode.display_name());
-+            if disabled_mode.is_some() {
-+                Arc::make_mut(&mut updated.step_settings).collaboration_mode = collaboration_mode;
-+            }
++                .clamp_configuration(&mut updated)
++                .then(|| requested_mode.display_name());
 
              if !should_commit(&state.session_configuration, &updated) {
                  return Ok(None);
@@ -24042,7 +24039,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
 
              let credential_masking_warning = updated
                  .original_config_do_not_use
-@@ -2089,6 +2272,11 @@ impl Session {
+@@ -2089,6 +2269,11 @@ impl Session {
              let root_service_tier_changed = updated.parent_thread_id.is_none()
                  && state.session_configuration.step_settings.service_tier
                      != updated.step_settings.service_tier;
@@ -24054,7 +24051,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
              let mcp_inputs_changed = self.mcp_inputs_differ(&state.session_configuration, &updated);
              if mcp_inputs_changed {
                  self.mark_mcp_runtime_dirty();
-@@ -2131,6 +2319,7 @@ impl Session {
+@@ -2131,6 +2316,7 @@ impl Session {
                  permission_profile_changed,
                  mcp_inputs_changed,
                  credential_masking_warning,
@@ -24062,7 +24059,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
              )
          };
          if windows_sandbox_changed {
-@@ -2155,6 +2344,17 @@ impl Session {
+@@ -2155,6 +2341,17 @@ impl Session {
              })
              .await;
          }
@@ -24080,7 +24077,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
          if mcp_inputs_changed {
              self.schedule_mcp_prewarm();
          }
-@@ -2178,6 +2378,36 @@ impl Session {
+@@ -2178,6 +2375,45 @@ impl Session {
          self.resume_config_snapshot().await.0
      }
 
@@ -24090,6 +24087,15 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
 +    ) -> ThreadConfigSnapshot {
 +        self.clamp_disabled_mode(&mut snapshot.collaboration_mode);
 +        snapshot
++    }
++
++    pub(crate) fn clamp_configuration(&self, configuration: &mut SessionConfiguration) -> bool {
++        let mut mode = configuration.step_settings.collaboration_mode.clone();
++        if !self.clamp_disabled_mode(&mut mode) {
++            return false;
++        }
++        Arc::make_mut(&mut configuration.step_settings).collaboration_mode = mode;
++        true
 +    }
 +
 +    pub(crate) fn clamp_disabled_mode(
@@ -24117,7 +24123,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
      pub(crate) async fn resume_config_snapshot(&self) -> (ThreadConfigSnapshot, Option<String>) {
          let configuration = self.state.lock().await.session_configuration.clone();
          let selected_service_tier = configuration.step_settings.service_tier.clone();
-@@ -2578,6 +2808,8 @@ impl Session {
+@@ -2578,6 +2814,8 @@ impl Session {
          self.send_event_raw(event).await;
          self.maybe_notify_parent_of_terminal_turn(turn_context, &legacy_source)
              .await;
@@ -24126,7 +24132,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
          self.maybe_mirror_event_text_to_realtime(&legacy_source)
              .await;
          self.maybe_clear_realtime_handoff_for_event(&legacy_source)
-@@ -2596,6 +2828,138 @@ impl Session {
+@@ -2596,6 +2834,138 @@ impl Session {
          }
      }
 
@@ -24265,7 +24271,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
      /// Forwards terminal turn events from spawned MultiAgentV2 children to their direct parent.
      async fn maybe_notify_parent_of_terminal_turn(
          &self,
-@@ -3405,7 +3769,11 @@ impl Session {
+@@ -3405,7 +3775,11 @@ impl Session {
              match active.as_mut() {
                  Some(at) => {
                      let mut ts = at.turn_state.lock().await;
@@ -24278,7 +24284,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
                  }
                  None => None,
              }
-@@ -3806,6 +4174,10 @@ impl Session {
+@@ -3806,6 +4180,10 @@ impl Session {
          let policy: codex_utils_output_truncation::TruncationPolicy =
              model_info.truncation_policy.into();
          for envelope in &mut items {
@@ -24289,7 +24295,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
              if matches!(
                  envelope.item,
                  ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
-@@ -4099,6 +4471,7 @@ impl Session {
+@@ -4099,6 +4477,7 @@ impl Session {
          let inherited_environments = inherited_environments.unwrap_or_else(|| environments.clone());
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -24297,7 +24303,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -4106,6 +4479,27 @@ impl Session {
+@@ -4106,6 +4485,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -24325,7 +24331,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4444,10 +4838,19 @@ impl Session {
+@@ -4444,10 +4844,19 @@ impl Session {
                  ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
              )
          }) {
@@ -24349,7 +24355,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
          }
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
-@@ -4677,6 +5080,10 @@ impl Session {
+@@ -4677,6 +5086,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -24360,7 +24366,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4686,6 +5093,7 @@ impl Session {
+@@ -4686,6 +5099,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -24368,7 +24374,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
                  })
                  .await
              {
-@@ -4774,6 +5182,10 @@ impl Session {
+@@ -4774,6 +5188,10 @@ impl Session {
                  }
              }
          }
@@ -24379,7 +24385,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4783,6 +5195,7 @@ impl Session {
+@@ -4783,6 +5201,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -24387,7 +24393,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
                  })
                  .await
              {
-@@ -4978,7 +5391,7 @@ impl Session {
+@@ -4978,7 +5397,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -24396,7 +24402,7 @@ index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..82d8339e3e944025d36a2eeb0d2c1a8e
          {
              error!("failed to record rollout items: {e:#}");
              return false;
-@@ -4988,7 +5401,12 @@ impl Session {
+@@ -4988,7 +5407,12 @@ impl Session {
 
      pub(crate) async fn clone_history(&self) -> ContextManager {
          let state = self.state.lock().await;
@@ -25775,7 +25781,7 @@ index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6d
          &sess,
          &turn_context,
 diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
-index a25dd60102b48b8a889a3ae80326e29dca7145ff..785e9002859ccf41119a7dde8acaa6e63dfb4d71 100644
+index a25dd60102b48b8a889a3ae80326e29dca7145ff..7e462975a7c67887e5608ab9db4a8f7fc5107d3f 100644
 --- a/codex-rs/core/src/session/turn_context.rs
 +++ b/codex-rs/core/src/session/turn_context.rs
 @@ -80,6 +80,8 @@ pub(crate) struct TurnEnvironment {
@@ -25811,23 +25817,20 @@ index a25dd60102b48b8a889a3ae80326e29dca7145ff..785e9002859ccf41119a7dde8acaa6e6
          );
          FileSystemSandboxContext {
              sandbox_override: SandboxOverride::NoOverride,
-@@ -1506,8 +1512,12 @@ impl Session {
+@@ -1506,8 +1512,9 @@ impl Session {
      }
 
      async fn default_turn_configuration(&self) -> SessionConfiguration {
 -        let state = self.state.lock().await;
 -        state.session_configuration.clone()
 +        let mut configuration = self.state.lock().await.session_configuration.clone();
-+        let mut mode = configuration.step_settings.collaboration_mode.clone();
-+        if self.clamp_disabled_mode(&mut mode) {
-+            Arc::make_mut(&mut configuration.step_settings).collaboration_mode = mode;
-+        }
++        self.clamp_configuration(&mut configuration);
 +        configuration
      }
  }
 
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..4c98273cde1c275c352430a96a8133b5e8f77615 100644
+index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..86dada95012e5e79ee2d8e62bf012399ea963046 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -236,13 +236,14 @@ pub(super) async fn handle(
@@ -25967,16 +25970,13 @@ index 4fa1c9de13dfbe970b21ba66b583392220f7a5f6..4c98273cde1c275c352430a96a8133b5
          {
              return None;
          }
-@@ -770,7 +878,27 @@ impl Session {
+@@ -770,7 +878,24 @@ impl Session {
              *active = None;
              return None;
          }
 -        Some(configuration.clone())
 +        let mut configuration = configuration.clone();
-+        let mut mode = configuration.step_settings.collaboration_mode.clone();
-+        if self.clamp_disabled_mode(&mut mode) {
-+            Arc::make_mut(&mut configuration.step_settings).collaboration_mode = mode;
-+        }
++        self.clamp_configuration(&mut configuration);
 +        Some(configuration)
 +    }
 +
@@ -112901,10 +112901,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5e331f919c18d5a4477e8fd75387623473e05458
+index 0000000000000000000000000000000000000000..39225c730d2fe980058d7c5e224772f877e8b787
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7005 @@
+@@ -0,0 +1,7004 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -113323,6 +113323,7 @@ index 0000000000000000000000000000000000000000..5e331f919c18d5a4477e8fd753876234
 +    "terminal_colors_v1",
 +    "terminal_pty_v2",
 +    "terminal_welcome_hidden_v1",
++    "routes_add_self_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -114306,14 +114307,12 @@ index 0000000000000000000000000000000000000000..5e331f919c18d5a4477e8fd753876234
 +                .cloned()
 +                .collect()
 +        } else {
-+            let mut required = ModHostCall {
++            let call = ModHostCall {
 +                operation: operation.clone(),
 +                arguments: Value::Null,
-+            }
-+            .capabilities()?;
-+            if matches!(operation.as_str(), "routes.add" | "settings.write") {
-+                required.push("packages");
-+            }
++            };
++            let mut required = call.capabilities()?;
++            required.extend(call.alternative_capabilities());
 +            if operation == "model.fork"
 +                && required.iter().any(|capability| {
 +                    !package
@@ -121024,10 +121023,10 @@ index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7b
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c6c315e8330decc468e5dff109d8aa83e2fa70e5
+index 0000000000000000000000000000000000000000..49c60e72c309a5ca591bc69853cd5717367faf33
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,489 @@
+@@ -0,0 +1,509 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -121040,7 +121039,29 @@ index 0000000000000000000000000000000000000000..c6c315e8330decc468e5dff109d8aa83
 +}
 +
 +impl ModHostCall {
++    fn package_target(&self) -> Option<&'static str> {
++        match self.operation.as_str() {
++            "routes.add" => Some("mod"),
++            "settings.write" => Some("id"),
++            _ => None,
++        }
++    }
++
++    pub fn alternative_capabilities(&self) -> &'static [&'static str] {
++        if self.package_target().is_some() {
++            &["packages"]
++        } else {
++            &[]
++        }
++    }
++
 +    pub fn capability(&self) -> Result<&'static str> {
++        if self
++            .package_target()
++            .is_some_and(|field| self.arguments[field].is_string())
++        {
++            return Ok("packages");
++        }
 +        let operation = self.operation.as_str();
 +        match operation {
 +            "exec.run" | "exec.output_page" => Ok("exec"),
@@ -121114,9 +121135,7 @@ index 0000000000000000000000000000000000000000..c6c315e8330decc468e5dff109d8aa83
 +            "config.set" => Ok("config.write"),
 +            "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
 +            | "packages.reload" | "routes.write" => Ok("packages"),
-+            "routes.add" if self.arguments["mod"].is_string() => Ok("packages"),
 +            "routes.add" => Ok("agents"),
-+            "settings.write" if self.arguments["id"].is_string() => Ok("packages"),
 +            "settings.write" => Ok("commands"),
 +            "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
 +            "mcp.connect" | "mcp.disconnect" => Ok("mcp"),

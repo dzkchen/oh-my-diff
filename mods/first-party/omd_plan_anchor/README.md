@@ -1,7 +1,7 @@
 # omd_plan_anchor
 
-Keeps the agent's current plan near the end of its context in long runs, without breaking the provider's prompt cache.
-It's experimental, and no install profile includes it.
+Keeps the agent's current plan near the end of its context in long runs. It's experimental, and no install profile
+includes it.
 
 ## Turn it on
 
@@ -10,8 +10,8 @@ omd install omd_plan_anchor
 omd mods enable omd_plan_anchor
 ```
 
-It needs no authority grant. Turn it on in the shell or `/mods` before a `codex exec` run: a headless run can't show the trust dialog, so a mod that
-isn't trusted yet stays off.
+It needs no authority grant. Turn it on in the shell or `/mods` before a `codex exec` run: a headless run can't show
+the trust dialog, so a mod that isn't trusted yet stays off.
 
 ## Use it
 
@@ -26,7 +26,8 @@ written or shown) ends with its open steps:
 
 Completed steps are counted, not listed, and at most 8 open steps are shown. Nothing is added when there is no plan
 or every step is completed. A result that was truncated or is over 200,000 characters gets no reminder and the next
-result is tried instead. A rejected `update_plan` call keeps the previous plan.
+result is tried instead. A rejected `update_plan` call keeps the previous plan, and each new turn starts with no
+plan, so an old task's steps are never repeated.
 
 ## Settings
 
@@ -36,10 +37,10 @@ result is tried instead. A rejected `update_plan` call keeps the previous plan.
 
 ## Needs and limits
 
-- Capabilities `interception` and `store`. It turns on Codex's `update_plan` tool.
-- Models that don't get `update_plan` by default (gpt-6.1-sol in Codex 0.166) get it added to their tool list, so a
-  new thread's first request no longer matches Codex's shared cached prefix and pays for about 12K more uncached
-  input tokens.
+- Capabilities `interception`, `lifecycle` and `store`. It works only where Codex already offers `update_plan`; it
+  doesn't add the tool, because changing the tool list makes a new thread's first request miss Codex's shared cached
+  prefix (about 12K uncached input tokens). gpt-6.1-sol in Codex 0.166 has no `update_plan`, so the mod does nothing
+  there.
 - The reminder is part of the tool result, so it is recorded in the conversation and later requests reuse the cached
   prefix. A request section can't do this: inserted sections join an early context message and would change the
   cached prefix every time the plan changes.

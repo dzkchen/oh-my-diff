@@ -40,9 +40,11 @@ A change applies from the next turn in T3 Code.
 
 - OMD+ keeps Codex's plan mode, so T3 Code's Plan mode works. If you turn on `omd_plan_removal`, T3 Code's plan
   turns run in the default mode and show a warning.
-- `omd_auto_continue` etc runs only in the terminal interface. In T3 Code, an approval waits for you.
-- Starting `codex app-server`, `codex exec` or `codex --version` never installs an OMD update, so T3 Code never
-  waits on one. A staged update installs the next time you run `codex` in a terminal.
+- `omd_auto_continue`, which answers approvals left waiting, runs only in the terminal interface. In T3 Code, an
+  approval waits for you.
+- Starting `codex app-server`, `codex exec` or `codex --version`, with or without options before them, never
+  installs an OMD update, so T3 Code never waits on one. A staged update installs the next time you run `codex` in a
+  terminal.
 
 ## Go back to plain Codex in T3 Code
 

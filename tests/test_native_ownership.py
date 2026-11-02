@@ -91,7 +91,7 @@ class NativeOwnershipTests(unittest.TestCase):
             for path in (mod, config, package):
                 path.parent.mkdir(parents=True, exist_ok=True)
             package.write_text('{"id": "omd_edit_guard"}')
-            mod.write_text('pub const MOD_HOST_FEATURES: &[&str] = &["edit-guard_v1", "edit", "guard"];\n' + "\n".join(
+            mod.write_text('pub const MOD_HOST_FEATURES: &[&str] = &["edit-guard_v1", "edit", "guard", "credit_guardian_v1"];\n' + "\n".join(
                 f'pub const {surface}: &[&str] = &[];' for surface in (
                     "MOD_HOST_OPERATIONS", "MOD_CAPABILITIES", "MOD_EVENTS", "MOD_REPLACEMENT_POINTS", "MOD_MIDDLEWARE_EVENTS")))
             config.write_text("struct HostConfig {\n}\n")

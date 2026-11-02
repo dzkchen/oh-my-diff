@@ -266,11 +266,11 @@ def selected_text(record):
         marker = f"{root}/sessions/$$"
         ready = f'{{ [ -e {root}/update/ready.json ] && {{ [ -z "$busy" ] || [ {root}/update/ready.json -nt {root}/update/announced ] || [ -n "$(find {root}/update/announced -mmin +60 2>/dev/null)" ]; }}; }}'
         lines += [f"mkdir -p {root}/sessions", "busy=", "unattended=",
-                  'case "$1" in app-server|exec|e|mcp-server|-V|--version) unattended=1;; esac',
+                  'for a; do case "$a" in app-server|exec|e|mcp-server|-V|--version) unattended=1;; esac; done',
                   f'for m in {root}/sessions/*; do [ -e "$m" ] && {{ kill -0 "${{m##*/}}" 2>/dev/null && busy=1 || rm -f "$m"; }}; done',
                   f": > {marker}",
                   f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/journal.json ] || {{ [ -z "$unattended" ] && {{ {ready} || [ {root}/update/state.json -nt {root}/update/notice.json ] || {{ [ {request} -nt {root}/update/seen ] && grep -q \'"request":\' {request}; }}; }}; }}; }}; then',
-                  f"  {installer} launch --root {root} --session $$",
+                  f'  {installer} launch --root {root} --session $$ ${{unattended:+--unattended}}',
                   f'  OH_MY_DIFF_UPDATED=1 exec {root}/current/bin/codex "$@"',
                   "fi",
                   "unset OH_MY_DIFF_UPDATED",

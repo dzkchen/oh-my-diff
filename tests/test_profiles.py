@@ -234,11 +234,16 @@ class ProfileModeTests(unittest.TestCase):
             self.assertEqual(calls(), 1)
             other.kill()
             other.wait()
-            for unattended in (["app-server"], ["--version"], ["exec", "hi"]):
+            for unattended in (["app-server"], ["--version"], ["exec", "hi"], ["-c", "model=x", "app-server"], ["--profile", "ci", "exec", "hi"]):
                 subprocess.run(["sh", launcher, *unattended], check=True)
                 self.assertEqual(calls(), 1, unattended)
+            (base / "root/update/journal.json").write_text("{}")
+            subprocess.run(["sh", launcher, "app-server"], check=True)
+            self.assertIn("--unattended", (base / "calls").read_text().splitlines()[-1])
+            (base / "root/update/journal.json").unlink()
             subprocess.run(["sh", launcher], check=True)
-            self.assertEqual(calls(), 2)
+            self.assertEqual(calls(), 3)
+            self.assertNotIn("--unattended", (base / "calls").read_text().splitlines()[-1])
 
     def test_launcher_runs_the_installer_for_a_new_update_request_only(self):
         with tempfile.TemporaryDirectory() as temporary:

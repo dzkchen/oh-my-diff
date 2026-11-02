@@ -46,10 +46,20 @@ test('the thread keeps the newest 20 exchanges and a failed answer saves nothing
   assert.equal(ask('', null).display, 'No side questions in this thread yet. Ask one with /btw <question>.');
   const cut = ask('q22', null, () => ({ status: 'incomplete', text: 'partial', error: null }));
   assert.deepEqual(cut.state, [{ question: 'q22', answer: 'partial (cut off)' }]);
+  const empty = ask('q22', null, () => ({ status: 'incomplete', text: ' ', error: null }));
+  assert.deepEqual([empty.display, empty.state], ['/btw failed: the model returned no answer', null]);
 });
 
 test('without a route the first side question asks for a plan route, saves it and answers on it', () => {
   const unset = ask('q23', null, undefined, {});
+  const operations = [];
+  callback({ ...request, settings: {}, state: null, event: 'command', name: 'aside', payload: 'q23' }, ({ operation, arguments: args }) => {
+    operations.push(operation);
+    return operation === 'routes.add' ? { route: 'r' } : operation === 'model.fork' ? { status: 'completed', text: 'a', error: null } : operation === 'settings.write' ? { settings: args.values } : { shown: true };
+  });
+  assert.equal(operations.at(-1), 'settings.write');
+  const failed = ask('q23', null, () => ({ status: 'failed', text: '', error: 'provider_unavailable' }), {});
+  assert.deepEqual([failed.display, failed.writes], ['/btw failed: provider_unavailable', [{ values: { route: 'plan-gpt-omd_btw' } }]]);
   assert.deepEqual([unset.forks.map(args => args.route), unset.writes], [['plan-gpt-omd_btw'], [{ values: { route: 'plan-gpt-omd_btw' } }]]);
   assert.equal(unset.display, 'btw: q23\n\nanswer to q23');
   const declined = ask('q24', null, undefined, {}, { status: 'declined' });

@@ -6,6 +6,7 @@ const KEEP = 20;
 const SHOW = 5;
 const CONTEXT_BYTES = 30_000;
 const QUESTION_BYTES = 6_000;
+const PICK = 'pick one in /mods, then Btw, then Side question model.';
 const SYSTEM = 'The user is asking a side question while the conversation above continues. Answer it briefly from what the conversation already shows. You have no tools in this answer, so never claim to have run, read or changed anything. The question and your answer stay out of the main conversation.';
 const encoder = new TextEncoder();
 
@@ -47,20 +48,22 @@ export default function activate(api: ModAPI) {
     let route = configured;
     if (!route) {
       const added = api.host.tryCall('routes.add', {});
-      const pick = 'pick one in /mods, then Btw, then Side question model.';
-      if (!added.ok) return { display: `No model for /btw yet (${added.error}): ${pick}` };
-      if ('status' in added.value) return { display: `No model for /btw yet. Run /btw again to allow one, or ${pick}` };
+      if (!added.ok) return { display: `No model for /btw yet (${added.error}): ${PICK}` };
+      if ('status' in added.value) return { display: `No model for /btw yet. Run /btw again to allow one, or ${PICK}` };
       route = added.value.route;
-      const saved = api.host.tryCall('settings.write', { values: { route } });
-      if (!saved.ok) api.host.tryCall('terminal.notice', { id: 'omd_btw_route', text: `btw couldn't save its model (${saved.error}); ${pick}`, placement: 'status', ttl_ms: 15_000 });
     }
     api.host.tryCall('terminal.notice', { id: 'omd_btw', text: 'btw: answering...', placement: 'status', ttl_ms: 60_000 });
     const reply = api.host.tryCall('model.fork', { prompt: question, system: SYSTEM, context: earlier(past), route, timeout_ms: 180_000 });
     api.host.tryCall('terminal.notice', { id: 'omd_btw', placement: 'status', clear: true });
-    if (!reply.ok) return { display: `/btw failed: ${reply.error}` };
-    const answer = reply.value.text.trim() + (reply.value.status === 'incomplete' ? ' (cut off)' : '');
-    if (reply.value.status === 'failed' || !answer) return { display: `/btw failed: ${reply.value.error ?? 'the model returned no answer'}` };
-    api.state.set([...past, { question, answer: clip(answer, 8_000) }].slice(-KEEP));
-    return { display: show(past, { question, answer }) };
+    const text = reply.ok ? reply.value.text.trim() : '';
+    let display: string;
+    if (!reply.ok || reply.value.status === 'failed' || !text) display = `/btw failed: ${reply.ok ? reply.value.error ?? 'the model returned no answer' : reply.error}`;
+    else {
+      const answer = text + (reply.value.status === 'incomplete' ? ' (cut off)' : '');
+      api.state.set([...past, { question, answer: clip(answer, 8_000) }].slice(-KEEP));
+      display = show(past, { question, answer });
+    }
+    const saved = route === configured || api.host.tryCall('settings.write', { values: { route } });
+    return { display: saved === true || saved.ok ? display : `${display}\n\nbtw couldn't save its model (${saved.error}); ${PICK}` };
   }, { description: 'Ask a side question without adding it to the conversation; alone, shows the last answer', args_hint: '[question]', immediate: true });
 }

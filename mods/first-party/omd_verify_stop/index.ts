@@ -10,6 +10,8 @@ const CHECK = /^(pytest|py\.test|tox|nox|python3?\s+-m\s+(pytest|unittest)|(pyth
 const PREFIX = /^(?:\(|(?:ba|z)?sh\s+-l?c\s+|['"]|\w+=\S*\s+|(?:timeout\s+\S+|time|nice|env|uv\s+run|poetry\s+run|pipenv\s+run|pdm\s+run|hatch\s+run|bundle\s+exec)\s+)+/;
 const FAILED = /\b[1-9]\d* (?:failed|errors?)\b|^(?:FAILED|FAIL|ERROR)\b|Traceback \(most recent call last\)|panicked at|^error(?:\[E\d+\])?:|npm ERR!/m;
 const BLOCKED = /No module named|ModuleNotFoundError|command not found|: not found$|Could not find a version that satisfies|Temporary failure in name resolution|Could not resolve host|ENOTFOUND|Network is unreachable/m;
+const SCRIPT_WRITE = /(?<!std(?:out|err))\.write\(|write_text\(|writeFile|open\([^)]*,\s*['"][wa]/;
+const SCRATCH = /['"](?:\/tmp|\/private\/tmp|\/var\/folders)\//;
 const RUN = /^(python3?|node|ruby|php|go\s+run|cargo\s+run|bash|sh)\s+[\w./-]+/;
 const EXIT = /^(?:Process exited with code|Exit code:) (\d+)/m;
 const RUNNING = /^Process running with session ID (\d+)/m;
@@ -106,7 +108,7 @@ export default function activate(api: ModAPI) {
       const { created, changed } = writes(cmd);
       created.filter(path => !path.startsWith('/') && /\.\w+$/.test(path)).forEach(path => edit(state, path, 'Add'));
       changed.filter(path => !path.startsWith('/')).forEach(path => edit(state, path));
-      if (!created.length && !changed.length && /\b(?:sed|perl)\s+(?:\S+\s+)*?-[a-zA-Z]*i[\w.]*(?:\s|$)/.test(cmd.replace(QUOTED, "''"))) state.edited = ++state.seq;
+      if (!created.length && !changed.length && ((SCRIPT_WRITE.test(cmd) && !SCRATCH.test(cmd)) || /\b(?:sed|perl)\s+(?:\S+\s+)*?-[a-zA-Z]*i[\w.]*(?:\s|$)/.test(cmd.replace(QUOTED, "''")))) state.edited = ++state.seq;
       const code = EXIT.exec(event.text)?.[1];
       const session = RUNNING.exec(event.text)?.[1];
       if (session) state.pending[session] = check;

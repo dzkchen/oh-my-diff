@@ -12,10 +12,10 @@ function call(state, tool, args, caller = 'model', thread = 't1', success = true
   const input = { tool, arguments: args, call_id: 'c', thread_id: thread, agent_id: null, schema: null, raw_arguments: JSON.stringify(args), batch: null };
   const output = callback({ ...request, state, event: 'intercept', name: '0', payload: { surface: 'tool', input, original: input, origin: { caller, thread_id: thread } } }, ({ operation }) => {
     assert.equal(operation, 'continuation.next');
-    return { result: { output: 'ok', success, truncated: false, bytes: 2 }, trace: [] };
+    return { result: { output: 'ok', success, truncated: false, bytes: 2, value: { n: 1 } }, trace: [] };
   });
   assert.equal(output.error, undefined);
-  return { state: output.state, output: output.value?.result?.output ?? 'ok' };
+  return { state: output.state, output: output.value?.result?.output ?? 'ok', result: output.value?.result };
 }
 
 test('open plan steps are appended to every third model tool result after the plan was last shown', () => {
@@ -23,6 +23,9 @@ test('open plan steps are appended to every third model tool result after the pl
   const outputs = [];
   for (let index = 0; index < 6; index++) ({ state, output: outputs[index] } = call(state, 'exec_command', { cmd: 'ls' }));
   assert.deepEqual(outputs.map(output => output !== 'ok'), [false, false, true, false, false, true]);
+  assert.deepEqual(call({ ...state, since: 2 }, 'exec_command', { cmd: 'ls' }).result.value, { n: 1 });
+  const started = callback({ ...request, state, event: 'turn_start', name: '', payload: { turn_id: 'u2' } }, () => assert.fail('no host call'));
+  assert.equal(started.state, null);
   assert.equal(outputs[2], 'ok\n\n[omd_plan_anchor: current plan, 1/3 done; call update_plan when it changes]\n- [>] Fix the parser\n- [ ] Run the suite');
   assert.equal(call(state, 'exec_command', { cmd: 'ls' }, 'code_mode').output, 'ok');
   const rejected = call(state, 'update_plan', { plan: [{ step: 'Other', status: 'pending' }] }, 'model', 't1', false);

@@ -702,7 +702,8 @@ These changes ship in the release after OMD 1.3.0.
   an error result. A mod that relied on the tool being absent needs no change; one that inspected the tool list
   sees the tool.
 - `routes.add` without `mod` (frozen in Mod API `1.0.0`) gives the caller itself a plan route and needs only
-  `agents`; naming a mod still needs `packages`. The change is additive: every call valid before stays valid.
+  `agents`; naming a mod still needs `packages`. The change is additive: every call valid before stays valid. A mod
+  that calls it without `mod` requires `routes_add_self_v1`, so an OMD 1.3.0 host refuses it before it turns on.
 
 These changes ship in OMD 1.3.0.
 
@@ -5492,7 +5493,7 @@ api.host.call('routes.select', { route: 'fast_lead', scope: 'next_request' });
 ### `routes.add`
 
 `routes.add {mod?}` (user only) gives a mod a worker route on the user's ChatGPT plan. Without `mod` it is for the
-caller itself and needs `agents`; naming a mod needs `packages`. It asks the user, then adds the worker route
+caller itself and needs `agents` (`routes_add_self_v1`); naming a mod needs `packages`. It asks the user, then adds the worker route
 `plan-MODEL-MOD` for the conversation's model and effort. The route is open only to that mod, and the host adds this
 repository to its grant.
 

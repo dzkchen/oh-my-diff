@@ -24,6 +24,7 @@
     "required_features": [
       "builtins_v1",
       "model_complete_v2",
+      "routes_add_self_v1",
       "state_scopes_v1",
       "store_thread_v1",
       "store_v1",
