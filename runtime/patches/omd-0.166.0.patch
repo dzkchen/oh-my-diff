@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index a34786d549bb69c3435507ab46a560fd414df0d2..2c18863db6d2ebfd0a08f2c0b89767afb741e43e 100644
+index a34786d549bb69c3435507ab46a560fd414df0d2..12b5a61bcf2d0e0d6c663879d628bd4358479927 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -265,7 +265,7 @@ version = "1.1.5"
@@ -147,7 +147,7 @@ index a34786d549bb69c3435507ab46a560fd414df0d2..2c18863db6d2ebfd0a08f2c0b89767af
 
 +[[package]]
 +name = "codex-omd"
-+version = "1.4.0"
++version = "1.4.1"
 +dependencies = [
 + "base64 0.22.1",
 + "codex-features",
@@ -215,7 +215,7 @@ index a34786d549bb69c3435507ab46a560fd414df0d2..2c18863db6d2ebfd0a08f2c0b89767af
 +
 +[[package]]
 +name = "codex-omd-runner"
-+version = "1.4.0"
++version = "1.4.1"
 +dependencies = [
 + "aws-lc-rs",
 + "base64 0.22.1",
@@ -90623,13 +90623,13 @@ index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01c
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..0da6f3ab124f3ac451d7dc2575d6079864292008
+index 0000000000000000000000000000000000000000..1a2d8c6ad6c449c085bc7e5bc8ef910f2d8edcdf
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
 @@ -0,0 +1,28 @@
 +[package]
 +name = "codex-omd"
-+version = "1.4.0"
++version = "1.4.1"
 +edition = "2024"
 +rust-version = "1.95"
 +license = "Apache-2.0"
@@ -90697,13 +90697,13 @@ index 0000000000000000000000000000000000000000..e60353e4c93c79280f009f9d5728cd61
 +)
 diff --git a/codex-rs/omd/runner/Cargo.toml b/codex-rs/omd/runner/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb018ab49479b4578dabbf67772ecb3362bd5239
+index 0000000000000000000000000000000000000000..e0c41a6efd78b7d3808283542c4e454084282ca9
 --- /dev/null
 +++ b/codex-rs/omd/runner/Cargo.toml
 @@ -0,0 +1,22 @@
 +[package]
 +name = "codex-omd-runner"
-+version = "1.4.0"
++version = "1.4.1"
 +edition = "2024"
 +rust-version = "1.95"
 +license = "Apache-2.0"
