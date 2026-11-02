@@ -273,7 +273,9 @@ def collisions(status, ids):
 def check(host, paths, providers, commands, scenarios):
     report = {}
     ids = {manifest(path)["id"]: path for path in packages([])}
-    first_party = [path for path in paths if path.parent.name == "first-party"]
+    experimental = {entry["id"] for entry in json.loads((ROOT / "extensions/index.json").read_text())["packages"]
+                    if entry["support_status"] == "experimental"}
+    first_party = [path for path in paths if path.parent.name == "first-party" and manifest(path)["id"] not in experimental]
     if first_party:
         location, refused = host.store("all", first_party, providers)
         status = host.status(location)
