@@ -2,6 +2,21 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
+
+Experimental harness mods, /btw side questions, and a stock tool list that keeps the provider prompt cache with plan mode.
+
+### Changed
+
+- Installer download errors name the URL and HTTP status. (#353)
+- Bump jdx/mise-action from 5.2.2 to 5.2.4 (#355)
+- One sccache cache per nightly job and source version; 3 GB for core (#336)
+- Experimental harness mods, /btw side questions, a stock tool list without plan mode and a T3 Code-safe launcher (#354)
+
+### Fixed
+
+- Pre-release review fixes for harness mods, launcher, installer and docs (#357)
+
 ## [1.3.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.3.0) — 2026-10-31
 
 Oh My Diff now builds on Codex 0.166.0, with cross-provider subagents, a free panel workspace, Lazygit and Yazi panes, living themes and faster mods.

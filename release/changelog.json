@@ -1,5 +1,37 @@
 [
   {
+    "version": "1.4.0",
+    "date": "2026-11-02",
+    "title": "Oh My Diff 1.4.0",
+    "summary": "Experimental harness mods, /btw side questions, and a stock tool list that keeps the provider prompt cache with plan mode.",
+    "sections": [
+      {
+        "label": "Changed",
+        "items": [
+          "Installer download errors name the URL and HTTP status. (#353)",
+          "Bump jdx/mise-action from 5.2.2 to 5.2.4 (#355)",
+          "One sccache cache per nightly job and source version; 3 GB for core (#336)",
+          "Experimental harness mods, /btw side questions, a stock tool list without plan mode and a T3 Code-safe launcher (#354)"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Pre-release review fixes for harness mods, launcher, installer and docs (#357)"
+        ]
+      }
+    ],
+    "commits": [
+      "e2e134b",
+      "d33d857",
+      "538accf",
+      "510b804",
+      "4b2944c",
+      "09a835c",
+      "c9b93fa"
+    ]
+  },
+  {
     "version": "1.3.0",
     "date": "2026-10-31",
     "title": "Oh My Diff 1.3.0",
