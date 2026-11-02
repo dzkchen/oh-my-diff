@@ -1835,6 +1835,40 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
 }
 
 #[test]
+fn exec_children_lead_their_own_session_without_the_terminal() {
+    let _exec = exec_slot();
+    let (_temp, repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["exec", "os"]);
+    let access = codex_omd::ModOsAccess {
+        programs: strings(&["sh"]),
+        network: true,
+    };
+    let granted = Caller {
+        os_access: Some(&access),
+        ..caller(&capabilities, &[], Origin::Tool)
+    };
+    let program = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
+    let hash = codex_omd::host::program_hash(&program).unwrap();
+    codex_omd::program_trust::pin(&data, granted.id, &program, &hash).unwrap();
+    let stat = host
+        .call(
+            &granted,
+            "exec.run",
+            json!({"program": "sh", "argv": ["-c", "ps -o stat= -p $$"], "sandbox": "none"}),
+        )
+        .unwrap();
+    assert!(stat["stdout"].as_str().unwrap().contains('s'), "{stat}");
+}
+
+#[test]
 fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let _exec = exec_slot();
     let (temp, repository, data, authority) = setup();
@@ -1858,6 +1892,13 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
         os_access: Some(&access),
         ..caller(&capabilities, &[], Origin::Tool)
     };
+    let trust = |access: &codex_omd::ModOsAccess, name: &str| {
+        let program = codex_omd::host::unrestricted_program(access, name, &repository).unwrap();
+        let hash = codex_omd::host::program_hash(&program).unwrap();
+        codex_omd::program_trust::pin(&data, granted.id, &program, &hash).unwrap();
+    };
+    trust(&access, "cat");
+    trust(&access, "env");
     let read = host
         .call(
             &granted,
@@ -1908,6 +1949,7 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
         programs: strings(&["*"]),
         network: false,
     };
+    trust(&offline, "/usr/bin/nc");
     let offline = Caller {
         os_access: Some(&offline),
         ..caller(&capabilities, &[], Origin::Tool)

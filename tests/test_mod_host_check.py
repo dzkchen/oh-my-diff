@@ -26,6 +26,21 @@ class SourceRules(unittest.TestCase):
                     f'export default function activate(api: ModAPI) {{ {source} }}')
                 self.assertIn("/model conflicts with a built-in command", check.static_problems(path))
 
+    def test_feature_lists(self):
+        features = sorted(check.FEATURES)
+        compatibility = {"required_features": features[:33], "optional_features": [features[0], "nope_v1", "nope_v1"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fixture"
+            path.mkdir()
+            (path / "mod.json").write_text(json.dumps({"id": "fixture", "compatibility": compatibility}))
+            (path / "index.ts").write_text("export default function activate() {}")
+            self.assertEqual(check.static_problems(path), [
+                "33 required_features exceed the limit of 32",
+                "optional_features lists nope_v1 twice",
+                "optional_features lists unknown host feature nope_v1",
+                f"{features[0]} is both required and optional",
+            ])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -131,7 +131,7 @@ export function payload(data: Data, config: Settings, id: string, now: number, v
   return {
     schema: 1, segment: id, placement: config.placement, viewport, now_ms: now,
     session: { thread_id: data.thread, cwd: data.cwd, started_at_ms: data.started, duration_ms: data.started === null ? null : now - data.started },
-    model: data.model,
+    model: data.model, profile: data.profile, workspace: data.workspace,
     context: { used: context.used, window: context.window, remaining: context.used !== null && context.window ? Math.max(0, context.window - context.used) : null,
       used_percent: context.used !== null && context.window ? Math.round(context.used / context.window * 1000) / 10 : null, compactions: context.compactions },
     tokens: { input: tokens.input, output: tokens.output, reasoning: tokens.reasoning, cache_read: tokens.cached, cache_write: tokens.write, requests: tokens.requests },

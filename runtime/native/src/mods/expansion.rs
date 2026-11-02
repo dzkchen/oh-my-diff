@@ -45,6 +45,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "events.publish",
     "credentials.list",
     "routes.select",
+    "models.context_window",
     "turns.activity",
     "packages.list",
     "packages.index",
@@ -65,6 +66,7 @@ type Timers = BTreeMap<(String, String, String), (String, u64, tokio::task::Join
 
 #[derive(Default)]
 pub(super) struct State {
+    active: Mutex<Option<Vec<String>>>,
     recording: AtomicBool,
     tool_output: AtomicBool,
     approval: AtomicBool,
@@ -243,6 +245,19 @@ impl State {
             }),
             Ordering::Release,
         );
+        let mut active: Vec<String> = runtime.owners().into_iter().map(|(id, _)| id).collect();
+        active.sort();
+        if let Ok(mut previous) = self.active.lock()
+            && previous
+                .replace(active.clone())
+                .is_none_or(|previous| previous != active)
+        {
+            broadcast(
+                self,
+                "mods_changed",
+                serde_json::json!({ "active": active }),
+            );
+        }
         let recording = runtime.uses_operation("turns.activity");
         self.recording.swap(recording, Ordering::AcqRel) && !recording
     }
@@ -514,6 +529,13 @@ pub(super) async fn dispatch(
         "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
         "turns.activity" => activity::read(core, lead, request.arguments).await,
         "routes.select" => select_route(lead, caller.id, request.arguments),
+        "models.context_window" => {
+            let arguments = request.arguments;
+            blocking(Box::new(move || {
+                crate::model_windows::call(&host.root, arguments)
+            }))
+            .await
+        }
         "tools.list" => tool_specs::list(core, lead),
         "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
         "tools.original" => tool_output::stored(core, lead, caller, request.arguments).await,

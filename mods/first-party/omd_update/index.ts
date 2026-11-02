@@ -1,10 +1,11 @@
 import type { Json, ModAPI, TerminalComponent, TerminalPatch, TerminalTone } from '../../api.d.ts';
 
-type Release = { version: string; prerelease?: boolean; notes?: string; page?: string; user_mods?: string[]; manifest?: { mod_api?: string } };
+type Release = { version: string; prerelease?: boolean; notes?: string; page?: string; user_mods?: string[]; mod_api?: string };
 type Info = {
   installed?: string; checked_at?: number | null; available?: Release | null; blocked?: { version: string; reasons?: string[] } | null;
   error?: string | null; pending?: { version: string } | null; failed?: { version: string; error?: string; at: number } | null;
   last?: { from: string; to: string; at: number } | null; held?: { version: string } | null; request_done?: string | null;
+  withdrawn?: { version: string; run?: string | null } | null;
 };
 type Saved = {
   info: Info | null; open: boolean; notice: string | null; banner: string[]; overrides: Record<string, string>;
@@ -13,20 +14,21 @@ type Saved = {
 };
 const EMPTY: Saved = { info: null, open: false, notice: null, banner: [], overrides: {}, snoozed: null, skipped: null, shown: null, seen: 0, requests: 0, mark: null };
 const DAY = 86_400_000;
-const VARIABLE = 'OH_MY_DIFF_UPDATE=';
 const CHOICES: Record<string, string[]> = { checks: ['on', 'off'], auto: ['off', 'on'], channel: ['stable', 'prerelease', 'nightly'], cadence: ['daily', 'weekly'] };
 
 export default function activate(api: ModAPI) {
   const saved = (): Saved => ({ ...EMPTY, ...(api.state.get() as Partial<Saved> | null ?? {}) });
   const save = (patch: Partial<Saved>) => api.state.set({ ...saved(), ...patch } as unknown as Json);
   const visible = (value: unknown, limit: number) => typeof value === 'string' ? [...value.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, ' ')].slice(0, limit).join('') : '';
+  const withdrawn = (info: Info | null) => info?.withdrawn
+    ? `Oh My Diff ${visible(info.withdrawn.version, 40)} was withdrawn${info.withdrawn.run ? `; run ${visible(info.withdrawn.run, 40)} in a shell` : ''}.` : '';
   const setting = (state: Saved, name: string) => state.overrides[name] ?? String(api.settings[name] ?? '');
 
   const read = (): Info | null => {
-    const env = api.host.tryCall('exec.run', { program: 'env', timeout_ms: 2000, max_output_bytes: 65536 });
-    const row = (env.ok && env.value.exit_code === 0 ? env.value.stdout : '').split('\n').find(line => line.startsWith(VARIABLE));
+    const env = api.host.tryCall('environment.read', { names: ['OH_MY_DIFF_UPDATE'] });
+    const row = env.ok ? env.value.values.OH_MY_DIFF_UPDATE?.value : null;
     try {
-      const value = row ? JSON.parse(row.slice(VARIABLE.length)) as unknown : null;
+      const value = row ? JSON.parse(row) as unknown : null;
       return value && typeof value === 'object' && !Array.isArray(value) ? value as Info : null;
     } catch {
       return null;
@@ -40,7 +42,7 @@ export default function activate(api: ModAPI) {
     const state = { ...previous, overrides };
     const now = Date.now();
     const available = info?.available;
-    const banner: string[] = [];
+    const banner: string[] = info?.withdrawn ? [withdrawn(info)] : [];
     if (info?.failed && info.failed.at > state.seen) banner.push(`The update to Oh My Diff ${visible(info.failed.version, 40)} failed and nothing changed. /update shows why.`);
     if (info?.last && info.last.at > state.seen) banner.push(`Oh My Diff was updated from ${visible(info.last.from, 40)} to ${visible(info.last.to, 40)}.`);
     const due = available && setting(state, 'checks') !== 'off' && state.skipped !== available.version
@@ -106,7 +108,7 @@ export default function activate(api: ModAPI) {
     { type: 'code', id: 'omd_update_command', label: 'Update command', text: 'omd update', language: 'sh' },
     ...(available.notes ? [line('notes', 'Release notes', available.notes, 'normal', 8)] : []),
     ...(available.page ? [line('page', 'Release page', available.page, 'muted', 2)] : []),
-    ...(available.user_mods?.length ? [line('user_mods', 'Incompatible mods', `These enabled mods do not support mod API ${visible(available.manifest?.mod_api, 40)} and stop loading after the update: ${available.user_mods.map(name => visible(name, 64)).join(', ')}.`, 'attention', 3)] : []),
+    ...(available.user_mods?.length ? [line('user_mods', 'Incompatible mods', `These enabled mods do not support mod API ${visible(available.mod_api, 40)} and stop loading after the update: ${available.user_mods.map(name => visible(name, 64)).join(', ')}.`, 'attention', 3)] : []),
     ...(state.info?.pending?.version === available.version ? [line('pending', 'Downloaded', 'Downloaded and verified; it installs the next time OMD starts with no other session open.', 'success', 2)]
       : [button('request', 'Update now (installs when OMD next starts)')]),
     button('later', 'Remind me in a week'),
@@ -118,6 +120,7 @@ export default function activate(api: ModAPI) {
     const status = !info ? [line('unmanaged', 'Installation', 'This Oh My Diff was not installed by the OMD installer, so it has no update checks.', 'muted')]
       : [
         line('installed', 'Installed', `Installed ${visible(info.installed, 40)} · last check ${when(info.checked_at)}`, 'normal', 1),
+        ...(info.withdrawn ? [line('withdrawn', 'Withdrawn', withdrawn(info), 'attention', 2)] : []),
         ...(info.held ? [line('held', 'Rolled back', `You rolled back from ${visible(info.held.version, 40)}; automatic updates skip it. Run omd update to install it again.`, 'muted', 2)] : []),
         ...(info.failed ? [line('failed', 'Last update', `The update to ${visible(info.failed.version, 40)} failed and nothing changed: ${visible(info.failed.error, 300)}`, 'failure', 4)] : []),
         ...(info.available ? release(state, info.available)

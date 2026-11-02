@@ -1,33 +1,76 @@
-# Approval desk example
+# approval_desk
 
-Shares approval history between the terminal and attached external clients over the client protocol (`omd-client/1`). An independent-author API `1.0.0` mod plus a client adapter. It's unrelated to `external_client` and can run beside it.
+Shares approval history between the terminal and attached external clients over the client protocol
+(`omd-client/1`). It's an example for mod authors. OMD+ and OMD Core don't install it, and it isn't in the curated
+directory.
 
-## What it shows
+Read it if you're writing [approval middleware](../../reference/app-bridge-and-approvals.md) or an
+[external client](../../reference/external-clients.md).
 
-- **Middleware:** `approval` records every request (command, files or host) and returns null, so the native decision is unchanged. `approval_result` records the decision and its source, with a `terminal.notice` toast.
-- **Wrapped sidebar:** the `terminal` handler wraps the sidebar (`mode: 'wrap'` with a `slot`), so another mod's sidebar stays below it. It holds:
-  - a `multiselect` of approval kinds (`Alt+k` focuses it, Space toggles, Enter applies)
+It's an API `1.0.0` mod that uses only the public mod API, like any outside author's mod
+([host primitives](../../reference/host-model.md#host-primitives)), plus a client adapter. It's unrelated to
+`external_client` and can run beside it. It shows:
+
+- Middleware: `approval` records every request (command, files or host) and returns null, so the native decision
+  is unchanged. `approval_result` records the decision and its source, with a `terminal.notice` toast.
+- Wrapped sidebar: the `terminal` handler wraps the sidebar (`mode: 'wrap'` with a `slot`), so another mod's
+  sidebar stays below it. It contains:
+  - a `multiselect` of approval kinds (`Alt+k` focuses it, `Space` toggles, `Enter` applies)
   - a controlled `input` note
-  - a `list` of requests and decisions (Enter inspects one)
+  - a `list` of requests and decisions (`Enter` inspects one)
   - a line with an OSC 8 link, and the inspected request's details
-- **Client adapter:** `client.mjs` connects with a GUI-shaped renderer (`svg`, `png`, `cells`, pixel pointer) and resumes every loaded thread. It answers `item/commandExecution/requestApproval` and `item/fileChange/requestApproval` with `APPROVAL_DESK_DECISION` (`decline` by default), and prints one JSON line per view, approval and unsupported component.
+- Client adapter: `client.mjs` connects with a GUI-shaped renderer (`svg`, `png`, `cells`, pixel pointer) and
+  resumes every loaded thread. It answers `item/commandExecution/requestApproval` and
+  `item/fileChange/requestApproval` with `APPROVAL_DESK_DECISION` (`decline` by default). It prints one JSON line per
+  event: `ready`, `roster`, `desk` (one per view), `approval`, `mirrored`, `resolved`, `unsupported` (one per
+  component it can't draw) and `error`.
 
-## Try it
+## Install it
 
-1. Grant `terminal`, `commands`, `approvals`, `middleware` and `store`.
-2. Start a host: `codex app-server --listen unix:///abs/omd.sock` or `codex --listen unix:///abs/omd.sock`.
-3. Run the client:
+From a checkout of this repository:
 
 ```sh
-APPROVAL_DESK_URL=unix:///abs/omd.sock node client.mjs
+omd install ./mods/examples/approval_desk
+omd mods enable approval_desk
 ```
 
-## Test it
+Grant `terminal`, `commands`, `approvals`, `middleware` and `store`. See [Manage mods](../../../docs/manage-mods.md)
+for the other ways to install mods, and [Trust and permissions](../../../docs/trust-and-permissions.md) for what a
+grant allows.
+
+## Use it
+
+1. Start a host: `codex app-server --listen unix:///abs/omd.sock` or `codex --listen unix:///abs/omd.sock`.
+2. Run the client from this folder:
+
+   ```sh
+   APPROVAL_DESK_URL=unix:///abs/omd.sock node client.mjs
+   ```
+
+### Test it
 
 `mod.test.json` runs offline: two approval requests, one decision, a kinds filter, a note and an inspect.
 
 ```sh
-python3 scripts/mod_host_check.py --omd-mod <omd-mod> --no-commands --scenarios approval_desk
+python3 scripts/mod_host_check.py --no-commands --scenarios approval_desk
 ```
 
+It uses the `omd-mod` on your `PATH`. [Tests](../../../tests/README.md) covers the other test runners.
+
 `scripts/client_acceptance.py` runs the client against real hosts.
+
+## Settings
+
+It has no settings.
+
+## Needs and limits
+
+- The client needs Node and a project that depends on `@oh-my-diff/mod-api`.
+- It's a demonstration of the client protocol, not a production approval tool.
+
+## More
+
+- [External clients reference](../../reference/external-clients.md)
+- [App bridge and approvals reference](../../reference/app-bridge-and-approvals.md)
+- [`omd-client/1` protocol reference](../../reference/omd-client-protocol.md)
+- [Terminal UI reference](../../reference/terminal-ui.md)

@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "virtual_time_ms": 1000,
+  "host_operations": {
+    "store.get": [{"result": null}, {"result": null}],
+    "store.put": [{"result": {"revision": 1}}],
+    "events.schedule": [{"result": {"key": "f.1000.-1.0.0.0.0", "delay_ms": 16}}, {"result": {"key": "f.1000.1.120.44.0.0", "delay_ms": 100}}],
+    "events.publish": [{"result": {"delivered": 1, "dropped": 0}}],
+    "terminal.blit": [{"result": {"frame": 1, "queued": 1, "frame_ms": 16}}],
+    "environment.read": [{"result": {"values": {"TERM_PROGRAM": {"set": true, "value": "Orca"}}}}],
+    "terminal.panel": [{"result": {"shown": true}}]
+  },
+  "steps": [
+    {"type": "event", "event": "start", "payload": null, "thread_id": "t1"},
+    {"type": "terminal_mount", "mod": "omd_theme", "thread_id": "t1", "payload": {"event": "startup", "ledger": null, "presentation": {"thread_id": "t1", "phase": "fresh", "surface": "fullscreen"},
+      "client": {"kind": "terminal", "graphics": "kitty", "pointer": "cell", "reduced_motion": false, "cell_px": null, "columns": 120, "rows": 44}, "clients": []}},
+    {"type": "event", "event": "timer", "payload": {"key": "f.1000.-1.0.0.0.0"}, "thread_id": "t1"},
+    {"type": "invoke", "mod": "omd_theme", "event": "command", "name": "scenes", "payload": "panel scene:lagoon", "thread_id": "t1"}
+  ]
+}

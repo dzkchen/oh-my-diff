@@ -5,7 +5,7 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Declines an approval or answers a question nobody responded to within two minutes, so a turn keeps going while you are away",
+  "description": "Declines an approval or answers a question nobody responded to before the timeout (two minutes by default), so a turn keeps going while you are away",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_auto_continue"},
   "capabilities": ["store", "events", "approvals", "terminal", "lifecycle", "inventory"],

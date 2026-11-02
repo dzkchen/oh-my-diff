@@ -143,7 +143,7 @@ pub use store::ModStore;
 pub use store::Trust;
 pub(crate) use store::lock as store_lock;
 
-pub const CODEX_HOST_RELEASE: &str = "0.165.0";
+pub const CODEX_HOST_RELEASE: &str = "0.166.0";
 /// The OMD product release: the `codex-omd` crate version is the release version (`release.py check` enforces it).
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "1.0.0";
@@ -344,6 +344,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "tool_batch_success_v1",
     "code_mode_values_v1",
     "workspace_watch_key_v1",
+    "workspace_watch_git_v1",
     "terminal_surface_v1",
     "credentials_v1",
     "completion_v1",
@@ -369,6 +370,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "pty_programs_v1",
     "route_reload_v1",
     "route_write_v1",
+    "model_context_window_v1",
     "power_hold_v1",
     "tool_original_v1",
     "builtins_features_v1",
@@ -392,6 +394,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "compaction_intercept_v1",
     "composer_v2",
     "lifecycle_events_v1",
+    "mods_changed_v1",
     "user_submissions_v1",
     "terminal_raster_v1",
     "svg_assets_v1",
@@ -403,7 +406,16 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "settings_file_v1",
     "terminal_focus_v1",
     "terminal_layout_title_v1",
+    "terminal_layout_dock_v1",
     "terminal_raster_packed_v1",
+    "terminal_site_area_v1",
+    "terminal_code_highlight_v1",
+    "terminal_welcome_area_v1",
+    "terminal_underlay_v1",
+    "terminal_chat_area_v1",
+    "terminal_colors_v1",
+    "terminal_pty_v2",
+    "terminal_welcome_hidden_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -465,6 +477,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "credentials.list",
     "credentials.request",
     "routes.select",
+    "models.context_window",
     "turns.activity",
     "turns.abort",
     "terminal.notify",
@@ -629,7 +642,7 @@ pub fn capability_phrase(capability: &str) -> &str {
         "config" => "read Codex settings",
         "config.write" => "change Codex settings",
         "inventory" => "list skills, plugins and commands",
-        "account" => "read account details",
+        "account" => "read account details and switch workspaces",
         "packages" => "install and manage mods",
         "approvals" => "answer approval prompts",
         "events" => "send and receive mod events",
@@ -638,7 +651,7 @@ pub fn capability_phrase(capability: &str) -> &str {
         "pty" => "run interactive terminal programs",
         "history" => "edit the conversation history",
         "outputs" => "change tool output",
-        "os" => "run listed programs unsandboxed with your account's full access",
+        "os" => "run listed programs unsandboxed with your account's full access and SSH agent",
         "approve" => "approve tool calls for you",
         "approve.override" => "approve commands your own rules forbid",
         "http" => "send web requests to the sites it lists",
@@ -661,7 +674,7 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     let granted = |name: &str| capabilities.iter().any(|c| c == name);
     let mut exposure = Vec::new();
     if granted("os") {
-        exposure.push("os: listed programs run unsandboxed as your account; they can read every file your account can read (including secret files such as ~/.ssh, ~/.codex/auth.json and browser profiles), change mod stores and control files, use the network as os_access allows and start processes OMD does not supervise. OMD sanitizes their environment and supervises, cancels and limits the processes it starts, but cannot undo their side effects. Only the OS-separated broker protects grants, credentials and evidence anchors from them.");
+        exposure.push("os: listed programs run unsandboxed as your account; they can read every file your account can read (including secret files such as ~/.ssh, ~/.codex/auth.json and browser profiles), change mod stores and control files, use the network as os_access allows, sign in through your SSH agent (SSH_AUTH_SOCK) and start processes OMD does not supervise. OMD sanitizes their environment and supervises, cancels and limits the processes it starts, but cannot undo their side effects. Only the OS-separated broker protects grants, credentials and evidence anchors from them.");
     }
     if granted("approve") {
         exposure.push("approve: this mod may approve exec, patch, MCP and network requests inside its approves scope without asking you; managed-policy and host denials still apply and any error asks you.");
@@ -778,6 +791,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("instructions_loaded", "lifecycle"),
     ("thread_settings", "lifecycle"),
     ("worktree", "lifecycle"),
+    ("mods_changed", "lifecycle"),
     ("elicitation_result", "approvals"),
     ("composer", "composer"),
     ("prompt_expanded", "middleware"),
@@ -867,6 +881,60 @@ fn timed_out(error: &str) -> bool {
 const MAX_WORKERS: usize = 8;
 /// How often a waiting `concurrently` checks `active`.
 const CANCEL_POLL: Duration = Duration::from_millis(10);
+
+/// A `terminal` payload split once per frame into what every mod sees and `client.sites`, of which each mod sees only its own `owner/name` entries.
+struct TerminalPayload {
+    shared: Value,
+    hash: String,
+    sites: Option<serde_json::Map<String, Value>>,
+}
+
+impl TerminalPayload {
+    fn new(mut shared: Value) -> Self {
+        let sites = shared
+            .get_mut("client")
+            .and_then(Value::as_object_mut)
+            .filter(|client| client.get("sites").is_some_and(Value::is_object))
+            .and_then(|client| client.remove("sites"))
+            .and_then(|sites| match sites {
+                Value::Object(sites) => Some(sites),
+                _ => None,
+            });
+        let hash = digest(shared.to_string().as_bytes());
+        Self {
+            shared,
+            hash,
+            sites,
+        }
+    }
+
+    fn own(&self, id: &str) -> serde_json::Map<String, Value> {
+        self.sites
+            .iter()
+            .flatten()
+            .filter(|(name, _)| name.split_once('/').is_some_and(|(owner, _)| owner == id))
+            .map(|(name, area)| (name.clone(), area.clone()))
+            .collect()
+    }
+
+    fn key(&self, own: &serde_json::Map<String, Value>) -> String {
+        if own.is_empty() {
+            return self.hash.clone();
+        }
+        let sites = serde_json::to_string(own).unwrap_or_default();
+        format!("{}:{}", self.hash, digest(sites.as_bytes()))
+    }
+
+    fn payload(&self, own: serde_json::Map<String, Value>) -> Value {
+        let mut payload = self.shared.clone();
+        if !own.is_empty()
+            && let Some(client) = payload.get_mut("client").and_then(Value::as_object_mut)
+        {
+            client.insert("sites".to_owned(), Value::Object(own));
+        }
+        payload
+    }
+}
 
 /// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
 fn concurrently<T: Send, R: Send>(
@@ -977,7 +1045,7 @@ fn selection_verdict(
         return Err(failure(format!("capability_denied: {}", package.id)));
     }
     check_secret_environment(package, &selection.secret_environment)?;
-    validate_settings(package, &selection.settings)?;
+    validate_stored_settings(package, &selection.settings)?;
     Ok(managed.filter(|_| !administered).and_then(|policy| {
         policy.refusal(
             &package.id,
@@ -1372,6 +1440,7 @@ fn source_use(
                 && declared("os")
             {
                 used.push("os".to_owned());
+                used.push("exec".to_owned());
             }
             if !used.is_empty()
                 && operation == "exec.run"
@@ -1607,7 +1676,12 @@ pub struct ModPackage {
 
 pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
 pub const CODEX_CONFIG_TOOL_OUTPUT_RAISE: &str = "tool_output_token_limit.raise";
-const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN, CODEX_CONFIG_TOOL_OUTPUT_RAISE];
+pub const CODEX_CONFIG_COMPLETION_WAKE: &str = "agents.completion_wake";
+const CODEX_CONFIG_KEYS: &[&str] = &[
+    CODEX_CONFIG_UPDATE_PLAN,
+    CODEX_CONFIG_TOOL_OUTPUT_RAISE,
+    CODEX_CONFIG_COMPLETION_WAKE,
+];
 pub const RAISED_TOOL_OUTPUT_TOKENS: usize = 65_536;
 pub const TOOL_OUTPUT_BYTES: usize = 256 * 1024;
 
@@ -1914,8 +1988,19 @@ impl ModPackage {
                 MOD_HOST_FEATURES.join(", ")
             )));
         }
-        if !identifier_list(&self.compatibility.required_features, 16)
-            || !identifier_list(&self.compatibility.optional_features, 16)
+        for (field, values) in [
+            ("required_features", &self.compatibility.required_features),
+            ("optional_features", &self.compatibility.optional_features),
+        ] {
+            if values.len() > 32 {
+                return Err(failure(format!(
+                    "invalid_host_compatibility_declaration: {field} has {} (max 32)",
+                    values.len()
+                )));
+            }
+        }
+        if !identifier_list(&self.compatibility.required_features)
+            || !identifier_list(&self.compatibility.optional_features)
             || self
                 .compatibility
                 .required_features
@@ -2461,8 +2546,33 @@ pub fn effective_settings(
         .flatten()
         .filter_map(|(name, definition)| Some((name.clone(), definition.get("default")?.clone())))
         .collect();
-    effective.extend(settings.clone());
+    effective.extend(declared_settings(schema, settings));
     effective
+}
+
+/// A closed schema drops stored keys a newer package no longer declares.
+fn declared_settings(
+    schema: Option<&Value>,
+    settings: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    let properties = schema
+        .filter(|schema| schema.get("additionalProperties") == Some(&json!(false)))
+        .and_then(|schema| schema["properties"].as_object());
+    settings
+        .iter()
+        .filter(|(name, _)| properties.is_none_or(|properties| properties.contains_key(*name)))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
+fn validate_stored_settings(
+    package: &ModPackage,
+    settings: &BTreeMap<String, Value>,
+) -> Result<()> {
+    validate_settings(
+        package,
+        &declared_settings(package.settings_schema.as_ref(), settings),
+    )
 }
 
 pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
@@ -2532,11 +2642,9 @@ fn validate_settings(package: &ModPackage, settings: &BTreeMap<String, Value>) -
     Ok(())
 }
 
-fn identifier_list(values: &[String], limit: usize) -> bool {
+fn identifier_list(values: &[String]) -> bool {
     let unique: BTreeSet<_> = values.iter().collect();
-    values.len() <= limit
-        && unique.len() == values.len()
-        && values.iter().all(|value| identifier(value))
+    unique.len() == values.len() && values.iter().all(|value| identifier(value))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2793,6 +2901,7 @@ struct Loaded {
     code_cache: Option<Arc<code_cache::CacheRoot>>,
     adapter: Option<Value>,
     state: Value,
+    state_revision: u64,
     /// The state the inspection ran with; `state` follows later callbacks.
     registered_state: Arc<Value>,
     ui: Option<(String, Arc<Mutex<UiState>>)>,
@@ -3122,6 +3231,12 @@ impl Loaded {
             telemetry: ModTelemetry::default(),
             ..self.clone()
         }
+    }
+
+    fn set_state(&mut self, state: Value) {
+        static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        self.state = state;
+        self.state_revision = REVISIONS.fetch_add(1, Ordering::Relaxed) + 1;
     }
 
     fn clear_ui(&mut self) {
@@ -3596,6 +3711,7 @@ fn read_only(operation: &str, arguments: &Value) -> bool {
         | "exec.output_page"
         | "terminal.image_sample" => true,
         "workspace.check_access" => arguments["write"] != true,
+        "models.context_window" => arguments.get("tokens").is_none(),
         "exec.run" => {
             arguments["write"] != true
                 && arguments["network"]
@@ -4215,6 +4331,7 @@ impl ModHost {
                 code_cache: caching.then(cache_root),
                 selection,
                 state: Value::Null,
+                state_revision: 0,
                 registered_state: Arc::default(),
                 ui: None,
                 ui_state: Value::Null,
@@ -4234,7 +4351,7 @@ impl ModHost {
                 if let Some(Err(error)) = &adapter {
                     return Err(failure(error.to_string()));
                 }
-                loaded.state = self.inspection_state(&loaded.package, &loaded.selection.scope)?;
+                loaded.set_state(self.inspection_state(&loaded.package, &loaded.selection.scope)?);
                 Ok(())
             })();
             inspections.push((id, loaded, ready));
@@ -5017,35 +5134,14 @@ impl ModHost {
         tool_validator: fn(&Value) -> Result<()>,
         active: &dyn Fn() -> bool,
     ) -> Result<BTreeMap<String, (Loaded, Result<Inspection>)>> {
-        // One at a time, since concurrent runner starts slow the first keystrokes; after a timeout the rest run together.
-        let mut inspected = BTreeMap::new();
-        let mut inspections = inspections.into_iter();
-        for (id, loaded, ready) in inspections.by_ref() {
+        let inspected = concurrently(inspections, active, |(id, loaded, ready), active| {
             let inspection = ready.and_then(|()| Self::inspect(&loaded, tool_validator, active));
-            if !active() {
-                return Err(failure("callback_cancelled"));
-            }
-            let timed_out = inspection
-                .as_ref()
-                .is_err_and(|error| timed_out(&error.to_string()));
-            inspected.insert(id, (loaded, inspection));
-            if timed_out {
-                break;
-            }
-        }
-        inspected.extend(concurrently(
-            inspections.collect(),
-            active,
-            |(id, loaded, ready), active| {
-                let inspection =
-                    ready.and_then(|()| Self::inspect(&loaded, tool_validator, active));
-                (id, (loaded, inspection))
-            },
-        ));
+            (id, (loaded, inspection))
+        });
         if !active() {
             return Err(failure("callback_cancelled"));
         }
-        Ok(inspected)
+        Ok(inspected.into_iter().collect())
     }
 
     fn inspect(
@@ -5688,7 +5784,7 @@ impl ModHost {
                     .record(self.generation, event, name, elapsed, "ok");
                 current.telemetry.faults = 0;
                 if state != previous_state {
-                    current.state = state;
+                    current.set_state(state);
                 }
                 Ok(value)
             }
@@ -6018,14 +6114,15 @@ impl ModHost {
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
         let thread = state_thread(&payload);
-        let payload_hash = digest(payload.to_string().as_bytes());
+        let payload = TerminalPayload::new(payload);
         let generation = self.generation;
         let mut results = Vec::new();
         let mut stale = Vec::new();
         for id in self.event_ids("terminal") {
+            let own = payload.own(&id);
             let key = self
                 .terminal_state_key(&id, thread.as_deref())
-                .map(|stamp| format!("{stamp}:{payload_hash}"));
+                .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
             // A handler that read the clock is rerun once its result is a second old.
             if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
                 && key == cached
@@ -6035,12 +6132,12 @@ impl ModHost {
                 continue;
             }
             let begun = self.begin(&id, generation, &active, thread.as_deref());
-            stale.push((results.len(), key, begun));
+            stale.push((results.len(), key, begun, own));
             results.push((id, None));
         }
         // Terminal handlers make no host calls, so their runners work in parallel.
         let payload = &payload;
-        let replies = concurrently(stale, &active, |(index, key, begun), active| {
+        let replies = concurrently(stale, &active, |(index, key, begun, own), active| {
             let reply = begun.and_then(|mut invocation| {
                 if invocation.migrate {
                     invocation.loaded.state =
@@ -6052,7 +6149,7 @@ impl ModHost {
                             &invocation.loaded,
                             "terminal",
                             "",
-                            payload.clone(),
+                            payload.payload(own),
                             &[],
                             active,
                             &mut |call| {
@@ -6081,7 +6178,7 @@ impl ModHost {
                                 generation,
                                 "terminal",
                                 "",
-                                payload.clone(),
+                                payload.payload(payload.own(&id)),
                                 &active,
                             ),
                         result => result,
@@ -6109,7 +6206,10 @@ impl ModHost {
                 )
             })
             .collect();
-        let origin = payload["event"].as_str().unwrap_or_default().to_owned();
+        let origin = payload.shared["event"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         self.compose_terminal(results, &origin, None)
     }
 
@@ -6155,7 +6255,8 @@ impl ModHost {
         self.renders.remove(id);
         // A command's result stands in for the `terminal` handler for a second, like a clock read.
         if matched && let Some(stamp) = stamp {
-            let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
+            let payload = TerminalPayload::new(payload.clone());
+            let key = format!("{stamp}:{}", payload.key(&payload.own(id)));
             self.renders
                 .insert(id.to_owned(), (key, patch, Some(Instant::now())));
         }
@@ -6183,6 +6284,7 @@ impl ModHost {
         let mut contributors = Vec::new();
         let mut conflicts = Vec::new();
         let mut diagnostics = Vec::new();
+        let mut hiding_welcome = BTreeMap::new();
         for (id, result) in results {
             if let Some(error) = self
                 .loaded
@@ -6237,9 +6339,17 @@ impl ModHost {
                 patch.sites.remove("dialog");
             }
             let before = view::site_component_ids(&view.sites);
+            let hides = patch
+                .welcome
+                .as_ref()
+                .filter(|welcome| welcome.hidden)
+                .map(|welcome| welcome.show_while_composing);
             match patch.apply(&mut view, &mut claims, &id, origin) {
                 Ok(lost) => {
                     conflicts.extend(lost);
+                    if let Some(composing) = hides {
+                        hiding_welcome.insert(id.clone(), composing);
+                    }
                     component_owners.extend(
                         view::site_component_ids(&view.sites)
                             .into_iter()
@@ -6256,6 +6366,34 @@ impl ModHost {
             }
         }
         view.close_wraps();
+        if let Some(underlay) = &view.underlay
+            && let Some(owner) = claims.get("underlay")
+        {
+            match component_owners.get(&underlay.raster) {
+                Some(drawer) if drawer != owner => {
+                    conflicts.push(ModViewConflict {
+                        field: "underlay".to_owned(),
+                        owner: drawer.clone(),
+                        rejected: owner.clone(),
+                        origin: origin.to_owned(),
+                    });
+                    view.underlay = None;
+                }
+                _ => {
+                    component_owners.insert(underlay.raster.clone(), owner.clone());
+                }
+            }
+        }
+        // Only the underlay's owner hides the welcome: a refused underlay brings it back and a later writer can't undo it.
+        let hider = view
+            .underlay
+            .as_ref()
+            .and(claims.get("underlay"))
+            .and_then(|owner| hiding_welcome.get(owner).copied());
+        if let Some(welcome) = view.welcome.as_mut() {
+            welcome.hidden = hider.is_some();
+            welcome.show_while_composing |= hider.unwrap_or_default();
+        }
         conflicts.truncate(32);
         ModTerminalView {
             layout_owner: view.layout.as_ref().and(claims.remove("layout")),
@@ -6621,6 +6759,18 @@ impl ModHost {
         self.generation
     }
 
+    /// Changes on a reload or when an active mod's state changes, so a view publication can tell an unchanged one.
+    pub fn state_fingerprint(&self) -> u64 {
+        use std::hash::Hash;
+        use std::hash::Hasher;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.generation.hash(&mut hasher);
+        for (id, loaded) in self.active() {
+            (id, loaded.state_revision, self.ui_revision(id)).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
     pub fn ui_revision(&self, id: &str) -> Option<u64> {
         self.loaded
             .get(id)?
@@ -6677,8 +6827,10 @@ impl ModHost {
             }
         }
         output.push_str("}\n");
-        self.store
-            .write_bytes("installed-contracts.d.ts", output.as_bytes())?;
+        crate::fsio::write_if_changed(
+            &self.store.root.join("installed-contracts.d.ts"),
+            output.as_bytes(),
+        )?;
         self.write_active_host_types()
     }
 
@@ -6701,8 +6853,10 @@ impl ModHost {
             literal(MOD_REPLACEMENT_POINTS),
             literal(MOD_HOST_OPERATIONS),
         );
-        self.store
-            .write_bytes("active-host.d.ts", output.as_bytes())?;
+        crate::fsio::write_if_changed(
+            &self.store.root.join("active-host.d.ts"),
+            output.as_bytes(),
+        )?;
         crate::tool_schema::write_types(&self.store.root)
     }
 

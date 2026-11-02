@@ -318,26 +318,6 @@ enum Framing {
     Raw,
 }
 
-fn program_sha256(path: &Path) -> io::Result<String> {
-    static HASHES: Mutex<BTreeMap<PathBuf, (codex_omd::FileStamp, String)>> =
-        Mutex::new(BTreeMap::new());
-    let stamp = codex_omd::file_stamp(&fs::metadata(path)?);
-    if let Some((known, sha256)) = HASHES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(path)
-        && *known == stamp
-    {
-        return Ok(sha256.clone());
-    }
-    let sha256 = crate::execution::hash(&fs::read(path)?);
-    HASHES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(path.to_path_buf(), (stamp, sha256.clone()));
-    Ok(sha256)
-}
-
 /// The newest frame waiting for the blit thread; older ones are dropped.
 struct Frames(Arc<(Mutex<Option<Option<Value>>>, std::sync::Condvar)>);
 
@@ -767,7 +747,7 @@ impl ManagedProcesses {
                         if metadata.len() > 128 * 1024 * 1024 {
                             return None;
                         }
-                        let sha256 = program_sha256(&path).ok()?;
+                        let sha256 = codex_omd::host::program_hash(&path).ok()?;
                         Some(json!({"name":name,"path":path,"sha256":sha256}))
                     })
                     .collect::<Vec<_>>();
@@ -909,8 +889,7 @@ impl ManagedProcesses {
                 let metadata = fs::metadata(&input.path).map_err(|error| error.to_string())?;
                 if !metadata.is_file()
                     || metadata.len() > 128 * 1024 * 1024
-                    || program_sha256(&input.path).map_err(|error| error.to_string())?
-                        != input.sha256
+                    || codex_omd::host::program_hash(&input.path)? != input.sha256
                 {
                     return Err("process_executable_changed".into());
                 }
@@ -2004,7 +1983,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             blit: Some(&sink),
         };
         let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
-        let sha256 = program_sha256(&sh).unwrap();
+        let sha256 = codex_omd::host::program_hash(&sh).unwrap();
         let script = r#"printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
         let start = |owner: ProcessOwner<'_>, session: &str, framing: &str| {
             processes.call(
@@ -2366,7 +2345,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 owner,
                 "process.start",
                 json!({"session":"slow","name":"sh","path":sh,
-            "sha256":program_sha256(&sh).unwrap(),"sandbox":"none","framing":"ndjson",
+            "sha256":codex_omd::host::program_hash(&sh).unwrap(),"sandbox":"none","framing":"ndjson",
             "arguments":["-c","sleep 3; cat >/dev/null"]}),
                 || true,
             )

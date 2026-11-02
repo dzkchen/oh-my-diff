@@ -2,10 +2,12 @@
   "schema": 1,
   "virtual_time_ms": 1800000000000,
   "host_operations": {
-    "session.info": [{"result": {"thread_id": "status-fixture", "root": "/repo", "cwd": "/repo", "codex_version": "0.165.0", "model": "gpt-6.1-sol", "provider": "openai", "route": null, "turns_started": 0, "process_id": "status-process"}}],
+    "session.info": [{"result": {"thread_id": "status-fixture", "root": "/repo", "cwd": "/repo", "codex_version": "0.166.0", "model": "gpt-6.1-sol", "provider": "openai", "route": null, "turns_started": 0, "process_id": "status-process"}}],
     "app.request": [
       {"result": {"config": {"model_reasoning_effort": "high", "model_context_window": 272000}}},
-      {"result": {"rateLimits": {"primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1800007200}}}}
+      {"result": {"data": [{"model": "gpt-6.1-sol", "defaultServiceTier": null, "serviceTiers": []}], "nextCursor": null}},
+      {"result": {"rateLimits": {"primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1800007200}}}},
+      {"result": {"account": {"type": "chatgpt", "email": null, "planType": "plus", "workspaceName": "Acme"}, "requiresOpenaiAuth": true}}
     ],
     "exec.run": [{"result": {"exit_code": 0, "signal": null, "timed_out": false, "stdout": "/repo/.git\n/repo/.git\n/repo\n@@\nhttps://github.com/dzkchen/oh-my-diff.git\n@@\n@@\n# branch.oid 0123456789abcdef\u0000# branch.head main\u0000? notes.txt\u0000", "stderr": "", "stdout_sha256": "", "stdout_bytes": 0, "output_artifact": null, "stdout_truncated": false, "stdout_preview_truncated": false, "stderr_truncated": false, "stderr_preview_truncated": false, "duration_ms": 5, "program": {"path": "/bin/sh", "sha256": ""}, "guards_verified": 0}}]
   },

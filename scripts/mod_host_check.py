@@ -32,6 +32,8 @@ EVENTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
     r"pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
 INTERCEPTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
     r"pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
+FEATURES = set(re.findall(r'"([^"]+)"', re.search(
+    r"pub const MOD_HOST_FEATURES:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
 SOURCE_REPORTS = {}
 NODE = None
 
@@ -241,7 +243,13 @@ def static_problems(path):
             needed.add("package_imports_v1")
         if report["component"]:
             needed.add("component_modules_v1")
-    required = set(package.get("compatibility", {}).get("required_features", []))
+    lists = {kind: package.get("compatibility", {}).get(f"{kind}_features", []) for kind in ("required", "optional")}
+    for kind, features in lists.items():
+        found += [f"{len(features)} {kind}_features exceed the limit of 32"] if len(features) > 32 else []
+        found += [f"{kind}_features lists {feature} twice" for feature in sorted({f for f in features if features.count(f) > 1})]
+        found += [f"{kind}_features lists unknown host feature {feature}" for feature in sorted(set(features) - FEATURES)]
+    found += [f"{feature} is both required and optional" for feature in sorted(set(lists["required"]) & set(lists["optional"]))]
+    required = set(lists["required"])
     found += [f"assets, relative imports and api.component need required feature {feature}" for feature in sorted(needed - required)]
     if path.parent.name == "first-party":
         found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH)]

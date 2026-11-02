@@ -11,8 +11,8 @@ body:
   - type: textarea
     id: gap
     attributes:
-      label: What the current API cannot do
-      description: The operation, event or terminal surface you tried in the API reference, and where it falls short.
+      label: What the current API can't do
+      description: The operation, event or terminal surface you tried in the [API reference](https://github.com/dzkchen/oh-my-diff/blob/main/mods/reference/README.md), and where it falls short.
     validations:
       required: true
   - type: textarea
@@ -21,3 +21,9 @@ body:
       label: Example
       description: A sketch of the mod code you would write if the API existed.
       render: ts
+  - type: textarea
+    id: status
+    attributes:
+      label: omd update status
+      description: Output of `omd update status`, so the request names your OMD version. Remove anything private.
+      render: text

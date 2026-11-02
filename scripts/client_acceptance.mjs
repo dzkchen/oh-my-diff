@@ -149,6 +149,7 @@ async function headless() {
   const spent = text.session.actionToken;
   await text.session.request('omd/action', { actionToken: spent, component: 'external_clients', row: self }).catch(() => {});
   await rejects(text.session.request('omd/action', { actionToken: spent, component: 'external_clients', row: self }), 'action_replayed');
+  await text.session.read();
   await desk.session.read();
   await rejects(desk.session.request('omd/action', { actionToken: text.session.actionToken ?? 'foreign', component: 'external_clients', row: 0 }), 'action_unknown');
   const held = (await desk.session.read()).actionToken;

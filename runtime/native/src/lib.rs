@@ -6,6 +6,7 @@ mod execution;
 mod generic_host;
 mod ledger;
 mod managed_process;
+mod model_windows;
 mod mods;
 mod workspace_operations;
 mod workspace_watch;
@@ -208,6 +209,7 @@ pub fn install(
             .unwrap_or_default(),
     });
     let root = host.root.clone();
+    model_windows::load(&root);
     mods::install(registry, host).or_else(|error| inactive(&root, error))
 }
 
@@ -239,6 +241,19 @@ fn request_route(route: &Route) -> accounting::RequestRoute {
         credential: route.credential.clone(),
         url: route.responses_url.clone(),
     }
+}
+
+fn provider_worker(owner: &str) -> bool {
+    owner.starts_with("agent:") && owner.contains('@')
+}
+
+fn cross_provider_child(
+    parent_owner: &str,
+    parent_provider: &str,
+    provider: &str,
+    configured_provider: &str,
+) -> bool {
+    provider_worker(parent_owner) || parent_provider != provider && provider != configured_provider
 }
 
 fn lead_candidate(route: &Route, provider: &str) -> bool {
@@ -289,6 +304,7 @@ impl Host {
     }
 
     fn refresh_session(&self, session: &Session) -> Result<(), String> {
+        model_windows::load(&self.root);
         let config = self.route_config().0;
         let limits = session
             .task
@@ -392,6 +408,59 @@ impl Host {
                     && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
             })
             .cloned()
+    }
+
+    fn provider_lead_route(&self, provider: &str, model: &str) -> Option<Route> {
+        let (routing, _) = self.route_config();
+        let mut routes = routing.routes.iter().filter(|route| {
+            route.roles.contains(&config::RouteRole::Lead) && route.provider == provider
+        });
+        routes
+            .clone()
+            .find(|route| route.model == model)
+            .or_else(|| routes.next())
+            .cloned()
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn enroll_cross_provider(
+        &self,
+        thread: ThreadId,
+        session: &Arc<Session>,
+        owner: &str,
+        parent: &str,
+        depth: u32,
+        provider: &str,
+        model: &str,
+    ) -> Result<(), String> {
+        let mut route = self.provider_lead_route(provider, model).ok_or_else(|| {
+            format!("agent_route_unavailable: {model} has no lead route on provider {provider}")
+        })?;
+        route.model = model.to_owned();
+        let worker = format!("{owner}@{}", ThreadId::new());
+        let parent = if provider_worker(parent) {
+            parent
+        } else {
+            "lead"
+        };
+        session
+            .task
+            .start_worker(
+                worker.clone(),
+                parent.to_owned(),
+                depth,
+                self.worker_limits(session)?,
+            )
+            .map_err(|error| format!("agent_admission_refused: {error}"))?;
+        let enrolled = session
+            .task
+            .authorize_worker_route(&worker, &route.provider, &route.model)
+            .map_err(|error| error.to_string())
+            .and_then(|()| self.enroll(thread, session, &worker, Some(&route), None));
+        if enrolled.is_err() {
+            let _ = session.task.finish_worker(&worker);
+        }
+        enrolled
     }
 
     fn protected_paths(&self) -> Vec<PathBuf> {

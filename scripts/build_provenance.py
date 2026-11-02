@@ -19,20 +19,20 @@ def cached_build(environment):
 def cargo_configs(tree, environment):
     if any(environment.get(key) for key in OVERRIDES if key != "RUSTC_WRAPPER" or not cached_build(environment)):
         raise ValueError("build provenance refuses compiler or target overrides")
-    paths = [parent / ".cargo" / name
-             for parent in (tree / "codex-rs", *(tree / "codex-rs").parents)
-             for name in ("config", "config.toml")]
+    names = ("config", "config.toml")
+    paths = {str(path.relative_to(tree) if path.is_relative_to(tree) else path): path
+             for parent in (tree / "codex-rs", *(tree / "codex-rs").parents) for path in (parent / ".cargo" / name for name in names)}
     cargo_home = Path(environment.get("CARGO_HOME", Path.home() / ".cargo"))
-    paths += [cargo_home / name for name in ("config", "config.toml")]
+    paths |= {f"$CARGO_HOME/{name}": cargo_home / name for name in names}
     config = {}
-    for path in paths:
+    for key, path in paths.items():
         if not path.is_file():
             continue
         value = tomllib.loads(path.read_text())
         if (set(value.get("build", {})) & {"rustc", "rustc-wrapper", "rustc-workspace-wrapper", "target"}
                 or set(value.get("env", {})) & set(OVERRIDES)):
             raise ValueError(f"build provenance refuses compiler or target overrides: {path}")
-        config[str(path)] = support.digest(path)
+        config[key] = support.digest(path)
     return config
 
 

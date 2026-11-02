@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { chmod, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeSync, constants, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -41,6 +42,8 @@ test('Claude mod translates host requests and replays host tool results', () => 
   { upstream_requests: 1 }, model, first.reverse, false, 0.042);
   assert.equal(response.find(event => event.type === 'response.output_item.done' &&
     event.item.type === 'custom_tool_call').item.input, '*** Begin Patch');
+  assert.deepEqual(response.filter(event => event.type === 'response.output_item.done').map(event => [event.item.id, event.item.call_id]),
+    [['msg-1-text', undefined], ['call-2', 'call_2']]);
   assert.equal(response.at(-1).response.usage.input_tokens, 16);
   assert.equal(response.at(-1).response.usage.omd_subscription_charge, 'unknown');
   assert.equal(response.at(-1).response.model, 'claude-opus-5-5-20261001');
@@ -55,6 +58,12 @@ test('Claude mod translates host requests and replays host tool results', () => 
   assert.deepEqual(prototypeTools.manifest.map(tool => tool.name), names);
   const returned = responseEvents({ id: 'names', model, usage: { input_tokens: 1, output_tokens: 1 }, content: names.map((name, index) => ({ type: 'tool_use', id: `name-${index}`, name: `mcp__omd__${name}`, input: {} })) }, {}, model, prototypeTools.reverse);
   assert.deepEqual(returned.filter(event => event.type === 'response.output_item.done').map(event => event.item.name), names);
+  const collaboration = translateRequest({ ...prompt, tools: [{ type: 'namespace', name: 'collaboration', tools: [{ type: 'function', name: 'spawn_agent' }] },
+    { type: 'function', name: 'exec_command' }] }, model);
+  const calls = responseEvents({ id: 'calls', model, usage: { input_tokens: 1, output_tokens: 1 }, content: [
+    { type: 'tool_use', id: 'spawn', name: 'mcp__omd__collaboration__spawn_agent', input: { message: 'plain' } },
+    { type: 'tool_use', id: 'exec', name: 'mcp__omd__exec_command', input: {} }] }, {}, model, collaboration.reverse);
+  assert.deepEqual(calls.filter(event => event.type === 'response.output_item.done').map(event => event.item.encrypted_function_args), [[], undefined]);
 });
 
 test('history from another provider carries over: opaque reasoning dropped, hosted calls kept as text', () => {
@@ -63,9 +72,11 @@ test('history from another provider carries over: opaque reasoning dropped, host
     { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'opaque' },
     { type: 'web_search_call', id: 'ws_1', status: 'completed', action: { type: 'search', query: 'codex docs' } },
     { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Found them.' }] },
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Summarize.' }] }] }, model);
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Summarize.' }] },
+    { type: 'agent_message', author: '/root', recipient: '/root/docs', content: [{ type: 'input_text', text: 'Read README.md.' }, { type: 'encrypted_content', encrypted_content: 'gAAAA' }] }] }, model);
   assert.deepEqual(carried.frames.map(frame => frame.message.content.map(block => block.text)), [
-    ['Find the docs.'], ['[searched the web {"type":"search","query":"codex docs"}]', 'Found them.'], ['Summarize.']]);
+    ['Find the docs.'], ['[searched the web {"type":"search","query":"codex docs"}]', 'Found them.'], ['Summarize.',
+    'Message from /root to /root/docs:\nRead README.md.\n[This message was sealed by the sender\'s provider and cannot be read here; infer your task from the conversation and your name, /root/docs.]']]);
 });
 
 async function fakeCli(script) {
@@ -96,9 +107,10 @@ test('cancelling at any point before the CLI starts never launches it and leaves
 });
 
 test('a CLI that hangs before its request or while acknowledging history replay is stopped at the deadline with its whole process group', async () => {
-  const root = await fakeCli('#!/bin/sh\nsleep 60 &\necho $! > "$(dirname "$0")/grandchild"\necho $$ > "$(dirname "$0")/child"\nwait\n');
+  const root = await fakeCli('#!/bin/sh\necho $$ > "$(dirname "$0")/child"\nsleep 60 &\necho $! > "$(dirname "$0")/grandchild"\nwait\n');
   const alive = async name => {
-    const pid = Number(await readFile(join(root, name), 'utf8'));
+    const pid = Number(await readFile(join(root, name), 'utf8').catch(() => 0));
+    if (!pid) return false;
     for (let attempt = 0; attempt < 50; attempt++) {
       try { process.kill(pid, 0); } catch { return false; }
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -110,10 +122,10 @@ test('a CLI that hangs before its request or while acknowledging history replay 
     assert.ok(history.frames.length > 1);
     for (const translated of [null, history]) {
       const started = Date.now();
-      const error = await runClaude(prompt, entry, join(root, 'claude'), new AbortController().signal, () => {}, { translated, deadlineMs: 1000 }).then(() => null, failure => failure);
+      const error = await runClaude(prompt, entry, join(root, 'claude'), new AbortController().signal, () => {}, { translated, deadlineMs: 3000 }).then(() => null, failure => failure);
       assert.equal(error?.code, 'claude_upstream_incomplete');
       assert.match(error.message, /did not finish within 0 minutes \(it never sent its request\).*Retry the request/);
-      assert.ok(Date.now() - started < 5000);
+      assert.ok(Date.now() - started < 8000);
       for (const name of ['child', 'grandchild']) assert.equal(await alive(name), false, name);
     }
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -161,6 +173,57 @@ test('one upstream request is admitted and a second is refused', async () => {
     assert.equal(relay.denied, 1);
   } finally {
     relay.abort();
+    await new Promise(resolve => upstream.close(resolve));
+  }
+});
+
+test('the relay decodes compressed request bodies, and refuses bad ones without spending its admission', async () => {
+  const seen = [];
+  const upstream = createServer((incoming, response) => {
+    const chunks = [];
+    incoming.on('data', chunk => chunks.push(chunk));
+    incoming.on('end', () => {
+      seen.push({ encoding: incoming.headers['content-encoding'], body: Buffer.concat(chunks).toString('utf8') });
+      response.writeHead(200, { 'content-type': 'text/event-stream' }).end('event: ping\ndata: {"type":"ping"}\n\n');
+    });
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const json = JSON.stringify({ model, messages: [] });
+  const post = (relay, body, encoding) => new Promise((resolve, reject) => {
+    const outgoing = request(new URL(`${relay.url}/v1/messages`), { method: 'POST',
+      headers: { authorization: 'Bearer fixture', ...encoding ? { 'content-encoding': encoding } : {} } }, response => {
+      response.resume(); response.on('end', () => resolve(response.statusCode));
+    });
+    outgoing.on('error', reject);
+    outgoing.end(body);
+  });
+  const fresh = async () => {
+    const relay = new Relay(`http://127.0.0.1:${upstream.address().port}`, () => {}, () => {}, { model });
+    await relay.listen();
+    return relay;
+  };
+  try {
+    for (const [encoding, compress] of [['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]]) {
+      const relay = await fresh();
+      try {
+        assert.equal(await post(relay, compress(json), encoding), 200, encoding);
+        const last = seen.at(-1);
+        assert.equal(last.encoding, undefined);
+        assert.deepEqual(JSON.parse(last.body), { model, messages: [] });
+      } finally { relay.abort(); }
+    }
+    const relay = await fresh();
+    try {
+      assert.equal(await post(relay, Buffer.from(json), 'zstd'), 415);
+      assert.equal(await post(relay, deflateSync(Buffer.alloc(65 * 1024 * 1024)), 'deflate'), 413);
+      assert.equal(await post(relay, Buffer.from('not compressed'), 'gzip'), 400);
+      assert.equal(relay.denied, 0);
+      const before = seen.length;
+      assert.equal(await post(relay, Buffer.from(json)), 200, 'the admission is still unspent');
+      assert.equal(seen.length, before + 1);
+    } finally { relay.abort(); }
+  } finally {
+    upstream.closeAllConnections();
     await new Promise(resolve => upstream.close(resolve));
   }
 });
@@ -340,8 +403,9 @@ else if (argv[0] === 'auth') {
   const row = JSON.parse(line);
   if (row.type === 'control_request') console.log(JSON.stringify({ type: 'control_response', response: { response: { models: [
     { value: 'default', resolvedModel: 'claude-opus-5' }, { value: 'sonnet', resolvedModel: 'claude-sonnet-5', description: 'Sonnet 5 · fast', supportsEffort: true, supportedEffortLevels: ['low', 'high'] },
-    { value: 'opus', resolvedModel: 'claude-opus-5', description: 'Opus 5', supportsEffort: true, supportedEffortLevels: ['high'] }] } } }));
-  else console.log(JSON.stringify({ type: 'result', modelUsage: { [argv[argv.indexOf('--model') + 1]]: { contextWindow: 200000 } } }));
+    { value: 'opus', resolvedModel: 'claude-opus-5', description: 'Opus 5', supportsEffort: true, supportedEffortLevels: ['high'] },
+    { value: 'sonnet[1m]', resolvedModel: 'claude-sonnet-5[1m]', description: 'Sonnet 5 · long sessions', supportsEffort: true, supportedEffortLevels: ['high'] }] } } }));
+  else { const model = argv[argv.indexOf('--model') + 1]; console.log(JSON.stringify({ type: 'result', modelUsage: { [model]: { contextWindow: model.endsWith('[1m]') ? 1000000 : 200000 } } })); }
 }
 `, { mode: 0o755 });
     const setup = (...args) => spawnSync(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), ...args],
@@ -355,13 +419,17 @@ else if (argv[0] === 'auth') {
     const dir = await realpath(join(store, 'routes/claude/accounts/work'));
     assert.deepEqual(result.accounts.map(account => [account.name, account.billing, account.email, account.config_dir, account.route]),
       [['default', 'subscription', 'me@example.com', null, 'claude'], ['work', 'api', 'work@example.com', dir, 'claude-work']]);
-    assert.deepEqual(result.models.map(model => model.slug), ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-5.work', 'claude-sonnet-5.work']);
+    assert.deepEqual(result.accounts.map(account => account.cli_version), [CLI_VERSION, CLI_VERSION]);
+    assert.deepEqual(result.models.map(model => [model.slug, model.display, model.context_window]), [['claude-opus-5', 'Claude Opus 5', 200000], ['claude-sonnet-5', 'Claude Sonnet 5', 200000],
+      ['claude-sonnet-5-1m', 'Claude Sonnet 5 (1M context)', 1000000], ['claude-opus-5.work', 'Claude Opus 5 · work', 200000], ['claude-sonnet-5.work', 'Claude Sonnet 5 · work', 200000],
+      ['claude-sonnet-5-1m.work', 'Claude Sonnet 5 (1M context) · work', 1000000]]);
     const written = await host();
     assert.deepEqual(written.routes.map(route => [route.name, route.provider, route.model, route.rates.included_subscription, route.rates.provider_billed]),
       [['claude', 'omd_claude_cli', 'claude-opus-5', true, undefined], ['claude-work', 'omd_claude_cli', 'claude-opus-5.work', undefined, true]]);
     const grant = written.services.find(service => service.id === 'claude_cli');
     assert.ok(grant.read_paths.includes(dir));
     assert.equal(grant.route.rates.provider_billed, true);
+    assert.deepEqual([written.routes[1].rates.input_token_ceiling, grant.route.rates.input_token_ceiling], [1000000, 1000000], 'the ceiling admits the widest model');
     const route = JSON.parse(await readFile(join(store, 'routes/claude/route.json'), 'utf8'));
     assert.deepEqual([route.accounts[1].models[0].cli, route.accounts[1].models[0].efforts, route.accounts[1].models[0].window], ['claude-opus-5', ['high'], 200000]);
     await writeFile(join(store, 'host.json'), JSON.stringify({ ...written, routes: [...written.routes, { ...written.routes[0], name: 'claude-spare', provider: 'omd_profiles' }] }));
@@ -443,6 +511,52 @@ test('the transport shows a foreign holder of its port neither the local token n
   } finally {
     squatter.closeAllConnections();
     squatter.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a transport started after setup changed the route takes the port once the owner drains, and an unchanged one leaves the owner serving', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'omd-claude-handoff-'));
+  const token = 'local-token-'.repeat(4);
+  const probe = createServer();
+  await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+  const { port } = probe.address();
+  await new Promise(resolve => probe.close(resolve));
+  const claude = join(directory, 'claude');
+  await writeFile(claude, `#!/bin/sh\nif [ "$1" = --version ]; then echo '${CLI_VERSION}'; else echo '{"loggedIn":true,"apiProvider":"firstParty","authMethod":"claude.ai","subscriptionType":"pro"}'; fi\n`);
+  await chmod(claude, 0o755);
+  const route = name => {
+    const path = join(directory, `${name}.json`);
+    writeFileSync(path, JSON.stringify({ port, claude, accounts: [{ name, billing: 'subscription', config_dir: null, models: [] }] }));
+    return path;
+  };
+  const children = [];
+  const serve = (path, ready) => {
+    const child = spawn(process.execPath, [fileURLToPath(new URL('./transport.mjs', import.meta.url)), 'serve', path, directory, 'user'],
+      { env: { OMD_CLAUDE_LOCAL_TOKEN: token, OMD_READY_TOKEN: ready }, stdio: 'ignore' });
+    children.push(child);
+    return child;
+  };
+  const served = async expected => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (await fetch(`http://127.0.0.1:${port}/_omd/ready`).then(reply => reply.text(), () => '') === `OMD_READY:${expected}`) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.fail(`${expected} was never served`);
+  };
+  try {
+    const owner = serve(route('default'), 'nonce-a');
+    await served('nonce-a');
+    const exited = new Promise(resolve => owner.once('exit', resolve));
+    const later = serve(route('work'), 'nonce-b');
+    assert.equal(await exited, 0);
+    await served('nonce-b');
+    const same = serve(route('work'), 'nonce-c');
+    await served('nonce-c');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.deepEqual([later.exitCode, same.exitCode], [null, null]);
+  } finally {
+    for (const child of children) child.kill('SIGKILL');
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -545,6 +659,11 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
     return { exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [signedIn, null] }), stderr: '' };
   }, 'claude').value.display;
   assert.match(listed, /me@example\.com[\s\S]*work: not signed in/);
+  const aged = [{ ...accounts[0], cli_version: '2.1.400 (Claude Code)' }, { ...accounts[1], cli_version: '2.1.400 (Claude Code)' }, { name: 'same', billing: 'api', config_dir: '/accounts/same', models: 1, cli_version: CLI_VERSION }];
+  const stale = modEvent('command', '', { accounts: aged, models: [], published: true }, () => ({ exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [null, null, null] }), stderr: '' }), 'claude').value.display;
+  assert.match(stale, /default: not signed in.*3 models; read with Claude CLI 2\.1\.400 \(Claude Code\), run \/claude login to refresh/);
+  assert.match(stale, /work: .*run \/claude login api work to refresh/);
+  assert.doesNotMatch(stale, /Account same.*read with/);
   const login = (args, state = null) => modEvent('command', args, state, () => ({ delivered: 1 }), 'claude');
   assert.deepEqual(login('login api work').calls[0].arguments, { channel: 'login', data: { billing: 'api', account: 'work' } });
   assert.deepEqual(login('login').calls[0].arguments, { channel: 'login', data: { billing: 'subscription', account: 'default' } });

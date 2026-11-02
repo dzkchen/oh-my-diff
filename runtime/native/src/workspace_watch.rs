@@ -45,6 +45,57 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
     relative.to_str().map(str::to_owned)
 }
 
+const WORKTREE_GIT_FILES: [&str; 2] = ["HEAD", "index"];
+
+fn git_dirs(root: &Path) -> Option<(PathBuf, PathBuf)> {
+    let top = root.ancestors().find(|dir| dir.join(".git").exists())?;
+    let dot = top.join(".git").canonicalize().ok()?;
+    if dot.is_dir() {
+        return Some((dot.clone(), dot));
+    }
+    let text = std::fs::read_to_string(&dot).ok()?;
+    let git = top
+        .join(text.strip_prefix("gitdir:")?.trim())
+        .canonicalize()
+        .ok()?;
+    let Ok(common) = std::fs::read_to_string(git.join("commondir")) else {
+        let submodule = git.ancestors().any(|dir| {
+            dir.ends_with(".git/modules")
+                && dir
+                    .parent()
+                    .and_then(Path::parent)
+                    .is_some_and(|owner| top.starts_with(owner))
+        });
+        return (submodule
+            && git.join("HEAD").is_file()
+            && git.join("refs").is_dir()
+            && git.join("objects").is_dir())
+        .then(|| (git.clone(), git));
+    };
+    let common = git.join(common.trim()).canonicalize().ok()?;
+    let backlink = std::fs::read_to_string(git.join("gitdir")).ok()?;
+    (git.parent() == Some(common.join("worktrees").as_path())
+        && git.join(backlink.trim()).canonicalize().ok()? == dot)
+        .then_some((git, common))
+}
+
+fn git_change(dirs: &(PathBuf, PathBuf), path: &Path) -> Option<String> {
+    let own = path
+        .strip_prefix(&dirs.0)
+        .ok()
+        .and_then(Path::to_str)
+        .filter(|name| WORKTREE_GIT_FILES.contains(name));
+    let shared = || {
+        path.strip_prefix(&dirs.1)
+            .ok()
+            .and_then(Path::to_str)
+            .filter(|name| *name == "packed-refs" || name.starts_with("refs/"))
+    };
+    own.or_else(shared)
+        .filter(|name| !name.ends_with(".lock"))
+        .map(|name| format!(".git/{name}"))
+}
+
 fn keyed(watches: &BTreeMap<(String, String), Watch>, owner: &str, key: &str) -> Option<String> {
     watches
         .iter()
@@ -106,6 +157,7 @@ impl WorkspaceWatches {
         source: &str,
         paths: &[String],
         recursive: bool,
+        git: bool,
         debounce_ms: Option<u64>,
         key: Option<(&str, &str)>,
         sink: ChangeSink,
@@ -121,6 +173,11 @@ impl WorkspaceWatches {
             .iter()
             .map(|path| self.resolve(path))
             .collect::<io::Result<Vec<_>>>()?;
+        let dirs = if git {
+            Some(git_dirs(&self.root).ok_or_else(|| io::Error::other("watch_git_unavailable"))?)
+        } else {
+            None
+        };
         let mut watches = self
             .watches
             .lock()
@@ -151,26 +208,41 @@ impl WorkspaceWatches {
             format!("w{}", *next)
         };
         let (subscriber, receiver) = self.watcher.add_subscriber();
-        let registration = subscriber.register_paths(
-            resolved
-                .iter()
-                .map(|path| WatchPath {
-                    path: path.clone(),
-                    recursive,
-                })
-                .collect(),
-        );
+        let mut targets: Vec<WatchPath> = resolved
+            .iter()
+            .map(|path| WatchPath {
+                path: path.clone(),
+                recursive,
+            })
+            .collect();
+        if let Some((git, common)) = &dirs {
+            for (path, recursive) in [(git, false), (common, false), (&common.join("refs"), true)] {
+                if !targets.iter().any(|target| target.path == *path) {
+                    targets.push(WatchPath {
+                        path: path.clone(),
+                        recursive,
+                    });
+                }
+            }
+        }
+        let registration = subscriber.register_paths(targets);
         let mut receiver = DebouncedWatchReceiver::new(receiver, Duration::from_millis(debounce));
         let (root, protected, watch_id) = (self.root.clone(), self.protected.clone(), id.clone());
         let task = tokio::spawn(async move {
             let _subscriber = subscriber;
             while let Some(event) = receiver.recv().await {
-                let changed: Vec<String> = event
+                let mut changed: Vec<String> = event
                     .paths
                     .iter()
                     .filter(|path| !protected.iter().any(|p| path.starts_with(p)))
-                    .filter_map(|path| relative(&root, path))
+                    .filter_map(|path| {
+                        dirs.as_ref()
+                            .and_then(|dirs| git_change(dirs, path))
+                            .or_else(|| relative(&root, path))
+                    })
                     .collect();
+                changed.sort();
+                changed.dedup();
                 if !changed.is_empty() {
                     sink(&watch_id, changed);
                 }

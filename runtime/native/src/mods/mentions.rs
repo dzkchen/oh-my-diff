@@ -61,7 +61,7 @@ pub(super) fn mentioned(input: &[UserInput], repository: &std::path::Path) -> Ve
             let name = if rest.starts_with('"') {
                 let mut quoted = serde_json::Deserializer::from_str(rest).into_iter::<String>();
                 let Some(Ok(name)) = quoted.next() else {
-                    break;
+                    continue;
                 };
                 consumed = index + 1 + quoted.byte_offset();
                 name
@@ -226,6 +226,11 @@ mod tests {
             mentioned(&input, directory.path()),
             ["report!", "notes \"quoted\".txt"]
         );
+        let input = [UserInput::Text {
+            text: r#"compare @"draft notes and @report"#.into(),
+            text_elements: Vec::new(),
+        }];
+        assert_eq!(mentioned(&input, directory.path()), ["report"]);
     }
 
     #[test]

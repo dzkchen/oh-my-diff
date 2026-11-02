@@ -157,6 +157,25 @@ fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() 
 }
 
 #[test]
+fn state_fingerprint_changes_only_when_mod_state_changes() {
+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('read', () => api.state.get()); }";
+    let (temp, _, _) = fixture(source, &["commands", "store"]);
+    let mut runtime = host(&temp);
+    let start = runtime.state_fingerprint();
+    let mut invoke = |name: &str| {
+        let generation = runtime.generation();
+        runtime
+            .invoke("fixture", generation, "command", name, Value::Null)
+            .unwrap();
+        runtime.state_fingerprint()
+    };
+    let counted = invoke("count");
+    assert_ne!(counted, start);
+    assert_eq!(invoke("read"), counted);
+    assert_ne!(invoke("count"), counted);
+}
+
+#[test]
 fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
     let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : key === 'os' ? api.host.tryCall('exec.run', { program: '/bin/echo', argv: [`${value}`], sandbox: 'none' }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
     let temp = TempDir::new().unwrap();
@@ -886,6 +905,17 @@ fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
         );
     }
     let mut manifest = base;
+    let features = |count: usize| (0..count).map(|i| format!("f{i}")).collect::<Vec<_>>();
+    manifest["compatibility"] = json!({"optional_features": features(33)});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let error = ModStore::inspect_package(&path).unwrap_err().to_string();
+    assert!(
+        error.contains("invalid_host_compatibility_declaration: optional_features has 33 (max 32)"),
+        "{error}"
+    );
+    manifest["compatibility"] = json!({"optional_features": features(32)});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    ModStore::inspect_package(&path).unwrap();
     manifest["compatibility"] = json!({"releases": [OMD_HOST_RELEASE]});
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     ModStore::inspect_package(&path).unwrap();
@@ -1270,6 +1300,42 @@ fn startup_terminal_preview_rejects_native_task_operations_at_host_boundary() {
         );
         assert!(terminal.contributors.is_empty());
     }
+}
+
+#[test]
+fn terminal_client_sites_reach_only_the_mod_that_owns_them() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    for id in ["alpha", "beta", "gamma"] {
+        let path = package(
+            &root,
+            id,
+            "export default api => api.on('terminal', ({ client }) => ({status: [client.columns + '|' + (Object.entries(client.sites ?? {}).sort().map(([name, area]) => `${name}=${area.columns}x${area.rows}`).join(',') || 'none')]}))",
+            &["terminal"],
+        );
+        trust(&store, &path, &["terminal"]);
+    }
+    let mut runtime = host(&temp);
+    let client = json!({"kind": "terminal", "columns": 120, "rows": 40, "sites": {
+        "alpha/git": {"columns": 50, "rows": 30},
+        "alpha/files": {"columns": 20, "rows": 9},
+        "beta/panel": {"columns": 70, "rows": 30},
+        "alphabet/x": {"columns": 1, "rows": 1},
+    }});
+    let terminal = runtime.terminal_view(json!({"event": "draw", "client": client}), || true);
+    let mut seen = terminal.view.status.clone();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            "120|alpha/files=20x9,alpha/git=50x30",
+            "120|beta/panel=70x30",
+            "120|none",
+        ],
+        "{:?}",
+        terminal.diagnostics
+    );
 }
 
 #[test]
@@ -1690,6 +1756,76 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
             "{error}"
         );
     }
+}
+
+#[test]
+fn an_underlay_never_takes_a_raster_another_mod_already_draws() {
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({sites:{dialog:{mode:'replace',components:[{type:'raster',id:'shared',label:'Chart',alt:'chart',width:4,height:2}]}}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({underlay:{raster:'shared'},welcome:{hidden:true}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let view = host(&temp).terminal_view(json!({}), || true);
+    assert_eq!(view.component_owners["shared"], "fixture");
+    assert_eq!(
+        view.view.welcome.as_ref().map(|welcome| welcome.hidden),
+        Some(false)
+    );
+    assert_eq!(
+        view.view.raster_declared("shared"),
+        Some((Some(4), Some(2)))
+    );
+    assert_eq!(view.view.underlay, None);
+    assert!(
+        view.conflicts
+            .iter()
+            .any(|conflict| conflict.field == "underlay" && conflict.rejected == "other")
+    );
+}
+
+#[test]
+fn a_later_welcome_writer_keeps_the_underlay_owners_hidden_welcome() {
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:true}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let view = host(&temp).terminal_view(json!({}), || true);
+    let welcome = view.view.welcome.unwrap();
+    assert!(welcome.show_while_composing && welcome.hidden);
+
+    let (temp, store, _) = fixture(
+        "export default api => api.on('terminal', () => ({underlay:{raster:'scene'},welcome:{hidden:true,show_while_composing:true}}));",
+        &["terminal"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.on('terminal', () => ({welcome:{show_while_composing:false}}));",
+        &["terminal"],
+    );
+    trust(&store, &other, &["terminal"]);
+    let welcome = host(&temp)
+        .terminal_view(json!({}), || true)
+        .view
+        .welcome
+        .unwrap();
+    assert!(welcome.show_while_composing && welcome.hidden);
 }
 
 #[test]
@@ -2286,6 +2422,26 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
         "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env',write:true}))",
         &["commands", "exec", "fs.write"],
     );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let capabilities = ["commands", "exec", "os", "pty"];
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => api.command('open',()=>api.host.call('terminal.pty',{action:'start',session:'s',program:'/bin/echo',sandbox:'none'}))",
+        &capabilities,
+    );
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+    manifest["os_access"] = json!({"programs": ["/bin/echo"]});
+    std::fs::write(
+        path.join("mod.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    trust(&store, &path, &capabilities);
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let (temp, _, _) = fixture(
         "export default (api: any) => api.command('count',()=>{ api.atom<number>('n', 0).set(1); return null; })",
@@ -2951,6 +3107,25 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
     assert_eq!(runtime.replacement_owner("context"), None);
 }
 
+#[cfg(unix)]
+#[test]
+fn reopening_an_unchanged_store_keeps_its_generated_types() {
+    use std::os::unix::fs::MetadataExt;
+    let (temp, _, _) = fixture(
+        "export default api => api.command('ok', () => 'ok')",
+        &["commands"],
+    );
+    let store = temp.path().join("store");
+    let inodes = || {
+        ["active-host.d.ts", "installed-contracts.d.ts"]
+            .map(|name| std::fs::metadata(store.join(name)).unwrap().ino())
+    };
+    drop(host(&temp));
+    let before = inodes();
+    drop(host(&temp));
+    assert_eq!(inodes(), before);
+}
+
 #[test]
 fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_owned() {
     let source = "export default api => {\n  api.command('fail', () => {\n    throw new Error('INTENTIONAL_AUTHOR_FAILURE sk- sk-authorsecret123456789');\n  });\n}";
@@ -3437,6 +3612,53 @@ fn settings_file_overrides_saved_settings_and_an_invalid_file_is_skipped_whole()
     assert_eq!(runtime.status()["mods"][0]["error"], Value::Null);
     std::fs::remove_file(file("json")).unwrap();
     assert_eq!(read(&mut runtime)[1]["status"], "missing");
+}
+
+#[test]
+fn settings_a_newer_package_no_longer_declares_are_dropped() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => api.command('read', () => JSON.stringify(api.settings))",
+        &["commands"],
+    );
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    let schema = |old: bool| {
+        let mut properties = json!({"mode":{"type":"string","default":"a"}});
+        if old {
+            properties["old"] = json!({"type":"boolean","default":false});
+        }
+        json!({"type":"object","properties":properties,"additionalProperties":false})
+    };
+    value["settings_schema"] = schema(true);
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+    codex_omd::write_settings(&store, "fixture", &json!({"old":true,"mode":"b"})).unwrap();
+    value["settings_schema"] = schema(false);
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    assert_eq!(
+        runtime
+            .invoke("fixture", generation, "command", "read", Value::Null)
+            .unwrap(),
+        json!(r#"{"mode":"b"}"#)
+    );
+    assert!(codex_omd::write_settings(&store, "fixture", &json!({"other":1})).is_err());
+    assert_eq!(
+        codex_omd::write_settings(&store, "fixture", &json!({"mode":"a"})).unwrap(),
+        json!({"settings":{"mode":"a"}})
+    );
+    assert_eq!(
+        store.configuration().unwrap().mods[0].settings,
+        std::collections::BTreeMap::from([("mode".to_string(), json!("a"))])
+    );
 }
 
 #[test]

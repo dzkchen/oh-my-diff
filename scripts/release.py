@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHANGELOG = ROOT / "release/changelog.json"
 MARKDOWN = ROOT / "CHANGELOG.md"
 LOCK = ROOT / "runtime/release.lock.json"
+CATALOG = ROOT / "extensions/index.json"
 REFERENCE = ROOT / "mods/REFERENCE.md"
 HOST_CRATES = ("runtime/omd/Cargo.toml", "runtime/omd/runner/Cargo.toml")
 REPOSITORY = "dzkchen/oh-my-diff"
@@ -55,10 +56,17 @@ def notes(entries, version):
         raise SystemExit(f"release/changelog.json has no {version} entry")
     channel = " --channel prerelease" if "-" in version else ""
     return "\n".join([entry["summary"], "", *sections(entry),
-                      "```sh",
+                      f"Install or update to the newest {'prerelease' if channel else 'stable release'}:", "", "```sh",
                       f"curl --proto '=https' --tlsv1.2 -fsSL https://github.com/{REPOSITORY}/releases/download/v{version}"
                       f"/install.sh | sh -s --{channel} --profile full", "```", "",
                       f"Full history: [CHANGELOG.md](https://github.com/{REPOSITORY}/blob/v{version}/CHANGELOG.md)"]) + "\n"
+
+
+def pinned(catalog, version):
+    text = re.sub(r"\bOMD \d+\.\d+\.\d+(?:-rc\.\d+)?", f"OMD {version}", json.dumps(catalog))
+    catalog = json.loads(re.sub(r"\bCodex \d+\.\d+\.\d+", f"Codex {catalog['release_pin']['codex']}", text))
+    catalog["release_pin"]["omd"] = version
+    return catalog
 
 
 def lock_version():
@@ -146,6 +154,9 @@ def check(version=None):
             problems.append(f"the OMD host crates are {', '.join(sorted(host_versions()))}, not {version}")
         if not entries or entries[0].get("version") != version:
             problems.append(f"the newest changelog entry is not {version}")
+        if (catalog := json.loads(CATALOG.read_text())) != pinned(catalog, version):
+            problems.append(f"extensions/index.json must pin and name OMD {version} and Codex {catalog['release_pin']['codex']} throughout")
+        problems += history(entries, version)
     problems += [f"broken link {item}" for item in broken_links()]
     if drift := reference_drift():
         problems.append(drift)
@@ -154,11 +165,26 @@ def check(version=None):
     print(f"release metadata consistent{f' for {version}' if version else ''}")
 
 
-def uncovered(entries):
+def uncovered(entries, *revisions):
     covered = {commit for entry in entries for commit in entry["commits"]}
     # One line per change on main: a merge commit stands for its pull request, not the branch commits it brings in.
-    return [commit[:7] for commit in run("git", "rev-list", "--reverse", "--first-parent", "origin/main").split()
+    return [commit[:7] for commit in run("git", "rev-list", "--reverse", "--first-parent", *(revisions or ["origin/main"])).split()
             if commit[:7] not in covered]
+
+
+def released(version, subject):
+    return re.fullmatch(rf"chore\(release\): {re.escape(version)}(?: \(#\d+\))?", subject)
+
+
+def history(entries, version, revision="HEAD"):
+    tag, commit = f"v{version}", run("git", "rev-parse", f"{revision}^{{commit}}")
+    if run("git", "tag", "--list", tag) and (tagged := run("git", "rev-parse", f"{tag}^{{commit}}")) != commit:
+        return [f"{tag} already tags {tagged[:7]}, not {commit[:7]}"]
+    previous = next((entry["version"] for entry in entries if entry.get("version") not in (None, version)), None)
+    since = [f"^v{previous}"] if previous and run("git", "tag", "--list", f"v{previous}") else []
+    missing = [item for item in uncovered(entries, run("git", "merge-base", commit, "origin/main"), *since)
+               if not (item == commit[:7] and released(version, run("git", "log", "-1", "--format=%s", commit)))]
+    return [f"no changelog entry covers {', '.join(missing)}"] if missing else []
 
 
 def changes(commits, existing=()):
@@ -194,7 +220,13 @@ def prepare(version, summary):
                          "bump codex-omd and codex-omd-runner in the patch and merge that first")
     merged = json.loads(run("git", "show", "origin/main:runtime/release.lock.json"))["version"] == version
     if merged:
-        run("git", "tag", "--annotate", tag, "--message", f"Oh My Diff {version}", "origin/main")
+        commit = next((commit for commit, _, subject in (line.partition(" ") for line in run(
+            "git", "log", "--first-parent", "--format=%H %s", "origin/main").splitlines()) if released(version, subject)), None)
+        if commit is None:
+            raise SystemExit(f"main has no `chore(release): {version}` commit to tag")
+        if problems := history(json.loads(run("git", "show", f"{commit}:release/changelog.json")), version, commit):
+            raise SystemExit("\n".join(problems))
+        run("git", "tag", "--annotate", tag, "--message", f"Oh My Diff {version}", commit)
         run("git", "push", "origin", tag)
         print(f"pushed {tag}; https://github.com/{REPOSITORY}/actions/workflows/release.yml builds, verifies and publishes it")
         return
@@ -210,17 +242,19 @@ def prepare(version, summary):
     lock = json.loads(LOCK.read_text())
     lock["version"] = version
     LOCK.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n")
+    CATALOG.write_text(json.dumps(pinned(json.loads(CATALOG.read_text()), version), indent=2, ensure_ascii=False) + "\n")
     entries = json.loads(CHANGELOG.read_text())
     entries.insert(0, release_entry(entries, version, summary))
     CHANGELOG.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n")
     MARKDOWN.write_text(render(entries))
     check(version)
-    run("git", "add", LOCK, CHANGELOG, MARKDOWN)
+    run("git", "add", LOCK, CATALOG, CHANGELOG, MARKDOWN)
     run("git", "commit", "--message", f"chore(release): {version}")
     run("git", "push", "--set-upstream", "origin", branch)
     run("gh", "pr", "create", "--repo", REPOSITORY, "--base", "main", "--head", branch,
         "--title", f"chore(release): {version}",
         "--body", "Review and edit the generated `release/changelog.json` entry, then run `python3 scripts/release.py render`. "
+                  f"Squash merge this pull request: tagging looks for its `chore(release): {version}` commit on main. "
                   f"Run `mise run release -- {version}` again to cover changes merged to main since, and once more after "
                   "this merges to tag it.", capture=False)
 

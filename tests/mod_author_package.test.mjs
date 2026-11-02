@@ -74,6 +74,10 @@ test('scaffold commands and mapped failures work for custom and example-named ID
       assert.match(debugged.stdout, /INTENTIONAL_AUTHOR_FAILURE/);
       assert.match(debugged.stdout, /index\.ts:\d+:\d+/);
     }
+    const dashed = join(root, 'my-mod');
+    const created = author('create', dashed);
+    assert.equal(created.status, 0, created.stderr);
+    assert.equal(JSON.parse(readFileSync(join(dashed, 'mod.json'))).id, 'my_mod');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -262,9 +266,11 @@ test('a managed release install scaffolds the SDK from its release asset and a d
       const { OMD_MOD_SDK_SPEC, ...env } = process.env;
       const result = spawnSync(process.execPath, [join(sdk, 'author/cli.mjs'), 'create', project, 'demo'], { encoding: 'utf8', env: { ...env, PATH: `${bin}:${process.env.PATH}` } });
       assert.equal(result.status, 0, result.stderr);
-      return JSON.parse(readFileSync(join(project, 'package.json'))).devDependencies['@oh-my-diff/mod-api'];
+      return JSON.parse(readFileSync(join(project, 'package.json'))).devDependencies;
     };
-    assert.equal(scaffold(join(root, 'managed'), { version: '1.2.3', update: {} }), 'https://github.com/dzkchen/oh-my-diff/releases/download/v1.2.3/mod-api.tgz');
-    assert.match(scaffold(join(root, 'dev'), { version: '1.2.3' }), /^file:/);
+    const managed = scaffold(join(root, 'managed'), { version: '1.2.3', update: {} });
+    assert.equal(managed['@oh-my-diff/mod-api'], 'https://github.com/dzkchen/oh-my-diff/releases/download/v1.2.3/mod-api.tgz');
+    assert.equal(managed.typescript, '5.9.3');
+    assert.match(scaffold(join(root, 'dev'), { version: '1.2.3' })['@oh-my-diff/mod-api'], /^file:/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

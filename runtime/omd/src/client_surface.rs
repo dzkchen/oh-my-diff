@@ -106,6 +106,9 @@ pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
             "terminal.selection" | "terminal.copy" | "terminal.panel"
         ))
         || operation == "terminal.prompt"
+        || operation == "terminal.open"
+        || (operation == "terminal.pty" && arguments["action"] == "start")
+        || operation == crate::program_trust::OPERATION
         || (operation == "app.request"
             && arguments["method"]
                 .as_str()
@@ -628,7 +631,7 @@ fn submit_bound(
     confirm: Option<String>,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<PendingReply, BlitError> {
-    if !SURFACE_OPERATIONS.contains(&operation) {
+    if !SURFACE_OPERATIONS.contains(&operation) && operation != crate::program_trust::OPERATION {
         return Err(BlitError::fatal(format!(
             "unsupported_host_operation: {operation}"
         )));
@@ -684,6 +687,21 @@ fn submit_bound(
         })
         .map_err(BlitError::retryable)?;
     Ok(PendingReply { receiver, lifetime })
+}
+
+pub fn trust(caller: &str, arguments: Value, active: &dyn Fn() -> bool) -> Result<Value, String> {
+    let pending = submit_bound(
+        caller,
+        crate::program_trust::OPERATION,
+        arguments,
+        InvocationContext::Event,
+        false,
+        None,
+        None,
+        Arc::new(|| true),
+    )
+    .map_err(|error| error.message)?;
+    wait_classified(pending, active, None).map_err(|error| error.message)
 }
 
 pub fn wait(

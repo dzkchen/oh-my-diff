@@ -10,6 +10,16 @@ pub const MOD_TEXT_BYTES: usize = 49_152;
 pub struct ModWelcome {
     #[serde(default)]
     pub show_while_composing: bool,
+    /// Keeps the welcome area (Codex's own welcome and animation stay off) but draws no `welcome` site in it;
+    /// effective only from the mod that owns the composed underlay.
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModUnderlay {
+    pub raster: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -57,6 +67,8 @@ pub struct ModView {
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_sites: Option<ModInlineSites>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underlay: Option<ModUnderlay>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -104,6 +116,8 @@ pub struct ModViewPatch {
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
     #[serde(default)]
     pub inline_sites: Option<ModInlineSites>,
+    #[serde(default)]
+    pub underlay: Option<ModUnderlay>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -165,7 +179,7 @@ pub enum ModLayout {
 
 impl ModLayout {
     fn walk(&self, depth: usize, leaves: &mut Vec<String>) -> bool {
-        if depth > 4 {
+        if depth > 6 {
             return false;
         }
         match self {
@@ -567,6 +581,8 @@ pub enum ModComponent {
         text: String,
         #[serde(default)]
         language: Option<String>,
+        #[serde(default)]
+        start: usize,
     },
     Pane {
         id: String,
@@ -641,6 +657,8 @@ pub enum ModComponent {
         session: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         height: Option<u16>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Image {
         id: String,
@@ -1345,6 +1363,12 @@ impl ModView {
         self.sites
             .values()
             .find_map(|site| find(&site.components, id))
+            .or_else(|| {
+                self.underlay
+                    .as_ref()
+                    .is_some_and(|underlay| underlay.raster == id)
+                    .then_some((None, None))
+            })
     }
 
     pub fn module(&self, id: &str) -> Option<(&str, &Value)> {
@@ -1742,6 +1766,7 @@ impl ModComponent {
                 label,
                 session,
                 height,
+                ..
             } => {
                 identified(id, label, ids)
                     && visible(session, 64)
@@ -2142,6 +2167,13 @@ impl ModViewPatch {
                 "surface_styles",
                 !valid_surface_styles(&patch.surface_styles),
             ),
+            (
+                "underlay",
+                patch
+                    .underlay
+                    .as_ref()
+                    .is_some_and(|underlay| !mod_component_id(&underlay.raster)),
+            ),
             ("size", serde_json::to_vec(&patch)?.len() > 262_144),
         ]
         .into_iter()
@@ -2159,6 +2191,7 @@ impl ModViewPatch {
         self.header = None;
         self.footer = None;
         self.layout = None;
+        self.underlay = None;
         self.status.clear();
     }
 
@@ -2173,6 +2206,18 @@ impl ModViewPatch {
         let mut candidate = target.clone();
         let mut candidate_claims = claims.clone();
         let mut conflicts = Vec::new();
+        self.sites.retain(|name, _| match name.split_once('/') {
+            Some((owner, _)) if owner != id => {
+                conflicts.push(ModViewConflict {
+                    field: format!("sites.{name}"),
+                    owner: owner.to_owned(),
+                    rejected: id.to_owned(),
+                    origin: origin.to_owned(),
+                });
+                false
+            }
+            _ => true,
+        });
         let mut claim = |field: String| {
             let owner = candidate_claims
                 .entry(field.clone())
@@ -2227,6 +2272,9 @@ impl ModViewPatch {
         }
         if self.placeholder.is_some() && claim("placeholder".into()) {
             candidate.placeholder = self.placeholder;
+        }
+        if self.underlay.is_some() && claim("underlay".into()) {
+            candidate.underlay = self.underlay;
         }
         candidate.surface_styles.extend(self.surface_styles);
         for (name, site) in self.sites {
@@ -2413,6 +2461,12 @@ impl ModView {
             (
                 "surface_styles",
                 !valid_surface_styles(&view.surface_styles),
+            ),
+            (
+                "underlay",
+                view.underlay
+                    .as_ref()
+                    .is_some_and(|underlay| !mod_component_id(&underlay.raster)),
             ),
             ("size", serde_json::to_vec(&view)?.len() > 1_048_576),
         ]

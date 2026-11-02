@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "omd_git",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "A lazygit-style Git panel in the workspace dock: files and hunks, branches, commits, stash, push and pull, and adding a selection to the prompt",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_git"},
+  "assets": ["git.ts", "view.ts"],
+  "capabilities": ["terminal", "commands", "store", "exec", "os", "services", "lifecycle", "fs.read", "composer", "inventory", "pty"],
+  "os_access": {"programs": ["git"], "network": true},
+  "compatibility": {"required_features": ["store_v1", "state_scopes_v1", "package_imports_v1", "package_text_assets_v1", "exec_v1", "unrestricted_process_v1", "terminal_surface_v1", "terminal_focus_v1", "terminal_input_v1", "terminal_prompt_v1", "ui_composition_v1", "terminal_editor_v1", "composer_v2", "service_dispatch_v1", "lifecycle_events_v1", "mods_changed_v1", "workspace_watch_key_v1", "workspace_watch_git_v1", "terminal_pty_v1", "pty_programs_v1"], "optional_features": ["terminal_site_area_v1"]},
+  "services": {"imports": [{"name": "omd.workspace", "version": "^1.0.0"}]}
+}

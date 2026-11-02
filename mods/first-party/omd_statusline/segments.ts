@@ -1,9 +1,9 @@
 import type { Json, TerminalSpan, TerminalTone } from '../../api.d.ts';
 
-export const SEGMENTS = ['model', 'effort', 'provider', 'context', 'tokens', 'cache', 'cost', 'limits', 'git', 'changes', 'pr', 'ci', 'session', 'tools', 'agents', 'plan', 'cwd', 'omd'] as const;
+export const SEGMENTS = ['model', 'effort', 'tier', 'profile', 'provider', 'workspace', 'context', 'tokens', 'cache', 'cost', 'limits', 'git', 'changes', 'pr', 'ci', 'session', 'tools', 'agents', 'plan', 'cwd', 'omd'] as const;
 export const PRESETS = {
-  compact: 'model context limits cost cache git omd',
-  detailed: 'model effort provider context tokens cache cost limits; git changes pr ci session tools agents plan omd',
+  compact: 'model tier context limits cost cache git omd',
+  detailed: 'model effort tier provider context tokens cache cost limits; git changes pr ci session tools agents plan omd',
 };
 export type Mods = { installed: number; enabled: number; active: number; failed?: number };
 const TONES: TerminalTone[] = ['normal', 'accent', 'success', 'attention', 'failure', 'muted'];
@@ -15,7 +15,7 @@ export type Settings = {
 };
 export const DEFAULTS: Settings = {
   placement: 'below', preset: 'compact', layout: PRESETS.detailed, hidden: '', glyphs: 'unicode', bars: true,
-  thresholds: 'context=70,90 limits=70,90 cost=5,20', tones: '', github: true, refresh_s: 30, scripts: '',
+  thresholds: 'context=70,90 limits=70,90 cost=5,20', tones: '', github: true, refresh_s: 60, scripts: '',
 };
 export type Script = { id: string; command: string[]; interval_s: number; timeout_ms: number };
 
@@ -30,8 +30,8 @@ export type Checks = { state: string; passed: number; failed: number; pending: n
 export type Github = { key: string | null; status: GithubStatus; at: number | null; next: number; failures: number; pr: Pull | null; ci: Checks | null; detail: string | null };
 export type ScriptResult = { spec: string; at: number; status: 'ok' | 'failed' | 'timeout' | 'empty'; spans: TerminalSpan[] };
 export type Data = {
-  thread: string | null; started: number | null; cwd: string | null;
-  model: { requested: string | null; served: string | null; effort: string | null; provider: string | null; billing: Charge | null };
+  thread: string | null; started: number | null; cwd: string | null; profile: string | null; workspace: string | null;
+  model: { requested: string | null; served: string | null; effort: string | null; provider: string | null; billing: Charge | null; tier: { id: string; name: string | null } | null };
   context: { used: number | null; window: number | null; compactions: number; at: number | null; compacted: number | null; reverted: number | null; switched: boolean };
   tokens: { input: number; output: number; reasoning: number; cached: number; write: number; requests: number };
   cache: { ratio: number | null; expires: number | null };
@@ -43,7 +43,7 @@ export type Data = {
   pending: { from: string[]; to: Settings; turns: number } | null;
 };
 export const EMPTY: Data = {
-  thread: null, started: null, cwd: null, model: { requested: null, served: null, effort: null, provider: null, billing: null },
+  thread: null, started: null, cwd: null, profile: null, workspace: null, model: { requested: null, served: null, effort: null, provider: null, billing: null, tier: null },
   context: { used: null, window: null, compactions: 0, at: null, compacted: null, reverted: null, switched: false },
   tokens: { input: 0, output: 0, reasoning: 0, cached: 0, write: 0, requests: 0 }, cache: { ratio: null, expires: null },
   cost: { billed: 0, estimate: 0, included: 0, pending: 0, unknown: 0 }, seen: {}, limits: [], credits: null, tools: {}, agents: {}, plan: null,
@@ -153,6 +153,9 @@ const parts: Record<string, (env: Env) => Part> = {
     return [{ text: served && requested && served !== requested ? `${requested}→${served}` : (served ?? requested)!, bold: true }];
   },
   effort: ({ data }) => data.model.effort ? [{ text: data.model.effort, tone: 'muted' }] : null,
+  tier: ({ data }) => data.model.tier?.name ? [{ text: data.model.tier.name, tone: 'accent' }] : null,
+  profile: ({ data }) => data.profile ? [{ text: `profile: ${data.profile}`, tone: 'muted' }] : null,
+  workspace: ({ data }) => data.workspace ? [{ text: `workspace: ${data.workspace}`, tone: 'muted' }] : null,
   provider: ({ data }) => {
     if (!data.model.provider) return null;
     const billing = { billed: 'billed', estimate: 'API est.', included: 'subscription', pending: 'unsettled', unknown: 'unpriced', none: null }[data.model.billing ?? 'none'];

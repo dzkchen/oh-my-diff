@@ -25,6 +25,7 @@ pub mod peers;
 pub mod plan_routes;
 pub mod power;
 pub mod process_raster;
+pub mod program_trust;
 pub mod resource_data;
 pub mod route_writes;
 pub mod scoped_data;
@@ -101,6 +102,7 @@ pub use workspace::tree_path;
 pub use workspace::workspace_path;
 
 pub use mods::AUTHORITY_CAPABILITIES;
+pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
 pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 pub use mods::CODEX_CONFIG_UPDATE_PLAN;
 pub use mods::CODEX_HOST_RELEASE;

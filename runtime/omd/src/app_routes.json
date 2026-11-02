@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.165.0",
-  "commit": "360319d8dee62d87e2d59fc0c21805d79519cfed"
+  "tag": "rust-v0.166.0",
+  "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856"
  },
  "requests": {
   "account/bedrock/checkGovCloudRequirements": {
@@ -59,6 +59,27 @@
     "event"
    ],
    "fields": []
+  },
+  "accountSession/list": {
+   "class": "account",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": [
+    "refreshWorkspaceMetadata"
+   ]
+  },
+  "accountSession/switch": {
+   "class": "account",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true,
+   "fields": [
+    "accountId",
+    "sessionId"
+   ]
   },
   "app/installed": {
    "class": "inventory",
@@ -1564,6 +1585,7 @@
   "features.guardian_conversation_history_tools",
   "features.guardian_enhanced_node_repl_transcripts",
   "features.guardian_ext",
+  "features.guardian_native_multi_agent_history",
   "features.guardian_node_repl_transcript_images",
   "features.guardian_recorded_items",
   "features.guardian_reuse_parent_compaction",
@@ -1587,6 +1609,7 @@
   "features.skill_mcp_dependency_install",
   "features.system_proxy_fallback",
   "features.unified_exec_zsh_fork",
+  "features.untrusted_as_tool_output",
   "features.use_agent_identity",
   "features.use_legacy_landlock",
   "features.use_linux_sandbox_bwrap",
@@ -1725,6 +1748,7 @@
   "features.connectors",
   "features.content_item_kinds",
   "features.context_management",
+  "features.critical_path_timing",
   "features.current_time_reminder",
   "features.cwd_relative_turn_diffs",
   "features.daemon_auto_start",
@@ -1762,6 +1786,7 @@
   "features.local_thread_store_compression",
   "features.local_thread_store_shared_compression",
   "features.mcp_2026_07_28",
+  "features.mcp_connection_sharing",
   "features.mcp_tool_list_changed",
   "features.memories",
   "features.memory_tool",
@@ -1775,8 +1800,10 @@
   "features.non_prefixed_mcp_tool_names",
   "features.nonfatal_clock_read_errors",
   "features.omit_app_server_notification_media",
+  "features.omit_skill_descriptions",
   "features.output_token_replay",
   "features.personality",
+  "features.plugin_discovery_prefetch",
   "features.plugin_hooks",
   "features.plugins",
   "features.powershell_shell_version",
@@ -1803,6 +1830,8 @@
   "features.shell_snapshot",
   "features.shell_snapshot_v2",
   "features.shell_tool",
+  "features.simplified_selection_hints",
+  "features.skill_catalog_deltas",
   "features.skill_env_var_dependency_prompt",
   "features.skill_search",
   "features.skip_host_skill_discovery",
@@ -1863,6 +1892,7 @@
   "mcp_optional_startup_grace_ms",
   "memories",
   "memories.consolidation_model",
+  "memories.consolidation_service_tier",
   "memories.dedicated_tools",
   "memories.disable_on_external_context",
   "memories.dual_write",

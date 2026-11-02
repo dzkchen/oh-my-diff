@@ -586,7 +586,14 @@ impl ModStore {
                     .settings
                     .get(&resolved.package.id)
                     .cloned()
-                    .or_else(|| previous.map(|locked| selected_settings(&config, locked)))
+                    .or_else(|| {
+                        previous.map(|locked| {
+                            declared_settings(
+                                resolved.package.settings_schema.as_ref(),
+                                &selected_settings(&config, locked),
+                            )
+                        })
+                    })
                     .unwrap_or_default();
                 validate_settings(&resolved.package, &settings)?;
                 resolved.locked.settings = settings;
@@ -1001,7 +1008,7 @@ impl ModStore {
         {
             return Err(failure("capability_denied"));
         }
-        super::validate_settings(&manifest, &selection.settings)?;
+        super::validate_stored_settings(&manifest, &selection.settings)?;
         selection.enabled = true;
         store::refuse_second_copy(&config, &path, &scope, &manifest.id)?;
         config.revision = config
@@ -1128,11 +1135,15 @@ impl ModStore {
             .ok_or_else(|| failure("package_not_installed"))?;
         let current_path = current.path.clone();
         previous.path = previous.cache_path.clone();
-        previous.settings = selected_settings(&self.configuration()?, &current);
+        let package = store::package(&previous.path)?.0;
+        previous.settings = declared_settings(
+            package.settings_schema.as_ref(),
+            &selected_settings(&self.configuration()?, &current),
+        );
         previous.enabled = current.enabled
             && same_approval(&previous, &current)
             && previous.state_version == current.state_version;
-        validate_settings(&store::package(&previous.path)?.0, &previous.settings)?;
+        validate_settings(&package, &previous.settings)?;
         let history = lock.history.entry(id.to_owned()).or_default();
         history.pop();
         history.push(current);

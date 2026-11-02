@@ -64,6 +64,24 @@ class NativeOwnershipTests(unittest.TestCase):
             self.assertEqual({item["name"] for item in findings},
                              {"privacy_cache_v1", "git.stage", "lsp", "claude_turn", "anthropic", "privacy_rules"})
 
+    def test_a_generic_literal_is_exempt_only_as_itself(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mod = root / "runtime/omd/src/mods.rs"
+            config = root / "runtime/native/src/config.rs"
+            runner = root / "runtime/omd/runner/src/step.js"
+            package = root / "mods/first-party/omd_files/mod.json"
+            for path in (mod, config, runner, package):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            package.write_text('{"id": "omd_files"}')
+            mod.write_text('pub const MOD_HOST_FEATURES: &[&str] = &["files", "files_preview_v1"];\n' + "\n".join(
+                f'pub const {surface}: &[&str] = &[];' for surface in (
+                    "MOD_HOST_OPERATIONS", "MOD_CAPABILITIES", "MOD_EVENTS", "MOD_REPLACEMENT_POINTS", "MOD_MIDDLEWARE_EVENTS")))
+            config.write_text('struct HostConfig {\n}\nfn f() { let _ = "files"; }\n')
+            runner.write_text("const files = details.files;\n")
+            findings = inspect(root)
+            self.assertEqual({item["name"] for item in findings}, {"files_preview_v1"})
+
     def test_added_patch_lines_are_scanned_outside_tests_and_mirrors(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
