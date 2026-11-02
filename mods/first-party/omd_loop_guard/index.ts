@@ -18,31 +18,33 @@ const QUOTED = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
 const REDIRECT = /(?<![\d=<>&-])>>?\s*(?!&)([^\s;&|<>()]+)/g;
 const WRITER = /(?:^|\s)(tee|cp|mv|sed|perl)\s+(.*)$/s;
 const IN_PLACE = /(?:^|\s)-[a-zA-Z]*i[\w.]*(?=\s|$)/;
-const UNSEEN_WRITE = /<<|\.write\(|write_text\(|writeFile/;
-function writes(cmd: string): { created: string[]; changed: string[]; unseen: boolean } {
-  const plain = cmd.replace(QUOTED, "''");
+const UNSEEN_WRITE = /\.write\(|write_text\(|writeFile/;
+const HEREDOC = /<<-?\s*(['"]?)(\w+)\1([^\n]*)[\s\S]*?^\s*\2$/gm;
+const SHELL = /^(exec_command|shell|shell_command|local_shell)$/;
+const command = (tool: string, args: Json) => {
+  const value = typeof args === 'string' ? (SHELL.test(tool) ? args : null) : args && typeof args === 'object' && !Array.isArray(args) ? args.cmd ?? args.command : null;
+  return typeof value === 'string' ? value : Array.isArray(value) ? value.filter(item => typeof item === 'string').join(' ') : '';
+};
+function writes(cmd: string): { created: string[]; changed: string[]; unnamed: boolean; unseen: boolean } {
+  const plain = cmd.replace(HEREDOC, '<<$2$3').replace(QUOTED, "''");
   const created = [...plain.matchAll(REDIRECT)].map(match => match[1]).filter(path => path !== '/dev/null');
   const changed: string[] = [];
-  let unseen = UNSEEN_WRITE.test(cmd);
+  let unnamed = false;
   for (const part of plain.split(/&&|\|\||[;|\n]/)) {
     const [, tool, rest = ''] = WRITER.exec(part.trim()) ?? [];
     const words = rest.split(/\s+/).filter(word => word && !word.startsWith('-'));
     const files = (tool === 'sed' && !/(?:^|\s)-[ef]\b/.test(rest) ? words.slice(1) : words).filter(word => word !== "''");
-    if (tool === 'tee') created.push(...files);
-    else if ((tool === 'cp' || tool === 'mv') && files.length > 1) changed.push(files[files.length - 1]);
-    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unseen ||= !files.length; }
+    if (tool === 'tee') created.push(...words);
+    else if ((tool === 'cp' || tool === 'mv') && words.length > 1) changed.push(words[words.length - 1]);
+    else if ((tool === 'sed' || tool === 'perl') && IN_PLACE.test(rest)) { changed.push(...files); unnamed ||= !files.length; }
   }
   const named = (paths: string[]) => paths.filter(path => /^[\w./-]+$/.test(path));
-  unseen ||= named(created).length < created.length || named(changed).length < changed.length;
-  return { created: named(created), changed: named(changed), unseen };
+  unnamed ||= named(created).length < created.length || named(changed).length < changed.length;
+  return { created: named(created), changed: named(changed), unnamed, unseen: UNSEEN_WRITE.test(cmd) };
 }
-const command = (args: Json) => {
-  const value = typeof args === 'string' ? args : args && typeof args === 'object' && !Array.isArray(args) ? args.cmd ?? args.command : null;
-  return typeof value === 'string' ? value : Array.isArray(value) ? value.join(' ') : '';
-};
 const edits = (tool: string, args: Json) => {
-  const found = writes(command(args));
-  return EDIT_TOOL.test(tool) || found.unseen || found.created.length + found.changed.length > 0;
+  const found = writes(command(tool, args));
+  return EDIT_TOOL.test(tool) || found.unnamed || found.unseen || found.changed.length > 0 || found.created.some(path => !path.startsWith('/') && !/\.(txt|log|out)$/.test(path));
 };
 
 const hash = (text: string) => {

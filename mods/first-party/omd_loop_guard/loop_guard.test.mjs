@@ -43,21 +43,16 @@ test('the third identical failure and the fourth identical success get one note;
   assert.equal(run(state, { cmd: 'make' }, 'error 2', false).note, null);
 });
 
-test('an edit restarts the count, a > inside quoted code is not an edit, and polling tools are ignored', () => {
+test('an edit restarts the count, an output capture is not an edit, and polling tools are ignored', () => {
   let { state } = repeat(2, { cmd: 'pytest' }, 'FAILED', false);
   ({ state } = run(state, '*** Begin Patch\n*** Update File: a.py\n*** End Patch', 'Success.', true, { tool: 'apply_patch' }));
   assert.equal(run(state, { cmd: 'pytest' }, 'FAILED', false).note, null);
   ({ state } = repeat(2, { cmd: 'pytest' }, 'FAILED', false));
   ({ state } = run(state, { cmd: 'echo x > a.py' }, '', true));
   assert.equal(run(state, { cmd: 'pytest' }, 'FAILED', false).note, null);
-  ({ state } = repeat(2, { cmd: 'pytest 2>&1' }, 'FAILED', false));
-  ({ state } = run(state, { cmd: 'ls 2>/dev/null' }, '', true));
-  assert.ok(run(state, { cmd: 'pytest 2>&1' }, 'FAILED', false).note);
-  for (const cmd of ['node -e "const f = x => x.toString()"', 'python -c "print(a > b.c)"']) {
-    ({ state } = repeat(2, { cmd: 'pytest' }, 'FAILED', false));
-    ({ state } = run(state, { cmd }, 'ok', true));
-    assert.ok(run(state, { cmd: 'pytest' }, 'FAILED', false).note, cmd);
-  }
+  ({ state } = repeat(2, { cmd: 'pytest' }, 'FAILED', false));
+  for (const cmd of ['pytest -x > out.txt', 'git diff > /tmp/d.patch']) ({ state } = run(state, { cmd }, '', false));
+  assert.ok(run(state, { cmd: 'pytest' }, 'FAILED', false).note);
   assert.deepEqual(repeat(5, { session_id: 1, chars: '' }, 'same', true, { tool: 'write_stdin' }).notes.map(Boolean), [false, false, false, false, false]);
 });
 

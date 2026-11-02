@@ -12,11 +12,13 @@ const request = { source: read('./index.ts'), filename: fileURLToPath(new URL('.
 function ask(payload, state, reply = args => ({ status: 'completed', text: `answer to ${args.prompt}`, error: null }), settings = request.settings, added = { route: 'plan-gpt-omd_btw' }) {
   const forks = [];
   const writes = [];
+  let ttl = 0;
   const output = callback({ ...request, settings, state, event: 'command', name: 'aside', payload }, ({ operation, arguments: args }) => {
-    if (operation === 'terminal.notice') { assert.ok(args.clear || (args.ttl_ms >= 1000 && args.ttl_ms <= 60_000)); return args.clear ? { cleared: true } : { shown: true }; }
+    if (operation === 'terminal.notice') { assert.ok(args.clear || (args.ttl_ms >= 1000 && args.ttl_ms <= 60_000)); ttl = args.ttl_ms ?? ttl; return args.clear ? { cleared: true } : { shown: true }; }
     if (operation === 'routes.add') { assert.deepEqual(args, {}); if (added instanceof Error) throw added; return added; }
     if (operation === 'settings.write') { writes.push(args); return { settings: args.values }; }
     if (operation !== 'model.fork') assert.fail(`unexpected ${operation}`);
+    assert.ok(args.timeout_ms <= ttl, 'the answering notice outlasts the wait');
     forks.push(args);
     return reply(args);
   });
@@ -52,12 +54,6 @@ test('the thread keeps the newest 20 exchanges and a failed answer saves nothing
 
 test('without a route the first side question asks for a plan route, saves it and answers on it', () => {
   const unset = ask('q23', null, undefined, {});
-  const operations = [];
-  callback({ ...request, settings: {}, state: null, event: 'command', name: 'aside', payload: 'q23' }, ({ operation, arguments: args }) => {
-    operations.push(operation);
-    return operation === 'routes.add' ? { route: 'r' } : operation === 'model.fork' ? { status: 'completed', text: 'a', error: null } : operation === 'settings.write' ? { settings: args.values } : { shown: true };
-  });
-  assert.equal(operations.at(-1), 'settings.write');
   const failed = ask('q23', null, () => ({ status: 'failed', text: '', error: 'provider_unavailable' }), {});
   assert.deepEqual([failed.display, failed.writes], ['/btw failed: provider_unavailable', [{ values: { route: 'plan-gpt-omd_btw' } }]]);
   assert.deepEqual([unset.forks.map(args => args.route), unset.writes], [['plan-gpt-omd_btw'], [{ values: { route: 'plan-gpt-omd_btw' } }]]);

@@ -566,6 +566,15 @@ class UpdateSelection(unittest.TestCase):
             self.assertEqual(len(attempts), 1)
         self.assertFalse(target.exists())
 
+    def test_http_errors_name_the_requested_url_not_the_signed_redirect(self):
+        signed = "https://objects.githubusercontent.com/asset?X-Amz-Signature=secret"
+        forbidden = urllib.error.HTTPError(signed, 403, "Forbidden", {}, None)
+        with patch.object(self.module.urllib.request, "urlopen", side_effect=forbidden), self.assertRaises(urllib.error.HTTPError) as caught:
+            self.module.opened("https://github.com/dzkchen/oh-my-diff/releases/download/v1/a.tgz", 1)
+        message = self.module.unreachable(caught.exception)
+        self.assertIn("https://github.com/dzkchen/oh-my-diff/releases/download/v1/a.tgz returned HTTP 403", message)
+        self.assertNotIn("secret", message)
+
     def test_downloads_retry_short_reads_and_stop_when_cancelled(self):
         body = b"archive"
         expected = self.module.hashlib.sha256(body).hexdigest()

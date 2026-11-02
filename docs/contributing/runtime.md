@@ -5,7 +5,7 @@ change and write it back. For what `runtime/` contains, see [runtime/README.md](
 
 ## Before you start
 
-- The setup in [CONTRIBUTING.md](../../CONTRIBUTING.md#set-up): an Apple Silicon Mac with mise and pnpm.
+- The setup in [CONTRIBUTING.md](../../CONTRIBUTING.md#set-up): an Apple Silicon Mac with mise, pnpm and Python 3.12 or later.
 - [rustup](https://rustup.rs). The scratch tree's `rust-toolchain.toml` installs the pinned Rust (`rust_toolchain` in
   `upstream.lock.json`) on first use.
 - 15–20 GB of disk for each build target. A first test build takes a few minutes.

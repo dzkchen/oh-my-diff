@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callback } from '../../../tests/mod_runner.mjs';
 import SNAPSHOT from './snapshot.ts';
@@ -48,6 +51,14 @@ test('a failed or empty snapshot is retried once, then never again in that threa
   const empty = send(failed.state, () => ({ exit_code: null, stdout: '', timed_out: true }));
   assert.deepEqual([empty.sent, empty.state], [sections, 2]);
   assert.deepEqual(send(empty.state, () => assert.fail('no third attempt')).calls, ['continuation.next']);
-  assert.match(send(null, () => ({ exit_code: null, stdout: 'os: Linux\ncwd: /a\n', timed_out: true })).state, /\nos: Linux\ncwd: \/a\n$/);
+  assert.match(send(null, () => ({ exit_code: null, stdout: 'os: Linux\nfiles (1): a\n', timed_out: true })).state, /\nos: Linux\nfiles \(1\): a\n$/);
   assert.equal(send(failed.state, () => ({ exit_code: 0, stdout: 'os: Linux\n', timed_out: false })).sent[3].id, 'mod:omd_env_bootstrap');
+});
+
+test('the file listing keeps names with spaces or glob characters whole', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omd-env-'));
+  for (const name of ['my notes.txt', '*']) writeFileSync(join(dir, name), '');
+  const { stdout } = spawnSync('sh', ['-s'], { input: SNAPSHOT, cwd: dir, encoding: 'utf8' });
+  rmSync(dir, { recursive: true });
+  assert.match(stdout, /^files \(2\): \* my notes\.txt$/m);
 });

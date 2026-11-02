@@ -1,9 +1,7 @@
 export default String.raw`[ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && shims=1
 has() { p=$(command -v "$1" 2>/dev/null) || return 1; [ -z "$shims" ] || case $p in /usr/bin/*) return 1;; esac; }
 echo "os: $(uname -sm)"
-echo "cwd: $(pwd)"
-set -- $(ls -Ap 2>/dev/null)
-echo "files ($#): $(echo "$@" | cut -c1-500)"
+echo "files ($(ls -A 2>/dev/null | wc -l | tr -d ' ')): $(ls -Ap 2>/dev/null | paste -sd ' ' - | cut -c1-500)"
 echo "languages: $({ has git && git ls-files 2>/dev/null || find . -maxdepth 3 -type f -not -path './.git/*' 2>/dev/null; } | head -20000 | sed -n 's/.*\.\([A-Za-z][A-Za-z0-9]*\)$/\1/p' | sort | uniq -c | sort -rn | head -8 | awk '{printf "%s%s %s", (NR > 1 ? ", " : ""), $2, $1}')"
 m=; for f in pyproject.toml setup.py setup.cfg requirements.txt Pipfile tox.ini noxfile.py pytest.ini package.json pnpm-lock.yaml yarn.lock package-lock.json bun.lockb go.mod Cargo.toml pom.xml build.gradle build.gradle.kts gradlew Gemfile Rakefile Makefile CMakeLists.txt composer.json mix.exs Dockerfile; do [ -e "$f" ] && m="$m $f"; done
 echo "manifests:$m"

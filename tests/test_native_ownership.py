@@ -95,7 +95,7 @@ class NativeOwnershipTests(unittest.TestCase):
                 f'pub const {surface}: &[&str] = &[];' for surface in (
                     "MOD_HOST_OPERATIONS", "MOD_CAPABILITIES", "MOD_EVENTS", "MOD_REPLACEMENT_POINTS", "MOD_MIDDLEWARE_EVENTS")))
             config.write_text("struct HostConfig {\n}\n")
-            self.assertEqual({item["name"] for item in inspect(root)}, {"edit-guard_v1"})
+            self.assertEqual({item["name"] for item in inspect(root)}, {"edit-guard_v1", "edit-guard"})
 
     def test_added_patch_lines_are_scanned_outside_tests_and_mirrors(self):
         with TemporaryDirectory() as temporary:
@@ -114,6 +114,20 @@ class NativeOwnershipTests(unittest.TestCase):
                 "+++ b/codex-rs/ext/omd/src/b.rs\n@@ -0,0 +1 @@\n+omd_sample\n")
             self.assertEqual([(item["path"], item["line"]) for item in first_party(root)],
                              [("codex-rs/tui/src/a.rs", 2)])
+
+    def test_compound_ids_match_with_suffixes_and_in_camel_case(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "mods/first-party/omd_loop_guard/mod.json"
+            patch = root / "runtime/patches/sample.patch"
+            for path in (package, patch):
+                path.parent.mkdir(parents=True)
+            package.write_text('{"id": "omd_loop_guard"}')
+            lines = ["omd_loop_guard_v1", "fn loop_guard_check()", "struct LoopGuard;", "struct OmdLoopGuard;", "omd-loop-guard",
+                     "unloop_guardian", "struct LoopGuardian;", "let sloop_guard = 1;"]
+            patch.write_text("diff --git a/codex-rs/tui/src/a.rs b/codex-rs/tui/src/a.rs\n+++ b/codex-rs/tui/src/a.rs\n@@ -0,0 +1,8 @@\n"
+                             + "".join(f"+{line}\n" for line in lines))
+            self.assertEqual([item["line"] for item in first_party(root)], [1, 2, 3, 4, 5])
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ best. For anything large, open an issue first.
 
 ## Set up
 
-You need an Apple Silicon Mac with [mise](https://mise.jdx.dev) and [pnpm](https://pnpm.io) 11.14 or later.
+You need an Apple Silicon Mac with [mise](https://mise.jdx.dev), [pnpm](https://pnpm.io) 11.14 or later and Python 3.12 or later (macOS ships 3.9).
 
 ```sh
 git clone https://github.com/dzkchen/oh-my-diff

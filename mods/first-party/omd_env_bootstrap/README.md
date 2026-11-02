@@ -21,7 +21,6 @@ repositories):
 
 ```text
 os: Linux x86_64
-cwd: /app
 files (12): pyproject.toml src/ tests/ ...
 languages: py 120, toml 2
 manifests: pyproject.toml

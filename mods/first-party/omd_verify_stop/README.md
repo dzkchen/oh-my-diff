@@ -20,9 +20,12 @@ show the trust dialog.
 It watches tool output in the turn:
 
 - Edits: `apply_patch` files, mod edit tools (`*_edit`, `*_write`, `*_create`, `*_replace`) with `path`, `file_path`
-  or `files[].path`, and the files named by shell redirects, `tee`, `sed -i`, `perl -i`, `cp` and `mv`. A `>` inside
-  quotes isn't a redirect. Docs (`.md`, `.rst`, `.txt`) don't count, whichever way they're edited, and deleting a file
-  the agent created doesn't either.
+  or `files[].path`, and the files named by shell redirects, `tee`, `sed -i`, `perl -i`, `cp` and `mv`, unless the
+  command was a single one that failed. A `>` inside quotes or a heredoc body isn't a redirect. A write to a quoted or
+  variable path, `sed -i` or `perl -i` with no file, and an interpreter writing a file outside `/tmp`
+  (`open(..., 'w')`, `.write(`, `write_text(`, `writeFile`) count as an edit of an unnamed file. Docs (`.md`, `.rst`,
+  `.txt`) don't count, whichever way they're edited, and deleting a file the agent created (with `apply_patch` or
+  `rm`) doesn't either.
 - Checks: test runners and build checks (pytest, `python -m unittest`, `runtests.py`, `cargo test|check|clippy`,
   `go test|vet`, `pnpm|npm|yarn test`, jest, vitest, tsc, `make test|check`, rspec, phpunit, mvn, gradle and others),
   passing on exit code 0. A check left running is settled when `write_stdin` reports its exit code.
@@ -48,7 +51,7 @@ It never continues when nothing was edited, when the turn ended with an error or
 ## Needs and limits
 
 - Commands are recognized by pattern. A test run through an unusual wrapper script doesn't count, and a shell edit
-  that names no file (for example a Python one-liner or a heredoc into a script) isn't seen.
+  matching none of the patterns above (for example `shutil.copy` in a script) isn't seen.
 - Checks run in the session sandbox, whose `PATH` may lack runners installed only through mise, nvm or pyenv.
 - A continuation costs a model request. A turn passing a check after its last edit costs nothing.
 - A turn whose most recent check couldn't run (a missing module or command, or no network) isn't continued: the

@@ -37,10 +37,11 @@ plan, so an old task's steps are never repeated.
 
 ## Needs and limits
 
-- Capabilities `interception`, `lifecycle` and `store`. It works only where Codex already offers `update_plan`; it
-  doesn't add the tool, because changing the tool list makes a new thread's first request miss Codex's shared cached
-  prefix (about 12K uncached input tokens). gpt-6.1-sol in Codex 0.166 has no `update_plan`, so the mod does nothing
-  there.
+- It acts only when the session offers Codex's `update_plan` tool, which Codex 0.166 leaves off: turn on
+  [`omd_plan_panel`](../omd_plan_panel/README.md) (or `[tools.update_plan] enabled = true` in `config.toml`). Either
+  changes the tool list, so each new thread's first request misses the prompt cache stock Codex requests share (about
+  12K uncached input tokens). The mod doesn't add the tool itself for that reason.
+- Capabilities `interception`, `lifecycle` and `store`.
 - The reminder is part of the tool result, so it is recorded in the conversation and later requests reuse the cached
   prefix. A request section can't do this: inserted sections join an early context message and would change the
   cached prefix every time the plan changes.
