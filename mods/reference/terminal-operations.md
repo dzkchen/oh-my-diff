@@ -247,6 +247,10 @@ session sandbox, without network, with a scratch `HOME`.
 | `network: 'loopback'` | Lets it reach services on this computer only; needs `network`. |
 
 The confirmation names the program, write and network access and that the mod can type into the pane.
+For sandboxed starts, Allow and remember saves a successful start in `pty-approvals/` in the mod store.
+The approval is scoped to the canonical workspace, mod, complete start arguments and resolved executable hash;
+changed access or executables require confirmation again. Declined or failed starts are not saved.
+Removing the corresponding approval file revokes that remembered start. Current sandbox and capability checks still apply.
 
 With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with the real `HOME` (no `write` or
 `network` fields) and stops when the grant ends.

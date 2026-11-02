@@ -12,8 +12,10 @@ const request = { source: read('./index.ts'), filename: fileURLToPath(new URL('.
 function ask(payload, state, reply = args => ({ status: 'completed', text: `answer to ${args.prompt}`, error: null }), settings = request.settings, added = { route: 'plan-gpt-omd_btw' }) {
   const forks = [];
   const writes = [];
+  const panels = [];
   let ttl = 0;
   const output = callback({ ...request, settings, state, event: 'command', name: 'aside', payload }, ({ operation, arguments: args }) => {
+    if (operation === 'terminal.panel') { panels.push(args); return { shown: true }; }
     if (operation === 'terminal.notice') { assert.ok(args.clear || (args.ttl_ms >= 1000 && args.ttl_ms <= 60_000)); ttl = args.ttl_ms ?? ttl; return args.clear ? { cleared: true } : { shown: true }; }
     if (operation === 'routes.add') { assert.deepEqual(args, {}); if (added instanceof Error) throw added; return added; }
     if (operation === 'settings.write') { writes.push(args); return { settings: args.values }; }
@@ -23,7 +25,7 @@ function ask(payload, state, reply = args => ({ status: 'completed', text: `answ
     return reply(args);
   });
   assert.equal(output.error, undefined);
-  return { state: output.state, display: output.value.display, forks, writes, registrations: output.registrations };
+  return { state: output.state, display: output.value?.display, panels, forks, writes, registrations: output.registrations };
 }
 
 test('/btw routes here; side questions fork the conversation without tools, replay earlier exchanges and stay out of the conversation', () => {
@@ -36,7 +38,8 @@ test('/btw routes here; side questions fork the conversation without tools, repl
   assert.match(second.forks[0].context[0], /Side question: why tabs\?\nYour answer: answer to why tabs\?/);
   assert.equal(second.display, 'Earlier side questions:\n  · why tabs?\n\nbtw: and spaces?\n\nanswer to and spaces?');
   const reopened = ask('', second.state);
-  assert.deepEqual([reopened.forks, reopened.display, reopened.state], [[], second.display, second.state]);
+  assert.deepEqual([reopened.forks, reopened.state], [[], second.state]);
+  assert.equal(reopened.panels[0].items[1].detail, 'You: and spaces?\n\nAssistant: answer to and spaces?');
 });
 
 test('the thread keeps the newest 20 exchanges and a failed answer saves nothing', () => {
@@ -45,7 +48,7 @@ test('the thread keeps the newest 20 exchanges and a failed answer saves nothing
   assert.deepEqual([state.length, state[0].question, state[19].question], [20, 'q1', 'q20']);
   const failed = ask('q21', state, () => ({ status: 'failed', text: '', error: 'provider_unavailable' }));
   assert.deepEqual([failed.display, failed.state], ['/btw failed: provider_unavailable', state]);
-  assert.equal(ask('', null).display, 'No side questions in this thread yet. Ask one with /btw <question>.');
+  assert.equal(ask('', null).panels[0].items[0].id, 'ask');
   const cut = ask('q22', null, () => ({ status: 'incomplete', text: 'partial', error: null }));
   assert.deepEqual(cut.state, [{ question: 'q22', answer: 'partial (cut off)' }]);
   const empty = ask('q22', null, () => ({ status: 'incomplete', text: ' ', error: null }));
@@ -64,4 +67,22 @@ test('without a route the first side question asks for a plan route, saves it an
   const unsigned = ask('q25', null, undefined, {}, new Error('routes_add_needs_chatgpt: sign in'));
   assert.deepEqual([unsigned.forks, unsigned.writes], [[], []]);
   assert.match(unsigned.display, /^No model for \/btw yet \(routes_add_needs_chatgpt: sign in\): pick one in \/mods/);
+});
+
+test('the saved conversation panel accepts a follow-up and reopens with the answer', () => {
+  const past = [{ question: 'First question', answer: 'First answer' }];
+  const panels = [];
+  const output = callback({ ...request, state: past, event: 'command', name: 'asidepanel', payload: 'ask Follow up' }, ({ operation, arguments: args }) => {
+    if (operation === 'terminal.notice') return { shown: true };
+    if (operation === 'model.fork') {
+      assert.equal(args.prompt, 'Follow up');
+      assert.match(args.context[0], /First answer/);
+      return { status: 'completed', text: 'Second answer', error: null };
+    }
+    if (operation === 'terminal.panel') { panels.push(args); return { shown: true }; }
+    assert.fail(operation);
+  });
+  assert.equal(output.error, undefined);
+  assert.deepEqual(output.state, [...past, { question: 'Follow up', answer: 'Second answer' }]);
+  assert.match(panels[0].items[1].detail, /Second answer/);
 });

@@ -28,6 +28,8 @@ Turn on [`omd_frecency`](../omd_frecency/README.md) too for the `z` jump list.
 
 ## Use it
 
+In a narrow dock the preview sits below the file list so names and file contents stay readable.
+
 Open the Files tab in the dock, and these keys apply while it has focus. `?` lists them. `Esc` returns to the chat.
 
 | Key | What it does |
@@ -96,3 +98,5 @@ It has no settings.
 - [`omd_git`](../omd_git/README.md), the Git panel in the same dock
 - [Terminal UI](../../reference/terminal-ui.md) and
   [workspace watches](../../reference/workspace-files.md#workspacewatch) in the mod API reference
+
+Arrow keys also navigate: Up/Down select an entry, Right opens it, and Left returns to the parent directory.

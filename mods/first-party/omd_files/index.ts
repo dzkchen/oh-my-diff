@@ -356,6 +356,10 @@ export default function activate(api: ModAPI) {
       '.': [v.hidden ? 'Hide dotfiles' : 'Show dotfiles', () => { v.hidden = !v.hidden; return reach(v, v.tab); }],
     };
     own.Enter = own.l;
+    own.Down = own.j;
+    own.Up = own.k;
+    own.Left = own.h;
+    own.Right = own.l;
     for (let at = 0; at < TABS; at++) {
       const item = v.tabs[at];
       own[String(at + 1)] = item
@@ -430,7 +434,7 @@ export default function activate(api: ModAPI) {
     const { entries, at } = shown(v);
     const name = current(v)?.[0];
     const tabs = v.tabs.length > 1;
-    const tall = Math.min(MAX_HEIGHT, Math.max(3, height - 3 - (tabs ? 1 : 0)));
+    const tall = Math.min(MAX_HEIGHT, Math.max(3, narrow ? Math.floor((height - 5 - (tabs ? 1 : 0)) / 2) : height - 3 - (tabs ? 1 : 0)));
     const dir = tab(v).dir;
     const up = v.parent.findIndex(([entry]) => entry === nameOf(dir));
     const left: TerminalComponent = { type: 'document', id: PARENT, label: 'Parent', lines: filled(rows(v.parent, nameOf(dir)), tall), keys: true, height: tall, ...(up >= 0 ? { selected: { start: up, end: up } } : {}) };
@@ -440,19 +444,20 @@ export default function activate(api: ModAPI) {
     const path = `/${dir}`;
     const columns = [
       ...(narrow ? [] : [column('parent', dir ? `/${parentOf(dir)}` : '', 1, false, left)]),
-      column('current', path.length > 60 ? `…${path.slice(-59)}` : path, 4, true, middle),
-      column('preview', name ?? 'Preview', 3, false, previewOf(v, tall, BUDGET - bytesOf(narrow ? [middle] : [left, middle]))),
+      column('current', path.length > 60 ? `…${path.slice(-59)}` : path, narrow ? 1 : 4, true, middle),
+      column('preview', name ?? 'Preview', narrow ? 1 : 3, false, previewOf(v, tall, BUDGET - bytesOf(narrow ? [middle] : [left, middle]))),
     ];
     return [
       ...(tabs ? [tabLine(v)] : []),
-      { type: 'box', id: 'omd_files_columns', label: 'Columns', style: { direction: 'row' }, children: columns },
+      { type: 'box', id: 'omd_files_columns', label: 'Columns', style: { direction: narrow ? 'column' : 'row' }, children: columns },
       { type: 'line', id: 'omd_files_footer', label: 'Status', spans: [span(`${cut(status, 140)}  `, { tone: v.notice ? 'attention' : 'muted' }), span(HINTS, { tone: 'muted' })] },
     ];
   };
   const contexts = (v: View): KeyContext[] => {
     const keys: KeyContext['keys'] = {};
     for (const [key, [label]] of Object.entries(actions(v))) keys[key] = { action: { command: 'files', args: `key ${key}` }, label: cut(label, 64) };
-    return [{ when: { focus: SITE }, keys }];
+    const entries = Object.entries(keys);
+    return [entries.slice(0, 32), entries.slice(32)].filter(part => part.length).map(part => ({ when: { focus: SITE }, keys: Object.fromEntries(part) }));
   };
   const guess = (client: TerminalClient | null | undefined) => {
     const rows = client?.rows ?? 40;

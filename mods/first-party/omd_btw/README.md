@@ -22,7 +22,7 @@ question model. Without a ChatGPT sign-in, pick a model there first.
 | Command | What it does |
 | --- | --- |
 | `/btw <question>` | Answers from the whole conversation so far, without tools, and shows your five earlier side questions above the answer. |
-| `/btw` | Shows the latest side question and its answer again. |
+| `/btw` | Opens the saved side conversation with a follow-up input. |
 | `/aside` | The same command under the mod's own name. |
 
 Stock Codex's `/btw` opens a separate side conversation and forgets it when you return. With this mod:
