@@ -226,6 +226,10 @@ def static_problems(path):
     package = manifest(path)
     schema = package.get("settings_schema", {}).get("properties", {})
     found += [f"setting {key} has no default" for key, value in schema.items() if "default" not in value]
+    if (size := len((path / "mod.json").read_bytes())) > 8192:
+        found.append(f"mod.json: {size} bytes exceeds the 8192-byte manifest limit")
+    if "description" in package and not 1 <= len(package["description"]) <= 160:
+        found.append("description must be 1 to 160 characters")
     needed = {"package_text_assets_v1"} if package.get("assets") else set()
     commands, tools = [], 0
     if any(str(source.resolve()) not in SOURCE_REPORTS for source in source_files(path)):

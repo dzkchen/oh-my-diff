@@ -8,9 +8,11 @@ type TurnEnd = { turn_id: string; outcome: string; evidence?: ResourceRef };
 type AgentEnd = { handle: string; status: string; error?: string; text?: string; sha256?: string };
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const bounded = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
-type Watch = { last: string; repeats: number; failures: Record<string, number> };
+type Watch = { last: string; repeats: number; failures: Record<string, number>; consulted?: Record<string, number>; at?: number };
 const FAILURES = 2;
 const REPEATS = 3;
+const CALL_COOLDOWN_MS = 600_000;
+const ANY_COOLDOWN_MS = 120_000;
 const PROMPT_BYTES = 8000;
 const CONTEXT_FINDINGS = 1_200;
 const SEVERITY = ['blocking', 'warning', 'advice'];
@@ -205,9 +207,14 @@ export default function activate(api: ModAPI) {
     if (failures) watch.failures[call] = failures;
     for (const key of Object.keys(watch.failures).slice(0, -32)) delete watch.failures[key];
     const trigger = triggers.has('loop') && watch.repeats >= REPEATS && !/^Process running with session ID/m.test(event.text) ? 'loop' : triggers.has('failure') && failures >= FAILURES ? 'failure' : null;
+    const now = Date.now();
+    const consulted = Object.fromEntries(Object.entries(watch.consulted ?? {}).filter(([, at]) => now - at < CALL_COOLDOWN_MS).slice(-32));
+    const cooling = (consulted[call] ?? -Infinity) > now - CALL_COOLDOWN_MS || (watch.at ?? -Infinity) > now - ANY_COOLDOWN_MS;
     if (trigger) { watch.repeats = 0; delete watch.failures[call]; }
+    if (trigger && !cooling) { consulted[call] = now; watch.at = now; }
+    watch.consulted = consulted;
     api.state.set({ ...current(), watch } as unknown as Json);
-    if (!trigger) return null;
+    if (!trigger || cooling) return null;
     const advice = consult(trigger, [['Triggering tool call', `${event.tool} ${[...JSON.stringify(event.arguments)].slice(0, 400).join('')}\n${failed ? 'failed' : 'succeeded'}; output ends:\n${[...(event.tail ?? event.text)].slice(-1500).join('')}`, 2000]]);
     return { append: clip(`Independent advisor (${trigger}, advisory): ${advice}`, 4000) };
   });
