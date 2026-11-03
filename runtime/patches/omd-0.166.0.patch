@@ -172358,10 +172358,10 @@ index 0000000000000000000000000000000000000000..76157c5a6184321ce87a5ff8c9ea8e29
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476d63155f5
+index 0000000000000000000000000000000000000000..ab8b23c7598fb8abc7ed4bfa5a703866665cbb28
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,704 @@
+@@ -0,0 +1,736 @@
 +use codex_omd::ModColor;
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Rect;
@@ -172400,6 +172400,7 @@ index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476
 +    width: u16,
 +    height: u16,
 +    cells: Vec<Cell>,
++    retained: bool,
 +    frame: Option<BlitContent>,
 +    drawn: bool,
 +    picture: Option<BlitContent>,
@@ -172421,6 +172422,7 @@ index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476
 +            width,
 +            height,
 +            cells: vec![Cell::default(); usize::from(width) * usize::from(height)],
++            retained: false,
 +            frame: None,
 +            drawn: false,
 +            picture: None,
@@ -172438,6 +172440,26 @@ index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476
 +        usize::from(self.picture.is_some()) + usize::from(self.dirty.is_some())
 +    }
 +
++    fn resized_underlay(&self, width: u16, height: u16) -> Self {
++        let mut next = Self::new(&self.owner, width, height);
++        next.scope = self.scope.clone();
++        next.retained = self.frames > 0 || self.retained;
++        for y in 0..height {
++            for x in 0..width {
++                let source = &self.cells[usize::from(y.min(self.height - 1))
++                    * usize::from(self.width)
++                    + usize::from(x.min(self.width - 1))];
++                let cell = &mut next.cells[usize::from(y) * usize::from(width) + usize::from(x)];
++                if x < self.width && y < self.height {
++                    *cell = source.clone();
++                } else {
++                    cell.bg = source.bg;
++                }
++            }
++        }
++        next
++    }
++
 +    fn stage(&mut self, update: Update, now: Instant) {
 +        match update.content {
 +            BlitContent::Cells { rect, cells } => {
@@ -172447,7 +172469,7 @@ index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476
 +                let mut cells = cells.into_iter();
 +                // A pending picture clears the cells when it applies, so cells after it compare against blanks.
 +                let after_picture = self.picture.is_some();
-+                let mut changed = self.frame.is_some() || after_picture;
++                let mut changed = self.frame.is_some() || after_picture || self.retained;
 +                let blank = Cell::default();
 +                for row in rect.y..rect.y + rect.height {
 +                    for column in rect.x..rect.x + rect.width {
@@ -172481,6 +172503,7 @@ index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476
 +
 +    fn apply(&mut self) {
 +        let _stage = codex_omd::frame_metrics::stage("raster_apply");
++        self.retained = false;
 +        if let Some(picture) = self.picture.take() {
 +            self.cells.fill(Cell::default());
 +            self.frame = Some(picture);
@@ -172678,7 +172701,15 @@ index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476
 +                if raster.drawn {
 +                    crate::mod_client::forget(&key);
 +                }
-+                *raster = Raster::new(caller, width, height);
++                *raster = if raster.owner == caller
++                    && raster.binding == binding
++                    && raster.scope.is_some()
++                    && raster.frame.is_none()
++                {
++                    raster.resized_underlay(width, height)
++                } else {
++                    Raster::new(caller, width, height)
++                };
 +            }
 +        })
 +        .or_insert_with(|| Raster::new(caller, width, height));
@@ -172927,7 +172958,7 @@ index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476
 +        }
 +        raster.shown = raster.frames;
 +    }
-+    (raster.frames > 0 && raster.frame.is_none()).then(|| paint(raster))
++    ((raster.frames > 0 || raster.retained) && raster.frame.is_none()).then(|| paint(raster))
 +}
 +
 +/// Underlay glyphs, drawn before the bottom pane so its popups clear them: only blank cells of `glyphs` past each row's text and a gutter, never inside `kept`.
@@ -172980,13 +173011,14 @@ index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476
 +            });
 +        let light = crate::terminal_palette::default_bg().is_some_and(crate::color::is_light);
 +        let empty = |cell: &ratatui::buffer::Cell| cell.symbol() == " " && cell.modifier.is_empty();
-+        for row in 0..screen.height.min(raster.height) {
++        for row in 0..screen.height {
 +            let y = screen.y + row;
-+            let columns = screen.width.min(raster.width);
++            let columns = screen.width;
 +            for column in 0..columns {
 +                let x = screen.x + column;
 +                let source = &raster.cells
-+                    [usize::from(row) * usize::from(raster.width) + usize::from(column)];
++                    [usize::from(row.min(raster.height - 1)) * usize::from(raster.width)
++                        + usize::from(column.min(raster.width - 1))];
 +                let Some(background) = source.bg else {
 +                    continue;
 +                };
@@ -173068,10 +173100,10 @@ index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..33e89ea64618a6a786acf0c22973c3be3f13d3c3
+index 0000000000000000000000000000000000000000..66659e1954ea779aa138804fceb8bf7e4cbdf8c5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,675 @@
+@@ -0,0 +1,732 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -173549,6 +173581,63 @@ index 0000000000000000000000000000000000000000..33e89ea64618a6a786acf0c22973c3be
 +        rasters().get(key).is_none(),
 +        "no raster entry is left behind"
 +    );
++}
++
++#[test]
++#[serial_test::serial]
++fn underlay_resize_keeps_the_frame_and_fills_new_edges() {
++    let now = Instant::now();
++    let key = "underlay-resize";
++    let mut snapshot = codex_omd::ModViewSnapshot::default();
++    snapshot.input = json!({"ledger": {"cwd": "/repo", "thread_id": "resize"}});
++    snapshot.view.underlay = serde_json::from_value(json!({"raster": key})).unwrap();
++    snapshot.component_owners.insert(key.into(), "owner".into());
++    let level = Some(StdoutColorLevel::TrueColor);
++    let paint = |screen: Rect, now| {
++        let mut buffer = Buffer::empty(screen);
++        underlay_glyphs(&snapshot, screen, screen, &[], &mut buffer, level, now);
++        underlay_tint(&snapshot, screen, &[], &mut buffer, level);
++        buffer
++    };
++    let send = |width, height, rect: Value, cells: &[(char, u32, u32)], now| {
++        blit(
++            "owner",
++            Some("owner".into()),
++            Some((width, height)),
++            &json!({"key": key, "rect": rect, "packed": packed(cells)}),
++            now,
++            |_, _| unreachable!(),
++        )
++        .unwrap()
++    };
++    let screen = Rect::new(0, 0, 64, 2);
++    paint(screen, now);
++    send(
++        64,
++        2,
++        json!({"x": 0, "y": 0, "width": 64, "height": 2}),
++        &[('x', 0x11_22_33, 0x44_55_66); 128],
++        now,
++    );
++    assert_eq!(paint(screen, now)[(63, 1)].symbol(), "x");
++    for (width, height) in [(80, 4), (60, 3), (90, 5)] {
++        let screen = Rect::new(0, 0, width, height);
++        let before = paint(screen, now);
++        assert_eq!(before[(width - 1, height - 1)].bg, Color::Rgb(0x44, 0x55, 0x66));
++        let reply = send(
++            width,
++            height,
++            json!({"x": 0, "y": 0, "width": 1, "height": 1}),
++            &[('y', 0x11_22_33, 0x44_55_66)],
++            now,
++        );
++        assert_eq!(reply["frame"], 1);
++        assert_eq!(reply["queued"], 1);
++        let after = paint(screen, now);
++        assert_eq!(after[(1, 0)].symbol(), "x");
++        assert_eq!(after[(width - 1, height - 1)].bg, Color::Rgb(0x44, 0x55, 0x66));
++    }
++    rasters().remove(key);
 +}
 +
 +#[test]

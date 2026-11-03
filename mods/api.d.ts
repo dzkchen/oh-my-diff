@@ -245,7 +245,7 @@ export interface TerminalView {
   placeholder?: string;
   layout?: LayoutNode; surface_styles?: { composer?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
   inline_sites?: 'hidden';
-  /** `terminal_underlay_v1`: one exclusive cell raster under the fullscreen screen; raised surfaces stay opaque. */
+  /** `terminal_underlay_v1`: one exclusive cell raster under the fullscreen grid; cached edge backgrounds cover resizes and raised surfaces stay opaque. */
   underlay?: { raster: string };
 }
 /** One mod's contribution to the composed view; exclusive fields go to the first mod in composition order. */

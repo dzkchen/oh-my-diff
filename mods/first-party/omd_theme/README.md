@@ -95,7 +95,9 @@ sessions.
 - Opening a conversation, including through `/subagent`, loads your saved scene if that thread has no theme state.
   Returning to an initialized thread keeps its current scene and animation.
 - Animation runs eight frames a second while the session is idle and sends only the changed cells. A still or paused
-  scene redraws nothing.
+  scene probes its cached frame. Resizing promptly redraws it without restarting the animation or advancing a paused scene.
+- The background fills the terminal grid, including newly exposed cells during resize. Any padding outside the grid
+  is controlled by the terminal application.
 - Other running sessions pick up a change the next time they start a new session.
 
 ## More

@@ -45,6 +45,39 @@ const tick = (state, key, ms, overrides) => call({ event: 'timer', payload: { ke
 const KEY = `fxe5hx-0-0-0-120-44`;
 const BEHIND_KEY = `fxe5hx-1-0-0-120-44`;
 
+test('resizing wakes a still scene and retires its old timer without changing its raster', () => {
+  const state = ready({ speed: 'off' });
+  const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
+  const old = first.of('events.schedule')[0].key;
+  const resized = call({ event: 'terminal', state: first.state, virtual_time_ms: NOW + 32,
+    payload: { event: 'idle', presentation: { phase: 'fresh', surface: 'fullscreen' }, client: client({ columns: 140 }), clients: [] } });
+  assert.equal(resized.state.view.raster, state.view.raster);
+  assert.deepEqual(resized.of('events.publish'), [{ channel: 'wake', data: NOW + 32 }]);
+  assert.deepEqual(tick(resized.state, old, NOW + 40).calls, []);
+  const wake = call({ event: 'channel', state: resized.state, payload: { channel: 'omd_theme/wake', data: NOW + 32 } });
+  const frame = tick(wake.state, wake.of('events.schedule')[0].key, NOW + 48);
+  assert.deepEqual(frame.of('terminal.blit')[0].rect, { x: 0, y: 0, width: 140, height: 44 });
+  assert.deepEqual(draw(resized.state, { columns: 140 }).of('events.publish'), []);
+});
+
+test('rapid resizing preserves animation time and the frozen frame during a turn', () => {
+  const state = ready();
+  const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 266);
+  const busy = call({ event: 'turn_start', state: first.state, payload: null }).state;
+  let resized = busy;
+  for (const columns of [140, 80, 160]) resized = draw(resized, { columns }).state;
+  assert.equal(resized.run, NOW + 3);
+  assert.equal(resized.origin, NOW);
+  const frame = tick(resized, `f.${resized.run}.-1.0.0.0.0`, NOW + 10_000);
+  assert.equal(frame.of('events.schedule')[0].key.split('.')[2], '2');
+  const chosen = call({ event: 'command', name: 'scenes', payload: 'lagoon', state: resized });
+  assert.equal(chosen.state.run, NOW + 4);
+  assert.deepEqual(tick(chosen.state, `f.${resized.run}.-1.0.0.0.0`, NOW + 10_000).calls, []);
+  const resumed = call({ event: 'resume', payload: null, state: resized });
+  assert.equal(resumed.state.run, NOW + 4);
+  assert.deepEqual(tick(resumed.state, `f.${resized.run}.-1.0.0.0.0`, NOW + 10_000).calls, []);
+});
+
 test('the scene goes under the whole screen and hides the welcome mark on a fresh session', () => {
   const start = started();
   assert.deepEqual(start.of('events.schedule'), [{ key: `f.${NOW}.-1.0.0.0.0`, delay_ms: 16 }]);
@@ -104,9 +137,11 @@ test('the frame chain blits the screen in bands, then only the changed rows, mer
   const full = first.of('terminal.blit');
   assert.equal(full.reduce((cells, blit) => cells + blit.rect.width * blit.rect.height, 0), 120 * 44);
   full.forEach(blit => assert.equal(decode(blit.packed).length, blit.rect.width * blit.rect.height * 12));
-  const wide = tick(draw(state, { columns: 300, rows: 80 }).state, `f.${NOW}.-1.0.0.0.0`, NOW + 16).of('terminal.blit');
+  const wideState = draw(state, { columns: 300, rows: 80 }).state;
+  const wide = tick(wideState, `f.${wideState.run}.-1.0.0.0.0`, NOW + 16).of('terminal.blit');
   assert.ok(wide.length > 1 && wide.every(blit => blit.rect.width * blit.rect.height <= 14_000));
-  const docked = tick(draw(state, { chat: { x: 0, y: 0, columns: 90, rows: 44 } }).state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
+  const dockedState = draw(state, { chat: { x: 0, y: 0, columns: 90, rows: 44 } }).state;
+  const docked = tick(dockedState, `f.${dockedState.run}.-1.0.0.0.0`, NOW + 16);
   const cells = docked.of('terminal.blit').flatMap(blit => {
     const bytes = decode(blit.packed);
     return Array.from({ length: bytes.length / 12 }, (_, at) => ({ glyph: bytes.readUInt32LE(at * 12), x: blit.rect.x + at % blit.rect.width }));
@@ -207,7 +242,7 @@ test('the panel applies choices at once and keeps Codex\'s picker and the termin
   const chosen = run('panel scene:lagoon');
   assert.equal(store.value.scene, 'lagoon');
   assert.deepEqual([chosen.state.prefs.scene, chosen.state.switched.from], ['lagoon', 'ember']);
-  assert.deepEqual(chosen.of('events.publish'), [{ channel: 'wake', data: NOW }]);
+  assert.deepEqual(chosen.of('events.publish'), [{ channel: 'wake', data: NOW + 1 }]);
   assert.match(chosen.of('terminal.panel')[0].subtitle, /Showing: Lagoon/);
   assert.equal(run('panel calm false').state.prefs.calm, false);
   assert.equal(run('panel speed warp').state.prefs.speed, 'normal');

@@ -768,13 +768,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "51ecbb443b4b93a8034259ed44a9a3e756cb112ab8d76e4617060e41bf511df1",
+        "index.ts": "97fd322e83ec6b78e80060e8014736d7d747b5818ee6e023419178b6a01f7cb5",
         "mod.json": "82cc014e08cd13b7bff6827d4a3da2c5a0f61775c08d10f2d01167b001fc6c2e",
         "scenes.ts": "95309f41d2e133a32f96e177118c2c44f87e84b4e2da135f941b7e447b5536b0",
         "steps.ts": "94f79d6f963178b87a347403dee7a8765351afc19b1c4e4ca39be870cfd73127"
       },
       "id": "omd_theme",
-      "package_sha256": "c16e096e68a3ae7fd13cc08ffbbb34f6871a8cbf9a2f8cd357d086d7cd09322a",
+      "package_sha256": "a05ce49760ac6e223762ae37d152fe9049b2239c4ff7916e5e3878e86796f25d",
       "source": "mods/first-party/omd_theme",
       "version": "1.0.0"
     },

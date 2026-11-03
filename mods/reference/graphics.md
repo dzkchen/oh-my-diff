@@ -130,9 +130,10 @@ gets it, and later claims become `terminal.conflicts` entries. A raster key anot
 same way: the underlay is dropped and the conflict names that mod.
 
 - The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
-  raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a
-  blit at the new size starts a fresh raster; a reply with `frame: 1` and `queued: 1` means the raster restarted, so
-  send it whole.
+  raster. Before the first draw a blit is `terminal_blit_unknown`. Across a resize, the old cell frame stays visible
+  with edge background colors extended into newly exposed cells until fresh blits replace them. Glyphs stay clipped
+  to the previous frame. A reply with `frame: 1` and `queued: 1` means the raster restarted, so send it whole.
+  The underlay fills the terminal grid; padding and pixels outside that grid belong to the terminal application.
 - Suspended frames are cached by repository, thread, raster key and mod owner. Returning to another context never
   draws a cached frame from the previous one; an evicted frame needs a fresh blit.
 - Its glyphs are painted after the transcript and before the bottom pane, so popups clear them. Its background
