@@ -15,6 +15,7 @@ Signed first-party mod updates between releases, account switching for new threa
 - /btw: `/btw` alone opens a side conversation panel that lists earlier exchanges and takes a follow-up question
 - Workspace: arrange panels with the keyboard alone (m, then Shift+arrows, T and = / -), F6 shows or hides the panels from the prompt, and number keys focus a panel whose tab is showing
 - Theme: an Aurora scene; the northern lights flare when a turn finishes, so you can tell from across the room that the agent is done
+- Aurora scene that flares when a turn finishes (#376)
 
 ### Changed
 
@@ -22,6 +23,7 @@ Signed first-party mod updates between releases, account switching for new threa
 - Theme: switching themes no longer flashes, scene transitions are shorter, and prompts and menus stay opaque over the scene
 - OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact and omd_preview move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default
 - Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace
+- Failure fixes
 
 ### Fixed
 
@@ -34,6 +36,7 @@ Signed first-party mod updates between releases, account switching for new threa
 - Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt
 - Workspace: a panel that goes away no longer leaves its screen mode behind, a key set twice is reported instead of silently turning another off, and focusing Changes no longer reruns git status every time
 - Claude CLI: turning off extra usage in the mod's settings file now stops at extra usage too, instead of only the `/mods` setting counting
+- Extra usage follows the store settings file (#375)
 
 ## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
 
