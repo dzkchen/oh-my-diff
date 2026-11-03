@@ -35416,10 +35416,10 @@ index 240700e2e9824903aef5152121001126970ee8cf..24d9e1aef8db9811bcd68539c018702d
                  let effort_label = effort
                      .as_ref()
 diff --git a/codex-rs/tui/src/app/new_session.rs b/codex-rs/tui/src/app/new_session.rs
-index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1df6fa6822f65caddee081d6b9681d23931d4085 100644
+index e6a1ade871116e55446c09491debc2d5bbf9dbbc..03ccc0e78e55dda9549be32be80453e09d7e4a66 100644
 --- a/codex-rs/tui/src/app/new_session.rs
 +++ b/codex-rs/tui/src/app/new_session.rs
-@@ -6,6 +6,140 @@ use super::*;
+@@ -6,6 +6,143 @@ use super::*;
  use codex_config::ConfigLayerSource;
  use codex_protocol::config_types::ServiceTier;
 
@@ -35525,7 +35525,10 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1df6fa6822f65caddee081d6b9681d23
 +        app.apply_new_thread_route(&mut next)?;
 +        assert_eq!(next.model.as_deref(), Some("other-model"));
 +        assert_eq!(next.model_provider_id, "next-provider");
-+        assert_eq!(next.web_search_mode.value(), codex_protocol::config_types::WebSearchMode::Disabled);
++        assert_eq!(
++            next.web_search_mode.value(),
++            codex_protocol::config_types::WebSearchMode::Disabled
++        );
 +        assert_eq!(
 +            next.model_reasoning_effort,
 +            Some(codex_protocol::openai_models::ReasoningEffort::High)
@@ -35560,7 +35563,7 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1df6fa6822f65caddee081d6b9681d23
  pub(crate) fn has_launch_setting(
      config: &Config,
      cli_kv_overrides: &[(String, TomlValue)],
-@@ -60,6 +194,88 @@ pub(super) fn overlay_new_session_defaults(
+@@ -60,6 +197,90 @@ pub(super) fn overlay_new_session_defaults(
  }
 
  impl App {
@@ -35633,7 +35636,9 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1df6fa6822f65caddee081d6b9681d23
 +        config.model_provider_id = provider.to_owned();
 +        config.model_provider = definition;
 +        if route["rates"]["provider_billed"] != true {
-+            config.web_search_mode.set(codex_protocol::config_types::WebSearchMode::Disabled)?;
++            config
++                .web_search_mode
++                .set(codex_protocol::config_types::WebSearchMode::Disabled)?;
 +        }
 +        config.model_reasoning_effort = serde_json::from_value(route["reasoning_effort"].clone())?;
 +        Ok(())
@@ -35649,10 +35654,16 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1df6fa6822f65caddee081d6b9681d23
      pub(super) async fn load_new_session_config(
          &mut self,
          app_server: &AppServerSession,
-@@ -106,6 +322,7 @@ impl App {
+@@ -106,6 +327,13 @@ impl App {
                  &self.harness_overrides,
              );
          }
++        apply_managed_new_thread_defaults(
++            &mut config,
++            app_server.managed_new_thread_defaults(),
++            &self.cli_kv_overrides,
++            &self.harness_overrides,
++        );
 +        self.apply_new_thread_route(&mut config)?;
          Ok((config, local_settings))
      }
@@ -36578,7 +36589,7 @@ index 632ac8b4defedf7eb37217a195ca42fed4df7015..928adeb4f92800b883bf38ee83cde19a
          let mut cell_displays = VecDeque::new();
          let mut rendered_rows = 0usize;
 diff --git a/codex-rs/tui/src/app/session_lifecycle.rs b/codex-rs/tui/src/app/session_lifecycle.rs
-index c7dc18d544a064d4bc684b0a54e3e86be76731f6..a4f73df8cbcc7dd45ee1fb9d70b5100679761eca 100644
+index c7dc18d544a064d4bc684b0a54e3e86be76731f6..f17f16b42e89ef0327b6217977e6f4c032a350d2 100644
 --- a/codex-rs/tui/src/app/session_lifecycle.rs
 +++ b/codex-rs/tui/src/app/session_lifecycle.rs
 @@ -529,6 +529,9 @@ impl App {
@@ -36633,7 +36644,29 @@ index c7dc18d544a064d4bc684b0a54e3e86be76731f6..a4f73df8cbcc7dd45ee1fb9d70b51006
      pub(super) fn should_attach_live_thread_for_selection(&self, thread_id: ThreadId) -> bool {
          self.agent_navigation
              .get(&thread_id)
-@@ -1056,6 +1094,9 @@ impl App {
+@@ -1031,7 +1069,7 @@ impl App {
+         // Start a fresh in-memory session while preserving resumability via persisted rollout
+         // history. If an initial message is provided, `enqueue_primary_thread_session` suppresses it
+         // until the new session is configured and any replayed turns have been rendered.
+-        let (mut config, local_settings) = match self.load_new_session_config(app_server).await {
++        let (config, local_settings) = match self.load_new_session_config(app_server).await {
+             Ok(config) => config,
+             Err(err) => {
+                 if let Some(message) = initial_user_message {
+@@ -1043,12 +1081,6 @@ impl App {
+                 return;
+             }
+         };
+-        apply_managed_new_thread_defaults(
+-            &mut config,
+-            app_server.managed_new_thread_defaults(),
+-            &self.cli_kv_overrides,
+-            &self.harness_overrides,
+-        );
+         match app_server
+             .start_thread_with_session_start_source(
+                 &self.local_settings,
+@@ -1056,6 +1088,9 @@ impl App {
                  session_start_source,
                  /*remote_cwd_override*/ None,
                  /*selected_profile*/ None,
@@ -37134,7 +37167,7 @@ index 587a63f7d69f997fb7ce2adb40a31f7afd624d73..fc7ecf3a11b27c17def1cd54a750b897
          .await;
          if matches!(selection, SessionSelection::StartFresh) {
 diff --git a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
-index 9123904c5117dbf0c7c653826bea32110deaf0c1..1275f3db82accba7c19d3bfeaccc4c9a36496824 100644
+index 9123904c5117dbf0c7c653826bea32110deaf0c1..bddbbf8dd60312435c3f390834626652e53833e3 100644
 --- a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
 +++ b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
 @@ -119,11 +119,16 @@ async fn command_center_new_keeps_startup_draft_visible_through_handoff() -> Res
@@ -37167,6 +37200,68 @@ index 9123904c5117dbf0c7c653826bea32110deaf0c1..1275f3db82accba7c19d3bfeaccc4c9a
          )
          .await?;
      app.enqueue_primary_thread_session(started.session, started.turns)
+@@ -1309,3 +1315,61 @@ async fn command_center_new_checkout_and_worktree_preserve_source_and_default_br
+     }
+     Ok(())
+ }
++
++#[tokio::test]
++#[serial_test::serial]
++async fn fresh_session_selected_route_overrides_managed_model_defaults() -> Result<()> {
++    let root = tempdir()?;
++    let store = root.path().canonicalize()?;
++    std::fs::write(
++        store.join("host.json"),
++        serde_json::to_vec(&serde_json::json!({"routes": [{
++            "name": "selected", "provider": "openai", "model": "selected-model",
++            "reasoning_effort": "high", "roles": ["lead"], "mods": ["route_fixture"]
++        }]}))?,
++    )?;
++    let _environment = crate::omd::tests::omd_environment(&store);
++    let mut app = make_test_app_with_channels().await.0;
++    trust_launch_folder(&mut app);
++    let requirements = store.join("requirements.toml");
++    std::fs::write(
++        &requirements,
++        "[models.new_thread]\nmodel = 'managed-model'\nmodel_reasoning_effort = 'low'\n",
++    )?;
++    let (mut server, requests, proxy) = start_recording_app_server_with_history(
++        &app.config,
++        HistoryCapabilities::Current,
++        None,
++        None,
++        crate::app_server_session::ThreadParamsMode::Embedded,
++        LoaderOverrides {
++            system_requirements_path: Some(requirements),
++            ..LoaderOverrides::default()
++        },
++    )
++    .await?;
++    server.bootstrap(&app.config).await?;
++    std::fs::write(
++        store.join("mod-status.json"),
++        serde_json::to_vec(
++            &serde_json::json!({"mods": [{"id": "route_fixture", "sha256": "source"}]}),
++        )?,
++    )?;
++    app.select_new_thread_route(
++        "route_fixture",
++        &serde_json::json!({"route": "selected", "scope": "new_threads"}),
++        codex_omd::app_routes::InvocationContext::User,
++    )
++    .map_err(color_eyre::eyre::Report::msg)?;
++    let mut tui = make_test_tui()?;
++    tui.pause_events();
++    app.start_fresh_session(&mut tui, &mut server, None, None, None)
++        .await;
++    let starts = recorded_params(&requests, "thread/start");
++    assert_eq!(starts.len(), 1);
++    assert_eq!(starts[0]["model"], "selected-model");
++    assert_eq!(starts[0]["config"]["model_reasoning_effort"], "high");
++    server.shutdown().await?;
++    proxy.await??;
++    Ok(())
++}
 diff --git a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs b/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
 index 8b612c8e916b3dd03005a01b1ced4fdd7c12db65..4794ffe49e38ee9645ce85c2656be611c69b4dd6 100644
 --- a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
@@ -159904,10 +159999,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f8fd7e2f9aa23fcc1d0d552549108a66f57a7d8f
+index 0000000000000000000000000000000000000000..f9452ce0c4f1e5ebfd15a61afa513c04c60e7929
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2628 @@
+@@ -0,0 +1,2630 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -161736,7 +161831,9 @@ index 0000000000000000000000000000000000000000..f8fd7e2f9aa23fcc1d0d552549108a66
 +                }
 +                _ => Err("routes_write_confirmation_missing".into()),
 +            },
-+            "routes.select" => self.select_new_thread_route(&call.caller, &call.arguments, call.context),
++            "routes.select" => {
++                self.select_new_thread_route(&call.caller, &call.arguments, call.context)
++            }
 +            "composer.read" => {
 +                let mut draft = self.chat_widget.mod_composer_read();
 +                draft_resources(&call.caller, call.thread.as_deref(), &mut draft).map(|()| draft)

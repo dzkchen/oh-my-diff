@@ -111,6 +111,7 @@
       "terminal_editor_v1",
       "pty_programs_v1",
       "route_reload_v1",
+      "route_new_threads_v1",
       "route_write_v1",
       "model_context_window_v1",
       "power_hold_v1",

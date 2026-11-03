@@ -910,3 +910,25 @@ test('the account meter renders a native Codex thread with a pending account wit
   const text = result.value.sites.above_composer.components[1].spans.map(span => span.text).join('');
   assert.match(text, /● Codex.*current thread.*\/new → home/);
 });
+
+test('new-thread selection history stays within the store value limit across OMD processes', () => {
+  let selections = Object.fromEntries(Array.from({ length: 2184 }, (_, index) =>
+    [`${String(index).padStart(6, '0')}-1700000000000`, 'work']));
+  const session = { thread_id: 'old', process_id: '999999-1700000000000', provider: 'omd_profiles', model: 'work' };
+  const routes = [route('work', 'included_subscription'), route('home', 'included_subscription')];
+  const invoke = (state, event, payload, name) => callback({ ...request, state, event, payload, name }, ({ operation, arguments: args }) => {
+    if (operation === 'store.get') return args.key === 'selection' ? { value: selections, revision: 1, provenance: { at: 0 } } : null;
+    if (operation === 'store.put') {
+      if (Buffer.byteLength(JSON.stringify(args.value)) > 65536) throw new Error('store_value_limit');
+      selections = args.value;
+      return { revision: 2 };
+    }
+    return { 'routes.list': routes, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
+      'routes.select': { route: routes[1], effective_at: 'new_thread' } }[operation];
+  });
+  const original = invoke(null, 'start', {}).state;
+  const selected = invoke(original, 'command', 'use home', 'profile');
+  assert.match(selected.value.display, /selected for new threads/);
+  assert.equal(invoke(null, 'start', {}).state.pending, 'home');
+  assert.ok(Buffer.byteLength(JSON.stringify(selections)) <= 65536);
+});

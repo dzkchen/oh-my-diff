@@ -183,7 +183,9 @@ export default function activate(api: ModAPI) {
     const updated = api.host.tryCall('routes.select', { route: account.name, scope: 'new_threads' });
     if (!updated.ok) return `Profile switch failed: ${updated.error}`;
     const process = api.session().process_id;
-    update<Record<string, string>>('selection', selections => ({ ...selections, [process]: account.name }));
+    update<Record<string, string>>('selection', selections => ({
+      ...Object.fromEntries(Object.entries(selections ?? {}).filter(([id]) => id !== process).slice(-127)), [process]: account.name,
+    }));
     store({ pending: account.name, pending_process: process, notice: null });
     return `${account.name} (${kind(account)}) selected for new threads. Run /new to use it. This thread keeps its current account.`;
   };

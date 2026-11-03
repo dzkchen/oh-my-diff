@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "117069186018ed1081b8ad1a6540766c4e679e6d37a74c69d2e115951aa38435"
+    "sha256": "94b332d5f5f42c8b34c39a8ac6f4b1e0049fab9bad3f9d45ed5f288a5795d8a8"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1911,7 +1911,7 @@
     },
     "codex-rs/tui/src/app/mod_surface.rs": {
       "before": null,
-      "after": "7c78f667f93b259e9b5b188765868a1744ac9825f15590e8fc539fa44972c276"
+      "after": "20a71632288c59e61c5ad198971abe242b116562437d50c261eaced958d257eb"
     },
     "codex-rs/tui/src/app/model_defaults.rs": {
       "before": "74d5b8620cc6fcb5db55cb5f0a270c8d35a20184ae8a3d40ca7e72d985889705",
@@ -1919,7 +1919,7 @@
     },
     "codex-rs/tui/src/app/new_session.rs": {
       "before": "89236933782728607bc37888d89f2ce008cf00212122324d5f900baaaa55d127",
-      "after": "9548c26cf98422865079affc10e86d05a882df052b27a2d6aaa94215ce95f42b"
+      "after": "892eba7e694dac0f5381cd41e4433f56308e771037100e879144b81b26b750b5"
     },
     "codex-rs/tui/src/app/owned_transcript.rs": {
       "before": "44f09d903344ecda0aeeb75741953a1cad93ad4882f72509a2640f130b00a807",
@@ -1955,7 +1955,7 @@
     },
     "codex-rs/tui/src/app/session_lifecycle.rs": {
       "before": "8cfe5730b1a351b42c8b9280d8f373087f1f2d573a214df833208e230be7cbbc",
-      "after": "271da522874c2e0537f208578c8a954ed0ba873515943fde558a4b45c1d0459b"
+      "after": "d17500b2721e305ffe065e3cca2f6d41597c04a6b587e3e746f17ca620fc1267"
     },
     "codex-rs/tui/src/app/side.rs": {
       "before": "ca7c478a6bffcafb1d22f54f910850d83c4fc3942955962633f0f925d4359063",
@@ -2003,7 +2003,7 @@
     },
     "codex-rs/tui/src/app/tests/background_task_defaults_tests.rs": {
       "before": "a68af7b607047dbff9e96149596a0e7bc38ac2eacff2a1d2d72f3629b8268fe5",
-      "after": "da23d5c8f14869a6ca2a27640557153bcb1d9317e3ea021f7cc1ede7c0ffd368"
+      "after": "9d0c9ef1f90dac83223c7d52f710c8d08d913f764651dca3013de23c8f7cd6ff"
     },
     "codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs": {
       "before": "5ef72a12727cbcf8d9256bccf897efb146f9f6d162a1b0cae9b0d771d7e65113",

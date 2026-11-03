@@ -644,14 +644,14 @@
       "extension_type": "mod",
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
-        "index.ts": "1b70cfd62a69e0e5ec0a7874c30cc6ae27cbce2b06426937d9a30cb6a9bb6b2e",
+        "index.ts": "46dd392011b5fdaf6df86cd6ea6ced0f8ca4532e659afe52a85b16bb8b654794",
         "mod.json": "a835b061a4d17c602e1d88949089ca7e881da9c60105da9160c687a892918247",
         "profiles.ts": "055218534d017dc89da265abc6d5a0e21253a781367ce329f3a7d8c5ebd532e4",
         "router.mjs": "8af36400c295812c48a26998e709161bb66973e4592a200be033d7542dbe5449",
         "setup.mjs": "64a902dd4886671d0dbf5cf23382b4b05c01b53342126bbf3c45f0018e0e117e"
       },
       "id": "omd_profiles",
-      "package_sha256": "757b7ba6e8f2e395afe5f1b2a257cba142232610c26205e0c5c7cf96af997741",
+      "package_sha256": "fd09579d8498a180e5829ffaaf9ea836fc175c317f8e41236212af217b06520c",
       "source": "mods/first-party/omd_profiles",
       "version": "1.0.0"
     },
