@@ -38,6 +38,7 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
         json!({"action": "install", "source": {"kind": "local", "path": path}}),
     )
     .unwrap();
+    assert!(install.public["identity_warning"].is_null());
     assert_eq!(
         (
             install.public["id"].as_str(),
@@ -433,4 +434,16 @@ fn index_pages_follow_the_cursor_to_the_last_entry() {
         error.to_string().contains("package_arguments_invalid"),
         "{error}"
     );
+}
+
+#[test]
+fn same_id_project_selection_warns_about_shared_authority() {
+    let (_temp, store, root) = setup();
+    for (base, scope) in [(&root, "user"), (&root.join("project"), "project")] {
+        let path = fixture_package(base, "same_id", &["commands"], json!([]));
+        let digest = ModStore::inspect_package(&path).unwrap()["sha256"].as_str().unwrap().to_owned();
+        store.trust(path, &digest, vec!["commands".into()], scope).unwrap();
+    }
+    let preview = preview(&store, json!({"action":"enable","id":"same_id","scope":"project"})).unwrap();
+    assert!(preview.public["identity_warning"].as_str().unwrap().contains("share storage and owned credential authority"));
 }

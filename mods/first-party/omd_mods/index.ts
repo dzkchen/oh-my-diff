@@ -1,6 +1,6 @@
 import type { Json, ModAPI, PackageCatalogEntry, PackageRequest, PackageState, TerminalComponent, TerminalIdentity, TerminalPanel, TerminalPanelItem, TerminalPatch } from '../../api.d.ts';
 
-type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; from: string; generation: number };
+type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; warning?: string; from: string; generation: number };
 type Scope = 'user' | 'project';
 const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'required', 'effective', 'pending', 'failed', 'blocked', 'compatible', 'conflicts'] as const;
 type Listed = Pick<PackageState, typeof FIELDS[number]>;
@@ -97,7 +97,7 @@ export default function activate(api: ModAPI) {
     const result = api.host.tryCall('packages.preview', { ...request, expected_generation: state.generation });
     if (result.ok && request.action === 'install' && result.value.id === SELF) return { ...state, review: null, notice: 'Mods is already running; update it from its own panel' };
     return result.ok
-      ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, grants: result.value.grants_added, from, generation: state.generation }, notice: null }
+      ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, grants: result.value.grants_added, warning: result.value.identity_warning ?? undefined, from, generation: state.generation }, notice: null }
       : { ...state, review: null, notice: `${label} is unavailable (${result.error})` };
   };
   const newest = (entry: PackageCatalogEntry | undefined) => entry?.versions.find(item => !item.blocked)?.version ?? '';
@@ -188,7 +188,7 @@ export default function activate(api: ModAPI) {
   };
   const reviewText = (review: Review) => {
     const config = configured(review.changes);
-    return `${review.label}: ${changed(review.changes)} · new permissions: ${review.grants.join(', ') || 'none'}${config.length ? ` · Codex config: ${config.join(', ')}` : ''}`;
+    return `${review.warning ? `WARNING: ${review.warning} · ` : ''}${review.label}: ${changed(review.changes)} · new permissions: ${review.grants.join(', ') || 'none'}${config.length ? ` · Codex config: ${config.join(', ')}` : ''}`;
   };
   const attention = (item: Listed) => Boolean(item.failed || item.blocked || !item.compatible || item.conflicts.length);
   const group = (item: Listed) => attention(item) ? GROUPS[0] : item.enabled ? GROUPS[1] : GROUPS[2];

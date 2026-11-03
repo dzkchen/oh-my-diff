@@ -1,4 +1,7 @@
 #!/bin/sh
+trap 'echo "omd installer: incomplete download" >&2; exit 1' 0
+install_main() {
+trap - 0
 usable() {
   [ -n "$1" ] && command -v "$1" >/dev/null 2>&1 \
     && "$1" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' 2>/dev/null
@@ -1621,3 +1624,5 @@ if __name__ == "__main__":
         say(f"  {paint('✗', '31')} {error}")
         raise SystemExit(1) from error
 PY
+}
+install_main "$@"

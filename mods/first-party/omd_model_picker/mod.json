@@ -9,7 +9,7 @@
   "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
-    "source": "mods/first-party"
+    "source": "mods/first-party/omd_model_picker"
   },
   "capabilities": [
     "terminal",

@@ -68,3 +68,5 @@ It has no settings.
 - [Manage mods](../../../docs/manage-mods.md)
 - [Included mods](../../../docs/collection.md)
 - [Packaging](../../reference/packaging.md) in the mod API reference
+
+Trust previews warn when an ID is already installed: same-ID copies share storage and owned credential authority.

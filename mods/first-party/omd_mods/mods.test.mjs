@@ -196,3 +196,11 @@ test('the list groups mods by state, searches their commands and reopens where i
   const reopened = invoke('', { packages, state: closed.stored });
   assert.deepEqual([reopened.panels[0].selected, reopened.panels[0].query], ['user:omd_usage', 'use']);
 });
+
+test('an identity collision warning is shown before accepting trust', () => {
+  const warning = 'Same-ID copies share storage and owned credential authority';
+  const result = invoke('update omd_logo', { 'packages.preview': () => ({ action: 'update', id: 'omd_logo', changes: {}, grants_added: [], identity_warning: warning }) });
+  assert.ok(result.value.display.includes(warning));
+  const panel = invoke('panel user', { ui_state: result.ui });
+  assert.ok(JSON.stringify(panel.panels).includes(warning));
+});

@@ -368,12 +368,12 @@ def selected_text(record):
         # The marker precedes the journal check and an update journals before reading markers, so each sees the other.
         # While another session is open, a staged release is announced once; ready.json newer than announced, or an announcement over an hour old, re-arms it.
         marker = f"{root}/sessions/$$"
-        ready = f'{{ [ -e {root}/update/ready.json ] && {{ [ -z "$busy" ] || [ {root}/update/ready.json -nt {root}/update/announced ] || [ -n "$(find {root}/update/announced -mmin +60 2>/dev/null)" ]; }}; }}'
+        ready = f'{{ [ -e {root}/update/ready.json ] && {{ [ -z "$busy" ] || [ ! -e {root}/update/announced ] || [ {root}/update/ready.json -nt {root}/update/announced ] || [ -n "$(find {root}/update/announced -mmin +60 2>/dev/null)" ]; }}; }}'
         lines += [f"mkdir -p {root}/sessions", "busy=", "unattended=", "skip=",
                   f'for a; do if [ -n "$skip" ]; then skip=; continue; fi; case "$a" in -V|--version|-h|--help|{"|".join(UNATTENDED_COMMANDS)}) unattended=1; break;; {"|".join(sorted(CODEX_VALUE_OPTIONS | {"-i", "--image"}))}) skip=1;; -*) ;; *) break;; esac; done',
                   f'for m in {root}/sessions/*; do [ -e "$m" ] && {{ kill -0 "${{m##*/}}" 2>/dev/null && busy=1 || rm -f "$m"; }}; done',
                   f": > {marker}",
-                  f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/journal.json ] || {{ [ -z "$unattended" ] && {{ {ready} || [ {root}/update/state.json -nt {root}/update/notice.json ] || {{ [ {request} -nt {root}/update/seen ] && grep -q \'"request":\' {request}; }}; }}; }}; }}; then',
+                  f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/journal.json ] || {{ [ -z "$unattended" ] && {{ {ready} || {{ [ -e {root}/update/state.json ] && {{ [ ! -e {root}/update/notice.json ] || [ {root}/update/state.json -nt {root}/update/notice.json ]; }}; }} || {{ [ -e {request} ] && {{ [ ! -e {root}/update/seen ] || [ {request} -nt {root}/update/seen ]; }} && grep -q \'"request":\' {request}; }}; }}; }}; }}; then',
                   f'  {installer} launch --root {root} --session $$ ${{unattended:+--unattended}}',
                   f'  OH_MY_DIFF_UPDATED=1 exec {root}/current/bin/codex "$@"',
                   "fi",

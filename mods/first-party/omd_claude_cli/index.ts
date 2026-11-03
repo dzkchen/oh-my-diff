@@ -369,11 +369,6 @@ export default function activate(api: ModAPI): void {
       adopt(result);
       return void say(`Removed Claude account ${name}${result.signed_out === null ? '; your Claude Code login is kept' : result.signed_out ? ' and signed it out' : '; signing it out failed, so its Keychain item may remain'}`);
     }
-    if (channel === `${api.package.id}/code`) {
-      const id = running();
-      if (!id) return void say('No Claude login is waiting for a code; run /claude login', true);
-      return void setLogin(id, { ...logins()[id], out: exchange(id, logins()[id], `${(data as Row).code}\n`) });
-    }
     if (channel !== `${api.package.id}/login`) return;
     if (running()) return void say('A Claude login is already running; finish it or wait for it to end', true);
     const { billing, account } = data as Row;
@@ -412,8 +407,10 @@ export default function activate(api: ModAPI): void {
       return { display: hop.ok && hop.value.delivered > 0 ? `Removing Claude account ${mode}` : 'The account could not be removed; try again' };
     }
     if (action === 'code' && mode) {
-      const hop = api.host.tryCall('events.publish', { channel: 'code', data: { code: mode } });
-      return { display: hop.ok && hop.value.delivered > 0 ? 'Sent the code to the Claude login' : 'The code could not be sent; run /claude login again' };
+      const id = running();
+      if (!id) return { display: 'No Claude login is waiting for a code; run /claude login' };
+      setLogin(id, { ...logins()[id], out: exchange(id, logins()[id], `${mode}\n`) });
+      return { display: 'Sent the code to the Claude login' };
     }
     if (action) return { display: usage };
     const accounts = (saved().accounts ?? []) as Row[];
