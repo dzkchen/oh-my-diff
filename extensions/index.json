@@ -10,7 +10,7 @@
   "packages": [
     {
       "id": "omd_claude_cli",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "extension_type": "mod",
       "capability": "Opt-in Claude models from your official Claude CLI login, switchable in-session with /model",
       "source": "mods/first-party/omd_claude_cli",
@@ -801,7 +801,7 @@
     },
     {
       "id": "omd_theme",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "extension_type": "mod",
       "capability": "Opt-in /theme panel: animated character-drawn scenes behind the whole screen, prompt box and menus, and terminal background steps",
       "source": "mods/first-party/omd_theme",

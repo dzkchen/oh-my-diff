@@ -42,6 +42,7 @@ export class Canvas {
   readonly glyph: Uint32Array;
   readonly fg: Uint32Array;
   readonly bg: Uint32Array;
+  energy = 0;
 
   constructor(width: number, height: number, density: number, sample: Sample | null) {
     this.width = width;
@@ -181,6 +182,35 @@ function mark(c: Canvas, t: number) {
       }
     }
   })));
+}
+
+const AURORA = [
+  { color: 0x2dff9a, crest: 0xd2ffe6, base: 0.24, length: 0.15, power: 0.85, phase: 0 },
+  { color: 0x2fd8d0, crest: 0xc0fff8, base: 0.36, length: 0.11, power: 0.6, phase: 2.4 },
+  { color: 0x9a6bff, crest: 0xe6d6ff, base: 0.14, length: 0.1, power: 0.5, phase: 4.1 },
+];
+
+function aurora(c: Canvas, t: number) {
+  const stir = c.energy;
+  const bright = 1 + 0.9 * stir;
+  for (const [i, band] of AURORA.entries()) {
+    const length = Math.max(1.2, c.height * band.length * (1 + 0.4 * stir));
+    for (let x = 0; x < c.width; x++) {
+      const u = x / 2;
+      const reach = (0.5 + 0.5 * Math.sin(u * 0.045 + t * 0.06 + band.phase)) ** 2;
+      if (reach < 0.02) continue;
+      const top = c.height * (band.base + 0.12 * Math.sin(u * 0.055 + t * 0.18 + band.phase) + 0.05 * Math.sin(u * 0.17 - t * 0.31 + i) + 0.03 * stir * Math.sin(u * 0.5 + t * 3 + i));
+      const ray = 0.25 + 0.75 * Math.sin(u * 0.8 + t * 0.9 + 3 * Math.sin(u * 0.04 + band.phase) + 1.5 * stir * Math.sin(t * 4 + u * 0.3)) ** 4;
+      for (let y = Math.max(0, Math.floor(top - 2)); y < Math.min(c.height, Math.ceil(top + 3 * length)); y++) {
+        const d = y - top;
+        const strength = band.power * bright * reach * ray * (d < 0 ? Math.exp(-2 * d * d) : Math.exp(-d / length));
+        if (strength < 0.015) continue;
+        const color = mix(band.color, band.crest, 1 - d / 1.5);
+        c.light(y * c.width + x, color, strength);
+        if (strength > 0.3 && rand(x, y, 20 + i) < 0.35) c.dot(x, y, d < 1 ? "'" : rand(x, Math.floor(t * 3), 30) < 0.5 ? '¦' : ':', color, Math.min(1, strength * 2));
+      }
+    }
+  }
 }
 
 const TURTLE = [
@@ -325,6 +355,25 @@ export const SCENES: Scene[] = [
     },
   },
   {
+    id: 'aurora', name: 'Aurora', detail: 'Northern lights ripple over a snowy ridge; they flare when a turn finishes, and stir faster while one runs.',
+    palette: { tint: [0x0b2a2c, 0x071822], accent: 0x9dffcf },
+    paint(c, t) {
+      c.sky([0x01040d, 0x041026, 0x0a1d33, 0x10283a]);
+      for (let i = 0; i < Math.round(55 * c.density); i++) {
+        const twinkle = Math.sin(t * (0.6 + rand(i, 3, 21)) + rand(i, 4, 21) * 6.28);
+        c.dot(Math.floor(rand(i, 1, 21) * c.width), Math.floor(rand(i, 2, 21) * c.height * 0.75), twinkle > 0.75 ? '+' : '·', 0xdce6ff, 0.35 + 0.35 * twinkle);
+      }
+      aurora(c, t);
+      const peaks: [number, number, number][] = [[0.09, 0.11, 0.8], [0.05, 0.29, 2], [0.025, 0.83, 0.4]];
+      hills(c, 0.72, peaks, 0x0b1626, 0.9);
+      for (let tx = 0; tx < c.cols; tx++) {
+        const ridge = Math.ceil(c.height * (0.72 + peaks.reduce((sum, [amp, freq, phase]) => sum + amp * Math.sin(tx * freq + phase), 0)));
+        if (ridge >= 0 && ridge < c.height && rand(tx, 22) > 0.35) c.dot(tx * 2 + (hash(tx, 23) % 2), ridge, rand(tx, 24) > 0.5 ? '^' : '.', 0xc9e4ff, 0.55);
+      }
+      hills(c, 0.86, [[0.05, 0.27, 1.4], [0.025, 0.9, 0]], 0x050a14, 0.92);
+    },
+  },
+  {
     id: 'image', name: 'Your image', detail: 'Your picture drawn as glyph tiles, with a slow light sweep and drifting motes.',
     paint(c, t) {
       const sample = c.sample;
@@ -366,9 +415,10 @@ export function samplePalette(sample: Sample): Palette {
   return { tint: [top, bottom], accent: mix(mix(average(0, sample.height), 0xffffff, 0.45), 0xffffff, 0.5) };
 }
 
-export function compose(id: string, previous: string | null, progress: number, width: number, height: number, density: number, sample: Sample | null, t: number): Canvas {
+export function compose(id: string, previous: string | null, progress: number, width: number, height: number, density: number, sample: Sample | null, t: number, energy = 0): Canvas {
   const draw = (which: string) => {
     const canvas = new Canvas(width, height, density, sample);
+    canvas.energy = clamp(energy, 0, 1);
     (scene(which) ?? SCENES[0]).paint(canvas, t);
     return canvas;
   };
