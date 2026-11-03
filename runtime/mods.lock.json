@@ -940,14 +940,14 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "e44e29498897cadd11519daa7266d7cbc20db8202d810ed5db3384236e20d3f2",
-        "mod.json": "c93dbafff1dc37aac79648381c847590a5ad5ecd3402071d22b4e1155c243c6f",
+        "index.ts": "86b957aa7038dcbe9d50f1416ce40115aab362cbc405b1290885b35781a2a491",
+        "mod.json": "3ad0e7a752cace8066dfa284be3e9d308efd171bd0393a5cca5d90a933170136",
         "tree.ts": "bf7fbea96846738c7fad9738cac75182c8dd46a796837f4b175a2f8eb9ce28f6"
       },
       "id": "omd_workspace",
-      "package_sha256": "55e8d48c6baaa7ff1f3969b0b73ea85f728d598d672ae3cbee758c18213b8c79",
+      "package_sha256": "662a0348d95f7b2abc33e7a2dcb5cafa0329bfbc4101520fa0255e8b04d1aa57",
       "source": "mods/first-party/omd_workspace",
-      "version": "1.1.0"
+      "version": "1.2.0"
     },
     "omd_yazi": {
       "api": "1.0.0",

@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_workspace",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "api": "1.0.0",
   "state_version": 1,
   "description": "Arrange the chat, a shell, Git changes, your own terminals and other mods' panels freely: presets, moves, drag, focus keys and a panel registry",
@@ -48,7 +48,10 @@
       "key_panel_tab_next": {"type": "string", "default": "}", "title": "Key: next tab inside a panel", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
       "key_grow": {"type": "string", "default": "=", "title": "Key: grow the panels", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
       "key_shrink": {"type": "string", "default": "-", "title": "Key: shrink the panels", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
-      "key_focus_shell": {"type": "string", "default": "Enter", "title": "Key: type in a running terminal", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"}
+      "key_focus_shell": {"type": "string", "default": "Enter", "title": "Key: type in a running terminal", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_toggle": {"type": "string", "default": "F2", "title": "Key: show or hide the panels", "description": "Works from the prompt too, so F2 to F12, Ctrl+ or Alt+ with a letter or digit; <disabled> turns it off"},
+      "key_arrange": {"type": "string", "default": "a", "title": "Key: arrange the focused panel", "description": "Starts and ends arranging, where the panel keys move it and the grow and shrink keys resize it; <disabled> turns it off"},
+      "key_arrange_tab": {"type": "string", "default": "t", "title": "Key: put the arranged panel in tabs", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"}
     },
     "additionalProperties": false
   }

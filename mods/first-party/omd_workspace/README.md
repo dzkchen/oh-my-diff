@@ -57,8 +57,12 @@ transcript                 ││                            │
 ╰────────────────────────╯ │╰────────────────────────────╯
 ```
 
-Then rearrange it:
+Then rearrange it. Everything works from the keyboard, and the mouse is optional:
 
+- Arrange with keys: focus a panel and press `a` (`key_arrange`). The panel keys (`Left`/`Right`/`Up`/`Down` or
+  `h`/`j`/`k`/`l`) then move it, `t` (`key_arrange_tab`) puts it in tabs with its neighbour, `=` / `-` resize it inside
+  its split, and `a` again finishes. The status line shows these keys while you arrange. `/workspace arrange PANEL`
+  does the same from the prompt.
 - Drag a panel by its title row onto another panel. Dropping on an edge splits beside it, and dropping in the
   center tabs with it. In a tab group, grab the frame line under the tab bar. A panel drawn without a title or frame
   can't be dragged. Move it with `/workspace move`.
@@ -81,12 +85,13 @@ dropping above or below a panel puts it beside that panel.
 
 ### Keys
 
-From the prompt, `Ctrl+]` enters the panels. `Esc` or `Ctrl+]` in a panel returns to the chat. `Tab` moves between a
-panel's controls.
+From the prompt, `Ctrl+]` enters the panels and `F2` (`key_toggle`) shows or hides them. `Esc` or `Ctrl+]` in a panel
+returns to the chat. `Tab` moves between a panel's controls.
 
 | Key | Setting | What it does |
 | --- | --- | --- |
-| `1`–`6` | `key_panel_1`, `key_panel_2`, `key_panel_3`, `key_panel_4`, `key_panel_5`, `key_panel_6` | Show that panel (its tab, or focus it) |
+| `F2` | `key_toggle` | Show or hide the panels, from the prompt too |
+| `1`–`6` | `key_panel_1`, `key_panel_2`, `key_panel_3`, `key_panel_4`, `key_panel_5`, `key_panel_6` | Focus that panel. A tab that isn't showing comes to the front first, and a second press focuses it |
 | `0` | `key_main` | Back to the chat |
 | `Left` or `h` | `key_left`, `key_left_alt` | Region on the left |
 | `Right` or `l` | `key_right`, `key_right_alt` | Region on the right |
@@ -94,7 +99,9 @@ panel's controls.
 | `Down` or `j` | `key_down`, `key_down_alt` | Region below (same) |
 | `[` / `]` | `key_tab_previous`, `key_tab_next` | Previous / next tab of the focused tab group |
 | `{` / `}` | `key_panel_tab_previous`, `key_panel_tab_next` | Previous / next tab inside a panel with its own tabs |
-| `=` / `-` | `key_grow`, `key_shrink` | Grow / shrink the panels (dragging a border works too) |
+| `=` / `-` | `key_grow`, `key_shrink` | Grow / shrink the panels (while arranging, the arranged panel; dragging a border works too) |
+| `a` | `key_arrange` | Start or finish arranging the focused panel |
+| `t` | `key_arrange_tab` | While arranging, put the panel in tabs with its neighbour |
 | `+` / `_` | `key_mode_next`, `key_mode_previous` | Next / previous screen mode: normal, half, full |
 | `Enter` | `key_focus_shell` | Type in a running Shell or terminal (`Ctrl+]` leaves it) |
 | `?` | `key_help` | List the keys that work here |
@@ -108,7 +115,11 @@ To change a key, set its setting in `/mods` to one of:
   `Ctrl+j`, `Ctrl+m` and `Ctrl+z` aren't allowed.
 - `<disabled>` to turn it off
 
-An invalid key keeps its default and is listed by `/workspace config`. The workspace binds at most 32 keys. With many
+`key_toggle` also works from the prompt, so it takes only `F2` to `F12` or a `Ctrl+` or `Alt+` key. On macOS, an `Alt+`
+key needs Option-as-Alt turned on in your terminal.
+
+An invalid key keeps its default and is listed by `/workspace config`, and so does a key already used by another
+setting. The workspace binds at most 32 keys. With many
 panels the alternate region keys, then the screen mode keys, are dropped first.
 
 Screen modes enlarge one panel for a while:
@@ -144,11 +155,13 @@ running shell costs about 2 MiB and no idle CPU.
 | --- | --- |
 | `/workspace` | Status and usage |
 | `/workspace on`, `off` | Show or hide the workspace |
+| `/workspace toggle` | Show or hide the panels and keep the workspace's keys (`key_toggle`) |
 | `/workspace layout PRESET\|save NAME\|load NAME\|delete NAME` | Pick, save, load or delete an arrangement |
 | `/workspace move PANEL left\|right\|up\|down\|tab`, `swap PANEL PANEL` | Rearrange panels |
+| `/workspace arrange PANEL`, then `arrange left\|right\|up\|down\|tab\|done` | Arrange one panel step by step (`key_arrange`) |
 | `/workspace tab N\|next\|previous` | Show a panel's tab |
 | `/workspace tab next\|previous PANEL` | Switch a panel's own tab |
-| `/workspace grow`, `shrink` | Resize the panels beside the chat by 5% |
+| `/workspace grow [PANEL]`, `shrink [PANEL]` | Resize the panels beside the chat, or one panel inside its split, by 5% |
 | `/workspace mode next\|previous\|normal\|half\|full [PANEL\|dock\|chat]` | Change a screen mode |
 | `/workspace start [PANEL]` | Start the shell or a terminal panel |
 | `/workspace diff PATH`, `refresh` | Show a changed file's diff, reload the list |
