@@ -21,7 +21,8 @@ TMP = Path(os.environ.get("OMD_WORK_ROOT", "/private/tmp"))
 SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
-         "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bins"]
+         "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bin", "codex-code-mode-host", "--bin", "omd",
+         "--bin", "omd-contract", "--bin", "omd-broker", "--bin", "omd-mod", "--bin", "omd-runner"]
 CHECK = ["check", "--locked", "-p", "codex-cli", "-p", "codex-exec", "-p", "codex-omd", "-p", "codex-omd-runner",
          "-p", "codex-omd-extension", "-p", "codex-tui", "-p", "codex-core", "-p", "codex-core-plugins", "-p", "codex-git-utils",
          "--tests"]
@@ -40,6 +41,8 @@ def base_tag():
 
 
 def work_dir(name):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+        raise SystemExit("tree name must contain only letters, numbers, hyphens or underscores and start with a letter or number")
     return TMP / f"omd-b{name}"
 
 
@@ -96,20 +99,41 @@ def setup(args):
     print(tree)
 
 
-def cargo_env(work):
+def cargo_env(work, cargo_args=()):
     env = {key: value for key, value in os.environ.items()
            if key not in ("CODEX_SQLITE_HOME", "FORCE_COLOR", "COLORTERM", "NO_COLOR")}
     env.update({
         "CARGO_TARGET_DIR": str(work / "target"),
-        "CARGO_INCREMENTAL": os.environ.get("CARGO_INCREMENTAL", "1"),
         "CARGO_PROFILE_DEV_DEBUG": os.environ.get("CARGO_PROFILE_DEV_DEBUG", "0"),
         "CARGO_PROFILE_RELEASE_LTO": os.environ.get("CARGO_PROFILE_RELEASE_LTO", "off"),
         "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": os.environ.get("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "16"),
         "CARGO_PROFILE_RELEASE_DEBUG": os.environ.get("CARGO_PROFILE_RELEASE_DEBUG", "0"),
         "RUST_MIN_STACK": "16777216",
     })
-    if os.environ.get("OMD_SCCACHE"):
-        env["RUSTC_WRAPPER"] = "sccache"
+    if env.get("OMD_LOW_RESOURCE") == "1":
+        env.setdefault("CARGO_BUILD_JOBS", "3")
+    nextest = bool(cargo_args) and cargo_args[0] == "nextest"
+    jobs_flag = "--build-jobs" if nextest else "--jobs"
+    for index, arg in enumerate(cargo_args):
+        if arg == "--":
+            break
+        if (arg == jobs_flag or (arg == "-j" and not nextest)) and index + 1 < len(cargo_args):
+            env["CARGO_BUILD_JOBS"] = cargo_args[index + 1]
+        elif arg.startswith(f"{jobs_flag}="):
+            env["CARGO_BUILD_JOBS"] = arg.split("=", 1)[1]
+        elif not nextest and arg.startswith("-j") and len(arg) > 2:
+            env["CARGO_BUILD_JOBS"] = arg[2:].removeprefix("=")
+    wrapper = env.get("RUSTC_WRAPPER", "")
+    if env.get("OMD_SCCACHE") == "1":
+        if wrapper and Path(wrapper).name != "sccache":
+            raise SystemExit("OMD_SCCACHE=1 conflicts with RUSTC_WRAPPER; unset it or disable OMD_SCCACHE")
+        env["RUSTC_WRAPPER"] = wrapper or "sccache"
+    cached = Path(env.get("RUSTC_WRAPPER", "")).name == "sccache"
+    if cached and env.get("RUSTC_WORKSPACE_WRAPPER"):
+        raise SystemExit("sccache conflicts with RUSTC_WORKSPACE_WRAPPER; unset it or disable sccache")
+    if cached and env.get("CARGO_INCREMENTAL", "0") != "0":
+        raise SystemExit("sccache requires CARGO_INCREMENTAL=0; unset CARGO_INCREMENTAL or disable sccache")
+    env.setdefault("CARGO_INCREMENTAL", "0" if cached else "1")
     target = run("rustc", "-vV").decode().split("host: ", 1)[1].splitlines()[0]
     env.setdefault("RUSTY_V8_ARCHIVE", str(V8 / f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz"))
     env.setdefault("RUSTY_V8_SRC_BINDING_PATH", str(V8 / f"src_binding_ptrcomp_sandbox_release_{target}.rs"))
@@ -136,12 +160,13 @@ def test_runner(work, cargo_args, env, output):
     return status
 
 
-def cargo_run(work, log, cargo_args):
-    log = Path(log)
+def cargo_run(work, log, cargo_args, *, skip_runner=False):
+    log = Path(log).resolve()
+    print(f"log={log}", flush=True)
+    env = cargo_env(work, cargo_args)
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w") as output:
-        env = cargo_env(work)
-        status = test_runner(work, cargo_args, env, output) or subprocess.run(
+        status = (0 if skip_runner else test_runner(work, cargo_args, env, output)) or subprocess.run(
             ["cargo", *cargo_args], cwd=work / "codex/codex-rs", env=env, stdout=output, stderr=subprocess.STDOUT).returncode
         output.write(f"exit={status}\n")
     text = log.read_text(errors="replace").splitlines()
@@ -192,7 +217,44 @@ def v8(args):
 
 
 def cargo(args):
-    raise SystemExit(cargo_run(work_dir(args.name), args.log, args.cargo_args))
+    raise SystemExit(cargo_run(work_dir(args.name), args.log, args.cargo_args, skip_runner=args.skip_runner))
+
+
+def dev_check(args):
+    work = work_dir(args.name)
+    selected = [flag for package in args.packages for flag in ("-p", package)]
+    raise SystemExit(cargo_run(work, work / "logs/dev-check.log", ["check", "--locked", *selected]))
+
+
+def dev_build(args):
+    work = work_dir(args.name)
+    status = cargo_run(work, work / "logs/dev-build.log", [
+        "build", "--locked", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd-runner", "--bin", "omd-runner",
+        "-p", "codex-code-mode-host", "--bin", "codex-code-mode-host"])
+    if status == 0:
+        print(work / "target/debug/codex")
+    raise SystemExit(status)
+
+
+def storage(args):
+    print("MiB\ttree\ttarget")
+    for work in sorted(TMP.glob("omd-b*")):
+        if not (work / "codex").is_dir():
+            continue
+        target = work / "target"
+        size = int(run("du", "-sk", target).split()[0]) / 1024 if target.exists() else 0
+        print(f"{size:.1f}\t{work.name.removeprefix('omd-b')}\t{target}")
+
+
+def clean(args):
+    targets = [work_dir(name) / "target" for name in args.names]
+    for target in targets:
+        if target.parent.is_symlink() or target.is_symlink():
+            raise SystemExit(f"refusing to clean a symlink: {target}")
+    for target in targets:
+        if target.exists():
+            shutil.rmtree(target)
+        print(f"cleaned {target}")
 
 
 def check(args):
@@ -323,16 +385,29 @@ def locks(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Hosted build tree for the pinned Codex runtime patch")
+    parser = argparse.ArgumentParser(description="Build trees for the pinned Codex runtime patch")
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser("setup", help="worktree at the pin, normalized and patched")
     command.add_argument("name")
     command.set_defaults(handler=setup)
     command = commands.add_parser("cargo", help="cargo in the scratch tree; full log to a file, summary to stdout")
+    command.add_argument("--skip-runner", action="store_true", help="skip runner preparation for tests that do not start a mod host")
     command.add_argument("name")
     command.add_argument("log", help="log file path")
     command.add_argument("cargo_args", nargs=argparse.REMAINDER)
     command.set_defaults(handler=cargo)
+    command = commands.add_parser("dev-check", help="check only the selected crate(s), without compiling tests")
+    command.add_argument("name")
+    command.add_argument("packages", nargs="+", help="Cargo package names")
+    command.set_defaults(handler=dev_check)
+    command = commands.add_parser("dev-build", help="build debug codex, omd-runner and codex-code-mode-host")
+    command.add_argument("name")
+    command.set_defaults(handler=dev_build)
+    command = commands.add_parser("storage", help="show each scratch tree's target disk usage in MiB")
+    command.set_defaults(handler=storage)
+    command = commands.add_parser("clean", help="delete only selected trees' targets; stop their builds first")
+    command.add_argument("names", nargs="+", help="tree names whose build outputs should be deleted")
+    command.set_defaults(handler=clean)
     command = commands.add_parser("check", help="cargo check --tests of the crates a pull request compiles")
     command.add_argument("name")
     command.set_defaults(handler=check)

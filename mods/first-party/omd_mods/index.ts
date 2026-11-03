@@ -4,11 +4,13 @@ type Review = { request: PackageRequest; label: string; changes: Json; grants: s
 type Scope = 'user' | 'project';
 const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'required', 'effective', 'pending', 'failed', 'blocked', 'compatible', 'conflicts'] as const;
 type Listed = Pick<PackageState, typeof FIELDS[number]>;
+type Choice = { model: string; label: string; efforts: string[]; effort: string; window: number };
+type Choosing = { from: string; name: string; models: Choice[]; lead: string | null };
 type Saved = { generation: number; packages: Listed[]; reloadError: string | null; review: Review | null; notice: string | null;
-  catalog: PackageCatalogEntry[]; catalogError: string | null; scope: Scope };
+  catalog: PackageCatalogEntry[]; catalogError: string | null; scope: Scope; choosing: Choosing | null };
 type Remembered = { onboarded?: boolean; selected?: string; query?: string };
 type Property = { type?: string; enum?: Json[]; default?: Json; title?: string; description?: string; choices?: 'routes' };
-const EMPTY: Saved = { generation: 0, packages: [], reloadError: null, review: null, notice: null, catalog: [], catalogError: null, scope: 'user' };
+const EMPTY: Saved = { generation: 0, packages: [], reloadError: null, review: null, notice: null, catalog: [], catalogError: null, scope: 'user', choosing: null };
 const LIST = 'mods';
 const SELF = 'omd_mods';
 const UNSET = '-';
@@ -38,6 +40,7 @@ const ACRONYMS = new Set(['cli', 'lsp', 'api', 'mcp', 'ui']);
 const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const SHOWN = 98;
 const CATALOG = 120;
+const MODELS = 24;
 // The catalog is kept in UI state, which the host caps at 64 KiB (validate_ui_state); stop paging once the raw index pages reach it.
 const INDEX_BYTES = 65_536;
 const TABS = [{ id: 'installed', title: 'All' }, { id: 'settings', title: 'Settings' }, { id: 'directory', title: 'Directory' }];
@@ -111,17 +114,38 @@ export default function activate(api: ModAPI) {
     store({ ...state, notice: `${labelOf(name, property)} saved` });
     return null;
   };
+  const skips = (item: PackageState) => properties(item).some(([name, property]) => name === 'skip_same_model' && property.type === 'boolean'
+    && (item.settings?.[name] ?? property.default) !== false);
+  const add = (state: Saved, item: PackageState, name: string, choice: { model?: string; effort?: string }): Saved | null => {
+    const added = api.host.tryCall('routes.add', { mod: item.id, ...choice });
+    const back = { ...state, choosing: null };
+    if (!added.ok || 'status' in added.value) return { ...back, notice: added.ok ? 'No helper model was added' : `No helper model was added (${brief(added.error)})` };
+    // An unchanged setting isn't written, so no reload reruns the panel to show write's notice.
+    if (item.settings?.[name] === added.value.route)
+      return { ...back, notice: `${labelOf(name, properties(item).find(([entry]) => entry === name)?.[1])} already uses ${added.value.route}` };
+    return write(back, item, `${name} ${added.value.route}`);
+  };
+  const choose = (state: Saved, item: PackageState, name: string): Saved => {
+    const listed = api.host.tryCall('routes.models', { mod: item.id });
+    if (!listed.ok) return { ...state, notice: `The model list is unavailable (${brief(listed.error)})` };
+    const models = listed.value.flatMap(({ model, display_name, efforts, default_effort, context_window }): Choice[] => {
+      const usable = efforts.filter(word).slice(0, 8);
+      return word(model) && usable.length ? [{ model, label: clip(display_name || model, 64), efforts: usable, effort: default_effort, window: context_window }] : [];
+    }).slice(0, MODELS);
+    if (!models.length) return { ...state, notice: 'No ChatGPT models are available; sign in to Codex with ChatGPT first' };
+    const info = api.host.tryCall('session.info', null);
+    return { ...state, choosing: { from: key(item), name, models, lead: info.ok ? info.value.model : null }, notice: null };
+  };
   const act = (state: Saved, verb: string, argument: string, from = LIST, item?: PackageState): Saved | null => {
-    if (verb === 'cancel') return { ...state, review: null, notice: null };
+    if (verb === 'cancel') return { ...state, review: null, choosing: null, notice: null };
     if (verb === 'apply') return state.review ? apply(state, state.review.request, state.review.label, state.review.generation) : { ...state, notice: 'Nothing to apply' };
     if (verb === 'set') return write(state, item, argument);
-    if (verb === 'route' && item) {
-      const added = api.host.tryCall('routes.add', { mod: item.id });
-      if (!added.ok || 'status' in added.value) return { ...state, notice: added.ok ? 'No helper model was added' : `No helper model was added (${brief(added.error)})` };
-      // An unchanged setting isn't written, so no reload reruns the panel to show write's notice.
-      if (item.settings?.[argument] === added.value.route)
-        return { ...state, notice: `${labelOf(argument, properties(item).find(([name]) => name === argument)?.[1])} already uses ${added.value.route}` };
-      return write(state, item, `${argument} ${added.value.route}`);
+    if (verb === 'route' && item) return add(state, item, argument, {});
+    if (verb === 'choose' && item) return choose(state, item, argument);
+    if (verb === 'pick' && item) {
+      const [name = '', ...rest] = argument.split(':');
+      const effort = rest.pop() ?? '';
+      return add(state, item, name, { model: rest.join(':'), effort });
     }
     if (verb === 'scope') return argument === 'user' || argument === 'project' ? { ...state, scope: argument } : state;
     if (verb === 'directory') return search(state);
@@ -233,7 +257,7 @@ export default function activate(api: ModAPI) {
       const chosen = String(current ?? property.default ?? '') || UNSET;
       const missing = chosen !== UNSET && !options.includes(chosen) && word(chosen);
       return entry({ ...base, kind: 'choice', value: missing || options.includes(chosen) ? chosen : UNSET,
-        description: options.length ? base.description : 'No helper model yet: use Add a helper model below',
+        description: options.length ? base.description : 'No helper model yet: choose one below',
         options: [{ value: UNSET, label: 'Not set' }, ...missing ? [{ value: chosen, label: `${chosen} (unavailable in this project)` }] : [], ...options.slice(0, 30).map(value => ({ value, label: value }))] });
     }
     if (options.length) return entry({ ...base, kind: 'choice', value: options.includes(String(current)) ? String(current) : options[0], options: options.map(value => ({ value, label: value })) });
@@ -247,9 +271,23 @@ export default function activate(api: ModAPI) {
     return { title: title(item, state), subtitle: subtitle([`${friendly(item.id)} is no longer installed`, state.notice]), action: { command: 'mods', args: `mod ${argument}` },
       items: [entry({ id: 'removed', label: 'Removed', kind: 'action', description: 'Esc returns to the list' })] };
   };
+  const chooser = (item: PackageState, state: Saved, { name, models, lead }: Choosing): TerminalPanel => {
+    const skipping = skips(item);
+    const picks = models.flatMap(choice => choice.efforts.map(effort => ({ choice, effort, id: `pick:${name}:${choice.model}:${effort}` })))
+      .filter(({ id }) => encoder.encode(id).length <= 128).slice(0, 190);
+    return {
+      title: `${title(item, state)}: ${labelOf(name, properties(item).find(([entry]) => entry === name)?.[1])}`, action: { command: 'mods', args: `mod ${key(item)}` },
+      subtitle: subtitle(['Choose a ChatGPT model and effort. It adds a helper route on your ChatGPT plan for this mod and asks before changing anything.',
+        skipping && `${friendly(item.id)} skips while it would run on the lead's model (skip_same_model is on)${lead ? `, so pick a model other than ${lead}` : ''}.`, state.notice]),
+      items: [...picks.map(({ choice, effort, id }) => entry({ id, group: choice.label, kind: 'action', label: `${choice.label} · ${effort}${effort === choice.effort ? ' (default)' : ''}`,
+        description: `${Math.round(choice.window / 1000)}K context${choice.model !== lead ? '' : skipping ? `; the lead's model: ${friendly(item.id)} would skip` : "; the lead's model"}` })),
+      entry({ id: 'cancel', label: 'Back', kind: 'action', description: 'Keep the current setting' })],
+    };
+  };
   const details = (item: PackageState, state: Saved): TerminalPanel => {
     const args = `mod ${key(item)}`;
     if (state.review?.from === key(item)) return reviewing(title(item, state), state, args);
+    if (state.choosing?.from === key(item)) return chooser(item, state, state.choosing);
     const fixed = kept(item) && item.enabled;
     const actions = item.source !== 'selection' ? [['update', 'Update'], ['rollback', 'Roll back'], ...fixed ? [] : [['remove', 'Remove']]] : item.failed?.startsWith('source_changed') ? [['trust', 'Trust the edited source']] : [];
     return {
@@ -259,8 +297,11 @@ export default function activate(api: ModAPI) {
       items: [
         ...fixed ? [] : [entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled })],
         ...properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
-        ...properties(item).filter(([, property]) => property.choices === 'routes').slice(0, 8).map(([name, property]) => entry({ id: `route:${name}`, kind: 'action',
-          label: `Add a helper model for ${labelOf(name, property)}`, description: 'Uses the model you are chatting with on your ChatGPT plan; asks before changing anything' })),
+        ...properties(item).filter(([, property]) => property.choices === 'routes').slice(0, 8).flatMap(([name, property]) => [
+          entry({ id: `choose:${name}`, kind: 'action', label: `Choose a model for ${labelOf(name, property)}`,
+            description: 'Pick a ChatGPT model and effort on your plan; asks before changing anything' }),
+          entry({ id: `route:${name}`, kind: 'action', label: `Add a helper model for ${labelOf(name, property)}`,
+            description: `Uses the model you are chatting with on your ChatGPT plan; asks before changing anything${skips(item) ? `. ${friendly(item.id)} skips it while skip_same_model is on` : ''}` })]),
         ...actions.map(([verb, label]) => entry({ id: `do:${verb}`, label, kind: 'action' })),
       ],
     };
@@ -299,7 +340,7 @@ export default function activate(api: ModAPI) {
       const [, scope, item, text] = words(raw, 3);
       const scoped: Saved = { ...lost || !item ? search(state) : state, scope: scope === 'project' ? 'project' : 'user' };
       const target = /^(open|update):/.test(item) ? describe(item.slice(item.indexOf(':') + 1)) : null;
-      if (target) return presenting(target, { ...scoped, review: null, notice: null });
+      if (target) return presenting(target, { ...scoped, review: null, choosing: null, notice: null });
       const next = !item ? { ...scoped, notice: current.notice }
         : item === 'apply' || item === 'cancel' || item === 'scope' || item === 'directory' ? act(scoped, item, text)
           : item === 'source' ? act(scoped, 'install', text)
@@ -317,10 +358,12 @@ export default function activate(api: ModAPI) {
           : item === 'enabled' ? act(state, text === 'true' ? 'enable' : 'disable', id, id, target)
             : item.startsWith('setting:') ? act(state, 'set', `${item.slice(8)} ${text}`, id, target)
               : item.startsWith('route:') ? act(state, 'route', item.slice(6), id, target)
-                : item.startsWith('do:') ? act(state, item.slice(3), id, id, target) : { ...state, notice: `Unknown action ${item}` };
+                : item.startsWith('choose:') ? act(state, 'choose', item.slice(7), id, target)
+                  : item.startsWith('pick:') ? act(state, 'pick', item.slice(5), id, target)
+                    : item.startsWith('do:') ? act(state, item.slice(3), id, id, target) : { ...state, notice: `Unknown action ${item}` };
       return next && presenting(target, next);
     }
-    if (target) return presenting(target, { ...state, review: null, notice: null });
+    if (target) return presenting(target, { ...state, review: null, choosing: null, notice: null });
     const next = act(state, verb, rest.join(' ')) ?? saved();
     store(next);
     return { display: [next.notice, next.review && `${reviewText(next.review)}\nRun /mods apply or /mods cancel`].filter(Boolean).join('\n') || 'No change' };

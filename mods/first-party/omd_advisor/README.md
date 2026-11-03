@@ -15,9 +15,15 @@ omd mods enable omd_advisor
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
 Then pick the model the advisor runs on. That's the `route` setting, which has no default. In `/mods`, open Advisor,
-then Advisor model. Or choose Add a helper model there to use the model you're chatting with on your ChatGPT plan.
-Other worker routes (model setups in `host.json`) need their own model access and allowance. Until `route` is set, the
-advisor reports `unavailable` with the routes it can use, and the status line reads `Advisor: no route set`.
+then Advisor model. It lists worker routes and the routes of connected providers whose model is available now. Or
+select Choose a model for Advisor model to pick any ChatGPT model on your plan and its reasoning effort. Set up other
+providers first in `/profiles` or their provider mod, such as Claude CLI; the advisor uses that connection's model
+access. Paid routes still need their configured allowance.
+
+Choose a different model from the lead: `skip_same_model` is on by default, so the advisor skips while its route uses
+the lead's model. Add a helper model uses the model you're chatting with, and Choose a model marks the lead's model. To
+consult the same model deliberately, turn that setting off. Until a model is selected, the advisor reports `unavailable`
+with the routes it can use, and the status line reads `Advisor: no route set`.
 
 ## Use it
 
@@ -36,7 +42,7 @@ Change settings in `/mods`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `route` | none | Worker route the advisor runs on |
+| `route` | none | The connected provider or ChatGPT helper route the advisor runs on |
 | `triggers` | `[]` | Consult automatically on `failure` (same call failed twice), `loop` (same output three times) or `completion` (turns that changed files) |
 | `every_turn` | `false` | Review every completed lead turn |
 | `mode` | `advisory` | `blocking` also needs a workflow contract with an advisor review gate |
@@ -47,12 +53,13 @@ Change settings in `/mods`.
 ## Needs and limits
 
 - It asks to add `/advisor`, `/observations` and a consult tool, read the conversation with its tool calls, the diff
-  (`git diff`) and workspace files, run the advisor model on a worker route, add its findings to the lead's context,
+  (`git diff`) and workspace files, run the advisor model on the selected route, add its findings to the lead's context,
   submit review receipts to a workflow contract, follow turns and tool output, show notes and keep its state. The
   capabilities are `commands`, `tools`, `sessions`, `sessions_tools`, `exec`, `fs.read`, `agents`, `model`, `context`,
   `contracts`, `lifecycle`, `outputs`, `terminal` and `store` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - Advice is a second opinion, not an approval. Review and verify yourself.
+- Partial advice is marked incomplete with the provider's stop reason when available.
 - The prompt is capped at 8 KB. Keys, tokens and credentials are redacted first, but that is a pattern filter, not a
   guarantee.
 - The conversation section contains the newest complete history records that fit in 2.5 KB. It never cuts a record off.

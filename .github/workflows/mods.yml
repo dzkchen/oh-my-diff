@@ -1,0 +1,60 @@
+name: Mods
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build, check and sign the bundle without publishing it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mods
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.repository == 'dzkchen/oh-my-diff' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d
+        with:
+          install_args: node python@3.14.6
+          cache_save: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          package_json_file: mods/package.json
+      - run: pnpm --dir mods install --frozen-lockfile
+      - run: mise run mods:check
+
+  publish:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d
+        with:
+          install_args: python@3.14.6
+          cache_save: false
+      - name: Build the bundle
+        run: python3 -m scripts.mods_bundle build --output bundle --commit "$GITHUB_SHA"
+      - name: Sign and publish (dry run prints the command)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OMD_RELEASE_SIGNING_KEY: ${{ secrets.OMD_RELEASE_SIGNING_KEY }}
+          DRY_RUN: ${{ inputs.dry_run && 'yes' || '' }}
+        run: python3 .github/scripts/ci.py publish-mods --directory bundle ${DRY_RUN:+--dry-run}

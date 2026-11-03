@@ -32,7 +32,7 @@ The registry marks these entries experimental in Mod API `1.0.0`:
 | Capabilities | `approve.override`, `autonomous`, `fs.external`, `history_write`, `mcp`, `peers`, `power`, `unix_sockets` |
 | Events | `config_change`, `contract`, `elicitation_result`, `focus`, `host_operation`, `instructions_loaded`, `migrate`, `mods_changed`, `peer_message`, `peer_receipt`, `prompt`, `prompt_expanded`, `session`, `tool_batch_end`, `tool_exposure`, `turn_queue`, `view`, `worktree` |
 | Interceptors | `agent_offers`, `agent_spawn`, `compaction`, `component_change`, `composer_key`, `elicitation`, `mention`, `peer_receive`, `peer_send`, `turn_stop` |
-| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access`, `workspace.unwatch` |
+| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access`, `workspace.unwatch` |
 | Components | `raster` |
 | Render sites | `composer_hint`, `notice`, `session_mode`, `tool_result`, `turn_duration`, `user_message` |
 | View fields | `background`, `footer`, `foreground`, `header`, `key_contexts`, `panels`, `placeholder`, `surface_styles`, `underlay` |
@@ -49,6 +49,7 @@ These experimental features have no registry entry of their own:
 | `api.uiState` and command views | [Session UI state](state-and-storage.md#session-ui-state-apiuistate) and [command views](commands-and-composer.md#command-views) |
 | `process_streams_v1` | `framing: "raw"` on `process.start` |
 | `process_raster_v1`, `raster_pixels_v1` | Processes that feed a raster frames or raw pixel buffers |
+| `route_new_threads_v1` | `routes.select` with `scope: "new_threads"`, for future terminal threads |
 | `completion_tokens_v1` | `api.completion` token triggers |
 | `settings_file_v1` | `api.settingsFile` and the settings file |
 | `terminal_focus_v1` | Focus regions, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus` |
@@ -67,6 +68,7 @@ These frozen entries have experimental fields:
 | `intercepts:tool` | `value`, `bytes` | `code_mode_values_v1`, `tool_original_v1` |
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
 | `operations:agents.spawn` | `model` | none |
+| `operations:routes.add` | `model`, `effort` | `routes_add_model_v1` |
 | `operations:routes.list` | `data` | `route_write_v1` |
 | `operations:session.info` | `process_id`, `omd_version` | none |
 | `operations:sidecars.status` | `started_at_ms` | none |

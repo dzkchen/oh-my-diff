@@ -7,7 +7,7 @@ part of it. For the test commands you run locally, see [tests/README.md](../../t
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `pr.yml` | Pull requests and the merge queue | Portable checks, selected native compilation, one `PR gate` status |
+| `pr.yml` | Pull requests, the merge queue and pushes to `main` | Portable checks, selected native compilation, one `PR gate` status; main pushes warm the compile cache |
 | `validate.yml` | Called by the two below | Tests, lints, builds and packages on `macos-15` |
 | `nightly.yml` | Daily at 07:17 UTC, or **Run workflow** | Validates; on `main` publishes a nightly prerelease |
 | `release.yml` | A `vX.Y.Z` or `vX.Y.Z-rc.N` tag; **Run workflow** is a dry run | Checks versions, validates, publishes the release |
@@ -16,7 +16,8 @@ part of it. For the test commands you run locally, see [tests/README.md](../../t
 
 Every pull request runs the portable checks on Linux: mod type and static checks (`mise run mods:check`), native
 ownership, first-party mod and plugin lock freshness, a selected set of host-free Python tests and workflow linting.
-A newer push cancels the older run.
+A newer push cancels the older run. Pushes to `main` also run these checks, always including native compilation,
+to seed the shared compile cache for new PRs.
 
 There is no workflow-level path filter, so documentation pull requests also report `PR gate`. The gate requires
 successful selection and portable checks, and successful native checks when they're selected. Only an
@@ -52,10 +53,12 @@ package`. It uses no provider credentials. Four macOS jobs start together, and `
 
 One upstream test, `filtered_host_additional_permissions`, is excluded as a known baseline failure. Tests run in
 parallel under `cargo nextest` with upstream's `.config/nextest.toml` and the overrides in `.github/nextest.toml`,
-one process per test with one retry. Doc tests run under `cargo test`. Every cargo command in a job names the same
-`-p` packages, the suite's crates plus the helper binaries, and narrows the run with a nextest filter, so features
-unify once and dependencies compile once. Jobs work under `/Users/runner/omd`, not `/tmp`, which a sandboxed command
-may write.
+one process per test with one retry. Doc tests run under `cargo test`. Helper builds and nextest commands name the
+same `-p` packages, the suite's crates plus the helper packages, and narrow the test run with a nextest filter.
+Doctests currently select only the suite crates, so their dependency features can differ. Helper setup selects
+the required host and MCP fixture binaries explicitly; release builds select only the seven binaries in the
+package, avoiding extra diagnostic binaries. Jobs work under `/Users/runner/omd`, not `/tmp`, which a sandboxed
+command may write.
 
 The `package` artifact (7 days) contains the archive, `omd-release.json`, `provenance.json`, `install.sh`, a source
 tarball and `SHA256SUMS`. Each job's logs are in `validation-report-JOB` (14 days). The `package` report contains
@@ -71,11 +74,12 @@ Only passing runs on `main` publish. The version is `NEXT-nightly.UTC_TIMESTAMP.
 version in `runtime/release.lock.json`, or its next patch if that is a stable release. A nightly is always a
 prerelease and never marked latest.
 
-Releases are in [Cut a release](release.md).
+Releases and first-party mod bundles (the manual Mods workflow) are in [Cut a release](release.md).
 
 ## Repository settings
 
-`.github/settings.json` records the labels, merge settings and `main` protection. The maintainer applies it.
+`.github/settings.json` records the labels, merge settings, `main` protection and the `release` environment that
+holds the signing key. The maintainer applies it.
 Dependabot (`.github/dependabot.yml`) opens one grouped pull request a month for GitHub Actions updates. There are
 no dependency license or scheduled vulnerability checks.
 

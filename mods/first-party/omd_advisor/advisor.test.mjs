@@ -147,6 +147,30 @@ test('advisor sends the newest complete history records within the section budge
   assert.match(run([...records.slice(0, 2), { ...records[2], content: [{ type: 'input_text', text: 'y'.repeat(4000) }] }]), /omitted: the newest history record exceeds/);
 });
 
+test('incomplete one-shot advice keeps its partial text and reports why it stopped', () => {
+  for (const stop_reason of ['max_output_tokens', null]) {
+    const fixture = consultHost({ 'model.complete': () => ({ status: 'incomplete', text: 'Partial advice', stop_reason }) });
+    const answer = invoke({}, fixture.host, { ...consultOptions({}), event: 'tool', name: 'ask' });
+    assert.match(answer.value, /^Advisor incomplete/);
+    assert.match(answer.value, /Partial advice/);
+    if (stop_reason) assert.ok(answer.value.includes(stop_reason));
+    assert.match(answer.state.consulted.advice, /^Advisor incomplete.*Partial advice/);
+  }
+});
+
+test('maximum observer implications fit the combined terminal row limit', () => {
+  for (const kind of ['behavior_change', 'uncertainty', 'unresolved_failure', 'decision_needed']) for (const unit of ['x', '😀']) {
+    const note = { fingerprint: 'x', kind, implication: unit.repeat(240), detail: '', quote: 'The unresolved failure', item: 1, turn: 't' };
+    const answer = invoke({ event: 'turn_end' }, () => assert.fail('terminal must not call host'), {
+      event: 'terminal', settings: { route: 'astra', observe: true }, state: { observer: { notes: [note] } },
+    });
+    const row = answer.value.sites.above_composer.components[1].children[0].rows[0];
+    const length = row.spans.reduce((count, span) => count + [...span.text].length, 0);
+    assert.ok(length <= 256, `${kind}: row has ${length} characters`);
+    assert.equal([...row.spans[1].text].length, Math.min(240, 256 - row.spans[0].text.length));
+  }
+});
+
 test('advisor without a route names the worker routes instead of calling a model', () => {
   const routes = [{ name: 'lead', roles: ['lead'], available: true }, { name: 'reviewer', roles: ['worker'], available: true }, { name: 'offline', roles: ['worker'], available: false }];
   const unset = { ...advisorOptions, settings: { every_turn: true }, state: null };

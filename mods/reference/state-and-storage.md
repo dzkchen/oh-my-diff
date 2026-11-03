@@ -152,6 +152,7 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
     makes the fork's copy first.
   - Registration reads the state of the thread whose callback reloaded the mods. At process start there is no such
     thread.
+  - Terminal handlers wait until a thread exists; they do not receive the pre-thread `startup` callbacks.
 - `"checkout"` stores one state per checkout, shared by every OMD process working there whatever its mod store: in
   `<git-dir>/omd/state/<mod>.json` for a Git checkout (a linked worktree has its own), read-only to agent commands
   as Codex keeps `.git` read-only. Outside a Git checkout, as in a projectless session, checkout state is unavailable

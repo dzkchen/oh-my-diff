@@ -57,8 +57,13 @@ transcript                 ││                            │
 ╰────────────────────────╯ │╰────────────────────────────╯
 ```
 
-Then rearrange it:
+Then rearrange it. Everything works from the keyboard, and the mouse is optional:
 
+- Arrange with keys: focus a panel and press `m` (`key_arrange`). `Shift` with an arrow key moves it, `T`
+  (`key_arrange_tab`) puts it in tabs with its neighbour, `=` / `-` resize it inside its split, and `m` again finishes.
+  While you arrange, the status row shows `Arranging PANEL:` and these keys. Arranging also ends after a minute without
+  an arrange key, on any other `/workspace` command, when the panels are hidden and when Codex restarts. The keys only
+  work while that panel has focus. `/workspace arrange PANEL` starts it from the prompt.
 - Drag a panel by its title row onto another panel. Dropping on an edge splits beside it, and dropping in the
   center tabs with it. In a tab group, grab the frame line under the tab bar. A panel drawn without a title or frame
   can't be dragged. Move it with `/workspace move`.
@@ -81,12 +86,13 @@ dropping above or below a panel puts it beside that panel.
 
 ### Keys
 
-From the prompt, `Ctrl+]` enters the panels. `Esc` or `Ctrl+]` in a panel returns to the chat. `Tab` moves between a
-panel's controls.
+From the prompt, `Ctrl+]` enters the panels and `F6` (`key_toggle`) shows or hides them. `Esc` or `Ctrl+]` in a panel
+returns to the chat. `Tab` moves between a panel's controls.
 
 | Key | Setting | What it does |
 | --- | --- | --- |
-| `1`–`6` | `key_panel_1`, `key_panel_2`, `key_panel_3`, `key_panel_4`, `key_panel_5`, `key_panel_6` | Show that panel (its tab, or focus it) |
+| `F6` | `key_toggle` | Show or hide the panels, from the prompt too. Showing them brings back the screen mode they had |
+| `1`–`6` | `key_panel_1`, `key_panel_2`, `key_panel_3`, `key_panel_4`, `key_panel_5`, `key_panel_6` | Focus that panel. A tab that isn't showing comes to the front first, and a second press focuses it |
 | `0` | `key_main` | Back to the chat |
 | `Left` or `h` | `key_left`, `key_left_alt` | Region on the left |
 | `Right` or `l` | `key_right`, `key_right_alt` | Region on the right |
@@ -94,7 +100,10 @@ panel's controls.
 | `Down` or `j` | `key_down`, `key_down_alt` | Region below (same) |
 | `[` / `]` | `key_tab_previous`, `key_tab_next` | Previous / next tab of the focused tab group |
 | `{` / `}` | `key_panel_tab_previous`, `key_panel_tab_next` | Previous / next tab inside a panel with its own tabs |
-| `=` / `-` | `key_grow`, `key_shrink` | Grow / shrink the panels (dragging a border works too) |
+| `=` / `-` | `key_grow`, `key_shrink` | Grow / shrink the panels (while arranging, the arranged panel; dragging a border works too) |
+| `m` | `key_arrange` | Start or finish arranging the focused panel |
+| `Shift+Left`, `Shift+Right`, `Shift+Up`, `Shift+Down` | `key_arrange_left`, `key_arrange_right`, `key_arrange_up`, `key_arrange_down` | While arranging, move the panel |
+| `T` | `key_arrange_tab` | While arranging, put the panel in tabs with its neighbour |
 | `+` / `_` | `key_mode_next`, `key_mode_previous` | Next / previous screen mode: normal, half, full |
 | `Enter` | `key_focus_shell` | Type in a running Shell or terminal (`Ctrl+]` leaves it) |
 | `?` | `key_help` | List the keys that work here |
@@ -108,8 +117,16 @@ To change a key, set its setting in `/mods` to one of:
   `Ctrl+j`, `Ctrl+m` and `Ctrl+z` aren't allowed.
 - `<disabled>` to turn it off
 
-An invalid key keeps its default and is listed by `/workspace config`. The workspace binds at most 32 keys. With many
-panels the alternate region keys, then the screen mode keys, are dropped first.
+`key_toggle` also works from the prompt, so it takes only `F2` to `F12`, or `Ctrl+` or `Alt+` with a lowercase letter
+or digit. On macOS, an `Alt+` key needs Option-as-Alt turned on in your terminal.
+
+Codex's own keys come first. A key Codex already uses, such as `F2` (warnings), `F3`, `F4`, `F8`, `F9` or `Ctrl+w`
+in the prompt, does nothing here. Inside another mod's panel, that mod's keys come first, so pick keys it doesn't use.
+
+An invalid key keeps its default. A key that another setting already uses also keeps its default, and if the default
+is taken as well, that key is turned off. `/workspace config` lists each one under `Ignored:`. The workspace binds at
+most 32 keys. With many panels the alternate region keys, the screen mode keys and the arrange keys of panels you
+aren't arranging are dropped first.
 
 Screen modes enlarge one panel for a while:
 
@@ -144,11 +161,13 @@ running shell costs about 2 MiB and no idle CPU.
 | --- | --- |
 | `/workspace` | Status and usage |
 | `/workspace on`, `off` | Show or hide the workspace |
+| `/workspace toggle` | Show or hide the panels and keep the workspace's keys (`key_toggle`). While the workspace is off, it turns it on |
 | `/workspace layout PRESET\|save NAME\|load NAME\|delete NAME` | Pick, save, load or delete an arrangement |
 | `/workspace move PANEL left\|right\|up\|down\|tab`, `swap PANEL PANEL` | Rearrange panels |
+| `/workspace arrange PANEL`, then `arrange left\|right\|up\|down\|tab\|done` | Arrange one panel step by step (`key_arrange`) |
 | `/workspace tab N\|next\|previous` | Show a panel's tab |
 | `/workspace tab next\|previous PANEL` | Switch a panel's own tab |
-| `/workspace grow`, `shrink` | Resize the panels beside the chat by 5% |
+| `/workspace grow [PANEL]`, `shrink [PANEL]` | Resize the panels beside the chat, or one panel inside its split, by 5% |
 | `/workspace mode next\|previous\|normal\|half\|full [PANEL\|dock\|chat]` | Change a screen mode |
 | `/workspace start [PANEL]` | Start the shell or a terminal panel |
 | `/workspace diff PATH`, `refresh` | Show a changed file's diff, reload the list |

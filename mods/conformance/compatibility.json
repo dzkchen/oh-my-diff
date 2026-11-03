@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "as_of": "2026-11-02",
+  "as_of": "2026-11-03",
   "host": {
     "codex": "0.166.0",
-    "omd": "1.4.1",
+    "omd": "1.4.2",
     "stability": "stable",
     "current_api": "1.0.0",
     "package_schemas": [
@@ -61,6 +61,8 @@
       "final_request_policy_v1",
       "continuation_middleware_v1",
       "builtins_v1",
+      "transcript_exec_groups_v1",
+      "terminal_thread_view_v1",
       "contracts_v2",
       "framed_process_v1",
       "process_streams_v1",
@@ -111,6 +113,7 @@
       "terminal_editor_v1",
       "pty_programs_v1",
       "route_reload_v1",
+      "route_new_threads_v1",
       "route_write_v1",
       "model_context_window_v1",
       "power_hold_v1",
@@ -158,7 +161,8 @@
       "terminal_colors_v1",
       "terminal_pty_v2",
       "terminal_welcome_hidden_v1",
-      "routes_add_self_v1"
+      "routes_add_self_v1",
+      "routes_add_model_v1"
     ]
   },
   "apis": [

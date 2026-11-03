@@ -17,11 +17,11 @@ def signing_key(directory):
     return key, key.with_suffix(".pub").read_text().strip()
 
 
-def signed(key, path, body):
+def signed(key, path, body, namespace=authority_broker.SIGNING_NAMESPACE):
     path.parent.mkdir(exist_ok=True)
     path.write_bytes(body)
     path.with_name(path.name + ".sig").unlink(missing_ok=True)
-    subprocess.run(["ssh-keygen", "-Y", "sign", "-q", "-f", key, "-n", authority_broker.SIGNING_NAMESPACE, path], check=True)
+    subprocess.run(["ssh-keygen", "-Y", "sign", "-q", "-f", key, "-n", namespace, path], check=True)
     return path
 
 
@@ -100,13 +100,15 @@ class PowerHelperDaemonTest(unittest.TestCase):
             root = base / "OhMyDiff/broker"
             paths = {"ROOT": root, "TOOLS": root.parent / "tools", "COPY": root.parent / "tools/authority_broker.py",
                      "HELPER": base / "helper", "DAEMON": base / "broker.plist",
-                     "POWER_DAEMON": base / "power.plist", "POWER_RECORD": root.parent / "power.json"}
+                     "POWER_DAEMON": base / "power.plist", "POWER_RECORD": root.parent / "power.json",
+                     "POLICY": root.parent / "policy.json", "SOCKET": str(base / "broker.sock"),
+                     "POWER_SOCKET": str(base / "power.sock")}
             commands = []
             with mock.patch.multiple(authority_broker, **paths), \
                     mock.patch.multiple(authority_broker, signed_releases=lambda _: [{"version": "1.0.0"}],
                                         signed_hashes=lambda _: {}, signed_bytes=lambda *_: b"signed",
                                         signed_cdhashes=lambda *_: ["pin"], create_account=lambda: None,
-                                        run=lambda *arguments, **_: commands.append(arguments)), \
+                                        run=lambda *arguments, **_: commands.append(arguments) or mock.Mock(returncode=0)), \
                     mock.patch("grp.getgrnam", return_value=mock.Mock(gr_gid=301)), \
                     mock.patch("shutil.chown"), mock.patch("os.chown"):
                 authority_broker.install(base / "omd-broker", base / "tooling.py", [], [])
@@ -124,6 +126,72 @@ class PowerHelperDaemonTest(unittest.TestCase):
 
 
 class AdministratorPolicyFileTest(unittest.TestCase):
+    def test_broker_uninstall_refuses_to_report_success_when_system_records_remain(self):
+        for failed, message in (("bootout", "service is still running"), ("remove", "authorization right remains"),
+                                ("-delete", "account record remains")):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as temporary:
+                base = Path(temporary)
+                root = base / "OhMyDiff/broker"
+                paths = {"ROOT": root, "POLICY": root.parent / "policy.json", "TOOLS": root.parent / "tools",
+                         "HELPER": base / "helper", "DAEMON": base / "broker.plist", "POWER_DAEMON": base / "power.plist",
+                         "POWER_RECORD": base / "power.json", "SOCKET": str(base / "broker.sock"),
+                         "POWER_SOCKET": str(base / "power.sock")}
+                paths["DAEMON"].write_text("managed")
+
+                def run(*arguments, **kwargs):
+                    return mock.Mock(returncode=int(failed in arguments))
+
+                with mock.patch.multiple(authority_broker, **paths), mock.patch.object(authority_broker, "run", side_effect=run), \
+                        self.assertRaisesRegex(ValueError, message):
+                    authority_broker.uninstall(purge=True)
+                self.assertTrue(paths["DAEMON"].is_file())
+
+    def test_broker_uninstall_parses_purge_without_changing_the_system(self):
+        with mock.patch("os.geteuid", return_value=0), mock.patch.object(authority_broker, "uninstall", return_value={}) as remove:
+            authority_broker.main(["uninstall", "--purge"])
+        remove.assert_called_once_with(True)
+
+    def test_broker_uninstall_reports_an_incomplete_directory_removal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "OhMyDiff/broker"
+            root.mkdir(parents=True)
+            paths = {"ROOT": root, "POLICY": root.parent / "policy.json", "TOOLS": root.parent / "tools",
+                     "HELPER": base / "helper", "DAEMON": base / "broker.plist", "POWER_DAEMON": base / "power.plist",
+                     "POWER_RECORD": base / "power.json", "SOCKET": str(base / "broker.sock"),
+                     "POWER_SOCKET": str(base / "power.sock")}
+            with mock.patch.multiple(authority_broker, **paths), mock.patch.object(authority_broker, "run"), \
+                    mock.patch.object(authority_broker.shutil, "rmtree", side_effect=PermissionError("broker is locked")), \
+                    self.assertRaisesRegex(PermissionError, "broker is locked"):
+                authority_broker.uninstall(purge=True)
+            self.assertTrue(root.exists())
+
+    def test_broker_uninstall_purge_removes_both_policy_files_and_keeps_user_files(self):
+        for purge in (False, True):
+            with self.subTest(purge=purge), tempfile.TemporaryDirectory() as temporary:
+                base = Path(temporary)
+                root = base / "OhMyDiff/broker"
+                root.mkdir(parents=True)
+                (root / "credentials.json").write_text("protected")
+                policy = root.parent / "policy.json"
+                previous = policy.with_name("policy.json.previous")
+                for path in (policy, previous):
+                    path.write_text("{}")
+                personal = root.parent / "personal.txt"
+                personal.write_text("keep")
+                paths = {"ROOT": root, "POLICY": policy, "TOOLS": root.parent / "tools", "HELPER": base / "helper",
+                         "DAEMON": base / "broker.plist", "POWER_DAEMON": base / "power.plist",
+                         "POWER_RECORD": base / "power.json", "SOCKET": str(base / "broker.sock"),
+                         "POWER_SOCKET": str(base / "power.sock")}
+                with mock.patch.multiple(authority_broker, **paths), mock.patch.object(authority_broker, "run"):
+                    result = authority_broker.uninstall(purge=purge)
+                self.assertEqual(policy.exists(), not purge)
+                self.assertEqual(previous.exists(), not purge)
+                self.assertFalse(root.exists())
+                self.assertEqual(personal.read_text(), "keep")
+                self.assertEqual(result["purged_administrator_policy" if purge else "preserved_administrator_policy"],
+                                 [str(policy), str(previous)])
+
     def test_install_rollback_and_remove_keep_one_previous_policy(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)

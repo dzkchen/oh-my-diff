@@ -319,6 +319,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "final_request_policy_v1",
     "continuation_middleware_v1",
     "builtins_v1",
+    "transcript_exec_groups_v1",
+    "terminal_thread_view_v1",
     "contracts_v2",
     "framed_process_v1",
     "process_streams_v1",
@@ -369,6 +371,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_editor_v1",
     "pty_programs_v1",
     "route_reload_v1",
+    "route_new_threads_v1",
     "route_write_v1",
     "model_context_window_v1",
     "power_hold_v1",
@@ -417,6 +420,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_pty_v2",
     "terminal_welcome_hidden_v1",
     "routes_add_self_v1",
+    "routes_add_model_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -505,6 +509,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "packages.apply",
     "packages.reload",
     "routes.add",
+    "routes.models",
     "routes.write",
     "settings.write",
     "terminal.open",
@@ -6121,6 +6126,14 @@ impl ModHost {
         let mut results = Vec::new();
         let mut stale = Vec::new();
         for id in self.event_ids("terminal") {
+            if thread.is_none()
+                && self
+                    .loaded
+                    .get(&id)
+                    .is_some_and(|loaded| loaded.package.state_scope == "thread")
+            {
+                continue;
+            }
             let own = payload.own(&id);
             let key = self
                 .terminal_state_key(&id, thread.as_deref())

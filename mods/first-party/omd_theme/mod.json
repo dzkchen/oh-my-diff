@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "id": "omd_theme",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "/theme: living character-drawn scenes behind the whole screen, prompt box and menus, and terminal background steps",
+  "description": "/theme: living character-drawn scenes behind the conversation, opaque prompts and menus, and terminal background steps",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_theme"},
   "capabilities": ["terminal", "commands", "store", "events", "lifecycle", "builtins", "exec"],
@@ -25,8 +25,8 @@
       "terminal_colors_v1",
       "terminal_panel_navigation_v1",
       "terminal_raster_packed_v1",
+      "terminal_thread_view_v1",
       "terminal_underlay_v1",
-      "terminal_welcome_area_v1",
       "terminal_welcome_hidden_v1",
       "terminal_welcome_v1",
       "timers_16ms_v1"

@@ -17,7 +17,7 @@ The status words on this page:
 | [`omd_mods`](../mods/first-party/omd_mods/README.md) | OMD Core, OMD+ | The `/mods` screen and a short welcome card |
 | [`omd_update`](../mods/first-party/omd_update/README.md) | OMD Core, OMD+ | Update notices and the `/update` screen |
 | [`omd_logo`](../mods/first-party/omd_logo/README.md) | OMD Core, OMD+ | The OMD logo in the session header |
-| [`omd_tool_lines`](../mods/first-party/omd_tool_lines/README.md) | OMD+ | One short line per tool call; open it for the full output |
+| [`omd_tool_lines`](../mods/first-party/omd_tool_lines/README.md) | OMD+ | Groups adjacent shell commands and shortens other tool calls; open a row for the full output |
 | [`omd_statusline`](../mods/first-party/omd_statusline/README.md) | OMD+ | A configurable status line; `/statusline` edits it |
 | [`omd_auto_continue`](../mods/first-party/omd_auto_continue/README.md) | OMD+ | When an approval or a question gets no answer within the wait you set (two minutes by default), declines the approval or answers the question so the turn continues |
 
@@ -32,7 +32,7 @@ All of these come with OMD+ only.
 | [`omd_usage`](../mods/first-party/omd_usage/README.md) | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
 | [`omd_tool_absorb`](../mods/first-party/omd_tool_absorb/README.md) | When the model repeats a read in one response, runs it once. In [code mode](../mods/reference/glossary.md#sessions-and-models), also reuses unchanged file reads; `/absorb` | |
 | [`omd_tool_fix`](../mods/first-party/omd_tool_fix/README.md) | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
-| [`omd_theme`](../mods/first-party/omd_theme/README.md) | Living scenes drawn in character tiles behind the whole screen, prompt box and menus; `/theme` picks a scene and prints terminal background steps | |
+| [`omd_theme`](../mods/first-party/omd_theme/README.md) | Living scenes drawn in character tiles behind the conversation, with opaque prompts and menus; `/theme` picks a scene and prints terminal background steps | |
 | [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in, and `/monitor allow owner/repo` |
 | [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs from model requests in cache-friendly batches; the model reads one back with a recall tool; `/mask` | Can't be on with `omd_programmable_context` |
 
@@ -63,7 +63,7 @@ on with `omd mods enable ID`. [Support](support.md#versions) lists the Node vers
 | [`omd_programmable_context`](../mods/first-party/omd_programmable_context/README.md) | A Python workspace that lasts through the session, where the model loads files, keeps results and hands work to child agents, and a session harness of notes, memories, skills and agent specs it can propose changes to; `/refine` | The `omd-code-execution` plugin's Python kernel |
 | [`omd_mini`](../mods/first-party/omd_mini/README.md) | `omd mini`: a minimal session that prints into your terminal's scrollback, with a bare prompt and one status line; `/omd_mini:switch` | A terminal |
 | [`omd_subagent_router`](../mods/first-party/omd_subagent_router/README.md) | Runs subagents on the model your prompt names ("use sonnet 5.5 as subagents to research") or per-role settings, including another provider's; `delegate_task` runs background workers | The other provider set up, such as `omd_claude_cli` |
-| [`omd_workspace`](../mods/first-party/omd_workspace/README.md) | Arranges the chat with Git changes, a shell, your own terminal panels and other mods' panels: presets such as a tabbed dock or a corner layout, moves, drag, resize and focus keys; `/workspace` | `git` on your `PATH` for the Changes panel |
+| [`omd_workspace`](../mods/first-party/omd_workspace/README.md) | Arranges the chat with Git changes, a shell, your own terminal panels and other mods' panels: presets such as a tabbed dock or a corner layout, moves, drag, resize and focus keys, arranging with the keyboard alone and F6 to show or hide the panels; `/workspace` | `git` on your `PATH` for the Changes panel |
 | [`omd_lazygit`](../mods/first-party/omd_lazygit/README.md) | Runs lazygit in the session, full screen or as a workspace panel; its edits open in your editor or become `@path` mentions; `/lazygit` | `lazygit` on your `PATH`, allowed to run outside the sandbox; uses the experimental terminal pane API |
 | [`omd_yazi`](../mods/first-party/omd_yazi/README.md) | Runs the yazi file manager in the session; the files you pick become `@path` mentions; `/yazi` | `yazi` on your `PATH`, allowed to run outside the sandbox; uses the experimental terminal pane API |
 | [`omd_git`](../mods/first-party/omd_git/README.md) | A lazygit-style Git panel in the workspace dock: stage files and hunks, branches, commits, stash, push and pull; `/git` | `omd_workspace` turned on and `git` on your `PATH` |
