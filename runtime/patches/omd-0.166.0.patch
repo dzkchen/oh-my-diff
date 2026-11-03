@@ -35455,10 +35455,10 @@ index 240700e2e9824903aef5152121001126970ee8cf..24d9e1aef8db9811bcd68539c018702d
                  let effort_label = effort
                      .as_ref()
 diff --git a/codex-rs/tui/src/app/new_session.rs b/codex-rs/tui/src/app/new_session.rs
-index e6a1ade871116e55446c09491debc2d5bbf9dbbc..03ccc0e78e55dda9549be32be80453e09d7e4a66 100644
+index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1c387cb10ec8d794f737a6a420c8095ec9cda7d8 100644
 --- a/codex-rs/tui/src/app/new_session.rs
 +++ b/codex-rs/tui/src/app/new_session.rs
-@@ -6,6 +6,143 @@ use super::*;
+@@ -6,6 +6,141 @@ use super::*;
  use codex_config::ConfigLayerSource;
  use codex_protocol::config_types::ServiceTier;
 
@@ -35476,9 +35476,7 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..03ccc0e78e55dda9549be32be80453e0
 +        );
 +        let paths = crate::omd::mod_paths()
 +            .ok_or_else(|| color_eyre::eyre::eyre!("mod store is not configured"))?;
-+        let store = paths
-+            .store
-+            .ok_or_else(|| color_eyre::eyre::eyre!("mod store is not configured"))?;
++        let store = paths.store;
 +        let host: serde_json::Value =
 +            serde_json::from_slice(&std::fs::read(store.join("host.json"))?)?;
 +        let routes = host["routes"]
@@ -35602,7 +35600,7 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..03ccc0e78e55dda9549be32be80453e0
  pub(crate) fn has_launch_setting(
      config: &Config,
      cli_kv_overrides: &[(String, TomlValue)],
-@@ -60,6 +197,90 @@ pub(super) fn overlay_new_session_defaults(
+@@ -60,6 +195,90 @@ pub(super) fn overlay_new_session_defaults(
  }
 
  impl App {
@@ -35693,7 +35691,7 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..03ccc0e78e55dda9549be32be80453e0
      pub(super) async fn load_new_session_config(
          &mut self,
          app_server: &AppServerSession,
-@@ -106,6 +327,13 @@ impl App {
+@@ -106,6 +325,13 @@ impl App {
                  &self.harness_overrides,
              );
          }
@@ -112794,10 +112792,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b3652968d83edbb
+index 0000000000000000000000000000000000000000..fe9ba54b8bfa46658bd9c645eeeadae8929caaa7
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,218 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -112843,22 +112841,16 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub use admission::TaskCostCapture;
 +pub use admission::VersionMarker;
 +pub use admission::WorkerLimits;
-+pub use admission::WorkerStatus;
 +pub use builtins::BuiltinControls;
 +pub use builtins::BuiltinSnapshot;
 +pub use builtins::PROTECTED_COMMANDS;
 +pub use builtins::builtins_snapshot;
-+pub use contract_document::BlockingFindings;
-+pub use contract_document::CONTRACT_DOCUMENT_SCHEMA;
 +pub use contract_document::ContractDocument;
-+pub use contract_document::ContractGates;
 +pub use contract_document::ContractRequirement;
 +pub use contract_document::ContractResolution;
 +pub use contract_document::ContractSelection;
 +pub use contract_document::FindingLedger;
 +pub use contract_document::FindingLedgerEntry;
-+pub use contract_document::FindingResolution;
-+pub use contract_document::FindingSeverity;
 +pub use contract_document::Gate;
 +pub use contract_document::PROJECT_CONTRACT_SELECTION;
 +pub use contract_document::Producer;
@@ -112882,13 +112874,10 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub use workspace::Fingerprint;
 +pub use workspace::INDEX_BYTES;
 +pub use workspace::INDEX_FILES;
-+pub use workspace::RecordedChange;
 +pub use workspace::Snapshot;
 +pub use workspace::WorkspaceChange;
 +pub use workspace::WorkspaceIndex;
-+pub use workspace::WorkspaceRename;
 +pub use workspace::WorkspaceTransaction;
-+pub use workspace::WorkspaceTransactionResult;
 +pub use workspace::capture_tracked;
 +pub use workspace::change_baseline;
 +pub use workspace::cleanup_owned_directory;
@@ -112905,37 +112894,25 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
 +pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 +pub use mods::CODEX_CONFIG_UPDATE_PLAN;
-+pub use mods::CODEX_HOST_RELEASE;
-+pub use mods::DELEGABLE_APPROVAL_KINDS;
 +pub use mods::FileStamp;
-+pub use mods::INSTALLED_CONTRACT_TYPES_VERSION;
 +pub use mods::MANAGED_POLICY_FILE;
 +pub use mods::MANAGED_POLICY_KEY;
 +pub use mods::MANAGED_SCOPE;
 +pub use mods::MOD_API_VERSION;
 +pub use mods::MOD_CALLBACK_TOTAL_BUDGET_MS;
-+pub use mods::MOD_CAPABILITIES;
-+pub use mods::MOD_EVENTS;
 +pub use mods::MOD_HOST_FEATURES;
 +pub use mods::MOD_HOST_OPERATIONS;
-+pub use mods::MOD_KEY_LIMIT;
-+pub use mods::MOD_MIDDLEWARE_EVENTS;
 +pub use mods::MOD_PACKAGE_SCHEMA_VERSION;
 +pub use mods::MOD_RENDER_COMPONENTS;
-+pub use mods::MOD_REPLACEMENT_POINTS;
 +pub use mods::MOD_STATE_STORAGE_SCHEMA_VERSION;
 +pub use mods::MOD_TEXT_BYTES;
 +pub use mods::Managed;
 +pub use mods::ManagedPolicy;
-+pub use mods::ManagedTier;
 +pub use mods::ModActivity;
-+pub use mods::ModAgent;
 +pub use mods::ModAgentDefinition;
 +pub use mods::ModAnchor;
 +pub use mods::ModApprovalScope;
-+pub use mods::ModAutonomy;
 +pub use mods::ModBorder;
-+pub use mods::ModBoxAccent;
 +pub use mods::ModBoxBorder;
 +pub use mods::ModBoxStyle;
 +pub use mods::ModChain;
@@ -112946,7 +112923,7 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub use mods::ModComponent;
 +pub use mods::ModComponentAction;
 +pub use mods::ModComposerWhen;
-+pub use mods::ModConfiguration;
++pub(crate) use mods::ModConfiguration;
 +pub use mods::ModDensity;
 +pub use mods::ModDirection;
 +pub use mods::ModFind;
@@ -112958,38 +112935,26 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub use mods::ModHttpAccess;
 +pub use mods::ModIcons;
 +pub use mods::ModInstallRequest;
-+pub use mods::ModInterceptor;
 +pub use mods::ModKeyAction;
 +pub use mods::ModKeyContext;
 +pub use mods::ModKeys;
 +pub use mods::ModLayout;
-+pub use mods::ModLayoutLeaf;
-+pub use mods::ModLayoutSplit;
-+pub use mods::ModLayoutTabs;
-+pub use mods::ModListRow;
-+pub use mods::ModMcpServer;
-+pub use mods::ModOffset;
 +pub use mods::ModOsAccess;
 +pub use mods::ModOverlay;
 +pub use mods::ModOverlayClip;
-+pub use mods::ModPackage;
 +pub use mods::ModPackageGrant;
 +pub use mods::ModPackageLock;
-+pub use mods::ModPackagePlan;
++pub(crate) use mods::ModPackagePlan;
 +pub use mods::ModPackageSource;
 +pub use mods::ModPackageTrust;
 +pub use mods::ModPaint;
 +pub use mods::ModPanel;
-+pub use mods::ModPeerAccess;
-+pub use mods::ModPolicyScope;
 +pub use mods::ModRange;
 +pub use mods::ModRegion;
 +pub use mods::ModRenderSite;
 +pub use mods::ModScreenAnchor;
 +pub use mods::ModSelectOption;
-+pub use mods::ModSelection;
 +pub use mods::ModSidebarSide;
-+pub use mods::ModSiteMode;
 +pub use mods::ModSpacing;
 +pub use mods::ModSpan;
 +pub use mods::ModSplit;
@@ -112997,10 +112962,7 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub use mods::ModStyle;
 +pub use mods::ModSubscriptions;
 +pub use mods::ModSurfacePaint;
-+pub use mods::ModTab;
 +pub use mods::ModTerminalView;
-+pub use mods::ModTheme;
-+pub use mods::ModThemePatch;
 +pub use mods::ModTone;
 +pub use mods::ModTool;
 +pub use mods::ModView;
@@ -113008,11 +112970,9 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub use mods::ModViewPatch;
 +pub use mods::ModViewSnapshot;
 +pub use mods::OMD_HOST_RELEASE;
-+pub use mods::PERSIST_CHUNK_BYTES;
 +pub use mods::PERSIST_WITHHELD;
-+pub use mods::PersistedRewrite;
 +pub use mods::RAISED_TOOL_OUTPUT_TOKENS;
-+pub use mods::SUPPORTED_MOD_APIS;
++pub(crate) use mods::SUPPORTED_MOD_APIS;
 +pub use mods::SendPolicy;
 +pub use mods::StateThread;
 +pub use mods::TOOL_OUTPUT_BYTES;
@@ -113032,29 +112992,21 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub use mods::effective_settings;
 +pub use mods::event_shared;
 +pub use mods::file_stamp;
-+pub use mods::host_namespace;
 +pub use mods::install_profile;
 +pub use mods::intercept_shared;
-+pub use mods::invalid_render_tree;
 +pub use mods::invoke_shared;
 +pub use mods::load_managed;
-+pub use mods::load_managed_from;
 +pub use mods::managed;
 +pub use mods::mod_command_reference;
-+pub use mods::mod_component_id;
++pub(crate) use mods::mod_component_id;
 +pub use mods::mod_counts;
 +pub use mods::mod_key_name;
 +pub use mods::mod_ui_allowlist;
-+pub use mods::namespace_matches;
 +pub use mods::owned_command;
-+pub use mods::persist_changed_by;
-+pub use mods::persist_chunks;
-+pub use mods::persist_cut;
 +pub use mods::persist_texts;
 +pub use mods::read_only_call;
 +pub use mods::render_shared;
 +pub use mods::take_turned_off;
-+pub use mods::valid_glyphs;
 +pub use mods::write_settings;
 +
 +pub mod turn_evidence;
@@ -114709,10 +114661,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a3aabed8c
+index 0000000000000000000000000000000000000000..c07e84a4b65c85f2c24224440a2050e3c28f8681
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7017 @@
+@@ -0,0 +1,7022 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -114727,12 +114679,7 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +pub use chain::compose_rows;
 +pub use chain::continue_operation;
 +pub use chain::intercept_shared;
-+pub use persisted::PERSIST_CHUNK_BYTES;
 +pub use persisted::PERSIST_WITHHELD;
-+pub use persisted::PersistedRewrite;
-+pub use persisted::persist_changed_by;
-+pub use persisted::persist_chunks;
-+pub use persisted::persist_cut;
 +pub use persisted::persist_texts;
 +pub use render::MOD_RENDER_COMPONENTS;
 +pub use render::client_component_unmount;
@@ -114743,12 +114690,10 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +pub use render::render_shared;
 +mod packages;
 +mod view;
-+pub use view::MOD_KEY_LIMIT;
 +pub use view::MOD_TEXT_BYTES;
 +pub use view::ModActivity;
 +pub use view::ModAnchor;
 +pub use view::ModBorder;
-+pub use view::ModBoxAccent;
 +pub use view::ModBoxBorder;
 +pub use view::ModBoxStyle;
 +pub use view::ModColor;
@@ -114764,11 +114709,6 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +pub use view::ModKeyContext;
 +pub use view::ModKeys;
 +pub use view::ModLayout;
-+pub use view::ModLayoutLeaf;
-+pub use view::ModLayoutSplit;
-+pub use view::ModLayoutTabs;
-+pub use view::ModListRow;
-+pub use view::ModOffset;
 +pub use view::ModOverlay;
 +pub use view::ModOverlayClip;
 +pub use view::ModPaint;
@@ -114785,21 +114725,16 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +pub use view::ModSplit;
 +pub use view::ModStyle;
 +pub use view::ModSurfacePaint;
-+pub use view::ModTab;
-+pub use view::ModTheme;
-+pub use view::ModThemePatch;
 +pub use view::ModTone;
 +pub use view::ModView;
 +pub use view::ModViewConflict;
 +pub use view::ModViewPatch;
 +pub use view::ModViewSnapshot;
 +pub use view::component_ids_of;
-+pub use view::invalid_render_tree;
 +pub use view::mod_command_reference;
 +pub use view::mod_component_id;
 +pub use view::mod_key_name;
 +pub use view::owned_command;
-+pub use view::valid_glyphs;
 +mod outcome;
 +pub use outcome::ModCommandOutcome;
 +mod package_manager;
@@ -116554,18 +116489,22 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +    }
 +}
 +
-+pub fn namespace_matches(pattern: &str, namespace: &str) -> bool {
-+    match pattern.split_once('*') {
-+        None => pattern == namespace,
-+        Some((prefix, rest)) => {
-+            namespace.starts_with(prefix)
-+                && (0..=namespace.len() - prefix.len()).any(|skip| {
-+                    namespace
-+                        .get(prefix.len() + skip..)
-+                        .is_some_and(|tail| namespace_matches(rest, tail))
-+                })
-+        }
++pub(crate) fn glob(pattern: &str, text: &str) -> bool {
++    let parts = pattern.split('*').collect::<Vec<_>>();
++    let [first, .., last] = parts.as_slice() else {
++        return pattern == text;
++    };
++    if text.len() < first.len() + last.len() || !text.starts_with(first) || !text.ends_with(last) {
++        return false;
 +    }
++    let (mut at, end) = (first.len(), text.len() - last.len());
++    parts[1..parts.len() - 1].iter().all(|part| {
++        let found = text[at..end].find(part);
++        if let Some(found) = found {
++            at += found + part.len();
++        }
++        found.is_some()
++    })
 +}
 +
 +pub const DELEGABLE_APPROVAL_KINDS: &[&str] = &["exec", "stdin", "patch", "mcp_tool", "network"];
@@ -117771,6 +117710,24 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +#[cfg(test)]
 +mod reload_tests {
 +    use super::*;
++
++    #[test]
++    fn glob_matches_any_run_of_characters() {
++        for (pattern, text, expected) in [
++            ("*", "", true),
++            ("*", "anything", true),
++            ("service:x/*", "service:x/read", true),
++            ("service:x/*", "service:y/read", false),
++            ("a*b*c", "abc", true),
++            ("a*b*c", "a-b-b-c", true),
++            ("a*b*c", "acb", false),
++            ("a*a", "a", false),
++            ("exact", "exact", true),
++            ("exact", "exactly", false),
++        ] {
++            assert_eq!(glob(pattern, text), expected, "{pattern} vs {text}");
++        }
++    }
 +
 +    #[test]
 +    fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
@@ -122844,7 +122801,7 @@ index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7b
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d643d34158fa092f75e235415c7633dd0877bcda
+index 0000000000000000000000000000000000000000..1fa5c16bfcc137d76fb8fbf20e1757a6483504a5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,509 @@
@@ -123034,7 +122991,7 @@ index 0000000000000000000000000000000000000000..d643d34158fa092f75e235415c7633dd
 +    if loaded
 +        .withheld
 +        .iter()
-+        .any(|pattern| namespace_matches(pattern, &namespace))
++        .any(|pattern| glob(pattern, &namespace))
 +    {
 +        return Err(failure(format!("capability_withheld: {namespace}")));
 +    }
@@ -123359,10 +123316,10 @@ index 0000000000000000000000000000000000000000..d643d34158fa092f75e235415c7633dd
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bdb99367e8b82ac6543334f903cf6c43ff7d0b84
+index 0000000000000000000000000000000000000000..8364bb090053e2d716feb91f86a6684ad1fc95e4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1988 @@
+@@ -0,0 +1,1966 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -123469,24 +123426,6 @@ index 0000000000000000000000000000000000000000..bdb99367e8b82ac6543334f903cf6c43
 +}
 +
 +type HostFn<'h> = dyn FnMut(&str, ModHostCall) -> Result<Value> + 'h;
-+
-+fn glob(pattern: &str, text: &str) -> bool {
-+    let parts = pattern.split('*').collect::<Vec<_>>();
-+    let [first, .., last] = parts.as_slice() else {
-+        return pattern == text;
-+    };
-+    if text.len() < first.len() + last.len() || !text.starts_with(first) || !text.ends_with(last) {
-+        return false;
-+    }
-+    let (mut at, end) = (first.len(), text.len() - last.len());
-+    parts[1..parts.len() - 1].iter().all(|part| {
-+        let found = text[at..end].find(part);
-+        if let Some(found) = found {
-+            at += found + part.len();
-+        }
-+        found.is_some()
-+    })
-+}
 +
 +pub struct SendPolicy {
 +    pub required: bool,
@@ -124547,10 +124486,7 @@ index 0000000000000000000000000000000000000000..bdb99367e8b82ac6543334f903cf6c43
 +            .unwrap_or_default())
 +    })?;
 +    let namespace = crate::mods::host_namespace(&call.operation, &call.arguments);
-+    if withheld
-+        .iter()
-+        .any(|pattern| crate::mods::namespace_matches(pattern, &namespace))
-+    {
++    if withheld.iter().any(|pattern| glob(pattern, &namespace)) {
 +        return Err(failure(format!("capability_withheld: {namespace}")));
 +    }
 +    if let Some(missing) = call
@@ -125244,11 +125180,10 @@ index 0000000000000000000000000000000000000000..bdb99367e8b82ac6543334f903cf6c43
 +        .filter_map(Value::as_str)
 +        .map(str::to_owned)
 +        .collect::<Vec<_>>();
-+    match withheld.iter().find(|namespace| {
-+        !scope
-+            .iter()
-+            .any(|pattern| crate::mods::namespace_matches(pattern, namespace))
-+    }) {
++    match withheld
++        .iter()
++        .find(|namespace| !scope.iter().any(|pattern| glob(pattern, namespace)))
++    {
 +        Some(namespace) => Err(format!(
 +            "admission_policy_invalid: {namespace} is outside policy.namespaces"
 +        )),
@@ -160871,7 +160806,7 @@ index 0000000000000000000000000000000000000000..9972c21897275961521e74b527828d69
 +}
 diff --git a/codex-rs/tui/src/app/mod_credentials.rs b/codex-rs/tui/src/app/mod_credentials.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a2e78b6e6
+index 0000000000000000000000000000000000000000..36b2df54333740e710b8c5c20a25b51b99114027
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_credentials.rs
 @@ -0,0 +1,332 @@
@@ -160964,7 +160899,7 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +
 +fn profiles() -> Result<CredentialProfiles, String> {
 +    let store = crate::omd::mod_paths()
-+        .and_then(|paths| paths.store)
++        .map(|paths| paths.store)
 +        .ok_or("mod store is not configured")?;
 +    CredentialProfiles::open(&store).map_err(|error| error.to_string())
 +}
@@ -161209,10 +161144,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da698489de3774
+index 0000000000000000000000000000000000000000..522f0a5963957c487ef06886db473b7c3e895283
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,3039 @@
+@@ -0,0 +1,3034 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -161266,7 +161201,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +
 +fn store_paths() -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
 +    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
-+    let store = paths.store.ok_or("mod store is not configured")?;
++    let store = paths.store;
 +    Ok((store, paths.repository))
 +}
 +
@@ -161328,7 +161263,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +    /// User-captured prompts: a user action grants a single-use consent that any context may spend.
 +    fn prompts(&mut self, call: &SurfaceCall) -> Result<Value, String> {
 +        let root = crate::omd::mod_paths()
-+            .and_then(|paths| paths.store)
++            .map(|paths| paths.store)
 +            .ok_or("mod store is not configured")?;
 +        let thread = call
 +            .thread
@@ -161617,7 +161552,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +    arguments: &Value,
 +) -> Result<(std::path::PathBuf, String, std::path::PathBuf), String> {
 +    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
-+    let store = paths.store.ok_or("mod store is not configured")?;
++    let store = paths.store;
 +    let access = crate::mod_runtime::os_access(caller).ok_or("capability_denied: os")?;
 +    let argv = crate::mod_pty::argv(arguments)?;
 +    let program = codex_omd::host::unrestricted_program(&access, &argv[0], &paths.repository)?;
@@ -161663,8 +161598,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +        "packages.apply" => {
 +            let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
 +            let store =
-+                codex_omd::ModStore::open(paths.store.ok_or("mod store is not configured")?)
-+                    .map_err(|error| error.to_string())?;
++                codex_omd::ModStore::open(paths.store).map_err(|error| error.to_string())?;
 +            let preview = codex_omd::package_controls::preview(&store, call.arguments.clone())
 +                .map_err(|error| error.to_string())?;
 +            if !call.arguments["expected_generation"].is_u64() {
@@ -161832,7 +161766,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +
 +fn configured_editor() -> Result<Vec<String>, String> {
 +    let store = crate::omd::mod_paths()
-+        .and_then(|paths| paths.store)
++        .map(|paths| paths.store)
 +        .ok_or("mod store is not configured")?;
 +    let config: Value = std::fs::read(store.join("host.json"))
 +        .ok()
@@ -161981,10 +161915,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +        .protected
 +        .iter()
 +        .any(|root| canonical.starts_with(root))
-+        || paths
-+            .store
-+            .as_ref()
-+            .is_some_and(|store| canonical.starts_with(store))
++        || canonical.starts_with(&paths.store)
 +    {
 +        return Err("import_file_protected".into());
 +    }
@@ -162063,7 +161994,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +        .ok_or("contract_key_required")?
 +        .to_owned();
 +    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
-+    let store = paths.store.ok_or("mod store is not configured")?;
++    let store = paths.store;
 +    let documents = crate::mod_runtime::contract_documents().ok_or("mod runtime unavailable")?;
 +    Ok((documents, store, paths.repository, key))
 +}
@@ -162108,7 +162039,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +        {
 +            Some((id, name)) => {
 +                let store = crate::omd::mod_paths()
-+                    .and_then(|paths| paths.store)
++                    .map(|paths| paths.store)
 +                    .ok_or("mod store is not configured")?;
 +                codex_omd::ModStore::open(store)
 +                    .and_then(|store| codex_omd::write_settings(&store, id, &json!({name: value})))
@@ -162125,8 +162056,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +        return Err("package_confirmation_missing".into());
 +    };
 +    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
-+    let store = codex_omd::ModStore::open(paths.store.ok_or("mod store is not configured")?)
-+        .map_err(|error| error.to_string())?;
++    let store = codex_omd::ModStore::open(paths.store).map_err(|error| error.to_string())?;
 +    crate::mod_surface::validate_call(call)?;
 +    call.lifetime.begin_execution()?;
 +    codex_omd::package_controls::apply(&store, &control).map_err(|error| error.to_string())
@@ -162210,7 +162140,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +            let mut argv = crate::mod_pty::argv(arguments)?;
 +            let program =
 +                codex_omd::host::unrestricted_program(&access, &argv[0], &paths.repository)?;
-+            let store = paths.store.ok_or("mod store is not configured")?;
++            let store = paths.store;
 +            let pin = pin
 +                .filter(|pin| pin.program == program)
 +                .ok_or("pty_program_unpinned")?;
@@ -162238,7 +162168,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +        if !cwd.starts_with(&paths.repository) || !cwd.is_dir() {
 +            return Err("pty_cwd_invalid".into());
 +        }
-+        let store = paths.store.clone().ok_or("mod store is not configured")?;
++        let store = paths.store.clone();
 +        let scratch = store.join("pty-scratch");
 +        std::fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
 +        let loopback = match arguments["network"].as_str() {
@@ -162910,7 +162840,7 @@ index 0000000000000000000000000000000000000000..81d713edaa2df736a1a05bb5b6da6984
 +                        match (
 +                            started,
 +                            pin,
-+                            crate::omd::mod_paths().and_then(|paths| paths.store),
++                            crate::omd::mod_paths().map(|paths| paths.store),
 +                        ) {
 +                            (Ok(started), Some(pin), Some(store)) if !pin.stored => {
 +                                if let Err(error) = codex_omd::program_trust::pin(
@@ -168745,7 +168675,7 @@ index 0000000000000000000000000000000000000000..da3a9bd5094c5c0dcd6e6cfe8c73ca2c
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..767d1f89d26f7a7c7cb221fa413a2a292d47aaff
+index 0000000000000000000000000000000000000000..427165f56e0bc4c1944a50649e14c85a9e23c547
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
 @@ -0,0 +1,699 @@
@@ -168800,7 +168730,7 @@ index 0000000000000000000000000000000000000000..767d1f89d26f7a7c7cb221fa413a2a29
 +/// Resource records are content-addressed, so resolved lines stay valid until the files that grant owners access change.
 +fn authority() -> Option<Authority> {
 +    let paths = crate::omd::mod_paths()?;
-+    let store = paths.store?;
++    let store = paths.store;
 +    let stamps =
 +        ["mod-status.json", "mods.json"].map(|name| crate::omd::file_stamp(&store.join(name)));
 +    Some((store, paths.repository, stamps))
@@ -171344,7 +171274,7 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..76157c5a6184321ce87a5ff8c9ea8e295d552423
+index 0000000000000000000000000000000000000000..ecb0291a9197f664332f5f3d96827a5f2f3dcf5a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
 @@ -0,0 +1,1879 @@
@@ -171980,7 +171910,7 @@ index 0000000000000000000000000000000000000000..76157c5a6184321ce87a5ff8c9ea8e29
 +    let owner = &binding.owner;
 +    let key = (owner.clone(), session.clone());
 +    let limit = crate::omd::mod_paths()
-+        .and_then(|paths| paths.store)
++        .map(|paths| paths.store)
 +        .map_or_else(Default::default, |store| {
 +            codex_omd::mod_limits::ModLimits::read(&store)
 +        })
@@ -175565,10 +175495,10 @@ index 0000000000000000000000000000000000000000..50b1e7d6e6298843bdb01c1cac820575
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff368c2587
+index 0000000000000000000000000000000000000000..b6da263e5a97462c5fd1cf01d059bb0acf5f0ef6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1770 @@
+@@ -0,0 +1,1764 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -175817,7 +175747,7 @@ index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff
 +        let prepared = snapshot.is_some();
 +        crate::mod_ui::startup_preview(snapshot, repository);
 +        if prepared
-+            && let Some(store) = crate::omd::mod_paths_for(repository).and_then(|paths| paths.store)
++            && let Some(store) = crate::omd::mod_paths_for(repository).map(|paths| paths.store)
 +        {
 +            warm_listing(store);
 +        }
@@ -176179,7 +176109,6 @@ index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff
 +) -> Result<std::process::Command, String> {
 +    let mut protected = paths.protected.clone();
 +    protected.push(codex_omd::workspace_lease::directory());
-+    protected.push(paths.evidence.clone());
 +    CommandAuthority {
 +        repository: &paths.repository,
 +        protected: &protected,
@@ -176255,11 +176184,7 @@ index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff
 +    }
 +    let mut protected = paths.protected.clone();
 +    protected.push(codex_omd::workspace_lease::directory());
-+    protected.push(paths.evidence.clone());
-+    let data_root = paths
-+        .store
-+        .clone()
-+        .ok_or_else(|| std::io::Error::other("mod store is not configured"))?;
++    let data_root = paths.store.clone();
 +    let authority = CommandAuthority {
 +        repository: &paths.repository,
 +        protected: &protected,
@@ -176314,7 +176239,7 @@ index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff
 +    if !active() {
 +        return None;
 +    }
-+    let mut snapshot = crate::omd::view_snapshot(&paths.evidence.join("mod-view.json"))?;
++    let mut snapshot = crate::omd::view_snapshot(&paths.store.join("mod-view.json"))?;
 +    snapshot.rendered_ms = codex_omd::peers::now_ms();
 +    if command.is_none() {
 +        reload_active(runtime, active);
@@ -176409,7 +176334,7 @@ index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff
 +    let mut host = try_lock_until(&HOST, active).ok_or("callback_cancelled")?;
 +    if host.is_none() {
 +        let paths = crate::omd::mod_paths().ok_or("mods are off in this directory")?;
-+        let store = paths.store.ok_or("mod store is not configured")?;
++        let store = paths.store;
 +        let runtime = ModHost::open_in_guarded(store, |_| Ok(()), &paths.repository, active)
 +            .map_err(|e| e.to_string())?;
 +        if !active() {
@@ -176722,8 +176647,7 @@ index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff
 +
 +fn packages(paths: &crate::omd::ModPaths) -> Result<Value, String> {
 +    let store =
-+        codex_omd::ModStore::open(paths.store.clone().ok_or("mod store is not configured")?)
-+            .map_err(|error| error.to_string())?;
++        codex_omd::ModStore::open(paths.store.clone()).map_err(|error| error.to_string())?;
 +    codex_omd::package_controls::list(&store, crate::omd::mod_status().as_deref())
 +        .map_err(|error| error.to_string())
 +}
@@ -177208,7 +177132,7 @@ index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff
 +
 +/// Never waits for a busy runtime, except within the keystroke budget for a surface never looked up.
 +pub(crate) fn intercepts(surface: &str) -> bool {
-+    if crate::omd::mod_paths().is_none_or(|paths| paths.store.is_none()) {
++    if crate::omd::mod_paths().is_none() {
 +        return false;
 +    }
 +    let wait = if KNOWN_INTERCEPTS.locked().contains_key(surface) {
@@ -177341,10 +177265,10 @@ index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac5a059ea0
+index 0000000000000000000000000000000000000000..2ab0f38993e0c6bbcb7f0e6dd39c55c7a0b90ac1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,787 @@
+@@ -0,0 +1,784 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -177384,8 +177308,7 @@ index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac
 +    let mut runtime = ModHost::open_in_guarded(data.clone(), |_| Ok(()), &root, &|| true).unwrap();
 +    let paths = crate::omd::ModPaths {
 +        repository: root.clone(),
-+        evidence: data.clone(),
-+        store: Some(data.clone()),
++        store: data.clone(),
 +        protected: vec![],
 +    };
 +    let mut snapshot = ModViewSnapshot {
@@ -177589,8 +177512,7 @@ index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac
 +    std::fs::create_dir(&data).unwrap();
 +    let paths = crate::omd::ModPaths {
 +        repository: repository.clone(),
-+        evidence: data.clone(),
-+        store: Some(data.clone()),
++        store: data.clone(),
 +        protected: vec![],
 +    };
 +    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::unrestricted();
@@ -177811,9 +177733,8 @@ index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac
 +    }
 +    std::fs::write(store.join("host.json"), "secret").unwrap();
 +    let paths = crate::omd::ModPaths {
-+        evidence: store.clone(),
 +        repository,
-+        store: Some(store.clone()),
++        store: store.clone(),
 +        protected: vec![store.clone()],
 +    };
 +    let output = sandboxed_command(
@@ -178134,10 +178055,10 @@ index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9a2fa3e715099bebef7d497c4eb3d13e8c879d50
+index 0000000000000000000000000000000000000000..e7047a0c0832393920ca2b67887a69d1036f0e98
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1215 @@
+@@ -0,0 +1,1206 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -178603,7 +178524,7 @@ index 0000000000000000000000000000000000000000..9a2fa3e715099bebef7d497c4eb3d13e
 +static COMPLETION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 +fn completion_items() -> usize {
 +    crate::omd::mod_paths()
-+        .and_then(|paths| paths.store)
++        .map(|paths| paths.store)
 +        .map_or_else(Default::default, |store| {
 +            codex_omd::mod_limits::ModLimits::read(&store)
 +        })
@@ -179150,15 +179071,13 @@ index 0000000000000000000000000000000000000000..9a2fa3e715099bebef7d497c4eb3d13e
 +    thread: Option<&str>,
 +) -> Result<(codex_omd::scoped_data::ScopedDataHost, PathBuf), String> {
 +    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
-+    let store = paths.store.ok_or("mod store is not configured")?;
++    let store = paths.store;
 +    let host = codex_omd::client_surface::resource_host(&store, &paths.repository, caller, thread)?;
 +    Ok((host, store))
 +}
 +
 +fn configured_routes(paths: &crate::omd::ModPaths) -> Vec<(String, String)> {
-+    let Some(store) = &paths.store else {
-+        return Vec::new();
-+    };
++    let store = &paths.store;
 +    std::fs::read(store.join("host.json"))
 +        .ok()
 +        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -179177,13 +179096,6 @@ index 0000000000000000000000000000000000000000..9a2fa3e715099bebef7d497c4eb3d13e
 +            ))
 +        })
 +        .collect()
-+}
-+
-+fn store(paths: &crate::omd::ModPaths) -> std::io::Result<PathBuf> {
-+    paths
-+        .store
-+        .clone()
-+        .ok_or_else(|| std::io::Error::other("mod store is not configured"))
 +}
 +
 +pub(crate) fn host_call(
@@ -179319,17 +179231,17 @@ index 0000000000000000000000000000000000000000..9a2fa3e715099bebef7d497c4eb3d13e
 +            codex_omd::client_surface::wake();
 +            Ok(json!({"delivered": delivery.delivered, "dropped": delivery.dropped}))
 +        }
-+        "credentials.list" => codex_omd::credentials::CredentialProfiles::open(&store(paths)?)?
++        "credentials.list" => codex_omd::credentials::CredentialProfiles::open(&paths.store)?
 +            .visible(caller)
 +            .map(Value::Array),
 +        "settings.write" if context == codex_omd::app_routes::InvocationContext::User => {
-+            let store = codex_omd::ModStore::open(store(paths)?)?;
++            let store = codex_omd::ModStore::open(paths.store.clone())?;
 +            let id = call.arguments["id"].as_str().unwrap_or(caller);
 +            crate::mod_runtime::write_settings(&store, id, &call.arguments["values"], caller)
 +        }
 +        "settings.write" => Err(other("host_operation_user_only: settings.write")),
 +        "packages.list" | "packages.index" | "packages.preview" | "packages.reload" => {
-+            let store = codex_omd::ModStore::open(store(paths)?)?;
++            let store = codex_omd::ModStore::open(paths.store.clone())?;
 +            match operation {
 +                "packages.list" => codex_omd::package_controls::list_fields(
 +                    &store,
@@ -179355,10 +179267,10 @@ index 0000000000000000000000000000000000000000..9a2fa3e715099bebef7d497c4eb3d13e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f0bae83a837472e1bd79429e44af217d97cf0fcd
+index 0000000000000000000000000000000000000000..73c4f19bd4eed745677371d7000ecc681f7621ec
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,1176 @@
+@@ -0,0 +1,1174 @@
 +use super::*;
 +use crate::test_support::PathBufExt;
 +use codex_omd::app_routes::InvocationContext;
@@ -179688,9 +179600,8 @@ index 0000000000000000000000000000000000000000..f0bae83a837472e1bd79429e44af217d
 +
 +fn paths(root: &std::path::Path) -> crate::omd::ModPaths {
 +    crate::omd::ModPaths {
-+        evidence: root.join("evidence"),
 +        repository: root.to_path_buf(),
-+        store: None,
++        store: root.join("store"),
 +        protected: Vec::new(),
 +    }
 +}
@@ -179731,7 +179642,7 @@ index 0000000000000000000000000000000000000000..f0bae83a837472e1bd79429e44af217d
 +fn user_commands_authorize_app_requests_before_the_app_loop() {
 +    let dir = tempfile::tempdir().unwrap();
 +    let root = dir.path().canonicalize().unwrap();
-+    let mut paths = paths(&root);
++    let paths = paths(&root);
 +    let package = root.join("package");
 +    std::fs::create_dir(&package).unwrap();
 +    std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema":1,"id":"m","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["sessions"]})).unwrap()).unwrap();
@@ -179775,8 +179686,7 @@ index 0000000000000000000000000000000000000000..f0bae83a837472e1bd79429e44af217d
 +        )
 +        .unwrap();
 +    store.enable(&packages_package, true).unwrap();
-+    paths.store = Some(root.join("store"));
-+    let _environment = crate::omd::tests::omd_environment(paths.store.as_deref().unwrap());
++    let _environment = crate::omd::tests::omd_environment(&paths.store);
 +    let _host = crate::mod_runtime::test_fresh_host();
 +    let grants = |capabilities: &[&str]| {
 +        let mut value = grants(capabilities).unwrap();
@@ -180014,7 +179924,7 @@ index 0000000000000000000000000000000000000000..f0bae83a837472e1bd79429e44af217d
 +    }
 +    let _changed = codex_omd::client_surface::register(Arc::new(ChangedSource(
 +        package.join("index.ts"),
-+        paths.store.clone().unwrap(),
++        paths.store.clone(),
 +    )));
 +    assert_eq!(
 +        host_call(
@@ -189650,10 +189560,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..94d93616096ef36f277183d10d969508f0d543ac
+index 0000000000000000000000000000000000000000..09907e116cc5b5e1e797b0c0da7ec15034ef22a0
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,829 @@
+@@ -0,0 +1,827 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -189692,9 +189602,8 @@ index 0000000000000000000000000000000000000000..94d93616096ef36f277183d10d969508
 +
 +#[derive(Clone, Debug, Eq, PartialEq)]
 +pub(crate) struct ModPaths {
-+    pub(crate) evidence: PathBuf,
 +    pub(crate) repository: PathBuf,
-+    pub(crate) store: Option<PathBuf>,
++    pub(crate) store: PathBuf,
 +    pub(crate) protected: Vec<PathBuf>,
 +}
 +
@@ -189787,9 +189696,8 @@ index 0000000000000000000000000000000000000000..94d93616096ef36f277183d10d969508
 +    let repository = scoped_repository(repository)?;
 +    let protected = host_protected_paths(&root);
 +    Some(ModPaths {
-+        evidence: root.clone(),
 +        repository,
-+        store: Some(root),
++        store: root,
 +        protected,
 +    })
 +}
@@ -189910,7 +189818,7 @@ index 0000000000000000000000000000000000000000..94d93616096ef36f277183d10d969508
 +    drop(cache);
 +    if status.is_some()
 +        && listing(status.as_ref()) != listing(previous.as_ref())
-+        && let Some(store) = mod_paths().and_then(|paths| paths.store)
++        && let Some(store) = mod_paths().map(|paths| paths.store)
 +    {
 +        crate::mod_runtime::warm_listing(store);
 +    }
@@ -190140,7 +190048,7 @@ index 0000000000000000000000000000000000000000..94d93616096ef36f277183d10d969508
 +        contract: "none".to_string(),
 +        ..Snapshot::default()
 +    };
-+    let Some(session) = latest_session(&paths.evidence) else {
++    let Some(session) = latest_session(&paths.store) else {
 +        return Ok(snapshot);
 +    };
 +    let read = |name: &str, limit: usize| {
