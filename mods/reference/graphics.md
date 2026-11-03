@@ -133,14 +133,15 @@ same way: the underlay is dropped and the conflict names that mod.
   raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a
   blit at the new size starts a fresh raster; a reply with `frame: 1` and `queued: 1` means the raster restarted, so
   send it whole.
-- It is painted after the transcript and the bottom pane and before selection, layout regions, the sidebar,
-  overlays, the `welcome` site and dialogs, so all of those draw over it.
-- Its background colors every cell whose background is the terminal default, and Codex's raised surface (menus,
-  list views, the composer, submitted prompts) gets the same color lifted the way Codex lifts the terminal
-  background. Text with the default color on a colored cell gets a readable foreground; explicit colors stay,
+- Its glyphs are painted after the transcript and before the bottom pane, so popups clear them. Its background
+  tint is painted after the bottom pane and before selection, layout regions, the sidebar, overlays, the `welcome`
+  site and dialogs, so all of those draw over it.
+- Its background colors cells whose background is the terminal default. Raised surfaces (menus, list views, the
+  composer and submitted prompts) stay opaque and keep their own backgrounds. Text with the default color on a
+  colored cell gets a readable foreground; explicit colors stay,
   except on a light terminal, where any that would be hard to read get a readable one.
-- The underlay's glyphs draw only in blank cells after each row's last character plus a 2-cell gutter. They draw at
-  full color in the transcript and at 35 % on the raised surface. Transcript images and the footer never show them,
+- The underlay's glyphs draw at full color only in blank, default-background transcript cells after each row's last
+  character plus a 2-cell gutter. Raised surfaces, transcript images and the footer never show them,
   and OMD's own copies never include them. The terminal's own selection (for example Shift-drag) copies what the
   screen shows.
 - Image and pixel frames draw nothing. Nothing draws under `NO_COLOR`, with fewer than 256 colors (`colors: '16'`),

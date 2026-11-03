@@ -34,6 +34,7 @@ It has no settings.
 ## Needs and limits
 
 - Groups show a failure count marked `✗`; expand the group for each command and its exit code.
+- Shell commands join their group when they start, so its running count includes commands such as `cargo test`.
 - Individual failures stay on one line, marked `✗` with the exit code.
 - Your own `!cmd` commands, approvals, `/diff` and the assistant's messages look the same as before.
 - Inline sessions (`--no-alt-screen`) print one-line rows to scrollback. `Ctrl+T` shows them in full.

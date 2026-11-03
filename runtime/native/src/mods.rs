@@ -1234,6 +1234,7 @@ impl TurnLifecycleContributor for Mods {
             else {
                 return;
             };
+            self.views.diagnostic(&self.host, "turn_evidence", None);
             lead.session.processes.cleanup();
             lead.session.access.cleanup();
             self.autonomy.turn_ended(

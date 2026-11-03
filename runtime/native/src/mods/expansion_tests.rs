@@ -2423,6 +2423,56 @@ async fn session_snapshots_need_the_sessions_tools_capability() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn aborted_turn_clears_stale_evidence_diagnostics() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let extension = mods(&fixture.core);
+    for recorded in [false, true] {
+        extension.views.diagnostic(
+            &fixture.lead.host,
+            "turn_evidence",
+            Some("evidence_generation_changed".into()),
+        );
+        extension.views.diagnostic(
+            &fixture.lead.host,
+            "routing",
+            Some("routing diagnostic".into()),
+        );
+        if recorded {
+            extension.turns.lock().unwrap().insert(
+                fixture.lead.thread.to_string(),
+                super::super::TurnRecord {
+                    turn_id: "aborted".into(),
+                    error: None,
+                    evidence: None,
+                },
+            );
+        }
+        let session_store = ExtensionData::new("session");
+        let thread_store = ExtensionData::new(fixture.lead.thread.to_string());
+        thread_store.insert(fixture.lead.clone());
+        let turn_store = ExtensionData::new("aborted");
+        extension
+            .on_turn_abort(codex_extension_api::TurnAbortInput {
+                reason: codex_protocol::protocol::TurnAbortReason::Interrupted,
+                session_store: &session_store,
+                thread_store: &thread_store,
+                turn_store: &turn_store,
+            })
+            .await;
+        assert_eq!(
+            extension.views.published().unwrap().diagnostics,
+            ["routing diagnostic"]
+        );
+        assert_eq!(
+            extension.views.published().unwrap().native_diagnostics,
+            ["routing diagnostic"]
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn turn_evidence_survives_reload_and_clears_stale_diagnostics() {
     let Some(mut fixture) = fixture(&[Package {
         id: "observer",

@@ -39676,6 +39676,19 @@ index e769319de7d8bb2e1dc4ab6cc9d71675c739bc48..85826fbf2d58d515fa7dbb340a3620d0
          self.rate_limit_snapshots_by_limit_id =
              std::mem::take(&mut previous.rate_limit_snapshots_by_limit_id);
          self.usage_notice_state = std::mem::take(&mut previous.usage_notice_state);
+diff --git a/codex-rs/tui/src/chatwidget/command_lifecycle.rs b/codex-rs/tui/src/chatwidget/command_lifecycle.rs
+index c65cae1fec1092dc652912db3c74ab8b2daf51c3..b91ad2b520c3e035f521414354e6bd550234c220 100644
+--- a/codex-rs/tui/src/chatwidget/command_lifecycle.rs
++++ b/codex-rs/tui/src/chatwidget/command_lifecycle.rs
+@@ -41,7 +41,7 @@ impl ChatWidget {
+             }
+             // Unified exec may be parsed as Unknown; keep the working indicator visible regardless.
+             self.bottom_pane.ensure_status_indicator();
+-            if !is_standard_tool_call(&parsed_cmd) {
++            if !crate::omd::builtins().group_exec && !is_standard_tool_call(&parsed_cmd) {
+                 return;
+             }
+         }
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
 index 7b2d08c691ff0a798169ec230aaab16f03da1586..0573b1cd1052dff7bd31778aafd1f4764701d1ef 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
@@ -41283,10 +41296,81 @@ index 4b77a7722db2ba338e1c7034a54bc7ac59ae8f65..734e1715b0187166b8eea564439fded0
  async fn reconnect_keeps_queue_paused_after_pending_compact() {
      let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
 diff --git a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
-index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..4b20c1cf33ae8c780390f3fa111a4361569d99a4 100644
+index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..ae270be9b61b64aaac1ae950e22a5a6ac8bbf676 100644
 --- a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
-@@ -864,7 +864,7 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
+@@ -2,6 +2,70 @@ use super::*;
+ use codex_app_server_protocol::ThreadItem;
+ use pretty_assertions::assert_eq;
+
++#[tokio::test]
++#[serial_test::serial]
++async fn grouped_unified_exec_tracks_unknown_commands_while_running() {
++    let root = tempfile::tempdir().unwrap();
++    let store = root.path().canonicalize().unwrap().join("store");
++    codex_omd::ModStore::create(store.clone()).unwrap();
++    std::fs::write(
++        store.join(codex_omd::builtins_snapshot(
++            &std::env::current_dir().unwrap(),
++        )),
++        serde_json::to_vec(&codex_omd::BuiltinSnapshot {
++            schema: 1,
++            group_exec: true,
++            ..Default::default()
++        })
++        .unwrap(),
++    )
++    .unwrap();
++    let _environment = crate::omd::tests::omd_environment(&store);
++    assert!(crate::omd::builtins().group_exec);
++    let (mut chat, mut events, _operations) = make_chatwidget_manual(None).await;
++    chat.on_task_started();
++    let first = begin_unified_exec_startup(&mut chat, "test", "test-process", "cargo test");
++    let active = chat
++        .transcript
++        .active_cell
++        .as_ref()
++        .unwrap()
++        .as_any()
++        .downcast_ref::<ExecCell>()
++        .unwrap();
++    assert!(active.is_active());
++    assert_eq!(active.iter_calls().count(), 1);
++    assert!(
++        active
++            .iter_calls()
++            .next()
++            .unwrap()
++            .command
++            .join(" ")
++            .contains("cargo test")
++    );
++    let second = begin_unified_exec_startup(&mut chat, "build", "build-process", "cargo build");
++    let running = |chat: &ChatWidget| {
++        chat.transcript
++            .active_cell
++            .as_ref()
++            .unwrap()
++            .as_any()
++            .downcast_ref::<ExecCell>()
++            .unwrap()
++            .iter_calls()
++            .filter(|call| call.duration.is_none())
++            .count()
++    };
++    assert_eq!(running(&chat), 2);
++    chat.on_exec_command_output_delta("test", "running tests\n");
++    end_exec(&mut chat, first, "passed\n", "", 0);
++    assert_eq!(running(&chat), 1);
++    end_exec(&mut chat, second, "built\n", "", 0);
++    assert_eq!(running(&chat), 0);
++    assert!(drain_insert_history(&mut events).is_empty());
++}
++
+ #[tokio::test]
+ async fn external_writer_snapshot_freezes_active_command_and_mcp_rows() {
+     let mut rendered = Vec::new();
+@@ -864,7 +928,7 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
              .reset_status_timer(Duration::from_secs(/*secs*/ 125));
          handle_agent_message_delta(&mut chat, "Final response.\n");
          chat.on_commit_tick();
@@ -68606,10 +68690,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8230ef12a80a465b4aa256376032456067be469c
+index 0000000000000000000000000000000000000000..a0ed18df122f7299b1889d56bb9178e1e259da71
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2632 @@
+@@ -0,0 +1,2633 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -69846,6 +69930,7 @@ index 0000000000000000000000000000000000000000..8230ef12a80a465b4aa2563760324560
 +            else {
 +                return;
 +            };
++            self.views.diagnostic(&self.host, "turn_evidence", None);
 +            lead.session.processes.cleanup();
 +            lead.session.access.cleanup();
 +            self.autonomy.turn_ended(
@@ -78751,10 +78836,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a47251f8df74a2e4522a51ee42dcf529c3621d31
+index 0000000000000000000000000000000000000000..481fccc1c0ff00c46de9acccbbfaedd4050cacfd
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5360 @@
+@@ -0,0 +1,5410 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -81177,6 +81262,56 @@ index 0000000000000000000000000000000000000000..a47251f8df74a2e4522a51ee42dcf529
 +    .await
 +    .unwrap_err();
 +    assert_eq!(refused, "capability_denied: sessions_tools");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn aborted_turn_clears_stale_evidence_diagnostics() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let extension = mods(&fixture.core);
++    for recorded in [false, true] {
++        extension.views.diagnostic(
++            &fixture.lead.host,
++            "turn_evidence",
++            Some("evidence_generation_changed".into()),
++        );
++        extension.views.diagnostic(
++            &fixture.lead.host,
++            "routing",
++            Some("routing diagnostic".into()),
++        );
++        if recorded {
++            extension.turns.lock().unwrap().insert(
++                fixture.lead.thread.to_string(),
++                super::super::TurnRecord {
++                    turn_id: "aborted".into(),
++                    error: None,
++                    evidence: None,
++                },
++            );
++        }
++        let session_store = ExtensionData::new("session");
++        let thread_store = ExtensionData::new(fixture.lead.thread.to_string());
++        thread_store.insert(fixture.lead.clone());
++        let turn_store = ExtensionData::new("aborted");
++        extension
++            .on_turn_abort(codex_extension_api::TurnAbortInput {
++                reason: codex_protocol::protocol::TurnAbortReason::Interrupted,
++                session_store: &session_store,
++                thread_store: &thread_store,
++                turn_store: &turn_store,
++            })
++            .await;
++        assert_eq!(
++            extension.views.published().unwrap().diagnostics,
++            ["routing diagnostic"]
++        );
++        assert_eq!(
++            extension.views.published().unwrap().native_diagnostics,
++            ["routing diagnostic"]
++        );
++    }
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -88934,10 +89069,10 @@ index 0000000000000000000000000000000000000000..88b18991e7021d169a8084ef7362a904
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0dab24b5dc7d126b46966754b5a52b2ab7c75b25
+index 0000000000000000000000000000000000000000..8161d4b739bd2f4d46c1e210bd94e1c61a737dc7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,240 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -89030,6 +89165,13 @@ index 0000000000000000000000000000000000000000..0dab24b5dc7d126b46966754b5a52b2a
 +            return;
 +        };
 +        change(&mut state);
++        state.snapshot.native_diagnostics = state
++            .diagnostics
++            .iter()
++            .filter(|(key, _)| !key.starts_with("terminal:"))
++            .take(16)
++            .map(|(_, diagnostic)| diagnostic.clone())
++            .collect();
 +        state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
 +        let _ = owner.persist_json("mod-view.json", &state.snapshot);
 +        if let Ok(mut published) = self.published.lock() {
@@ -132358,10 +132500,10 @@ index 0000000000000000000000000000000000000000..72a08ef77e0805667d5da27b8d101e42
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..916c0abb105c37f87735a0cd3ec416bcfbb4178e
+index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa6c664764
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2530 @@
+@@ -0,0 +1,2537 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 24;
@@ -133667,6 +133809,8 @@ index 0000000000000000000000000000000000000000..916c0abb105c37f87735a0cd3ec416bc
 +    #[serde(default)]
 +    pub diagnostics: Vec<String>,
 +    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub native_diagnostics: Vec<String>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
 +    pub errors: Vec<(String, String)>,
 +}
 +
@@ -134867,8 +135011,13 @@ index 0000000000000000000000000000000000000000..916c0abb105c37f87735a0cd3ec416bc
 +                .any(|contributor| !identifier(contributor))
 +            || serde_json::to_vec(&snapshot.input)?.len() > 65_536
 +            || snapshot.diagnostics.len() > 16
++            || snapshot.native_diagnostics.len() > 16
 +            || snapshot
 +                .diagnostics
++                .iter()
++                .any(|diagnostic| !visible(diagnostic, 512))
++            || snapshot
++                .native_diagnostics
 +                .iter()
 +                .any(|diagnostic| !visible(diagnostic, 512))
 +            || snapshot.errors.len() > 16
@@ -171461,10 +171610,10 @@ index 0000000000000000000000000000000000000000..76157c5a6184321ce87a5ff8c9ea8e29
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..676a6648169a90c816cb360f1db992441231e56c
+index 0000000000000000000000000000000000000000..644160eb4efbeb70854573c3f8341476d63155f5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,686 @@
+@@ -0,0 +1,704 @@
 +use codex_omd::ModColor;
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Rect;
@@ -171494,9 +171643,11 @@ index 0000000000000000000000000000000000000000..676a6648169a90c816cb360f1db99244
 +const HIDDEN_RETRY: Duration = Duration::from_millis(250);
 +
 +type LinesKey = (u64, usize, u16, bool, Option<StdoutColorLevel>, String);
++type RasterScope = (String, Option<String>);
 +
 +struct Raster {
 +    owner: String,
++    scope: Option<RasterScope>,
 +    binding: Option<u64>,
 +    width: u16,
 +    height: u16,
@@ -171517,6 +171668,7 @@ index 0000000000000000000000000000000000000000..676a6648169a90c816cb360f1db99244
 +    fn new(owner: &str, width: u16, height: u16) -> Self {
 +        Self {
 +            owner: owner.to_owned(),
++            scope: None,
 +            binding: None,
 +            width,
 +            height,
@@ -171633,8 +171785,13 @@ index 0000000000000000000000000000000000000000..676a6648169a90c816cb360f1db99244
 +    let Some(raster) = rasters().remove(id) else {
 +        return;
 +    };
++    if raster.scope.is_none() {
++        return;
++    }
 +    let mut suspended = SUSPENDED.locked();
-+    suspended.retain(|(key, _)| key != id);
++    suspended.retain(|(key, cached)| {
++        key != id || cached.owner != raster.owner || cached.scope != raster.scope
++    });
 +    suspended.push_back((id.to_owned(), raster));
 +    while suspended.len() > 4 {
 +        suspended.pop_front();
@@ -171970,6 +172127,14 @@ index 0000000000000000000000000000000000000000..676a6648169a90c816cb360f1db99244
 +) -> Option<T> {
 +    let id = &snapshot.view.underlay.as_ref()?.raster;
 +    let owner = snapshot.component_owners.get(id).map(String::as_str);
++    let scope = snapshot.input["ledger"]["cwd"].as_str().map(|repository| {
++        (
++            repository.to_owned(),
++            snapshot.input["ledger"]["thread_id"]
++                .as_str()
++                .map(str::to_owned),
++        )
++    });
 +    if !matches!(
 +        level,
 +        Some(StdoutColorLevel::TrueColor | StdoutColorLevel::Ansi256)
@@ -171991,21 +172156,23 @@ index 0000000000000000000000000000000000000000..676a6648169a90c816cb360f1db99244
 +    let mut rasters = rasters();
 +    if !rasters.contains_key(id) {
 +        let mut suspended = SUSPENDED.locked();
-+        if let Some(index) = suspended
-+            .iter()
-+            .position(|(key, raster)| key == id && Some(raster.owner.as_str()) == owner)
-+            && let Some((key, raster)) = suspended.remove(index)
++        if let Some(index) = suspended.iter().position(|(key, raster)| {
++            key == id
++                && Some(raster.owner.as_str()) == owner
++                && scope.is_some()
++                && raster.scope == scope
++        }) && let Some((key, raster)) = suspended.remove(index)
 +        {
 +            rasters.insert(key, raster);
 +        }
 +    }
-+    if rasters
-+        .get(id)
-+        .is_some_and(|raster| Some(raster.owner.as_str()) != owner)
-+    {
++    if rasters.get(id).is_some_and(|raster| {
++        Some(raster.owner.as_str()) != owner || raster.scope.is_some() && raster.scope != scope
++    }) {
 +        rasters.remove(id);
 +    }
 +    let raster = rasters.get_mut(id)?;
++    raster.scope = scope;
 +    if advance {
 +        if let Some(next) = raster.advance(now) {
 +            crate::mod_render::schedule_frame(next.saturating_sub(now.elapsed()));
@@ -172153,10 +172320,10 @@ index 0000000000000000000000000000000000000000..676a6648169a90c816cb360f1db99244
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a2e20ea4fe5152526381b3bf982e46cc1e3e3d8c
+index 0000000000000000000000000000000000000000..33e89ea64618a6a786acf0c22973c3be3f13d3c3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,630 @@
+@@ -0,0 +1,675 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -172638,10 +172805,55 @@ index 0000000000000000000000000000000000000000..a2e20ea4fe5152526381b3bf982e46cc
 +
 +#[test]
 +#[serial_test::serial]
++fn suspended_underlays_stay_with_their_repository_and_thread() {
++    let now = Instant::now();
++    let key = "scoped-underlay";
++    let screen = Rect::new(0, 0, 64, 2);
++    let level = Some(StdoutColorLevel::TrueColor);
++    let mut snapshot = codex_omd::ModViewSnapshot::default();
++    snapshot.view.underlay = serde_json::from_value(json!({"raster": key})).unwrap();
++    snapshot.component_owners.insert(key.into(), "owner".into());
++    snapshot.input = json!({"ledger": {"cwd": "/repo-a", "thread_id": "thread-a"}});
++    let draw = |snapshot: &codex_omd::ModViewSnapshot| {
++        let mut buffer = Buffer::empty(screen);
++        underlay_glyphs(snapshot, screen, screen, &[], &mut buffer, level, now);
++        underlay_tint(snapshot, screen, &[], &mut buffer, level);
++        buffer
++    };
++    for thread in ["thread-a", "thread-b"] {
++        snapshot.input["ledger"]["thread_id"] = json!(thread);
++        assert_eq!(draw(&snapshot), Buffer::empty(screen));
++        blit(
++            "owner",
++            Some("owner".into()),
++            Some((64, 2)),
++            &json!({"key": key, "rect": {"x": 0, "y": 0, "width": 64, "height": 2},
++                "packed": packed(&[('x', 0x11_22_33, 0x44_55_66); 64 * 2])}),
++            now,
++            |_, _| unreachable!(),
++        )
++        .unwrap();
++        assert_eq!(draw(&snapshot)[(0, 0)].symbol(), "x");
++        suspend(key);
++    }
++    snapshot.input["ledger"]["cwd"] = json!("/repo-b");
++    assert_eq!(draw(&snapshot), Buffer::empty(screen));
++    snapshot.input["ledger"]["cwd"] = json!("/repo-a");
++    for thread in ["thread-a", "thread-b"] {
++        snapshot.input["ledger"]["thread_id"] = json!(thread);
++        assert_eq!(draw(&snapshot)[(0, 0)].symbol(), "x");
++        suspend(key);
++    }
++    SUSPENDED.locked().retain(|(id, _)| id != key);
++}
++
++#[test]
++#[serial_test::serial]
 +fn underlay_tints_default_cells_and_preserves_raised_prompt_surfaces() {
 +    let now = Instant::now();
 +    let key = "underlay_scene";
 +    let mut snapshot = codex_omd::ModViewSnapshot::default();
++    snapshot.input = json!({"ledger": {"cwd": "/underlay-repo", "thread_id": "underlay-thread"}});
 +    snapshot.view.underlay = serde_json::from_value(json!({"raster": key})).expect("underlay");
 +    snapshot.component_owners.insert(key.into(), "owner".into());
 +    let level = Some(StdoutColorLevel::TrueColor);
@@ -173610,10 +173822,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b17e1bce7e4a9ade75845d58cefd79ba69f0de82
+index 0000000000000000000000000000000000000000..599e323b8052b08480e4c6beecff00a3668c6024
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1749 @@
+@@ -0,0 +1,1750 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -174383,6 +174595,7 @@ index 0000000000000000000000000000000000000000..b17e1bce7e4a9ade75845d58cefd79ba
 +    snapshot.contributors = terminal.contributors;
 +    snapshot.component_owners = terminal.component_owners;
 +    snapshot.layout_owner = terminal.layout_owner;
++    snapshot.diagnostics = snapshot.native_diagnostics.clone();
 +    for diagnostic in terminal.diagnostics {
 +        if !snapshot.diagnostics.contains(&diagnostic) {
 +            snapshot.diagnostics.push(diagnostic);
@@ -175365,10 +175578,10 @@ index 0000000000000000000000000000000000000000..b17e1bce7e4a9ade75845d58cefd79ba
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..71346dfa32218d7ee142400fb2ad530746af306e
+index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac5a059ea0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,770 @@
+@@ -0,0 +1,787 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -175392,7 +175605,7 @@ index 0000000000000000000000000000000000000000..71346dfa32218d7ee142400fb2ad5307
 +    std::fs::write(package.join("mod.json"), serde_json::json!({"schema":1,"id":"context","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["terminal"]}).to_string()).unwrap();
 +    std::fs::write(
 +        package.join("index.ts"),
-+        "export default api => api.on('terminal', e => ({status:[e.ledger.thread_id]}));",
++        "export default api => api.on('terminal', e => { if(e.ledger.thread_id === 'previous') throw Error('broken terminal'); return {status:[e.ledger.thread_id]}; });",
 +    )
 +    .unwrap();
 +    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
@@ -175412,10 +175625,27 @@ index 0000000000000000000000000000000000000000..71346dfa32218d7ee142400fb2ad5307
 +        store: Some(data.clone()),
 +        protected: vec![],
 +    };
-+    let snapshot = ModViewSnapshot {
++    let mut snapshot = ModViewSnapshot {
 +        input: serde_json::json!({"event":"idle","ledger":{"thread_id":"previous"}}),
 +        ..Default::default()
 +    };
++    let terminal = runtime.terminal_view(snapshot.input.clone(), &|| true);
++    assert_eq!(terminal.diagnostics.len(), 1);
++    snapshot.native_diagnostics = vec!["native evidence diagnostic".into()];
++    snapshot.diagnostics = terminal
++        .diagnostics
++        .into_iter()
++        .map(|diagnostic| {
++            diagnostic
++                .chars()
++                .filter(|character| !character.is_control())
++                .take(512)
++                .collect()
++        })
++        .collect();
++    snapshot
++        .diagnostics
++        .push("native evidence diagnostic".into());
 +    std::fs::write(
 +        data.join("mod-view.json"),
 +        serde_json::to_vec(&snapshot).unwrap(),
@@ -175429,7 +175659,7 @@ index 0000000000000000000000000000000000000000..71346dfa32218d7ee142400fb2ad5307
 +    };
 +    let refreshed = preview_with(&mut runtime, &paths, &context, None, &|| true).unwrap();
 +    assert!(
-+        refreshed.diagnostics.is_empty(),
++        refreshed.diagnostics == ["native evidence diagnostic"],
 +        "{:?}",
 +        refreshed.diagnostics
 +    );

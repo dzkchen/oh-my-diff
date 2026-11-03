@@ -89,6 +89,8 @@ sessions.
   (`terminal_colors_v1`), and the welcome area and hiding it (`terminal_welcome_area_v1`,
   `terminal_welcome_hidden_v1`). The scene replaces the welcome while it draws the underlay. The chat column
   (`terminal_chat_area_v1`) is optional.
+- Menus, the composer and submitted prompts stay opaque over the scene. Cached frames belong to their repository
+  and conversation.
 - Animation runs eight frames a second while the session is idle and sends only the changed cells. A still or paused
   scene redraws nothing.
 - Other running sessions pick up a change the next time they start a new session.

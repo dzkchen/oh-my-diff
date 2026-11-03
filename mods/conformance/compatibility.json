@@ -61,6 +61,7 @@
       "final_request_policy_v1",
       "continuation_middleware_v1",
       "builtins_v1",
+      "transcript_exec_groups_v1",
       "contracts_v2",
       "framed_process_v1",
       "process_streams_v1",

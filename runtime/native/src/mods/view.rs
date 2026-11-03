@@ -90,6 +90,13 @@ impl Views {
             return;
         };
         change(&mut state);
+        state.snapshot.native_diagnostics = state
+            .diagnostics
+            .iter()
+            .filter(|(key, _)| !key.starts_with("terminal:"))
+            .take(16)
+            .map(|(_, diagnostic)| diagnostic.clone())
+            .collect();
         state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
         let _ = owner.persist_json("mod-view.json", &state.snapshot);
         if let Ok(mut published) = self.published.lock() {
