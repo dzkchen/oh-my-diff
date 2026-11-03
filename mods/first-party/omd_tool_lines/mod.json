@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_tool_lines",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "api": "1.0.0",
   "state_version": 1,
   "description": "Compact command groups and one-line tool results; expand a row for the full native output",
