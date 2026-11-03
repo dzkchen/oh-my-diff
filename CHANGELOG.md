@@ -21,7 +21,6 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 - Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list
 - Status line: usage limits refresh while idle, and an empty snapshot clears old limits
 - Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt
-- Installed OMD+ status, clippy and a kernel test race (#364)
 
 ## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
 
