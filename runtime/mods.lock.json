@@ -667,14 +667,14 @@
       "extension_type": "mod",
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
-        "index.ts": "46dd392011b5fdaf6df86cd6ea6ced0f8ca4532e659afe52a85b16bb8b654794",
+        "index.ts": "a873931d53be7a46fad89cca9a9b46a92dc09646393cb3c823a25e1ca1167906",
         "mod.json": "a835b061a4d17c602e1d88949089ca7e881da9c60105da9160c687a892918247",
         "profiles.ts": "055218534d017dc89da265abc6d5a0e21253a781367ce329f3a7d8c5ebd532e4",
         "router.mjs": "8af36400c295812c48a26998e709161bb66973e4592a200be033d7542dbe5449",
         "setup.mjs": "64a902dd4886671d0dbf5cf23382b4b05c01b53342126bbf3c45f0018e0e117e"
       },
       "id": "omd_profiles",
-      "package_sha256": "fd09579d8498a180e5829ffaaf9ea836fc175c317f8e41236212af217b06520c",
+      "package_sha256": "d3fb27229de5fc2400cba3847f998c57af511fcb6fc7f0dee06f58ab1f029061",
       "source": "mods/first-party/omd_profiles",
       "version": "1.0.0"
     },
@@ -964,11 +964,11 @@
       "extension_type": "mod",
       "files": {
         "index.ts": "43e270a3d75f2a29b85dc805e951ea3033cf680499341271f0af7ff16f129103",
-        "mod.json": "c4585d7b1b6d34dddd8687419573220bd15cbe5583ccd13fe8c879ee874fe870",
+        "mod.json": "4ac23ad69283ff3ef42b8573b3738c8b431a0e0f17741a30cf488fe901c2e981",
         "tree.ts": "bf7fbea96846738c7fad9738cac75182c8dd46a796837f4b175a2f8eb9ce28f6"
       },
       "id": "omd_workspace",
-      "package_sha256": "83c2f708377fc05012143c779a6b302f99e5b9694f0a614d4ecc440e92759f07",
+      "package_sha256": "8b7d9f7afcbf0c18e7d0146f275f4f25d1c550a7efbb2cd8842dae99df82f87d",
       "source": "mods/first-party/omd_workspace",
       "version": "1.2.0"
     },
