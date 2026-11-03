@@ -4,35 +4,30 @@ Generated from [`release/changelog.json`](release/changelog.json) by `mise run r
 
 ## [1.4.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.2) — 2026-11-03
 
-Keyboard workspace arranging, first-party mod updates between releases, and fixes for theme switching, profile switching and account setup.
+Signed first-party mod updates between releases, account switching for new threads, keyboard workspace arranging, and theme, terminal and uninstall fixes.
 
 ### New
 
-- Keyboard-only arranging, panel toggle and bug fixes (#366)
-- Update first-party mods between releases (#370)
-
-### Changed
-
-- Smooth theme switching, preserve scene rasters, and compact adjacent shell command groups with regression coverage. (#371)
-- Repair account setup, preserve provider routing across threads, and make uninstall cleanup retryable. (#372)
-
-## [1.4.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.1) — 2026-11-02
-
-A leaner OMD+ with untested mods and plugins moved to Experimental, remembered sandboxed terminal starts, and fixes for /btw, the files browser, the status line and themes.
-
-### New
-
+- Mod updates: fixes to first-party mods now arrive between releases as signed mod updates; `omd update`, `/update` and automatic updates apply them, and `omd update rollback` undoes them
+- Accounts: `/profile` chooses the account that `/new` uses without changing existing threads, and subscription setup discovers model defaults instead of asking for model names, context sizes or pricing
+- Uninstall: `omd uninstall --purge` also signs out OMD accounts and clears caches, keeping shared Codex data
 - Terminal panes: Allow and remember on a sandboxed start saves the approval for that workspace, mod, command and executable, so the same start doesn't ask again until its access or executable changes
 - /btw: `/btw` alone opens a side conversation panel that lists earlier exchanges and takes a follow-up question
 - Workspace: arrange panels with the keyboard alone (m, then Shift+arrows, T and = / -), F6 shows or hides the panels from the prompt, and number keys focus a panel whose tab is showing
 
 ### Changed
 
+- Shell commands: adjacent agent shell commands collapse into one expandable summary with running and failure counts
+- Theme: switching themes no longer flashes, scene transitions are shorter, and prompts and menus stay opaque over the scene
 - OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact and omd_preview move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default
 - Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace
 
 ### Fixed
 
+- Accounts: threads keep their provider across account switches and resumes, and account setup works again; reconnecting and removing ChatGPT, Claude, Cursor and API accounts now work the same way
+- Theme: resizing the terminal keeps the theme background
+- Working indicator: stays visible until the active task finishes
+- Uninstall: a cleanup that fails partway can be retried
 - Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list
 - Status line: usage limits refresh while idle, and an empty snapshot clears old limits
 - Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt
