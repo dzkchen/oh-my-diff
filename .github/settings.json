@@ -22,6 +22,17 @@
     "allow_force_pushes": false,
     "allow_deletions": false
   },
+  "environments": [{"name": "release", "branches": ["main"], "tags": ["v*"]}],
+  "rulesets": [
+    {"name": "Release tags", "target": "tag", "enforcement": "active",
+     "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": ["refs/tags/v*-nightly.*"]}},
+     "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+     "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]},
+    {"name": "Mod bundle tags", "target": "tag", "enforcement": "active",
+     "conditions": {"ref_name": {"include": ["refs/tags/mods-*"], "exclude": []}},
+     "rules": [{"type": "update"}, {"type": "deletion"}],
+     "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]}
+  ],
   "repository": {
     "allow_squash_merge": true,
     "allow_merge_commit": true,

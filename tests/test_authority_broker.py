@@ -17,11 +17,11 @@ def signing_key(directory):
     return key, key.with_suffix(".pub").read_text().strip()
 
 
-def signed(key, path, body):
+def signed(key, path, body, namespace=authority_broker.SIGNING_NAMESPACE):
     path.parent.mkdir(exist_ok=True)
     path.write_bytes(body)
     path.with_name(path.name + ".sig").unlink(missing_ok=True)
-    subprocess.run(["ssh-keygen", "-Y", "sign", "-q", "-f", key, "-n", authority_broker.SIGNING_NAMESPACE, path], check=True)
+    subprocess.run(["ssh-keygen", "-Y", "sign", "-q", "-f", key, "-n", namespace, path], check=True)
     return path
 
 

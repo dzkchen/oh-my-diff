@@ -355,17 +355,39 @@ def archive_acceptance(archive, upstream):
                 raise ValueError("archive installation changed shared Codex configuration")
 
 
-def sign(manifest):
+def sign(manifest, namespace=authority_broker.SIGNING_NAMESPACE):
     key = os.environ.get("OMD_RELEASE_SIGNING_KEY")
     if not key:
-        raise ValueError("OMD_RELEASE_SIGNING_KEY is required to sign omd-release.json")
+        raise ValueError(f"OMD_RELEASE_SIGNING_KEY is required to sign {manifest.name}")
     with tempfile.TemporaryDirectory() as temporary:
         private = Path(temporary) / "key"
         private.write_text(key.strip() + "\n")
         private.chmod(0o600)
-        support.output(["ssh-keygen", "-Y", "sign", "-q", "-f", private, "-n", authority_broker.SIGNING_NAMESPACE, manifest])
-    authority_broker.signed_releases([manifest])
-    return manifest.with_name(manifest.name + ".sig")
+        support.output(["ssh-keygen", "-Y", "sign", "-q", "-f", private, "-n", namespace, manifest])
+    signature = manifest.with_name(manifest.name + ".sig")
+    if not authority_broker.release_signed(manifest.read_bytes(), signature, namespace):
+        raise ValueError(f"{manifest} is not signed by the Oh My Diff release key")
+    return signature
+
+
+def publish_mods(directory, dry_run=False):
+    manifest = json.loads((directory / "omd-mods.json").read_text())
+    if manifest["commit"] != os.environ["GITHUB_SHA"] or Path(manifest["archive"]).name != manifest["archive"]:
+        raise ValueError("mod bundle does not match the workflow commit")
+    if not dry_run and os.environ.get("GITHUB_REF") != "refs/heads/main":
+        raise ValueError("mod bundles are published from main only")
+    if support.digest(directory / manifest["archive"]) != manifest["sha256"]:
+        raise ValueError("mod bundle archive disagrees with its manifest")
+    tag = f"mods-{manifest['omd']}-{manifest['serial']}"
+    assets = [directory / manifest["archive"], directory / "omd-mods.json", sign(directory / "omd-mods.json", authority_broker.MODS_NAMESPACE)]
+    create = ["gh", "release", "create", tag, *assets, "--repo", os.environ["GITHUB_REPOSITORY"], "--target", manifest["commit"],
+              "--title", f"First-party mods for Oh My Diff {manifest['omd']} ({manifest['serial']})",
+              "--notes-file", directory / "notes.md", "--latest=false"]
+    if dry_run:
+        print("dry run verified", ", ".join(path.name for path in assets))
+        print(*map(str, create))
+        return
+    support.output(create)
 
 
 def publish(directory, notes=None, dry_run=False):
@@ -387,7 +409,9 @@ def publish(directory, notes=None, dry_run=False):
             raise ValueError(f"release asset checksum mismatch: {name}")
     if support.digest(directory / manifest["archive"]) != manifest["sha256"]:
         raise ValueError("release archive disagrees with the installer manifest")
-    assets = [directory / name for _, name in sums] + [directory / "SHA256SUMS", sign(directory / "omd-release.json")]
+    signature = (sign(directory / "omd-release.json") if not dry_run or os.environ.get("OMD_RELEASE_SIGNING_KEY")
+                 else directory / "omd-release.json.sig")
+    assets = [directory / name for _, name in sums] + [directory / "SHA256SUMS", signature]
     if not notes:
         notes = directory.parent / "notes.md"
         notes.write_text(f"Nightly from `{provenance['commit']}`; pinned {provenance['upstream_tag']}.\n\n"
@@ -414,7 +438,7 @@ def publish(directory, notes=None, dry_run=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Hosted validation, packaging and publication for nightlies and tagged releases")
-    parser.add_argument("command", choices=("validate", "tests", "package", "publish"))
+    parser.add_argument("command", choices=("validate", "tests", "package", "publish", "publish-mods"))
     parser.add_argument("--job", choices=("build", "native", "core", "lint", "acceptance"), help="validate: the job's steps")
     parser.add_argument("--directory", type=Path, default=Path("release"))
     parser.add_argument("--suite", choices=("native", "core", "core-integration"))
@@ -429,6 +453,8 @@ def main():
         raise SystemExit(validate(args.job, args.release))
     if args.command == "publish":
         publish(args.directory, args.notes, args.dry_run)
+    elif args.command == "publish-mods":
+        publish_mods(args.directory, args.dry_run)
     elif args.command == "package":
         package(args.version)
     else:

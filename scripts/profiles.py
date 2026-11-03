@@ -31,6 +31,7 @@ PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
+MODS_MARKER = ".mods-applying.json"
 ROUTES = {"profiles": "omd_profiles"}
 CODEX_VALUE_OPTIONS = {"-c", "--config", "--enable", "--disable", "-m", "--model", "--local-provider", "-p", "--profile",
                        "-s", "--sandbox", "-a", "--ask-for-approval", "-C", "--cd", "--add-dir", "--remote",
@@ -113,6 +114,17 @@ def deduplicate(root):
                 share(objects, path)
 
 
+def replace_tree(source, target):
+    staged, retired = target.with_name(f".{target.name}.new"), target.with_name(f".{target.name}.old")
+    for leftover in (staged, retired):
+        shutil.rmtree(leftover, ignore_errors=True)
+    shutil.copytree(source, staged)
+    if target.is_dir():
+        target.rename(retired)
+    staged.rename(target)
+    shutil.rmtree(retired, ignore_errors=True)
+
+
 def sync_sources(manager, store, origin, packages):
     selections = {item.get("path"): item for item in invoke(manager, "selection-status", store)["selections"]}
     changed = []
@@ -129,14 +141,7 @@ def sync_sources(manager, store, origin, packages):
         if not pending.exists():
             support.atomic_text(pending, json.dumps({"selected": bool(selection.get("selected"))}))
         if not current:
-            staged, retired = target.with_name(f".{identifier}.new"), target.with_name(f".{identifier}.old")
-            for leftover in (staged, retired):
-                shutil.rmtree(leftover, ignore_errors=True)
-            shutil.copytree(origin / identifier, staged)
-            if target.is_dir():
-                target.rename(retired)
-            staged.rename(target)
-            shutil.rmtree(retired, ignore_errors=True)
+            replace_tree(origin / identifier, target)
         invoke(manager, "trust-all", store, json.dumps([{"path": str(target), "sha256": package["sha256"],
                                                          "capabilities": package["capabilities"]}]))
         if json.loads(pending.read_text())["selected"]:
@@ -160,6 +165,102 @@ def reconcile(prefix, bin_dir):
     record = load(prefix)
     _, manager = check(record, bin_dir)
     return {"restored": sync_sources(manager, Path(record["store"]), prefix / "sources", record["packages"])}
+
+
+def apply_mods(prefix, bin_dir, bundle, applied, backup):
+    record = load(prefix)
+    lock_path, marker = prefix / "management/runtime/mods.lock.json", prefix / MODS_MARKER
+    resuming = json.loads(marker.read_text()) if marker.is_file() else None
+    if resuming and support.digest(lock_path) == resuming["lock"]:
+        record["management"]["files"]["runtime/mods.lock.json"] = resuming["lock"]
+        write(prefix, record)
+    _, manager = check(record, bin_dir)
+    for leftover in (prefix / ".mods-previous.new", *(prefix / "sources").glob(".*")):
+        shutil.rmtree(leftover, ignore_errors=True)
+    lock = json.loads(lock_path.read_text())
+    offered = json.loads((bundle / "mods.lock.json").read_text())
+    if offered.get("mod_api") != lock["mod_api"]:
+        raise ValueError(f"the mod bundle is for mod API {offered.get('mod_api')}; this installation hosts {lock['mod_api']}")
+    forced = set(resuming["ids"]) if resuming else set()
+    changed = {identifier: package for identifier, package in offered["packages"].items()
+               if identifier in lock["packages"] and (identifier in forced
+                                                      or package["package_sha256"] != lock["packages"][identifier]["package_sha256"])}
+    if not changed:
+        marker.unlink(missing_ok=True)
+        return {"updated": []}
+    for identifier, package in changed.items():
+        source = (bundle / "sources" / identifier).resolve()
+        files = {path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file()}
+        if files != set(package["files"]) or any(support.digest(source / name) != digest for name, digest in package["files"].items()):
+            raise ValueError(f"mod bundle files differ from its lock: {identifier}")
+        verify(manager, source, package["package_sha256"])
+    if backup:
+        staged = prefix / ".mods-previous.new"
+        for identifier in changed:
+            shutil.copytree(prefix / "sources" / identifier, staged / "sources" / identifier)
+        staged.mkdir(exist_ok=True)
+        support.atomic_text(staged / "mods.lock.json", json.dumps({
+            "mod_api": lock["mod_api"], "applied": record.get("mods_bundle"),
+            "packages": {identifier: lock["packages"][identifier] for identifier in changed}}, indent=2, sort_keys=True) + "\n")
+        shutil.rmtree(prefix / "mods-previous", ignore_errors=True)
+        staged.rename(prefix / "mods-previous")
+    lock["packages"].update(changed)
+    text = json.dumps(lock, indent=2, sort_keys=True) + "\n"
+    identifiers = sorted(changed)
+    support.atomic_text(marker, json.dumps({"lock": hashlib.sha256(text.encode()).hexdigest(), "ids": identifiers}))
+    for identifier in changed:
+        replace_tree(bundle / "sources" / identifier, prefix / "sources" / identifier)
+    support.atomic_text(lock_path, text)
+    record["management"]["files"]["runtime/mods.lock.json"] = support.digest(lock_path)
+    installed = {}
+    for identifier in identifiers:
+        package = lock["packages"][identifier]
+        record["sources"][identifier] = package["files"]
+        if identifier in record["packages"]:
+            installed[identifier] = record["packages"][identifier] = {
+                "version": package["version"], "sha256": package["package_sha256"], "files": package["files"],
+                "capabilities": package["capabilities"]}
+    if applied:
+        record["mods_bundle"] = applied
+    else:
+        record.pop("mods_bundle", None)
+    write(prefix, record)
+    store = Path(record["store"])
+    index = json.loads((store / "package-index.json").read_text())
+    managed = prefix.name == "prefix" and prefix.parent.parent.name == "releases"
+    for identifier in set(identifiers) & index["packages"].keys():
+        entry, package = index["packages"][identifier][0], lock["packages"][identifier]
+        if entry["source"]["kind"] == "local":
+            shelf = (shelve(prefix / "sources" / identifier, prefix.parents[2] / "catalog" / identifier / package["package_sha256"])
+                     if managed else prefix / "sources" / identifier)
+            index["packages"][identifier] = [entry | {"version": package["version"], "integrity": package["package_sha256"],
+                                                      "source": {"kind": "local", "path": str(shelf)}}]
+    support.atomic_text(store / "package-index.json", json.dumps(index, indent=2) + "\n")
+    sync_sources(manager, store, prefix / "sources", installed)
+    marker.unlink()
+    return {"updated": sorted(installed)}
+
+
+def rollback_mods(prefix, bin_dir):
+    backup = prefix / "mods-previous"
+    if not backup.is_dir():
+        raise ValueError("no first-party mod update to roll back")
+    result = apply_mods(prefix, bin_dir, backup, json.loads((backup / "mods.lock.json").read_text()).get("applied"), False)
+    retired = prefix / ".mods-previous.new"
+    backup.rename(retired)
+    shutil.rmtree(retired)
+    return result
+
+
+def update_mods(prefix, bin_dir, bundle, serial):
+    if (prefix / MODS_MARKER).is_file():
+        rollback_mods(prefix, bin_dir)
+    try:
+        return apply_mods(prefix, bin_dir, bundle, {"serial": serial}, True)
+    except BaseException:
+        if (prefix / MODS_MARKER).is_file():
+            rollback_mods(prefix, bin_dir)
+        raise
 
 
 def paths(prefix, bin_dir, store):
@@ -940,6 +1041,9 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     managed.update(prefix / "management" / name for name in record["management"]["files"])
     managed.update(prefix / "sources" / identifier / name
                    for identifier, files in record["sources"].items() for name in files)
+    managed.update(path for root in (prefix / "mods-previous", prefix / ".mods-previous.new", *(prefix / "sources").glob(".*"))
+                   for path in root.rglob("*") if path.is_file())
+    managed.update(path for path in (prefix / MODS_MARKER,) if path.is_file())
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])
@@ -1017,6 +1121,10 @@ def main():
     install_parser.add_argument("--attach-store", action="store_true")
     install_parser.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
     commands.add_parser("reconcile", help="restore this installation's first-party mod sources in its store (used by install.sh)")
+    mods_parser = commands.add_parser("mods-update", help="apply a verified first-party mod bundle (used by install.sh)")
+    mods_parser.add_argument("--bundle", type=Path, required=True)
+    mods_parser.add_argument("--serial", type=int, required=True)
+    commands.add_parser("mods-rollback", help="undo the last first-party mod bundle (used by install.sh)")
     status_parser = commands.add_parser("status", help="show the installed profile and its mods")
     status_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
     activate_parser = commands.add_parser("activate", help="switch between OMD Core, OMD+ and upstream-style direct mode")
@@ -1064,6 +1172,10 @@ def main():
             return
     elif args.command == "reconcile":
         result = reconcile(prefix, bin_dir)
+    elif args.command == "mods-update":
+        result = update_mods(prefix, bin_dir, args.bundle.resolve(), args.serial)
+    elif args.command == "mods-rollback":
+        result = rollback_mods(prefix, bin_dir)
     elif args.command == "activate":
         result = activate(prefix, bin_dir, args.selection)
     elif args.command == "mod":
