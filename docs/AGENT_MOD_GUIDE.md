@@ -95,7 +95,7 @@ file.
 | Add commands and settings | [Commands and configuration](../mods/reference/commands-and-composer.md#commands-and-configuration-command_config_middleware_v1), [settings file](../mods/reference/settings.md#settings-file-settings_file_v1), [registration rules](../mods/reference/host-model.md#registration-limits) |
 | Add tools | `ToolSpec` and `api.tool` in [`api.d.ts`](../mods/api.d.ts), [registration limits](../mods/reference/host-model.md#registration-limits) |
 | Intercept tool calls and other surfaces | [`api.intercept`](../mods/reference/interceptors.md#apiintercept), [chain and failure rules](../mods/reference/interceptors.md#registration-chain-and-failure-rules) |
-| Observe events | [Lifecycle events](../mods/reference/events-and-lifecycle.md#lifecycle-events-and-classic-hooks-lifecycle_events_v1) |
+| Observe events and schedule work | [Events and lifecycle](../mods/reference/events-and-lifecycle.md), [timer helpers](../mods/reference/events-and-lifecycle.md#apitime-helpers) |
 | Change model requests | [Model requests](../mods/reference/model-requests.md#model-requests-and-streams-model_turn_interception_v1) |
 | Keep state | [Durable data](../mods/reference/state-and-storage.md#durable-data-store-and-evidence), [reactive state](../mods/reference/state-and-storage.md#reactive-state-reactive_state_v1) |
 | Draw on screen | [Terminal UI](../mods/reference/terminal-ui.md), [render hooks](../mods/reference/render-hooks.md#render-hooks-render_hooks_v1) |

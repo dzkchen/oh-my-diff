@@ -64,10 +64,12 @@ These frozen entries have experimental fields:
 | `events:agent` | `provider`, `model`, `billing` | none |
 | `events:component_event` | `content`, `target`, `edge`, `columns`, `rows` | `terminal_layout_dock_v1` |
 | `events:terminal` | `omd_version`, `welcome`, `chat`, `colors`, `sites` | `terminal_welcome_area_v1`, `terminal_chat_area_v1`, `terminal_colors_v1`, `terminal_site_area_v1` |
+| `events:timer` | `data` | `timer_data_v1` |
 | `replacements:tool_batch` | `success_per_call` | `tool_batch_success_v1` |
 | `intercepts:tool` | `value`, `bytes` | `code_mode_values_v1`, `tool_original_v1` |
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
 | `operations:agents.spawn` | `model` | none |
+| `operations:events.schedule` | `data` | `timer_data_v1` |
 | `operations:routes.add` | `model`, `effort` | `routes_add_model_v1` |
 | `operations:routes.list` | `data` | `route_write_v1` |
 | `operations:session.info` | `process_id`, `omd_version` | none |

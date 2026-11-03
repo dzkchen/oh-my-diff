@@ -42,6 +42,7 @@ the API version matches. Each list holds at most 32 features.
 | `terminal.copy` | `terminal_copy_v1` |
 | `environment.set` | `environment_overrides_v1` |
 | Timers of 16-999 ms | `timers_16ms_v1` |
+| JSON arguments for timers and typed `api.time.after<T>` | `timer_data_v1` |
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
 | `routes.write` | `route_write_v1` |
 | `routes.add` without `mod` | `routes_add_self_v1` |

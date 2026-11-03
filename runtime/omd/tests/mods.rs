@@ -3294,6 +3294,64 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
 }
 
 #[test]
+fn timer_data_survives_fresh_callbacks_replacement_and_cancellation_offline() {
+    let (temp, _, _) = fixture(
+        "export default api => { \
+         const later = api.time.after('work', 16, event => api.state.set([...(api.state.get() ?? []), event])); \
+         api.command('start', value => later.start(value)); \
+         api.command('cancel', () => later.cancel()); \
+         api.command('raw', value => api.host.call('events.schedule', value)); \
+         }",
+        &["commands", "events", "store"],
+    );
+    let mut runtime = host(&temp);
+    runtime.offline_test(json!({"schema": 1, "virtual_time_ms": 0, "steps": [
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": {"turn_id": "old"}},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": {"turn_id": "new"}},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": "x".repeat(65_535), "expect_error": "timer_data_limit"},
+        {"type": "advance_time", "ms": 16},
+        {"type": "state", "mod": "fixture", "expect": [{"key": "work", "data": {"turn_id": "new"}}]},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": "cancelled"},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "cancel", "expect": {"cancelled": true}},
+        {"type": "advance_time", "ms": 16},
+        {"type": "state", "mod": "fixture", "expect": [{"key": "work", "data": {"turn_id": "new"}}]},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": null},
+        {"type": "advance_time", "ms": 16},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "raw", "payload": {"key": "time:work", "delay_ms": 16}},
+        {"type": "advance_time", "ms": 16},
+        {"type": "state", "mod": "fixture", "expect": [
+            {"key": "work", "data": {"turn_id": "new"}}, {"key": "work", "data": null}, {"key": "work"}
+        ]}
+    ]})).unwrap();
+}
+
+#[test]
+fn timer_data_cannot_schedule_work_during_rendering() {
+    let (temp, _, _) = fixture(
+        "export default api => { const later = api.time.after('work', 16, () => {}); \
+         api.intercept('render', () => later.start({turn_id: 't'})); }",
+        &["events", "terminal"],
+    );
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let result = codex_omd::render_shared(
+        &runtime,
+        json!({"component": "assistant_message", "id": "m", "surface": "fullscreen",
+            "viewport": {"columns": 80, "rows": 24}, "lifecycle": "final", "owner": null,
+            "props": {"text": "Hello", "first": true, "truncated": false}}),
+        || true,
+    )
+    .unwrap();
+    assert_eq!(result.result, json!({"tree": [{"type": "native"}]}));
+    assert!(
+        result.trace.iter().any(|entry| entry["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("host_operation_unavailable"))),
+        "{:?}",
+        result.trace
+    );
+}
+
+#[test]
 fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
     let (temp, _, _) = fixture(
         "export default api => { api.command('nap', () => api.time.sleep(300)); api.command('doze', () => api.time.sleep(5000)); api.intercept('command_list', async (e, next) => { await api.time.sleep(10); return next(e); }); api.intercept('composer_edit', async (e, next) => { await api.time.sleep(10); return next(e); }); }",

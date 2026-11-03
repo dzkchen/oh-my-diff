@@ -275,6 +275,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_copy_v1",
     "environment_overrides_v1",
     "timers_16ms_v1",
+    "timer_data_v1",
     "author_diagnostics_v1",
     "author_offline_runner_v1",
     "author_tooling_v1",

@@ -54,7 +54,7 @@ experimental may change in any release
 | `workspace_change` | `{repository, source, call_id, watch_id?, changes, status, reason?}` | nothing | `api.on` | frozen | [Workspace files](workspace-files.md#workspace_change-delivery) |
 | `workspace_pre_rename` | `{repository, old, new, expected, thread_id}` | a `ready` or `fallback` proposal, or nothing | `api.on` | frozen | [Workspace files](workspace-files.md#workspacerequest_rename) |
 | `process_event` | `{session, kind: 'output', bytes}` or `{session, kind: 'exit'}` | nothing | `api.on` | frozen | [Managed processes](managed-processes.md#process-notifications) |
-| `timer` | `{key}` | nothing | `api.on` | frozen | [Timers](#timers-timers_v1) |
+| `timer` | `{key, data?}` | nothing | `api.on` | frozen; experimental field: `data` | [Timers](#timers-timers_v1) |
 | `channel` | `{publisher, channel, data, correlation, sequence, dropped}` | nothing | `api.on` | frozen | [`events.publish`](#eventspublish) |
 | `component_event` | `{component, thread_id, kind, ...}` | nothing | `api.on` | frozen; experimental fields: `content`, `target`, `edge`, `columns`, `rows` | [Terminal input](terminal-input.md#component_event) |
 | `component_post` | `{component, module, client?, data}` | nothing | `api.on` | frozen | [Terminal input](terminal-input.md#component-module-handlers) |
@@ -185,7 +185,7 @@ limit fails with `channel_sequence_limit`, while existing channels remain publis
 
 ### Timers (`timers_v1`)
 
-`events.schedule {key, delay_ms}` (`timers_v1`) delivers one `timer` event `{key}` to the calling mod after
+`events.schedule {key, delay_ms, data?}` (`timers_v1`) delivers one `timer` event `{key, data?}` to the calling mod after
 `delay_ms`, which is 16 ms to 24 h.
 
 - Scheduling a key again replaces it within that thread.
@@ -200,6 +200,11 @@ limit fails with `channel_sequence_limit`, while existing channels remain publis
 - A timer never starts a turn by itself; only [`turns.queue`](sessions-and-turns.md#turnsqueue) under an `autonomous`
   grant can.
 
+The optional `data` field is experimental (`timer_data_v1`): at most 65,536 UTF-8 bytes of compact JSON, including
+quotes and escapes. The host passes it to the timer callback, so arguments need not be saved in `api.state`.
+An omitted field stays omitted; explicit `null` is delivered as `null`. Replacing or cancelling a timer drops its
+old payload. An oversized payload fails with `timer_data_limit` before replacing the existing timer.
+
 ### `api.time` helpers
 
 - `api.time.sleep(ms)` calls `time.sleep {ms}` (experimental, capability `events`, at most 60 s). The callback waits
@@ -212,6 +217,28 @@ limit fails with `channel_sequence_limit`, while existing channels remain publis
 - `every` reschedules after each handler run until `cancel()`, the handler returns `false`, or a reload with
   changed source, disable or session end drops it (the host timer limits apply).
 - A mod uses these or its own `on('timer')`, not both.
+
+`api.time.after<T>(key, delay_ms, ({key, data}) => …)` returns a timer whose `start(data: T)` schedules a typed
+JSON argument (`timer_data_v1`, experimental). Declare `timer_data_v1` in `compatibility.required_features`.
+For example, with `lifecycle`, `events`, `store`, `http` and a matching
+[`http_access`](authority-grants.md#http_access-manifest-field) grant:
+
+```ts
+const refresh = api.time.after<{ turn_id: string }>('refresh', 1000, ({ data }) => {
+  const response = api.host.tryCall('http.request', {
+    url: 'https://example.com/cards/' + encodeURIComponent(data.turn_id),
+    timeout_ms: 2000, max_bytes: 4096, redirects: 0,
+  });
+  api.state.set({ text: response.ok && response.value.status === 200
+    ? response.value.body ?? '' : 'Refresh failed' });
+});
+api.on('turn_end', event => {
+  if (event.outcome === 'completed') refresh.start({ turn_id: event.turn_id });
+});
+```
+
+Perform requests in the timer handler and render from the saved result. Await asynchronous work before the handler
+returns. [Callback operation restrictions](host-model.md#callback-contexts) still apply.
 
 Where `time.sleep` is unavailable:
 

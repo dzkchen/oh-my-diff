@@ -54,6 +54,7 @@ export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'include
 export type RouteModel = { model: string; display_name: string; efforts: string[]; default_effort: string; context_window: number };
 export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; omd_version?: string; model: string; provider: string; route: string | null; turns_started: number; process_id: string };
 export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
+export type PayloadTimer<T extends Json> = { start(data: T): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
 export type UsageSummary = {
   request_id: string | null; route: string | null; provider: string | null; credential: string | null; requested_model: string | null; served_model: string | null;
   /** Provider-reported token counts; `false` when the response carried none. */
@@ -450,7 +451,7 @@ export interface HostOperations {
   /** New channels fail with channel_sequence_limit at 256 counters per publisher or 4096 process-wide. */
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
   /** Require timers_16ms_v1 for delays below 1000 ms. */
-  'events.schedule': { arguments: { key: string; delay_ms: number }; result: { key: string; delay_ms: number } };
+  'events.schedule': { arguments: { key: string; delay_ms: number; data?: Json }; result: { key: string; delay_ms: number } };
   'events.cancel': { arguments: { key: string }; result: { cancelled: boolean } };
   'tools.define': { arguments: { name: string; description: string; parameters: Json; label?: string }; result: { name: string; effective_at: 'next_request' } };
   'tools.undefine': { arguments: { name: string }; result: { removed: boolean } };
@@ -555,7 +556,7 @@ export interface Events {
   history: { input: { thread_id: string; agent_id: string | null; model: string | null; items: HistoryItem[] }; output: null | HistoryEdit };
   tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json; success_per_call?: boolean }[] } };
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
-  timer: { input: { key: string }; output: void };
+  timer: { input: { key: string; data?: Json }; output: void };
   /** Independent per-channel sequence; restarts at 1 after publisher reclamation (15 minutes idle and no queued events). */
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
   component_event: { input: { component: string; thread_id: string | null; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close' | 'dock' | 'exit' | 'title' | 'bell' | 'notify';
@@ -695,6 +696,7 @@ export interface ModAPI {
     wait<T>(check: () => T | Promise<T>, options?: { interval_ms?: number; timeout_ms?: number }): Promise<{ value: T; waited_ms: number; timed_out: boolean; cancelled: boolean }>;
     /** Registered during activation; `start()` schedules it from a callback. */
     after(key: string, delay_ms: number, handler: (event: { key: string }) => void | Promise<void>): Timer;
+    after<T extends Json>(key: string, delay_ms: number, handler: (event: { key: string; data: T }) => void | Promise<void>): PayloadTimer<T>;
     /** Repeats until `cancel()`, the handler returns `false`, or the mod's generation ends. */
     every(key: string, interval_ms: number, handler: (event: { key: string }) => void | boolean | Promise<void | boolean>): Timer;
   };

@@ -78468,10 +78468,10 @@ index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..272409f24771bd72f8ec13a725bc07e9f438e99c
+index 0000000000000000000000000000000000000000..3bc392cbfae64726adaeba0ae73bfff63c639faf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,741 @@
+@@ -0,0 +1,749 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -78502,6 +78502,7 @@ index 0000000000000000000000000000000000000000..272409f24771bd72f8ec13a725bc07e9
 +        key: String,
 +        source: String,
 +        incarnation: u64,
++        data: Option<Value>,
 +    },
 +}
 +
@@ -78833,6 +78834,7 @@ index 0000000000000000000000000000000000000000..272409f24771bd72f8ec13a725bc07e9
 +            key,
 +            source,
 +            incarnation,
++            data,
 +        } => {
 +            let Some(lead) = core.expansion.thread(thread) else {
 +                if let Ok(mut timers) = core.expansion.timers.lock() {
@@ -78846,12 +78848,16 @@ index 0000000000000000000000000000000000000000..272409f24771bd72f8ec13a725bc07e9
 +                }
 +                return;
 +            };
++            let mut payload = json!({"key": key});
++            if let Some(data) = data {
++                payload["data"] = data;
++            }
 +            invoke_one_guarded(
 +                core,
 +                &lead,
 +                owner,
 +                "timer",
-+                json!({"key": key}),
++                payload,
 +                Some((key, source, incarnation)),
 +            )
 +            .await;
@@ -79051,6 +79057,7 @@ index 0000000000000000000000000000000000000000..272409f24771bd72f8ec13a725bc07e9
 +    arguments: Value,
 +) -> Result<Value, String> {
 +    let (key, delay_ms) = codex_omd::host::validate_timer_request("events.schedule", &arguments)?;
++    let data = arguments.get("data").cloned();
 +    let weak = core
 +        .expansion
 +        .core
@@ -79095,6 +79102,7 @@ index 0000000000000000000000000000000000000000..272409f24771bd72f8ec13a725bc07e9
 +                    key: timer_key,
 +                    source,
 +                    incarnation,
++                    data,
 +                },
 +            );
 +        }
@@ -79919,10 +79927,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f1dce5f09dc371025c60ef038abcdcd4d31ab782
+index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada3a16697d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5433 @@
+@@ -0,0 +1,5518 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -82203,6 +82211,7 @@ index 0000000000000000000000000000000000000000..f1dce5f09dc371025c60ef038abcdcd4
 +        key: key.into(),
 +        source: "source".into(),
 +        incarnation: 0,
++        data: None,
 +    };
 +    for item in [
 +        timer("a", "one"),
@@ -82224,6 +82233,90 @@ index 0000000000000000000000000000000000000000..f1dce5f09dc371025c60ef038abcdcd4
 +    assert!(
 +        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(16)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
 +    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn timer_data_replacement_cancellation_and_owner_release_use_existing_slots() {
++    fn timer_count(state: &State) -> usize {
++        state
++            .pending
++            .lock()
++            .unwrap()
++            .iter()
++            .filter(|pending| matches!(pending, delivery::Pending::Timer { .. }))
++            .count()
++    }
++    async fn queued(state: &State) {
++        tokio::time::timeout(std::time::Duration::from_secs(2), async {
++            while timer_count(state) == 0 {
++                state.wake.notified().await;
++            }
++        })
++        .await
++        .unwrap();
++    }
++    let Some(fixture) = fixture(&[Package {
++        id: "observer",
++        capabilities: &["events", "store", "commands"],
++        manifest: Value::Null,
++        source: "export default api => { api.on('timer', e => api.state.set(e)); api.command('seen', () => api.state.get()); }",
++    }]) else {
++        return;
++    };
++    let (core, lead) = (&fixture.core, &fixture.lead);
++    core.expansion.core.set(Arc::downgrade(core)).unwrap();
++    let (generation, grants) = {
++        let runtime = core.runtime.lock().unwrap();
++        (runtime.generation(), runtime.grants("observer"))
++    };
++    let source = grants.as_ref().unwrap().source_sha256.clone();
++    let caller = Caller {
++        id: "observer",
++        source: &source,
++        grants,
++        generation,
++        origin: Origin::Event,
++        record_changes: false,
++    };
++    let schedule = |data: Value| {
++        delivery::schedule(
++            core,
++            lead,
++            &caller,
++            json!({"key": "k", "delay_ms": 16, "data": data}),
++        )
++    };
++    schedule(json!("old")).unwrap();
++    queued(&core.expansion).await;
++    assert_eq!(timer_count(&core.expansion), 1);
++    assert_eq!(
++        schedule(json!("x".repeat(65_535))).unwrap_err(),
++        "timer_data_limit"
++    );
++    assert_eq!(timer_count(&core.expansion), 1);
++    schedule(json!({"turn_id": "new"})).unwrap();
++    assert!(core.expansion.pending.lock().unwrap().iter().filter(|pending| matches!(pending, delivery::Pending::Timer { .. })).all(|pending| {
++        matches!(pending, delivery::Pending::Timer { data: Some(data), .. } if *data == json!({"turn_id": "new"}))
++    }));
++    queued(&core.expansion).await;
++    delivery::deliver(core).await;
++    let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
++    assert_eq!(
++        command(core, "observer", "seen"),
++        json!({"key": "k", "data": {"turn_id": "new"}})
++    );
++    assert!(core.expansion.timers.lock().unwrap().is_empty());
++    schedule(Value::Null).unwrap();
++    queued(&core.expansion).await;
++    assert_eq!(
++        delivery::cancel(core, lead, "observer", &json!({"key": "k"})).unwrap(),
++        json!({"cancelled": true})
++    );
++    assert_eq!(timer_count(&core.expansion), 0);
++    schedule(json!("released")).unwrap();
++    delivery::release_owner(core, "observer");
++    assert!(core.expansion.timers.lock().unwrap().is_empty());
++    assert_eq!(timer_count(&core.expansion), 0);
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -92522,10 +92615,10 @@ index 0000000000000000000000000000000000000000..1be17343954a7f675b6043f83ef4bdf5
 +}
 diff --git a/codex-rs/omd/runner/src/bootstrap.js b/codex-rs/omd/runner/src/bootstrap.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..8d9f8b1ab440fd23bee3e2be1fe2621c9824bf62
+index 0000000000000000000000000000000000000000..9e88bade3832979d0f59521b9c0e375ce7ef5119
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/bootstrap.js
-@@ -0,0 +1,888 @@
+@@ -0,0 +1,890 @@
 +const request = JSON.parse(globalThis.__request);
 +delete globalThis.__request;
 +request.hook_budget_ms ??= 1000;
@@ -93040,7 +93133,7 @@ index 0000000000000000000000000000000000000000..8d9f8b1ab440fd23bee3e2be1fe2621c
 +  entry.cancelled = false;
 +  let failure = null;
 +  try {
-+    if (await entry.handler({ key: entry.key }) === false) entry.cancelled = true;
++    if (await entry.handler({ ...event, key: entry.key }) === false) entry.cancelled = true;
 +  } catch (error) {
 +    if (error === suspension) throw error;
 +    failure = error;
@@ -93064,7 +93157,9 @@ index 0000000000000000000000000000000000000000..8d9f8b1ab440fd23bee3e2be1fe2621c
 +  const entry = { key, ms, handler, repeat, cancelled: false };
 +  timers.set(scheduled, entry);
 +  return Object.freeze({
-+    start() { return hostCall('events.schedule', { key: scheduled, delay_ms: ms }); },
++    start(...args) {
++      return hostCall('events.schedule', { key: scheduled, delay_ms: ms, ...(!repeat && args.length ? { data: args[0] } : {}) });
++    },
 +    cancel() { entry.cancelled = true; return hostCall('events.cancel', { key: scheduled }); },
 +  });
 +}
@@ -110576,10 +110671,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b122dc38f1dd633efc9a3f01ad9d617a4b155645
+index 0000000000000000000000000000000000000000..3d0d3553a1f4ef60b6e0ef9e2a371c35d01a6f3f
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,2079 @@
+@@ -0,0 +1,2090 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -110926,6 +111021,8 @@ index 0000000000000000000000000000000000000000..b122dc38f1dd633efc9a3f01ad9d617a
 +    Ok((input.name, value))
 +}
 +
++pub const TIMER_DATA_BYTES: usize = 65_536;
++
 +pub fn validate_timer_request(operation: &str, arguments: &Value) -> Result<(String, u64), String> {
 +    if operation == "events.cancel" {
 +        return arguments["key"]
@@ -110938,12 +111035,21 @@ index 0000000000000000000000000000000000000000..b122dc38f1dd633efc9a3f01ad9d617a
 +    struct Input {
 +        key: String,
 +        delay_ms: u64,
++        data: Option<Value>,
 +    }
 +    let input: Input =
 +        serde_json::from_value(arguments.clone()).map_err(|error| error.to_string())?;
 +    if input.key.is_empty() || input.key.len() > 64 || !(16..=86_400_000).contains(&input.delay_ms)
 +    {
 +        return Err("timer_invalid".into());
++    }
++    if let Some(data) = input.data
++        && serde_json::to_vec(&data)
++            .map_err(|error| error.to_string())?
++            .len()
++            > TIMER_DATA_BYTES
++    {
++        return Err("timer_data_limit".into());
 +    }
 +    Ok((input.key, input.delay_ms))
 +}
@@ -114709,10 +114815,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a3aabed8c
+index 0000000000000000000000000000000000000000..587d050418c23739501769fbc927a0d7d86c119d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7017 @@
+@@ -0,0 +1,7018 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -114990,6 +115096,7 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +    "terminal_copy_v1",
 +    "environment_overrides_v1",
 +    "timers_16ms_v1",
++    "timer_data_v1",
 +    "author_diagnostics_v1",
 +    "author_offline_runner_v1",
 +    "author_tooling_v1",
@@ -121732,12 +121839,14 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7bc74a81a9
+index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb50b62f51
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1106 @@
+@@ -0,0 +1,1112 @@
 +use super::*;
 +use std::collections::VecDeque;
++
++type OfflineTimers = BTreeMap<(Option<String>, String, String), (u64, Option<Value>)>;
 +
 +#[derive(Default)]
 +struct OfflineHost {
@@ -121746,7 +121855,7 @@ index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7b
 +    violations: Vec<String>,
 +    now_ms: u64,
 +    /// Live timers are per thread: (thread, owner, key), firing in the thread that scheduled them.
-+    timers: BTreeMap<(Option<String>, String, String), u64>,
++    timers: OfflineTimers,
 +    thread: Option<String>,
 +    /// Mods with `state_scope: "thread"`; the others' timers share the one session thread, as live.
 +    thread_scoped: std::collections::BTreeSet<String>,
@@ -121971,7 +122080,7 @@ index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7b
 +                    .ok_or_else(|| failure("offline_time_overflow"))?;
 +                self.timers.insert(
 +                    (self.timer_thread(caller), caller.to_owned(), key.clone()),
-+                    deadline,
++                    (deadline, call.arguments.get("data").cloned()),
 +                );
 +                return Ok(json!({"key": key, "delay_ms": delay}));
 +            }
@@ -122243,12 +122352,12 @@ index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7b
 +                    .ok_or_else(|| failure("offline_virtual_time_overflow"))?;
 +                let mut fired = Vec::new();
 +                // Due timers fire in due order at their own virtual time; a handler may reschedule.
-+                while let Some(((thread, owner, key), due)) = host
++                while let Some(((thread, owner, key), (due, data))) = host
 +                    .timers
 +                    .iter()
-+                    .filter(|(_, due)| **due <= until)
-+                    .min_by_key(|(_, due)| **due)
-+                    .map(|(timer, due)| (timer.clone(), *due))
++                    .filter(|(_, (due, _))| *due <= until)
++                    .min_by_key(|(_, (due, _))| *due)
++                    .map(|(timer, value)| (timer.clone(), value.clone()))
 +                {
 +                    if fired.len() >= 256 {
 +                        return Err(failure("offline_timer_limit"));
@@ -122259,12 +122368,16 @@ index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7b
 +                    self.virtual_time_ms = Some(due);
 +                    host.thread = thread.clone().or_else(bound_thread);
 +                    let _thread = StateThread::enter(host.thread.clone());
++                    let mut payload = json!({"key": key});
++                    if let Some(data) = data {
++                        payload["data"] = data;
++                    }
 +                    let value = self.invoke_scoped_with(
 +                        &owner,
 +                        self.generation,
 +                        "timer",
 +                        "",
-+                        json!({"key": key}),
++                        payload,
 +                        || active,
 +                        |caller, call| host.call(caller, call),
 +                    );
@@ -125601,10 +125714,10 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..861ea5baa759b5ce12dc008c56091a38a5a820cb
+index 0000000000000000000000000000000000000000..df6817a99ee41d9287c20f28c7b193d901a6ad1f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,227 @@
 +{
 +  "operations": {
 +    "exec.run": {"arguments":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdin":{"type":"string"},"timeout_ms":{"type":"number"},"max_output_bytes":{"type":"number"},"output_artifact":{"anyOf":[{"const":false},{"const":true}]},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"unix_sockets":{"type":"array","items":{"type":"string"}},"snapshot":{"$ref":"#/$defs/1"},"guards":{"type":"array","items":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdout_sha256":{"type":"string"}},"required":["program","stdout_sha256"]}},"required_access":{"type":"object","properties":{"write":{"type":"array","items":{"type":"string"}}},"required":["write"]},"exclusive_workspace":{"type":"string"},"sandbox":{"const":"none"}},"required":["program"]},"result":{"allOf":[{"type":"object","properties":{"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"signal":{"anyOf":[{"type":"null"},{"type":"string"}]},"stdout":{"type":"string"},"stdout_sha256":{"type":"string"},"stdout_bytes":{"type":"number"},"output_artifact":{"$ref":"#/$defs/2"},"stderr":{"type":"string"},"stdout_truncated":{"type":"boolean"},"stdout_preview_truncated":{"type":"boolean"},"stderr_truncated":{"type":"boolean"},"stderr_preview_truncated":{"type":"boolean"},"timed_out":{"type":"boolean"},"duration_ms":{"type":"number"},"program":{"$ref":"#/$defs/3"},"guards_verified":{"type":"number"}},"required":["exit_code","signal","stdout","stdout_sha256","stdout_bytes","output_artifact","stderr","stdout_truncated","stdout_preview_truncated","stderr_truncated","stderr_preview_truncated","timed_out","duration_ms","program","guards_verified"]},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"evidence":{"$ref":"#/$defs/1"}},"required":[]}]}},
@@ -125681,16 +125794,16 @@ index 0000000000000000000000000000000000000000..861ea5baa759b5ce12dc008c56091a38
 +    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"},"git":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/61"}},
 +    "workspace.unwatch": {"arguments":{"anyOf":[{"$ref":"#/$defs/61"},{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}]},"result":{"$ref":"#/$defs/59"}},
 +    "events.publish": {"arguments":{"type":"object","properties":{"channel":{"type":"string"},"data":{},"correlation":{"type":"string"}},"required":["channel","data"]},"result":{"type":"object","properties":{"delivered":{"type":"number"},"dropped":{"type":"number"}},"required":["delivered","dropped"]}},
-+    "events.schedule": {"arguments":{"$ref":"#/$defs/62"},"result":{"$ref":"#/$defs/62"}},
++    "events.schedule": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"delay_ms":{"type":"number"},"data":{"$ref":"#/$defs/32"}},"required":["key","delay_ms"]},"result":{"type":"object","properties":{"key":{"type":"string"},"delay_ms":{"type":"number"}},"required":["key","delay_ms"]}},
 +    "events.cancel": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/47"}},
 +    "tools.define": {"arguments":{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"parameters":{},"label":{"type":"string"}},"required":["name","description","parameters"]},"result":{"type":"object","properties":{"name":{"type":"string"},"effective_at":{"const":"next_request"}},"required":["name","effective_at"]}},
 +    "tools.undefine": {"arguments":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"result":{"$ref":"#/$defs/56"}},
 +    "tools.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"tools":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"kind":{"anyOf":[{"const":"mcp"},{"const":"builtin"},{"const":"extension"},{"const":"dynamic"}]},"server":{"anyOf":[{"type":"null"},{"type":"string"}]},"original":{"type":"object","properties":{"description":{"type":"string"},"parameters":{},"freeform":{"type":"boolean"}},"required":["description","parameters","freeform"]},"effective":{"anyOf":[{"type":"null"},{"type":"object","properties":{"description":{"type":"string"},"parameters":{},"deferred":{"type":"boolean"}},"required":["description","parameters","deferred"]}]}},"required":["name","kind","server","original","effective"]}}},"required":["thread_id","tools"]}},
-+    "tools.invoke": {"arguments":{"$ref":"#/$defs/63"},"result":{"type":"object","properties":{"call_id":{"type":"string"},"output":{"type":"string"},"success":{"type":"boolean"},"truncated":{"type":"boolean"}},"required":["call_id","output","success","truncated"]}},
-+    "tools.check": {"arguments":{"$ref":"#/$defs/63"},"result":{"type":"object","properties":{"decision":{"anyOf":[{"const":"allow"},{"const":"ask"},{"const":"deny"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"authority":{"anyOf":[{"const":"host"},{"const":"mod"}]}},"required":["decision","reason","authority"]}},
++    "tools.invoke": {"arguments":{"$ref":"#/$defs/62"},"result":{"type":"object","properties":{"call_id":{"type":"string"},"output":{"type":"string"},"success":{"type":"boolean"},"truncated":{"type":"boolean"}},"required":["call_id","output","success","truncated"]}},
++    "tools.check": {"arguments":{"$ref":"#/$defs/62"},"result":{"type":"object","properties":{"decision":{"anyOf":[{"const":"allow"},{"const":"ask"},{"const":"deny"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"authority":{"anyOf":[{"const":"host"},{"const":"mod"}]}},"required":["decision","reason","authority"]}},
 +    "tools.original": {"arguments":{"type":"object","properties":{"call_id":{"type":"string"}},"required":["call_id"]},"result":{"type":"object","properties":{"reference":{"$ref":"#/$defs/1"},"sha256":{"type":"string"},"bytes":{"type":"number"}},"required":["reference","sha256","bytes"]}},
-+    "credentials.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/65"}}},
-+    "credentials.request": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"anyOf":[{"const":"chatgpt"},{"const":"api_key"}]},"label":{"type":"string"},"provider":{"type":"string"}},"required":["action","kind","label"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"provider"},"label":{"type":"string"},"provider":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"secret"},"label":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"anyOf":[{"const":"remove"},{"const":"refresh"}]},"profile":{"type":"string"}},"required":["action","profile"]}]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"completed"},{"const":"declined"}]},"profile":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/65"}]}},"required":["status","profile"]}},
++    "credentials.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/64"}}},
++    "credentials.request": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"anyOf":[{"const":"chatgpt"},{"const":"api_key"}]},"label":{"type":"string"},"provider":{"type":"string"}},"required":["action","kind","label"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"provider"},"label":{"type":"string"},"provider":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"secret"},"label":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"anyOf":[{"const":"remove"},{"const":"refresh"}]},"profile":{"type":"string"}},"required":["action","profile"]}]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"completed"},{"const":"declined"}]},"profile":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/64"}]}},"required":["status","profile"]}},
 +    "models.context_window": {"arguments":{"type":"object","properties":{"model":{"type":"string"},"tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["model"]},"result":{"type":"object","properties":{"model":{"type":"string"},"tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"max":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["model","tokens","max"]}},
 +    "routes.select": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"scope":{"anyOf":[{"const":"thread"},{"const":"next_request"},{"const":"new_threads"}]}},"required":["route","scope"]},"result":{"type":"object","properties":{"route":{"$ref":"#/$defs/33"},"effective_at":{"anyOf":[{"const":"next_request"},{"const":"new_thread"}]}},"required":["route","effective_at"]}},
 +    "turns.activity": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"thread_id":{"type":"string"},"turn_id":{"type":"string"},"last":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"turns":{"type":"array","items":{"type":"object","properties":{"turn_id":{"type":"string"},"started_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"ended_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"const":"error"},{"const":"unknown"},{"const":"completed"},{"const":"interrupted"},{"const":"running"},{"const":"aborted"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/52"},"unrecorded_end":{"type":"boolean"},"tool_calls":{"type":"array","items":{"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"started_at":{"type":"string"},"finished_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"type":"null"},{"type":"string"}]},"output_replaced":{"type":"object","properties":{"mod":{"type":"string"},"original_sha256":{"type":"string"},"replacement_sha256":{"type":"string"}},"required":["mod","original_sha256","replacement_sha256"]}},"required":["call_id","tool","started_at","finished_at","outcome"]}},"processes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"anyOf":[{"const":"exec"},{"const":"managed"}]},"command":{"type":"string"},"running":{"anyOf":[{"type":"null"},{"const":false},{"const":true}]},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["id","kind","command","running","exit_code"]}},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"before":{"anyOf":[{"type":"null"},{"type":"string"}]},"after":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"external"},{"const":"exec"},{"const":"tool"},{"const":"transaction"},{"const":"rescan"}]}},"required":["path","before","after","source"]}},"truncated":{"type":"boolean"}},"required":["turn_id","started_at","ended_at","outcome","reason","error","unrecorded_end","tool_calls","processes","files","truncated"]}},"recording":{"type":"boolean"}},"required":["turns","recording"]}},
@@ -125699,38 +125812,38 @@ index 0000000000000000000000000000000000000000..861ea5baa759b5ce12dc008c56091a38
 +    "terminal.copy": {"arguments":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"pending"},{"const":"confirmed"},{"const":"unconfirmed"},{"const":"busy"}]}},"required":["status"]}},
 +    "terminal.notify": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}},"required":["title"]},"result":{"type":"object","properties":{"delivered":{"type":"boolean"},"method":{"anyOf":[{"const":"none"},{"const":"osc9"},{"const":"osc99"},{"const":"osc777"},{"const":"bel"}]},"reason":{"type":"string"}},"required":["delivered","method"]}},
 +    "terminal.show_thread": {"arguments":{"type":"object","properties":{"thread_id":{"type":"string"}},"required":["thread_id"]},"result":{"type":"object","properties":{"shown":{"type":"boolean"}},"required":["shown"]}},
-+    "commands.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"commands":{"type":"array","items":{"$ref":"#/$defs/66"}}},"required":["commands"]}},
-+    "commands.describe": {"arguments":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]},"result":{"$ref":"#/$defs/66"}},
-+    "commands.invoke": {"arguments":{"$ref":"#/$defs/67"},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"command":{"type":"string"},"result":{}},"required":["command","result"]}]}},
++    "commands.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"commands":{"type":"array","items":{"$ref":"#/$defs/65"}}},"required":["commands"]}},
++    "commands.describe": {"arguments":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]},"result":{"$ref":"#/$defs/65"}},
++    "commands.invoke": {"arguments":{"$ref":"#/$defs/66"},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"command":{"type":"string"},"result":{}},"required":["command","result"]}]}},
 +    "config.describe": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"rows":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"label":{"type":"string"},"value":{},"source":{"type":"string"},"version":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"mod"},{"const":"codex"}]},"editable":{"type":"boolean"},"managed":{"type":"boolean"},"secret":{"type":"boolean"},"hidden":{"type":"boolean"},"type":{"type":"string"},"enum":{"anyOf":[{"type":"null"},{"type":"array","items":{}}]}},"required":["key","label","value","source","version","scope","editable","managed","secret","hidden"]}}},"required":["rows"]}},
 +    "config.set": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"value":{},"expected":{"$ref":"#/$defs/32"}},"required":["key","value"]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"key":{"type":"string"},"effective":{}},"required":["key","effective"]}]}},
 +    "sessions.ports": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"ports":{"type":"array","items":{"type":"object","properties":{"port":{"type":"number"},"pid":{"type":"number"},"address":{"type":"string"}},"required":["port","pid","address"]}}},"required":["ports"]}},
 +    "terminal.import_file": {"arguments":{"type":"object","properties":{"path":{"type":"string"},"max_bytes":{"type":"number"},"lifetime":{"anyOf":[{"const":"thread"},{"const":"package"}]}},"required":["path"]},"result":{"anyOf":[{"$ref":"#/$defs/1"},{"$ref":"#/$defs/34"}]}},
 +    "terminal.image_sample": {"arguments":{"type":"object","properties":{"resource":{"$ref":"#/$defs/1"},"columns":{"type":"number"},"rows":{"type":"number"}},"required":["resource","columns","rows"]},"result":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"},"rgba":{"type":"array","items":{"type":"number"}}},"required":["width","height","rgba"]}},
-+    "composer.read": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"selection":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/68"}]},"revision":{"type":"number"},"attachments":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"image"},"label":{"type":"string"},"owner":{"type":"string"},"resource":{"$ref":"#/$defs/2"},"width":{"type":"number"},"height":{"type":"number"}},"required":["id","kind","label","owner","resource"]}},"suggestion":{"anyOf":[{"type":"null"},{"type":"object","properties":{"owner":{"type":"string"},"id":{"type":"string"}},"required":["owner","id"]}]}},"required":["text","cursor","selection","revision","attachments","suggestion"]}},
-+    "composer.write": {"arguments":{"type":"object","properties":{"revision":{"type":"number"},"edit":{"anyOf":[{"type":"object","properties":{"kind":{"anyOf":[{"const":"fill"},{"const":"append"},{"const":"insert"}]},"text":{"type":"string"}},"required":["kind","text"]},{"type":"object","properties":{"kind":{"const":"splice"},"text":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"}},"required":["kind","text","start","end"]}]},"cursor":{"type":"number"},"selection":{"$ref":"#/$defs/68"},"attach":{"type":"array","items":{"type":"object","properties":{"image":{"$ref":"#/$defs/1"}},"required":["image"]}},"detach":{"type":"array","items":{"type":"string"}}},"required":["revision"]},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"revision":{"type":"number"}},"required":["text","cursor","revision"]}},
++    "composer.read": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"selection":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/67"}]},"revision":{"type":"number"},"attachments":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"image"},"label":{"type":"string"},"owner":{"type":"string"},"resource":{"$ref":"#/$defs/2"},"width":{"type":"number"},"height":{"type":"number"}},"required":["id","kind","label","owner","resource"]}},"suggestion":{"anyOf":[{"type":"null"},{"type":"object","properties":{"owner":{"type":"string"},"id":{"type":"string"}},"required":["owner","id"]}]}},"required":["text","cursor","selection","revision","attachments","suggestion"]}},
++    "composer.write": {"arguments":{"type":"object","properties":{"revision":{"type":"number"},"edit":{"anyOf":[{"type":"object","properties":{"kind":{"anyOf":[{"const":"fill"},{"const":"append"},{"const":"insert"}]},"text":{"type":"string"}},"required":["kind","text"]},{"type":"object","properties":{"kind":{"const":"splice"},"text":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"}},"required":["kind","text","start","end"]}]},"cursor":{"type":"number"},"selection":{"$ref":"#/$defs/67"},"attach":{"type":"array","items":{"type":"object","properties":{"image":{"$ref":"#/$defs/1"}},"required":["image"]}},"detach":{"type":"array","items":{"type":"string"}}},"required":["revision"]},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"revision":{"type":"number"}},"required":["text","cursor","revision"]}},
 +    "composer.suggest": {"arguments":{"anyOf":[{"type":"object","properties":{"revision":{"type":"number"},"id":{"type":"string"},"text":{"type":"string"}},"required":["revision","id","text"]},{"type":"object","properties":{"clear":{"const":true}},"required":["clear"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]},{"type":"object","properties":{"cleared":{"const":true}},"required":["cleared"]}]}},
-+    "prompts.consent": {"arguments":{"type":"object","properties":{"text":{"type":"string"},"attachments":{"$ref":"#/$defs/69"}},"required":["text"]},"result":{"type":"object","properties":{"consent":{"type":"string"},"sha256":{"type":"string"}},"required":["consent","sha256"]}},
-+    "prompts.submit": {"arguments":{"type":"object","properties":{"consent":{"type":"string"},"text":{"type":"string"},"attachments":{"$ref":"#/$defs/69"},"mode":{"anyOf":[{"const":"turn"},{"const":"steer"}]},"client_id":{"type":"string"}},"required":["consent","text","mode"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"anyOf":[{"const":"started"},{"const":"steered"}]},"client_id":{"type":"string"}},"required":["status","client_id"]},{"type":"object","properties":{"status":{"const":"not_submitted"},"reason":{"type":"string"}},"required":["status","reason"]}]}},
-+    "prompts.status": {"arguments":{"$ref":"#/$defs/70"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
-+    "prompts.revoke": {"arguments":{"$ref":"#/$defs/70"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
++    "prompts.consent": {"arguments":{"type":"object","properties":{"text":{"type":"string"},"attachments":{"$ref":"#/$defs/68"}},"required":["text"]},"result":{"type":"object","properties":{"consent":{"type":"string"},"sha256":{"type":"string"}},"required":["consent","sha256"]}},
++    "prompts.submit": {"arguments":{"type":"object","properties":{"consent":{"type":"string"},"text":{"type":"string"},"attachments":{"$ref":"#/$defs/68"},"mode":{"anyOf":[{"const":"turn"},{"const":"steer"}]},"client_id":{"type":"string"}},"required":["consent","text","mode"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"anyOf":[{"const":"started"},{"const":"steered"}]},"client_id":{"type":"string"}},"required":["status","client_id"]},{"type":"object","properties":{"status":{"const":"not_submitted"},"reason":{"type":"string"}},"required":["status","reason"]}]}},
++    "prompts.status": {"arguments":{"$ref":"#/$defs/69"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
++    "prompts.revoke": {"arguments":{"$ref":"#/$defs/69"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
 +    "builtins.invoke": {"arguments":{"type":"object","properties":{"action":{"type":"string","format":"dotted-string"}},"required":["action"]},"result":{"type":"object","properties":{"invoked":{"type":"boolean"}},"required":["invoked"]}},
 +    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"required"},{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"required":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","required","effective","pending","failed","api","compatible","grants","conflicts","settings_schema","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
 +    "packages.index": {"arguments":{"type":"object","properties":{"index":{"type":"string"},"query":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"}},"required":[]},"result":{"type":"object","properties":{"index":{"type":"string"},"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"latest":{"type":"string"},"description":{"type":"string"},"support":{"anyOf":[{"type":"null"},{"type":"string"}]},"versions":{"type":"array","items":{"type":"object","properties":{"version":{"type":"string"},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["version","blocked"]}},"installed":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["id","latest","description","support","versions","installed"]}},"total":{"type":"number"},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["index","packages","total","cursor"]}},
-+    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}}},"required":["action","id","changes","grants_added"]}},
-+    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
++    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/76"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}}},"required":["action","id","changes","grants_added"]}},
++    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/76"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
 +    "packages.reload": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"generation":{"type":"number"},"failed":{"type":"array","items":{"type":"string"}},"applies":{"const":"next_boundary"}},"required":["generation","failed","applies"]}},
 +    "settings.write": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"values":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["values"]},"result":{"type":"object","properties":{"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["settings"]}},
 +    "terminal.open": {"arguments":{"anyOf":[{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"number"},"editor":{"const":true}},"required":["path","editor"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"opened":{"const":true}},"required":["opened"]}]}},
-+    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/79"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
++    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/78"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
 +    "terminal.pane": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"anyOf":[{"const":"open"},{"const":"close"},{"const":"focus"},{"const":"reveal"}]},"id":{"type":"string"}},"required":["action","id"]},{"type":"object","properties":{"action":{"const":"scroll"},"id":{"type":"string"},"offset":{"type":"number"}},"required":["action","id","offset"]}]},"result":{"type":"object","properties":{"applied":{"const":true}},"required":["applied"]}},
 +    "terminal.panes": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"panes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"visible":{"type":"boolean"},"collapsed":{"type":"boolean"},"focused":{"type":"boolean"},"scroll":{"type":"number"}},"required":["id","visible","collapsed","focused","scroll"]}}},"required":["panes"]}},
-+    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/79"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/67"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
++    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/79"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/79"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/78"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/79"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/79"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/66"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
-+    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/81"},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/82"},{"$ref":"#/$defs/82"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/81"},"packed":{"type":"string"}},"required":["key","rect","packed"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
++    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/80"},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/81"},{"$ref":"#/$defs/81"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/80"},"packed":{"type":"string"}},"required":["key","rect","packed"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"},"files":{"$ref":"#/$defs/0"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/57"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"files":{"$ref":"#/$defs/0"}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
-+    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/85"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/94"}},
-+    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/85"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/94"}},
++    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/93"}},
++    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/93"}},
 +    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"omd_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
@@ -125798,39 +125911,38 @@ index 0000000000000000000000000000000000000000..861ea5baa759b5ce12dc008c56091a38
 +    "59": {"type":"object","properties":{"stopped":{"type":"boolean"}},"required":["stopped"]},
 +    "60": {"type":"object","properties":{"id":{"type":"string"},"secrets":{"type":"array","items":{"type":"string"}}},"required":["id"]},
 +    "61": {"type":"object","properties":{"watch_id":{"type":"string"}},"required":["watch_id"]},
-+    "62": {"type":"object","properties":{"key":{"type":"string"},"delay_ms":{"type":"number"}},"required":["key","delay_ms"]},
-+    "63": {"type":"object","properties":{"tool":{"type":"string"},"arguments":{}},"required":["tool","arguments"]},
-+    "64": {"anyOf":[{"const":"secret"},{"const":"provider"},{"const":"chatgpt"},{"const":"api_key"}]},
-+    "65": {"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"kind":{"$ref":"#/$defs/64"},"provider":{"anyOf":[{"type":"null"},{"type":"string"}]},"origin":{"anyOf":[{"type":"null"},{"type":"string"}]},"status":{"anyOf":[{"const":"ready"},{"const":"not_enrolled"}]},"default":{"type":"boolean"}},"required":["id","label","kind","provider","origin","status","default"]},
-+    "66": {"type":"object","properties":{"command":{"type":"string"},"description":{"type":"string"},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"hidden":{"type":"boolean"},"args_hint":{"anyOf":[{"type":"null"},{"type":"string"}]},"immediate":{"type":"boolean"},"protected":{"type":"boolean"}},"required":["command","description","owner","hidden","args_hint","immediate","protected"]},
-+    "67": {"type":"object","properties":{"command":{"type":"string"},"args":{"type":"string"}},"required":["command"]},
-+    "68": {"type":"object","properties":{"start":{"type":"number"},"end":{"type":"number"}},"required":["start","end"]},
-+    "69": {"type":"array","items":{"$ref":"#/$defs/1"}},
-+    "70": {"type":"object","properties":{"consent":{"type":"string"}},"required":["consent"]},
-+    "71": {"anyOf":[{"const":"rollback"},{"const":"remove"},{"const":"update"},{"const":"install"},{"const":"enable"},{"const":"disable"},{"const":"trust"}]},
-+    "72": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
-+    "73": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
-+    "74": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
-+    "75": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
-+    "76": {"anyOf":[{"$ref":"#/$defs/72"},{"$ref":"#/$defs/73"},{"$ref":"#/$defs/74"},{"$ref":"#/$defs/75"}]},
-+    "77": {"type":"object","properties":{"action":{"$ref":"#/$defs/71"},"id":{"type":"string"},"source":{"$ref":"#/$defs/76"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
-+    "78": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
-+    "79": {"type":"array","items":{"$ref":"#/$defs/78"}},
-+    "80": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
-+    "81": {"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},
-+    "82": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
-+    "83": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
-+    "84": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
-+    "85": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/83"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/84"}},"required":["prompt"]},
-+    "86": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
-+    "87": {"type":"array","items":{"$ref":"#/$defs/86"}},
-+    "88": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
-+    "89": {"type":"array","items":{"$ref":"#/$defs/88"}},
-+    "90": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
-+    "91": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
-+    "92": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/91"}},"required":["microusd","basis"]},
-+    "93": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
-+    "94": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/87"},"tool_calls":{"$ref":"#/$defs/89"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/90"},"cost":{"$ref":"#/$defs/92"},"timing":{"$ref":"#/$defs/93"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
++    "62": {"type":"object","properties":{"tool":{"type":"string"},"arguments":{}},"required":["tool","arguments"]},
++    "63": {"anyOf":[{"const":"secret"},{"const":"provider"},{"const":"chatgpt"},{"const":"api_key"}]},
++    "64": {"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"kind":{"$ref":"#/$defs/63"},"provider":{"anyOf":[{"type":"null"},{"type":"string"}]},"origin":{"anyOf":[{"type":"null"},{"type":"string"}]},"status":{"anyOf":[{"const":"ready"},{"const":"not_enrolled"}]},"default":{"type":"boolean"}},"required":["id","label","kind","provider","origin","status","default"]},
++    "65": {"type":"object","properties":{"command":{"type":"string"},"description":{"type":"string"},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"hidden":{"type":"boolean"},"args_hint":{"anyOf":[{"type":"null"},{"type":"string"}]},"immediate":{"type":"boolean"},"protected":{"type":"boolean"}},"required":["command","description","owner","hidden","args_hint","immediate","protected"]},
++    "66": {"type":"object","properties":{"command":{"type":"string"},"args":{"type":"string"}},"required":["command"]},
++    "67": {"type":"object","properties":{"start":{"type":"number"},"end":{"type":"number"}},"required":["start","end"]},
++    "68": {"type":"array","items":{"$ref":"#/$defs/1"}},
++    "69": {"type":"object","properties":{"consent":{"type":"string"}},"required":["consent"]},
++    "70": {"anyOf":[{"const":"rollback"},{"const":"remove"},{"const":"update"},{"const":"install"},{"const":"enable"},{"const":"disable"},{"const":"trust"}]},
++    "71": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
++    "72": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
++    "73": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
++    "74": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
++    "75": {"anyOf":[{"$ref":"#/$defs/71"},{"$ref":"#/$defs/72"},{"$ref":"#/$defs/73"},{"$ref":"#/$defs/74"}]},
++    "76": {"type":"object","properties":{"action":{"$ref":"#/$defs/70"},"id":{"type":"string"},"source":{"$ref":"#/$defs/75"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
++    "77": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
++    "78": {"type":"array","items":{"$ref":"#/$defs/77"}},
++    "79": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
++    "80": {"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},
++    "81": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
++    "82": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
++    "83": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
++    "84": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/82"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/83"}},"required":["prompt"]},
++    "85": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
++    "86": {"type":"array","items":{"$ref":"#/$defs/85"}},
++    "87": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
++    "88": {"type":"array","items":{"$ref":"#/$defs/87"}},
++    "89": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
++    "90": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
++    "91": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/90"}},"required":["microusd","basis"]},
++    "92": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
++    "93": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/86"},"tool_calls":{"$ref":"#/$defs/88"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/89"},"cost":{"$ref":"#/$defs/91"},"timing":{"$ref":"#/$defs/92"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
 +  }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_validation.rs b/codex-rs/omd/src/mods/operation_validation.rs
@@ -145775,10 +145887,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cbeaa2e6c4eeeb094e3ac9be145ddeeefd749b4d
+index 0000000000000000000000000000000000000000..17e7c8e746fdf9bdaa1df3cff8b31b4bc04fff3c
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2152 @@
+@@ -0,0 +1,2196 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -145885,6 +145997,50 @@ index 0000000000000000000000000000000000000000..cbeaa2e6c4eeeb094e3ac9be145ddeee
 +
 +// Tests share the `fixture` caller, so parallel exec runs would hit its concurrency cap.
 +static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
++
++#[test]
++fn timer_data_is_bounded_by_serialized_utf8_bytes() {
++    use codex_omd::host::{TIMER_DATA_BYTES, validate_timer_request};
++
++    for data in [
++        Value::Null,
++        json!({"path": "src/a.ts"}),
++        json!("x".repeat(TIMER_DATA_BYTES - 2)),
++        json!("😀".repeat((TIMER_DATA_BYTES - 2) / 4)),
++    ] {
++        assert!(
++            validate_timer_request(
++                "events.schedule",
++                &json!({"key": "k", "delay_ms": 16, "data": data})
++            )
++            .is_ok()
++        );
++    }
++    for data in [
++        json!("x".repeat(TIMER_DATA_BYTES - 1)),
++        json!("😀".repeat(TIMER_DATA_BYTES / 4)),
++        json!("\n".repeat(TIMER_DATA_BYTES / 2)),
++    ] {
++        assert_eq!(
++            validate_timer_request(
++                "events.schedule",
++                &json!({"key": "k", "delay_ms": 16, "data": data})
++            )
++            .unwrap_err(),
++            "timer_data_limit"
++        );
++    }
++    assert!(
++        validate_timer_request("events.schedule", &json!({"key": "k", "delay_ms": 16})).is_ok()
++    );
++    assert!(
++        validate_timer_request(
++            "events.schedule",
++            &json!({"key": "k", "delay_ms": 16, "unknown": null})
++        )
++        .is_err()
++    );
++}
 +
 +#[test]
 +fn scoped_environment_is_private_bounded_and_applies_to_future_children() {
@@ -149542,10 +149698,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2fd97e5ebb2dd3ca957b0936a21243e833433bd3
+index 0000000000000000000000000000000000000000..b2b2dac469c50a2f082df7b8473b5038edb0cf18
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5169 @@
+@@ -0,0 +1,5227 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -152839,6 +152995,64 @@ index 0000000000000000000000000000000000000000..2fd97e5ebb2dd3ca957b0936a21243e8
 +    assert_eq!(usage["tokens"]["cached"], 200);
 +    assert_eq!(usage["cost"]["source"], "configured_rates");
 +    assert_eq!(result["unused_mock_replies"], json!([]));
++}
++
++#[test]
++fn timer_data_survives_fresh_callbacks_replacement_and_cancellation_offline() {
++    let (temp, _, _) = fixture(
++        "export default api => { \
++         const later = api.time.after('work', 16, event => api.state.set([...(api.state.get() ?? []), event])); \
++         api.command('start', value => later.start(value)); \
++         api.command('cancel', () => later.cancel()); \
++         api.command('raw', value => api.host.call('events.schedule', value)); \
++         }",
++        &["commands", "events", "store"],
++    );
++    let mut runtime = host(&temp);
++    runtime.offline_test(json!({"schema": 1, "virtual_time_ms": 0, "steps": [
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": {"turn_id": "old"}},
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": {"turn_id": "new"}},
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": "x".repeat(65_535), "expect_error": "timer_data_limit"},
++        {"type": "advance_time", "ms": 16},
++        {"type": "state", "mod": "fixture", "expect": [{"key": "work", "data": {"turn_id": "new"}}]},
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": "cancelled"},
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "cancel", "expect": {"cancelled": true}},
++        {"type": "advance_time", "ms": 16},
++        {"type": "state", "mod": "fixture", "expect": [{"key": "work", "data": {"turn_id": "new"}}]},
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": null},
++        {"type": "advance_time", "ms": 16},
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "raw", "payload": {"key": "time:work", "delay_ms": 16}},
++        {"type": "advance_time", "ms": 16},
++        {"type": "state", "mod": "fixture", "expect": [
++            {"key": "work", "data": {"turn_id": "new"}}, {"key": "work", "data": null}, {"key": "work"}
++        ]}
++    ]})).unwrap();
++}
++
++#[test]
++fn timer_data_cannot_schedule_work_during_rendering() {
++    let (temp, _, _) = fixture(
++        "export default api => { const later = api.time.after('work', 16, () => {}); \
++         api.intercept('render', () => later.start({turn_id: 't'})); }",
++        &["events", "terminal"],
++    );
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let result = codex_omd::render_shared(
++        &runtime,
++        json!({"component": "assistant_message", "id": "m", "surface": "fullscreen",
++            "viewport": {"columns": 80, "rows": 24}, "lifecycle": "final", "owner": null,
++            "props": {"text": "Hello", "first": true, "truncated": false}}),
++        || true,
++    )
++    .unwrap();
++    assert_eq!(result.result, json!({"tree": [{"type": "native"}]}));
++    assert!(
++        result.trace.iter().any(|entry| entry["reason"]
++            .as_str()
++            .is_some_and(|reason| reason.contains("host_operation_unavailable"))),
++        "{:?}",
++        result.trace
++    );
 +}
 +
 +#[test]

@@ -512,7 +512,7 @@ async function dispatchTimer(event) {
   entry.cancelled = false;
   let failure = null;
   try {
-    if (await entry.handler({ key: entry.key }) === false) entry.cancelled = true;
+    if (await entry.handler({ ...event, key: entry.key }) === false) entry.cancelled = true;
   } catch (error) {
     if (error === suspension) throw error;
     failure = error;
@@ -536,7 +536,9 @@ function timer(key, ms, handler, repeat) {
   const entry = { key, ms, handler, repeat, cancelled: false };
   timers.set(scheduled, entry);
   return Object.freeze({
-    start() { return hostCall('events.schedule', { key: scheduled, delay_ms: ms }); },
+    start(...args) {
+      return hostCall('events.schedule', { key: scheduled, delay_ms: ms, ...(!repeat && args.length ? { data: args[0] } : {}) });
+    },
     cancel() { entry.cancelled = true; return hostCall('events.cancel', { key: scheduled }); },
   });
 }
