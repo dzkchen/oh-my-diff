@@ -1,6 +1,7 @@
 import type { Json, ModAPI } from '../../api.d.ts';
 
 type Files = { tick: number; files: Record<string, [number, number]> };
+type Pending = { at: number; tokens: string[] };
 type Status = { at: number; prefix?: string; head?: string; boosts: [string, number, number?][]; recent?: [string, number][] };
 
 const LIMIT = 50;
@@ -14,6 +15,7 @@ const LOG_BYTES = 6_000;
 const ENTRY_BYTES = 8_000;
 const STATUS_TTL_MS = 30_000;
 const DIRTY_STATS = 64;
+const PENDING_MS = 120_000;
 const RECENT_COMMITS = 10;
 const HUGE_COMMIT = 50;
 const MODIFIED = [[120_000, 16], [900_000, 8], [3_600_000, 4], [86_400_000, 2], [604_800_000, 1]];
@@ -85,7 +87,11 @@ export default function activate(api: ModAPI) {
       return run.ok && run.value.exit_code === 0 ? run.value : null;
     };
     const status = exec(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], STATUS_BYTES);
-    if (!status) return { at: 0, boosts: [] };
+    if (!status) {
+      const failed: Status = { at: Date.now(), boosts: [] };
+      api.host.tryCall('store.put', { key: 'status', value: failed as unknown as Exclude<Json, null>, expected_revision: cached.ok && cached.value ? cached.value.revision : null, scope: 'repository' });
+      return failed;
+    }
     const prefix = entry?.prefix ?? exec(['rev-parse', '--show-prefix'], 4096)?.stdout.replace(/\n$/, '');
     const records = status.stdout.split('\0');
     if (status.stdout_truncated) records.pop();
@@ -135,9 +141,9 @@ export default function activate(api: ModAPI) {
     const status = git();
     const boosts = new Map(status.boosts.map(([path, boost, time]) => [path, boost + (MODIFIED.find(([age]) => Date.now() - (time ?? -Infinity) <= age)?.[1] ?? 0)]));
     const recent = new Map(status.recent ?? []);
-    const known = new Set([...upstream, ...boosts.keys()]);
+    const known = new Set(upstream);
     const order = new Map(upstream.map((path, index) => [path, index]));
-    const scored = [...new Set([...known, ...Object.keys(files.files)])]
+    const scored = [...new Set([...upstream, ...boosts.keys(), ...Object.keys(files.files)])]
       .map(path => ({ path, score: fuzzy(query, path) ?? (order.has(path) ? 0 : null) }))
       .filter((item): item is { path: string; score: number } => item.score !== null)
       .map(item => ({ path: item.path, score: item.score + Math.min(50, weight(files, item.path) + (boosts.get(item.path) ?? 0) + Math.min(12, 4 * (recent.get(item.path) ?? 0))) }))
@@ -173,16 +179,22 @@ export default function activate(api: ModAPI) {
     },
   });
 
+  const pending = () => {
+    const saved = api.state.get() as Pending | null;
+    return saved && Array.isArray(saved.tokens) && Date.now() - saved.at <= PENDING_MS ? saved.tokens : [];
+  };
+
   api.intercept('input', (event, next) => {
-    const tokens = mentioned(event.text);
-    if (tokens.length) api.state.set([...new Set([...(api.state.get() as string[] | null ?? []), ...tokens])].slice(-16));
+    const tokens = /^\s*[/!]/.test(event.text) ? [] : mentioned(event.text);
+    if (tokens.length) api.state.set({ at: Date.now(), tokens: [...new Set([...pending(), ...tokens])].slice(-16) });
     return next(event);
   });
 
   api.on('turn_start', () => {
-    const tokens = api.state.get() as string[] | null;
-    if (!tokens?.length) return;
+    if (api.state.get() === null) return;
+    const tokens = pending();
     api.state.set(null);
+    if (!tokens.length) return;
     const listed = api.host.tryCall('exec.run', { program: 'git', argv: ['--literal-pathspecs', 'ls-files', '-z', '-co', '--exclude-standard', '--', ...tokens], timeout_ms: 3000 });
     let found: string[];
     if (listed.ok && listed.value.exit_code === 0) {

@@ -25,7 +25,8 @@ How files rank:
   status can lift a close match above a better one.
 - A query with a capital letter matches case exactly. Otherwise case is ignored.
 - A small typo still finds the file once the query has four or more characters: `parsre` finds `parser.ts`.
-- Files you mention often, and recently, rank higher. A file path in a submitted prompt counts as a use.
+- Files you mention often, and recently, rank higher. A file path in a submitted prompt counts as a use when its turn
+  starts within 2 minutes. Slash commands and `!` shell commands don't count.
 - Staged and modified files rank higher, then untracked ones. It runs `git status` at most every 30 seconds.
 - Changed files you saved recently rank higher. The lift is largest for a save in the last 2 minutes, and it
   drops in steps at 15 minutes, an hour, a day and a week.
@@ -41,7 +42,8 @@ It has no settings.
 
 - Usage is kept per project for the strongest files, up to 512 paths or 32 KB of paths, whichever limit comes first
   (about 400 typical paths). Ignored and missing files are not learned.
-- Outside a Git repository you lose only the Git boosts.
+- Outside a Git repository you lose only the Git boosts, and it tries `git status` at most every 30 seconds.
+- Changed files are checked to still exist before they are offered.
 - With a very large Git status, only the first changed files (about 6 KB of paths, staged and modified first) keep
   their lift, and only the first 64 (about 2 KB of paths) get the recent-save lift.
 - Recent commits are read again only when HEAD moves, so a fetch that moves `origin/main` shows up after your next

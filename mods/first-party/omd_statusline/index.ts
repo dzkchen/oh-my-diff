@@ -39,6 +39,8 @@ export default function activate(api: ModAPI) {
     update(data => {
       data.git = !run.ok ? { ...parseGit(key, ''), error: visible(run.error, 80) }
         : run.value.exit_code !== 0 || run.value.timed_out ? { ...parseGit(key, ''), error: run.value.timed_out ? 'timed out' : 'not a repository' }
+        // A capped status would silently undercount, so say it was truncated instead of showing wrong numbers.
+        : run.value.stdout_truncated ? { ...parseGit(key, ''), error: 'status truncated' }
         : parseGit(key, run.value.stdout);
     });
   };

@@ -99,7 +99,7 @@ for (const [label, component, count] of [['Unicode', '雪'.repeat(60), 100], ['J
     const tokens = Array.from({ length: 16 }, (_, index) => path(count + index));
     const queued = run('intercept', { surface: 'input', input: { text: tokens.join(' '), attachments: 0 }, origin: { caller: 'user' } },
       call => ({ result: { text: call.arguments.input.text }, trace: [] }), '0').state;
-    assert.deepEqual(queued, tokens);
+    assert.deepEqual(queued.tokens, tokens);
     assert.ok(Buffer.byteLength(JSON.stringify({ tick: 1, files: { ...files.files, ...Object.fromEntries(tokens.map(path => [path, [1, 1]])) } })) > 32_000);
     const { host, writes } = repository(files, tokens.join('\0') + '\0');
     const learned = run('turn_start', { turn_id: 'unicode' }, host, '', queued);
@@ -155,7 +155,40 @@ test('quoted mentions keep spaces, escapes and a trailing dot', () => {
   const text = 'see @"src/a b.ts", @"docs/say \\"hi\\".md", @"lib/v1." and @plain/c.ts';
   const queued = run('intercept', { surface: 'input', input: { text, attachments: 0 }, origin: { caller: 'user' } },
     call => ({ result: { text: call.arguments.input.text }, trace: [] }), '0').state;
-  assert.deepEqual(queued, ['src/a b.ts', 'docs/say "hi".md', 'lib/v1.', 'plain/c.ts']);
+  assert.deepEqual(queued.tokens, ['src/a b.ts', 'docs/say "hi".md', 'lib/v1.', 'plain/c.ts']);
+});
+
+const typed = (text, state = null, now = 1_000_000) => run('intercept', { surface: 'input', input: { text, attachments: 0 }, origin: { caller: 'user' } },
+  call => ({ result: { text: call.arguments.input.text }, trace: [] }), '0', state, now).state;
+
+test('slash and shell commands are not learned, and mentions left waiting too long are dropped at the next turn', () => {
+  assert.equal(typed('/preview ./src/x.ts'), null);
+  assert.equal(typed('  !cat src/x.ts'), null);
+  const queued = typed('look at src/x.ts');
+  assert.deepEqual(queued, { at: 1_000_000, tokens: ['src/x.ts'] });
+  const fresh = repository(null, 'src/x.ts\0');
+  assert.equal(run('turn_start', { turn_id: 't' }, fresh.host, '', queued, 1_000_000 + 60_000).state, null);
+  assert.deepEqual(fresh.writes.map(files => Object.keys(files.files)), [['src/x.ts']]);
+  const stale = repository(null, 'src/x.ts\0');
+  const late = run('turn_start', { turn_id: 't' }, stale.host, '', queued, 1_000_000 + 300_000);
+  assert.equal(late.state, null);
+  assert.deepEqual([stale.writes, stale.execs()], [[], 0]);
+});
+
+test('outside a Git repository a failed status is cached, so queries in the window run git once', () => {
+  const { host, execs } = repository(null, '');
+  const failing = call => call.operation === 'exec.run' && call.arguments.argv[0] === 'status' ? (host(call), { exit_code: 128, stdout: '', stdout_truncated: false, stderr: 'not a git repository' }) : host(call);
+  const query = now => run('completion', { kind: 'mention', query: 'a', candidates: [{ path: 'a.ts' }] }, failing, '', null, now).value.items;
+  assert.deepEqual(query(1_000), [{ path: 'a.ts' }]);
+  assert.deepEqual(query(2_000), [{ path: 'a.ts' }]);
+  assert.equal(execs(), 1);
+  query(40_000);
+  assert.equal(execs(), 2);
+});
+
+test('a dirty file deleted after the status was cached is no longer offered', () => {
+  const { host } = repository(null, branch() + modified('src/keep.ts') + modified('old/gone.ts'));
+  assert.deepEqual(mention(host, '', []), ['src/keep.ts']);
 });
 
 test('names with tabs, newlines and spaces parse from NUL-separated Git output, limited to the session folder', () => {
