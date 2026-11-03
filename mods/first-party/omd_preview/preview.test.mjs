@@ -149,6 +149,14 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     assert.match(readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8'), /Changed <a href="[^"]*docs\/Other%20note\.md">see<\/a>/);
     command('unwatch');
     assert.deepEqual(watching(repository).watch, []);
+    const many = Array.from({ length: 9 }, (_, index) => `docs/w${index}.md`);
+    for (const path of many) writeFileSync(join(repository, path), path);
+    for (const path of many.slice(0, 8)) command(`${path} --watch`);
+    assert.match(command(`${many[8]} --watch`).value.display, /^At most 8 files/);
+    rmSync(join(repository, many[0]));
+    command(`${many[8]} --watch`);
+    assert.deepEqual(watching(repository).watch, many.slice(1));
+    command('unwatch');
     const stopped = invoke(repository, null, 'channel', { channel: 'omd_preview/watch', data: null });
     assert.deepEqual(stopped.calls.find(call => call.operation === 'workspace.unwatch').arguments, { key: 'files' });
     assert.ok(invoke(repository, null, 'timer', { key: 'poll' }).calls.some(call => call.operation === 'workspace.unwatch'));

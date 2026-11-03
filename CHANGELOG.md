@@ -20,6 +20,7 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 
 ### Fixed
 
+- Mods, updates and preview: `/mods cancel` says whether it dropped a waiting change, the updates panel labels times as UTC and hides update settings on installs the OMD installer didn't make, and `/preview FILE --watch` frees the place of a watched file that was deleted
 - Usage: tool calls no longer rewrite the mod's whole saved state while the usage dialog is closed, and an agent event that changes nothing is skipped
 - Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list
 - Status line: usage limits refresh while idle, and an empty snapshot clears old limits

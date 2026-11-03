@@ -26,7 +26,7 @@ omd mods enable omd_preview
 | `/preview diagrams [N]` | List Mermaid diagrams from the last 10 responses, or open diagram N with its source and a copy button |
 | `/preview server [PORT]` | Open a server this session is listening on |
 
-`--watch` follows up to 8 files and doesn't work with `--inline`. `/preview unwatch` stops watching.
+`--watch` follows up to 8 files and doesn't work with `--inline`. When all 8 places are taken, watching another file drops the watched files that no longer exist. `/preview unwatch` stops watching.
 
 For `/preview PATH`, use `./PATH` if the file is named like a subcommand. Spaces inside the path are kept as typed;
 only `--` flags are removed.
