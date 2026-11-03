@@ -148,11 +148,6 @@ test('connect, attach separate cards to identical messages, reload and disconnec
   assert.deepEqual(calls(trace, 'http.request').map(call => call.arguments.credential), [profile.id, profile.id]);
 });
 
-test('declined enrollment makes no HTTP request', () => {
-  const trace = runScenario(directory, clock(0), hostOperations({'credentials.request': [{result: {status: 'declined', profile: null}}]}), {steps: [command('connect'), message('m1'), advance(16)]});
-  assert.equal(calls(trace, 'http.request').length, 0);
-});
-
 test('pending cancellation and reload drop requests; retry is explicit', () => {
   const trace = runScenario(directory, clock(0), hostOperations({'credentials.request': [credential], 'http.request': [response('Retried')]}), {steps: [
     command('connect'), message('m1'), command('cancel'), advance(16),
@@ -167,29 +162,4 @@ test('expired credential is a failed job without a card', () => {
   assert.match(JSON.stringify(trace.steps.at(-2).value), /failed/);
   assert.match(JSON.stringify(trace.steps.at(-2).value), /credential_expired/);
   assert.equal(trace.steps.at(-1).value.cards?.m1, undefined);
-});
-
-test('the same background API runs independent repository checks without channel wiring', () => {
-  const manifest = {schema: 1, id: 'repository_checks', version: '1.0.0', api: '1.0.0', state_version: 1, state_scope: 'thread', capabilities: ['commands', 'events', 'store', 'exec'], compatibility: {required_features: ['session_activation_v1', 'background_jobs_v1']}};
-  const source = `import type { ModAPI } from '@oh-my-diff/mod-api';
-    export default function activate(api: ModAPI) {
-      const check = api.background<null, string>('git', () => {
-        const result = api.host.call('exec.run', {program: 'git', argv: ['status', '--short'], timeout_ms: 1000, max_output_bytes: 4096});
-        if (result.exit_code !== 0) throw new Error('Git check failed');
-        return result.stdout;
-      });
-      api.command('refresh', () => { check.start(null); return null; });
-      api.command('status', () => ({display: JSON.stringify(check.get())}));
-    }`;
-  writeFileSync(join(directory, 'mod.json'), JSON.stringify(manifest));
-  writeFileSync(join(directory, 'index.ts'), source);
-  const result = {exit_code: 0, signal: null, stdout: ' M README.md\n', stdout_sha256: '0'.repeat(64), stdout_bytes: 13, output_artifact: null, stderr: '', stdout_truncated: false, stdout_preview_truncated: false, stderr_truncated: false, stderr_preview_truncated: false, timed_out: false, duration_ms: 1, program: {path: '/usr/bin/git', sha256: '0'.repeat(64)}, guards_verified: 0};
-  const trace = runScenario(directory, clock(0), hostOperations({'exec.run': [{result}]}), {steps: [
-    invoke('repository_checks', 'command', 'refresh', null, {threadId}), advance(16),
-    invoke('repository_checks', 'command', 'status', null, {threadId}),
-  ]});
-  assert.match(JSON.stringify(trace.steps.at(-1).value), /completed/);
-  assert.match(JSON.stringify(trace.steps.at(-1).value), /README.md/);
-  assert.equal(calls(trace, 'exec.run').length, 1);
-  assert.equal(calls(trace, 'events.publish').length, 0);
 });

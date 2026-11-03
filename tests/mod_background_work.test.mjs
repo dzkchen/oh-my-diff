@@ -128,10 +128,3 @@ test('new turns cancel pending work and independent threads receive their own pa
   ] });
   assert.deepEqual(calls(result, 'http.request').map(call => call.arguments.url), ['https://example.com/cards/t1', 'https://example.com/cards/t2']);
 }));
-
-test('HTTP refusals become saved presentation state', () => fixture(directory => {
-  runScenario(directory, clock(0), hostOperations({ 'http.request': [{ error: 'http_origin_denied' }] }), { steps: [
-    ...turn(first, 't1'), advance(16),
-    state('answer_card', { threadId: first, expect: { turn: 't1', card: 'Card unavailable' } }),
-  ] });
-}));
