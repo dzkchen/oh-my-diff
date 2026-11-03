@@ -514,14 +514,38 @@ async function inert(path) {
   }
 }
 
+// Like the host, one valid settings file overrides mods.json; undefined means it doesn't, and YAML this can't read stops.
+async function fileSetting(store) {
+  const found = [];
+  for (const extension of ['json', 'yaml', 'yml']) {
+    try { found.push([extension, await readFile(join(store, 'settings', `omd_claude_cli.${extension}`), 'utf8')]); }
+    catch (error) { if (error.code !== 'ENOENT') return false; }
+  }
+  if (found.length !== 1) return undefined;
+  const [[extension, text]] = found;
+  if (extension === 'json') {
+    let value;
+    try { value = JSON.parse(text); } catch { return undefined; }
+    const valid = value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every(key => key === 'extra_usage')
+      && (!('extra_usage' in value) || typeof value.extra_usage === 'boolean');
+    return valid ? value.extra_usage : undefined;
+  }
+  const lines = text.split('\n').map(line => line.replace(/(^|\s)#.*$/, '').trim()).filter(line => line && line !== '---');
+  if (!lines.length || (lines.length === 1 && lines[0] === '{}')) return undefined;
+  const match = lines.length === 1 && /^(?:extra_usage\s*:\s*(true|True|TRUE|false|False|FALSE)|\{\s*extra_usage\s*:\s*(true|True|TRUE|false|False|FALSE)\s*\})$/.exec(lines[0]);
+  return match ? (match[1] ?? match[2]).toLowerCase() === 'true' : false;
+}
+
 // An unreadable setting stops at extra usage rather than silently allowing paid overage.
 export async function extraUsageAllowed(routePath, mod = dirname(file)) {
   const store = resolve(dirname(routePath), '../..');
   const paths = [mod, join(store, 'sources', 'omd_claude_cli')];
   try {
     const config = JSON.parse(await readFile(join(store, 'mods.json'), 'utf8'));
-    const selection = config.mods.find(item => paths.includes(resolve(item.path)));
-    return selection ? selection.settings?.extra_usage !== false : false;
+    const selections = config.mods.filter(item => paths.includes(resolve(item.path)));
+    const override = selections.some(item => item.scope !== 'managed') ? await fileSetting(store) : undefined;
+    const allowed = item => (item.scope === 'managed' || override === undefined ? item.settings?.extra_usage : override) !== false;
+    return selections.length > 0 && selections.every(allowed);
   } catch { return false; }
 }
 
