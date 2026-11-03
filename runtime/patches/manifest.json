@@ -2,20 +2,28 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "9321df78c32bde82f139ffb970a7d5168cfa355e0495bdeed05235cf40a4ee32"
+    "sha256": "eac324ab23b689623116c3ac49d639c2f21056d78b188f458d81a49c32988009"
   },
   "files": {
     "codex-rs/Cargo.lock": {
       "before": "360ea1e0ec391255ffc153a73548be524aa5d50c3476f247631cec184c21d4cb",
-      "after": "faa6b07585b1988de6c01f07288703917059249b6c130ff848f8a0fa9eaf1e2b"
+      "after": "159dae65a7702257f3541fc675f9acc809e144a0c43229f62c388162a233a6ca"
     },
     "codex-rs/Cargo.toml": {
       "before": "4f9c16fb73cc8487e40dcbfca545f69e7595e6806e1a59b81ea8045b15364e49",
       "after": "41672e1038675944f9cad5cd7e2e02484b745de51fe4f33ad71a1a180e266651"
     },
+    "codex-rs/app-server-client/Cargo.toml": {
+      "before": "9f941218c5bc7932bf1d675cbea2715820a563a41e5d871dd45207e1c285ba3e",
+      "after": "0d7c2f27f5b5939dc9b5e876759165371b4d525b406e263894ecc09820bd2e1d"
+    },
     "codex-rs/app-server-client/src/lib.rs": {
       "before": "1dadc18f61860172658f7dab20a7a349fa7ceb34a40c1998609e1c2cf147d3be",
-      "after": "f2c271754c7e7195e32c5e6e8bb438abb43699068d6b9f1eb0d3eb029f8a7292"
+      "after": "b8b8e43da7b8c0aac7299f9785ec8f9f758ae15371afdc7dea5be8310cefa9e9"
+    },
+    "codex-rs/app-server-client/src/model_catalog.rs": {
+      "before": null,
+      "after": "4b3eae875c8f7ff42482b2275365bec73aec19aa227093cdd49f85f15b14bd4e"
     },
     "codex-rs/app-server-protocol/schema/json/ClientRequest.json": {
       "before": "42caef9e6f7a544f2565d7696b03b34cd77771b91b50e639faed673bb276c262",
@@ -1911,7 +1919,7 @@
     },
     "codex-rs/tui/src/app/mod_surface.rs": {
       "before": null,
-      "after": "a068bf0f219557a8b14de639bad6c6d58729da91b11fdd416e53631d0d9a5904"
+      "after": "d8248d9164582ccf9ea45d0690cbd69c6753109118bd6351ac2a385b4182f619"
     },
     "codex-rs/tui/src/app/model_defaults.rs": {
       "before": "74d5b8620cc6fcb5db55cb5f0a270c8d35a20184ae8a3d40ca7e72d985889705",
@@ -2631,7 +2639,7 @@
     },
     "codex-rs/tui/src/mod_raster_tests.rs": {
       "before": null,
-      "after": "a5972b2fe76ae6195d3a8d86ba631bb4d19336b81ee5cb94ea20f5c7b5e3e56f"
+      "after": "cc9c6e716cc381a3aeb443c6f7af65e5a1bab25d8e5563920c8dfd7024c5a70d"
     },
     "codex-rs/tui/src/mod_render.rs": {
       "before": null,
@@ -2992,6 +3000,10 @@
     "codex-rs/tui/src/worktree_browser.rs": {
       "before": "85b6fc2e4b662f5a5ffba5fa5ba6cbc0d6014d9b65658690f9abef25c3505b91",
       "after": "9a731c21ebeed7b264c96720e7c807236007b72fc5f7fc938e3b7cf15c0a2147"
+    },
+    "codex-rs/tui/tests/suite/provider_defaults.rs": {
+      "before": "d00b850ef20c77ad9a411012b6e8b6ff401ae7770624d0b30f6282b113f9cb81",
+      "after": "8bb45b42aa38fe9509b3adcddb17b71094f615f2c1b3d53ec4606a3c46b05473"
     },
     "codex-rs/utils/pty/src/pipe.rs": {
       "before": "c0ff489e08af4108f989abdf7fdb2b4542909ad6b29c6df53100c4dd69c43c29",
