@@ -80,23 +80,11 @@ path: the full output goes there and a summary goes to the terminal.
 python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER
 ```
 
-For tests that do not start a mod host, skip runner preparation to avoid building the runner and V8:
+Build `codex`, `omd-mod` and `omd-runner` together, because a host started from the target looks for `omd-runner`
+beside itself. `mise run mods:test` then finds them without `OMD_TEST_RUNNER` or `OMD_MOD_BIN`:
 
 ```sh
-python3 .github/scripts/build.py cargo --skip-runner NAME LOG test --locked -p CRATE FILTER
-```
-
-Place `--skip-runner` before `NAME`; it also works with `nextest run`. Keep runner preparation enabled for tests
-that launch a host. Keep package selections consistent where practical to avoid dependency feature rebuilds.
-
-## Resource and cache settings
-
-Limit each Cargo build to three compile jobs with `OMD_LOW_RESOURCE=1`; `CARGO_BUILD_JOBS` overrides that default.
-This does not limit test processes or concurrent builds in other trees.
-For `nextest run`, use `--build-jobs` to override compile concurrency; `-j`/`--jobs` controls test threads.
-
-```sh
-OMD_LOW_RESOURCE=1 mise run dev:build NAME
+python3 .github/scripts/build.py cargo NAME LOG build --locked -p codex-cli -p codex-omd-extension -p codex-omd-runner --bins
 ```
 
 Incremental compilation is the default for repeated edits in one tree. To try sccache across targets, use
