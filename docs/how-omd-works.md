@@ -45,7 +45,8 @@ terminal panels and model routes, and never one feature. A repository check fail
 first-party mod. The rule is meant to keep the patch small enough to rebuild for each Codex release.
 
 The two install profiles are mod selections. OMD Core installs three mods (`omd_mods`, `omd_update`, `omd_logo`).
-OMD+ installs the rest of the [included mods](collection.md) and turns some of them on.
+OMD+ installs the supported first-party selection in the [collection](collection.md) and turns some of them on.
+Experimental mods and ports require a separate `omd install ID`.
 
 ## Mods run in their own processes
 

@@ -463,6 +463,9 @@ fn describe(preview: &Value) -> String {
             text(&changes["version"]["to"])
         ));
     }
+    if let Some(warning) = preview["identity_warning"].as_str() {
+        lines.push(format!("  WARNING: {warning}"));
+    }
     if preview["grants_added"]
         .as_array()
         .is_some_and(|grants| !grants.is_empty())

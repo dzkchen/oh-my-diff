@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { callback } from '../../../tests/mod_runner.mjs';
 
@@ -42,7 +41,7 @@ function applied(segments, edits) {
     .sort((a, b) => b.start - a.start).reduce((out, edit) => out.slice(0, edit.start) + edit.text + out.slice(edit.end), text)]));
 }
 
-test('redacts supported secrets in editable text with stable opaque placeholders and keeps inner edits', () => {
+test('redacts supported secrets in editable text with random opaque placeholders and keeps inner edits', () => {
   const token = fake.github();
   const segments = [
     segment('/input/0/content/0/text', `export GITHUB_TOKEN=${token} and key ${fake.aws()}`),
@@ -68,7 +67,9 @@ test('redacts supported secrets in editable text with stable opaque placeholders
   assert.ok(!JSON.stringify(state).includes(token.slice(4)) && !JSON.stringify(state).includes('hunter2pw'));
 
   const later = send([segment('/input/9/content/0/text', `retrying with ${token}`)], { state });
-  assert.equal(ids(applied([segment('/input/9/content/0/text', `retrying with ${token}`)], later.result.edits)['/input/9/content/0/text'])[0], first);
+  assert.notEqual(ids(applied([segment('/input/9/content/0/text', `retrying with ${token}`)], later.result.edits)['/input/9/content/0/text'])[0], first);
+  assert.equal(state.salt, undefined);
+  assert.equal(state.ids, undefined);
   const other = send([segment('/input/9/content/0/text', token)], { state, scope: { thread_id: 'thread-b', agent_id: null, kind: 'main' } });
   assert.notEqual(other.result.edits[0].text, later.result.edits[0].text);
 });
@@ -182,15 +183,10 @@ test('sensitive path policy asks before shell reads, ignores case, covers parent
   assert.ok(Date.now() - started < 1000);
 });
 
-test('/privacy allow fingerprints the value exactly as typed, keeping inner runs of whitespace', () => {
-  const writes = [];
-  const allowed = text => run('command', 'privacy', `allow ${text}`, { host: call => {
-    assert.equal(call.operation, 'settings.write');
-    writes.push(call.arguments.values.exempt.at(-1));
-    return {};
-  } });
-  allowed('  John  Smith\t');
-  allowed('John\tSmith');
-  const digest = value => `sha256:${createHash('sha256').update(value).digest('hex').slice(0, 16)}`;
-  assert.deepEqual(writes, [digest('John  Smith'), digest('John\tSmith')]);
+test('value exemptions do not persist guessable fingerprints', () => {
+  const output = run('command', 'privacy', 'allow hunter2pw');
+  assert.match(output.value.display, /Usage/);
+  const sent = send([segment('/s', 'password=hunter2pw')], { state: { salt: 'old', ids: { old: 'hash' } } });
+  assert.equal(sent.state.salt, undefined);
+  assert.equal(sent.state.ids, undefined);
 });

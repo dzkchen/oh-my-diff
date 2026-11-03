@@ -599,7 +599,27 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
         }
         _ => json!({"enabled": arguments.action == "enable"}),
     };
+    let collisions = store
+        .configuration()?
+        .mods
+        .iter()
+        .filter_map(|entry| {
+            let inspected = ModStore::inspect_package(&entry.path).ok()?;
+            (inspected["manifest"]["id"].as_str() == Some(id.as_str())
+                && entry.scope != arguments.scope)
+                .then(|| entry.path.display().to_string())
+        })
+        .collect::<Vec<_>>();
+    let identity_warning = if collisions.is_empty() {
+        Value::Null
+    } else {
+        json!(format!(
+            "Mod ID {id} is already installed at {}. Mods with this ID share storage and owned credential authority; a project-scoped copy takes precedence over a user-scoped copy.",
+            collisions.join(", ")
+        ))
+    };
     let public = json!({
+        "identity_warning": identity_warning,
         "action": arguments.action,
         "id": id,
         "changes": changes,

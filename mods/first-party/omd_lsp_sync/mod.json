@@ -7,7 +7,7 @@
   "state_scope": "thread",
   "description": "Language servers report the diagnostics each edit introduces and answer definition, reference and rename requests",
   "license": "MIT",
-  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_lsp_sync" },
   "assets": ["protocol.ts", "client.ts", "semantic.ts"],
   "capabilities": ["lifecycle", "exec", "inventory", "store", "tools", "outputs", "fs.read", "fs.write", "services", "terminal", "events"],
   "exec_environment": ["RUSTUP_HOME"],
