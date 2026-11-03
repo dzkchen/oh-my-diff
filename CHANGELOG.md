@@ -2,6 +2,26 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.4.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.1) — 2026-11-02
+
+A leaner OMD+ with untested mods and plugins moved to Experimental, remembered sandboxed terminal starts, and fixes for /btw, the files browser, the status line and themes.
+
+### New
+
+- Terminal panes: Allow and remember on a sandboxed start saves the approval for that workspace, mod, command and executable, so the same start doesn't ask again until its access or executable changes
+- /btw: `/btw` alone opens a side conversation panel that lists earlier exchanges and takes a follow-up question
+
+### Changed
+
+- OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact and omd_preview move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default
+- Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace
+
+### Fixed
+
+- Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list
+- Status line: usage limits refresh while idle, and an empty snapshot clears old limits
+- Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt
+
 ## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
 
 Experimental harness mods that cut token use, /btw side questions, and a tool list that matches stock Codex so new threads keep the provider's prompt cache.
