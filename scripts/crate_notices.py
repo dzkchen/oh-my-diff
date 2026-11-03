@@ -17,7 +17,7 @@ TEMPLATE = re.compile(r"[\[{<](yyyy|year)[\]}>]", re.I)
 def shipped_crates(tree):
     metadata = json.loads(subprocess.run(
         ["cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", TARGET],
-        cwd=tree / "codex-rs", capture_output=True, check=True).stdout)
+        cwd=tree / "codex-rs", stdout=subprocess.PIPE, check=True).stdout)
     packages = {package["id"]: package for package in metadata["packages"]}
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
     members = set(metadata["workspace_members"])

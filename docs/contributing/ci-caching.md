@@ -8,7 +8,8 @@ see [How CI checks a change](ci.md).
 PR, main-branch, nightly and release jobs share Cargo download and V8 cache keys.
 
 - Cargo downloads are keyed by OS, architecture and upstream pin, independently of the patch. Cargo fetches any
-  missing patched dependencies itself. This avoids another multi-gigabyte download snapshot for every patch edit.
+  missing patched dependencies itself. Restore also accepts earlier patch-specific snapshots for the same pin.
+  This avoids another multi-gigabyte download snapshot for every patch edit without discarding existing downloads.
 - V8 keys also include the patch manifest, falling back to the same platform and upstream pin. `build.py v8`
   verifies cached files against the pinned checksum before reuse.
 - Only nightly and release jobs save these download caches; PR and main-branch checks restore them.
