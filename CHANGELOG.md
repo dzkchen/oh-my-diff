@@ -12,6 +12,7 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 - /btw: `/btw` alone opens a side conversation panel that lists earlier exchanges and takes a follow-up question
 - Workspace: arrange panels with the keyboard alone (m, then Shift+arrows, T and = / -), F6 shows or hides the panels from the prompt, and number keys focus a panel whose tab is showing
 - Undo: the experimental omd_checkpoint snapshots your files around each turn, so `/undo` puts back what the agent changed in the last turn and `/redo` brings it back; it never overwrites edits you made since without `/undo force`
+- Theme: an Aurora scene; the northern lights flare when a turn finishes, so you can tell from across the room that the agent is done
 
 ### Changed
 
