@@ -95,6 +95,28 @@
       "source": "mods/first-party/omd_btw",
       "version": "1.0.0"
     },
+    "omd_checkpoint": {
+      "api": "1.0.0",
+      "capabilities": [
+        "commands",
+        "lifecycle",
+        "inventory",
+        "store",
+        "exec",
+        "os",
+        "fs.read",
+        "fs.write"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "a06f03b5cdcab3db62b51b2b04bb789c75f7e2024d91b888fd06776a7cc61963",
+        "mod.json": "a94bdff0a9d22dd720aab65062bf009d7fe6c13a225b337ec98c9e8f19229dcc"
+      },
+      "id": "omd_checkpoint",
+      "package_sha256": "d64c148f7037e35b9455cd3bb90c39a220186b092412fe13d6f361e33bf815ef",
+      "source": "mods/first-party/omd_checkpoint",
+      "version": "1.0.0"
+    },
     "omd_claude_cli": {
       "api": "1.0.0",
       "capabilities": [

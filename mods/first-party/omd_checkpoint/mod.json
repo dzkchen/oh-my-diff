@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "omd_checkpoint",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "checkout",
+  "description": "Snapshots files before and after each turn in hidden Git refs; /undo puts back what the last turn changed and /redo brings it back",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_checkpoint"},
+  "capabilities": ["commands", "lifecycle", "inventory", "store", "exec", "os", "fs.read", "fs.write"],
+  "os_access": {"programs": ["git"], "network": false},
+  "exec_environment": ["GIT_INDEX_FILE"],
+  "compatibility": {"required_features": ["store_v1", "state_scopes_v1", "exec_v1", "unrestricted_process_v1", "lifecycle_events_v1"]}
+}
