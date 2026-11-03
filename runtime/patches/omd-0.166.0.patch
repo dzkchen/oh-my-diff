@@ -172358,7 +172358,7 @@ index 0000000000000000000000000000000000000000..76157c5a6184321ce87a5ff8c9ea8e29
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab8b23c7598fb8abc7ed4bfa5a703866665cbb28
+index 0000000000000000000000000000000000000000..1f4bd7e660e5d609571f2f7a2eb22e2d8a1ee50a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
 @@ -0,0 +1,736 @@
@@ -173016,9 +173016,9 @@ index 0000000000000000000000000000000000000000..ab8b23c7598fb8abc7ed4bfa5a703866
 +            let columns = screen.width;
 +            for column in 0..columns {
 +                let x = screen.x + column;
-+                let source = &raster.cells
-+                    [usize::from(row.min(raster.height - 1)) * usize::from(raster.width)
-+                        + usize::from(column.min(raster.width - 1))];
++                let source = &raster.cells[usize::from(row.min(raster.height - 1))
++                    * usize::from(raster.width)
++                    + usize::from(column.min(raster.width - 1))];
 +                let Some(background) = source.bg else {
 +                    continue;
 +                };
@@ -173100,10 +173100,10 @@ index 0000000000000000000000000000000000000000..ab8b23c7598fb8abc7ed4bfa5a703866
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..66659e1954ea779aa138804fceb8bf7e4cbdf8c5
+index 0000000000000000000000000000000000000000..5a74fec2b258c85e26a18e0e0253b15a6691b129
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,732 @@
+@@ -0,0 +1,738 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -173623,7 +173623,10 @@ index 0000000000000000000000000000000000000000..66659e1954ea779aa138804fceb8bf7e
 +    for (width, height) in [(80, 4), (60, 3), (90, 5)] {
 +        let screen = Rect::new(0, 0, width, height);
 +        let before = paint(screen, now);
-+        assert_eq!(before[(width - 1, height - 1)].bg, Color::Rgb(0x44, 0x55, 0x66));
++        assert_eq!(
++            before[(width - 1, height - 1)].bg,
++            Color::Rgb(0x44, 0x55, 0x66)
++        );
 +        let reply = send(
 +            width,
 +            height,
@@ -173635,7 +173638,10 @@ index 0000000000000000000000000000000000000000..66659e1954ea779aa138804fceb8bf7e
 +        assert_eq!(reply["queued"], 1);
 +        let after = paint(screen, now);
 +        assert_eq!(after[(1, 0)].symbol(), "x");
-+        assert_eq!(after[(width - 1, height - 1)].bg, Color::Rgb(0x44, 0x55, 0x66));
++        assert_eq!(
++            after[(width - 1, height - 1)].bg,
++            Color::Rgb(0x44, 0x55, 0x66)
++        );
 +    }
 +    rasters().remove(key);
 +}
