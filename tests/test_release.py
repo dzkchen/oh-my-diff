@@ -159,7 +159,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(release.history(entries, "1.0.0"), [f"no changelog entry covers {tagged}, {later}"])
 
     def test_rollback_drafts_the_release_and_restores_the_previous_stable_as_latest(self):
-        listed = json.dumps([{"tagName": "v1.1.0"}, {"tagName": "v1.0.0"}])
+        listed = json.dumps([{"tagName": "v1.1.0"}, {"tagName": "mods-1.0.0-2"}, {"tagName": "v1.0.0"}])
         with mock.patch.object(release, "run", return_value=listed) as run, mock.patch("builtins.print"):
             release.rollback("1.1.0", dry_run=True)
             self.assertEqual(run.call_count, 1)
