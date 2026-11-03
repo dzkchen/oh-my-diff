@@ -302,7 +302,7 @@ test('tab commands show panels in tabs and cycle a tabbed panel', () => {
   assert.equal(command('tab next', state, { settings: stack }).value.display, 'No panels are in tabs');
   const two = { arrangement: { split: 'horizontal', children: ['chat', { tabs: ['changes', 'terminal'] }, { tabs: ['vcs', 'files'] }] } };
   const groups = register(register(null, 'vcs'), 'files');
-  const focused = draw({ ...groups, recent: ['files'] }, { settings: two }).key_contexts.find(context => context.when.focus.includes(CHANGES));
+  const focused = draw({ ...groups, recent: ['files'] }, { settings: two }).key_contexts.find(context => context.when?.focus?.includes(CHANGES));
   assert.deepEqual([focused.keys['['].action, focused.keys[']'].action], [{ command: 'workspace', args: 'tab 2' }, { command: 'workspace', args: 'tab 2' }]);
 });
 
