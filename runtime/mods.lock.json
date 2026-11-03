@@ -940,12 +940,12 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "86b957aa7038dcbe9d50f1416ce40115aab362cbc405b1290885b35781a2a491",
-        "mod.json": "3ad0e7a752cace8066dfa284be3e9d308efd171bd0393a5cca5d90a933170136",
+        "index.ts": "43e270a3d75f2a29b85dc805e951ea3033cf680499341271f0af7ff16f129103",
+        "mod.json": "c4585d7b1b6d34dddd8687419573220bd15cbe5583ccd13fe8c879ee874fe870",
         "tree.ts": "bf7fbea96846738c7fad9738cac75182c8dd46a796837f4b175a2f8eb9ce28f6"
       },
       "id": "omd_workspace",
-      "package_sha256": "662a0348d95f7b2abc33e7a2dcb5cafa0329bfbc4101520fa0255e8b04d1aa57",
+      "package_sha256": "83c2f708377fc05012143c779a6b302f99e5b9694f0a614d4ecc440e92759f07",
       "source": "mods/first-party/omd_workspace",
       "version": "1.2.0"
     },

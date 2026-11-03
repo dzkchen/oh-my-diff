@@ -12,11 +12,12 @@ type File = { path: string; code: string };
 type Changes = { files: File[]; total: number; selected: string | null; diff: string; error: string | null; at?: number };
 type Thread = { sessions?: string[]; changes?: Changes };
 type Level = 'normal' | 'half' | 'full';
+type Mode = { target: string; level: Exclude<Level, 'normal'> };
 type Border = 'rounded' | 'plain' | 'double' | 'thick';
 type State = {
   off: boolean; registered: Panel[]; arranged: Arranged | null; saved: Record<string, Node>; ratios: Record<string, number[]>;
-  recent: string[]; tabs: Record<string, number>; mode: { target: string; level: Exclude<Level, 'normal'> } | null; threads: Record<string, Thread>;
-  arranging: string | null;
+  recent: string[]; tabs: Record<string, number>; mode: Mode | null; threads: Record<string, Thread>;
+  arranging: { id: string; at: number } | null; restore: Mode | null;
 };
 type Bind = { rank: number; panel?: Panel; key: string; action: KeyAction; label: string };
 
@@ -32,10 +33,11 @@ const KEYS: Record<string, string> = {
   ...Object.fromEntries(Array.from({ length: PANELS }, (_, index) => [`panel_${index + 1}`, String(index + 1)])),
   main: '0', left: 'Left', left_alt: 'h', right: 'Right', right_alt: 'l', up: 'Up', up_alt: 'k', down: 'Down', down_alt: 'j', help: '?',
   mode_next: '+', mode_previous: '_', tab_previous: '[', tab_next: ']', panel_tab_previous: '{', panel_tab_next: '}',
-  grow: '=', shrink: '-', focus_shell: 'Enter', toggle: 'F2', arrange: 'a', arrange_tab: 't',
+  grow: '=', shrink: '-', focus_shell: 'Enter', toggle: 'F6', arrange: 'm', arrange_tab: 'T',
+  arrange_left: 'Shift+Left', arrange_right: 'Shift+Right', arrange_up: 'Shift+Up', arrange_down: 'Shift+Down',
 };
 const KEY = /^(?:[\x21-\x7e]|F(?:[2-9]|1[0-2])|(?:Ctrl\+(?![cdzhijm]$)|Alt\+|Ctrl\+Alt\+)[a-z0-9]|(?:Ctrl\+|Alt\+|Shift\+)?(?:Up|Down|Left|Right|Home|End|PageUp|PageDown|Delete|Insert|Tab|Enter|Backspace|Space))$/;
-const CHAT_KEY = /^(?:F\d+|Ctrl\+|Alt\+)/;
+const TOGGLE_KEY = /^(?:F(?:[2-9]|1[0-2])|(?:Ctrl\+(?![cdzhijm]$)|Alt\+|Ctrl\+Alt\+)[a-z0-9])$/;
 const SITE = /^[a-z][a-z0-9_]{0,23}\/[a-z0-9_-]{1,48}$/;
 const DISABLED = '<disabled>';
 const CELLS = 10;
@@ -59,10 +61,11 @@ const START = 'omd_workspace_start';
 const LIST = 'omd_workspace_changes';
 const REFRESH = 'omd_workspace_refresh';
 const SHELL = 'omd_workspace_shell';
-const ARRANGING = 'omd_workspace_arranging';
+const ARRANGE_MS = 60_000;
+const STATUS = 40;
 const FRESH_MS = 2_000;
 const EXAMPLE = {
-  layout: 'corner', panels: 'changes, terminal, snake', side: 'left', dock_size: 25, narrow_below: 90, border: 'plain', key_main: 'm',
+  layout: 'corner', panels: 'changes, terminal, snake', side: 'left', dock_size: 25, narrow_below: 90, border: 'plain', key_main: 'Home',
   shell_write: true, terminals: [{ id: 'snake', title: 'Snake', argv: ['node', 'demo/snake.mjs'] }],
 };
 const encoder = new TextEncoder();
@@ -87,7 +90,7 @@ const clip = (text: string, limit: number) => {
 export default function activate(api: ModAPI) {
   const load = (): State => {
     const stored = obj(api.state.get());
-    const empty: State = { off: false, registered: [], arranged: null, saved: {}, ratios: {}, recent: [], tabs: {}, mode: null, threads: {}, arranging: null };
+    const empty: State = { off: false, registered: [], arranged: null, saved: {}, ratios: {}, recent: [], tabs: {}, mode: null, threads: {}, arranging: null, restore: null };
     return Object.fromEntries(Object.entries(empty).map(([key, value]) => [key, own(stored, key) ?? value])) as State;
   };
   const save = (state: State) => api.state.set(state as unknown as Json);
@@ -112,30 +115,31 @@ export default function activate(api: ModAPI) {
   const keymap = () => {
     const keys: Record<string, string | null> = { ...KEYS };
     const invalid: string[] = [];
+    const conflicts = new Map<string, string>();
     const chosen = new Set<string>();
     for (const action of Object.keys(KEYS)) {
       const key = api.settings[`key_${action}`];
       if (key === undefined || key === null || key === '') continue;
       if (key === DISABLED) keys[action] = null;
-      else if (typeof key === 'string' && KEY.test(key) && (action !== 'toggle' || CHAT_KEY.test(key))) {
+      else if (typeof key === 'string' && KEY.test(key) && (action !== 'toggle' || TOGGLE_KEY.test(key))) {
         keys[action] = key;
         chosen.add(action);
-      } else invalid.push(`key_${action}: invalid key ${JSON.stringify(key)}${action === 'toggle' ? ' (it works from the prompt, so it needs F2-F12, Ctrl+ or Alt+)' : ''}`);
+      } else invalid.push(`key_${action}: invalid key ${JSON.stringify(key)}${action === 'toggle' ? ' (it works from the prompt, so it needs F2-F12, or Ctrl+ or Alt+ with a lowercase letter or digit)' : ''}`);
     }
     const holders = (key: string | null) => Object.keys(keys).filter(action => key !== null && keys[action] === key);
     for (const action of chosen) {
       const others = holders(keys[action]).filter(other => other !== action);
       if (!others.length) continue;
-      invalid.push(`key_${action}: ${keys[action]} is already key_${others[0]}`);
+      conflicts.set(action, `key_${action}: ${keys[action]} is already key_${others[0]}, so it keeps its default ${KEYS[action]}`);
       keys[action] = KEYS[action];
     }
     for (const action of Object.keys(keys)) {
       const first = holders(keys[action])[0];
       if (first === undefined || first === action) continue;
-      invalid.push(`key_${action}: ${keys[action]} is already key_${first}, so it is off`);
+      conflicts.set(action, `key_${action}: ${keys[action]} is already key_${first}, so it is off`);
       keys[action] = null;
     }
-    return { keys, invalid };
+    return { keys, invalid: [...invalid, ...conflicts.values()] };
   };
   const { keys, invalid } = keymap();
   const { settings } = api;
@@ -247,6 +251,7 @@ export default function activate(api: ModAPI) {
     return { split: 'vertical', ratio: [100 - compact, compact], children: [other, 'chat'] };
   };
   const activeOf = (state: State, group: Group) => Math.max(0, group.tabs.findIndex(id => id === state.recent.find(name => group.tabs.includes(name))));
+  const arrangingOf = (state: State) => (state.arranging && Date.now() - state.arranging.at < ARRANGE_MS ? state.arranging.id : null);
   const ownTab = (state: State, panel: Panel) => Math.min(own(state.tabs, panel.id) ?? 0, (panel.tabs?.length ?? 1) - 1);
   const expand = (state: State, list: Panel[], tree: Node, narrow: boolean): LayoutNode => {
     const byId = new Map(list.map((panel, index) => [panel.id, { panel, title: `${index + 1} ${panel.title}` }]));
@@ -327,17 +332,14 @@ export default function activate(api: ModAPI) {
       bind(1, `panel_${index + 1}`, hidden ? run(`tab ${index + 1}`) : { region: site }, `${hidden ? 'Show' : 'Focus'} ${panel.title}`);
     });
     bind(1, 'main', { region: 'chat' }, 'Main view');
-    const moving = list.find(panel => panel.id === state.arranging);
+    const moving = list.find(panel => panel.id === arrangingOf(state));
     if (moving) {
-      for (const [region] of REGIONS) {
-        bind(2, region, run(`arrange ${region}`), `Move ${moving.title} ${region}`, moving);
-        bind(2, `${region}_alt`, run(`arrange ${region}`), `Move ${moving.title} ${region}`, moving);
-      }
+      for (const [region] of REGIONS) bind(2, `arrange_${region}`, run(`arrange ${region}`), `Move ${moving.title} ${region}`, moving);
       bind(2, 'arrange_tab', run('arrange tab'), `Put ${moving.title} in tabs with its neighbour`, moving);
       bind(2, 'grow', run(`grow ${moving.id}`), `Grow ${moving.title}`, moving);
       bind(2, 'shrink', run(`shrink ${moving.id}`), `Shrink ${moving.title}`, moving);
+      bind(2, 'arrange', run('arrange done'), 'Done arranging', moving);
     }
-    for (const panel of list) bind(3, 'arrange', run(panel === moving ? 'arrange done' : `arrange ${panel.id}`), panel === moving ? 'Done arranging' : `Arrange ${panel.title} with keys`, panel);
     for (const panel of list) {
       const session = pty(panel);
       if (session && thread?.sessions?.includes(session.session)) bind(2, 'focus_shell', { focus: session.component }, `Type in ${panel.title}`, panel);
@@ -361,6 +363,7 @@ export default function activate(api: ModAPI) {
     }
     bind(5, 'grow', run('grow'), 'Grow the panels (or drag their border)');
     bind(5, 'shrink', run('shrink'), 'Shrink the panels (or drag their border)');
+    for (const panel of list.filter(item => item !== moving)) bind(6, 'arrange', run(`arrange ${panel.id}`), `Arrange ${panel.title} with keys`, panel);
     for (const panel of list) {
       bind(6, 'mode_next', run(`mode next ${panel.id}`), 'Next screen mode', panel);
       bind(6, 'mode_previous', run(`mode previous ${panel.id}`), 'Previous screen mode', panel);
@@ -455,11 +458,20 @@ export default function activate(api: ModAPI) {
     for (const id of gone) delete state.tabs[id];
     state.recent = state.recent.filter(id => !gone.includes(id));
     if (state.mode && gone.includes(state.mode.target)) state.mode = null;
-    if (state.arranging && gone.includes(state.arranging)) {
-      state.arranging = null;
-      notice(state);
-    }
+    if (state.restore && gone.includes(state.restore.target)) state.restore = null;
+    if (state.arranging && gone.includes(state.arranging.id)) state.arranging = null;
   };
+  const arrangingStatus = (panel: Panel) => {
+    const moves = REGIONS.map(([region]) => keys[`arrange_${region}`]);
+    const shifted = REGIONS.every(([region]) => keys[`arrange_${region}`] === KEYS[`arrange_${region}`]);
+    const hint = [shifted ? 'Shift+arrows' : moves.filter(Boolean).join(' '), keys.arrange_tab, keys.grow, keys.shrink, keys.arrange].filter(Boolean).join(' ');
+    const room = Math.max(1, STATUS - `Arranging : ${hint}`.length);
+    return `Arranging ${panel.title.slice(0, room)}: ${hint}`.slice(0, STATUS);
+  };
+
+  api.on('start', () => changed(state => {
+    state.arranging = null;
+  }));
 
   api.on('mods_changed', ({ active }) => changed(state => {
     const kept = state.registered.filter(panel => active.includes(panel.site.split('/')[0]));
@@ -479,7 +491,11 @@ export default function activate(api: ModAPI) {
       if (pty(panel)) sites[panel.site as `${string}/${string}`] = { components: ptySite(panel, thread) };
       else if (panel.id === 'changes') sites[panel.site as `${string}/${string}`] = { components: changesSite(thread?.changes) };
     }
-    return { layout, sites, ...(list.length ? { key_contexts: contexts(state, tree, list, thread) } : {}) };
+    const moving = list.find(panel => panel.id === arrangingOf(state) && shown.has(panel.id));
+    return {
+      layout, sites, ...(list.length ? { key_contexts: contexts(state, tree, list, thread) } : {}),
+      ...(moving ? { status: [arrangingStatus(moving)] } : {}),
+    };
   });
 
   api.on('component_event', event => {
@@ -537,17 +553,6 @@ export default function activate(api: ModAPI) {
       `Ctrl+] from the prompt enters the panels${keys.toggle ? ` and ${keys.toggle} shows or hides them` : ''}. In them: ${hints.join(', ')}.`,
     ].join('\n');
   };
-  const notice = (state: State) => {
-    const panel = panels(state).find(item => item.id === state.arranging);
-    if (!panel) {
-      api.host.tryCall('terminal.notice', { id: ARRANGING, placement: 'status', clear: true });
-      return;
-    }
-    const ways = REGIONS.map(([region]) => keys[region]).filter(Boolean).join(' ');
-    const hints = [[ways, 'move'], [keys.arrange_tab, 'tabs'], [[keys.grow, keys.shrink].filter(Boolean).join(' '), 'resize'], [keys.arrange, 'done']]
-      .flatMap(([key, what]) => (key ? [`${key} ${what}`] : []));
-    api.host.tryCall('terminal.notice', { id: ARRANGING, placement: 'status', ttl_ms: 600_000, text: `Arranging ${panel.title}: ${hints.join(', ')}` });
-  };
   const config = (state: State) => {
     const file = api.settingsFile;
     const unknown = [...new Set(order)].filter(id => ![...BUILTIN, ...commands, ...state.registered].some(panel => panel.id === id));
@@ -574,30 +579,29 @@ export default function activate(api: ModAPI) {
       const known = (id: string) => id === 'chat' || list.some(panel => panel.id === id);
       const named = (word = '') => (list[Number(word) - 1] ?? list.find(panel => panel.id === word || panel.title.toLowerCase() === word.toLowerCase()))?.id ?? word;
       const resize = (step: number, word?: string) => {
-        state.mode = null;
         const tree = current();
         const id = word === undefined ? undefined : named(word);
         const path = id === undefined ? [] : locate(tree, id);
         if (!path || id === 'chat') return `Usage: /workspace ${step > 0 ? 'grow' : 'shrink'} [PANEL] (a shown panel)`;
+        state.mode = null;
         for (let depth = id === undefined ? 0 : path.length - 1; depth >= 0; depth -= 1) {
           const node = at(tree, path.slice(0, depth));
           if (typeof node !== 'object' || !('split' in node)) continue;
-          const [index, sign] = id === undefined ? [node.children.findIndex(child => leaves(child).includes('chat')), -1] : [path[depth], 1];
+          const [index, change] = id === undefined ? [node.children.findIndex(child => leaves(child).includes('chat')), -step] : [path[depth], step];
           const stored = state.ratios[signature(node)];
           const ratio = stored?.length === node.children.length ? stored : node.ratio ?? node.children.map(() => 1);
           const total = ratio.reduce((sum, weight) => sum + weight, 0);
-          const now = Math.round(100 - ratio[index] * 100 / total);
-          const next = step * sign < 0 ? Math.max(now, Math.min(85, now - step * sign)) : Math.min(now, Math.max(15, now - step * sign));
-          const others = total - ratio[index];
+          const share = Math.round(ratio[index] * 100 / total);
+          const next = change > 0 ? Math.max(share, Math.min(85, share + change)) : Math.min(share, Math.max(15, share + change));
           delete state.ratios[signature(node)];
-          state.ratios[signature(node)] = ratio.map((weight, slot) => (slot === index ? 100 - next : Math.max(1, Math.round(weight * next / others))));
+          state.ratios[signature(node)] = ratio.map((weight, slot) => (slot === index ? next : Math.max(1, Math.round(weight * (100 - next) / (total - ratio[index])))));
           for (const old of Object.keys(state.ratios).slice(0, -RATIOS)) delete state.ratios[old];
           return null;
         }
         return null;
       };
       const arrange = (way: string) => {
-        const id = state.arranging;
+        const id = arrangingOf(state);
         if (!id || !known(id)) return 'Usage: /workspace arrange PANEL, then arrange left|right|up|down|tab|done';
         const refused = commit(state, move(current(), id, way));
         if (refused) return refused;
@@ -612,7 +616,16 @@ export default function activate(api: ModAPI) {
           return 'Arrangement, sizes, tabs and screen modes reset';
         },
         toggle: () => {
-          state.mode = state.mode?.target === 'chat' && state.mode.level === 'full' ? null : { target: 'chat', level: 'full' };
+          const hidden = state.mode?.target === 'chat' && state.mode.level === 'full';
+          if (state.off || hidden) {
+            const was = state.off;
+            state.off = false;
+            if (hidden) state.mode = state.restore;
+            state.restore = null;
+            return was ? 'Workspace on' : null;
+          }
+          state.restore = state.mode;
+          state.mode = { target: 'chat', level: 'full' };
           return null;
         },
         arrange: () => {
@@ -624,7 +637,7 @@ export default function activate(api: ModAPI) {
           if (Object.hasOwn(WAYS, word)) return arrange(word);
           const id = named(word);
           if (!known(id) || id === 'chat') return 'Usage: /workspace arrange PANEL, then arrange left|right|up|down|tab|done';
-          state.arranging = id;
+          state.arranging = { id, at: Date.now() };
           return null;
         },
         grow: () => resize(STEP, words[0]),
@@ -697,12 +710,14 @@ export default function activate(api: ModAPI) {
           const next = action === 'next' ? (now + 1) % 3 : action === 'previous' ? (now + 2) % 3 : LEVELS.indexOf(action as Level);
           if (next < 0) return 'Usage: /workspace mode next|previous|normal|half|full [PANEL|dock|chat]';
           state.mode = next === 0 ? null : { target, level: LEVELS[next] as 'half' | 'full' };
+          state.restore = null;
           return `Screen mode: ${target} ${LEVELS[next]}`;
         },
       };
-      const before = state.arranging;
       const result = Object.hasOwn(operations, op) ? operations[op]() : status(state);
-      if (state.arranging !== before) notice(state);
+      const id = arrangingOf(state);
+      const arranging = op === 'arrange' || ((op === 'grow' || op === 'shrink') && words[0] === id);
+      state.arranging = arranging && id ? { id, at: Date.now() } : null;
       return result;
     });
     return display === null ? null : { display };
@@ -778,6 +793,8 @@ export default function activate(api: ModAPI) {
       if (level < 0) return refuse('level must be normal, half or full');
       if (target !== 'chat' && target !== 'dock' && !panels(state).some(panel => panel.id === target)) return refuse('target must be chat, dock or a shown panel id');
       state.mode = level === 0 ? null : { target: target as string, level: LEVELS[level] as 'half' | 'full' };
+      state.restore = null;
+      state.arranging = null;
       return { mode: state.mode as Json };
     }),
   });

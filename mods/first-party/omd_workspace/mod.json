@@ -49,9 +49,13 @@
       "key_grow": {"type": "string", "default": "=", "title": "Key: grow the panels", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
       "key_shrink": {"type": "string", "default": "-", "title": "Key: shrink the panels", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
       "key_focus_shell": {"type": "string", "default": "Enter", "title": "Key: type in a running terminal", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
-      "key_toggle": {"type": "string", "default": "F2", "title": "Key: show or hide the panels", "description": "Works from the prompt too, so F2 to F12, Ctrl+ or Alt+ with a letter or digit; <disabled> turns it off"},
-      "key_arrange": {"type": "string", "default": "a", "title": "Key: arrange the focused panel", "description": "Starts and ends arranging, where the panel keys move it and the grow and shrink keys resize it; <disabled> turns it off"},
-      "key_arrange_tab": {"type": "string", "default": "t", "title": "Key: put the arranged panel in tabs", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"}
+      "key_toggle": {"type": "string", "default": "F6", "title": "Key: show or hide the panels", "description": "Works from the prompt too, so F2 to F12, or Ctrl+ or Alt+ with a lowercase letter or digit; a key Codex already uses (such as F2 or Ctrl+w) does nothing; <disabled> turns it off"},
+      "key_arrange": {"type": "string", "default": "m", "title": "Key: arrange the focused panel", "description": "Starts and ends arranging, where the arrange keys move the panel and the grow and shrink keys resize it; <disabled> turns it off"},
+      "key_arrange_tab": {"type": "string", "default": "T", "title": "Key: put the arranged panel in tabs", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_arrange_left": {"type": "string", "default": "Shift+Left", "title": "Key: move the arranged panel left", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_arrange_right": {"type": "string", "default": "Shift+Right", "title": "Key: move the arranged panel right", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_arrange_up": {"type": "string", "default": "Shift+Up", "title": "Key: move the arranged panel up", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_arrange_down": {"type": "string", "default": "Shift+Down", "title": "Key: move the arranged panel down", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"}
     },
     "additionalProperties": false
   }

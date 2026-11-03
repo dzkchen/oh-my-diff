@@ -56,6 +56,8 @@ const register = (state, id, tabs = 0, order) => service('register', {
   id, title: id, site: `${id}/main`, ...(order === undefined ? {} : { order }),
   ...(tabs ? { tabs: Array.from({ length: tabs }, (_, index) => ({ title: `t${index}`, site: `${id}/t${index}` })) } : {}),
 }, state).state;
+const anywhere = contexts => contexts.find(context => !context.when);
+const panelKeys = (contexts, site) => contexts.find(context => Array.isArray(context.when?.focus) && context.when.focus.includes(site));
 const keysOf = contexts => contexts.reduce((total, context) => total + Object.keys(context.keys).length, 0);
 const cells = node => node.tabs ? node.tabs.reduce((total, tab) => total + cells(tab.node), 0) : node.children ? node.children.reduce((total, child) => total + cells(child), 0) : 1;
 const depth = node => 1 + Math.max(0, ...(node.tabs ?? []).map(tab => depth(tab.node)), ...(node.children ?? []).map(depth));
@@ -90,7 +92,7 @@ test('half and full screen modes act on the whole dock and keep a compact chat b
   assert.deepEqual([draw({ ...grown, ...mode('dock', 'half') }).layout.ratio, draw({ ...grown, ...mode('chat', 'half') }).layout.ratio], [[50, 50], [75, 25]]);
   const full = draw(mode('chat', 'full'));
   assert.deepEqual(full.layout, chat);
-  assert.deepEqual(full.key_contexts[0], { keys: { F2: { action: { command: 'workspace', args: 'toggle' }, label: 'Show or hide the panels' } } });
+  assert.deepEqual(anywhere(full.key_contexts), { keys: { F6: { action: { command: 'workspace', args: 'toggle' }, label: 'Show or hide the panels' } } });
   assert.equal(full.key_contexts.length, 2);
 
   assert.deepEqual(draw(mode('changes', 'half'), { settings: stack }).layout, { split: 'horizontal', ratio: [50, 50], children: [chat, leaf(CHANGES, '1 Changes')] });
@@ -129,7 +131,7 @@ test('keys show or focus panels by number, move between regions, resize and chan
     { region: 'up' }, { region: 'up' }, { region: 'down' }, { region: 'down' }, { help: true },
   ]);
   assert.deepEqual(['[', ']', '=', '-'].map(key => general.keys[key].action), [run('tab previous'), run('tab next'), run('grow'), run('shrink')]);
-  assert.deepEqual(contexts.slice(1, -1).map(context => [context.when.focus, context.keys['+'].action]), [[[CHANGES], run('mode next changes')], [[SHELL], run('mode next terminal')]]);
+  assert.deepEqual([CHANGES, SHELL].map(site => panelKeys(contexts, site)).map(context => [context.when.focus, context.keys['+'].action]), [[[CHANGES], run('mode next changes')], [[SHELL], run('mode next terminal')]]);
 
   const keys = { key_panel_1: 'x', key_help: '<disabled>', key_main: 'nope', key_grow: 'Ctrl+g', key_left_alt: 'Esc', key_left: 'Alt+Q', key_right: 'Ctrl+c', key_shrink: '' };
   const custom = draw(null, { settings: keys }).key_contexts.at(-1);
@@ -148,15 +150,15 @@ test('stack mode keys focus panels by site and keep screen mode and tab keys per
   const state = service('register', { id: 'log', title: 'Git', site: 'omd_git/a', tabs: [{ title: 'A', site: 'omd_git/a' }, { title: 'B', site: 'omd_git/b' }] }, null).state;
   const contexts = draw(state, { settings: stack }).key_contexts;
   const general = contexts.at(-1);
-  const own = contexts.slice(1, -1);
+  const own = contexts.filter(context => Array.isArray(context.when?.focus));
   assert.deepEqual(general.keys['3'], { action: { region: 'omd_git/a' }, label: 'Focus Git' });
   assert.deepEqual(draw({ ...state, tabs: { log: 1 } }, { settings: stack }).key_contexts.at(-1).keys['3'].action, { region: 'omd_git/b' });
   assert.equal(general.keys['['], undefined);
   assert.deepEqual(own.map(context => context.when.focus), [[CHANGES], [SHELL], ['omd_git/a', 'omd_git/b']]);
   assert.deepEqual(own[0].keys['+'].action, { command: 'workspace', args: 'mode next changes' });
   assert.deepEqual(own[2].keys['{'].action, { command: 'workspace', args: 'tab previous log' });
-  const [, changes] = draw(state, { settings: { ...stack, key_mode_next: 'Ctrl+n' } }).key_contexts;
-  assert.deepEqual(Object.keys(changes.keys), ['a', 'Ctrl+n', '_']);
+  const changes = panelKeys(draw(state, { settings: { ...stack, key_mode_next: 'Ctrl+n' } }).key_contexts, CHANGES);
+  assert.deepEqual(Object.keys(changes.keys), ['m', 'Ctrl+n', '_']);
 });
 
 test('a registered panel with tabs nests in the dock and every key and layout limit holds with six panels', () => {
@@ -176,7 +178,7 @@ test('a registered panel with tabs nests in the dock and every key and layout li
   assert.equal(six.layout.children[1].tabs.length, 6);
   assert.ok(cells(six.layout) <= 12 && depth(six.layout) <= 6);
   assert.ok(six.key_contexts.length <= 8 && keysOf(six.key_contexts) <= 32);
-  assert.deepEqual(six.key_contexts[1].keys['{'].action, { command: 'workspace', args: 'tab previous a' });
+  assert.deepEqual(panelKeys(six.key_contexts, 'a/t0').keys['{'].action, { command: 'workspace', args: 'tab previous a' });
   state = register(state, 'f', 1);
   for (const [panels, columns, region] of [['a, b, c, d, e, f', 120, 'Left'], ['a, b, c, d, e, f', 60, 'Up'], ['a, b, c, d, e, terminal', 120, 'Right']]) {
     const tabbed = draw({ ...state, threads: { t1: { sessions: ['shell'] } } }, { columns, settings: { panels } }).key_contexts;
@@ -395,8 +397,8 @@ test('the start button opens the shell with the configured access, and a decline
   assert.deepEqual(started.calls.filter(call => call.operation === 'terminal.pty').map(call => call.arguments), [{ action: 'start', session: 'shell' }]);
   assert.equal(draw(started.state).sites[SHELL].components.at(-1).session, 'shell');
   assert.equal(button(started.state), undefined);
-  assert.deepEqual(draw(started.state).key_contexts[2].keys.Enter, { action: { focus: 'omd_workspace_shell' }, label: 'Type in Shell' });
-  assert.equal(draw(declined.state).key_contexts[2].keys.Enter, undefined);
+  assert.deepEqual(panelKeys(draw(started.state).key_contexts, SHELL).keys.Enter, { action: { focus: 'omd_workspace_shell' }, label: 'Type in Shell' });
+  assert.equal(panelKeys(draw(declined.state).key_contexts, SHELL).keys.Enter, undefined);
   const open = command('start', null, { settings: { shell_write: true, shell_network: 'loopback' } }).calls.at(-1).arguments;
   assert.deepEqual(open, { action: 'start', session: 'shell', write: true, network: 'loopback' });
 });
@@ -567,77 +569,120 @@ test('a dock drop moves the dragged panel beside or into tabs with its target, a
   assert.deepEqual(service('arrangement', {}, narrow, { settings: stack }).value.tree, { split: 'vertical', ratio: [67, 33], children: ['chat', { split: 'horizontal', children: ['terminal', 'changes'] }] });
 });
 
-test('the toggle key shows and hides the panels from anywhere, and only takes keys that work from the prompt', () => {
+test('the toggle key hides and brings back the panels, keeps a panel screen mode and turns the workspace on', () => {
   const hidden = command('toggle').state;
-  assert.deepEqual(hidden.mode, { target: 'chat', level: 'full' });
+  assert.deepEqual([hidden.mode, hidden.restore], [{ target: 'chat', level: 'full' }, null]);
   assert.deepEqual(draw(hidden).layout, chat);
+  assert.deepEqual(anywhere(draw(hidden).key_contexts), { keys: { F6: { action: { command: 'workspace', args: 'toggle' }, label: 'Show or hide the panels' } } });
   assert.equal(command('toggle', hidden).state.mode, null);
-  assert.deepEqual(command('toggle', command('mode half changes').state).state.mode, { target: 'chat', level: 'full' });
-  assert.deepEqual(Object.keys(draw(null, { settings: { key_toggle: 'Ctrl+w' } }).key_contexts[0].keys), ['Ctrl+w']);
-  const plain = { key_toggle: 'w' };
-  assert.deepEqual(Object.keys(draw(null, { settings: plain }).key_contexts[0].keys), ['F2']);
-  assert.match(command('config', null, { settings: plain }).value.display, /Ignored: key_toggle: invalid key "w" \(it works from the prompt/);
-  assert.deepEqual(draw(null, { settings: { key_toggle: '<disabled>' } }).key_contexts[0].when, { focus: [CHANGES] });
+  const half = command('mode half changes').state;
+  const back = command('toggle', command('toggle', half).state).state;
+  assert.deepEqual([back.mode, back.restore], [{ target: 'changes', level: 'half' }, null]);
+  assert.equal(command('mode normal', command('toggle', half).state).state.restore, null);
+  const off = command('toggle', command('off').state);
+  assert.deepEqual([off.value.display, off.state.off, off.state.mode], ['Workspace on', false, null]);
+  assert.deepEqual(Object.keys(anywhere(draw(null, { settings: { key_toggle: 'F7' } }).key_contexts).keys), ['F7']);
+  for (const key of ['w', 'Ctrl+Left', 'Alt+Backspace', 'Shift+Up', 'Ctrl+c']) {
+    const settings = { key_toggle: key };
+    assert.deepEqual(Object.keys(anywhere(draw(null, { settings }).key_contexts).keys), ['F6'], key);
+    assert.match(command('config', null, { settings }).value.display, /Ignored: key_toggle: invalid key .* \(it works from the prompt/, key);
+  }
+  assert.equal(anywhere(draw(null, { settings: { key_toggle: '<disabled>' } }).key_contexts), undefined);
 });
 
-test('a key set twice keeps its default and is named in config', () => {
+test('a key set twice keeps its default, or is turned off when that is taken too, and is named once in config', () => {
   const settings = { key_main: 'h', key_grow: 'x', key_shrink: 'x' };
   const general = draw(null, { settings }).key_contexts.at(-1);
   assert.deepEqual([general.keys['0'].action, general.keys.h.action], [{ region: 'chat' }, { region: 'left' }]);
   assert.deepEqual([general.keys['='].action, general.keys.x.action], [{ command: 'workspace', args: 'grow' }, { command: 'workspace', args: 'shrink' }]);
   const text = command('config', null, { settings }).value.display;
-  assert.match(text, /Ignored: key_main: h is already key_left_alt/);
-  assert.match(text, /Ignored: key_grow: x is already key_shrink/);
-  assert.match(command('config', null, { settings: { key_left_alt: '0' } }).value.display, /Ignored: key_left_alt: 0 is already key_main/);
+  assert.match(text, /Ignored: key_main: h is already key_left_alt, so it keeps its default 0/);
+  assert.match(text, /Ignored: key_grow: x is already key_shrink, so it keeps its default =/);
+  const off = command('config', null, { settings: { key_panel_1: '0', key_main: '2' } }).value.display;
+  assert.deepEqual(off.match(/Ignored: key_main: .*/g), ['Ignored: key_main: 0 is already key_panel_1, so it is off']);
+  assert.equal(draw(null, { settings: { key_panel_1: '0', key_main: '2' } }).key_contexts.at(-1).keys['0'].label, 'Focus Changes');
 });
 
-test('arranging moves the focused panel with the panel keys, tabs and resizes it, and ends with the arrange key', () => {
-  const run = args => ({ command: 'workspace', args });
-  const before = draw(null).key_contexts;
-  assert.deepEqual(before.slice(1, -1).map(context => context.keys.a.action), [run('arrange changes'), run('arrange terminal')]);
-  const started = command('arrange terminal');
-  assert.equal(started.state.arranging, 'terminal');
-  assert.match(started.calls.at(-1).arguments.text, /^Arranging Shell: Left Right Up Down move, t tabs, = - resize, a done$/);
-  const [, changes, shell] = draw(started.state).key_contexts;
-  assert.deepEqual(changes.keys.a.action, run('arrange changes'));
-  assert.deepEqual(['Left', 'l', 'Down', 'j', 't', '=', '-', 'a'].map(key => shell.keys[key].action),
-    [run('arrange left'), run('arrange right'), run('arrange down'), run('arrange down'), run('arrange tab'), run('grow terminal'), run('shrink terminal'), run('arrange done')]);
-  assert.ok(keysOf(draw(started.state).key_contexts) <= 32);
+test('arranging moves the focused panel with Shift+arrows, tabs and resizes it, shows a short status and ends with its key', () => {
+  const act = args => ({ command: 'workspace', args });
+  const before = draw(null);
+  assert.deepEqual([CHANGES, SHELL].map(site => panelKeys(before.key_contexts, site).keys.m.action), [act('arrange changes'), act('arrange terminal')]);
+  assert.equal(before.status, undefined);
+  const started = command('arrange terminal').state;
+  assert.equal(started.arranging.id, 'terminal');
+  const drawn = draw(started);
+  assert.deepEqual(drawn.status, ['Arranging Shell: Shift+arrows T = - m']);
+  const shell = panelKeys(drawn.key_contexts, SHELL);
+  assert.deepEqual(['Shift+Left', 'Shift+Right', 'Shift+Up', 'Shift+Down', 'T', '=', '-', 'm'].map(key => shell.keys[key].action), [
+    act('arrange left'), act('arrange right'), act('arrange up'), act('arrange down'), act('arrange tab'), act('grow terminal'), act('shrink terminal'), act('arrange done'),
+  ]);
+  assert.deepEqual([shell.keys.Left, shell.keys.h, shell.keys.t, shell.keys.a], [undefined, undefined, undefined, undefined]);
+  assert.deepEqual(panelKeys(drawn.key_contexts, CHANGES).keys.m.action, act('arrange changes'));
+  assert.ok(keysOf(drawn.key_contexts) <= 32);
+  assert.equal(draw({ ...started, arranging: { id: 'terminal', at: 0 } }).status, undefined);
+  assert.equal(draw({ ...started, arranging: 'terminal' }).status, undefined);
 
-  const moved = command('arrange down', started.state).state;
+  const moved = command('arrange down', started).state;
   assert.deepEqual(service('arrangement', {}, moved).value.tree, service('arrangement', {}, command('move terminal down').state).value.tree);
-  assert.equal(moved.arranging, 'terminal');
+  assert.equal(moved.arranging.id, 'terminal');
   const tabbed = command('arrange tab', moved).state;
   assert.deepEqual(service('arrangement', {}, tabbed).value.tree.children[1], { tabs: ['changes', 'terminal'] });
   assert.equal(tabbed.recent[0], 'terminal');
   assert.equal(command('arrange tab', tabbed).value.display, 'terminal is already in tabs');
-  const done = command('arrange done', tabbed);
-  assert.equal(done.state.arranging, null);
-  assert.deepEqual(done.calls.at(-1).arguments, { id: 'omd_workspace_arranging', placement: 'status', clear: true });
+  assert.equal(command('grow terminal', started).state.arranging.id, 'terminal');
+  for (const other of ['arrange done', 'grow changes', 'grow', 'tab 1', 'toggle', 'mode half', 'layout grid', 'off', '']) {
+    assert.equal(command(other, started).state.arranging, null, other);
+  }
+  assert.equal(run('start', {}, { state: started }).state.arranging, null);
+  assert.equal(service('mode', { level: 'half', target: 'changes' }, started).state.arranging, null);
   assert.match(command('arrange left').value.display, /^Usage: \/workspace arrange PANEL/);
   assert.match(command('arrange chat').value.display, /^Usage: \/workspace arrange PANEL/);
-  assert.equal(command('arrange 1').state.arranging, 'changes');
-  assert.equal(command('reset', started.state).state.arranging, null);
+  assert.equal(command('arrange 1').state.arranging.id, 'changes');
+
+  const long = command('arrange wide', register(null, 'wide')).state;
+  const titled = service('register', { id: 'wide', title: 'W'.repeat(30), site: 'wide/main' }, long).state;
+  const [line] = draw(titled).status;
+  assert.ok(line.length <= 40 && line.endsWith(': Shift+arrows T = - m'), line);
+  const [custom] = draw(started, { settings: { key_arrange_left: 'Ctrl+u', key_arrange_tab: '<disabled>' } }).status;
+  assert.ok(custom.length <= 40 && custom.startsWith('Arranging S') && custom.includes('Ctrl+u Shift+Right'), custom);
 });
 
-test('grow and shrink with a panel resize it inside its own split', () => {
+test('with six panels and arranging, the help, region and toggle keys stay inside the key limit', () => {
+  let state = null;
+  for (const id of ['a', 'b', 'c', 'd']) state = register(state, id, 2);
+  for (const extra of [{}, { arranging: { id: 'a', at: Date.now() } }]) {
+    for (const layout of ['dock', 'stack', 'grid']) {
+      const contexts = draw({ ...state, ...extra, threads: { t1: { sessions: ['shell'] } } }, { settings: { layout } }).key_contexts;
+      assert.ok(contexts.length <= 8 && keysOf(contexts) <= 32, layout);
+      const { keys } = contexts.at(-1);
+      for (const key of ['?', '0', 'Left', 'Right', 'Up', 'Down']) assert.ok(keys[key], `${layout} ${key} ${JSON.stringify(extra)}`);
+      assert.ok(anywhere(contexts), layout);
+    }
+  }
+});
+
+test('grow and shrink with a panel resize it inside its own split, and an unknown panel changes nothing', () => {
   let state = command('grow terminal', null, { settings: stack }).state;
   assert.deepEqual(draw(state, { settings: stack }).layout.children[1].ratio, [45, 55]);
   state = command('shrink 1', state, { settings: stack }).state;
   assert.deepEqual(draw(state, { settings: stack }).layout.children[1].ratio, [40, 60]);
   assert.deepEqual(draw(command('grow changes').state).layout.ratio, draw(command('grow').state).layout.ratio);
-  assert.match(command('grow chat').value.display, /^Usage: \/workspace grow \[PANEL\]/);
-  assert.match(command('shrink nope').value.display, /^Usage: \/workspace shrink \[PANEL\]/);
+  const half = command('mode half changes').state;
+  for (const bad of ['grow chat', 'shrink nope']) {
+    const result = command(bad, half);
+    assert.match(result.value.display, /^Usage: \/workspace (grow|shrink) \[PANEL\]/);
+    assert.deepEqual([result.state.mode, result.state.ratios], [half.mode, half.ratios]);
+  }
 });
 
 test('a panel that goes away takes its screen mode, arranging, tab and recent entry with it', () => {
   let state = service('register', { id: 'lazygit', title: 'Lazygit', site: 'omd_lazygit/main', tabs: [{ title: 'A', site: 'omd_lazygit/a' }, { title: 'B', site: 'omd_lazygit/b' }], show: true }, null).state;
   state = command('tab next lazygit', service('mode', { level: 'full', target: 'lazygit' }, state).state).state;
   state = command('arrange lazygit', state).state;
-  assert.deepEqual([state.mode.target, state.arranging, state.tabs.lazygit, state.recent[0]], ['lazygit', 'lazygit', 1, 'lazygit']);
+  assert.deepEqual([state.mode.target, state.arranging.id, state.tabs.lazygit, state.recent[0]], ['lazygit', 'lazygit', 1, 'lazygit']);
   for (const gone of [run('mods_changed', { active: ['omd_workspace'] }, { state }), service('unregister', { id: 'lazygit' }, state)]) {
     assert.deepEqual([gone.state.mode, gone.state.arranging, gone.state.tabs.lazygit, gone.state.recent.includes('lazygit')], [null, null, undefined, false]);
   }
   const kept = run('mods_changed', { active: ['omd_workspace', 'omd_lazygit'] }, { state }).state;
-  assert.deepEqual([kept.mode.target, kept.arranging], ['lazygit', 'lazygit']);
+  assert.deepEqual([kept.mode.target, kept.arranging.id], ['lazygit', 'lazygit']);
 });
