@@ -462,6 +462,102 @@ enabled = true
                 self.assertEqual(commands, ["selection-status"])
             self.assertEqual(sorted(path.name for path in (store / "sources").iterdir()), ["example"])
 
+    def test_a_mod_bundle_updates_changed_first_party_mods_in_place_and_rolls_back(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            prefix, store, bundle = base / "prefix", base / "store", base / "bundle"
+
+            def package(root, identifier, text):
+                (root / "sources" / identifier).mkdir(parents=True, exist_ok=True)
+                (root / "sources" / identifier / "index.ts").write_text(text)
+                return {"version": "1.0.0", "capabilities": [text], "package_sha256": f"sha-{text}",
+                        "files": {"index.ts": profiles.support.digest(root / "sources" / identifier / "index.ts")}}
+
+            lock = {"mod_api": "1.0.0", "packages": {"one": package(prefix, "one", "old"), "two": package(prefix, "two", "same"),
+                                                     "catalogued": package(prefix, "catalogued", "old")}}
+            offered = {"mod_api": "1.0.0", "packages": {"one": package(bundle, "one", "new"), "two": package(bundle, "two", "same"),
+                                                        "catalogued": package(bundle, "catalogued", "new"),
+                                                        "added": package(bundle, "added", "new")}}
+            (prefix / "management/runtime").mkdir(parents=True)
+            (prefix / "management/runtime/mods.lock.json").write_text(json.dumps(lock))
+            (bundle / "mods.lock.json").write_text(json.dumps(offered))
+            (store / "sources").mkdir(parents=True)
+            shutil.copytree(prefix / "sources/one", store / "sources/one")
+            (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": {"catalogued": [
+                {"version": "1.0.0", "integrity": "sha-old", "source": {"kind": "local", "path": "old"}}]}}))
+            record = {"schema": profiles.SCHEMA, "product": profiles.PRODUCT, "prefix": str(prefix), "store": str(store),
+                      "management": {"files": {}}, "packages": {"one": {"sha256": "sha-old"}, "two": {"sha256": "sha-same"}},
+                      "sources": {identifier: package["files"] for identifier, package in lock["packages"].items()}}
+            profiles.write(prefix, record)
+            selection = {"path": str(store / "sources/one"), "sha256": "sha-old", "selected": True}
+            commands = []
+
+            def invoke(_manager, command, _store, *arguments):
+                commands.append(command)
+                if command == "inspect":
+                    return {"sha256": "sha-" + (Path(_store) / "index.ts").read_text()}
+                if command == "selection-status":
+                    return {"selections": [dict(selection)]}
+                if command == "trust-all":
+                    selection.update(sha256=json.loads(arguments[0])[0]["sha256"], selected=False)
+                elif command == "enable":
+                    selection["selected"] = True
+                return {}
+
+            def state():
+                installed = json.loads((prefix / "install.json").read_text())
+                locked = json.loads((prefix / "management/runtime/mods.lock.json").read_text())["packages"]
+                return ({identifier: (prefix / "sources" / identifier / "index.ts").read_text() for identifier in ("one", "two", "catalogued")},
+                        (store / "sources/one/index.ts").read_text(), {identifier: locked[identifier]["package_sha256"] for identifier in locked},
+                        installed["packages"]["one"]["sha256"], installed.get("mods_bundle"), selection["selected"])
+
+            with patch.object(profiles, "check", return_value=(None, "manager")), patch.object(profiles, "invoke", side_effect=invoke):
+                (bundle / "sources/one/index.ts").write_text("tampered")
+                with self.assertRaisesRegex(ValueError, "files differ from its lock: one"):
+                    profiles.apply_mods(prefix, base / "bin", bundle, {"serial": 1}, True)
+                (bundle / "sources/one/index.ts").write_text("new")
+                before = state()
+                self.assertEqual(profiles.update_mods(prefix, base / "bin", bundle, 1), {"updated": ["one"]})
+                self.assertEqual(state(), ({"one": "new", "two": "same", "catalogued": "new"}, "new",
+                                           {"one": "sha-new", "two": "sha-same", "catalogued": "sha-new"}, "sha-new", {"serial": 1}, True))
+                index = json.loads((store / "package-index.json").read_text())["packages"]["catalogued"][0]
+                self.assertEqual((index["integrity"], index["source"]["path"]), ("sha-new", str(prefix / "sources/catalogued")))
+                self.assertEqual(json.loads((prefix / "install.json").read_text())["management"]["files"]["runtime/mods.lock.json"],
+                                 profiles.support.digest(prefix / "management/runtime/mods.lock.json"))
+                self.assertFalse((prefix / "sources/added").exists())
+                self.assertEqual(profiles.rollback_mods(prefix, base / "bin"), {"updated": ["one"]})
+                self.assertEqual(state(), before)
+                self.assertFalse((prefix / "mods-previous").exists())
+                with self.assertRaisesRegex(ValueError, "no first-party mod update to roll back"):
+                    profiles.rollback_mods(prefix, base / "bin")
+                rename = Path.rename
+
+                def swap(path, target):
+                    if path.parent.name == "sources" and path.name.endswith(".new"):
+                        raise OSError("killed")
+                    return rename(path, target)
+                for interrupted in (patch.object(profiles, "write", side_effect=OSError("killed")),
+                                    patch.object(Path, "rename", swap)):
+                    with self.subTest(interrupted=interrupted), interrupted:
+                        with self.assertRaisesRegex(OSError, "killed"):
+                            profiles.apply_mods(prefix, base / "bin", bundle, {"serial": 1}, True)
+                        self.assertTrue((prefix / profiles.MODS_MARKER).is_file())
+                    profiles.rollback_mods(prefix, base / "bin")
+                    self.assertEqual(state(), before)
+                    self.assertFalse((prefix / profiles.MODS_MARKER).exists())
+                sync, failures = profiles.sync_sources, [OSError("trust failed")]
+
+                def flaky(*arguments):
+                    if failures:
+                        sync(*arguments)
+                        raise failures.pop()
+                    return sync(*arguments)
+                with patch.object(profiles, "sync_sources", side_effect=flaky):
+                    with self.assertRaisesRegex(OSError, "trust failed"):
+                        profiles.update_mods(prefix, base / "bin", bundle, 1)
+                self.assertEqual(state(), before)
+                self.assertFalse((prefix / "mods-previous").exists())
+
     def test_a_directory_package_on_beside_its_bundled_copy_is_turned_off(self):
         store = Path("/store")
         selections = [

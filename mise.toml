@@ -4,6 +4,28 @@ git-cliff = "2.14.2"
 "aqua:mozilla/sccache" = "0.19.0"
 node = "24.22.1"
 
+[tasks."dev:check"]
+description = "Check selected Rust crates: dev:check NAME CRATE [CRATE...]"
+usage = '''
+arg "<name>" help="Scratch tree name"
+arg "<packages>" var=#true help="Cargo package names"
+'''
+run = "python3 .github/scripts/build.py dev-check {{ usage.name | quote }}{% for package in usage.packages %} {{ package | quote }}{% endfor %}"
+
+[tasks."dev:build"]
+description = "Build the runnable debug app: dev:build NAME"
+usage = 'arg "<name>" help="Scratch tree name"'
+run = "python3 .github/scripts/build.py dev-build {{ usage.name | quote }}"
+
+[tasks."dev:storage"]
+description = "Show scratch-tree target sizes"
+run = "python3 .github/scripts/build.py storage"
+
+[tasks."dev:clean"]
+description = "Delete selected targets: dev:clean NAME [NAME...]; stop their builds first"
+usage = 'arg "<names>" var=#true help="Scratch tree names; deletes only their targets"'
+run = "python3 .github/scripts/build.py clean{% for name in usage.names %} {{ name | quote }}{% endfor %}"
+
 [tasks."mods:check"]
 run = ["pnpm --dir mods check", "python3 scripts/mod_host_check.py --static"]
 

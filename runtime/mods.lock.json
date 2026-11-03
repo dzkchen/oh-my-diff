@@ -845,11 +845,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "35eb1c2145955a384a0c862bc140765d0e1cf22f5aee64a1a6de34dfcf79619f",
+        "index.ts": "24e6d4e608ca5feb322b378ef3ae37081cf2cb6870ecac6d18fa6fd17ec77c4f",
         "mod.json": "547e533918475d0d8e8424590a5454d4aaf5b5b5f9a7305c610a5a89884acf5c"
       },
       "id": "omd_update",
-      "package_sha256": "b3d542e3078dd4e0ef4cbbd2f0b67f9d923ef572dd5fe60d260260c75e9f5939",
+      "package_sha256": "efc9f4f11ccd2ec52b59e6e026c66b321ade161d6bd824f42e01f38400cfc54d",
       "source": "mods/first-party/omd_update",
       "version": "1.0.0"
     },

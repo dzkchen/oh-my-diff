@@ -66,9 +66,9 @@ set.
 
 | Command | What it does |
 | --- | --- |
-| `omd update` | Install the newest release |
+| `omd update` | Install the newest release, or first-party mod updates when no newer release is out |
 | `omd update status` | Show the install and update settings |
-| `omd update check` | Check for a release without installing it |
+| `omd update check` | Check for a release or first-party mod updates without installing them |
 | `omd update rollback` | Undo the last update |
 | `omd update enable\|disable` | Install updates automatically, or only when you run `omd update` |
 | `omd update checks on\|off` | Turn update checks on or off |
