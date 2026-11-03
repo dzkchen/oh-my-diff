@@ -149,6 +149,23 @@ class DeveloperBuilds(unittest.TestCase):
                                                   ["test", *flags])["CARGO_BUILD_JOBS"], "1")
         self.assertEqual(self.environment({"OMD_LOW_RESOURCE": "1"}, ["test", "--", "-j8"])["CARGO_BUILD_JOBS"], "3")
 
+    def test_nextest_separates_test_threads_from_build_jobs(self):
+        for flags in (["-j", "num-cpus"], ["-jnum-cpus"], ["-j=num-cpus"], ["--jobs", "num-cpus"],
+                      ["--jobs=num-cpus"], ["--test-threads", "num-cpus"], ["-j", "8"]):
+            with self.subTest(flags=flags):
+                args = ["nextest", "run", *flags]
+                self.assertNotIn("CARGO_BUILD_JOBS", self.environment({}, args))
+                self.assertEqual(self.environment({"OMD_LOW_RESOURCE": "1", "CARGO_BUILD_JOBS": "2"}, args)[
+                    "CARGO_BUILD_JOBS"], "2")
+        for flags in (["--build-jobs", "1"], ["--build-jobs=1"]):
+            for args in (["nextest", "run", "-j", "num-cpus", *flags],
+                         ["nextest", "run", *flags, "--jobs=num-cpus"]):
+                with self.subTest(args=args):
+                    self.assertEqual(self.environment({"OMD_LOW_RESOURCE": "1", "CARGO_BUILD_JOBS": "2"}, args)[
+                        "CARGO_BUILD_JOBS"], "1")
+        self.assertEqual(self.environment({"OMD_LOW_RESOURCE": "1"},
+                                          ["nextest", "run", "--", "--build-jobs=8"])["CARGO_BUILD_JOBS"], "3")
+
     def test_cache_modes_disable_incremental_and_explain_conflicts(self):
         self.assertEqual(self.environment({})["CARGO_INCREMENTAL"], "1")
         self.assertNotIn("RUSTC_WRAPPER", self.environment({}))

@@ -93,6 +93,7 @@ that launch a host. Keep package selections consistent where practical to avoid 
 
 Limit each Cargo build to three compile jobs with `OMD_LOW_RESOURCE=1`; `CARGO_BUILD_JOBS` overrides that default.
 This does not limit test processes or concurrent builds in other trees.
+For `nextest run`, use `--build-jobs` to override compile concurrency; `-j`/`--jobs` controls test threads.
 
 ```sh
 OMD_LOW_RESOURCE=1 mise run dev:build NAME

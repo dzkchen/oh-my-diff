@@ -112,14 +112,16 @@ def cargo_env(work, cargo_args=()):
     })
     if env.get("OMD_LOW_RESOURCE") == "1":
         env.setdefault("CARGO_BUILD_JOBS", "3")
+    nextest = bool(cargo_args) and cargo_args[0] == "nextest"
+    jobs_flag = "--build-jobs" if nextest else "--jobs"
     for index, arg in enumerate(cargo_args):
         if arg == "--":
             break
-        if arg in ("-j", "--jobs") and index + 1 < len(cargo_args):
+        if (arg == jobs_flag or (arg == "-j" and not nextest)) and index + 1 < len(cargo_args):
             env["CARGO_BUILD_JOBS"] = cargo_args[index + 1]
-        elif arg.startswith("--jobs="):
+        elif arg.startswith(f"{jobs_flag}="):
             env["CARGO_BUILD_JOBS"] = arg.split("=", 1)[1]
-        elif arg.startswith("-j") and len(arg) > 2:
+        elif not nextest and arg.startswith("-j") and len(arg) > 2:
             env["CARGO_BUILD_JOBS"] = arg[2:].removeprefix("=")
     wrapper = env.get("RUSTC_WRAPPER", "")
     if env.get("OMD_SCCACHE") == "1":
