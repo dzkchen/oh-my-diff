@@ -28,6 +28,8 @@ jobs:
   native:
     runs-on: macos-15
     timeout-minutes: 360
+    env:
+      OMD_SCCACHE: '1'
     steps: &rust-job
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -49,7 +51,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-${{ hashFiles('runtime/patches/manifest.json') }}
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}
           restore-keys: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -62,9 +64,12 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}
-          restore-keys: sccache-${{ github.job }}-${{ runner.os }}-
+          key: sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}-${{ github.sha }}
+          restore-keys: |
+            sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}-
+            sccache-${{ github.job }}-${{ runner.os }}-
       - name: Validate
+        id: validation
         run: python3 .github/scripts/ci.py validate --job "$GITHUB_JOB" ${OMD_RELEASE_VERSION:+--release}
       - name: Pack host binaries
         if: github.job == 'build'
@@ -92,22 +97,26 @@ jobs:
         continue-on-error: true
         run: sccache --show-stats && sccache --stop-server
       - name: Save sccache
-        if: success() && env.OMD_SCCACHE != '' && steps.sccache.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && (steps.validation.outcome == 'success' || steps.validation.outcome == 'failure') && env.OMD_RELEASE_VERSION == '' && env.OMD_SCCACHE != '' && steps.sccache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-${{ github.job }}-${{ runner.os }}-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}
+          key: ${{ steps.sccache.outputs.cache-primary-key }}
 
   core:
     runs-on: macos-15
     timeout-minutes: 360
     env:
+      OMD_SCCACHE: '1'
       SCCACHE_CACHE_SIZE: 3G
     steps: *rust-job
 
   lint:
     runs-on: macos-15
     timeout-minutes: 180
+    env:
+      OMD_SCCACHE: '1'
+      SCCACHE_CACHE_SIZE: 1G
     steps: *rust-job
 
   build:

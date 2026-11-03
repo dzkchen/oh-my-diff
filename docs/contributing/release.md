@@ -54,6 +54,14 @@ The release version is in `runtime/release.lock.json`. Release notes and `CHANGE
    gh release view vVERSION
    ```
 
+## Validation time
+
+Release dry runs and tag builds reuse the native, core and lint compiler caches seeded by nightly validation.
+The shipped binaries still compile cleanly in the `build` job and undergo the same provenance, signing,
+packaging and acceptance checks. Release builds select only the seven shipped binaries; test setup selects
+only the required host and MCP fixture binaries. These changes reduce repeated compilation without reusing
+a previously packaged release or skipping validation.
+
 ## Publish first-party mod updates
 
 Fixes to `mods/first-party` can reach users of the current release without a new release. The Mods workflow builds
