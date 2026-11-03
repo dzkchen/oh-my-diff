@@ -36,6 +36,7 @@ You can also type:
 | Jellyfish | Three glowing jellyfish pulse and rise, trailing tentacles |
 | Fireflies | Fireflies wander and blink with soft halos over a treeline |
 | Moonlit night | Twinkling stars, a cloud crossing the moon, an occasional meteor |
+| Aurora | Northern lights ripple over a snowy ridge. They flare for a few seconds when a turn finishes, and stir faster while one runs if Calm while working is off |
 | Your image | A PNG or JPEG you choose, drawn as glyph tiles with a slow light sweep |
 
 Every picture is made of two-cell tiles that each contain a glyph, tinted over a color gradient. Choosing a scene
@@ -58,7 +59,7 @@ Once anything else is on screen, the scene stays behind it, darkened:
 - Scenes: pick a scene, No scene, Your image… (asks before reading the file and keeps only a 60×24 color
   sample), or Syntax colours….
 - Motion: animation normal, slow or off (one still frame), how many glyphs drift and calm while working
-  (pauses the scene during a turn).
+  (pauses the scene during a turn). Aurora's flare when a turn finishes shows either way, unless animation is off.
 - Terminal: steps for the terminal you run in, found from its environment variables. Each opens the lines to add,
   with Copy to the clipboard. The mod never edits terminal configuration. The steps cover:
   - font family

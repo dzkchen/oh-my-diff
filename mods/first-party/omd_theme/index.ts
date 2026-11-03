@@ -9,7 +9,7 @@ type Density = 'sparse' | 'normal' | 'dense';
 type Prefs = { scene: string; speed: Speed; density: Density; calm: boolean; image: Sample | null; family: string };
 type Area = { x: number; y: number; columns: number; rows: number };
 type View = { columns: number; rows: number; reduced: boolean; color: boolean; colors: string; phase: string | null; surface: string | null; chat: Area | null; raster: string };
-type State = { prefs: Prefs | null; view: View | null; run: number; origin?: number; frame?: number; switched: { from: string; at: number } | null; busy: boolean; keep?: { id: string; cell: string } };
+type State = { prefs: Prefs | null; view: View | null; run: number; origin?: number; frame?: number; switched: { from: string; at: number } | null; busy: boolean; ended?: number; keep?: { id: string; cell: string } };
 type Remembered = { selected?: string; query?: string };
 type Tick = { run: number; drawn: number; width: number; height: number; look: string; misses: number };
 
@@ -30,6 +30,7 @@ const WELCOME_CAP = 150;
 const BAND_CELLS = 14_000;
 const STARTUP_MS = 3000;
 const RETRY_MS = 50;
+const FLARE_MS = 1800;
 const HIDDEN_MS = 1000;
 const STILL_POLL_MS = 1500;
 const PAUSE_POLL_MS = 400;
@@ -51,6 +52,7 @@ const drawable = (s: State) => !!s.prefs && !!s.view && s.prefs.scene !== 'off' 
 const still = (s: State) => !!s.view?.reduced || s.prefs?.speed === 'off';
 const paused = (s: State) => s.busy && !!s.prefs?.calm;
 const behind = (s: State) => s.view?.phase !== 'fresh';
+const energy = (s: State, at: number) => Math.max(s.busy && !s.prefs?.calm ? 1 : 0, s.ended !== undefined && at >= s.ended ? Math.exp(-(at - s.ended) / FLARE_MS) : 0);
 const fontName = (value: string) => clip(value.replace(/["\\\n\r]/g, '').trim(), 128);
 const palette = (prefs: Prefs) => prefs.scene === 'image' && prefs.image ? samplePalette(prefs.image) : (scene(prefs.scene) ?? SCENES[0]).palette!;
 const stepsFor = (prefs: Prefs, terminal: Terminal, topic: Topic, family = prefs.family) =>
@@ -122,7 +124,7 @@ export default function activate(api: ModAPI) {
     if (!read().busy) write({ busy: true });
   });
   api.on('turn_end', () => {
-    if (read().busy) write({ busy: false });
+    write({ busy: false, ended: Date.now() });
   });
 
   api.on('timer', ({ key }) => {
@@ -164,7 +166,7 @@ export default function activate(api: ModAPI) {
     const shown = { width, height, look };
     const frame = (n: number) => {
       const art = compose(prefs.scene, quiet ? null : s.switched?.from ?? null, s.switched ? revealProgress(origin + n * period - s.switched.at) : 1,
-        chat.columns, chat.rows, DENSITY[prefs.density], prefs.image, quiet ? STILL_SECONDS : n * FRAME_SECONDS);
+        chat.columns, chat.rows, DENSITY[prefs.density], prefs.image, quiet ? STILL_SECONDS : n * FRAME_SECONDS, quiet ? 0 : energy(s, origin + n * period));
       const canvas = place(art, width, height, chat.x, chat.y);
       return behind(s) ? shade(canvas, BEHIND, BEHIND_CAP) : shade(canvas, 0, WELCOME_CAP);
     };
