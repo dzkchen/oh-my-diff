@@ -85,7 +85,12 @@ export default function activate(api: ModAPI) {
       return run.ok && run.value.exit_code === 0 ? run.value : null;
     };
     const status = exec(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], STATUS_BYTES);
-    if (!status) return { at: 0, boosts: [] };
+    // Cache failures too: outside a Git repository an uncached failure reran git status on every keystroke.
+    if (!status) {
+      const empty: Status = { at: Date.now(), boosts: [] };
+      api.host.tryCall('store.put', { key: 'status', value: empty as unknown as Exclude<Json, null>, expected_revision: cached.ok && cached.value ? cached.value.revision : null, scope: 'repository' });
+      return empty;
+    }
     const prefix = entry?.prefix ?? exec(['rev-parse', '--show-prefix'], 4096)?.stdout.replace(/\n$/, '');
     const records = status.stdout.split('\0');
     if (status.stdout_truncated) records.pop();
@@ -135,9 +140,10 @@ export default function activate(api: ModAPI) {
     const status = git();
     const boosts = new Map(status.boosts.map(([path, boost, time]) => [path, boost + (MODIFIED.find(([age]) => Date.now() - (time ?? -Infinity) <= age)?.[1] ?? 0)]));
     const recent = new Map(status.recent ?? []);
-    const known = new Set([...upstream, ...boosts.keys()]);
+    // Git-status paths are candidates, not known files: they get the same existence check as other unknowns, so a file deleted since the cached snapshot is not offered with its boost.
+    const known = new Set(upstream);
     const order = new Map(upstream.map((path, index) => [path, index]));
-    const scored = [...new Set([...known, ...Object.keys(files.files)])]
+    const scored = [...new Set([...known, ...boosts.keys(), ...Object.keys(files.files)])]
       .map(path => ({ path, score: fuzzy(query, path) ?? (order.has(path) ? 0 : null) }))
       .filter((item): item is { path: string; score: number } => item.score !== null)
       .map(item => ({ path: item.path, score: item.score + Math.min(50, weight(files, item.path) + (boosts.get(item.path) ?? 0) + Math.min(12, 4 * (recent.get(item.path) ?? 0))) }))
@@ -174,7 +180,8 @@ export default function activate(api: ModAPI) {
   });
 
   api.intercept('input', (event, next) => {
-    const tokens = mentioned(event.text);
+    // A slash command (for example /preview ./x.ts) is not a prompt, so its paths don't count as uses.
+    const tokens = event.text.trimStart().startsWith('/') ? [] : mentioned(event.text);
     if (tokens.length) api.state.set([...new Set([...(api.state.get() as string[] | null ?? []), ...tokens])].slice(-16));
     return next(event);
   });
