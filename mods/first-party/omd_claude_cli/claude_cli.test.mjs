@@ -526,6 +526,16 @@ else if (argv[0] === 'auth') {
     assert.equal((await readFile(join(root, 'auth.log'), 'utf8')).match(/^logout/gm).length, logouts);
     const empty = await host();
     assert.deepEqual([empty.routes, empty.services.filter(service => service.id === 'claude_cli')], [[], []]);
+    const cached = join(store, 'package-cache/omd_claude_cli/0123abcd');
+    await cp(join(store, 'sources/omd_claude_cli'), cached, { recursive: true });
+    const fromCache = spawnSync(process.execPath, [join(cached, 'setup.mjs'), 'default', 'subscription'],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    assert.equal(fromCache.status, 0, fromCache.stderr);
+    assert.deepEqual((await host()).routes.map(route => route.name), ['claude']);
+    assert.ok((await host()).services.find(service => service.id === 'claude_cli').read_paths.includes(cached));
+    const loose = join(root, 'loose');
+    await cp(join(store, 'sources/omd_claude_cli'), loose, { recursive: true });
+    assert.match(spawnSync(process.execPath, [join(loose, 'setup.mjs'), 'default', 'subscription'], { encoding: 'utf8' }).stderr, /setup_must_run_from_installed_mod/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

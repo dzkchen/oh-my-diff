@@ -125,8 +125,9 @@ const rates = (billing, window) => ({ input_microusd_per_million: 0, cached_micr
 
 async function setup(name, action, login) {
   const mod = await realpath(source);
-  const store = dirname(dirname(mod));
-  if (basename(dirname(mod)) !== 'sources') throw new Error('setup_must_run_from_installed_mod');
+  const cached = basename(dirname(dirname(mod))) === 'package-cache';
+  if (!cached && basename(dirname(mod)) !== 'sources') throw new Error('setup_must_run_from_installed_mod');
+  const store = cached ? dirname(dirname(dirname(mod))) : dirname(dirname(mod));
   if (!ACCOUNT.test(name ?? '') || name === 'api') throw new Error('claude_account_name_invalid: a letter, then lowercase letters, digits, _ or - (at most 24)');
   const directory = join(store, 'routes', 'claude');
   const routePath = join(directory, 'route.json');
