@@ -28,7 +28,8 @@ The release version is in `runtime/release.lock.json`. Release notes and `CHANGE
    python3 scripts/release.py render
    ```
 
-2. Optional: dry-run the release workflow. It validates, packages, signs and prints the publish commands:
+2. Optional: dry-run the release workflow. It validates and packages, then prints the publish commands. Only a tag
+   run signs, so a branch never gets the signing key:
 
    ```sh
    gh workflow run release.yml --ref release/vVERSION -f version=VERSION
@@ -56,9 +57,10 @@ The release version is in `runtime/release.lock.json`. Release notes and `CHANGE
 ## Publish first-party mod updates
 
 Fixes to `mods/first-party` can reach users of the current release without a new release. The Mods workflow builds
-a bundle of every first-party mod on `main` and publishes it as the GitHub release `mods-VERSION-N`, where VERSION is
-`release_pin.omd` in `extensions/index.json` and N counts up. Installs of exactly that VERSION take the mods that
-differ from what they have. Mods new since the release, and a mod API change, wait for the next release.
+a bundle from `main` and publishes it as the GitHub release `mods-VERSION-N`, where VERSION is `release_pin.omd` in
+`extensions/index.json` and N counts up. The bundle holds every mod that differs from the `vVERSION` tag or that an
+earlier bundle changed. Installs of exactly that VERSION take the mods that differ from what they have. Mods new
+since the release, mods that need host features the release lacks, and a mod API change wait for the next release.
 
 1. Check what would ship:
 
@@ -66,8 +68,10 @@ differ from what they have. Mods new since the release, and a mod API change, wa
    python3 -m scripts.mods_bundle plan
    ```
 
-   `changed` lists the mods that differ from the `vVERSION` tag and `needs_release` lists new mods it skips. A
-   changed mod's `required_features` must all be in that release's host, or installs refuse the bundle.
+   `bundle` lists the mods it would ship, `new` the ones that changed since the last bundle (the build refuses when
+   it is empty), `needs_host` mods whose `required_features` the release's host lacks (the build refuses them) and
+   `needs_release` new mods it skips. `host_changed` lists host files changed since the tag: a mod fix that depends
+   on one of those changes waits for the release.
 2. Optional: dry-run it. It checks, builds and signs, then prints the publish command:
 
    ```sh
@@ -80,15 +84,22 @@ differ from what they have. Mods new since the release, and a mod API change, wa
    gh workflow run mods.yml --ref main
    ```
 
-To withdraw a bad bundle, revert the fix on `main` and publish again: the higher N replaces it. Users who already
-updated can run `omd update rollback`.
+To withdraw a bad bundle, revert the fix on `main` and publish again: the higher N ships the reverted mod and
+replaces it. Never delete a bundle release; a ruleset keeps its tag. Users who already updated can also run
+`omd update rollback`.
 
 ## How releases are signed
 
 Publication signs `omd-release.json` (`ssh-keygen -Y sign`, namespace `oh-my-diff-release`) with the
 `OMD_RELEASE_SIGNING_KEY` secret. Mod bundles sign `omd-mods.json` with the same key in the namespace
-`oh-my-diff-mods`, so neither manifest passes for the other. The installer (`install.sh`) and `scripts/authority_broker.py` verify it against a
-pinned public key. To rotate the key, change both pins and the secret together.
+`oh-my-diff-mods`, so neither manifest passes for the other. The installer (`install.sh`) and
+`scripts/authority_broker.py` verify both against a pinned public key. To rotate the key, change both pins and the
+secret together.
+
+The secret lives only in the `release` environment, which only `main` and `v*` tags can deploy to (recorded in
+`.github/settings.json`). The nightly, release and Mods publish jobs use that environment, so code on any other
+branch never sees the key. Keep no repository-level copy of the secret. Tag rulesets let only admins create `v*`
+tags and keep `mods-*` tags from being moved or deleted.
 
 ## Withdraw a release
 

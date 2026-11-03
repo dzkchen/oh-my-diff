@@ -470,6 +470,30 @@ class UpdateSelection(unittest.TestCase):
                 if error:
                     self.assertIn(error, result["error"])
 
+    def test_mod_bundle_checks_skip_known_serials_and_fall_back_past_deleted_or_broken_releases(self):
+        refs = [{"ref": f"refs/tags/mods-0.1.0-{serial}"} for serial in (2, 3, 4)]
+        bad = mods(3)
+        bad["assets"] = bad["assets"][::2]
+
+        def fetch(address, limit):
+            if "/git/matching-refs/tags/mods-0.1.0-" in address:
+                return refs
+            if address.endswith("/releases/tags/mods-0.1.0-4"):
+                raise urllib.error.HTTPError(address, 404, "not found", {}, None)
+            for item in (bad, mods(2)):
+                if address.endswith("/releases/tags/" + item["tag_name"]):
+                    return {key: value for key, value in item.items() if key != "manifest"}
+            self.fail(f"unexpected fetch: {address}")
+        self.published = [mods(2)]
+        url = "https://api.github.com/repos/example/omd/releases"
+        with patch.object(self.module, "fetch_json", side_effect=fetch) as fetched:
+            self.assertEqual(self.module.mod_bundle(url, "0.1.0")["serial"], 2)
+            fetched.reset_mock()
+            self.assertIsNone(self.module.mod_bundle(url, "0.1.0", after=4))
+            self.assertEqual(fetched.call_count, 1)
+            with self.assertRaisesRegex(ValueError, "mods-0.1.0-3 is unsigned"):
+                self.module.mod_bundle(url, "0.1.0", after=2)
+
     def test_mod_updates_follow_auto_requests_release_precedence_and_roll_back(self):
         self.bundled()
         self.published = [mods(2)]
@@ -478,11 +502,16 @@ class UpdateSelection(unittest.TestCase):
         payload.mkdir()
         (payload / "mods.lock.json").write_text(json.dumps({"packages": {
             "omd_btw": {"package_sha256": "1" * 64}, "omd_new": {"package_sha256": "2" * 64}}}))
-        self.module.download = lambda url, expected, destination: calls.append(("download", url))
+        self.module.download = lambda url, expected, destination: (calls.append(("download", url)), Path(destination).write_bytes(b"bundle"))
         self.module.extract = lambda archive, destination: payload
+        real_digest = self.module.digest
+        self.module.digest = lambda path: "b" * 64 if str(path).endswith(".tar.xz") else real_digest(path)
+        held = []
 
         def package(generation, upstream, bin_dir, *arguments):
             calls.append(arguments[:1])
+            if arguments[0] == "mods-rollback":
+                held.append(self.module.state(self.root).get("held_mods"))
             if failing:
                 raise ValueError(failing.pop())
             return json.dumps({"updated": ["omd_btw"]})
@@ -502,10 +531,21 @@ class UpdateSelection(unittest.TestCase):
         self.module.tick(args, self.root, self.current)
         self.assertEqual(calls, [])
         self.module.save(self.root, failed_mods=None)
+        self.module.mod_request = lambda *arguments: None
         self.module.tick(args, self.root, self.current)
-        self.assertEqual(calls, [("download", self.published[0]["assets"][2]["browser_download_url"]), ("mods-update",)])
+        url = self.published[0]["assets"][2]["browser_download_url"]
+        self.assertEqual((calls, self.module.state(self.root)["pending_mods"]), ([("download", url)], {"omd": "0.1.0", "serial": 2, "automatic": True}))
+        calls.clear()
+        other = self.root / "sessions/1"
+        other.parent.mkdir(exist_ok=True)
+        other.touch()
+        self.module.launch(args, self.root, self.current)
+        self.assertEqual(calls, [])
+        other.unlink()
+        self.module.launch(args, self.root, self.current)
+        self.assertEqual(calls, [("mods-update",)])
         saved = self.module.state(self.root)
-        self.assertEqual((saved["mods"], saved["last_mods"]["changed"]), (None, ["omd_btw"]))
+        self.assertEqual((saved["mods"], saved["pending_mods"], saved["last_mods"]["changed"]), (None, None, ["omd_btw"]))
         calls.clear()
         self.module.mod_request = lambda *arguments: {"id": "mods-0.1.0-2#1", "mods": 2, "omd": "0.1.0"}
         self.module.check(args, self.root, self.current)
@@ -519,23 +559,39 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual((applied, calls), (["0.2.0"], []))
         self.published = [mods(2)]
         self.assertEqual(self.module.manual(args, self.root, self.current)["mods_updated"], ["omd_btw"])
+        self.module.check(args, self.root, self.current)
+        failing.append("killed")
+        with self.assertRaisesRegex(ValueError, "killed"):
+            self.module.apply_mods(args, self.root, self.current, self.module.state(self.root)["mods"])
+        self.assertIsNone(self.module.state(self.root)["last_mods"])
+        self.module.manual(args, self.root, self.current)
         (self.current / "prefix/mods-previous").mkdir()
         record = json.loads((self.current / "prefix/install.json").read_text()) | {"mods_bundle": {"serial": 2}}
         (self.current / "prefix/install.json").write_text(json.dumps(record))
         calls.clear()
+        other.touch()
+        with self.assertRaises(self.module.SessionsOpen):
+            self.module.rollback(args, self.root, args.bin_dir, self.current)
+        other.unlink()
+        self.assertEqual(calls, [])
         with contextlib.redirect_stdout(io.StringIO()):
             self.module.rollback(args, self.root, args.bin_dir, self.current)
-        self.assertEqual(calls, [("mods-rollback",)])
+        self.assertEqual((calls, held), ([("mods-rollback",)], [{"omd": "0.1.0", "serial": 2}]))
         self.assertEqual(self.module.state(self.root)["held_mods"], {"omd": "0.1.0", "serial": 2})
         calls.clear()
         self.module.tick(args, self.root, self.current)
         self.assertEqual(calls, [])
+        with self.assertRaisesRegex(ValueError, "No previous installation"):
+            self.module.rollback(args, self.root, args.bin_dir, self.current)
+        self.assertEqual(calls, [])
 
     def test_a_built_mod_bundle_extracts_with_the_installer_and_matches_its_manifest(self):
         from scripts import mods_bundle
-        planned = {"omd": "0.1.0", "serial": 4, "changed": ["omd_update"], "needs_release": [], "commits": ["abc fix"]}
+        planned = {"omd": "0.1.0", "serial": 4, "changed": ["omd_update"], "bundle": ["omd_update"], "new": ["omd_update"],
+                   "needs_host": {}, "needs_release": [], "commits": ["abc fix"]}
         with patch.object(mods_bundle, "plan", return_value=planned):
             manifest = mods_bundle.build(self.root / "bundle", "c" * 40)
+        self.assertEqual(list(manifest["packages"]), ["omd_update"])
         archive = self.root / "bundle" / manifest["archive"]
         self.assertEqual((manifest["archive"], manifest["sha256"]), ("omd-mods-0.1.0-4.tar.xz", self.module.digest(archive)))
         payload = self.module.extract(archive, self.root / "unpacked")

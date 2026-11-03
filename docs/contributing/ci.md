@@ -75,7 +75,8 @@ Releases and first-party mod bundles (the manual Mods workflow) are in [Cut a re
 
 ## Repository settings
 
-`.github/settings.json` records the labels, merge settings and `main` protection. The maintainer applies it.
+`.github/settings.json` records the labels, merge settings, `main` protection and the `release` environment that
+holds the signing key. The maintainer applies it.
 Dependabot (`.github/dependabot.yml`) opens one grouped pull request a month for GitHub Actions updates. There are
 no dependency license or scheduled vulnerability checks.
 

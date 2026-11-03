@@ -843,11 +843,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "89d68e92feefc5c397a0c7909421baf233dd0baf3f57199a1e0da9c19b21c94c",
+        "index.ts": "24e6d4e608ca5feb322b378ef3ae37081cf2cb6870ecac6d18fa6fd17ec77c4f",
         "mod.json": "547e533918475d0d8e8424590a5454d4aaf5b5b5f9a7305c610a5a89884acf5c"
       },
       "id": "omd_update",
-      "package_sha256": "91b30207d2515c32f645a535e21811d5b373523c1e4ebb6c9d14d1fbe10b9010",
+      "package_sha256": "efc9f4f11ccd2ec52b59e6e026c66b321ade161d6bd824f42e01f38400cfc54d",
       "source": "mods/first-party/omd_update",
       "version": "1.0.0"
     },

@@ -43,8 +43,8 @@ Change settings in `/update`, or with `omd update` in a shell (see the [install 
   environment, keep its state and draw its notice and panel. The capabilities are `commands`, `lifecycle`, `exec`,
   `store` and `terminal` (see [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - A running session is never replaced. Updates install when OMD next starts with no other session open.
-- First-party mod updates keep your OMD version and each mod's on or off state. Automatic ones install in the
-  background and apply at your next message; a version pin turns them off.
+- First-party mod updates keep your OMD version and each mod's on or off state. Automatic ones download in the
+  background and install when OMD next starts with no other session open; a version pin turns them off.
 - Automatic updates skip mods you installed yourself.
 - An update that fails once isn't retried automatically.
 - Nightly is opt-in. Stable and prerelease never offer it.

@@ -20,6 +20,7 @@ jobs:
     needs: validate
     if: github.ref == 'refs/heads/main' && github.repository == 'dzkchen/oh-my-diff'
     runs-on: ubuntu-24.04
+    environment: release
     permissions:
       contents: write
     steps:

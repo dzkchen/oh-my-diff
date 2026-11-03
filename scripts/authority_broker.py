@@ -27,6 +27,7 @@ POWER_RECORD = ROOT.parent / "power.json"
 COPY = TOOLS / "authority_broker.py"
 RELEASE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGhcSdBwdX2rgdAjg2JwbF7A1KCswnSZpwbdFsaLKo6G"
 SIGNING_NAMESPACE = "oh-my-diff-release"
+MODS_NAMESPACE = "oh-my-diff-mods"
 ACCOUNT = "_omdbroker"
 RIGHTS = {
     "dev.ohmydiff.broker.grant": {

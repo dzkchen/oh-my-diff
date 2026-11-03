@@ -8,6 +8,7 @@ type Info = {
   last?: { from: string; to: string; at: number } | null; held?: { version: string } | null; request_done?: string | null;
   withdrawn?: { version: string; run?: string | null } | null; mods?: Mods | null;
   last_mods?: { serial: number; changed?: string[]; at: number } | null; failed_mods?: { omd?: string; serial: number; error?: string; at: number } | null;
+  held_mods?: { omd: string; serial: number } | null; pending_mods?: { omd: string; serial: number } | null;
 };
 type Saved = {
   info: Info | null; open: boolean; notice: string | null; banner: string[]; overrides: Record<string, string>;
@@ -27,8 +28,9 @@ export default function activate(api: ModAPI) {
   const setting = (state: Saved, name: string) => state.overrides[name] ?? String(api.settings[name] ?? '');
   const names = (list: string[] | undefined) => (list ?? []).map(name => visible(name, 64)).join(', ');
   const modKey = (mods: Mods) => `mods-${mods.omd}-${mods.serial}`;
-  const offer = (state: Saved, info: Info | null) => info?.available?.version ?? (info?.mods
-    && (setting(state, 'auto') !== 'on' || (info.failed_mods?.omd === info.mods.omd && info.failed_mods.serial === info.mods.serial)) ? modKey(info.mods) : null);
+  const same = (mods: Mods, other?: { omd?: string; serial: number } | null) => other?.omd === mods.omd && other.serial === mods.serial;
+  const offer = (state: Saved, info: Info | null) => info?.available?.version ?? (info?.mods && (setting(state, 'auto') !== 'on'
+    || same(info.mods, info.failed_mods) || same(info.mods, info.held_mods) || same(info.mods, info.pending_mods)) ? modKey(info.mods) : null);
 
   const read = (): Info | null => {
     const env = api.host.tryCall('environment.read', { names: ['OH_MY_DIFF_UPDATE'] });
@@ -57,7 +59,9 @@ export default function activate(api: ModAPI) {
     const due = offered && setting(state, 'checks') !== 'off' && state.skipped !== offered
       && !(state.snoozed?.version === offered && now < state.snoozed.until)
       && !(state.shown?.version === offered && now - state.shown.at < DAY);
-    if (due) banner.push(!available ? `Updates to first-party mods are out: ${names(info?.mods?.changed)}. Run omd update in a shell, or /update.`
+    if (due) banner.push(!available ? (info?.mods && same(info.mods, info.pending_mods)
+      ? `Updates to first-party mods (${names(info.mods.changed)}) are downloaded and install the next time OMD starts with no other session open.`
+      : `Updates to first-party mods are out: ${names(info?.mods?.changed)}. Run omd update in a shell, or /update.`)
       : info?.pending?.version === available.version
       ? `Oh My Diff ${visible(available.version, 40)} is downloaded and installs the next time OMD starts with no other session open.`
       : `Oh My Diff ${visible(available.version, 80)}${available.prerelease ? ' (prerelease)' : ''} is out; you have ${visible(info?.installed, 80)}. Run omd update in a shell, or /update for the notes.`);
@@ -128,8 +132,10 @@ export default function activate(api: ModAPI) {
     button('later', 'Remind me in a week'),
     button('skip', 'Skip this version'),
   ];
-  const modUpdates = (mods: Mods): TerminalComponent[] => [
+  const modUpdates = (info: Info, mods: Mods): TerminalComponent[] => [
     line('mods', 'Mod updates', `Updates to first-party mods are out: ${names(mods.changed)}. Your Oh My Diff version stays the same.`, 'accent', 3),
+    ...(same(mods, info.pending_mods) ? [line('mods_pending', 'Downloaded', 'Downloaded and verified; they install the next time OMD starts with no other session open.', 'success', 2)] : []),
+    ...(same(mods, info.held_mods) ? [line('mods_held', 'Rolled back', 'You rolled these back; automatic updates skip them. Choose Update mods to install them again.', 'muted', 2)] : []),
     ...(mods.notes ? [line('mods_notes', 'Notes', mods.notes, 'normal', 8)] : []),
     ...(mods.page ? [line('mods_page', 'Release page', mods.page, 'muted', 2)] : []),
     button('mods', 'Update mods (installs when OMD next starts)'),
@@ -146,7 +152,7 @@ export default function activate(api: ModAPI) {
         ...(info.held ? [line('held', 'Rolled back', `You rolled back from ${visible(info.held.version, 40)}; automatic updates skip it. Run omd update to install it again.`, 'muted', 2)] : []),
         ...(info.failed ? [line('failed', 'Last update', `The update to ${visible(info.failed.version, 40)} failed and nothing changed: ${visible(info.failed.error, 300)}`, 'failure', 4)] : []),
         ...(info.failed_mods ? [line('failed_mods', 'Last mod update', `The first-party mod update failed and nothing changed: ${visible(info.failed_mods.error, 300)}`, 'failure', 4)] : []),
-        ...(info.available ? release(state, info.available) : info.mods ? modUpdates(info.mods)
+        ...(info.available ? release(state, info.available) : info.mods ? modUpdates(info, info.mods)
           : [line('current', 'Status', info.error ? `The last check failed: ${visible(info.error, 200)}` : info.checked_at ? 'You have the newest release for your settings.' : 'No check has run yet; run omd update check in a shell.', info.error ? 'attention' : 'muted', 3)]),
         ...(info.blocked ? [line('blocked', 'Not compatible', `Oh My Diff ${visible(info.blocked.version, 40)} needs: ${(info.blocked.reasons ?? []).map(reason => visible(reason, 120)).join('; ')}`, 'attention', 4)] : []),
       ];
@@ -159,7 +165,7 @@ export default function activate(api: ModAPI) {
       button(`auto ${auto === 'on' ? 'off' : 'on'}`, auto === 'on' ? 'Turn automatic updates off' : 'Turn automatic updates on'),
       ...CHOICES.channel.filter(value => value !== channel).map(value => button(`channel ${value}`, `Use ${value} releases`)),
       button(`cadence ${cadence === 'weekly' ? 'daily' : 'weekly'}`, cadence === 'weekly' ? 'Check daily' : 'Check weekly'),
-      line('help', 'More', 'Automatic updates install releases when OMD starts with no other session open, and first-party mod updates right away; they never touch mods you installed. Pin with omd update pin VERSION. omd update rollback undoes the last update.', 'muted', 4),
+      line('help', 'More', 'Automatic updates download in the background and install releases and first-party mod updates when OMD starts with no other session open; they never touch mods you installed. Pin with omd update pin VERSION. omd update rollback undoes the last update.', 'muted', 4),
       button('close', 'Close'),
     ];
     return { type: 'dialog', id: 'omd_update_dialog', label: 'Oh My Diff updates', title: 'Updates', children };

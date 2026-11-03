@@ -116,6 +116,20 @@ class HostedJobs(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ["cargo", "build", "--locked", "-p", "codex-core", "-p", "codex-omd-runner",
                                                  "--bin", "omd-runner"])
 
+    def test_a_release_dry_run_without_the_signing_key_prints_the_commands_unsigned(self):
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "omd.tar.xz").write_bytes(b"archive")
+            digest = ci.support.digest(directory / "omd.tar.xz")
+            (directory / "SHA256SUMS").write_text(f"{digest}  omd.tar.xz\n")
+            (directory / "omd-release.json").write_text(ci.json.dumps(
+                {"version": "1.2.3", "target": "aarch64-apple-darwin", "archive": "omd.tar.xz", "sha256": digest}))
+            (directory / "provenance.json").write_text(ci.json.dumps({"commit": "c" * 40, "version": "1.2.3", "profile": "release"}))
+            environment = {"GITHUB_SHA": "c" * 40, "GITHUB_REPOSITORY": "example/omd"}
+            with mock.patch.dict(os.environ, environment, clear=True), mock.patch("builtins.print") as printed:
+                ci.publish(directory, directory / "notes.md", dry_run=True)
+            self.assertIn("omd-release.json.sig", printed.call_args_list[0].args[1])
+
     def test_compile_cache_is_opt_in(self):
         with mock.patch.object(build, "run", return_value=b"host: aarch64-apple-darwin\n"):
             with mock.patch.dict(os.environ, {"OMD_SCCACHE": "", "RUSTC_WRAPPER": ""}):

@@ -170,7 +170,6 @@ def reconcile(prefix, bin_dir):
 def apply_mods(prefix, bin_dir, bundle, applied, backup):
     record = load(prefix)
     lock_path, marker = prefix / "management/runtime/mods.lock.json", prefix / MODS_MARKER
-    # An interrupted apply resumes: its backup is kept and the lock it already wrote is adopted.
     resuming = json.loads(marker.read_text()) if marker.is_file() else None
     if resuming and support.digest(lock_path) == resuming["lock"]:
         record["management"]["files"]["runtime/mods.lock.json"] = resuming["lock"]
@@ -182,9 +181,12 @@ def apply_mods(prefix, bin_dir, bundle, applied, backup):
     offered = json.loads((bundle / "mods.lock.json").read_text())
     if offered.get("mod_api") != lock["mod_api"]:
         raise ValueError(f"the mod bundle is for mod API {offered.get('mod_api')}; this installation hosts {lock['mod_api']}")
+    forced = set(resuming["ids"]) if resuming else set()
     changed = {identifier: package for identifier, package in offered["packages"].items()
-               if identifier in lock["packages"] and package["package_sha256"] != lock["packages"][identifier]["package_sha256"]}
-    if not changed and not resuming:
+               if identifier in lock["packages"] and (identifier in forced
+                                                      or package["package_sha256"] != lock["packages"][identifier]["package_sha256"])}
+    if not changed:
+        marker.unlink(missing_ok=True)
         return {"updated": []}
     for identifier, package in changed.items():
         source = (bundle / "sources" / identifier).resolve()
@@ -192,7 +194,7 @@ def apply_mods(prefix, bin_dir, bundle, applied, backup):
         if files != set(package["files"]) or any(support.digest(source / name) != digest for name, digest in package["files"].items()):
             raise ValueError(f"mod bundle files differ from its lock: {identifier}")
         verify(manager, source, package["package_sha256"])
-    if backup and not resuming:
+    if backup:
         staged = prefix / ".mods-previous.new"
         for identifier in changed:
             shutil.copytree(prefix / "sources" / identifier, staged / "sources" / identifier)
@@ -204,7 +206,7 @@ def apply_mods(prefix, bin_dir, bundle, applied, backup):
         staged.rename(prefix / "mods-previous")
     lock["packages"].update(changed)
     text = json.dumps(lock, indent=2, sort_keys=True) + "\n"
-    identifiers = sorted(set(changed) | set(resuming["ids"] if resuming else ()))
+    identifiers = sorted(changed)
     support.atomic_text(marker, json.dumps({"lock": hashlib.sha256(text.encode()).hexdigest(), "ids": identifiers}))
     for identifier in changed:
         replace_tree(bundle / "sources" / identifier, prefix / "sources" / identifier)
@@ -236,7 +238,7 @@ def apply_mods(prefix, bin_dir, bundle, applied, backup):
     support.atomic_text(store / "package-index.json", json.dumps(index, indent=2) + "\n")
     sync_sources(manager, store, prefix / "sources", installed)
     marker.unlink()
-    return {"updated": identifiers}
+    return {"updated": sorted(installed)}
 
 
 def rollback_mods(prefix, bin_dir):
@@ -244,8 +246,21 @@ def rollback_mods(prefix, bin_dir):
     if not backup.is_dir():
         raise ValueError("no first-party mod update to roll back")
     result = apply_mods(prefix, bin_dir, backup, json.loads((backup / "mods.lock.json").read_text()).get("applied"), False)
-    shutil.rmtree(backup)
+    retired = prefix / ".mods-previous.new"
+    backup.rename(retired)
+    shutil.rmtree(retired)
     return result
+
+
+def update_mods(prefix, bin_dir, bundle, serial):
+    if (prefix / MODS_MARKER).is_file():
+        rollback_mods(prefix, bin_dir)
+    try:
+        return apply_mods(prefix, bin_dir, bundle, {"serial": serial}, True)
+    except BaseException:
+        if (prefix / MODS_MARKER).is_file():
+            rollback_mods(prefix, bin_dir)
+        raise
 
 
 def paths(prefix, bin_dir, store):
@@ -1158,7 +1173,7 @@ def main():
     elif args.command == "reconcile":
         result = reconcile(prefix, bin_dir)
     elif args.command == "mods-update":
-        result = apply_mods(prefix, bin_dir, args.bundle.resolve(), {"serial": args.serial}, True)
+        result = update_mods(prefix, bin_dir, args.bundle.resolve(), args.serial)
     elif args.command == "mods-rollback":
         result = rollback_mods(prefix, bin_dir)
     elif args.command == "activate":

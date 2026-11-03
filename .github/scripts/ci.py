@@ -24,7 +24,6 @@ from scripts.release import REPOSITORY
 
 WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 TREE = "nightly"
-MODS_NAMESPACE = "oh-my-diff-mods"
 CRATES = ["codex-omd", "codex-omd-runner", "codex-omd-extension", "codex-tui", "codex-core-plugins", "codex-git-utils"]
 HELPERS = ["codex-omd-runner", "codex-rmcp-client", "codex-cli", "codex-code-mode-host"]
 SUITE_CRATES = {"native": CRATES, "core": ["codex-core"], "core-integration": ["codex-core"]}
@@ -380,7 +379,7 @@ def publish_mods(directory, dry_run=False):
     if support.digest(directory / manifest["archive"]) != manifest["sha256"]:
         raise ValueError("mod bundle archive disagrees with its manifest")
     tag = f"mods-{manifest['omd']}-{manifest['serial']}"
-    assets = [directory / manifest["archive"], directory / "omd-mods.json", sign(directory / "omd-mods.json", MODS_NAMESPACE)]
+    assets = [directory / manifest["archive"], directory / "omd-mods.json", sign(directory / "omd-mods.json", authority_broker.MODS_NAMESPACE)]
     create = ["gh", "release", "create", tag, *assets, "--repo", os.environ["GITHUB_REPOSITORY"], "--target", manifest["commit"],
               "--title", f"First-party mods for Oh My Diff {manifest['omd']} ({manifest['serial']})",
               "--notes-file", directory / "notes.md", "--latest=false"]
@@ -410,7 +409,9 @@ def publish(directory, notes=None, dry_run=False):
             raise ValueError(f"release asset checksum mismatch: {name}")
     if support.digest(directory / manifest["archive"]) != manifest["sha256"]:
         raise ValueError("release archive disagrees with the installer manifest")
-    assets = [directory / name for _, name in sums] + [directory / "SHA256SUMS", sign(directory / "omd-release.json")]
+    signature = (sign(directory / "omd-release.json") if not dry_run or os.environ.get("OMD_RELEASE_SIGNING_KEY")
+                 else directory / "omd-release.json.sig")
+    assets = [directory / name for _, name in sums] + [directory / "SHA256SUMS", signature]
     if not notes:
         notes = directory.parent / "notes.md"
         notes.write_text(f"Nightly from `{provenance['commit']}`; pinned {provenance['upstream_tag']}.\n\n"

@@ -517,7 +517,7 @@ enabled = true
                     profiles.apply_mods(prefix, base / "bin", bundle, {"serial": 1}, True)
                 (bundle / "sources/one/index.ts").write_text("new")
                 before = state()
-                self.assertEqual(profiles.apply_mods(prefix, base / "bin", bundle, {"serial": 1}, True), {"updated": ["catalogued", "one"]})
+                self.assertEqual(profiles.update_mods(prefix, base / "bin", bundle, 1), {"updated": ["one"]})
                 self.assertEqual(state(), ({"one": "new", "two": "same", "catalogued": "new"}, "new",
                                            {"one": "sha-new", "two": "sha-same", "catalogued": "sha-new"}, "sha-new", {"serial": 1}, True))
                 index = json.loads((store / "package-index.json").read_text())["packages"]["catalogued"][0]
@@ -525,22 +525,38 @@ enabled = true
                 self.assertEqual(json.loads((prefix / "install.json").read_text())["management"]["files"]["runtime/mods.lock.json"],
                                  profiles.support.digest(prefix / "management/runtime/mods.lock.json"))
                 self.assertFalse((prefix / "sources/added").exists())
-                self.assertEqual(profiles.rollback_mods(prefix, base / "bin"), {"updated": ["catalogued", "one"]})
+                self.assertEqual(profiles.rollback_mods(prefix, base / "bin"), {"updated": ["one"]})
                 self.assertEqual(state(), before)
                 self.assertFalse((prefix / "mods-previous").exists())
                 with self.assertRaisesRegex(ValueError, "no first-party mod update to roll back"):
                     profiles.rollback_mods(prefix, base / "bin")
-                real_write = profiles.write
-                with patch.object(profiles, "write", side_effect=OSError("killed")):
-                    with self.assertRaisesRegex(OSError, "killed"):
-                        profiles.apply_mods(prefix, base / "bin", bundle, {"serial": 1}, True)
-                self.assertTrue((prefix / profiles.MODS_MARKER).is_file())
-                profiles.write = real_write
-                self.assertEqual(profiles.apply_mods(prefix, base / "bin", bundle, {"serial": 1}, True), {"updated": ["catalogued", "one"]})
-                self.assertFalse((prefix / profiles.MODS_MARKER).exists())
-                self.assertEqual(state()[1:], ("new", {"one": "sha-new", "two": "sha-same", "catalogued": "sha-new"}, "sha-new", {"serial": 1}, True))
-                profiles.rollback_mods(prefix, base / "bin")
+                rename = Path.rename
+
+                def swap(path, target):
+                    if path.parent.name == "sources" and path.name.endswith(".new"):
+                        raise OSError("killed")
+                    return rename(path, target)
+                for interrupted in (patch.object(profiles, "write", side_effect=OSError("killed")),
+                                    patch.object(Path, "rename", swap)):
+                    with self.subTest(interrupted=interrupted), interrupted:
+                        with self.assertRaisesRegex(OSError, "killed"):
+                            profiles.apply_mods(prefix, base / "bin", bundle, {"serial": 1}, True)
+                        self.assertTrue((prefix / profiles.MODS_MARKER).is_file())
+                    profiles.rollback_mods(prefix, base / "bin")
+                    self.assertEqual(state(), before)
+                    self.assertFalse((prefix / profiles.MODS_MARKER).exists())
+                sync, failures = profiles.sync_sources, [OSError("trust failed")]
+
+                def flaky(*arguments):
+                    if failures:
+                        sync(*arguments)
+                        raise failures.pop()
+                    return sync(*arguments)
+                with patch.object(profiles, "sync_sources", side_effect=flaky):
+                    with self.assertRaisesRegex(OSError, "trust failed"):
+                        profiles.update_mods(prefix, base / "bin", bundle, 1)
                 self.assertEqual(state(), before)
+                self.assertFalse((prefix / "mods-previous").exists())
 
     def test_a_directory_package_on_beside_its_bundled_copy_is_turned_off(self):
         store = Path("/store")
