@@ -96,6 +96,7 @@
     "events:tool_exposure": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "events:tool_output": {"status":"frozen","consumer":{"path":"mods/examples/edit_diagnostics/index.ts","snippet":"api.on('tool_output'"},"decision":"tool.output"},
     "events:tool_result": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.on('tool_result'"},"decision":"context.lifecycle"},
+    "events:assistant_message": {"status":"experimental","reason":"Canonical assistant message completion and identity (assistant_message_identity_v1)."},
     "events:turn_end": {"status":"frozen","consumer":{"path":"mods/examples/guard/index.ts","snippet":"api.on('turn_end'"},"decision":"context.lifecycle"},
     "events:turn_queue": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "events:turn_start": {"status":"frozen","consumer":{"path":"mods/examples/guard/index.ts","snippet":"api.on('turn_start'"},"decision":"context.lifecycle"},
@@ -283,7 +284,7 @@
     "components:slot": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'slot'"},"decision":"terminal.controls"},
     "components:terminal": {"status":"frozen","consumer":{"path":"mods/examples/shell_pane/index.ts","snippet":"type: 'terminal'"},"decision":"terminal.pty"},
     "components:text": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'text'"},"decision":"terminal.controls"},
-    "render_sites:assistant_message": {"status":"frozen","consumer":{"path":"mods/examples/render_hooks/index.ts","snippet":"component: 'assistant_message'"},"decision":"terminal.rendering"},
+    "render_sites:assistant_message": {"status":"frozen","experimental_fields":["message_id"],"reason":"Turn-qualified canonical identity is additive (assistant_message_identity_v1).","consumer":{"path":"mods/examples/render_hooks/index.ts","snippet":"component: 'assistant_message'"},"decision":"terminal.rendering"},
     "render_sites:composer_hint": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "render_sites:list": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"component: 'list'"},"decision":"terminal.rendering"},
     "render_sites:notice": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
@@ -678,7 +679,8 @@
           "stop",
           "tool_result",
           "turn_start",
-          "turn_end"
+          "turn_end",
+          "assistant_message"
         ],
         "replacements": [],
         "operations": []

@@ -246,14 +246,14 @@ Host call arguments and results share a 1 MiB transport budget per callback.
 
 What a callback keeps from earlier runs, and when its work ends.
 
-- Every callback except a render hook gets a fresh VM context and activation. Render hooks keep their activation
+- Unless the package opts into experimental `session_activation_v1`, every callback except a render hook gets a fresh VM context and activation. Render hooks keep their activation
   while the package revision, settings and persisted state stay unchanged
   ([Render callback runtime](reference/render-hooks.md#render-callback-runtime)).
 - A package's later callbacks may reuse its sandboxed runner process and a bounded bytecode cache. Runners are never
   shared between packages.
 - Before the host returns a callback's result, it waits for work the callback left running to settle. If that work
   makes a host call after the callback returned, the callback fails.
-- Persist state through `api.state`. Module globals don't survive from one callback to the next.
+- Persist state through `api.state`. Module globals survive session callbacks only with `session_activation_v1`.
 
 ### Callback contexts
 
@@ -270,7 +270,7 @@ user contexts. A user context can call only:
   `packages.*`, `routes.add`, `routes.models`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
 - `turns.activity`
-- `events.publish`
+- `events.publish`, `events.schedule` and `events.cancel`
 
 A service call from a user context works only when its provider needs no other host operation.
 
@@ -656,6 +656,8 @@ These experimental features have no registry entry of their own:
 
 | Feature | Covers |
 | --- | --- |
+| `session_activation_v1`, `background_jobs_v1` | Retained session variables and typed background jobs |
+| `assistant_message_identity_v1` | Assistant completion events and message IDs on render props |
 | `api.uiState` and command views | [Session UI state](reference/state-and-storage.md#session-ui-state-apiuistate) and [command views](reference/commands-and-composer.md#command-views) |
 | `process_streams_v1` | `framing: "raw"` on `process.start` |
 | `process_raster_v1`, `raster_pixels_v1` | Processes that feed a raster frames or raw pixel buffers |
@@ -675,6 +677,7 @@ These frozen entries have experimental fields:
 | `events:component_event` | `content`, `target`, `edge`, `columns`, `rows` | `terminal_layout_dock_v1` |
 | `events:terminal` | `omd_version`, `welcome`, `chat`, `colors`, `sites` | `terminal_welcome_area_v1`, `terminal_chat_area_v1`, `terminal_colors_v1`, `terminal_site_area_v1` |
 | `events:timer` | `data` | `timer_data_v1` |
+| `render_sites:assistant_message` | `message_id` | `assistant_message_identity_v1` |
 | `replacements:tool_batch` | `success_per_call` | `tool_batch_success_v1` |
 | `intercepts:tool` | `value`, `bytes` | `code_mode_values_v1`, `tool_original_v1` |
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
@@ -1814,7 +1817,7 @@ a mod makes: tools, commands, interceptors, replacements, lifecycle events and s
 | `middleware` | `host_operation`, `model_request`, `response_stream` and `model_send` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
 | `context` | the `context` replacement and the `context` event |
-| `lifecycle` | the lifecycle events: `start`, `idle`, `stop`, `resume`, `tool_result`, `turn_start`, `turn_end`, `compaction_start`, `compaction_end`, `agent_end`, `tool_batch_end`, `instructions_loaded`, `thread_settings`, `worktree`, `mods_changed` |
+| `lifecycle` | the lifecycle events: `start`, `idle`, `stop`, `resume`, `tool_result`, `turn_start`, `turn_end`, `assistant_message`, `compaction_start`, `compaction_end`, `agent_end`, `tool_batch_end`, `instructions_loaded`, `thread_settings`, `worktree`, `mods_changed` |
 | `compaction` | the `compaction` replacement, the `compaction` event and the `compaction` interceptor |
 | `services` | `api.provide` and `api.services.call` |
 | `virtual_reads` | `api.virtualRead` |
@@ -4236,6 +4239,7 @@ experimental may change in any release
 | `session` | `{phase, thread_id, cause?}` | nothing | `api.on` or `api.middleware` | experimental | [Thread and turn events](#session) |
 | `prompt` | `{thread_id, turn_id, original, effective, provenance}` | nothing | `api.on` or `api.middleware` | experimental | [Peers, power holds and mod-started turns](reference/sessions-and-turns.md#how-queued-turns-start) |
 | `turn_start` | `{turn_id}` | nothing | `api.on` | frozen | [Thread and turn events](#turn_start-and-compaction_start) |
+| `assistant_message` | `{thread_id, turn_id, message_id, text, truncated}` | nothing | `api.on` | experimental | [Background jobs](reference/events-and-lifecycle.md#session-activations-and-background-jobs-experimental) |
 | `turn_end` | `{turn_id, outcome, reason?, error?, evidence?}` | nothing | `api.on` | frozen | [Agents](reference/agents.md#agent-failure-details) |
 | `tool_call` | `{call_id, agent_id, tool, arguments}` | nothing | `api.on` or `api.middleware` | frozen | [Thread and turn events](#tool_call) |
 | `tool_result` | `{call_id, agent_id, thread_id, tool, outcome, answered_by, call_sha256, result_sha256, result_complete}` | nothing | `api.on` or `api.middleware` | frozen | [Tools](reference/tools.md#result-digests-on-tool_result) |
@@ -4385,7 +4389,43 @@ limit fails with `channel_sequence_limit`, while existing channels remain publis
   callback that changes its mod's state republishes the terminal view, so background results appear without waiting for
   the next turn.
 
-#### Timers (`timers_v1`)
+#### Session activations and background jobs (experimental)
+
+Require `session_activation_v1` to keep one activation per package binding and thread. Ordinary TypeScript variables
+survive admitted session callbacks, including commands and timers. Render callbacks, component modules, input hooks,
+workspace pre-rename and history persistence retain their separate execution contexts; share presentation through
+`api.state`, not a module variable. Settings, source or authority changes, explicit reload and thread teardown discard
+the activation. A lost runner reports `session_activation_lost`; later work starts a new activation. Persisted state
+remains explicit. Session callbacks are serialized from admission through completion and are not automatically
+replayed after state conflicts or failed completion. External effects already performed cannot be rolled back.
+
+`api.background<T, R>(key, handler)` registers a typed job during activation. It requires `store`, `events`,
+`state_scope: "thread"`, `session_activation_v1` and `background_jobs_v1`. Keys contain 1–53 ASCII letters, digits, underscores, dots or hyphens.
+The helper returns `start(input)`, `cancel()` and `get()`. Starting schedules session work from a command or component
+action without a channel subscription. One pending invocation per key and thread is retained; starting again replaces
+it. The handler may return a JSON result or a promise of one. `get()` returns `idle`, `pending`, `running`, `completed`
+with `result`, `failed` with `error`, or `cancelled`. A handler failure is saved as a failed status.
+
+Jobs use the regular timer limits and the `background_<key>` state key, which authors must reserve for the helper.
+At most 32 session activations are retained per process; reaching the bound reports `session_activation_limit`.
+The host rechecks callback authority and rejects stale completions. Reload abandons pending work; call `start()`
+explicitly to retry. Cancelling stops pending delivery. A running callback keeps the ordinary host cancellation and completion checks;
+external effects already performed are not rolled back. Status writes become visible when the callback commits.
+These APIs are experimental and opt in.
+
+`assistant_message {thread_id, turn_id, message_id, text, truncated}` (capability `lifecycle`, feature
+`assistant_message_identity_v1`) reports completed assistant messages. Text is bounded to 8,192 characters.
+Assistant-message render props expose `message_id` (or null when no canonical message identity is available).
+Use that opaque ID to attach saved metadata. Equal text does not imply equal identity. The host qualifies each
+canonical item ID by its turn, so item IDs reused by providers in later turns remain distinct. IDs remain the
+same for streaming, final rendering and canonical transcript replay; old idless history cannot
+recover a canonical identity from content.
+
+Full-screen transcript cells can repaint when background state changes. Inline scrollback keeps already committed
+rows; a mod can show its latest asynchronous result through an `above_composer` terminal site when
+`event.presentation?.surface === "inline"`. Closed sessions do not deliver assistant completion callbacks.
+
+### Timers (`timers_v1`)
 
 `events.schedule {key, delay_ms, data?}` (`timers_v1`) delivers one `timer` event `{key, data?}` to the calling mod after
 `delay_ms`, which is 16 ms to 24 h.
@@ -6596,7 +6636,7 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |
 | `user_message` (experimental) | content digest | `text`, `images`, `spoken` | none |
-| `assistant_message` | content digest | `text`, `first`, `truncated` | none |
+| `assistant_message` | content digest | `text`, `first`, `truncated`, `message_id` | none |
 | `tool_call` | call id (row id for agent rows; `explore:<first call id>` for a command group) | every agent tool row (`RenderToolCall`); see [`tool_call` props](#tool_call-props) | none |
 | `tool_result` (experimental) | call id | `tool`, `success`, `text` (MCP results inside their call) | none |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |

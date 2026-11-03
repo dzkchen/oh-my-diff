@@ -41,7 +41,7 @@ let state = structuredCloneFallback(request.state);
 let uiState = structuredCloneFallback(request.ui_state ?? null);
 let uiRead = false;
 let uiWritten = false;
-const initial = JSON.stringify(state ?? null);
+let initial = JSON.stringify(state ?? null);
 const reads = new Set();
 let tracking = null;
 const subscriptions = [];
@@ -60,16 +60,17 @@ let receipts = request.receipts ?? [];
 // A warm render runner answers the next render with the activated mod, from that render's own input.
 function serve(line) {
   const next = JSON.parse(line);
-  Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
+  Object.assign(request, { event: next.event ?? request.event, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
   if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
   clockRead = false;
-  if (request.event === 'component') {
+  if (request.session_activation || request.event === 'component') {
     state = structuredCloneFallback(next.state);
     uiState = structuredCloneFallback(next.ui_state ?? null);
     uiRead = false;
     uiWritten = false;
   } else state = structuredCloneFallback(activatedState);
+  initial = JSON.stringify(state ?? null);
   reads.clear();
   calls.length = 0;
   updates.length = 0;
@@ -737,6 +738,44 @@ const api = Object.freeze({
     if (typeof trigger !== 'string' || !/^[!-/:-@[-`{-~]$/.test(trigger) || '@/$'.includes(trigger)) throw new Error('invalid_completion_trigger: ' + trigger);
     unique(completers, trigger, handler);
     registrations.completions.push({ trigger });
+  },
+  background(key, handler) {
+    requireCapability('store');
+    if (request.session_model !== true) throw new Error('background_requires_session_activation');
+    if (request.state_scope !== 'thread') throw new Error('background_requires_thread_state');
+    if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,53}$/.test(key)) throw new Error('invalid_background_key');
+    if (typeof handler !== 'function') throw new Error('handler_required: ' + key);
+    const status = api.atom('background_' + key, { status: 'idle' });
+    const current = () => {
+      const value = status.get();
+      return value.activation === request.activation_id ? value : { status: 'idle' };
+    };
+    const task = timer('job.' + key, 16, async ({ data }) => {
+      if (data.activation !== request.activation_id || current().token !== data.token || current().status !== 'pending') return;
+      status.set({ activation: request.activation_id, token: data.token, status: 'running' });
+      try {
+        const result = await handler(data.input);
+        if (current().token !== data.token || current().status !== 'running') return;
+        status.set({ activation: request.activation_id, token: data.token, status: 'completed', result: result ?? null });
+      } catch (error) {
+        if (error === suspension) throw error;
+        if (current().token !== data.token || current().status !== 'running') return;
+        status.set({ activation: request.activation_id, token: data.token, status: 'failed', error: String(error?.message ?? error).slice(0, 1024) });
+      }
+    }, false);
+    return Object.freeze({
+      get: current,
+      start(input) {
+        if (typeof request.activation_id !== 'string') throw new Error('background_requires_thread');
+        const token = (current().token ?? 0) + 1;
+        task.start({ activation: request.activation_id, token, input: input ?? null });
+        status.set({ activation: request.activation_id, token, status: 'pending' });
+      },
+      cancel() {
+        task.cancel();
+        status.set({ activation: request.activation_id, token: current().token ?? 0, status: 'cancelled' });
+      },
+    });
   },
   command(name, handler, options = {}) {
     if (!activating) throw new Error('command_registration_outside_activation');

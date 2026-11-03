@@ -78,6 +78,8 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "turns.activity"
                         | "turns.abort"
                         | "events.publish"
+                        | "events.schedule"
+                        | "events.cancel"
                         | "credentials.list"
                         | "packages.list"
                         | "packages.preview"

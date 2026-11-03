@@ -197,6 +197,7 @@ pub(crate) const LIFECYCLE_EVENTS: &[&str] = &[
     "stop",
     "turn_start",
     "turn_end",
+    "assistant_message",
     "tool_result",
     "workspace_change",
     "compaction_start",

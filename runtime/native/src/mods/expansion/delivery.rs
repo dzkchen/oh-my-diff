@@ -707,6 +707,7 @@ pub(in crate::mods) fn release_owner(core: &Core, owner: &str) {
 
 pub(in crate::mods) fn release_thread(core: &Core, thread: ThreadId) {
     clear_timers(core, Some(thread), None);
+    if let Ok(runtime) = core.runtime.lock() { runtime.release_thread_activations(&thread.to_string()); }
 }
 
 fn clear_timers(core: &Core, thread: Option<ThreadId>, owner: Option<&str>) {

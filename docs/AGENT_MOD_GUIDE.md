@@ -147,3 +147,9 @@ file.
 - A changed `state_version` keeps the mod off with `state_migration_required` until its `migrate` handler runs.
 - The model finds mod tools through tool search, named `mod_<id>_<tool>`.
 - A denial you don't understand: run `omd-mod-author explain 'DENIAL TEXT'`.
+
+For stateful workflows, opt into experimental `session_activation_v1`: ordinary variables then survive session
+callbacks, while views render from saved state. `api.background<T, R>` schedules typed work directly from commands
+or buttons with status, pending cancellation and reload-safe results; it requires `background_jobs_v1` and
+thread-scoped state. Per-message UI uses `assistant_message` events and render `props.message_id`, not text digests.
+See [session activations and background jobs](../mods/reference/events-and-lifecycle.md#session-activations-and-background-jobs-experimental).

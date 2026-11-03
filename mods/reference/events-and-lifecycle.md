@@ -34,6 +34,7 @@ experimental may change in any release
 | `session` | `{phase, thread_id, cause?}` | nothing | `api.on` or `api.middleware` | experimental | [Thread and turn events](#session) |
 | `prompt` | `{thread_id, turn_id, original, effective, provenance}` | nothing | `api.on` or `api.middleware` | experimental | [Peers, power holds and mod-started turns](sessions-and-turns.md#how-queued-turns-start) |
 | `turn_start` | `{turn_id}` | nothing | `api.on` | frozen | [Thread and turn events](#turn_start-and-compaction_start) |
+| `assistant_message` | `{thread_id, turn_id, message_id, text, truncated}` | nothing | `api.on` | experimental | [Background jobs](events-and-lifecycle.md#session-activations-and-background-jobs-experimental) |
 | `turn_end` | `{turn_id, outcome, reason?, error?, evidence?}` | nothing | `api.on` | frozen | [Agents](agents.md#agent-failure-details) |
 | `tool_call` | `{call_id, agent_id, tool, arguments}` | nothing | `api.on` or `api.middleware` | frozen | [Thread and turn events](#tool_call) |
 | `tool_result` | `{call_id, agent_id, thread_id, tool, outcome, answered_by, call_sha256, result_sha256, result_complete}` | nothing | `api.on` or `api.middleware` | frozen | [Tools](tools.md#result-digests-on-tool_result) |
@@ -182,6 +183,42 @@ limit fails with `channel_sequence_limit`, while existing channels remain publis
 - A `channel`, `timer`, [`process_event`](managed-processes.md#process-notifications) or watched `workspace_change`
   callback that changes its mod's state republishes the terminal view, so background results appear without waiting for
   the next turn.
+
+### Session activations and background jobs (experimental)
+
+Require `session_activation_v1` to keep one activation per package binding and thread. Ordinary TypeScript variables
+survive admitted session callbacks, including commands and timers. Render callbacks, component modules, input hooks,
+workspace pre-rename and history persistence retain their separate execution contexts; share presentation through
+`api.state`, not a module variable. Settings, source or authority changes, explicit reload and thread teardown discard
+the activation. A lost runner reports `session_activation_lost`; later work starts a new activation. Persisted state
+remains explicit. Session callbacks are serialized from admission through completion and are not automatically
+replayed after state conflicts or failed completion. External effects already performed cannot be rolled back.
+
+`api.background<T, R>(key, handler)` registers a typed job during activation. It requires `store`, `events`,
+`state_scope: "thread"`, `session_activation_v1` and `background_jobs_v1`. Keys contain 1–53 ASCII letters, digits, underscores, dots or hyphens.
+The helper returns `start(input)`, `cancel()` and `get()`. Starting schedules session work from a command or component
+action without a channel subscription. One pending invocation per key and thread is retained; starting again replaces
+it. The handler may return a JSON result or a promise of one. `get()` returns `idle`, `pending`, `running`, `completed`
+with `result`, `failed` with `error`, or `cancelled`. A handler failure is saved as a failed status.
+
+Jobs use the regular timer limits and the `background_<key>` state key, which authors must reserve for the helper.
+At most 32 session activations are retained per process; reaching the bound reports `session_activation_limit`.
+The host rechecks callback authority and rejects stale completions. Reload abandons pending work; call `start()`
+explicitly to retry. Cancelling stops pending delivery. A running callback keeps the ordinary host cancellation and completion checks;
+external effects already performed are not rolled back. Status writes become visible when the callback commits.
+These APIs are experimental and opt in.
+
+`assistant_message {thread_id, turn_id, message_id, text, truncated}` (capability `lifecycle`, feature
+`assistant_message_identity_v1`) reports completed assistant messages. Text is bounded to 8,192 characters.
+Assistant-message render props expose `message_id` (or null when no canonical message identity is available).
+Use that opaque ID to attach saved metadata. Equal text does not imply equal identity. The host qualifies each
+canonical item ID by its turn, so item IDs reused by providers in later turns remain distinct. IDs remain the
+same for streaming, final rendering and canonical transcript replay; old idless history cannot
+recover a canonical identity from content.
+
+Full-screen transcript cells can repaint when background state changes. Inline scrollback keeps already committed
+rows; a mod can show its latest asynchronous result through an `above_composer` terminal site when
+`event.presentation?.surface === "inline"`. Closed sessions do not deliver assistant completion callbacks.
 
 ### Timers (`timers_v1`)
 

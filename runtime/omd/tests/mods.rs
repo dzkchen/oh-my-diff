@@ -5225,3 +5225,96 @@ fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
         json!("##")
     );
 }
+
+#[test]
+fn background_jobs_cross_host_instances_and_keep_session_variables() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(&root, "jobs", "let calls = 0; export default api => { const job = api.background('refresh', input => ({input, calls: ++calls})); api.command('start', input => { job.start(input); return null; }); api.command('status', () => job.get()); };", &["commands", "store", "events"]);
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    manifest["compatibility"] = json!({"required_features":["session_activation_v1", "background_jobs_v1"]});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &["commands", "store", "events"]);
+    let mut ui = host(&temp);
+    let mut native = host(&temp);
+    let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
+    for count in 1..=2 {
+        let mut timer = Value::Null;
+        ui.invoke_with("jobs", ui.generation(), "command", "start", json!(count), || true, |call| {
+            assert_eq!(call.operation, "events.schedule");
+            timer = call.arguments;
+            Ok(json!({"key":timer["key"],"delay_ms":timer["delay_ms"]}))
+        }).unwrap();
+        native.invoke("jobs", native.generation(), "timer", "", json!({"key":timer["key"],"data":timer["data"]})).unwrap();
+        let status = ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap();
+        assert_eq!(status["status"], "completed");
+        assert_eq!(status["result"], json!({"input":count,"calls":count}));
+    }
+    std::thread::scope(|scope| {
+        let (scheduled, delivered) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let ui = &mut ui;
+        let command = scope.spawn(move || {
+            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
+            ui.invoke_with("jobs", ui.generation(), "command", "start", json!(3), || true, |call| {
+                scheduled.send(call.arguments.clone()).unwrap();
+                released.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+                Ok(json!({"key":call.arguments["key"], "delay_ms":call.arguments["delay_ms"]}))
+            }).unwrap();
+        });
+        let timer = delivered.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let (waiting, waited) = std::sync::mpsc::channel();
+        let native = &mut native;
+        let delivery = scope.spawn(move || {
+            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
+            let checks = AtomicUsize::new(0);
+            native.invoke_guarded("jobs", native.generation(), "timer", "", json!({"key":timer["key"],"data":timer["data"]}), || {
+                if checks.fetch_add(1, Ordering::Relaxed) == 1 { waiting.send(()).unwrap(); }
+                true
+            }).unwrap();
+        });
+        waited.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        release.send(()).unwrap();
+        command.join().unwrap();
+        delivery.join().unwrap();
+    });
+    assert_eq!(ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap()["result"], json!({"input":3,"calls":3}));
+    std::thread::scope(|scope| {
+        let (scheduled, delivered) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let ui = &mut ui;
+        let command = scope.spawn(move || {
+            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
+            ui.invoke_with("jobs", ui.generation(), "command", "start", json!(4), || true, |call| {
+                scheduled.send(()).unwrap();
+                released.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+                Ok(json!({"key":call.arguments["key"],"delay_ms":call.arguments["delay_ms"]}))
+            })
+        });
+        delivered.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        native.reload().unwrap();
+        release.send(()).unwrap();
+        assert!(command.join().unwrap().unwrap_err().to_string().contains("callback_cancelled"));
+    });
+    ui.reload().unwrap();
+    assert_eq!(ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap()["status"], "idle");
+    let mut old_timer = Value::Null;
+    ui.invoke_with("jobs", ui.generation(), "command", "start", json!("stale"), || true, |call| {
+        old_timer = call.arguments;
+        Ok(json!({"key":old_timer["key"],"delay_ms":old_timer["delay_ms"]}))
+    }).unwrap();
+    ui.reload().unwrap();
+    let mut current_timer = Value::Null;
+    ui.invoke_with("jobs", ui.generation(), "command", "start", json!("current"), || true, |call| {
+        current_timer = call.arguments;
+        Ok(json!({"key":current_timer["key"],"delay_ms":current_timer["delay_ms"]}))
+    }).unwrap();
+    native.invoke("jobs", native.generation(), "timer", "", json!({"key":old_timer["key"],"data":old_timer["data"]})).unwrap();
+    assert_eq!(ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap()["status"], "pending");
+    native.invoke("jobs", native.generation(), "timer", "", json!({"key":current_timer["key"],"data":current_timer["data"]})).unwrap();
+    assert_eq!(ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap()["result"], json!({"input":"current","calls":1}));
+    ui.release_thread_activations("jobs-thread");
+}

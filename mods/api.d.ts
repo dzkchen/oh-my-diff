@@ -268,7 +268,7 @@ export type RenderToolCall = { expanded: boolean } & (RenderExecCall
 export type RenderQuestion = { id: string; header: string; question: string; secret: boolean; options: string[] };
 export interface RenderProps {
   user_message: { text: string; images: number; spoken: boolean };
-  assistant_message: { text: string; first: boolean; truncated: boolean };
+  assistant_message: { text: string; first: boolean; truncated: boolean; message_id?: string | null };
   tool_call: RenderToolCall;
   tool_result: { call_id: string; tool: string; success: boolean | null; text: string };
   spinner: { header: string; elapsed_seconds: number; details: string | null; message: string | null; interrupt_hint: boolean };
@@ -535,6 +535,7 @@ export interface Events {
   workspace_change: { input: { repository: string; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external'; call_id: string | null; watch_id?: string; changes: { path: string; before: string | null; after: string | null }[]; status: 'observed' | 'unavailable'; reason?: string | null }; output: void };
   workspace_pre_rename: { input: { repository: string; old: string; new: string; expected: Record<string, string | null>; thread_id: string }; output: { status: 'ready'; expected: Record<string, string | null>; writes: Record<string, string> } | { status: 'fallback'; reason: string } | void };
   turn_start: { input: { turn_id: string }; output: void };
+  assistant_message: { input: { thread_id: string; turn_id: string; message_id: string; text: string; truncated: boolean }; output: void };
   turn_end: { input: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; reason?: string; error?: AgentFailure; evidence?: ResourceRef }; output: void };
   compaction_start: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
   compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto'; outcome: 'compacted' | 'replaced' | 'skipped' | 'deferred' | 'failed'; by: string | null; provider_call: boolean }; output: void };
@@ -673,6 +674,7 @@ export interface ModAPI {
   agent(definition: AgentDefinition): void;
   dynamicTools(handler: (call: { name: string; arguments: Json }) => Json | Promise<Json>): void;
   virtualRead(definition: { scheme: string; version: string }, handler: (request: VirtualReadRequest) => VirtualReadResponse | Promise<VirtualReadResponse>): void;
+  background<T extends Json, R extends Json>(key: string, handler: (input: T) => R | Promise<R>): BackgroundJob<T, R>;
   command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string; cli?: string; args_hint?: string; immediate?: boolean }): void;
   completion(options: { trigger: string }, handler: (input: { kind: 'token'; trigger: string; query: string; line: string }) => { items: { insert: string }[] } | null | Promise<{ items: { insert: string }[] } | null>): void;
   progress(text: string): void;
@@ -715,3 +717,13 @@ export interface ModAPI {
   };
 }
 export default function activate(api: ModAPI): void | Promise<void>;
+
+export type BackgroundStatus<R extends Json> =
+  | { status: 'idle' | 'pending' | 'running' | 'cancelled' }
+  | { status: 'completed'; result: R }
+  | { status: 'failed'; error: string };
+export type BackgroundJob<T extends Json, R extends Json> = {
+  start(input: T): void;
+  cancel(): void;
+  get(): BackgroundStatus<R>;
+};
