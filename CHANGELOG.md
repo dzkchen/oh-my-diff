@@ -2,6 +2,20 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.4.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.2) — 2026-11-03
+
+Keyboard workspace arranging, first-party mod updates between releases, and fixes for theme switching, profile switching and account setup.
+
+### New
+
+- Keyboard-only arranging, panel toggle and bug fixes (#366)
+- Update first-party mods between releases (#370)
+
+### Changed
+
+- Smooth theme switching, preserve scene rasters, and compact adjacent shell command groups with regression coverage. (#371)
+- Repair account setup, preserve provider routing across threads, and make uninstall cleanup retryable. (#372)
+
 ## [1.4.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.1) — 2026-11-02
 
 A leaner OMD+ with untested mods and plugins moved to Experimental, remembered sandboxed terminal starts, and fixes for /btw, the files browser, the status line and themes.

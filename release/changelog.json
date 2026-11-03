@@ -1,5 +1,36 @@
 [
   {
+    "version": "1.4.2",
+    "date": "2026-11-03",
+    "title": "Oh My Diff 1.4.2",
+    "summary": "Keyboard workspace arranging, first-party mod updates between releases, and fixes for theme switching, profile switching and account setup.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Keyboard-only arranging, panel toggle and bug fixes (#366)",
+          "Update first-party mods between releases (#370)"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Smooth theme switching, preserve scene rasters, and compact adjacent shell command groups with regression coverage. (#371)",
+          "Repair account setup, preserve provider routing across threads, and make uninstall cleanup retryable. (#372)"
+        ]
+      }
+    ],
+    "commits": [
+      "b5d5a48",
+      "67406b4",
+      "4eee99e",
+      "52db97c",
+      "a0366af",
+      "318324f",
+      "1e3f11c"
+    ]
+  },
+  {
     "version": "1.4.1",
     "date": "2026-11-02",
     "title": "Oh My Diff 1.4.1",
