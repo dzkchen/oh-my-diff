@@ -52,6 +52,7 @@ pub(super) struct Caller<'a> {
 pub(super) fn event_allows(event: &str, operation: &str) -> bool {
     crate::generic_host::event_allows(event, operation)
         || super::expansion::event_allows(event)
+        || event == "command" && matches!(operation, "process.status" | "process.exchange")
         || event == "context"
             && (codex_omd::scoped_data::operation(operation)
                 || matches!(
@@ -796,6 +797,18 @@ fn trust_start(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commands_can_only_exchange_with_or_check_existing_processes() {
+        for operation in ["process.status", "process.exchange"] {
+            assert!(event_allows("command", operation), "{operation}");
+            assert!(!event_allows("component_event", operation), "{operation}");
+            assert!(!event_allows("component_post", operation), "{operation}");
+        }
+        for operation in ["process.start", "process.which", "process.stop"] {
+            assert!(!event_allows("command", operation), "{operation}");
+        }
+    }
 
     #[test]
     fn unsandboxed_process_start_checks_the_program_before_asking() {

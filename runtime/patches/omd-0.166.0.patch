@@ -86518,10 +86518,10 @@ index 0000000000000000000000000000000000000000..ac3eef4f0eaf7b0adc3629c4338e3952
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9a41f0c56af31f6c3afbaa1503362dfaaf393355
+index 0000000000000000000000000000000000000000..a861fb8356a56e99fd9a7edc12fe6a94f73b6a87
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,872 @@
+@@ -0,0 +1,885 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -86576,6 +86576,7 @@ index 0000000000000000000000000000000000000000..9a41f0c56af31f6c3afbaa1503362dfa
 +pub(super) fn event_allows(event: &str, operation: &str) -> bool {
 +    crate::generic_host::event_allows(event, operation)
 +        || super::expansion::event_allows(event)
++        || event == "command" && matches!(operation, "process.status" | "process.exchange")
 +        || event == "context"
 +            && (codex_omd::scoped_data::operation(operation)
 +                || matches!(
@@ -87320,6 +87321,18 @@ index 0000000000000000000000000000000000000000..9a41f0c56af31f6c3afbaa1503362dfa
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    fn commands_can_only_exchange_with_or_check_existing_processes() {
++        for operation in ["process.status", "process.exchange"] {
++            assert!(event_allows("command", operation), "{operation}");
++            assert!(!event_allows("component_event", operation), "{operation}");
++            assert!(!event_allows("component_post", operation), "{operation}");
++        }
++        for operation in ["process.start", "process.which", "process.stop"] {
++            assert!(!event_allows("command", operation), "{operation}");
++        }
++    }
 +
 +    #[test]
 +    fn unsandboxed_process_start_checks_the_program_before_asking() {
@@ -136613,10 +136626,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f9a590a5f57143d381fadc1530e1e0b03af297e7
+index 0000000000000000000000000000000000000000..6e7d9df60ea1345fb991f81b0110a96105f0d940
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,792 @@
+@@ -0,0 +1,803 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -137218,13 +137231,24 @@ index 0000000000000000000000000000000000000000..f9a590a5f57143d381fadc1530e1e0b0
 +        }
 +        _ => json!({"enabled": arguments.action == "enable"}),
 +    };
-+    let collisions = store.configuration()?.mods.iter().filter_map(|entry| {
-+        let inspected = ModStore::inspect_package(&entry.path).ok()?;
-+        (inspected["manifest"]["id"].as_str() == Some(id.as_str()) && entry.scope != arguments.scope)
-+            .then(|| entry.path.display().to_string())
-+    }).collect::<Vec<_>>();
-+    let identity_warning = if collisions.is_empty() { Value::Null } else {
-+        json!(format!("Mod ID {id} is already installed at {}. Mods with this ID share storage and owned credential authority; a project-scoped copy takes precedence over a user-scoped copy.", collisions.join(", ")))
++    let collisions = store
++        .configuration()?
++        .mods
++        .iter()
++        .filter_map(|entry| {
++            let inspected = ModStore::inspect_package(&entry.path).ok()?;
++            (inspected["manifest"]["id"].as_str() == Some(id.as_str())
++                && entry.scope != arguments.scope)
++                .then(|| entry.path.display().to_string())
++        })
++        .collect::<Vec<_>>();
++    let identity_warning = if collisions.is_empty() {
++        Value::Null
++    } else {
++        json!(format!(
++            "Mod ID {id} is already installed at {}. Mods with this ID share storage and owned credential authority; a project-scoped copy takes precedence over a user-scoped copy.",
++            collisions.join(", ")
++        ))
 +    };
 +    let public = json!({
 +        "identity_warning": identity_warning,
@@ -137411,10 +137435,10 @@ index 0000000000000000000000000000000000000000..f9a590a5f57143d381fadc1530e1e0b0
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..39631604ffc630e58ce9a95ffb03c2617182333a
+index 0000000000000000000000000000000000000000..248d8d89eea01b6b48adb18a547c9ddf8ff822d6
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,449 @@
+@@ -0,0 +1,463 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -137858,11 +137882,25 @@ index 0000000000000000000000000000000000000000..39631604ffc630e58ce9a95ffb03c261
 +    let (_temp, store, root) = setup();
 +    for (base, scope) in [(&root, "user"), (&root.join("project"), "project")] {
 +        let path = fixture_package(base, "same_id", &["commands"], json!([]));
-+        let digest = ModStore::inspect_package(&path).unwrap()["sha256"].as_str().unwrap().to_owned();
-+        store.trust(path, &digest, vec!["commands".into()], scope).unwrap();
++        let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
++            .as_str()
++            .unwrap()
++            .to_owned();
++        store
++            .trust(path, &digest, vec!["commands".into()], scope)
++            .unwrap();
 +    }
-+    let preview = preview(&store, json!({"action":"enable","id":"same_id","scope":"project"})).unwrap();
-+    assert!(preview.public["identity_warning"].as_str().unwrap().contains("share storage and owned credential authority"));
++    let preview = preview(
++        &store,
++        json!({"action":"enable","id":"same_id","scope":"project"}),
++    )
++    .unwrap();
++    assert!(
++        preview.public["identity_warning"]
++            .as_str()
++            .unwrap()
++            .contains("share storage and owned credential authority")
++    );
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644

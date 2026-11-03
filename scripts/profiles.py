@@ -131,7 +131,6 @@ def sync_sources(manager, store, origin, packages):
     changed = []
     for identifier, package in packages.items():
         target = store / "sources" / identifier
-        # Trusting resets the selection, so the intended one is journaled until it is restored.
         pending = target.with_name(f".{identifier}.pending.json")
         selection = selections.get(str(target), {})
         files = {path.relative_to(target).as_posix() for path in target.rglob("*") if path.is_file()}
@@ -332,7 +331,6 @@ def omd_text(record, tool, control):
 
 
 def omd_help(record, tool):
-    # `omd help --all` keeps the host binary's complete flag reference.
     rows = [("Mods", [("omd mods list", "Installed mods and whether each is on"),
                       ("omd mods catalog [QUERY]", "Search the mod directory"),
                       ("omd install MOD", "Install a mod: a name, npm:PACKAGE, git+URL or ./folder"),
@@ -365,8 +363,6 @@ def selected_text(record):
     if update:
         root, installer = shlex.quote(update["root"]), f"OMD_PYTHON={shlex.quote(update['python'])} sh {shlex.quote(update['installer'])}"
         request = shlex.quote(str(Path(store) / "data/user/omd_update/store.json"))
-        # The marker precedes the journal check and an update journals before reading markers, so each sees the other.
-        # While another session is open, a staged release is announced once; ready.json newer than announced, or an announcement over an hour old, re-arms it.
         marker = f"{root}/sessions/$$"
         ready = f'{{ [ -e {root}/update/ready.json ] && {{ [ -z "$busy" ] || [ ! -e {root}/update/announced ] || [ {root}/update/ready.json -nt {root}/update/announced ] || [ -n "$(find {root}/update/announced -mmin +60 2>/dev/null)" ]; }}; }}'
         lines += [f"mkdir -p {root}/sessions", "busy=", "unattended=", "skip=",
@@ -386,7 +382,6 @@ def selected_text(record):
         lines.append("export OMD_MODE=upstream_direct")
     else:
         lines.extend(["export OMD_MODE=omd", f"export OMD_MOD_STORE={shlex.quote(store)}"])
-    # The installed binary is not a packaged Codex CLI, so upstream's background server can't install from it; every mode runs embedded.
     flags = ["-c", "features.daemon_auto_start=false"]
     for provider in record.get("providers", {}).values() if selection != "direct" else ():
         key = provider["env_key"]
@@ -753,7 +748,6 @@ def install(args):
         for source, name in ((Path(binary["path"]), "codex"), (code_mode_host, "codex-code-mode-host"),
                              (broker_helper, "omd-broker"), (runner, "omd-runner"), (manager, "omd-mod")):
             shutil.copy2(source, artifacts / name)
-        # macOS scans a new executable at its first run; pay that here instead of at the first launch.
         for command in (["codex", "--version"], ["codex-code-mode-host", "--help"], ["omd-runner"]):
             subprocess.run([artifacts / command[0], *command[1:]], stdin=subprocess.DEVNULL, capture_output=True, timeout=60,
                            check=True)
@@ -836,7 +830,6 @@ def install(args):
         support.atomic_text(store / "package-index.json", json.dumps({"schema": 1, "packages": catalog}, indent=2) + "\n")
         granted = {Path(item["path"]).resolve(): item.get("capabilities")
                    for item in invoke(installed_manager, "selection-status", store)["selections"]}
-        # Revoking keeps the selection with no capabilities; a mod the user disabled keeps its grant and stays off.
         revoked = [identifier for identifier in PLATFORM_PACKAGES
                    if not granted.get((sources / identifier).resolve())
                    and all(item["path"] != str(sources / identifier) for item in trusted)]
@@ -951,7 +944,6 @@ def register_plugins(prefix, bin_dir):
         raise ValueError("OMD Core stages no plugins; install --profile full first")
     root = Path(bundle["marketplace"])
     link = prefix.parents[2] / "current"
-    # Codex records the resolved path, which a later update prunes; the current link survives updates.
     source = link / prefix.name / root.relative_to(prefix) if support.resolved(link) == prefix.parent else root
     name = json.loads((root / ".agents/plugins/marketplace.json").read_text())["name"]
     home = Path(record["shared_state"]["codex_home"])
@@ -1149,7 +1141,6 @@ def remove_plugins(record, prefix):
 
 
 def removed(prefix, bin_dir, record):
-    # The journal goes last, so an interrupted removal resumes from it; launchers replaced since are kept.
     journal = prefix / UNINSTALL_JOURNAL
     for name, expected in launchers(record).items():
         if ours(bin_dir / name, expected):
@@ -1234,7 +1225,6 @@ def main():
                                   help="remove this installation while another one keeps using the authority broker")
     uninstall_parser.add_argument("--purge", action="store_true", help="also remove this installation's mod data and saved sign-ins; Codex data stays")
     args = parser.parse_args()
-    # The launcher runs from its management directory; commands act on the caller's directory.
     os.chdir(os.environ.pop("OMD_PACKAGE_CWD", "."))
     prefix, bin_dir = support.validate_locations(args.prefix, args.bin_dir)
     if args.command == "install":

@@ -441,9 +441,23 @@ fn same_id_project_selection_warns_about_shared_authority() {
     let (_temp, store, root) = setup();
     for (base, scope) in [(&root, "user"), (&root.join("project"), "project")] {
         let path = fixture_package(base, "same_id", &["commands"], json!([]));
-        let digest = ModStore::inspect_package(&path).unwrap()["sha256"].as_str().unwrap().to_owned();
-        store.trust(path, &digest, vec!["commands".into()], scope).unwrap();
+        let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        store
+            .trust(path, &digest, vec!["commands".into()], scope)
+            .unwrap();
     }
-    let preview = preview(&store, json!({"action":"enable","id":"same_id","scope":"project"})).unwrap();
-    assert!(preview.public["identity_warning"].as_str().unwrap().contains("share storage and owned credential authority"));
+    let preview = preview(
+        &store,
+        json!({"action":"enable","id":"same_id","scope":"project"}),
+    )
+    .unwrap();
+    assert!(
+        preview.public["identity_warning"]
+            .as_str()
+            .unwrap()
+            .contains("share storage and owned credential authority")
+    );
 }

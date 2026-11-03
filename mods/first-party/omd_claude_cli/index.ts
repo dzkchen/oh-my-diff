@@ -3,7 +3,6 @@ import type { Json, ModAPI, ProviderModel } from '../../api.d.ts';
 const service = 'claude_cli';
 const provider = 'omd_claude_cli';
 const loginWindow = 30 * 60_000;
-// Oldest tested CLI; newer 2.x keep the transport, and each request rechecks auth, billing, model and window.
 export const CLI_MINIMUM = '2.1.307';
 export const cliSupported = (version: string | null | undefined) => {
   const [major, minor, patch] = /^(\d+)\.(\d+)\.(\d+) \(Claude Code\)$/.exec(version?.trim() ?? '')?.slice(1).map(Number) ?? [];
@@ -11,7 +10,6 @@ export const cliSupported = (version: string | null | undefined) => {
   return major === 2 && (minor > wantMinor || minor === wantMinor && patch >= wantPatch);
 };
 export const CLI_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash';
-// Variables that would make the CLI sign in, store or bill somewhere other than the account OMD selected.
 export const CLI_ENV_OVERRIDE = /^ANTHROPIC_|^CLAUDE_(CONFIG_DIR|SECURESTORAGE_CONFIG_DIR)$|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
 export const ACCOUNT = /^[a-z][a-z0-9_-]{0,23}$/;
 export const loginCommand = (billing: unknown, name?: unknown) => `/claude login${billing === 'api' ? ' api' : ''}${typeof name === 'string' && name !== 'default' ? ` ${name}` : ''}`;
@@ -25,7 +23,6 @@ const run = (argv, dir) => { ${cliEnvSource} if (dir) env.CLAUDE_CONFIG_DIR = di
 const version = run(['--version']);
 const auth = JSON.parse(process.argv[2]).map(dir => version.status === 0 ? run(['auth', 'status'], dir) : null);
 console.log(JSON.stringify({ version: version.status === 0 ? version.stdout.trim() : null, auth: auth.map(run => run?.status === 0 ? run.stdout : null) }));`;
-// The Claude CLI binary is larger than the host's program hash limit, so the login runs it under node.
 const loginScript = `const { spawn } = await import('node:child_process');
 ${cliEnvSource}
 if (process.argv[2]) env.CLAUDE_CONFIG_DIR = process.argv[2];
@@ -67,7 +64,6 @@ function text(content: unknown): string {
   return parts.map(block => block.text).join('');
 }
 
-// Codex returns searched default-namespace tools under `functions`; they are called by their plain names.
 const scope = (spec: Row): string => spec.name === 'functions' ? '' : String(spec.name);
 
 function toolName(namespace: string, name: string): string {
@@ -82,7 +78,6 @@ export function localId(id: string): string {
 
 const SEALED = new Set(['collaboration/spawn_agent', 'collaboration/send_message', 'collaboration/followup_task']);
 
-// The CLI drops replayed thinking from its history input, so reasoning items carry only the visible summary.
 export function reasoningItem(block: Row, id: string): Row {
   return { type: 'reasoning', id, summary: block.thinking ? [{ type: 'summary_text', text: block.thinking }] : [] };
 }
@@ -147,7 +142,6 @@ export function translateRequest(request: Row, model: string | undefined): Row {
       if (typeof id !== 'string' || pending.has(id)) throw new Error('invalid_tool_call_id');
       const args = expected === 'custom' ? { input: item.input } : expected === 'search' ? item.arguments : JSON.parse(item.arguments);
       if (!plain(args)) throw new Error('invalid_tool_arguments');
-      // Requests without the call's tool (Codex compaction sends none) carry the exchange as text.
       if (reverse[name]?.kind === expected) {
         assistant().push({ type: 'tool_use', id, name: `mcp__omd__${name}`, input: args });
       } else {
@@ -329,7 +323,6 @@ export default function activate(api: ModAPI): void {
     const account = (result.accounts as Row[]).find(item => item.name === login.account);
     say(`Claude account ${login.account}${account?.email ? ` (${account.email})` : ''} is ready on ${login.billing === 'api' ? 'Console API credits' : 'your subscription'}; pick its models with /model or switch with /profile`);
   };
-  // The host reports no exit status for a managed process, so setup.mjs (checkCli) decides whether the login worked.
   const exchange = (session: string, login: Row, send?: string) => {
     let out = String(login.out);
     for (let reads = 0; reads < 16; reads++) {

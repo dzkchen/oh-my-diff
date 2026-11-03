@@ -199,7 +199,6 @@ def environment(upstream, bin_dir):
     return values
 
 
-# An upstream upgrade (for example brew upgrade codex) keeps status, rollback and uninstall working: a recorded path that moved falls back to the codex on PATH, and --upstream overrides both.
 def first_passing(candidates, accept):
     errors = []
     for candidate in candidates:
@@ -519,7 +518,6 @@ def installed(result):
         say(f"      {path_line(result['bin_dir'])}")
         say()
     else:
-        # A shell that already looked up codex keeps running the old one until its command cache is cleared.
         rows.insert(0, ("Start", "open a new terminal and run codex, or hash -r && codex"))
     for label, text in rows:
         say(f"    {paint(f'{label:<9}', '2')}{text}")
@@ -689,7 +687,6 @@ def removing(generation):
     return (prefix / UNINSTALL_JOURNAL).is_file() or not prefix.is_dir() or not any(prefix.iterdir())
 
 
-# Once the package uninstall journals, the prefix holds only validated files and removal only rolls forward.
 def remove_generation(generation, upstream, bin_dir, *flags):
     prefix = generation / "prefix"
     if not removing(generation):

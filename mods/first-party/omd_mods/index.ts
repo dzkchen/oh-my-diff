@@ -17,7 +17,6 @@ const UNSET = '-';
 const kept = (item: Pick<PackageState, 'id' | 'required'>) => item.id === SELF || item.required;
 const labelOf = (name: string, property?: Property) => property?.title ?? name.replace(/_/g, ' ');
 const word = (value: string) => /^\S{1,128}$/.test(value);
-// No Intl.Collator: it loads ICU data in every runner.
 const compare = (a: string, b: string) => {
   const [x, y] = [a.toLowerCase(), b.toLowerCase()];
   return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
@@ -41,7 +40,6 @@ const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const SHOWN = 98;
 const CATALOG = 120;
 const MODELS = 24;
-// The catalog is kept in UI state, which the host caps at 64 KiB (validate_ui_state); stop paging once the raw index pages reach it.
 const INDEX_BYTES = 65_536;
 const TABS = [{ id: 'installed', title: 'All' }, { id: 'settings', title: 'Settings' }, { id: 'directory', title: 'Directory' }];
 const GROUPS = ['Needs attention', 'On', 'Off'];
@@ -83,7 +81,6 @@ export default function activate(api: ModAPI) {
     } while (cursor && catalog.length < CATALOG && received < INDEX_BYTES);
     return { ...state, catalog, catalogError: null };
   };
-  // A successful change reloads mods, which refuses this callback's later panel calls; the host then reruns every open panel's action.
   const apply = (state: Saved, request: PackageRequest, label: string, generation = state.generation): Saved | null => {
     const result = api.host.tryCall('packages.apply', { ...request, expected_generation: generation });
     if (!result.ok || result.value.status === 'declined') return refresh({ ...state, review: null }, result.ok ? `${label} was declined` : `${label} failed: ${result.error}`);
@@ -120,7 +117,6 @@ export default function activate(api: ModAPI) {
     const added = api.host.tryCall('routes.add', { mod: item.id, ...choice });
     const back = { ...state, choosing: null };
     if (!added.ok || 'status' in added.value) return { ...back, notice: added.ok ? 'No helper model was added' : `No helper model was added (${brief(added.error)})` };
-    // An unchanged setting isn't written, so no reload reruns the panel to show write's notice.
     if (item.settings?.[name] === added.value.route)
       return { ...back, notice: `${labelOf(name, properties(item).find(([entry]) => entry === name)?.[1])} already uses ${added.value.route}` };
     return write(back, item, `${name} ${added.value.route}`);
