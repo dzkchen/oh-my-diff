@@ -785,7 +785,7 @@
     },
     {
       "id": "omd_theme",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "extension_type": "mod",
       "capability": "Opt-in /theme panel: animated character-drawn scenes behind the whole screen, prompt box and menus, and terminal background steps",
       "source": "mods/first-party/omd_theme",
