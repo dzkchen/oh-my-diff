@@ -258,6 +258,7 @@ User-only operations are never delegated:
 - `config.set`
 - `packages.apply`
 - `routes.add`
+- `routes.models`
 - `routes.write`
 - `contract.select`
 

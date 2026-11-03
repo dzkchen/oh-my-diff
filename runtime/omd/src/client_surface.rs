@@ -70,6 +70,7 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "builtins.invoke",
     "packages.apply",
     "routes.add",
+    "routes.models",
     "routes.write",
     "routes.select",
     "contract.select",
@@ -96,6 +97,7 @@ pub const USER_ONLY_OPERATIONS: &[&str] = &[
     "config.set",
     "packages.apply",
     "routes.add",
+    "routes.models",
     "routes.write",
     "contract.select",
 ];

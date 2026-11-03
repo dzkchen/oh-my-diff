@@ -35,6 +35,7 @@ const safe = (value: string) => [...value.replace(/[\x00-\x1f\x7f\u202A-\u202E\u
 const utf8 = new TextEncoder();
 const bytes = (value: string) => utf8.encode(value).length;
 const shrink = (text: string) => { const characters = [...text]; return characters.slice(0, Math.floor(characters.length * 0.9)).join(''); };
+const chars = (value: string, max: number) => [...value].slice(0, Math.max(0, max)).join('');
 const clip = (value: string, max: number) => value.slice(0, utf8.encodeInto(value, new Uint8Array(Math.max(0, max))).read);
 const redact = (value: string) => SECRETS.reduce((text, pattern) => text.replace(pattern, '[redacted]'), value);
 const relative = (value: unknown): value is string => bounded(value, 256) && !/[:\\\x00-\x1f]/.test(value) && !value.split('/').some(part => !part || part === '.' || part === '..');
@@ -73,7 +74,7 @@ export default function activate(api: ModAPI) {
   const unrouted = () => {
     const routes = api.host.tryCall('routes.list', null);
     const workers = routes.ok ? routes.value.filter(item => item.roles.includes('worker') && item.available).map(item => item.name) : [];
-    return `pick an Advisor model in /mods (Settings, Advisor)${workers.length ? `: ${workers.join(', ')}` : ', or add a helper model there'}`;
+    return `pick an Advisor model in /mods (Settings, Advisor)${workers.length ? `: ${workers.join(', ')}` : ', or choose a model there'}`;
   };
   const read = (reference: ResourceRef) => {
     let text = '';
@@ -164,7 +165,8 @@ export default function activate(api: ModAPI) {
       room -= bytes(text) + 2;
     }
     const answer = api.host.tryCall('model.complete', { route, prompt: [header, ...body].join('\n\n'), timeout_ms: 180_000 });
-    const advice = answer.ok && answer.value.status !== 'failed' ? answer.value.text.trim() : `Advisor unavailable: ${answer.ok ? answer.value.error : answer.error}`;
+    const advice = !answer.ok || answer.value.status === 'failed' ? `Advisor unavailable: ${answer.ok ? answer.value.error : answer.error}`
+      : `${answer.value.status === 'incomplete' ? `Advisor incomplete${answer.value.stop_reason ? ` (${answer.value.stop_reason})` : ''}:\n` : ''}${answer.value.text.trim()}`;
     api.state.set({ ...current(), consulted: { trigger, advice: safe(advice) } });
     return advice;
   };
@@ -407,7 +409,10 @@ export default function activate(api: ModAPI) {
       status[0] += ` · ${watch.notes.length} to know`;
       above.push({ type: 'box', id: 'advisor_observations', label: 'You should know', title: 'You should know', children: [
         { type: 'list', id: 'advisor_observation_list', label: 'Observer notes; Enter inspects', height: watch.notes.length, hotkey: 'Alt+m', action: { command: 'omd_advisor:observations' },
-          rows: watch.notes.map((note, index) => ({ value: String(index + 1), label: clip(`${KINDS[note.kind]}: ${note.implication}`, 256), spans: [{ text: `${KINDS[note.kind]}: `, tone: 'attention', bold: true }, { text: clip(note.implication, 256) }] })) },
+          rows: watch.notes.map((note, index) => {
+            const prefix = `${KINDS[note.kind]}: `;
+            return { value: String(index + 1), label: clip(prefix + note.implication, 256), spans: [{ text: prefix, tone: 'attention', bold: true }, { text: chars(note.implication, 256 - prefix.length) }] };
+          }) },
         { type: 'text', id: 'advisor_observation_hint', label: 'Observer hint', text: 'Alt+m then Enter, or /observations N, inspects · /observations dismiss N|all', tone: 'muted' }] });
     } else if (watch && ['observing', 'unavailable', 'invalid_result', 'incomplete'].includes(watch.status)) status[0] += ` · watch ${watch.status.replace('_', ' ')}`;
     const note = watch && watch.inspect !== null ? watch.notes[watch.inspect] : undefined;

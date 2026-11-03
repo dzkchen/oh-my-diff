@@ -41,7 +41,7 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 | --- | --- | --- | --- |
 | `user_message` (experimental) | content digest | `text`, `images`, `spoken` | none |
 | `assistant_message` | content digest | `text`, `first`, `truncated` | none |
-| `tool_call` | call id (row id for agent rows; `explore:<first call id>` for an exploration group) | every agent tool row (`RenderToolCall`); see [`tool_call` props](#tool_call-props) | none |
+| `tool_call` | call id (row id for agent rows; `explore:<first call id>` for a command group) | every agent tool row (`RenderToolCall`); see [`tool_call` props](#tool_call-props) | none |
 | `tool_result` (experimental) | call id | `tool`, `success`, `text` (MCP results inside their call) | none |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
 | `turn_duration` (experimental) | `turn-<completed ms>` | `seconds`, `completed_at_ms` | none |
@@ -66,7 +66,7 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 | `kind` | Props |
 | --- | --- |
 | `exec` | `command`, `parsed`, `exit_code`, `output_lines`, `output_tail`, `user_shell` |
-| `explore` | `calls` (grouped reads, searches and listings) |
+| `explore` | `calls` (grouped reads, searches and listings, or adjacent agent shell commands with `group_exec`) |
 | `patch` | `files` (`path`, `change`, `added`, `removed`), `error` |
 | `web_search` | `action`, `query` |
 | `agent` | `tool`, `agents`, `prompt` |
@@ -76,19 +76,23 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 
 Group and file limits:
 
-- Exploration groups contain at most 32 calls; larger sequences split into additional rows without dropping calls.
+- Command groups contain at most 32 calls; larger sequences split into additional rows without dropping calls.
 - Patch `files` contains at most 32 details; `file_count`, `added` and `removed` are complete totals across all
   changed files.
 
 ## Grouped members
 
-For grouped exploration and computer activity, the host runs `tool_call` hooks on each member of the group, as kind
-`exec` or `mcp`.
+Grouped exploration and computer activity support `tool_call` hooks on each member of the group, as kind `exec`
+or `mcp`.
 
 - When those member hooks replace the drawing, each member has its own focus, pointer region and `expanded` flag;
   `next` draws a collapsed member as its compact row, and transcript search (Find) searches every member expanded.
 - Native grouping remains when no member is replaced.
 - Aggregate exploration rendering remains available on the group when member rendering does not replace it.
+- With [`group_exec`](commands-and-composer.md#built-in-controls) enabled, the host first offers shell command
+  groups to the aggregate `tool_call` hook with `kind: 'explore'`. An aggregate replacement wins; otherwise the
+  individual `exec` member hooks still run. A lone command outside reads, searches and listings keeps `kind: 'exec'`.
+  Expanding a group shows every command's native output.
 
 ## Render hook behavior
 

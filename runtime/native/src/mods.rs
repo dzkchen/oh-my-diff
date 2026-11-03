@@ -1234,6 +1234,7 @@ impl TurnLifecycleContributor for Mods {
             else {
                 return;
             };
+            self.views.diagnostic(&self.host, "turn_evidence", None);
             lead.session.processes.cleanup();
             lead.session.access.cleanup();
             self.autonomy.turn_ended(
@@ -1328,26 +1329,27 @@ impl TurnLifecycleContributor for Mods {
                 payload.get("error").cloned(),
             );
             let private = match &turn.evidence {
-                Some(cursor) => match evidence::finish(
-                    &self.core,
-                    &lead,
-                    cursor,
-                    &turn.turn_id,
-                    payload["outcome"].as_str().unwrap_or("error"),
-                )
-                .await
-                {
-                    Ok(value) => value,
-                    Err(error) => {
-                        self.views
-                            .diagnostic(&self.host, "turn_evidence", Some(error));
-                        BTreeMap::new()
-                    }
-                },
-                None => BTreeMap::new(),
+                Some(cursor) => {
+                    evidence::finish(
+                        &self.core,
+                        &lead,
+                        cursor,
+                        &turn.turn_id,
+                        payload["outcome"].as_str().unwrap_or("error"),
+                    )
+                    .await
+                }
+                None => Ok(BTreeMap::new()),
             };
-            self.event_with_private("turn_end", payload, Some(&*lead), private)
-                .await;
+            self.views
+                .diagnostic(&self.host, "turn_evidence", private.as_ref().err().cloned());
+            self.event_with_private(
+                "turn_end",
+                payload,
+                Some(&*lead),
+                private.unwrap_or_default(),
+            )
+            .await;
         })
     }
 

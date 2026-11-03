@@ -1303,6 +1303,8 @@ pub struct ModViewSnapshot {
     #[serde(default)]
     pub diagnostics: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_diagnostics: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<(String, String)>,
 }
 
@@ -2503,8 +2505,13 @@ impl ModViewSnapshot {
                 .any(|contributor| !identifier(contributor))
             || serde_json::to_vec(&snapshot.input)?.len() > 65_536
             || snapshot.diagnostics.len() > 16
+            || snapshot.native_diagnostics.len() > 16
             || snapshot
                 .diagnostics
+                .iter()
+                .any(|diagnostic| !visible(diagnostic, 512))
+            || snapshot
+                .native_diagnostics
                 .iter()
                 .any(|diagnostic| !visible(diagnostic, 512))
             || snapshot.errors.len() > 16

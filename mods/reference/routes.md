@@ -54,6 +54,7 @@ needs a grant.
   - a lead route of a registered provider (its model is in that provider's runtime catalog) whose `mods` is empty or
     lists the caller. That agent is admitted like a cross-provider native child, with no grant.
 - [`routes.add`](#routesadd) adds a worker route on the user's ChatGPT plan for one mod.
+- [`routes.models`](#routesmodels) lists the ChatGPT models `routes.add` accepts.
 
 ## `routes.list`
 
@@ -106,13 +107,31 @@ api.host.call('routes.select', { route: 'fast_lead', scope: 'next_request' });
 
 ## `routes.add`
 
-`routes.add {mod?}` (user only) gives a mod a worker route on the user's ChatGPT plan. Without `mod` it is for the
-caller itself and needs `agents` (`routes_add_self_v1`); naming a mod needs `packages`. It asks the user, then adds the worker route
-`plan-MODEL-MOD` for the conversation's model and effort. The route is open only to that mod, and the host adds this
-repository to its grant.
+`routes.add {mod?, model?, effort?}` (user only) gives a mod a worker route on the user's ChatGPT plan. Without `mod`
+it is for the caller itself and needs `agents` (`routes_add_self_v1`); naming a mod needs `packages`. It asks the user,
+then adds the worker route `plan-MODEL-MOD`. The route is open only to that mod, and the host adds this repository to
+its grant.
+
+Without `model` the route uses the conversation's model and effort. With `model` (`routes_add_model_v1`) it uses that
+model from the ChatGPT catalog of the Codex ChatGPT sign-in, the list `routes.models` returns, and `effort`, which
+defaults to the model's own default. This works while the conversation, or Codex itself, uses another provider. The
+host reads that catalog from the Codex model cache and refreshes it from the ChatGPT models endpoint only when the
+cache is stale; it never sends a model request. The route's input limit is the chosen model's usable context window,
+taken from the first of: a window set with `models.context_window`, the Codex `model_context_window` setting when the
+chosen model is the configured model, the ChatGPT catalog, the host's bundled model metadata, or 272,000 tokens.
 
 It returns `{route}`, or `{status: 'declined'}`. It refuses with `routes_add_needs_chatgpt` without a ChatGPT sign-in
-or when the conversation's provider doesn't use it.
+(an API key doesn't count), or without `model` when the conversation's provider doesn't use it. A model outside the
+catalog fails with `routes_add_model_unknown`, an effort the model doesn't list with `routes_add_effort_unsupported`,
+and `effort` without `model` with `routes_add_effort_needs_model`.
+
+## `routes.models`
+
+Experimental (added after 1.0.0, `routes_add_model_v1`). `routes.models {mod?}` (user only) lists the models
+`routes.add` accepts with `model`: `{model, display_name, efforts, default_effort, context_window}[]`, at most 64
+picker-visible models with up to 16 efforts each. `context_window` is the usable window a route on that model gets.
+Like `routes.add`, it needs `agents` without `mod` and `packages` naming a mod. It fails with
+`routes_add_needs_chatgpt` without a ChatGPT sign-in.
 
 ## Route reload (`route_reload_v1`)
 

@@ -7,7 +7,7 @@ export type Rect = { x: number; y: number; width: number; height: number };
 const TEXTURE = '$%St#&*+=@oS';
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const SPACE = 32;
-const REVEAL_MS = 1200;
+const REVEAL_MS = 350;
 const PANE_SHADE = 0.5;
 const GLYPH_SHADE = 0.6;
 export const FRAME_SECONDS = 0.125;
@@ -373,7 +373,7 @@ export function compose(id: string, previous: string | null, progress: number, w
     return canvas;
   };
   const next = draw(id);
-  if (!previous || previous === id || progress >= 1) return next;
+  if (!previous || previous === 'off' || previous === id || progress >= 1) return next;
   const old = draw(previous);
   const cx = next.cols / 2;
   const cy = height / 2;
