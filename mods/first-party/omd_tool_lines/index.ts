@@ -38,7 +38,7 @@ const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   return `${kept.join('')}…`;
 };
 
-const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : noun === 'search' ? 'es' : 's'}`;
 const lines = (count: number | null, status: RenderToolCall['status']) => count == null || status === 'running' ? null : plural(count, 'line');
 
 const duration = (ms: number | null) => {
@@ -102,6 +102,28 @@ const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null =>
   }
 };
 
+const group = (calls: RenderExecCall[]): Row => {
+  const failed = calls.filter(call => call.status === 'failed' || call.status === 'interrupted');
+  const interrupted = calls.filter(call => call.status === 'interrupted');
+  const running = calls.filter(call => call.status === 'running');
+  const latest = running.at(-1) ?? failed.at(-1) ?? calls.at(-1)!;
+  const counts = new Map<string, number>();
+  for (const call of calls) {
+    const label = exec(call).name;
+    const name = label === 'Shell' ? 'command' : label.toLowerCase();
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return {
+    name: [...counts].map(([name, count]) => plural(count, name)).join(', '),
+    args: exec(latest).args,
+    marker: [running.length ? `${running.length} running` : null,
+      failed.length > interrupted.length ? `${failed.length - interrupted.length} failed` : null,
+      interrupted.length ? `${interrupted.length} interrupted` : failed.length || running.length ? null : 'ok',
+      duration(calls.reduce((total, call) => total + (call.duration_ms ?? 0), 0))],
+    failed: failed.length > 0, running: running.length > 0,
+  };
+};
+
 const line = (id: string, item: Row, columns: number): TerminalComponent => {
   const available = Math.max(0, Math.min(columns, 256));
   const bullet = fit(item.failed ? '✗' : '•', available);
@@ -120,11 +142,13 @@ const line = (id: string, item: Row, columns: number): TerminalComponent => {
 };
 
 export default function activate(api: ModAPI) {
+  api.builtins({ group_exec: true });
   api.intercept('render', { match: { component: 'tool_call' } }, (event, next) => {
     const { props, viewport } = event as RenderEvent<'tool_call'>;
     if (props.expanded || (props.kind === 'exec' && props.user_shell)) return next(event);
     try {
-      const rows = props.kind === 'explore' ? props.calls.map(exec) : [row(props)];
+      const rows = props.kind === 'explore' && props.calls.length > 1 ? [group(props.calls)]
+        : props.kind === 'explore' ? props.calls.map(exec) : [row(props)];
       if (rows.length && rows.every((item): item is Row => item !== null)) {
         return { tree: rows.map((item, index) => line(`tool_lines_${index}`, item, viewport.columns)) };
       }

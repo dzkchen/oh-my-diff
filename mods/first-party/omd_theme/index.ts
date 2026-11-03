@@ -8,8 +8,8 @@ type Speed = 'off' | 'slow' | 'normal';
 type Density = 'sparse' | 'normal' | 'dense';
 type Prefs = { scene: string; speed: Speed; density: Density; calm: boolean; image: Sample | null; family: string };
 type Area = { x: number; y: number; columns: number; rows: number };
-type View = { columns: number; rows: number; reduced: boolean; color: boolean; colors: string; phase: string | null; surface: string | null; chat: Area | null; welcome: boolean; raster: string };
-type State = { prefs: Prefs | null; view: View | null; run: number; switched: { from: string; at: number } | null; busy: boolean; keep?: { id: string; cell: string } };
+type View = { columns: number; rows: number; reduced: boolean; color: boolean; colors: string; phase: string | null; surface: string | null; chat: Area | null; raster: string };
+type State = { prefs: Prefs | null; view: View | null; run: number; origin?: number; frame?: number; switched: { from: string; at: number } | null; busy: boolean; keep?: { id: string; cell: string } };
 type Remembered = { selected?: string; query?: string };
 type Tick = { run: number; drawn: number; width: number; height: number; look: string; misses: number };
 
@@ -29,7 +29,7 @@ const BEHIND_CAP = 64;
 const WELCOME_CAP = 150;
 const BAND_CELLS = 14_000;
 const STARTUP_MS = 3000;
-const RETRY_MS = 250;
+const RETRY_MS = 50;
 const HIDDEN_MS = 1000;
 const STILL_POLL_MS = 1500;
 const PAUSE_POLL_MS = 400;
@@ -92,21 +92,29 @@ export default function activate(api: ModAPI) {
     write({ ...patch, prefs });
     api.host.tryCall('store.put', { key: 'prefs', value: prefs as unknown as { [key: string]: Json }, expected_revision: stored()?.revision ?? null, scope: 'user' });
   };
-  const schedule = (tick: Tick, delay: number) => api.host.call('events.schedule', { key: tickKey(tick), delay_ms: Math.max(16, Math.round(delay)) });
+  const schedule = (tick: Tick, delay: number) => {
+    if (read().prefs?.scene !== 'off') api.host.call('events.schedule', { key: tickKey(tick), delay_ms: Math.max(16, Math.round(delay)) });
+  };
   const first = (run: number): Tick => ({ run, drawn: -1, width: 0, height: 0, look: '0', misses: 0 });
-  const restart = () => {
-    const run = Date.now();
-    write({ run });
+  const restart = (resize = false) => {
+    const s = read();
+    const run = Math.max(Date.now(), s.run + 1);
+    write({ run, origin: resize ? s.origin ?? s.run : run, frame: resize ? s.frame : -1 });
     api.host.tryCall('events.publish', { channel: 'wake', data: run });
   };
   const begin = () => {
-    const run = Date.now();
-    write({ prefs: load(), run, busy: false });
+    const run = Math.max(Date.now(), read().run + 1);
+    write({ prefs: load(), run, origin: run, frame: -1, busy: false });
     schedule(first(run), 16);
   };
 
   api.on('start', begin);
   api.on('resume', begin);
+  api.on('view', ({ phase, view }) => {
+    if (phase !== 'opened' || view !== 'thread' || read().prefs) return;
+    write({ prefs: load() });
+    restart();
+  });
   api.on('channel', ({ channel, data }) => {
     if (channel === 'omd_theme/wake' && typeof data === 'number') schedule(first(data), 16);
   });
@@ -149,11 +157,13 @@ export default function activate(api: ModAPI) {
     const same = tick.width === width && tick.height === height && tick.look === look;
     const quiet = still(s);
     const period = prefs.speed === 'slow' ? SLOW_MS : FRAME_MS;
-    const k = quiet ? 0 : paused(s) && tick.drawn > 0 ? tick.drawn : Math.max(1, Math.floor((now - s.run) / period));
+    const origin = s.origin ?? s.run;
+    const drawn = Math.max(s.frame ?? -1, tick.drawn);
+    const k = quiet ? 0 : paused(s) && drawn > 0 ? drawn : Math.max(1, Math.floor((now - origin) / period));
     const poll = quiet ? STILL_POLL_MS : PAUSE_POLL_MS;
     const shown = { width, height, look };
     const frame = (n: number) => {
-      const art = compose(prefs.scene, quiet ? null : s.switched?.from ?? null, s.switched ? revealProgress(s.run + n * period - s.switched.at) : 1,
+      const art = compose(prefs.scene, quiet ? null : s.switched?.from ?? null, s.switched ? revealProgress(origin + n * period - s.switched.at) : 1,
         chat.columns, chat.rows, DENSITY[prefs.density], prefs.image, quiet ? STILL_SECONDS : n * FRAME_SECONDS);
       const canvas = place(art, width, height, chat.x, chat.y);
       return behind(s) ? shade(canvas, BEHIND, BEHIND_CAP) : shade(canvas, 0, WELCOME_CAP);
@@ -181,16 +191,18 @@ export default function activate(api: ModAPI) {
       again(reply.ok && 'status' in reply.value ? Math.max(HIDDEN_MS, reply.value.retry_after_ms) : misses > UNKNOWN_RETRIES ? HIDDEN_MS : RETRY_MS, { ...shown, misses });
       return;
     }
-    again(quiet || paused(s) ? poll : s.run + (k + 1) * period - now, { ...shown, drawn: lost ? -1 : k });
+    if (!lost && s.frame !== k) write({ frame: k });
+    again(quiet || paused(s) ? poll : origin + (k + 1) * period - now, { ...shown, drawn: lost ? -1 : k });
   };
 
   api.on('terminal', (input): TerminalPatch | null => {
     const s = read();
     const client = input.client;
     const view: View | null = client ? { columns: client.columns, rows: client.rows, reduced: client.reduced_motion, color: client.graphics !== 'text', colors: client.colors ?? 'truecolor',
-      phase: input.presentation?.phase ?? null, surface: input.presentation?.surface ?? null, chat: client.chat ?? null, welcome: client.welcome !== null,
-      raster: s.view?.raster ?? rasterFor(input.presentation?.thread_id ?? `fresh${s.run}`) } : s.view;
+      phase: input.presentation?.phase ?? null, surface: input.presentation?.surface ?? null, chat: client.chat ?? null,
+      raster: s.view?.raster ?? rasterFor(input.ledger?.thread_id ?? input.presentation?.thread_id ?? `fresh${s.run}`) } : s.view;
     if (JSON.stringify(view) !== JSON.stringify(s.view)) write({ view });
+    if (s.view && view && drawable({ ...s, view }) && (view.columns !== s.view.columns || view.rows !== s.view.rows || JSON.stringify(view.chat) !== JSON.stringify(s.view.chat))) restart(true);
     const prefs = s.prefs;
     if (!prefs || !view) return null;
     if (!drawable({ ...s, view })) return {};

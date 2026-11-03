@@ -45,14 +45,17 @@ the API version matches. Each list holds at most 32 features.
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
 | `routes.write` | `route_write_v1` |
 | `routes.add` without `mod` | `routes_add_self_v1` |
+| `routes.add` with `model` or `effort`, `routes.models` | `routes_add_model_v1` |
 | `api.settingsFile` | `settings_file_v1` |
 | `key_contexts`, `region` and `help` key actions, `keys: 'all'`, layout leaf `style.focus` | `terminal_focus_v1` |
 | Layout leaf `title` | `terminal_layout_title_v1` |
 | The `dock` `component_event` | `terminal_layout_dock_v1` |
+| `view` events with `view: 'thread'` | `terminal_thread_view_v1` |
 | `models.context_window` | `model_context_window_v1` |
 | `power.hold`/`power.release` | `power_hold_v1` |
 | `tools.original` | `tool_original_v1` |
 | `api.builtins` `features.remove` | `builtins_features_v1` |
+| `api.builtins` `group_exec` | `transcript_exec_groups_v1` |
 | `success_per_call` on a `tool_batch` merge | `tool_batch_success_v1` |
 | `value` in code-mode `tool` results and answers | `code_mode_values_v1` |
 | `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |

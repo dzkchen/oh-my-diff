@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PackageControl {
@@ -224,6 +224,12 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     Ok(listed)
 }
 
+static CONNECTED: OnceLock<fn(&str, &str) -> bool> = OnceLock::new();
+
+pub fn set_connected_models(connected: fn(&str, &str) -> bool) {
+    let _ = CONNECTED.set(connected);
+}
+
 /// Read per call since `host.json` and plan grants change outside the listing cache; without a repository plan routes are always offered.
 fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>) -> Value {
     let here = repository.map(|repository| {
@@ -255,16 +261,31 @@ fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>)
                 .filter(|route| here.as_ref().is_none_or(|here| granted(route, here)))
                 .collect()
         });
+        let open = |route: &&Value| {
+            route["mods"]
+                .as_array()
+                .is_none_or(|mods| mods.is_empty() || mods.contains(&id))
+        };
+        let role = |route: &Value, role: &str| {
+            route["roles"]
+                .as_array()
+                .is_some_and(|roles| roles.contains(&json!(role)))
+        };
+        let connected = |route: &&Value| {
+            role(route, "lead")
+                && !role(route, "worker")
+                && CONNECTED.get().is_some_and(|connected| {
+                    connected(
+                        route["provider"].as_str().unwrap_or_default(),
+                        route["model"].as_str().unwrap_or_default(),
+                    )
+                })
+        };
         let names: Vec<Value> = routes
             .iter()
-            .filter(|route| {
-                route["roles"]
-                    .as_array()
-                    .is_some_and(|roles| roles.contains(&json!("worker")))
-                    && route["mods"]
-                        .as_array()
-                        .is_none_or(|mods| mods.is_empty() || mods.contains(&id))
-            })
+            .filter(|route| role(route, "worker"))
+            .chain(routes.iter().filter(connected))
+            .filter(open)
             .filter_map(|route| route["name"].as_str().map(Value::from))
             .collect();
         for property in choices {

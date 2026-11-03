@@ -12,6 +12,7 @@
   },
   "capabilities": [
     "commands",
+    "inventory",
     "packages",
     "store",
     "terminal"
@@ -20,6 +21,7 @@
     "required_features": [
       "package_controls_v1",
       "package_index_paging_v1",
+      "routes_add_model_v1",
       "terminal_panel_v1",
       "terminal_panel_navigation_v1",
       "terminal_render_sites_v1",

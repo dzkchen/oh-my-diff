@@ -52,6 +52,8 @@ pub struct Removed {
 #[serde(deny_unknown_fields)]
 pub struct BuiltinControls {
     #[serde(default)]
+    pub group_exec: bool,
+    #[serde(default)]
     pub commands: HiddenCommands,
     #[serde(default)]
     pub modes: Disabled,
@@ -72,6 +74,8 @@ impl Removed {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BuiltinSnapshot {
+    #[serde(default)]
+    pub group_exec: bool,
     pub schema: u32,
     pub hidden_commands: BTreeMap<String, Vec<String>>,
     pub disabled_modes: BTreeMap<String, Vec<String>>,
@@ -170,6 +174,7 @@ impl BuiltinSnapshot {
             ..Self::default()
         };
         for (owner, controls) in controls {
+            snapshot.group_exec |= controls.group_exec;
             for command in &controls.commands.hide {
                 snapshot
                     .hidden_commands

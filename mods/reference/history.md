@@ -267,3 +267,7 @@ Completed-turn packets retain bounded original visible records across a host-obs
 segment's records with its history revision. Compaction summaries do not replace those records. An unobserved
 history reset or interrupted compaction still rejects evidence explicitly. The mod chooses how to select and
 summarize a truncated packet.
+
+Evidence is delivered only to mods that subscribed at the turn's start and still subscribe with the same source
+hash when it finishes. Reloading unchanged mods preserves their evidence; newly added or changed subscribers
+receive no evidence for that in-progress turn.

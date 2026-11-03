@@ -30,7 +30,8 @@ undeclared setting is still refused with `unknown_setting`.
 
 A property can also have a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
 instead of the raw name. A string property without `enum` can set `choices: "routes"`. `packages.list` then fills its
-`enum` with the names of the `host.json` worker routes open to that mod.
+`enum` with the names of the `host.json` worker routes open to that mod, then the lead-only routes open to it whose
+connected provider offers the route's model right now, the ones its workers can run on.
 
 ## Settings file (`settings_file_v1`)
 

@@ -23,7 +23,7 @@ The terminal event's read-only `presentation` is `{thread_id, phase, surface?}`.
 - Before the composer first accepts input, the host can run the `terminal` handler with `event: 'startup'`, more
   than once. That event has `ledger: null` and a null `thread_id`, and its phase depends on whether the session is
   new, resumed or forked. During these `startup` callbacks, native task, app and paid host operations are
-  unavailable.
+  unavailable. Mods with `state_scope: 'thread'` wait until a thread exists instead of receiving these callbacks.
 - Before local presentation is available, the whole presentation value may be absent or null.
 
 `presentation` describes the host session, so a mod doesn't need to persist its own first-turn flag. The host sends
