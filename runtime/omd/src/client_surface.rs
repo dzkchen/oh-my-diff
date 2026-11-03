@@ -70,7 +70,9 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "builtins.invoke",
     "packages.apply",
     "routes.add",
+    "routes.models",
     "routes.write",
+    "routes.select",
     "contract.select",
     "terminal.open",
     "terminal.prompt",
@@ -95,6 +97,7 @@ pub const USER_ONLY_OPERATIONS: &[&str] = &[
     "config.set",
     "packages.apply",
     "routes.add",
+    "routes.models",
     "routes.write",
     "contract.select",
 ];
@@ -370,6 +373,7 @@ impl SurfaceCall {
 pub fn needs_terminal(operation: &str, arguments: &Value) -> bool {
     USER_ONLY_OPERATIONS.contains(&operation)
         || operation == "prompts.consent"
+        || (operation == "routes.select" && arguments["scope"] == "new_threads")
         || (operation == "terminal.pty" && arguments["action"] == "start")
 }
 

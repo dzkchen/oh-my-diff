@@ -51,6 +51,7 @@ export type FinalRequestPage = {
 };
 export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
 /** `turns_started` counts turns this process started in the thread; `process_id` identifies the OMD process. */
+export type RouteModel = { model: string; display_name: string; efforts: string[]; default_effort: string; context_window: number };
 export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; omd_version?: string; model: string; provider: string; route: string | null; turns_started: number; process_id: string };
 export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
 export type UsageSummary = {
@@ -244,7 +245,7 @@ export interface TerminalView {
   placeholder?: string;
   layout?: LayoutNode; surface_styles?: { composer?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
   inline_sites?: 'hidden';
-  /** `terminal_underlay_v1`: one of the mod's rasters drawn under the whole fullscreen screen; exclusive. */
+  /** `terminal_underlay_v1`: one exclusive cell raster under the fullscreen grid; cached edge backgrounds cover resizes and raised surfaces stay opaque. */
   underlay?: { raster: string };
 }
 /** One mod's contribution to the composed view; exclusive fields go to the first mod in composition order. */
@@ -397,8 +398,10 @@ export interface HostOperations {
   'sessions.read': { arguments: { session_id: string; revision: string; handle: string; cursor?: number; max_bytes?: number }; result: { session: SessionSummary; records: SessionRecord[]; cursor: number | null; bytes: number; projection: string; projection_truncated: boolean } };
   'sessions.snapshot': { arguments: { call_ids?: string[] }; result: { evidence: ResourceRef; provenance: { sha256: string; bytes: number; items: number; revision: number } } };
   'routes.list': { arguments: null; result: RouteInfo[] };
-  /** Without `mod` (routes_add_self_v1): a plan route for the caller, needing only `agents`. */
-  'routes.add': { arguments: { mod?: string }; result: { route: string } | Declined };
+  /** Without `mod` (routes_add_self_v1): a plan route for the caller, needing only `agents`. With `model` (routes_add_model_v1): that ChatGPT catalog model and `effort` (default: the model's) instead of the conversation's. */
+  'routes.add': { arguments: { mod?: string; model?: string; effort?: string }; result: { route: string } | Declined };
+  /** Requires routes_add_model_v1: the signed-in ChatGPT catalog `routes.add` accepts, with each model's usable context window. */
+  'routes.models': { arguments: { mod?: string }; result: RouteModel[] };
   /** Requires route_write_v1: replaces the caller's lead routes and service grants in `host.json` after the user confirms. */
   'routes.write': { arguments: { routes: HostRoute[]; services?: ServiceGrantUpdate[] }; result: { routes: string[]; services: string[]; unchanged?: true } | Declined };
   'task.status': { arguments: null; result: { ledger: Ledger; limits: Json; worker_limits: Json } };
@@ -460,7 +463,7 @@ export interface HostOperations {
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   /** Requires model_context_window_v1: sets (tokens), clears (null) or reads a model's context window from each thread's next turn (other sessions: the turn after), capped at its maximum. */
   'models.context_window': { arguments: { model: string; tokens?: number | null }; result: { model: string; tokens: number | null; max: number | null } };
-  'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
+  'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' | 'new_threads' }; result: { route: RouteInfo; effective_at: 'next_request' | 'new_thread' } };
   'turns.activity': { arguments: { thread_id?: string; turn_id?: string; last?: number } | null; result: { turns: TurnActivity[]; recording: boolean } };
   /** Requires turn_abort_v1; acceptance precedes cancellation cleanup. */
   'turns.abort': { arguments: { turn_id: string }; result: { accepted: boolean } };
@@ -563,7 +566,7 @@ export interface Events {
     content?: string; target?: string; edge?: 'left' | 'right' | 'top' | 'bottom' | 'center'; columns?: number; rows?: number }; output: void };
   /** The latest value a component module posted this frame. */
   component_post: { input: { component: string; module: string; client?: string; data: Json }; output: void };
-  view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null; dropped?: number }; output: void };
+  view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay' | 'thread'; view_id: string | null; dropped?: number }; output: void };
   focus: { input: { focused: boolean; dropped?: number }; output: void };
   config_change: { input: { key: string; original: Json; effective: Json; source: string; scope: 'codex' | 'mod'; caller: string }; output: void };
   peer_message: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json; sent_at_ms: number }; output: void };
@@ -635,7 +638,7 @@ export type InterceptResult<S extends keyof InterceptSurfaces> = InterceptSurfac
 export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readonly<InterceptSurfaces[S]['input']>, next: Next<S>) => InterceptResult<S> | Promise<InterceptResult<S>>;
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
-export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; features?: { remove?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+export type BuiltinControls = { group_exec?: boolean; commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; features?: { remove?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 /** Callback completion rejects cancelled or stale authority before committing state. The `crypto` global exists only when mod.json declares `"environment": ["crypto"]`. See REFERENCE.md. */
 export interface ModAPI {
   readonly version: '1.0.0';

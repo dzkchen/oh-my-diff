@@ -319,6 +319,47 @@ test('the extra-usage opt-out is read from the store per request and fails safe'
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('the extra-usage setting follows the store settings file like the host, and every selection of the mod must allow it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'omd-claude-settings-file-'));
+  const settings = join(root, 'settings');
+  const allowed = () => extraUsageAllowed(join(root, 'routes/claude/route.json'), '/real/omd_claude_cli');
+  const select = (...rows) => writeFile(join(root, 'mods.json'), JSON.stringify({ mods: rows.map(([scope, extra]) => ({ path: '/real/omd_claude_cli', scope, settings: extra === undefined ? {} : { extra_usage: extra } })) }));
+  const only = async (extension, text) => {
+    await rm(settings, { recursive: true, force: true });
+    await mkdir(settings);
+    if (text !== undefined) await writeFile(join(settings, `omd_claude_cli.${extension}`), text);
+  };
+  try {
+    await select(['user']);
+    for (const [extension, text, expected] of [
+      ['json', undefined, true],
+      ['json', '{"extra_usage": false}', false],
+      ['json', '{}', true],
+      ['json', '{"extra_usage": "no"}', true],
+      ['json', '{"extra_usage": false, "other": 1}', true],
+      ['json', 'not json', true],
+      ['yaml', 'extra_usage: false # stop\n', false],
+      ['yml', '---\n# off\nExtra: 1\n', false],
+      ['yaml', '{extra_usage: true}', true],
+      ['yaml', '# nothing set\n', true],
+    ]) {
+      await only(extension, text);
+      assert.equal(await allowed(), expected, `${extension} ${text}`);
+    }
+    await only('json', '{"extra_usage": false}');
+    await writeFile(join(settings, 'omd_claude_cli.yaml'), 'extra_usage: false\n');
+    assert.equal(await allowed(), true);
+    await only('json', '{"extra_usage": true}');
+    await select(['user', false]);
+    assert.equal(await allowed(), true);
+    await select(['managed', false]);
+    assert.equal(await allowed(), false);
+    await select(['user'], ['project', false]);
+    await only('json');
+    assert.equal(await allowed(), false);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('missing subscription login fails before routing and inherited API overrides never reach the CLI', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-auth-'));
   const fake = join(root, 'claude');
@@ -398,6 +439,7 @@ const dir = process.env.CLAUDE_CONFIG_DIR ?? '';
 if (argv[0] === '--version') console.log('${CLI_VERSION}');
 else if (argv[0] === 'auth') {
   appendFileSync('${root}/auth.log', argv[1] + ' ' + dir + '\\n');
+  if (argv[1] === 'logout' && process.env.OMD_TEST_LOGOUT_FAIL) process.exit(1);
   console.log(JSON.stringify({ loggedIn: true, apiProvider: 'firstParty', ...dir ? { authMethod: 'api_key', apiKeySource: '/login managed key', email: 'work@example.com' } : { authMethod: 'claude.ai', subscriptionType: 'max', email: 'me@example.com' } }));
 } else for await (const line of createInterface({ input: process.stdin })) {
   const row = JSON.parse(line);
@@ -440,6 +482,13 @@ else if (argv[0] === 'auth') {
     assert.match(failed.stderr, /claude_ai_subscription_login_required/);
     await assert.rejects(stat(join(store, 'routes/claude/accounts/team')));
     assert.match(await readFile(join(root, 'auth.log'), 'utf8'), new RegExp(`logout ${join(store, 'routes/claude/accounts/team')}\n$`));
+    const retryDir = join(store, 'routes/claude/accounts/retry');
+    const retained = spawnSync(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), 'retry', 'subscription', retryDir],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OMD_TEST_LOGOUT_FAIL: '1' } });
+    assert.match(retained.stderr, /claude_sign_out_failed.*kept.*retry/);
+    assert.ok((await stat(retryDir)).isDirectory());
+    assert.match(setup('retry', 'subscription', retryDir).stderr, /claude_ai_subscription_login_required/);
+    await assert.rejects(stat(retryDir));
     const held = openSync(join(store, 'store.lock'), constants.O_WRONLY | constants.O_CREAT | 0x20);
     const locked = setup('crew', 'api', join(store, 'routes/claude/accounts/crew'));
     closeSync(held);
@@ -449,6 +498,7 @@ else if (argv[0] === 'auth') {
     assert.deepEqual(JSON.parse(await readFile(join(store, 'routes/claude/route.json'), 'utf8')).accounts.map(account => account.name), ['default', 'work']);
     assert.match(setup('stray', 'api', join(root, 'elsewhere')).stderr, /claude_account_directory_outside_store/);
     await assert.rejects(stat(join(store, 'routes/claude/accounts/stray')));
+    assert.ok(!(await readFile(join(root, 'auth.log'), 'utf8')).includes(`logout ${join(root, 'elsewhere')}\n`));
     const together = await Promise.all(['p', 'q'].map(name => new Promise(done => {
       const child = spawn(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), name, 'api', join(store, `routes/claude/accounts/${name}`)],
         { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, stdio: 'ignore' });
@@ -457,6 +507,14 @@ else if (argv[0] === 'auth') {
     assert.deepEqual(together, [0, 0]);
     assert.deepEqual(JSON.parse(await readFile(join(store, 'routes/claude/route.json'), 'utf8')).accounts.map(account => account.name).sort(), ['default', 'p', 'q', 'work']);
     for (const name of ['p', 'q']) assert.equal(setup(name, 'remove').status, 0);
+    const beforeRemoval = await readFile(join(store, 'routes/claude/route.json'), 'utf8');
+    const refused = spawnSync(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), 'work', 'remove'],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OMD_TEST_LOGOUT_FAIL: '1' } });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /claude_sign_out_failed.*kept.*retry/);
+    assert.equal(await readFile(join(store, 'routes/claude/route.json'), 'utf8'), beforeRemoval);
+    assert.ok((await stat(dir)).isDirectory());
+    assert.ok((await host()).routes.some(route => route.name === 'claude-work'));
     const removed = setup('work', 'remove');
     assert.equal(removed.status, 0, removed.stderr);
     assert.deepEqual((await host()).routes.map(route => route.name), ['claude']);

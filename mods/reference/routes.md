@@ -44,7 +44,7 @@ needs a grant.
 
 - [`routes.list`](#routeslist) returns the routes visible to the calling mod, plus `data` on the caller's own routes
   ([route writes](#route-writes-route_write_v1)).
-- [`routes.select`](#routesselect) applies a lead route to the next request or the thread.
+- [`routes.select`](#routesselect) applies a lead route to the next request, the thread or future new threads.
 - The `routing` replacement returns `{route}` to choose a configured lead route at thread start.
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](model-requests.md#model-requests-and-streams-model_turn_interception_v1)).
@@ -54,6 +54,7 @@ needs a grant.
   - a lead route of a registered provider (its model is in that provider's runtime catalog) whose `mods` is empty or
     lists the caller. That agent is admitted like a cross-provider native child, with no grant.
 - [`routes.add`](#routesadd) adds a worker route on the user's ChatGPT plan for one mod.
+- [`routes.models`](#routesmodels) lists the ChatGPT models `routes.add` accepts.
 
 ## `routes.list`
 
@@ -74,22 +75,29 @@ const routes = api.host.call('routes.list', null).filter(route => route.availabl
 ## `routes.select`
 
 ```text
-routes.select {route, scope} → {route: RouteInfo, effective_at: 'next_request'}
+routes.select {route, scope} → {route: RouteInfo, effective_at: 'next_request' | 'new_thread'}
 ```
 
-`routes.select` (capability `model`) applies a configured lead route to the calling thread.
+`routes.select` (capability `model`) selects a configured lead route.
 
 | Argument | Type | Meaning |
 | --- | --- | --- |
 | `route` | string | The name of a lead route the caller may use |
-| `scope` | `'next_request'` or `'thread'` | Apply the route to the next request only, or to every later request of the thread |
+| `scope` | `'next_request'`, `'thread'` or `'new_threads'` | Apply to the next request, the calling thread, or future new threads in this terminal session |
 
-The route takes effect from the next request. A lead route added to `host.json` after the thread started is
+`new_threads` requires `route_new_threads_v1` and a local user command. It selects model, provider and effort for
+`/new` and other fresh terminal threads, returning `effective_at: 'new_thread'`. Existing and resumed threads keep
+their settings. It overrides launch defaults for those new threads, never writes global Codex config, and is lost
+when the terminal process exits. Missing, ambiguous or changed-owner routes fail without falling back to another
+account. Routes must have a unique model/provider pair. Routes that do not delegate billing to the provider
+start with hosted web search disabled, because separate tool charges are outside their token rates.
+
+The other scopes take effect from the next request. A lead route added to `host.json` after the thread started is
 admitted when it is on the thread's provider ([route reload](#route-reload-route_reload_v1)).
 
 | Error | When |
 | --- | --- |
-| `route_scope_invalid` | `scope` is neither `next_request` nor `thread` |
+| `route_scope_invalid` | `scope` is not `next_request`, `thread` or `new_threads` |
 | `route_not_configured: ROUTE` | No lead route with that name is open to the caller; after an invalid `host.json` edit the message adds why |
 | `route_unavailable_for_thread: ROUTE` | The thread has no lead route account, or the route is on another provider |
 
@@ -99,13 +107,31 @@ api.host.call('routes.select', { route: 'fast_lead', scope: 'next_request' });
 
 ## `routes.add`
 
-`routes.add {mod?}` (user only) gives a mod a worker route on the user's ChatGPT plan. Without `mod` it is for the
-caller itself and needs `agents` (`routes_add_self_v1`); naming a mod needs `packages`. It asks the user, then adds the worker route
-`plan-MODEL-MOD` for the conversation's model and effort. The route is open only to that mod, and the host adds this
-repository to its grant.
+`routes.add {mod?, model?, effort?}` (user only) gives a mod a worker route on the user's ChatGPT plan. Without `mod`
+it is for the caller itself and needs `agents` (`routes_add_self_v1`); naming a mod needs `packages`. It asks the user,
+then adds the worker route `plan-MODEL-MOD`. The route is open only to that mod, and the host adds this repository to
+its grant.
+
+Without `model` the route uses the conversation's model and effort. With `model` (`routes_add_model_v1`) it uses that
+model from the ChatGPT catalog of the Codex ChatGPT sign-in, the list `routes.models` returns, and `effort`, which
+defaults to the model's own default. This works while the conversation, or Codex itself, uses another provider. The
+host reads that catalog from the Codex model cache and refreshes it from the ChatGPT models endpoint only when the
+cache is stale; it never sends a model request. The route's input limit is the chosen model's usable context window,
+taken from the first of: a window set with `models.context_window`, the Codex `model_context_window` setting when the
+chosen model is the configured model, the ChatGPT catalog, the host's bundled model metadata, or 272,000 tokens.
 
 It returns `{route}`, or `{status: 'declined'}`. It refuses with `routes_add_needs_chatgpt` without a ChatGPT sign-in
-or when the conversation's provider doesn't use it.
+(an API key doesn't count), or without `model` when the conversation's provider doesn't use it. A model outside the
+catalog fails with `routes_add_model_unknown`, an effort the model doesn't list with `routes_add_effort_unsupported`,
+and `effort` without `model` with `routes_add_effort_needs_model`.
+
+## `routes.models`
+
+Experimental (added after 1.0.0, `routes_add_model_v1`). `routes.models {mod?}` (user only) lists the models
+`routes.add` accepts with `model`: `{model, display_name, efforts, default_effort, context_window}[]`, at most 64
+picker-visible models with up to 16 efforts each. `context_window` is the usable window a route on that model gets.
+Like `routes.add`, it needs `agents` without `mod` and `packages` naming a mod. It fails with
+`routes_add_needs_chatgpt` without a ChatGPT sign-in.
 
 ## Route reload (`route_reload_v1`)
 

@@ -133,6 +133,51 @@ test('a route setting offers a helper model and saves the route the host added',
   invoke('mod user:omd_advisor route:route', { packages: [advisor], ui_state: opened.ui, 'routes.add': () => ({ status: 'declined' }) });
 });
 
+test('Choose a model lists routes.models with their efforts, marks the lead model Advisor would skip and adds the pick', () => {
+  const advisor = mod('omd_advisor', { settings: { route: '' }, settings_schema: { properties: {
+    route: { type: 'string', title: 'Advisor model', choices: 'routes', enum: [] }, skip_same_model: { type: 'boolean', default: true } } } });
+  const models = [
+    { model: 'gpt-lead', display_name: 'Lead', efforts: ['low', 'medium'], default_effort: 'medium', context_window: 258_400 },
+    { model: 'bad model', display_name: 'Bad', efforts: ['low'], default_effort: 'low', context_window: 1 },
+    { model: 'gpt-noeffort', display_name: 'None', efforts: [], default_effort: 'low', context_window: 1 },
+    { model: 'gpt-other', display_name: 'Other', efforts: ['high', 'xhigh'], default_effort: 'xhigh', context_window: 475_000 }];
+  const answers = { packages: [advisor],
+    'routes.models': args => { assert.deepEqual(args, { mod: answers.target ?? 'omd_advisor' }); return models; },
+    'session.info': () => ({ model: 'gpt-lead', provider: 'openai' }) };
+  const opened = invoke('omd_advisor', { packages: [advisor] });
+  assert.deepEqual(opened.panels[0].items.filter(item => /^(choose|route):/.test(item.id)).map(item => item.id), ['choose:route', 'route:route']);
+  assert.match(opened.panels[0].items.find(item => item.id === 'route:route').description, /Advisor skips it while skip_same_model is on/);
+  const choosing = invoke('mod user:omd_advisor choose:route', { ...answers, ui_state: opened.ui });
+  const panel = choosing.panels[0];
+  assert.deepEqual(panel.items.map(item => [item.id, item.label]), [
+    ['pick:route:gpt-lead:low', 'Lead · low'], ['pick:route:gpt-lead:medium', 'Lead · medium (default)'],
+    ['pick:route:gpt-other:high', 'Other · high'], ['pick:route:gpt-other:xhigh', 'Other · xhigh (default)'], ['cancel', 'Back']]);
+  assert.match(panel.subtitle, /Advisor skips while it would run on the lead's model \(skip_same_model is on\), so pick a model other than gpt-lead/);
+  assert.equal(panel.items[0].description, "258K context; the lead's model: Advisor would skip");
+  assert.equal(panel.items[2].description, '475K context');
+  let written;
+  invoke('mod user:omd_advisor pick:route:gpt-other:high', { packages: [advisor], ui_state: choosing.ui,
+    'routes.add': args => { assert.deepEqual(args, { mod: 'omd_advisor', model: 'gpt-other', effort: 'high' }); return { route: 'plan-gpt-other-omd_advisor' }; },
+    'settings.write': args => { written = args; return {}; } });
+  assert.deepEqual(written, { id: 'omd_advisor', values: { route: 'plan-gpt-other-omd_advisor' } });
+  const refused = invoke('mod user:omd_advisor pick:route:gpt-other:high', { packages: [advisor], ui_state: choosing.ui,
+    'routes.add': () => { throw new Error('routes_add_effort_unsupported'); } });
+  assert.match(refused.panels[0].subtitle, /No helper model was added \(routes_add_effort_unsupported\)/);
+  assert.equal(refused.ui.choosing, null);
+  const back = invoke('mod user:omd_advisor cancel', { packages: [advisor], ui_state: choosing.ui });
+  assert.ok(back.panels[0].items.some(item => item.id === 'choose:route'));
+  const quiet = mod('omd_quiet', { settings: { route: '' }, settings_schema: { properties: { route: { type: 'string', choices: 'routes' } } } });
+  answers.target = 'omd_quiet';
+  const plain = invoke('mod user:omd_quiet choose:route', { ...answers, packages: [quiet] });
+  assert.doesNotMatch(plain.panels[0].subtitle, /skip/);
+  assert.equal(plain.panels[0].items[0].description, "258K context; the lead's model");
+  const empty = invoke('mod user:omd_quiet choose:route', { packages: [quiet], 'routes.models': () => [] });
+  assert.match(empty.panels[0].subtitle, /No ChatGPT models are available/);
+  const unsigned = invoke('mod user:omd_quiet choose:route', { packages: [quiet], 'routes.models': () => { throw new Error('routes_add_needs_chatgpt: sign in'); } });
+  assert.match(unsigned.panels[0].subtitle, /The model list is unavailable \(routes_add_needs_chatgpt: sign in\)/);
+  assert.ok(!operations(unsigned).includes('app.request'));
+});
+
 test('the list groups mods by state, searches their commands and reopens where it was closed', () => {
   const packages = [logo, mod('omd_usage', { enabled: false, effective: false }), mod('omd_preview', { failed: 'activation failed' })];
   const index = () => ({ packages: [{ id: 'omd_frecency', description: 'Ranks files', latest: '1.0.0', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });

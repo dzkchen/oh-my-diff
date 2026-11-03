@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "api": "1.0.0",
   "state_version": 1,
-  "description": "One transcript line per agent tool call with its name, short arguments and result; open a row for the full native drawing",
+  "description": "Compact command groups and one-line tool results; expand a row for the full native output",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_tool_lines"},
-  "capabilities": ["terminal"],
-  "compatibility": {"required_features": ["render_hooks_v1"]}
+  "capabilities": ["terminal", "builtins"],
+  "compatibility": {"required_features": ["render_hooks_v1", "builtins_v1", "transcript_exec_groups_v1"]}
 }

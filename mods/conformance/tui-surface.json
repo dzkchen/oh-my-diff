@@ -104,6 +104,7 @@
     "prompts.status",
     "prompts.submit",
     "routes.add",
+    "routes.models",
     "routes.write",
     "session.info",
     "sessions.ports",

@@ -24,7 +24,7 @@ change back with `build.py sync`.
 
 ## Set up a scratch tree
 
-`NAME` is any label for your tree:
+`NAME` is a label made of letters, numbers, hyphens or underscores, starting with a letter or number:
 
 ```sh
 python3 .github/scripts/build.py setup NAME
@@ -32,6 +32,10 @@ python3 .github/scripts/build.py setup NAME
 
 `setup` prints the patch result and then the tree's path, `/private/tmp/omd-bNAME/codex`. Running it again on an
 existing tree only prints the path.
+
+Reuse the same name for repeated edits: Cargo keeps that tree's incremental output. `setup` does not refresh an
+existing tree after you switch branches, change the upstream pin or pull a new patch. Finish and `sync` your native
+edits first, then use a new name for different sources. Keep each tree and target exclusive to one active build.
 
 - The build target is `/private/tmp/omd-bNAME/target`. Set `OMD_WORK_ROOT` to use another directory instead of
   `/private/tmp`.
@@ -56,9 +60,21 @@ cached file that matches. It does nothing when `V8_FROM_SOURCE` or `RUSTY_V8_ARC
 
 ## Build and test with cargo
 
-Always run cargo through `build.py cargo`. It sets the target, and for `test` and `nextest` it first builds
-`omd-runner` and links it beside the test binaries, where hosts look for it. `LOG` is a log file path: the full
-output goes there and a summary goes to the terminal.
+After `setup`, check one crate without compiling tests or build the runnable debug app:
+
+```sh
+mise run dev:check NAME codex-tui
+mise run dev:build NAME
+```
+
+`dev:check` takes one or more Cargo package names and does not compile tests. `dev:build` requires V8 and builds
+`codex`, `omd-runner` and `codex-code-mode-host` together in `/private/tmp/omd-bNAME/target/debug`.
+Both tasks print the log path, a summary and the exit status. Logs are `logs/dev-check.log` and
+`logs/dev-build.log` under the scratch tree and are overwritten on each run.
+
+For other Cargo commands, use `build.py cargo`. It sets the same target and environment. For `test` and `nextest`
+it first builds `omd-runner` and links it beside the test binaries, where hosts look for it. `LOG` is a log file
+path: the full output goes there and a summary goes to the terminal.
 
 ```sh
 python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER
@@ -71,25 +87,52 @@ beside itself. `mise run mods:test` then finds them without `OMD_TEST_RUNNER` or
 python3 .github/scripts/build.py cargo NAME LOG build --locked -p codex-cli -p codex-omd-extension -p codex-omd-runner --bins
 ```
 
+Incremental compilation is the default for repeated edits in one tree. To try sccache across targets, use
+`OMD_SCCACHE=1` and a common `SCCACHE_DIR`:
+
+```sh
+OMD_SCCACHE=1 SCCACHE_DIR="$HOME/.cache/omd-sccache" mise run dev:check NAME codex-tui
+mise exec -- sccache --show-stats
+```
+
+With sccache, `build.py` defaults `CARGO_INCREMENTAL` to `0` and rejects explicit incremental compilation or
+conflicting compiler wrappers. Leave these settings to `build.py` rather than overriding them through Cargo config.
+Cross-tree cache hits depend on source paths, compiler versions, flags and features; measure hits and elapsed time
+for your crate set before adopting it. To return to the default, unset `OMD_SCCACHE` and any explicit `RUSTC_WRAPPER`.
+
+## Build storage
+
+```sh
+mise run dev:storage
+mise run dev:clean NAME OTHER_NAME
+```
+
+`dev:storage` lists target paths and disk usage in MiB. Stop builds and tests before running `dev:clean`, which
+deletes only the named targets and refuses symlinked trees or targets. Sources, logs, artifacts and download
+caches are preserved; the next build starts with an empty target.
+
 ## Check your change
 
-Run these in the scratch tree:
+Start narrow, then broaden according to the change. Mods, plugins, SDK, docs and Python-only changes do not need
+a Rust build; use the checks in [CONTRIBUTING.md](../../CONTRIBUTING.md#check-your-change). For Rust, run these
+commands from the repository root; the wrapper runs Cargo in your scratch tree:
 
-1. The regression test for your fix.
+1. `mise run dev:check NAME CRATE`, then the regression test for your fix.
 2. The crate's tests:
 
    ```sh
    python3 .github/scripts/build.py cargo NAME LOG nextest run --locked -p CRATE
    ```
 
-3. Clippy and Rustfmt:
+3. Before integration, Clippy and Rustfmt for the touched crates:
 
    ```sh
    python3 .github/scripts/build.py cargo NAME LOG clippy --locked -p CRATE --tests
    python3 .github/scripts/build.py cargo NAME LOG fmt -p CRATE -- --check
    ```
 
-4. The compile check a pull request runs, `cargo check --tests` of the crates it compiles. Its log is
+4. For cross-crate changes or before integration, the compile check a pull request runs, `cargo check --tests`
+   of the crates it compiles. Its log is
    `/private/tmp/omd-bNAME/logs/check.log`:
 
    ```sh
@@ -102,6 +145,9 @@ Run these in the scratch tree:
    ```sh
    mise run native:ownership
    ```
+
+Use broader tests for changes to shared host contracts, dependency features, the upstream pin or build tooling.
+The full native suite runs nightly; it is not part of every edit/build cycle.
 
 ## Write the change back
 
@@ -154,6 +200,11 @@ design.
 | `setup NAME` | Creates the scratch tree at the pin, tags the normalized source as `normalized<version>` and applies the patch |
 | `v8 NAME` | Downloads and verifies the V8 prebuilt |
 | `cargo NAME LOG ARGS` | Runs cargo in the tree, full log to `LOG` |
+| `cargo --skip-runner NAME LOG ARGS` | Skips runner preparation for host-independent tests |
+| `dev-check NAME CRATE [CRATE...]` | Checks selected crates without test targets; `logs/dev-check.log` |
+| `dev-build NAME` | Builds the debug app, runner and code-mode host; `logs/dev-build.log` |
+| `storage` | Lists each scratch tree's target disk usage |
+| `clean NAME [NAME...]` | Deletes only the selected targets; preserves sources and logs |
 | `check NAME` | Runs `cargo check --tests` of the crates a pull request compiles |
 | `sync NAME` | Writes the patch, manifest, copies and crate notices back and verifies the replay |
 | `locks` | Regenerates the source locks |

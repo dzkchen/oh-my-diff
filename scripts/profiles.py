@@ -31,6 +31,8 @@ PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
+CURSOR_DATA = Path("/private/tmp") / f"omd-cursor-{os.getuid()}"
+MODS_MARKER = ".mods-applying.json"
 ROUTES = {"profiles": "omd_profiles"}
 CODEX_VALUE_OPTIONS = {"-c", "--config", "--enable", "--disable", "-m", "--model", "--local-provider", "-p", "--profile",
                        "-s", "--sandbox", "-a", "--ask-for-approval", "-C", "--cd", "--add-dir", "--remote",
@@ -113,6 +115,17 @@ def deduplicate(root):
                 share(objects, path)
 
 
+def replace_tree(source, target):
+    staged, retired = target.with_name(f".{target.name}.new"), target.with_name(f".{target.name}.old")
+    for leftover in (staged, retired):
+        shutil.rmtree(leftover, ignore_errors=True)
+    shutil.copytree(source, staged)
+    if target.is_dir():
+        target.rename(retired)
+    staged.rename(target)
+    shutil.rmtree(retired, ignore_errors=True)
+
+
 def sync_sources(manager, store, origin, packages):
     selections = {item.get("path"): item for item in invoke(manager, "selection-status", store)["selections"]}
     changed = []
@@ -129,14 +142,7 @@ def sync_sources(manager, store, origin, packages):
         if not pending.exists():
             support.atomic_text(pending, json.dumps({"selected": bool(selection.get("selected"))}))
         if not current:
-            staged, retired = target.with_name(f".{identifier}.new"), target.with_name(f".{identifier}.old")
-            for leftover in (staged, retired):
-                shutil.rmtree(leftover, ignore_errors=True)
-            shutil.copytree(origin / identifier, staged)
-            if target.is_dir():
-                target.rename(retired)
-            staged.rename(target)
-            shutil.rmtree(retired, ignore_errors=True)
+            replace_tree(origin / identifier, target)
         invoke(manager, "trust-all", store, json.dumps([{"path": str(target), "sha256": package["sha256"],
                                                          "capabilities": package["capabilities"]}]))
         if json.loads(pending.read_text())["selected"]:
@@ -160,6 +166,102 @@ def reconcile(prefix, bin_dir):
     record = load(prefix)
     _, manager = check(record, bin_dir)
     return {"restored": sync_sources(manager, Path(record["store"]), prefix / "sources", record["packages"])}
+
+
+def apply_mods(prefix, bin_dir, bundle, applied, backup):
+    record = load(prefix)
+    lock_path, marker = prefix / "management/runtime/mods.lock.json", prefix / MODS_MARKER
+    resuming = json.loads(marker.read_text()) if marker.is_file() else None
+    if resuming and support.digest(lock_path) == resuming["lock"]:
+        record["management"]["files"]["runtime/mods.lock.json"] = resuming["lock"]
+        write(prefix, record)
+    _, manager = check(record, bin_dir)
+    for leftover in (prefix / ".mods-previous.new", *(prefix / "sources").glob(".*")):
+        shutil.rmtree(leftover, ignore_errors=True)
+    lock = json.loads(lock_path.read_text())
+    offered = json.loads((bundle / "mods.lock.json").read_text())
+    if offered.get("mod_api") != lock["mod_api"]:
+        raise ValueError(f"the mod bundle is for mod API {offered.get('mod_api')}; this installation hosts {lock['mod_api']}")
+    forced = set(resuming["ids"]) if resuming else set()
+    changed = {identifier: package for identifier, package in offered["packages"].items()
+               if identifier in lock["packages"] and (identifier in forced
+                                                      or package["package_sha256"] != lock["packages"][identifier]["package_sha256"])}
+    if not changed:
+        marker.unlink(missing_ok=True)
+        return {"updated": []}
+    for identifier, package in changed.items():
+        source = (bundle / "sources" / identifier).resolve()
+        files = {path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file()}
+        if files != set(package["files"]) or any(support.digest(source / name) != digest for name, digest in package["files"].items()):
+            raise ValueError(f"mod bundle files differ from its lock: {identifier}")
+        verify(manager, source, package["package_sha256"])
+    if backup:
+        staged = prefix / ".mods-previous.new"
+        for identifier in changed:
+            shutil.copytree(prefix / "sources" / identifier, staged / "sources" / identifier)
+        staged.mkdir(exist_ok=True)
+        support.atomic_text(staged / "mods.lock.json", json.dumps({
+            "mod_api": lock["mod_api"], "applied": record.get("mods_bundle"),
+            "packages": {identifier: lock["packages"][identifier] for identifier in changed}}, indent=2, sort_keys=True) + "\n")
+        shutil.rmtree(prefix / "mods-previous", ignore_errors=True)
+        staged.rename(prefix / "mods-previous")
+    lock["packages"].update(changed)
+    text = json.dumps(lock, indent=2, sort_keys=True) + "\n"
+    identifiers = sorted(changed)
+    support.atomic_text(marker, json.dumps({"lock": hashlib.sha256(text.encode()).hexdigest(), "ids": identifiers}))
+    for identifier in changed:
+        replace_tree(bundle / "sources" / identifier, prefix / "sources" / identifier)
+    support.atomic_text(lock_path, text)
+    record["management"]["files"]["runtime/mods.lock.json"] = support.digest(lock_path)
+    installed = {}
+    for identifier in identifiers:
+        package = lock["packages"][identifier]
+        record["sources"][identifier] = package["files"]
+        if identifier in record["packages"]:
+            installed[identifier] = record["packages"][identifier] = {
+                "version": package["version"], "sha256": package["package_sha256"], "files": package["files"],
+                "capabilities": package["capabilities"]}
+    if applied:
+        record["mods_bundle"] = applied
+    else:
+        record.pop("mods_bundle", None)
+    write(prefix, record)
+    store = Path(record["store"])
+    index = json.loads((store / "package-index.json").read_text())
+    managed = prefix.name == "prefix" and prefix.parent.parent.name == "releases"
+    for identifier in set(identifiers) & index["packages"].keys():
+        entry, package = index["packages"][identifier][0], lock["packages"][identifier]
+        if entry["source"]["kind"] == "local":
+            shelf = (shelve(prefix / "sources" / identifier, prefix.parents[2] / "catalog" / identifier / package["package_sha256"])
+                     if managed else prefix / "sources" / identifier)
+            index["packages"][identifier] = [entry | {"version": package["version"], "integrity": package["package_sha256"],
+                                                      "source": {"kind": "local", "path": str(shelf)}}]
+    support.atomic_text(store / "package-index.json", json.dumps(index, indent=2) + "\n")
+    sync_sources(manager, store, prefix / "sources", installed)
+    marker.unlink()
+    return {"updated": sorted(installed)}
+
+
+def rollback_mods(prefix, bin_dir):
+    backup = prefix / "mods-previous"
+    if not backup.is_dir():
+        raise ValueError("no first-party mod update to roll back")
+    result = apply_mods(prefix, bin_dir, backup, json.loads((backup / "mods.lock.json").read_text()).get("applied"), False)
+    retired = prefix / ".mods-previous.new"
+    backup.rename(retired)
+    shutil.rmtree(retired)
+    return result
+
+
+def update_mods(prefix, bin_dir, bundle, serial):
+    if (prefix / MODS_MARKER).is_file():
+        rollback_mods(prefix, bin_dir)
+    try:
+        return apply_mods(prefix, bin_dir, bundle, {"serial": serial}, True)
+    except BaseException:
+        if (prefix / MODS_MARKER).is_file():
+            rollback_mods(prefix, bin_dir)
+        raise
 
 
 def paths(prefix, bin_dir, store):
@@ -241,7 +343,7 @@ def omd_help(record, tool):
     rows.append(("Oh My Diff", [*([("omd update", "Install the newest release"),
                                    ("omd update status", "Check the install and update settings"),
                                    ("omd update rollback", "Undo the last update")] if record.get("update") else []),
-                                ("omd uninstall", "Remove OMD; your Codex settings and sessions stay"),
+                                ("omd uninstall [--purge]", "Remove OMD; --purge removes its mod data and sign-ins too; Codex data stays"),
                                 ("omd help --all", "Every command and flag")]))
     lines = ["", "${b}Oh My Diff${r}  Codex CLI, extended with mods", "",
              "Run ${b}codex${r} as usual, and type ${b}/mods${r} inside it to turn mods on or off."]
@@ -527,7 +629,8 @@ def route(prefix, bin_dir, name, args):
         raise ValueError(f"unknown {name} model {wanted}; choose one of {', '.join(item['slug'] for item in models['models'])}")
     launcher = bin_dir / "codex"
     os.execv(launcher, [str(launcher), "-c", f"model_provider={json.dumps(identifier)}", "-c", f"model={json.dumps(model)}",
-                        "-c", f"model_catalog_json={json.dumps(provider['catalog'])}", *args.codex])
+                        "-c", f"model_catalog_json={json.dumps(provider['catalog'])}",
+                        *(["-c", 'web_search="disabled"'] if name == "profiles" else []), *args.codex])
 
 
 def session_options(codex):
@@ -888,10 +991,14 @@ def signed_manifest(prefix):
     return manifest
 
 
-def broker(prefix, bin_dir, action, also=()):
+def broker(prefix, bin_dir, action, also=(), purge=False):
+    if purge and action != "uninstall":
+        raise ValueError("--purge is only valid with broker uninstall")
     record = load(prefix)
     _, manager = check(record, bin_dir)
     arguments = [action]
+    if purge:
+        arguments.append("--purge")
     if action in ("install", "pin"):
         prefixes = [prefix, *(support.resolved(other) for other in also)]
         pins = set().union(*(pinned_binaries(load(item)) for item in prefixes))
@@ -923,14 +1030,68 @@ def administrator_policy(prefix, bin_dir, action, source=None):
     return result
 
 
-def uninstall(prefix, bin_dir, keep_broker=False):
+def purge_accounts(record):
+    stores = [Path(record["store"])]
+    if update := record.get("update"):
+        root = support.resolved(update["root"])
+        if support.resolved(record["prefix"]).parents[2] != root:
+            raise ValueError("managed installation root changed")
+        directory = root / "stores"
+        stores = list(directory.iterdir()) if directory.is_dir() and not directory.is_symlink() else []
+    accounts = []
+    for store in stores:
+        directory = store / "routes/claude/accounts"
+        if not directory.is_dir() or directory.resolve() != directory:
+            continue
+        accounts.extend(path for path in sorted(directory.iterdir()) if path.is_dir() and not path.is_symlink()
+                        and re.fullmatch(r"[a-z][a-z0-9_-]{0,23}", path.name) and path.name not in ("default", "api"))
+    claude = shutil.which("claude") if accounts else None
+    if accounts and not claude:
+        raise ValueError("Claude CLI is required to sign out OMD's isolated accounts; install claude and retry --purge")
+    env = {name: value for name, value in os.environ.items() if not name.startswith(("ANTHROPIC_", "CLAUDE_"))}
+    for account in accounts:
+        try:
+            result = subprocess.run([claude, "auth", "logout"], env={**env, "CLAUDE_CONFIG_DIR": str(account)},
+                                    capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ValueError(f"Could not sign out OMD Claude account {account.name}; its store is kept for retry") from error
+        if result.returncode:
+            raise ValueError(f"Could not sign out OMD Claude account {account.name}; its store is kept for retry")
+    if CURSOR_DATA.is_symlink():
+        CURSOR_DATA.unlink()
+    elif CURSOR_DATA.exists():
+        info = CURSOR_DATA.stat()
+        if not CURSOR_DATA.is_dir() or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ValueError(f"Cursor's OMD data directory is not private to this user: {CURSOR_DATA}")
+        shutil.rmtree(CURSOR_DATA)
+    return {"signed_out_claude_accounts": len(accounts)}
+
+
+def uninstall(prefix, bin_dir, keep_broker=False, purge=False):
     journal = prefix / UNINSTALL_JOURNAL
     resuming = journal.is_file()
     record = json.loads(journal.read_text()) if resuming else load(prefix)
     if not resuming:
         check(record, bin_dir)
+    purge = purge or record.get("purge_mod_store", False)
     if authority_broker.deployed() and not keep_broker:
-        raise ValueError("the authority broker is deployed; run omd-package broker uninstall first")
+        raise ValueError(f"the authority broker is deployed; run omd-package broker uninstall{' --purge' if purge else ''} first")
+    policies = [path for path in (authority_broker.POLICY, authority_broker.POLICY.with_name("policy.json.previous"))
+                if path.exists() or path.is_symlink()]
+    if purge and policies:
+        raise ValueError("administrator policy files remain; run omd-package broker uninstall --purge first: "
+                         + ", ".join(map(str, policies)))
+    if purge:
+        if keep_broker:
+            raise ValueError("--purge cannot keep a broker that may still hold OMD sign-ins; remove the broker first")
+        if record.get("update"):
+            raise ValueError("use omd uninstall --purge to remove all managed installations and their stores")
+        _, _, store = paths(prefix, bin_dir, record["store"])
+        shared = [support.resolved(record["shared_state"][key]) for key in ("codex_home", "codex_sqlite_home")
+                  if record["shared_state"].get(key)]
+        if any(support.within(store, state) or support.within(state, store) for state in shared):
+            raise ValueError("mod store must be separate from shared Codex state")
+        record = {**record, "purge_mod_store": True}
     managed = {prefix / "install.json", journal, Path(record["binary"]["installed_path"]),
                Path(record["code_mode_host"]["installed_path"]), Path(record["broker"]["installed_path"]),
                Path(record["runner"]["installed_path"]),
@@ -940,6 +1101,9 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     managed.update(prefix / "management" / name for name in record["management"]["files"])
     managed.update(prefix / "sources" / identifier / name
                    for identifier, files in record["sources"].items() for name in files)
+    managed.update(path for root in (prefix / "mods-previous", prefix / ".mods-previous.new", *(prefix / "sources").glob(".*"))
+                   for path in root.rglob("*") if path.is_file())
+    managed.update(path for path in (prefix / MODS_MARKER,) if path.is_file())
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])
@@ -954,6 +1118,8 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     if not found:
         raise ValueError("no upstream codex remains on PATH; refusing to remove the launcher")
     support.binary_identity(found)
+    if purge:
+        purge_accounts(record)
     plugins = remove_plugins(record, prefix)
     record = {**record, "upstream": str(support.resolved(found))}
     support.atomic_text(journal, json.dumps(record))
@@ -988,6 +1154,12 @@ def removed(prefix, bin_dir, record):
     for name, expected in launchers(record).items():
         if ours(bin_dir / name, expected):
             (bin_dir / name).unlink()
+    if record.get("purge_mod_store"):
+        store = Path(record["store"])
+        if store.is_symlink():
+            store.unlink()
+        elif store.exists():
+            shutil.rmtree(store)
     for path in prefix.iterdir():
         if path.is_dir() and not path.is_symlink():
             shutil.rmtree(path)
@@ -995,8 +1167,11 @@ def removed(prefix, bin_dir, record):
             path.unlink()
     journal.unlink()
     prefix.rmdir()
-    return {"uninstalled": True, "preserved_mod_store": record["store"], "shared_state": record["shared_state"],
-            "upstream": record["upstream"]}
+    return {"uninstalled": True, "purged_mod_store" if record.get("purge_mod_store") else "preserved_mod_store": record["store"],
+            "shared_state": record["shared_state"], "upstream": record["upstream"],
+            "preserved_administrator_policy": [str(path) for path in
+                (authority_broker.POLICY, authority_broker.POLICY.with_name("policy.json.previous")) if path.exists() or path.is_symlink()],
+            **({} if record.get("purge_mod_store") else {"purge_option": "omd uninstall --purge removes OMD mod data and saved sign-ins too"})}
 
 
 def main():
@@ -1017,6 +1192,11 @@ def main():
     install_parser.add_argument("--attach-store", action="store_true")
     install_parser.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
     commands.add_parser("reconcile", help="restore this installation's first-party mod sources in its store (used by install.sh)")
+    commands.add_parser("purge-accounts", help="sign out isolated accounts before uninstall (used by install.sh)")
+    mods_parser = commands.add_parser("mods-update", help="apply a verified first-party mod bundle (used by install.sh)")
+    mods_parser.add_argument("--bundle", type=Path, required=True)
+    mods_parser.add_argument("--serial", type=int, required=True)
+    commands.add_parser("mods-rollback", help="undo the last first-party mod bundle (used by install.sh)")
     status_parser = commands.add_parser("status", help="show the installed profile and its mods")
     status_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
     activate_parser = commands.add_parser("activate", help="switch between OMD Core, OMD+ and upstream-style direct mode")
@@ -1045,12 +1225,14 @@ def main():
     broker_parser.add_argument("action", choices=("install", "pin", "status", "reset", "uninstall"))
     broker_parser.add_argument("--also", type=Path, action="append", default=[],
                                help="also pin the binaries of another installation prefix")
+    broker_parser.add_argument("--purge", action="store_true", help="with broker uninstall, also remove the administrator policy and its backup")
     policy_parser = commands.add_parser("policy", help="install, roll back, remove or explain the administrator policy file (sudo)")
     policy_parser.add_argument("action", choices=("install", "rollback", "remove", "explain"))
     policy_parser.add_argument("file", type=Path, nargs="?")
     uninstall_parser = commands.add_parser("uninstall", help="remove this installation and its launchers")
     uninstall_parser.add_argument("--keep-broker", action="store_true",
                                   help="remove this installation while another one keeps using the authority broker")
+    uninstall_parser.add_argument("--purge", action="store_true", help="also remove this installation's mod data and saved sign-ins; Codex data stays")
     args = parser.parse_args()
     # The launcher runs from its management directory; commands act on the caller's directory.
     os.chdir(os.environ.pop("OMD_PACKAGE_CWD", "."))
@@ -1064,6 +1246,14 @@ def main():
             return
     elif args.command == "reconcile":
         result = reconcile(prefix, bin_dir)
+    elif args.command == "purge-accounts":
+        record = load(prefix)
+        check(record, bin_dir)
+        result = purge_accounts(record)
+    elif args.command == "mods-update":
+        result = update_mods(prefix, bin_dir, args.bundle.resolve(), args.serial)
+    elif args.command == "mods-rollback":
+        result = rollback_mods(prefix, bin_dir)
     elif args.command == "activate":
         result = activate(prefix, bin_dir, args.selection)
     elif args.command == "mod":
@@ -1077,11 +1267,11 @@ def main():
     elif args.command == "plugins":
         result = register_plugins(prefix, bin_dir)
     elif args.command == "broker":
-        result = broker(prefix, bin_dir, args.action, args.also)
+        result = broker(prefix, bin_dir, args.action, args.also, args.purge)
     elif args.command == "policy":
         result = administrator_policy(prefix, bin_dir, args.action, args.file)
     else:
-        result = uninstall(prefix, bin_dir, args.keep_broker)
+        result = uninstall(prefix, bin_dir, args.keep_broker, args.purge)
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

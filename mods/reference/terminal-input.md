@@ -145,8 +145,15 @@ position, never a backlog. Views with no pointer components add no pointer work.
 
 `component_event` reports interaction with a mod's components and goes only to the component's owner. Two experimental
 events report native state: `view` (`{phase, view, view_id, dropped?}`) when a native bottom-pane view or overlay opens
-or closes, and `focus` (`{focused, dropped?}`) when the terminal window gains or loses focus. Each event names its
-`component` and `kind`:
+or closes, and `focus` (`{focused, dropped?}`) when the terminal window gains or loses focus.
+
+With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
+`view {phase: 'opened', view: 'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent.
+It fires once per thread change, not on each redraw. Delivery is asynchronous and queued events for an obsolete
+thread context are dropped. Use it to initialize thread-scoped UI state; `start` and `resume` still describe the lead
+thread's lifecycle.
+
+Each `component_event` names its `component` and `kind`:
 
 | Kind | Reports | Fields |
 | --- | --- | --- |

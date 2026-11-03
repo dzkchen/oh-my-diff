@@ -173,6 +173,10 @@ collaboration modes, native surfaces and Codex features. Call it during activati
 boundary and lasts until the mod is disabled, unloaded or fails. Controls apply to the directory OMD was launched in and
 cover every thread of that session, including threads in its worktrees.
 
+- `group_exec: true` (`transcript_exec_groups_v1`) groups adjacent agent shell commands, including commands
+  beyond reads and searches. A render hook receives the group as `tool_call` with `kind: 'explore'`; expanding
+  the group opens its full native output. User shell commands remain separate. Each command row keeps the
+  grouping setting it started with; disabling it stops grouping new commands and leaves existing groups intact.
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.

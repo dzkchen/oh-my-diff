@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_workspace",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "api": "1.0.0",
   "state_version": 1,
   "description": "Arrange the chat, a shell, Git changes, your own terminals and other mods' panels freely: presets, moves, drag, focus keys and a panel registry",
@@ -48,7 +48,14 @@
       "key_panel_tab_next": {"type": "string", "default": "}", "title": "Key: next tab inside a panel", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
       "key_grow": {"type": "string", "default": "=", "title": "Key: grow the panels", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
       "key_shrink": {"type": "string", "default": "-", "title": "Key: shrink the panels", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
-      "key_focus_shell": {"type": "string", "default": "Enter", "title": "Key: type in a running terminal", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"}
+      "key_focus_shell": {"type": "string", "default": "Enter", "title": "Key: type in a running terminal", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_toggle": {"type": "string", "default": "F6", "title": "Key: show or hide the panels", "description": "Works from the prompt too, so F2 to F12, or Ctrl+ or Alt+ with a lowercase letter or digit; a key Codex already uses (such as F2 or Ctrl+w) does nothing; <disabled> turns it off"},
+      "key_arrange": {"type": "string", "default": "m", "title": "Key: arrange the focused panel", "description": "Starts and ends arranging, where the arrange keys move the panel and the grow and shrink keys resize it; <disabled> turns it off"},
+      "key_arrange_tab": {"type": "string", "default": "T", "title": "Key: put the arranged panel in tabs", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_arrange_left": {"type": "string", "default": "Shift+Left", "title": "Key: move the arranged panel left", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_arrange_right": {"type": "string", "default": "Shift+Right", "title": "Key: move the arranged panel right", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_arrange_up": {"type": "string", "default": "Shift+Up", "title": "Key: move the arranged panel up", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"},
+      "key_arrange_down": {"type": "string", "default": "Shift+Down", "title": "Key: move the arranged panel down", "description": "A key such as h, Left, F2 or Ctrl+x; <disabled> turns it off"}
     },
     "additionalProperties": false
   }

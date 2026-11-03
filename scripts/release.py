@@ -278,8 +278,9 @@ def refresh(version, branch):
 def rollback(version, dry_run=False):
     tag = f"v{version}"
     listed = json.loads(run("gh", "release", "list", "--repo", REPOSITORY, "--exclude-drafts",
-                            "--exclude-pre-releases", "--limit", "2", "--json", "tagName"))
-    previous = next((item["tagName"] for item in listed if item["tagName"] != tag), None)
+                            "--exclude-pre-releases", "--limit", "50", "--json", "tagName"))
+    previous = next((item["tagName"] for item in listed
+                     if item["tagName"] != tag and re.fullmatch(r"v\d+\.\d+\.\d+", item["tagName"])), None)
     edits = [("gh", "release", "edit", tag, "--repo", REPOSITORY, "--draft=true")]
     if previous and "-" not in version:
         edits.append(("gh", "release", "edit", previous, "--repo", REPOSITORY, "--latest"))

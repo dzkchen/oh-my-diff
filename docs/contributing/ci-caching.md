@@ -1,35 +1,50 @@
 # CI caching
 
-How the GitHub workflows cache Cargo downloads, the V8 prebuilt and compiled crates, for maintainers changing the
-workflows. For what each workflow runs, see [How CI checks a change](ci.md).
+How the GitHub workflows cache Cargo downloads, the V8 prebuilt and compiled crates. For the checks themselves,
+see [How CI checks a change](ci.md).
 
 ## Download caches
 
-PR, nightly and release jobs use the same Cargo download-cache and V8 prebuilt-cache keys.
+PR, main-branch, nightly and release jobs share Cargo download and V8 cache keys.
 
-- PR runs only restore. A patch edit falls back to the newest cache for the same platform and upstream pin.
-- Only nightly and release runs save, because a cache saved by a PR is visible to that PR alone.
-- PR checks set `OMD_WORK_ROOT` to the path validation uses, so the V8 cache is restored where validation saved it.
-- `build.py v8` reuses a cached V8 file only when it matches the pinned checksum, and retries a failed download.
-- PR jobs never save the mise cache (`cache_save: false`).
+- Cargo downloads are keyed by OS, architecture and upstream pin, independently of the patch. Cargo fetches any
+  missing patched dependencies itself. Restore also accepts earlier patch-specific snapshots for the same pin.
+  This avoids another multi-gigabyte download snapshot for every patch edit without discarding existing downloads.
+- V8 keys also include the patch manifest, falling back to the same platform and upstream pin. `build.py v8`
+  verifies cached files against the pinned checksum before reuse.
+- Only nightly and release jobs save these download caches; PR and main-branch checks restore them.
+- PR and main-branch jobs never save the mise cache (`cache_save: false`).
 
 ## Compile cache
 
-Nightly jobs set `OMD_SCCACHE=1`, which makes `build.py` set `RUSTC_WRAPPER=sccache` (pinned in `mise.toml`) over a
-local 2 GB `SCCACHE_DIR` (3 GB for `core`, which builds `codex-core` in two feature sets), not the GitHub backend.
-Each job restores that directory with `actions/cache/restore` and, unless that was an exact hit, saves it as
-`sccache-JOB-OS-HASH`, where `HASH` covers `upstream.lock.json` and `runtime/patches/manifest.json`. A failed run still
-saves what it compiled; a cancelled one doesn't. One cache per job and source version keeps the nightly inside the
-10 GB Actions cache budget. Restore falls back to the newest cache for the job. `sccache --show-stats` ends every job.
+PR native checks, main-branch native checks, nightly jobs and release test/lint jobs use sccache 0.19.0 from
+`mise.toml`. This version
+[caches metadata-only Rust compilation](https://github.com/mozilla/sccache/blob/v0.19.0/src/compiler/rust.rs),
+including library checks under `cargo check`. Setting `OMD_SCCACHE=1` makes `build.py` set `RUSTC_WRAPPER=sccache`.
+It defaults `CARGO_INCREMENTAL` to `0` and refuses an explicit incremental setting of `1` or a conflicting compiler
+wrapper. Linked binaries and procedural macros still require compilation.
 
-PR `native` restores `sccache-lint-*`, which the nightly `lint` job fills with the same check. For the keys to match,
-PR `native` uses the nightly work root and tree name (`/Users/runner/omd/omd-bnightly`), the same `CARGO_*` values
-and the same `build.py check` package set, because a cache key includes the compile directory and every `CARGO_*`
-variable.
+Native checks on every push to `main` save the shared lint cache, making it available to new PRs without waiting
+for a passing nightly. PRs also save caches for later pushes to the same PR. GitHub scopes those caches to the PR;
+other PRs and main-branch jobs cannot restore them. All existing patch replay, drift, formatting and compile checks
+still run. Newer pushes cancel superseded checks.
 
-Tagged releases leave `OMD_SCCACHE` empty and compile uncached. `scripts/build_provenance.py` accepts
-`RUSTC_WRAPPER=sccache` only for a build without `OMD_RELEASE_VERSION` and records the wrapper and its version.
-`CARGO_BUILD_JOBS` is set once in `validate.yml` and once in `pr.yml`.
+Each job uses a local `SCCACHE_DIR`, restored and saved through `actions/cache`, rather than sccache's GitHub backend.
+The lint/PR cache is capped at 1 GB, native and build at 2 GB each, and core at 3 GB. Keys include job, OS,
+architecture, upstream pin, mise and build configuration, and commit. Restore prefers the same configuration,
+then falls back to the newest cache for that job and OS; sccache validates individual compiler inputs itself.
+A commit-specific key lets new commits save added compiler output instead of freezing a patch-keyed snapshot.
+GitHub evicts older snapshots under the repository cache budget.
+
+PR native and nightly lint use the same work root and tree name (`/Users/runner/omd/omd-bnightly`), matching `CARGO_*`
+settings and the same `build.py check` package set. Both stop the sccache server before saving. PR/main checks save
+on success; nightly compile jobs also save after failed validation, but cancelled jobs do not save. Every compile
+job reports sccache hit/miss statistics.
+
+For release dry runs and tagged releases, `native`, `core` and `lint` restore compiler caches but do not save
+release-specific copies. The `build` job leaves `OMD_SCCACHE` empty and compiles the shipped binaries uncached.
+`scripts/build_provenance.py` still refuses a compiler wrapper for release artifacts; its checks are unchanged.
+Nightly artifact builds may use sccache and record its version in provenance.
 
 ## See also
 

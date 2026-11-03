@@ -50,7 +50,7 @@ Change settings in `/mods`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `extra_usage` | `true` | Keep working on paid extra usage when the plan limit is reached, if your account allows it. `false` stops as soon as a response reports extra usage, which may still be billed. |
+| `extra_usage` | `true` | Keep working on paid extra usage when the plan limit is reached, if your account allows it. `false` stops as soon as a response reports extra usage, which may still be billed. A `settings/omd_claude_cli.json` (or `.yaml`) in the mod store wins over `/mods`, as for any mod. If the mod is selected in more than one scope, every one of them must allow it, and a settings file it can't read stops at extra usage. |
 
 ## Needs and limits
 

@@ -43,6 +43,12 @@ In Directory, Add from source takes `npm:NAME[@VERSION]`, `git+URL#TAG`, an abso
 directory entry installs its newest available version. To update a mod that's already installed, use its own panel
 instead. The Install for option picks your user store or this project.
 
+A mod setting that picks a model route lists the worker routes open to that mod and the routes of connected
+providers whose model is available now. Below it, Choose a model lists the ChatGPT models on your plan with their
+reasoning efforts, and Add a helper model uses the model you're chatting with. Either asks before adding a helper route
+on your ChatGPT plan for that mod. When the mod skips runs on the lead's model (`skip_same_model`, on by default in
+Advisor), the chooser says so and marks the lead's model.
+
 On a fresh session it also shows a short welcome card.
 
 ## Settings
@@ -52,6 +58,8 @@ It has no settings.
 ## Needs and limits
 
 - Turning a mod on asks for approval and lists any new permissions.
+- Choose a model reads the ChatGPT model list (`routes.models`, under `packages`) and the conversation's model
+  (`session.info`, under `inventory`).
 - Every install is reviewed and starts off.
 - A mod's commands work at once. Its other behavior starts with your next message.
 

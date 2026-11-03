@@ -8,14 +8,14 @@ host. The support policy, platforms and terminals are in [Support](../../docs/su
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.166.0 | 1.3.0 to 1.4.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.166.0 | 1.3.0 to 1.4.2 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.164.0 | 1.2.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.163.0 | 1.0.0 to 1.1.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 
 The `host` object in [compatibility.json](compatibility.json) describes `main`: Codex 0.166.0 with the host crate
-version `1.4.1` from `runtime/omd/Cargo.toml`.
+version `1.4.2` from `runtime/omd/Cargo.toml`.
 
 On the matrix's `as_of` date, OMD didn't lag upstream. Codex 0.166.0 was the newest stable Codex release then.
 
@@ -45,14 +45,17 @@ the API version matches. Each list holds at most 32 features.
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
 | `routes.write` | `route_write_v1` |
 | `routes.add` without `mod` | `routes_add_self_v1` |
+| `routes.add` with `model` or `effort`, `routes.models` | `routes_add_model_v1` |
 | `api.settingsFile` | `settings_file_v1` |
 | `key_contexts`, `region` and `help` key actions, `keys: 'all'`, layout leaf `style.focus` | `terminal_focus_v1` |
 | Layout leaf `title` | `terminal_layout_title_v1` |
 | The `dock` `component_event` | `terminal_layout_dock_v1` |
+| `view` events with `view: 'thread'` | `terminal_thread_view_v1` |
 | `models.context_window` | `model_context_window_v1` |
 | `power.hold`/`power.release` | `power_hold_v1` |
 | `tools.original` | `tool_original_v1` |
 | `api.builtins` `features.remove` | `builtins_features_v1` |
+| `api.builtins` `group_exec` | `transcript_exec_groups_v1` |
 | `success_per_call` on a `tool_batch` merge | `tool_batch_success_v1` |
 | `value` in code-mode `tool` results and answers | `code_mode_values_v1` |
 | `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |

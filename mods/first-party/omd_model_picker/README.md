@@ -17,7 +17,7 @@ omd mods enable omd_model_picker
 
 Open `/model` as usual. Selection and keys work as before. With `omd_profiles` on, the model list also shows up to 4
 of your account profiles (ChatGPT accounts, API keys and providers). `/profile` lists all of them, and
-`/profile use NAME` switches to one.
+`/profile use NAME` selects an account for new threads; run `/new` to use it.
 
 ## Settings
 

@@ -53,6 +53,12 @@ Run only the checks for what you changed:
 | A Python script or the installer | `python3 -m unittest tests.test_NAME` |
 | Docs or the changelog | `mise run release:check` |
 
+Mod, SDK, plugin, Python and documentation edits do not need Rust compilation unless they also change the native
+host. For Rust edits, reuse a scratch tree and start with `mise run dev:check NAME CRATE`; use
+`mise run dev:build NAME` when you need a runnable debug app. See the
+[runtime workflow](docs/contributing/runtime.md#build-and-test-with-cargo) for logs, resource and cache settings,
+focused tests and build storage cleanup.
+
 Tests are in `tests/` and beside the code. [tests/README.md](tests/README.md) explains how they're found and which
 runner runs each kind. Tests that run mods start the `omd-runner` named in `OMD_TEST_RUNNER`, else the installed one
 beside `omd-mod`, else the newest one built in a scratch tree (see

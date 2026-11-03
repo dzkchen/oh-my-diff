@@ -267,7 +267,7 @@ user contexts. A user context can call only:
 - `workspace.read/list/stat/check_access/transaction/backup/restore`
 - `store.*`
 - the user-action operations (`app.request`, `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`,
-  `packages.*`, `routes.add`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
+  `packages.*`, `routes.add`, `routes.models`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
 - `turns.activity`
 - `events.publish`
@@ -276,7 +276,7 @@ A service call from a user context works only when its provider needs no other h
 
 Component input callbacks also run in the terminal, but not as user actions. They can't call `terminal.selection`,
 `terminal.copy`, `terminal.panel`, `credentials.request`, `terminal.import_file`, `builtins.invoke`,
-`commands.invoke`, `config.set`, `packages.apply`, `routes.add`, `routes.write`, `contract.select` or
+`commands.invoke`, `config.set`, `packages.apply`, `routes.add`, `routes.models`, `routes.write`, `contract.select` or
 `settings.write`.
 
 To run any other operation (`task.*`, `contract.*`, other `routes.*`, `evidence.*`,
@@ -641,7 +641,7 @@ The registry marks these entries experimental in Mod API `1.0.0`:
 | Capabilities | `approve.override`, `autonomous`, `fs.external`, `history_write`, `mcp`, `peers`, `power`, `unix_sockets` |
 | Events | `config_change`, `contract`, `elicitation_result`, `focus`, `host_operation`, `instructions_loaded`, `migrate`, `mods_changed`, `peer_message`, `peer_receipt`, `prompt`, `prompt_expanded`, `session`, `tool_batch_end`, `tool_exposure`, `turn_queue`, `view`, `worktree` |
 | Interceptors | `agent_offers`, `agent_spawn`, `compaction`, `component_change`, `composer_key`, `elicitation`, `mention`, `peer_receive`, `peer_send`, `turn_stop` |
-| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access`, `workspace.unwatch` |
+| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access`, `workspace.unwatch` |
 | Components | `raster` |
 | Render sites | `composer_hint`, `notice`, `session_mode`, `tool_result`, `turn_duration`, `user_message` |
 | View fields | `background`, `footer`, `foreground`, `header`, `key_contexts`, `panels`, `placeholder`, `surface_styles`, `underlay` |
@@ -658,6 +658,7 @@ These experimental features have no registry entry of their own:
 | `api.uiState` and command views | [Session UI state](reference/state-and-storage.md#session-ui-state-apiuistate) and [command views](reference/commands-and-composer.md#command-views) |
 | `process_streams_v1` | `framing: "raw"` on `process.start` |
 | `process_raster_v1`, `raster_pixels_v1` | Processes that feed a raster frames or raw pixel buffers |
+| `route_new_threads_v1` | `routes.select` with `scope: "new_threads"`, for future terminal threads |
 | `completion_tokens_v1` | `api.completion` token triggers |
 | `settings_file_v1` | `api.settingsFile` and the settings file |
 | `terminal_focus_v1` | Focus regions, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus` |
@@ -676,6 +677,7 @@ These frozen entries have experimental fields:
 | `intercepts:tool` | `value`, `bytes` | `code_mode_values_v1`, `tool_original_v1` |
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
 | `operations:agents.spawn` | `model` | none |
+| `operations:routes.add` | `model`, `effort` | `routes_add_model_v1` |
 | `operations:routes.list` | `data` | `route_write_v1` |
 | `operations:session.info` | `process_id`, `omd_version` | none |
 | `operations:sidecars.status` | `started_at_ms` | none |
@@ -1644,7 +1646,8 @@ undeclared setting is still refused with `unknown_setting`.
 
 A property can also have a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
 instead of the raw name. A string property without `enum` can set `choices: "routes"`. `packages.list` then fills its
-`enum` with the names of the `host.json` worker routes open to that mod.
+`enum` with the names of the `host.json` worker routes open to that mod, then the lead-only routes open to it whose
+connected provider offers the route's model right now, the ones its workers can run on.
 
 ### Settings file (`settings_file_v1`)
 
@@ -1777,7 +1780,7 @@ These capabilities allow processes, workspace files, models, agents, stored data
 | `network` | `exec.run`, `process.start` and `terminal.pty` with `network: "loopback"` |
 | `unix_sockets` (experimental) | `exec.run` `unix_sockets` |
 | `model` | `routes.list`, `routes.select`, `models.context_window`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
-| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (also needs `sessions` and `sessions_tools`), `routes.add` for the mod itself, `task.status`, `workspace.integrate` |
+| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (also needs `sessions` and `sessions_tools`), `routes.add` and `routes.models` for the mod itself, `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.snapshot`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot`, `model.fork` and `agents.spawn {parent_history}` (also needs `sessions`) |
@@ -1801,7 +1804,7 @@ a mod makes: tools, commands, interceptors, replacements, lifecycle events and s
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
-| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `routes.add` and `settings.write` for another mod, `routes.write` |
+| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `routes.add`, `routes.models` and `settings.write` for another mod, `routes.write` |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check`, `tools.original` (`tool_original_v1`) and the `tool_batch` replacement |
 | `input` | `input` and `mention` interceptors |
@@ -1939,7 +1942,8 @@ it needs and its registry status. An operation marked experimental may change in
 | `providers.register` | `model` | frozen |
 | `providers.unregister` | `model` | frozen |
 | `receipts.submit` | `contracts` | frozen |
-| `routes.add` | `agents` for the mod itself; `packages` for another mod | frozen |
+| `routes.add` | `agents` for the mod itself; `packages` for another mod | frozen; experimental fields: `model`, `effort` |
+| `routes.models` | `agents` for the mod itself; `packages` for another mod | experimental |
 | `routes.list` | `model` | frozen; experimental fields: `data` |
 | `routes.select` | `model` | frozen |
 | `routes.write` | `packages` | experimental |
@@ -3133,6 +3137,10 @@ collaboration modes, native surfaces and Codex features. Call it during activati
 boundary and lasts until the mod is disabled, unloaded or fails. Controls apply to the directory OMD was launched in and
 cover every thread of that session, including threads in its worktrees.
 
+- `group_exec: true` (`transcript_exec_groups_v1`) groups adjacent agent shell commands, including commands
+  beyond reads and searches. A render hook receives the group as `tool_call` with `kind: 'explore'`; expanding
+  the group opens its full native output. User shell commands remain separate. Each command row keeps the
+  grouping setting it started with; disabling it stops grouping new commands and leaves existing groups intact.
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.
@@ -3926,6 +3934,7 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
     makes the fork's copy first.
   - Registration reads the state of the thread whose callback reloaded the mods. At process start there is no such
     thread.
+  - Terminal handlers wait until a thread exists; they do not receive the pre-thread `startup` callbacks.
 - `"checkout"` stores one state per checkout, shared by every OMD process working there whatever its mod store: in
   `<git-dir>/omd/state/<mod>.json` for a Git checkout (a linked worktree has its own), read-only to agent commands
   as Codex keeps `.git` read-only. Outside a Git checkout, as in a projectless session, checkout state is unavailable
@@ -5437,7 +5446,7 @@ needs a grant.
 
 - [`routes.list`](#routeslist) returns the routes visible to the calling mod, plus `data` on the caller's own routes
   ([route writes](#route-writes-route_write_v1)).
-- [`routes.select`](#routesselect) applies a lead route to the next request or the thread.
+- [`routes.select`](#routesselect) applies a lead route to the next request, the thread or future new threads.
 - The `routing` replacement returns `{route}` to choose a configured lead route at thread start.
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](reference/model-requests.md#model-requests-and-streams-model_turn_interception_v1)).
@@ -5447,6 +5456,7 @@ needs a grant.
   - a lead route of a registered provider (its model is in that provider's runtime catalog) whose `mods` is empty or
     lists the caller. That agent is admitted like a cross-provider native child, with no grant.
 - [`routes.add`](#routesadd) adds a worker route on the user's ChatGPT plan for one mod.
+- [`routes.models`](#routesmodels) lists the ChatGPT models `routes.add` accepts.
 
 ### `routes.list`
 
@@ -5467,22 +5477,29 @@ const routes = api.host.call('routes.list', null).filter(route => route.availabl
 ### `routes.select`
 
 ```text
-routes.select {route, scope} → {route: RouteInfo, effective_at: 'next_request'}
+routes.select {route, scope} → {route: RouteInfo, effective_at: 'next_request' | 'new_thread'}
 ```
 
-`routes.select` (capability `model`) applies a configured lead route to the calling thread.
+`routes.select` (capability `model`) selects a configured lead route.
 
 | Argument | Type | Meaning |
 | --- | --- | --- |
 | `route` | string | The name of a lead route the caller may use |
-| `scope` | `'next_request'` or `'thread'` | Apply the route to the next request only, or to every later request of the thread |
+| `scope` | `'next_request'`, `'thread'` or `'new_threads'` | Apply to the next request, the calling thread, or future new threads in this terminal session |
 
-The route takes effect from the next request. A lead route added to `host.json` after the thread started is
+`new_threads` requires `route_new_threads_v1` and a local user command. It selects model, provider and effort for
+`/new` and other fresh terminal threads, returning `effective_at: 'new_thread'`. Existing and resumed threads keep
+their settings. It overrides launch defaults for those new threads, never writes global Codex config, and is lost
+when the terminal process exits. Missing, ambiguous or changed-owner routes fail without falling back to another
+account. Routes must have a unique model/provider pair. Routes that do not delegate billing to the provider
+start with hosted web search disabled, because separate tool charges are outside their token rates.
+
+The other scopes take effect from the next request. A lead route added to `host.json` after the thread started is
 admitted when it is on the thread's provider ([route reload](#route-reload-route_reload_v1)).
 
 | Error | When |
 | --- | --- |
-| `route_scope_invalid` | `scope` is neither `next_request` nor `thread` |
+| `route_scope_invalid` | `scope` is not `next_request`, `thread` or `new_threads` |
 | `route_not_configured: ROUTE` | No lead route with that name is open to the caller; after an invalid `host.json` edit the message adds why |
 | `route_unavailable_for_thread: ROUTE` | The thread has no lead route account, or the route is on another provider |
 
@@ -5492,13 +5509,31 @@ api.host.call('routes.select', { route: 'fast_lead', scope: 'next_request' });
 
 ### `routes.add`
 
-`routes.add {mod?}` (user only) gives a mod a worker route on the user's ChatGPT plan. Without `mod` it is for the
-caller itself and needs `agents` (`routes_add_self_v1`); naming a mod needs `packages`. It asks the user, then adds the worker route
-`plan-MODEL-MOD` for the conversation's model and effort. The route is open only to that mod, and the host adds this
-repository to its grant.
+`routes.add {mod?, model?, effort?}` (user only) gives a mod a worker route on the user's ChatGPT plan. Without `mod`
+it is for the caller itself and needs `agents` (`routes_add_self_v1`); naming a mod needs `packages`. It asks the user,
+then adds the worker route `plan-MODEL-MOD`. The route is open only to that mod, and the host adds this repository to
+its grant.
+
+Without `model` the route uses the conversation's model and effort. With `model` (`routes_add_model_v1`) it uses that
+model from the ChatGPT catalog of the Codex ChatGPT sign-in, the list `routes.models` returns, and `effort`, which
+defaults to the model's own default. This works while the conversation, or Codex itself, uses another provider. The
+host reads that catalog from the Codex model cache and refreshes it from the ChatGPT models endpoint only when the
+cache is stale; it never sends a model request. The route's input limit is the chosen model's usable context window,
+taken from the first of: a window set with `models.context_window`, the Codex `model_context_window` setting when the
+chosen model is the configured model, the ChatGPT catalog, the host's bundled model metadata, or 272,000 tokens.
 
 It returns `{route}`, or `{status: 'declined'}`. It refuses with `routes_add_needs_chatgpt` without a ChatGPT sign-in
-or when the conversation's provider doesn't use it.
+(an API key doesn't count), or without `model` when the conversation's provider doesn't use it. A model outside the
+catalog fails with `routes_add_model_unknown`, an effort the model doesn't list with `routes_add_effort_unsupported`,
+and `effort` without `model` with `routes_add_effort_needs_model`.
+
+### `routes.models`
+
+Experimental (added after 1.0.0, `routes_add_model_v1`). `routes.models {mod?}` (user only) lists the models
+`routes.add` accepts with `model`: `{model, display_name, efforts, default_effort, context_window}[]`, at most 64
+picker-visible models with up to 16 efforts each. `context_window` is the usable window a route on that model gets.
+Like `routes.add`, it needs `agents` without `mod` and `packages` naming a mod. It fails with
+`routes_add_needs_chatgpt` without a ChatGPT sign-in.
 
 ### Route reload (`route_reload_v1`)
 
@@ -6346,6 +6381,10 @@ segment's records with its history revision. Compaction summaries do not replace
 history reset or interrupted compaction still rejects evidence explicitly. The mod chooses how to select and
 summarize a truncated packet.
 
+Evidence is delivered only to mods that subscribed at the turn's start and still subscribe with the same source
+hash when it finishes. Reloading unchanged mods preserves their evidence; newly added or changed subscribers
+receive no evidence for that in-progress turn.
+
 ## Terminal UI
 
 Use it when a mod draws in the terminal. This page defines the terms the terminal pages share, lists every view
@@ -6528,7 +6567,7 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 | --- | --- | --- | --- |
 | `user_message` (experimental) | content digest | `text`, `images`, `spoken` | none |
 | `assistant_message` | content digest | `text`, `first`, `truncated` | none |
-| `tool_call` | call id (row id for agent rows; `explore:<first call id>` for an exploration group) | every agent tool row (`RenderToolCall`); see [`tool_call` props](#tool_call-props) | none |
+| `tool_call` | call id (row id for agent rows; `explore:<first call id>` for a command group) | every agent tool row (`RenderToolCall`); see [`tool_call` props](#tool_call-props) | none |
 | `tool_result` (experimental) | call id | `tool`, `success`, `text` (MCP results inside their call) | none |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
 | `turn_duration` (experimental) | `turn-<completed ms>` | `seconds`, `completed_at_ms` | none |
@@ -6553,7 +6592,7 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 | `kind` | Props |
 | --- | --- |
 | `exec` | `command`, `parsed`, `exit_code`, `output_lines`, `output_tail`, `user_shell` |
-| `explore` | `calls` (grouped reads, searches and listings) |
+| `explore` | `calls` (grouped reads, searches and listings, or adjacent agent shell commands with `group_exec`) |
 | `patch` | `files` (`path`, `change`, `added`, `removed`), `error` |
 | `web_search` | `action`, `query` |
 | `agent` | `tool`, `agents`, `prompt` |
@@ -6563,19 +6602,23 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 
 Group and file limits:
 
-- Exploration groups contain at most 32 calls; larger sequences split into additional rows without dropping calls.
+- Command groups contain at most 32 calls; larger sequences split into additional rows without dropping calls.
 - Patch `files` contains at most 32 details; `file_count`, `added` and `removed` are complete totals across all
   changed files.
 
 ### Grouped members
 
-For grouped exploration and computer activity, the host runs `tool_call` hooks on each member of the group, as kind
-`exec` or `mcp`.
+Grouped exploration and computer activity support `tool_call` hooks on each member of the group, as kind `exec`
+or `mcp`.
 
 - When those member hooks replace the drawing, each member has its own focus, pointer region and `expanded` flag;
   `next` draws a collapsed member as its compact row, and transcript search (Find) searches every member expanded.
 - Native grouping remains when no member is replaced.
 - Aggregate exploration rendering remains available on the group when member rendering does not replace it.
+- With [`group_exec`](reference/commands-and-composer.md#built-in-controls) enabled, the host first offers shell command
+  groups to the aggregate `tool_call` hook with `kind: 'explore'`. An aggregate replacement wins; otherwise the
+  individual `exec` member hooks still run. A lone command outside reads, searches and listings keeps `kind: 'exec'`.
+  Expanding a group shows every command's native output.
 
 ### Render hook behavior
 
@@ -6642,7 +6685,7 @@ The terminal event's read-only `presentation` is `{thread_id, phase, surface?}`.
 - Before the composer first accepts input, the host can run the `terminal` handler with `event: 'startup'`, more
   than once. That event has `ledger: null` and a null `thread_id`, and its phase depends on whether the session is
   new, resumed or forked. During these `startup` callbacks, native task, app and paid host operations are
-  unavailable.
+  unavailable. Mods with `state_scope: 'thread'` wait until a thread exists instead of receiving these callbacks.
 - Before local presentation is available, the whole presentation value may be absent or null.
 
 `presentation` describes the host session, so a mod doesn't need to persist its own first-turn flag. The host sends
@@ -7095,8 +7138,15 @@ position, never a backlog. Views with no pointer components add no pointer work.
 
 `component_event` reports interaction with a mod's components and goes only to the component's owner. Two experimental
 events report native state: `view` (`{phase, view, view_id, dropped?}`) when a native bottom-pane view or overlay opens
-or closes, and `focus` (`{focused, dropped?}`) when the terminal window gains or loses focus. Each event names its
-`component` and `kind`:
+or closes, and `focus` (`{focused, dropped?}`) when the terminal window gains or loses focus.
+
+With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
+`view {phase: 'opened', view: 'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent.
+It fires once per thread change, not on each redraw. Delivery is asynchronous and queued events for an obsolete
+thread context are dropped. Use it to initialize thread-scoped UI state; `start` and `resume` still describe the lead
+thread's lifecycle.
+
+Each `component_event` names its `component` and `kind`:
 
 | Kind | Reports | Fields |
 | --- | --- | --- |
@@ -7362,17 +7412,21 @@ gets it, and later claims become `terminal.conflicts` entries. A raster key anot
 same way: the underlay is dropped and the conflict names that mod.
 
 - The raster has the screen's size (at most 512 × 256) and needs no component; blit it with `terminal.blit` like any
-  raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a
-  blit at the new size starts a fresh raster; a reply with `frame: 1` and `queued: 1` means the raster restarted, so
-  send it whole.
-- It is painted after the transcript and the bottom pane and before selection, layout regions, the sidebar,
-  overlays, the `welcome` site and dialogs, so all of those draw over it.
-- Its background colors every cell whose background is the terminal default, and Codex's raised surface (menus,
-  list views, the composer, submitted prompts) gets the same color lifted the way Codex lifts the terminal
-  background. Text with the default color on a colored cell gets a readable foreground; explicit colors stay,
+  raster. Before the first draw a blit is `terminal_blit_unknown`. Across a resize, the old cell frame stays visible
+  with edge background colors extended into newly exposed cells until fresh blits replace them. Glyphs stay clipped
+  to the previous frame. A reply with `frame: 1` and `queued: 1` means the raster restarted, so send it whole.
+  The underlay fills the terminal grid; padding and pixels outside that grid belong to the terminal application.
+- Suspended frames are cached by repository, thread, raster key and mod owner. Returning to another context never
+  draws a cached frame from the previous one; an evicted frame needs a fresh blit.
+- Its glyphs are painted after the transcript and before the bottom pane, so popups clear them. Its background
+  tint is painted after the bottom pane and before selection, layout regions, the sidebar, overlays, the `welcome`
+  site and dialogs, so all of those draw over it.
+- Its background colors cells whose background is the terminal default. Raised surfaces (menus, list views, the
+  composer and submitted prompts) stay opaque and keep their own backgrounds. Text with the default color on a
+  colored cell gets a readable foreground; explicit colors stay,
   except on a light terminal, where any that would be hard to read get a readable one.
-- The underlay's glyphs draw only in blank cells after each row's last character plus a 2-cell gutter. They draw at
-  full color in the transcript and at 35 % on the raised surface. Transcript images and the footer never show them,
+- The underlay's glyphs draw at full color only in blank, default-background transcript cells after each row's last
+  character plus a 2-cell gutter. Raised surfaces, transcript images and the footer never show them,
   and OMD's own copies never include them. The terminal's own selection (for example Shift-drag) copies what the
   screen shows.
 - Image and pixel frames draw nothing. Nothing draws under `NO_COLOR`, with fewer than 256 colors (`colors: '16'`),
@@ -8568,6 +8622,7 @@ User-only operations are never delegated:
 - `config.set`
 - `packages.apply`
 - `routes.add`
+- `routes.models`
 - `routes.write`
 - `contract.select`
 

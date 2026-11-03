@@ -50,7 +50,7 @@ export function catalogEntry(profile, bundled, index) {
   return { ...native ?? bundled[0], slug: profile.name, display_name: `${profile.name} · ${profile.model}`,
     description: `${profile.protocol} profile through omd_profiles${profile.paid ? ' (paid API)' : ''}.`,
     context_window: profile.window, max_context_window: profile.window, auto_compact_token_limit: Math.floor(profile.window * 0.9),
-    visibility: 'list', supported_in_api: true, priority: 70 + index, ...native ? {} : { web_search_tool_type: null },
+    visibility: 'list', supported_in_api: true, priority: 70 + index, web_search_tool_type: null,
     ...profile.text_only ? { input_modalities: ['text'] } : {} };
 }
 
@@ -104,10 +104,15 @@ async function write(store, mod, profiles, allowance, { routePath, tokenPath, pr
 // Codex's cached model catalog gives a catalog model's context window and efforts without asking the user.
 async function catalog(model) {
   const cache = await json(join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'models_cache.json'), {}).catch(() => ({}));
-  const found = (Array.isArray(cache.models) ? cache.models : []).find(item => item?.slug === model);
+  let models = Array.isArray(cache.models) ? cache.models : [];
+  if (!models.length) {
+    const dump = spawnSync('codex', ['debug', 'models', '--bundled'], { encoding: 'utf8', timeout: 30000 });
+    if (dump.status === 0) try { models = JSON.parse(dump.stdout).models ?? []; } catch {}
+  }
+  const found = model ? models.find(item => item?.slug === model) : models.find(item => item?.visibility === 'list') ?? models[0];
   if (!Number.isInteger(found?.context_window)) return null;
   const efforts = (found.supported_reasoning_levels ?? []).map(level => level?.effort).filter(effort => typeof effort === 'string');
-  return { window: found.context_window, max: Number.isInteger(found.max_context_window) ? found.max_context_window : found.context_window, effort: found.default_reasoning_level ?? 'medium', efforts };
+  return { model: found.slug, window: found.context_window, max: Number.isInteger(found.max_context_window) ? found.max_context_window : found.context_window, effort: found.default_reasoning_level ?? 'medium', efforts };
 }
 
 async function setup(recordPath, optionText) {

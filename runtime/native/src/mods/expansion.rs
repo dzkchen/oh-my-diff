@@ -528,7 +528,9 @@ pub(super) async fn dispatch(
         "events.schedule" => delivery::schedule(core, lead, caller, request.arguments),
         "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
         "turns.activity" => activity::read(core, lead, request.arguments).await,
-        "routes.select" => select_route(lead, caller.id, request.arguments),
+        "routes.select" if request.arguments["scope"] != "new_threads" => {
+            select_route(lead, caller.id, request.arguments)
+        }
         "models.context_window" => {
             let arguments = request.arguments;
             blocking(Box::new(move || {

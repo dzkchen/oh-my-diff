@@ -6,25 +6,27 @@ pub(super) struct Cursor {
     paused: bool,
     invalid: bool,
     offset: usize,
-    generation: u64,
-    owners: Vec<String>,
+    owners: BTreeMap<String, String>,
     pub tools: Vec<Value>,
     usage_start: Value,
 }
 
-fn subscribers(runtime: &ModHost) -> Vec<String> {
+fn subscribers(runtime: &ModHost) -> BTreeMap<String, String> {
     let mut owners = runtime.subscribers_with_capability("turn_end", "sessions");
     owners.extend(runtime.subscribers_with_capability("turn_end", "turn_evidence"));
-    owners.sort();
-    owners.dedup();
-    owners
+    runtime
+        .owners()
+        .into_iter()
+        .filter(|(id, _)| owners.contains(id))
+        .map(|(id, owner)| (id, owner.sha256))
+        .collect()
 }
 
 pub(super) async fn begin(core: &Core, lead: &Lead) -> Option<Cursor> {
     let runtime = core.runtime.clone();
-    let (owners, generation) = tokio::task::spawn_blocking(move || {
+    let owners = tokio::task::spawn_blocking(move || {
         let runtime = runtime.lock().ok()?;
-        Some((subscribers(&runtime), runtime.generation()))
+        Some(subscribers(&runtime))
     })
     .await
     .ok()
@@ -46,7 +48,6 @@ pub(super) async fn begin(core: &Core, lead: &Lead) -> Option<Cursor> {
         paused: false,
         invalid: false,
         offset: history.review_items().count(),
-        generation,
         owners,
         tools: Vec::new(),
         usage_start: json!(lead.session.task.cost_capture().ok()),
@@ -123,22 +124,18 @@ pub(super) async fn finish(
     outcome: &str,
 ) -> Result<BTreeMap<String, Value>, String> {
     let runtime = core.runtime.clone();
-    let (owners, generation, sources) = tokio::task::spawn_blocking(move || {
+    let owners = tokio::task::spawn_blocking(move || {
         let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-        Ok::<_, String>((
-            subscribers(&runtime),
-            runtime.generation(),
-            runtime
-                .owners()
-                .into_iter()
-                .map(|(id, owner)| (id, owner.sha256))
-                .collect::<BTreeMap<_, _>>(),
-        ))
+        Ok::<_, String>(subscribers(&runtime))
     })
     .await
     .map_err(|e| e.to_string())??;
-    if generation != cursor.generation {
-        return Err("evidence_generation_changed".into());
+    let owners = owners
+        .into_iter()
+        .filter(|(owner, source)| cursor.owners.get(owner) == Some(source))
+        .collect::<BTreeMap<_, _>>();
+    if owners.is_empty() {
+        return Ok(BTreeMap::new());
     }
     let thread = lead
         .host
@@ -185,14 +182,7 @@ pub(super) async fn finish(
     )?;
     let root = lead.host.root.clone();
     let mut results = BTreeMap::new();
-    for owner in owners
-        .into_iter()
-        .filter(|owner| cursor.owners.contains(owner))
-    {
-        let source = sources
-            .get(&owner)
-            .cloned()
-            .ok_or("evidence_owner_unavailable")?;
+    for (owner, source) in owners {
         let data = codex_omd::scoped_data::ScopedDataHost::new(
             root.clone(),
             lead.host.repository.clone(),

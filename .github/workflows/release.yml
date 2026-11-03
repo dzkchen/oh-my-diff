@@ -50,6 +50,7 @@ jobs:
     needs: [check, validate]
     if: github.repository == 'dzkchen/oh-my-diff'
     runs-on: ubuntu-24.04
+    environment: ${{ github.event_name == 'push' && 'release' || '' }}
     permissions:
       contents: write
     steps:
@@ -63,7 +64,7 @@ jobs:
         with:
           name: package
           path: release
-      - name: Publish the verified release (dry run prints the commands)
+      - name: Publish the verified release (dry run prints the commands, unsigned)
         env:
           GH_TOKEN: ${{ github.token }}
           OMD_RELEASE_SIGNING_KEY: ${{ secrets.OMD_RELEASE_SIGNING_KEY }}
