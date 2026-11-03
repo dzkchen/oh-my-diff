@@ -43,7 +43,7 @@ UNATTENDED_COMMANDS = ("exec", "e", "review", "login", "logout", "mcp", "plugin"
 CODEX_FLAGS = {"--oss", "--approve-for-me", "--not-so-yolo", "--dangerously-bypass-approvals-and-sandbox", "--yolo",
                "--dangerously-bypass-hook-trust", "--search", "--no-daemon", "--strict-config"}
 MANAGEMENT_FILES = ("scripts/profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
-                    "scripts/mods_lock.py", "runtime/mods.lock.json",
+                    "scripts/mods_lock.py", "runtime/mods.lock.json", "extensions/index.json",
                     "upstream.lock.json", "docs/install.md", "install.sh")
 
 
