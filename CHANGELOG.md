@@ -20,11 +20,13 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 
 ### Fixed
 
+- Usage: tool calls no longer rewrite the mod's whole saved state while the usage dialog is closed, and an agent event that changes nothing is skipped
 - Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list
 - Status line: usage limits refresh while idle, and an empty snapshot clears old limits
 - Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt
 - Workspace: a panel that goes away no longer leaves its screen mode behind, a key set twice is reported instead of silently turning another off, and focusing Changes no longer reruns git status every time
 - Claude CLI: turning off extra usage in the mod's settings file now stops at extra usage too, instead of only the `/mods` setting counting
+- Claude CLI: `/claude login` works when the mod was installed from the catalog, instead of failing with setup_must_run_from_installed_mod after sign-in
 
 ## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
 
