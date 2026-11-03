@@ -21,7 +21,8 @@ PR native checks, main-branch native checks, nightly jobs and release test/lint 
 `mise.toml`. This version
 [caches metadata-only Rust compilation](https://github.com/mozilla/sccache/blob/v0.19.0/src/compiler/rust.rs),
 including library checks under `cargo check`. Setting `OMD_SCCACHE=1` makes `build.py` set `RUSTC_WRAPPER=sccache`.
-Linked binaries and procedural macros still require compilation.
+It defaults `CARGO_INCREMENTAL` to `0` and refuses an explicit incremental setting of `1` or a conflicting compiler
+wrapper. Linked binaries and procedural macros still require compilation.
 
 Native checks on every push to `main` save the shared lint cache, making it available to new PRs without waiting
 for a passing nightly. PRs also save caches for later pushes to the same PR. GitHub scopes those caches to the PR;

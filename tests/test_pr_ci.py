@@ -1,3 +1,6 @@
+import argparse
+import contextlib
+import io
 import itertools
 import os
 from pathlib import Path
@@ -129,9 +132,72 @@ class HostedJobs(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ["cargo", "build", "--locked", "-p", "codex-core", "-p", "codex-omd-runner",
                                                  "--bin", "omd-runner"])
 
-    def test_compile_cache_is_opt_in(self):
-        with mock.patch.object(build, "run", return_value=b"host: aarch64-apple-darwin\n"):
-            with mock.patch.dict(os.environ, {"OMD_SCCACHE": "", "RUSTC_WRAPPER": ""}):
-                self.assertFalse(build.cargo_env(Path("/work")).get("RUSTC_WRAPPER"))
-            with mock.patch.dict(os.environ, {"OMD_SCCACHE": "1"}):
-                self.assertEqual(build.cargo_env(Path("/work"))["RUSTC_WRAPPER"], "sccache")
+
+class DeveloperBuilds(unittest.TestCase):
+    def environment(self, values, args=()):
+        with mock.patch.dict(os.environ, values, clear=True), mock.patch.object(
+                build, "run", return_value=b"host: aarch64-apple-darwin\n"):
+            return build.cargo_env(Path("/work"), args) if args else build.cargo_env(Path("/work"))
+
+    def test_low_resource_jobs_and_explicit_overrides(self):
+        self.assertNotIn("CARGO_BUILD_JOBS", self.environment({}))
+        self.assertEqual(self.environment({"OMD_LOW_RESOURCE": "1"})["CARGO_BUILD_JOBS"], "3")
+        self.assertEqual(self.environment({"OMD_LOW_RESOURCE": "1", "CARGO_BUILD_JOBS": "2"})["CARGO_BUILD_JOBS"], "2")
+        for flags in (["-j", "1"], ["-j1"], ["-j=1"], ["--jobs=1"], ["--jobs", "1"]):
+            with self.subTest(flags=flags):
+                self.assertEqual(self.environment({"OMD_LOW_RESOURCE": "1", "CARGO_BUILD_JOBS": "2"},
+                                                  ["test", *flags])["CARGO_BUILD_JOBS"], "1")
+        self.assertEqual(self.environment({"OMD_LOW_RESOURCE": "1"}, ["test", "--", "-j8"])["CARGO_BUILD_JOBS"], "3")
+
+    def test_cache_modes_disable_incremental_and_explain_conflicts(self):
+        self.assertEqual(self.environment({})["CARGO_INCREMENTAL"], "1")
+        self.assertNotIn("RUSTC_WRAPPER", self.environment({}))
+        self.assertNotIn("RUSTC_WRAPPER", self.environment({"OMD_SCCACHE": "0"}))
+        cached = self.environment({"OMD_SCCACHE": "1"})
+        self.assertEqual(cached["CARGO_INCREMENTAL"], "0")
+        self.assertEqual(cached["RUSTC_WRAPPER"], "sccache")
+        self.assertEqual(self.environment({"RUSTC_WRAPPER": "/tools/sccache"})["CARGO_INCREMENTAL"], "0")
+        self.assertEqual(self.environment({"CARGO_INCREMENTAL": "0"})["CARGO_INCREMENTAL"], "0")
+        for values, message in (({"OMD_SCCACHE": "1", "CARGO_INCREMENTAL": "1"}, "CARGO_INCREMENTAL=0"),
+                                ({"OMD_SCCACHE": "1", "RUSTC_WRAPPER": "other"}, "RUSTC_WRAPPER"),
+                                ({"OMD_SCCACHE": "1", "RUSTC_WORKSPACE_WRAPPER": "other"}, "RUSTC_WORKSPACE_WRAPPER")):
+            with self.subTest(values=values), self.assertRaisesRegex(SystemExit, message):
+                self.environment(values)
+
+    def test_skip_runner_is_explicit_and_propagates_test_failure(self):
+        for subcommand in ("test", "nextest"):
+            with self.subTest(subcommand=subcommand), TemporaryDirectory() as temporary:
+                work = Path(temporary)
+                with mock.patch.object(build, "test_runner", return_value=0) as runner, mock.patch.object(
+                        build, "cargo_env", return_value={}), mock.patch.object(
+                        build.subprocess, "run", return_value=mock.Mock(returncode=7)) as run, contextlib.redirect_stdout(io.StringIO()):
+                    status = build.cargo_run(work, work / "test.log", [subcommand], skip_runner=True)
+                    self.assertEqual(status, 7)
+                    runner.assert_not_called()
+                    self.assertEqual(run.call_args.args[0], ["cargo", subcommand])
+                    build.cargo_run(work, work / "test.log", [subcommand])
+                    runner.assert_called_once()
+
+    def test_storage_and_clean_only_selected_targets_preserving_source_and_logs(self):
+        with TemporaryDirectory() as temporary, mock.patch.object(build, "TMP", Path(temporary)):
+            for name in ("first", "second"):
+                work = build.work_dir(name)
+                for directory in ("codex", "target", "logs", "artifacts"):
+                    (work / directory).mkdir(parents=True)
+                    (work / directory / "keep").write_text("contents")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                build.storage(argparse.Namespace())
+                build.clean(argparse.Namespace(names=["first"]))
+            self.assertIn(str(build.work_dir("second") / "target"), output.getvalue())
+            self.assertFalse((build.work_dir("first") / "target").exists())
+            self.assertTrue((build.work_dir("second") / "target/keep").is_file())
+            for directory in ("codex", "logs", "artifacts"):
+                self.assertTrue((build.work_dir("first") / directory / "keep").is_file())
+            for name in ("../outside", "a/b", ".", ""):
+                with self.subTest(name=name), self.assertRaises(SystemExit):
+                    build.clean(argparse.Namespace(names=[name]))
+            (build.work_dir("first") / "target").symlink_to(build.work_dir("second") / "target")
+            with self.assertRaises(SystemExit):
+                build.clean(argparse.Namespace(names=["second", "first"]))
+            self.assertTrue((build.work_dir("second") / "target/keep").is_file())
