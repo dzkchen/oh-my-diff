@@ -241,13 +241,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "875f33524b8f70266481088323d08324abb88723e705e2ac864dae7737f90645",
-        "mod.json": "e6db50e40578d4aaa8e63998086eea6247565177658e07794b078ed434b33811"
+        "index.ts": "689efdf2af200ea71e880c233b0eb9701026b4b666a16a1368896a2312bbbf26",
+        "mod.json": "0d08fa328fc469fdfcfd9c9b13b35a83d90db613a1c4e55a647e730cea7f9d6c"
       },
       "id": "omd_frecency",
-      "package_sha256": "b18515ab700a150746be644978366936c62266e5bb859a5b0e44fc884588e909",
+      "package_sha256": "b9b871a80d727b81eeb48045d41d0b5b0fe49e2ab8b223d3729a6e4e5920dd9c",
       "source": "mods/first-party/omd_frecency",
-      "version": "1.2.1"
+      "version": "1.2.2"
     },
     "omd_git": {
       "api": "1.0.0",
