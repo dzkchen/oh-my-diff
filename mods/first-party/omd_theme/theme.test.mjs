@@ -10,7 +10,7 @@ const manifest = JSON.parse(read('mod.json'));
 const source = read('index.ts');
 const assets = Object.fromEntries(manifest.assets.map(name => [name, { text: read(name), sha256: '0'.repeat(64) }]));
 const NOW = 1_800_000_000_000;
-const SCENE_IDS = ['ember', 'drift', 'lagoon', 'jelly', 'fireflies', 'moonlit'];
+const SCENE_IDS = ['ember', 'drift', 'lagoon', 'jelly', 'fireflies', 'moonlit', 'aurora'];
 
 function call(input, overrides = {}) {
   const calls = [];
@@ -288,4 +288,27 @@ test('enabling a scene from no scene never draws the Ember fallback', async () =
       assert.deepEqual(compose(id, 'off', progress, 120, 44, 1, null, 1), expected);
     }
   }
+});
+
+test('Aurora flares when a turn ends and stirs while one runs with calm off, in place; other scenes ignore turns', async () => {
+  const scenes = await import(new URL('scenes.ts', dir));
+  const glow = canvas => canvas.bg.reduce((sum, color) => sum + (color >> 8 & 255), 0);
+  const at = energy => scenes.compose('aurora', null, 1, 120, 34, 1, null, 30, energy);
+  assert.ok(glow(at(1)) > glow(at(0.5)) && glow(at(0.5)) > glow(at(0)));
+  const lit = canvas => [...canvas.bg].map(color => (color >> 8 & 255) > 60);
+  const overlap = lit(at(0)).filter((on, index) => on && lit(at(0.1))[index]).length;
+  assert.ok(overlap > 0.95 * lit(at(0)).filter(Boolean).length, 'a fading flare moves the curtains only a little per step');
+  for (const id of SCENE_IDS.filter(id => id !== 'aurora')) {
+    assert.deepEqual(scenes.compose(id, null, 1, 80, 20, 1, null, 30, 1).bg, scenes.compose(id, null, 1, 80, 20, 1, null, 30).bg, id);
+  }
+
+  const state = ready({ scene: 'aurora' });
+  const ended = call({ event: 'turn_end', payload: { turn_id: 'a', outcome: 'completed' }, state, virtual_time_ms: NOW + 1000 }).state;
+  assert.deepEqual([ended.busy, ended.ended], [false, NOW + 1000]);
+  const frame = s => tick(s, `f.${NOW}.-1.0.0.0.0`, NOW + 1125).of('terminal.blit').map(blit => blit.packed).join();
+  assert.notEqual(frame(ended), frame({ ...ended, ended: undefined }));
+  const working = { ...state, busy: true, prefs: { ...state.prefs, calm: false } };
+  assert.notEqual(frame(working), frame(state));
+  const ember = ready();
+  assert.equal(frame({ ...ember, ended: NOW + 1000 }), frame(ember));
 });

@@ -13,7 +13,8 @@
           "Uninstall: `omd uninstall --purge` also signs out OMD accounts and clears caches, keeping shared Codex data",
           "Terminal panes: Allow and remember on a sandboxed start saves the approval for that workspace, mod, command and executable, so the same start doesn't ask again until its access or executable changes",
           "/btw: `/btw` alone opens a side conversation panel that lists earlier exchanges and takes a follow-up question",
-          "Workspace: arrange panels with the keyboard alone (m, then Shift+arrows, T and = / -), F6 shows or hides the panels from the prompt, and number keys focus a panel whose tab is showing"
+          "Workspace: arrange panels with the keyboard alone (m, then Shift+arrows, T and = / -), F6 shows or hides the panels from the prompt, and number keys focus a panel whose tab is showing",
+          "Theme: an Aurora scene; the northern lights flare when a turn finishes, so you can tell from across the room that the agent is done"
         ]
       },
       {
@@ -35,7 +36,8 @@
           "Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list",
           "Status line: usage limits refresh while idle, and an empty snapshot clears old limits",
           "Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt",
-          "Workspace: a panel that goes away no longer leaves its screen mode behind, a key set twice is reported instead of silently turning another off, and focusing Changes no longer reruns git status every time"
+          "Workspace: a panel that goes away no longer leaves its screen mode behind, a key set twice is reported instead of silently turning another off, and focusing Changes no longer reruns git status every time",
+          "Claude CLI: turning off extra usage in the mod's settings file now stops at extra usage too, instead of only the `/mods` setting counting"
         ]
       }
     ],
