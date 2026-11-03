@@ -942,11 +942,11 @@
       "extension_type": "mod",
       "files": {
         "index.ts": "43e270a3d75f2a29b85dc805e951ea3033cf680499341271f0af7ff16f129103",
-        "mod.json": "c4585d7b1b6d34dddd8687419573220bd15cbe5583ccd13fe8c879ee874fe870",
+        "mod.json": "4ac23ad69283ff3ef42b8573b3738c8b431a0e0f17741a30cf488fe901c2e981",
         "tree.ts": "bf7fbea96846738c7fad9738cac75182c8dd46a796837f4b175a2f8eb9ce28f6"
       },
       "id": "omd_workspace",
-      "package_sha256": "83c2f708377fc05012143c779a6b302f99e5b9694f0a614d4ecc440e92759f07",
+      "package_sha256": "8b7d9f7afcbf0c18e7d0146f275f4f25d1c550a7efbb2cd8842dae99df82f87d",
       "source": "mods/first-party/omd_workspace",
       "version": "1.2.0"
     },
