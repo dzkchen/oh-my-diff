@@ -737,9 +737,9 @@
     },
     {
       "id": "omd_workspace",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "extension_type": "mod",
-      "capability": "Opt-in workspace that arranges the chat with Git changes, a shell, your own terminal panels and registered panels: presets, moves, drag, focus, resize and screen-mode keys",
+      "capability": "Opt-in workspace that arranges the chat with Git changes, a shell, your own terminal panels and registered panels: presets, moves, drag, keyboard arranging, focus, resize, show/hide and screen-mode keys",
       "source": "mods/first-party/omd_workspace",
       "license": "MIT",
       "maintainer": "Oh My Diff",

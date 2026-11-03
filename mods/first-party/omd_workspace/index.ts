@@ -9,13 +9,14 @@ type Panel = { id: string; title: string; site: string; tabs?: Tab[]; order?: nu
 type Preset = typeof PRESETS[number];
 type Arranged = { by: 'user' | 'mod'; preset?: Preset; tree?: Node };
 type File = { path: string; code: string };
-type Changes = { files: File[]; total: number; selected: string | null; diff: string; error: string | null };
+type Changes = { files: File[]; total: number; selected: string | null; diff: string; error: string | null; at?: number };
 type Thread = { sessions?: string[]; changes?: Changes };
 type Level = 'normal' | 'half' | 'full';
 type Border = 'rounded' | 'plain' | 'double' | 'thick';
 type State = {
   off: boolean; registered: Panel[]; arranged: Arranged | null; saved: Record<string, Node>; ratios: Record<string, number[]>;
   recent: string[]; tabs: Record<string, number>; mode: { target: string; level: Exclude<Level, 'normal'> } | null; threads: Record<string, Thread>;
+  arranging: string | null;
 };
 type Bind = { rank: number; panel?: Panel; key: string; action: KeyAction; label: string };
 
@@ -31,9 +32,10 @@ const KEYS: Record<string, string> = {
   ...Object.fromEntries(Array.from({ length: PANELS }, (_, index) => [`panel_${index + 1}`, String(index + 1)])),
   main: '0', left: 'Left', left_alt: 'h', right: 'Right', right_alt: 'l', up: 'Up', up_alt: 'k', down: 'Down', down_alt: 'j', help: '?',
   mode_next: '+', mode_previous: '_', tab_previous: '[', tab_next: ']', panel_tab_previous: '{', panel_tab_next: '}',
-  grow: '=', shrink: '-', focus_shell: 'Enter',
+  grow: '=', shrink: '-', focus_shell: 'Enter', toggle: 'F2', arrange: 'a', arrange_tab: 't',
 };
 const KEY = /^(?:[\x21-\x7e]|F(?:[2-9]|1[0-2])|(?:Ctrl\+(?![cdzhijm]$)|Alt\+|Ctrl\+Alt\+)[a-z0-9]|(?:Ctrl\+|Alt\+|Shift\+)?(?:Up|Down|Left|Right|Home|End|PageUp|PageDown|Delete|Insert|Tab|Enter|Backspace|Space))$/;
+const CHAT_KEY = /^(?:F\d+|Ctrl\+|Alt\+)/;
 const SITE = /^[a-z][a-z0-9_]{0,23}\/[a-z0-9_-]{1,48}$/;
 const DISABLED = '<disabled>';
 const CELLS = 10;
@@ -57,6 +59,8 @@ const START = 'omd_workspace_start';
 const LIST = 'omd_workspace_changes';
 const REFRESH = 'omd_workspace_refresh';
 const SHELL = 'omd_workspace_shell';
+const ARRANGING = 'omd_workspace_arranging';
+const FRESH_MS = 2_000;
 const EXAMPLE = {
   layout: 'corner', panels: 'changes, terminal, snake', side: 'left', dock_size: 25, narrow_below: 90, border: 'plain', key_main: 'm',
   shell_write: true, terminals: [{ id: 'snake', title: 'Snake', argv: ['node', 'demo/snake.mjs'] }],
@@ -83,7 +87,7 @@ const clip = (text: string, limit: number) => {
 export default function activate(api: ModAPI) {
   const load = (): State => {
     const stored = obj(api.state.get());
-    const empty: State = { off: false, registered: [], arranged: null, saved: {}, ratios: {}, recent: [], tabs: {}, mode: null, threads: {} };
+    const empty: State = { off: false, registered: [], arranged: null, saved: {}, ratios: {}, recent: [], tabs: {}, mode: null, threads: {}, arranging: null };
     return Object.fromEntries(Object.entries(empty).map(([key, value]) => [key, own(stored, key) ?? value])) as State;
   };
   const save = (state: State) => api.state.set(state as unknown as Json);
@@ -108,12 +112,28 @@ export default function activate(api: ModAPI) {
   const keymap = () => {
     const keys: Record<string, string | null> = { ...KEYS };
     const invalid: string[] = [];
+    const chosen = new Set<string>();
     for (const action of Object.keys(KEYS)) {
       const key = api.settings[`key_${action}`];
       if (key === undefined || key === null || key === '') continue;
       if (key === DISABLED) keys[action] = null;
-      else if (typeof key === 'string' && KEY.test(key)) keys[action] = key;
-      else invalid.push(`key_${action}: invalid key ${JSON.stringify(key)}`);
+      else if (typeof key === 'string' && KEY.test(key) && (action !== 'toggle' || CHAT_KEY.test(key))) {
+        keys[action] = key;
+        chosen.add(action);
+      } else invalid.push(`key_${action}: invalid key ${JSON.stringify(key)}${action === 'toggle' ? ' (it works from the prompt, so it needs F2-F12, Ctrl+ or Alt+)' : ''}`);
+    }
+    const holders = (key: string | null) => Object.keys(keys).filter(action => key !== null && keys[action] === key);
+    for (const action of chosen) {
+      const others = holders(keys[action]).filter(other => other !== action);
+      if (!others.length) continue;
+      invalid.push(`key_${action}: ${keys[action]} is already key_${others[0]}`);
+      keys[action] = KEYS[action];
+    }
+    for (const action of Object.keys(keys)) {
+      const first = holders(keys[action])[0];
+      if (first === undefined || first === action) continue;
+      invalid.push(`key_${action}: ${keys[action]} is already key_${first}, so it is off`);
+      keys[action] = null;
     }
     return { keys, invalid };
   };
@@ -293,17 +313,31 @@ export default function activate(api: ModAPI) {
       if (key) picks.push({ rank, panel, key, action: run, label });
     };
     const run = (args: string): KeyAction => ({ command: 'workspace', args });
-    const grouped = (id: string) => {
+    const groupOf = (id: string) => {
       const path = locate(tree, id);
       const holder = path && path.length ? at(tree, path.slice(0, -1)) : null;
-      return !!holder && typeof holder === 'object' && 'tabs' in holder;
+      return holder && typeof holder === 'object' && 'tabs' in holder ? holder : null;
     };
+    const grouped = (id: string) => groupOf(id) !== null;
     all.forEach((panel, index) => {
       if (!list.includes(panel)) return;
       const site = (panel.tabs ? panel.tabs[ownTab(state, panel)].site : panel.site) as `${string}/${string}`;
-      bind(1, `panel_${index + 1}`, grouped(panel.id) ? run(`tab ${index + 1}`) : { region: site }, `${grouped(panel.id) ? 'Show' : 'Focus'} ${panel.title}`);
+      const group = groupOf(panel.id);
+      const hidden = group !== null && group.tabs[activeOf(state, group)] !== panel.id;
+      bind(1, `panel_${index + 1}`, hidden ? run(`tab ${index + 1}`) : { region: site }, `${hidden ? 'Show' : 'Focus'} ${panel.title}`);
     });
     bind(1, 'main', { region: 'chat' }, 'Main view');
+    const moving = list.find(panel => panel.id === state.arranging);
+    if (moving) {
+      for (const [region] of REGIONS) {
+        bind(2, region, run(`arrange ${region}`), `Move ${moving.title} ${region}`, moving);
+        bind(2, `${region}_alt`, run(`arrange ${region}`), `Move ${moving.title} ${region}`, moving);
+      }
+      bind(2, 'arrange_tab', run('arrange tab'), `Put ${moving.title} in tabs with its neighbour`, moving);
+      bind(2, 'grow', run(`grow ${moving.id}`), `Grow ${moving.title}`, moving);
+      bind(2, 'shrink', run(`shrink ${moving.id}`), `Shrink ${moving.title}`, moving);
+    }
+    for (const panel of list) bind(3, 'arrange', run(panel === moving ? 'arrange done' : `arrange ${panel.id}`), panel === moving ? 'Done arranging' : `Arrange ${panel.title} with keys`, panel);
     for (const panel of list) {
       const session = pty(panel);
       if (session && thread?.sessions?.includes(session.session)) bind(2, 'focus_shell', { focus: session.component }, `Type in ${panel.title}`, panel);
@@ -332,14 +366,15 @@ export default function activate(api: ModAPI) {
       bind(6, 'mode_previous', run(`mode previous ${panel.id}`), 'Previous screen mode', panel);
     }
     for (const [region, label] of REGIONS) bind(7, `${region}_alt`, { region }, label);
-    const kept = picks.map((pick, index) => ({ pick, index })).sort((a, b) => a.pick.rank - b.pick.rank || a.index - b.index).slice(0, BINDINGS).sort((a, b) => a.index - b.index).map(({ pick }) => pick);
+    const kept = picks.map((pick, index) => ({ pick, index })).sort((a, b) => a.pick.rank - b.pick.rank || a.index - b.index).slice(0, BINDINGS - (keys.toggle ? 1 : 0)).sort((a, b) => a.index - b.index).map(({ pick }) => pick);
     const out: KeyContext[] = [];
     for (const panel of list) {
       const own = Object.fromEntries(kept.filter(pick => pick.panel === panel).map(pick => [pick.key, { action: pick.action, label: pick.label }]));
       if (Object.keys(own).length) out.push({ when: { focus: sitesOf(panel) }, keys: own });
     }
     const general = Object.fromEntries(kept.filter(pick => !pick.panel).map(pick => [pick.key, { action: pick.action, label: pick.label }]));
-    return [...out, { when: { focus: 'site' }, keys: general }];
+    const anywhere = keys.toggle ? [{ keys: { [keys.toggle]: { action: run('toggle'), label: 'Show or hide the panels' } } }] : [];
+    return [...anywhere, ...out, { when: { focus: 'site' }, keys: general }];
   };
 
   const git = (...argv: string[]): string | null => {
@@ -368,7 +403,7 @@ export default function activate(api: ModAPI) {
     const selected = files.find(file => file.path === kept);
     touch(state, thread, { changes: {
       files: files.slice(0, FILES), total: files.length, selected: selected?.path ?? null, diff: selected ? diffOf(selected) : '',
-      error: status === null ? 'Not a Git repository' : null,
+      error: status === null ? 'Not a Git repository' : null, at: Date.now(),
     } });
   };
   const choose = (state: State, thread: string, path: string): string | null => {
@@ -416,8 +451,20 @@ export default function activate(api: ModAPI) {
     ];
   };
 
+  const forget = (state: State, gone: string[]) => {
+    for (const id of gone) delete state.tabs[id];
+    state.recent = state.recent.filter(id => !gone.includes(id));
+    if (state.mode && gone.includes(state.mode.target)) state.mode = null;
+    if (state.arranging && gone.includes(state.arranging)) {
+      state.arranging = null;
+      notice(state);
+    }
+  };
+
   api.on('mods_changed', ({ active }) => changed(state => {
-    state.registered = state.registered.filter(panel => active.includes(panel.site.split('/')[0]));
+    const kept = state.registered.filter(panel => active.includes(panel.site.split('/')[0]));
+    forget(state, state.registered.filter(panel => !kept.includes(panel)).map(panel => panel.id));
+    state.registered = kept;
   }));
 
   api.on('terminal', ({ ledger, client }): TerminalPatch | null => {
@@ -432,7 +479,7 @@ export default function activate(api: ModAPI) {
       if (pty(panel)) sites[panel.site as `${string}/${string}`] = { components: ptySite(panel, thread) };
       else if (panel.id === 'changes') sites[panel.site as `${string}/${string}`] = { components: changesSite(thread?.changes) };
     }
-    return { layout, sites, ...(list.some(panel => shown.has(panel.id)) ? { key_contexts: contexts(state, tree, list, thread) } : {}) };
+    return { layout, sites, ...(list.length ? { key_contexts: contexts(state, tree, list, thread) } : {}) };
   });
 
   api.on('component_event', event => {
@@ -440,7 +487,8 @@ export default function activate(api: ModAPI) {
     changed(state => {
       if (event.kind === 'focus') {
         const panel = [...BUILTIN, ...commands].find(item => pty(item)?.component === event.component);
-        if (event.component === LIST || (event.component === REFRESH && !state.threads[thread]?.changes)) refresh(state, thread);
+        const loaded = state.threads[thread]?.changes;
+        if ((event.component === LIST && !(loaded?.at && Date.now() - loaded.at < FRESH_MS)) || (event.component === REFRESH && !loaded)) refresh(state, thread);
         else if (panel && state.threads[thread]?.sessions?.includes(pty(panel)!.session)) {
           const { session } = pty(panel)!;
           const read = api.host.tryCall('terminal.pty', { action: 'read', session });
@@ -480,14 +528,25 @@ export default function activate(api: ModAPI) {
     const source = state.arranged ? `${state.arranged.preset ?? 'custom'}, set by ${state.arranged.by === 'mod' ? 'a mod' : 'you'}` : settled ? 'arrangement setting' : layoutSetting;
     const { refused } = render(state, list);
     const notes = [...(refused ? [`Showing dock instead: ${refused}.`] : []), ...(unusable ? [`Arrangement setting ignored: ${unusable}.`] : [])];
-    const hints = ([['panel_1', 'shows or focuses the first panel'], ['grow', 'grows'], ['shrink', 'shrinks'], ['main', 'returns to the chat'], ['help', 'lists the keys']] as [string, string][])
+    const hints = ([['panel_1', 'shows or focuses the first panel'], ['arrange', 'arranges the focused panel'], ['grow', 'grows'], ['shrink', 'shrinks'], ['main', 'returns to the chat'], ['help', 'lists the keys']] as [string, string][])
       .flatMap(([action, what]) => keys[action] ? [`${keys[action]} ${what}`] : []);
     return [
       `Workspace is ${state.off ? 'off' : 'on'} (${source}). Panels: ${list.map((panel, index) => `${index + 1} ${panel.title}${panel.title.toLowerCase() === panel.id ? '' : ` (${panel.id})`}`).join(', ') || 'none'}. Screen mode: ${state.mode ? `${state.mode.target} ${state.mode.level}` : 'normal'}.`,
       ...notes,
-      `Usage: /workspace on | off | layout ${PRESETS.join('|')}|save NAME|load NAME | move PANEL left|right|up|down|tab | swap PANEL PANEL | mode next|previous|normal|half|full [PANEL|dock|chat] | tab N|next|previous [PANEL] | grow | shrink | start [PANEL] | diff PATH | refresh | config | reset`,
-      `Ctrl+] from the prompt enters the panels. In them: ${hints.join(', ')}.`,
+      `Usage: /workspace on | off | toggle | layout ${PRESETS.join('|')}|save NAME|load NAME|delete NAME | move PANEL left|right|up|down|tab | swap PANEL PANEL | arrange PANEL|left|right|up|down|tab|done | mode next|previous|normal|half|full [PANEL|dock|chat] | tab N|next|previous [PANEL] | grow [PANEL] | shrink [PANEL] | start [PANEL] | diff PATH | refresh | config | reset`,
+      `Ctrl+] from the prompt enters the panels${keys.toggle ? ` and ${keys.toggle} shows or hides them` : ''}. In them: ${hints.join(', ')}.`,
     ].join('\n');
+  };
+  const notice = (state: State) => {
+    const panel = panels(state).find(item => item.id === state.arranging);
+    if (!panel) {
+      api.host.tryCall('terminal.notice', { id: ARRANGING, placement: 'status', clear: true });
+      return;
+    }
+    const ways = REGIONS.map(([region]) => keys[region]).filter(Boolean).join(' ');
+    const hints = [[ways, 'move'], [keys.arrange_tab, 'tabs'], [[keys.grow, keys.shrink].filter(Boolean).join(' '), 'resize'], [keys.arrange, 'done']]
+      .flatMap(([key, what]) => (key ? [`${key} ${what}`] : []));
+    api.host.tryCall('terminal.notice', { id: ARRANGING, placement: 'status', ttl_ms: 600_000, text: `Arranging ${panel.title}: ${hints.join(', ')}` });
   };
   const config = (state: State) => {
     const file = api.settingsFile;
@@ -514,30 +573,62 @@ export default function activate(api: ModAPI) {
       const current = () => arrangement(state, list);
       const known = (id: string) => id === 'chat' || list.some(panel => panel.id === id);
       const named = (word = '') => (list[Number(word) - 1] ?? list.find(panel => panel.id === word || panel.title.toLowerCase() === word.toLowerCase()))?.id ?? word;
-      const resize = (step: number) => {
+      const resize = (step: number, word?: string) => {
         state.mode = null;
         const tree = current();
-        if (typeof tree !== 'object' || !('split' in tree)) return null;
-        const chat = tree.children.findIndex(child => leaves(child).includes('chat'));
-        const stored = state.ratios[signature(tree)];
-        const ratio = stored?.length === tree.children.length ? stored : tree.ratio ?? tree.children.map(() => 1);
-        const total = ratio.reduce((sum, weight) => sum + weight, 0);
-        const now = Math.round(100 - ratio[chat] * 100 / total);
-        const next = step > 0 ? Math.max(now, Math.min(85, now + step)) : Math.min(now, Math.max(15, now + step));
-        const others = total - ratio[chat];
-        delete state.ratios[signature(tree)];
-        state.ratios[signature(tree)] = ratio.map((weight, index) => (index === chat ? 100 - next : Math.max(1, Math.round(weight * next / others))));
+        const id = word === undefined ? undefined : named(word);
+        const path = id === undefined ? [] : locate(tree, id);
+        if (!path || id === 'chat') return `Usage: /workspace ${step > 0 ? 'grow' : 'shrink'} [PANEL] (a shown panel)`;
+        for (let depth = id === undefined ? 0 : path.length - 1; depth >= 0; depth -= 1) {
+          const node = at(tree, path.slice(0, depth));
+          if (typeof node !== 'object' || !('split' in node)) continue;
+          const [index, sign] = id === undefined ? [node.children.findIndex(child => leaves(child).includes('chat')), -1] : [path[depth], 1];
+          const stored = state.ratios[signature(node)];
+          const ratio = stored?.length === node.children.length ? stored : node.ratio ?? node.children.map(() => 1);
+          const total = ratio.reduce((sum, weight) => sum + weight, 0);
+          const now = Math.round(100 - ratio[index] * 100 / total);
+          const next = step * sign < 0 ? Math.max(now, Math.min(85, now - step * sign)) : Math.min(now, Math.max(15, now - step * sign));
+          const others = total - ratio[index];
+          delete state.ratios[signature(node)];
+          state.ratios[signature(node)] = ratio.map((weight, slot) => (slot === index ? 100 - next : Math.max(1, Math.round(weight * next / others))));
+          for (const old of Object.keys(state.ratios).slice(0, -RATIOS)) delete state.ratios[old];
+          return null;
+        }
+        return null;
+      };
+      const arrange = (way: string) => {
+        const id = state.arranging;
+        if (!id || !known(id)) return 'Usage: /workspace arrange PANEL, then arrange left|right|up|down|tab|done';
+        const refused = commit(state, move(current(), id, way));
+        if (refused) return refused;
+        front(state, id);
         return null;
       };
       const operations: Record<string, () => string | null> = {
         on: () => { state.off = false; return 'Workspace on'; },
         off: () => { state.off = true; return 'Workspace off'; },
         reset: () => {
-          Object.assign(state, { arranged: null, ratios: {}, tabs: {}, recent: [], mode: null });
+          Object.assign(state, { arranged: null, ratios: {}, tabs: {}, recent: [], mode: null, arranging: null });
           return 'Arrangement, sizes, tabs and screen modes reset';
         },
-        grow: () => resize(STEP),
-        shrink: () => resize(-STEP),
+        toggle: () => {
+          state.mode = state.mode?.target === 'chat' && state.mode.level === 'full' ? null : { target: 'chat', level: 'full' };
+          return null;
+        },
+        arrange: () => {
+          const [word = ''] = words;
+          if (word === 'done') {
+            state.arranging = null;
+            return null;
+          }
+          if (Object.hasOwn(WAYS, word)) return arrange(word);
+          const id = named(word);
+          if (!known(id) || id === 'chat') return 'Usage: /workspace arrange PANEL, then arrange left|right|up|down|tab|done';
+          state.arranging = id;
+          return null;
+        },
+        grow: () => resize(STEP, words[0]),
+        shrink: () => resize(-STEP, words[0]),
         config: () => config(state),
         start: () => {
           const panel = list.find(item => item.id === named(words[0] ?? 'terminal') && pty(item));
@@ -609,7 +700,10 @@ export default function activate(api: ModAPI) {
           return `Screen mode: ${target} ${LEVELS[next]}`;
         },
       };
-      return Object.hasOwn(operations, op) ? operations[op]() : status(state);
+      const before = state.arranging;
+      const result = Object.hasOwn(operations, op) ? operations[op]() : status(state);
+      if (state.arranging !== before) notice(state);
+      return result;
     });
     return display === null ? null : { display };
   }, {
@@ -658,8 +752,8 @@ export default function activate(api: ModAPI) {
     unregister: input => changed(state => {
       const kept = state.registered.filter(panel => panel.id !== obj(input).id);
       const removed = kept.length < state.registered.length;
+      if (removed) forget(state, [obj(input).id as string]);
       state.registered = kept;
-      if (removed && state.mode?.target === obj(input).id) state.mode = null;
       return { removed };
     }),
     panels: () => {
