@@ -170,8 +170,8 @@ test('javascript kernel survives a background child writing while the result fra
     assert.match(overlapped.error, /output limit exceeded/);
     await cell(stopNoise);
   }
-  assert.deepEqual(await cell(spawnNoise(0.05)), { ok: true, output: 'x'.repeat(60000) + '\n', bridge_failed: false });
-  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.deepEqual(await cell(spawnNoise(0.5)), { ok: true, output: 'x'.repeat(60000) + '\n', bridge_failed: false });
+  await new Promise(resolve => setTimeout(resolve, 800));
   await cell(stopNoise);
   assert.deepEqual(await cell('console.log("next")'), { ok: true, output: 'next\n', bridge_failed: false });
 });
