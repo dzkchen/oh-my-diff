@@ -20,6 +20,7 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 
 ### Fixed
 
+- Usage: tool calls no longer rewrite the mod's whole saved state while the usage dialog is closed, and an agent event that changes nothing is skipped
 - Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list
 - Status line: usage limits refresh while idle, and an empty snapshot clears old limits
 - Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt
