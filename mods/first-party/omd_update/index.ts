@@ -119,7 +119,7 @@ export default function activate(api: ModAPI) {
     ({ type: 'text', id: `omd_update_${id}`, label, text: wrap(value, lines, width), tone });
   const button = (verb: string, label: string): TerminalComponent =>
     ({ type: 'button', id: `omd_update_${verb.replace(/\W+/g, '_')}`, label, text: label, action: { command: 'omd_update:update', args: verb } });
-  const when = (seconds: number | null | undefined) => seconds ? new Date(seconds * 1000).toISOString().slice(0, 16).replace('T', ' ') : 'never';
+  const when = (seconds: number | null | undefined) => seconds ? new Date(seconds * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'never';
 
   const release = (state: Saved, available: Release): TerminalComponent[] => [
     line('available', 'Available', `Oh My Diff ${visible(available.version, 80)}${available.prerelease ? ' (prerelease)' : ''} is out. To install it, quit OMD and run:`, 'accent', 2),
@@ -160,12 +160,12 @@ export default function activate(api: ModAPI) {
       { type: 'line', id: 'omd_update_header', label: 'Updates', spans: [{ text: 'Updates', bold: true, tone: 'accent' }] },
       ...(state.notice ? [line('notice', 'Result', state.notice, 'attention')] : []),
       ...status,
-      line('settings', 'Settings', `Checks ${checks}, ${cadence} · channel ${channel} · automatic updates ${auto} · pin ${visible(api.settings.pin, 40) || 'none'}`, 'muted', 2),
+      ...!info ? [] : [line('settings', 'Settings', `Checks ${checks}, ${cadence} · channel ${channel} · automatic updates ${auto} · pin ${visible(api.settings.pin, 40) || 'none'}`, 'muted', 2),
       button(`checks ${checks === 'off' ? 'on' : 'off'}`, checks === 'off' ? 'Turn update checks on' : 'Turn update checks off'),
       button(`auto ${auto === 'on' ? 'off' : 'on'}`, auto === 'on' ? 'Turn automatic updates off' : 'Turn automatic updates on'),
       ...CHOICES.channel.filter(value => value !== channel).map(value => button(`channel ${value}`, `Use ${value} releases`)),
       button(`cadence ${cadence === 'weekly' ? 'daily' : 'weekly'}`, cadence === 'weekly' ? 'Check daily' : 'Check weekly'),
-      line('help', 'More', 'Automatic updates download in the background and install releases and first-party mod updates when OMD starts with no other session open; they never touch mods you installed. Pin with omd update pin VERSION. omd update rollback undoes the last update.', 'muted', 4),
+      line('help', 'More', 'Automatic updates download in the background and install releases and first-party mod updates when OMD starts with no other session open; they never touch mods you installed. Pin with omd update pin VERSION. omd update rollback undoes the last update.', 'muted', 4)],
       button('close', 'Close'),
     ];
     return { type: 'dialog', id: 'omd_update_dialog', label: 'Oh My Diff updates', title: 'Updates', children };
