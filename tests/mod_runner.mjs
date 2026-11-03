@@ -1,6 +1,6 @@
 import { AssertionError } from 'node:assert';
 import { spawn, execFileSync } from 'node:child_process';
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 
@@ -15,12 +15,25 @@ function engineOnPath() {
   }
 }
 
+function built(root) {
+  const trees = existsSync(root) ? readdirSync(root).filter(name => name.startsWith('omd-b')) : [];
+  const found = trees.flatMap(tree => ['artifacts', 'target/release', 'target/debug'].map(place => join(root, tree, place, 'omd-runner')))
+    .filter(path => existsSync(path) && statSync(path).isFile());
+  return found.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+}
+
 function locate() {
   if (process.env.OMD_TEST_RUNNER) return realpathSync(process.env.OMD_TEST_RUNNER);
   const engine = process.env.OMD_MOD_BIN ?? engineOnPath();
   const runner = engine && join(dirname(realpathSync(engine)), 'omd-runner');
   if (runner && existsSync(runner)) return realpathSync(runner);
-  throw new Error('omd-runner not found: set OMD_TEST_RUNNER to a built omd-runner, or install Oh My Diff so one sits beside omd-mod');
+  const root = process.env.OMD_WORK_ROOT ?? '/private/tmp';
+  const local = built(root);
+  if (local) {
+    process.stderr.write(`Using omd-runner from ${local}; set OMD_TEST_RUNNER to choose another\n`);
+    return local;
+  }
+  throw new Error(`omd-runner not found: set OMD_TEST_RUNNER to a built omd-runner, build one with \`python3 .github/scripts/build.py cargo NAME LOG build --locked -p codex-omd-extension -p codex-omd-runner --bins\` (searched ${root}/omd-b*/), or install Oh My Diff so one sits beside omd-mod`);
 }
 
 export const runner = locate();

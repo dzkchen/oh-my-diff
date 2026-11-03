@@ -54,8 +54,9 @@ Run only the checks for what you changed:
 | Docs or the changelog | `mise run release:check` |
 
 Tests are in `tests/` and beside the code. [tests/README.md](tests/README.md) explains how they're found and which
-runner runs each kind. Tests that run mods start the `omd-runner` named in `OMD_TEST_RUNNER`, or else the installed
-one beside `omd-mod`.
+runner runs each kind. Tests that run mods start the `omd-runner` named in `OMD_TEST_RUNNER`, else the installed one
+beside `omd-mod`, else the newest one built in a scratch tree (see
+[Change the patched Codex code](docs/contributing/runtime.md)).
 
 Add a test only for behavior nothing else covers. A pull request runs a subset of checks, and the full suite runs
 nightly on GitHub. [How CI checks a change](docs/contributing/ci.md) says what runs when.

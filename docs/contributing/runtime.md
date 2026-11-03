@@ -64,10 +64,11 @@ output goes there and a summary goes to the terminal.
 python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER
 ```
 
-Build both binaries, because a host started from the target looks for `omd-runner` beside itself:
+Build `codex`, `omd-mod` and `omd-runner` together, because a host started from the target looks for `omd-runner`
+beside itself. `mise run mods:test` then finds them without `OMD_TEST_RUNNER` or `OMD_MOD_BIN`:
 
 ```sh
-python3 .github/scripts/build.py cargo NAME LOG build --locked -p codex-cli -p codex-omd-runner
+python3 .github/scripts/build.py cargo NAME LOG build --locked -p codex-cli -p codex-omd-extension -p codex-omd-runner --bins
 ```
 
 ## Check your change
