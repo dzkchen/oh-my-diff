@@ -43,7 +43,7 @@ Change settings in `/mods`.
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `route` | none | The connected provider or ChatGPT helper route the advisor runs on |
-| `triggers` | `[]` | Consult automatically on `failure` (same call failed twice), `loop` (same output three times) or `completion` (turns that changed files) |
+| `triggers` | `[]` | Consult automatically on `failure` (same call failed twice), `loop` (same output three times) or `completion` (turns that changed files). `failure` and `loop` consult at most once per call every 10 minutes and once every 2 minutes overall |
 | `every_turn` | `false` | Review every completed lead turn |
 | `mode` | `advisory` | `blocking` also needs a workflow contract with an advisor review gate |
 | `share` | `conversation`, `diff`, `files` | What the advisor may see |

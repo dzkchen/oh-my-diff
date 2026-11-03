@@ -22,13 +22,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "04e49fdc1f168d473cb8da7b08d8d15e6572c29e707bbfe8c078e48c5b5e5164",
-        "mod.json": "5c48848f9eca8c04eccf205a17cd9b8f616555f9b33099ecd89a7e7d863e34a0"
+        "index.ts": "20f1978cf82987765d18efacb7244fab4b5854596aa0183b29af2c6c47b99a6a",
+        "mod.json": "8088ba437bdb545317f325d7a0e021a3af448823913794994cc49787b3d7fa00"
       },
       "id": "omd_advisor",
-      "package_sha256": "1d03042e270a77c331d7425d6743bc07accf190591422b2aa619e2f71f904703",
+      "package_sha256": "a8c24d9ad435ed2d971ec6317342d70d73dc383034acba55b27a5d30e0f6815e",
       "source": "mods/first-party/omd_advisor",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     "omd_auto_continue": {
       "api": "1.0.0",
