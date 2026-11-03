@@ -319,6 +319,47 @@ test('the extra-usage opt-out is read from the store per request and fails safe'
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('the extra-usage setting follows the store settings file like the host, and every selection of the mod must allow it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'omd-claude-settings-file-'));
+  const settings = join(root, 'settings');
+  const allowed = () => extraUsageAllowed(join(root, 'routes/claude/route.json'), '/real/omd_claude_cli');
+  const select = (...rows) => writeFile(join(root, 'mods.json'), JSON.stringify({ mods: rows.map(([scope, extra]) => ({ path: '/real/omd_claude_cli', scope, settings: extra === undefined ? {} : { extra_usage: extra } })) }));
+  const only = async (extension, text) => {
+    await rm(settings, { recursive: true, force: true });
+    await mkdir(settings);
+    if (text !== undefined) await writeFile(join(settings, `omd_claude_cli.${extension}`), text);
+  };
+  try {
+    await select(['user']);
+    for (const [extension, text, expected] of [
+      ['json', undefined, true],
+      ['json', '{"extra_usage": false}', false],
+      ['json', '{}', true],
+      ['json', '{"extra_usage": "no"}', true],
+      ['json', '{"extra_usage": false, "other": 1}', true],
+      ['json', 'not json', true],
+      ['yaml', 'extra_usage: false # stop\n', false],
+      ['yml', '---\n# off\nExtra: 1\n', false],
+      ['yaml', '{extra_usage: true}', true],
+      ['yaml', '# nothing set\n', true],
+    ]) {
+      await only(extension, text);
+      assert.equal(await allowed(), expected, `${extension} ${text}`);
+    }
+    await only('json', '{"extra_usage": false}');
+    await writeFile(join(settings, 'omd_claude_cli.yaml'), 'extra_usage: false\n');
+    assert.equal(await allowed(), true);
+    await only('json', '{"extra_usage": true}');
+    await select(['user', false]);
+    assert.equal(await allowed(), true);
+    await select(['managed', false]);
+    assert.equal(await allowed(), false);
+    await select(['user'], ['project', false]);
+    await only('json');
+    assert.equal(await allowed(), false);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('missing subscription login fails before routing and inherited API overrides never reach the CLI', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-auth-'));
   const fake = join(root, 'claude');
