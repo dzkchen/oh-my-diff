@@ -26,6 +26,7 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 - Workspace: a panel that goes away no longer leaves its screen mode behind, a key set twice is reported instead of silently turning another off, and focusing Changes no longer reruns git status every time
 - Claude CLI: turning off extra usage in the mod's settings file now stops at extra usage too, instead of only the `/mods` setting counting
 - Advisor: automatic `failure` and `loop` consults cool down, once per call every 10 minutes and once every 2 minutes overall, so an agent retrying one failing command no longer pays for a second model on every other failure
+- Claude CLI: `/claude login` works when the mod was installed from the catalog, instead of failing with setup_must_run_from_installed_mod after sign-in
 
 ## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
 
