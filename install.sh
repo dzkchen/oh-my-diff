@@ -52,6 +52,9 @@ RELEASE_MANIFEST = "omd-release.json"
 RELEASE_SIGNATURE = RELEASE_MANIFEST + ".sig"
 RELEASE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGhcSdBwdX2rgdAjg2JwbF7A1KCswnSZpwbdFsaLKo6G"
 SIGNING_NAMESPACE = "oh-my-diff-release"
+MODS_MANIFEST = "omd-mods.json"
+MODS_SIGNATURE = MODS_MANIFEST + ".sig"
+MODS_NAMESPACE = "oh-my-diff-mods"
 RELEASE_HOSTS = ("api.github.com", "localhost", "127.0.0.1")
 TARGET = "aarch64-apple-darwin"
 UPDATE_MOD = "omd_update"
@@ -708,6 +711,8 @@ def discard(generation, upstream, bin_dir):
 
 
 def rollback(args, root, bin_dir, current):
+    if current and (current / "prefix/mods-previous").is_dir():
+        return rollback_mods(args, root, current)
     previous = pointer(root, "previous")
     if previous == current and current:
         prior_name = receipt(current).get("previous")
@@ -916,15 +921,15 @@ def channel_newer(channel, version, installed):
 
 
 @functools.cache
-def signed(body, signature):
+def signed(body, signature, namespace=SIGNING_NAMESPACE):
     if not RELEASE_KEY:
         return False
     with tempfile.TemporaryDirectory(prefix="omd-signature-") as temporary:
         signers, detached = Path(temporary) / "signers", Path(temporary) / "manifest.sig"
-        signers.write_text(f'release namespaces="{SIGNING_NAMESPACE}" {RELEASE_KEY}\n')
+        signers.write_text(f'release namespaces="{namespace}" {RELEASE_KEY}\n')
         detached.write_bytes(signature)
         return subprocess.run(["/usr/bin/ssh-keygen", "-Y", "verify", "-f", signers, "-I", "release",
-                               "-n", SIGNING_NAMESPACE, "-s", detached], input=body, capture_output=True).returncode == 0
+                               "-n", namespace, "-s", detached], input=body, capture_output=True).returncode == 0
 
 
 def release_manifest(release):
@@ -948,6 +953,65 @@ def release_manifest(release):
         fail(f"release {release['version']} archive digest disagrees with its manifest")
     return {key: record[key] for key in ("version", "target", "upstream_tag", "mod_api", "sha256")} | {
         "url": str(archive.get("browser_download_url")), "body": body.decode(), "signature": signature.decode()}
+
+
+def mod_bundle(url, version):
+    pattern = re.compile(rf"mods-{re.escape(version)}-([1-9][0-9]{{0,8}})")
+    parsed = urllib.parse.urlsplit(url)
+    if re.fullmatch(r"/repos/[^/]+/[^/]+/releases/?", parsed.path):
+        base = urllib.parse.urlunsplit(parsed._replace(path=parsed.path.rstrip("/"), query="", fragment=""))
+        refs = fetch_json(f"{base.removesuffix('/releases')}/git/matching-refs/tags/mods-{urllib.parse.quote(version, safe='')}-",
+                          2_000_000)
+        if not isinstance(refs, list):
+            fail("mod bundle tags are malformed")
+        tags = [ref.removeprefix("refs/tags/") for item in refs if isinstance(item, dict) and isinstance(ref := item.get("ref"), str)]
+        newest = max((tag for tag in tags if pattern.fullmatch(tag)), key=lambda tag: int(pattern.fullmatch(tag)[1]), default=None)
+        listed = [fetch_json(f"{base}/tags/{newest}", 2_000_000)] if newest else []
+    else:
+        listed = fetch_json(url, 2_000_000)
+        if not isinstance(listed, list):
+            fail("release list is malformed")
+    found = [(int(match[1]), item) for item in listed if isinstance(item, dict) and not item.get("draft")
+             and isinstance(item.get("tag_name"), str) and (match := pattern.fullmatch(item["tag_name"]))]
+    if not found:
+        return None
+    serial, item = max(found, key=lambda pair: pair[0])
+    tag = item["tag_name"]
+    assets = {asset.get("name"): asset for asset in item.get("assets") or [] if isinstance(asset, dict)}
+    if MODS_MANIFEST not in assets or MODS_SIGNATURE not in assets:
+        fail(f"mod bundle {tag} is unsigned")
+    body = fetch_bytes(str(assets[MODS_MANIFEST].get("browser_download_url")), 65_536)
+    signature = fetch_bytes(str(assets[MODS_SIGNATURE].get("browser_download_url")), 4096)
+    if not signed(body, signature, MODS_NAMESPACE):
+        fail(f"mod bundle {tag} manifest signature does not verify against the Oh My Diff release key")
+    try:
+        record = json.loads(body)
+    except ValueError:
+        record = None
+    archive = assets.get(record.get("archive")) if isinstance(record, dict) else None
+    packages = record.get("packages") if archive else None
+    if (not isinstance(packages, dict) or record.get("schema") != 1 or record.get("omd") != version
+            or record.get("serial") != serial or not isinstance(record.get("mod_api"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("sha256")))
+            or not all(re.fullmatch(r"[0-9a-f]{64}", str(value)) for value in packages.values())):
+        fail(f"mod bundle {tag} has a malformed {MODS_MANIFEST}")
+    if archive.get("digest") not in (None, f"sha256:{record['sha256']}"):
+        fail(f"mod bundle {tag} archive digest disagrees with its manifest")
+    return {"omd": version, "serial": serial, "mod_api": record["mod_api"], "packages": packages, "sha256": record["sha256"],
+            "notes": text(item.get("body"), 1500), "page": text(item.get("html_url"), 300),
+            "url": str(archive.get("browser_download_url")), "body": body.decode(), "signature": signature.decode()}
+
+
+def mod_changes(current, record, bundle):
+    if bundle["mod_api"] != record.get("mod_api") or bundle["serial"] <= record.get("mods_bundle", {}).get("serial", 0):
+        return []
+    locked = read_json(current / "prefix/management/runtime/mods.lock.json", {}).get("packages", {})
+    return sorted(identifier for identifier, sha256 in bundle["packages"].items()
+                  if identifier in locked and identifier in record["packages"] and locked[identifier].get("package_sha256") != sha256)
+
+
+def mod_key(mods):
+    return mods and {"omd": mods["omd"], "serial": mods["serial"]}
 
 
 def release_source(url):
@@ -1000,11 +1064,12 @@ def state(root):
 
 def notice(saved):
     value = {key: saved.get(key) for key in ("installed", "checked_at", "blocked", "error", "pending", "failed", "last", "held",
-                                             "request_done", "withdrawn")}
-    available = saved.get("available")
+                                             "request_done", "withdrawn", "last_mods", "failed_mods")}
+    available, mods = saved.get("available"), saved.get("mods")
     value["available"] = available and {key: available.get(key) for key in ("version", "prerelease", "notes", "page", "user_mods")} | {
         "mod_api": available["manifest"]["mod_api"]}
-    for owner, key in ((value["available"] or {}, "notes"), (value, "blocked"), (value, "failed"),
+    value["mods"] = mods and {key: mods.get(key) for key in ("omd", "serial", "changed", "notes", "page")}
+    for owner, key in ((value["available"] or {}, "notes"), (value["mods"] or {}, "notes"), (value, "blocked"), (value, "failed"),
                        (value["available"] or {}, "user_mods"), (value, "error")):
         if len(json.dumps(value, sort_keys=True)) <= NOTICE_BYTES:
             break
@@ -1069,6 +1134,12 @@ def probe(args, root, current):
                                } if published and record["version"] in missing else None
     except (OSError, ValueError) as error:
         return {"error": text(str(error), 300)}
+    try:
+        bundle = None if pin else mod_bundle(release_source(details.get("releases_url") or RELEASES_URL), record["version"])
+        changed = bundle and mod_changes(current, record, bundle)
+        result["mods"] = bundle | {"changed": changed} if changed else None
+    except (OSError, ValueError) as error:
+        result["error"] = result["error"] or text(str(error), 300)
     return result
 
 
@@ -1085,7 +1156,8 @@ def recorded_check(root, version, result, settings):
     if "available" not in result:
         saved = state(root)
         cached = saved.get("available")
-        result = result | {"available": cached if eligible(settings, cached, version) else None, "blocked": saved.get("blocked")}
+        result = result | {"available": cached if eligible(settings, cached, version) else None, "blocked": saved.get("blocked"),
+                           "mods": saved.get("mods") if (saved.get("mods") or {}).get("omd") == version and not settings.get("pin") else None}
     save(root, schema=1, installed=version, checked_at=int(time.time()), command="omd update", **result)
     return state(root)
 
@@ -1101,7 +1173,7 @@ def newer(known, version):
 
 def settled(root, version, **changes):
     save(root, schema=1, command="omd update", installed=version, available=newer(state(root).get("available"), version),
-         pending=None, withdrawn=None, **changes)
+         pending=None, withdrawn=None, mods=None, held_mods=None, failed_mods=None, **changes)
 
 
 def flocked(path, waiting=None):
@@ -1166,6 +1238,39 @@ def apply(args, root, current, available):
     return result
 
 
+def apply_mods(args, root, current, mods):
+    try:
+        if not (signed(mods["body"].encode(), mods["signature"].encode(), MODS_NAMESPACE)
+                and json.loads(mods["body"]).get("sha256") == mods["sha256"]
+                and json.loads(mods["body"]).get("omd") == installation(root, current)[1]["version"]):
+            fail("the mod bundle manifest no longer verifies for this installation; run omd update check")
+        upstream = Path(upstream_binary(args, current)["path"])
+        with tempfile.TemporaryDirectory(prefix="omd-mods-") as temporary:
+            archive = Path(temporary) / "bundle.tar.xz"
+            download(mods["url"], mods["sha256"], archive)
+            payload = extract(archive, Path(temporary) / "unpacked")
+            offered = json.loads((payload / "mods.lock.json").read_text())["packages"]
+            if {identifier: package.get("package_sha256") for identifier, package in offered.items()} != json.loads(mods["body"])["packages"]:
+                fail("the mod bundle disagrees with its signed manifest")
+            result = json.loads(package(current, upstream, args.bin_dir, "mods-update", "--bundle", payload,
+                                        "--serial", str(mods["serial"])))
+    except BaseException as error:
+        save(root, failed_mods=mod_key(mods) | {"error": text(str(error), 300), "at": int(time.time())})
+        raise
+    save(root, mods=None, failed_mods=None, held_mods=None,
+         last_mods={"serial": mods["serial"], "changed": result["updated"], "at": int(time.time())})
+    return {"mods_updated": result["updated"], "version": mods["omd"], "serial": mods["serial"]}
+
+
+def rollback_mods(args, root, current):
+    upstream = Path(upstream_binary(args, current)["path"])
+    record = json.loads((current / "prefix/install.json").read_text())
+    serial = record.get("mods_bundle", {}).get("serial")
+    result = json.loads(package(current, upstream, args.bin_dir, "mods-rollback"))
+    save(root, mods=None, last_mods=None, held_mods={"omd": record["version"], "serial": serial} if serial else None)
+    print(json.dumps({"restored_mods": result["updated"]}, indent=2))
+
+
 def confirmed(args, available):
     if args.yes:
         return True
@@ -1204,13 +1309,17 @@ def manual(args, root, current):
         available = saved.get("available")
         return {"installed": record["version"], "profile": details["profile"], "policy": policy(store),
                 "open_sessions": len(sessions(root, None))} | {
-            key: saved.get(key) for key in ("checked_at", "blocked", "error", "pending", "failed", "held", "last", "withdrawn")} | {
+            key: saved.get(key) for key in ("checked_at", "blocked", "error", "pending", "failed", "held", "last", "withdrawn",
+                                            "last_mods", "failed_mods", "held_mods")} | {
             "available": available and available | {"manifest": {key: value for key, value in available["manifest"].items()
-                                                                 if key not in ("body", "signature")}}}
+                                                                 if key not in ("body", "signature")}},
+            "mods": saved.get("mods") and {key: value for key, value in saved["mods"].items() if key not in ("body", "signature")}}
     result = check(args, root, current)
     if action == "check":
         return result
     available = result["available"]
+    if not available and result.get("mods"):
+        return apply_mods(args, root, current, result["mods"])
     if not available:
         return {"up_to_date": record["version"], "blocked": result["blocked"], "error": result["error"]}
     if available["user_mods"] and not confirmed(args, available):
@@ -1248,7 +1357,14 @@ def tick(args, root, current):
             committed(root, current, lambda: prune(root, current, args))
         except (OSError, ValueError):
             pass
-        available = (saved or {}).get("available")
+        available, mods = (saved or {}).get("available"), (saved or {}).get("mods")
+        if (settings["auto"] == "on" and not available and mods
+                and mod_key(mods) not in (mod_key(saved.get("failed_mods")), mod_key(saved.get("held_mods")))):
+            try:
+                committed(root, current, lambda: apply_mods(args, root, current, mods))
+            except (OSError, ValueError, RuntimeError, tarfile.TarError):
+                pass
+            return
         if (settings["auto"] != "on" or not available or available["user_mods"]
                 or available["version"] in ((saved.get("failed") or {}).get("version"), (saved.get("held") or {}).get("version"))):
             return
@@ -1283,6 +1399,18 @@ def launch(args, root, current):
     if request and request["id"] != saved.get("request_done"):
         save(root, request_done=request["id"])
         requested = request.get("version")
+        if "mods" in request:
+            mods = saved.get("mods")
+            if not mods or (mods["omd"], mods["serial"]) != (request.get("omd"), request["mods"]):
+                print("The first-party mod update is no longer available; open /update or run omd update.", file=sys.stderr)
+                return
+            try:
+                result = apply_mods(args, root, current, mods)
+            except (OSError, ValueError, RuntimeError, tarfile.TarError) as error:
+                print(f"The first-party mod update failed and nothing changed: {error}", file=sys.stderr)
+                return
+            print(f"Updated first-party mods: {', '.join(result['mods_updated'])}.", file=sys.stderr)
+            return
     automatic = staged.get("automatic", True) and requested != available.get("version")
     settings = policy(store)
     allowed = eligible(settings, available, record["version"])
@@ -1323,6 +1451,7 @@ def update_summary(status):
     checks = f"{rules['cadence']} checks" if rules["checks"] == "on" else "update checks off"
     found = status["available"]
     latest = (f"{found['version']} is available: run omd update" if found else
+              f"first-party mod updates are available ({', '.join(status['mods']['changed'])}): run omd update" if status["mods"] else
               f"the last check failed: {status['error']}" if status["error"] else
               "up to date" if status["checked_at"] else "not checked yet")
     pinned = f", pinned to {rules['pin']}" if rules["pin"] else ""

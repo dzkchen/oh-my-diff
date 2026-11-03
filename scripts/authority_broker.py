@@ -66,6 +66,14 @@ def version_key(value):
     return int(found[1]), int(found[2]), int(found[3]), not found[4], pre
 
 
+def release_signed(body, signature, namespace=SIGNING_NAMESPACE):
+    with tempfile.TemporaryDirectory(prefix="omd-signature-") as temporary:
+        signers = Path(temporary) / "signers"
+        signers.write_text(f'release namespaces="{namespace}" {RELEASE_KEY}\n')
+        return bool(RELEASE_KEY) and run("/usr/bin/ssh-keygen", "-Y", "verify", "-f", signers, "-I", "release",
+                                         "-n", namespace, "-s", signature, stdin=body, check=False).returncode == 0
+
+
 def signed_releases(manifests):
     releases = []
     for manifest in map(Path, manifests):
@@ -74,13 +82,7 @@ def signed_releases(manifests):
             raise ValueError(f"{manifest.parent} has no signed omd-release.json; the authority broker accepts only "
                              "installs from a signed release")
         body = manifest.read_bytes()
-        with tempfile.TemporaryDirectory(prefix="omd-signature-") as temporary:
-            signers = Path(temporary) / "signers"
-            signers.write_text(f'release namespaces="{SIGNING_NAMESPACE}" {RELEASE_KEY}\n')
-            verified = RELEASE_KEY and run("/usr/bin/ssh-keygen", "-Y", "verify", "-f", signers, "-I", "release",
-                                           "-n", SIGNING_NAMESPACE, "-s", signature, stdin=body,
-                                           check=False).returncode == 0
-        if not verified:
+        if not release_signed(body, signature):
             raise ValueError(f"{manifest} is not signed by the Oh My Diff release key")
         release = json.loads(body)
         version_key(release["version"])

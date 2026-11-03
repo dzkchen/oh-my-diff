@@ -71,7 +71,7 @@ Only passing runs on `main` publish. The version is `NEXT-nightly.UTC_TIMESTAMP.
 version in `runtime/release.lock.json`, or its next patch if that is a stable release. A nightly is always a
 prerelease and never marked latest.
 
-Releases are in [Cut a release](release.md).
+Releases and first-party mod bundles (the manual Mods workflow) are in [Cut a release](release.md).
 
 ## Repository settings
 

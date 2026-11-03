@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -41,6 +43,17 @@ def release(version, prerelease=False, **manifest):
                          "artifacts": {"codex": "c" * 64}, **manifest}}
 
 
+def mods(serial, omd="0.1.0", **manifest):
+    name = f"omd-mods-{omd}-{serial}.tar.xz"
+    base = f"https://example.test/mods-{omd}-{serial}"
+    return {"tag_name": f"mods-{omd}-{serial}", "draft": False, "body": f"mods {serial}", "html_url": base, "assets": [
+                {"name": "omd-mods.json", "browser_download_url": f"{base}/omd-mods.json"},
+                {"name": "omd-mods.json.sig", "browser_download_url": f"{base}/omd-mods.json.sig"},
+                {"name": name, "browser_download_url": f"{base}/{name}", "digest": f"sha256:{'b' * 64}"}],
+            "manifest": {"schema": 1, "omd": omd, "serial": serial, "commit": "c" * 40, "mod_api": "1.0.0", "archive": name,
+                         "sha256": "b" * 64, "packages": {"omd_btw": "1" * 64, "omd_new": "2" * 64}, **manifest}}
+
+
 class UpdateSelection(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -70,6 +83,7 @@ class UpdateSelection(unittest.TestCase):
         (self.current / "prefix/install.json").write_text(json.dumps({"version": "0.1.0", "store": str(store), "packages": {},
                                                                       "author": {"node": "/usr/bin/true"}}))
         self.published = []
+        self.mods_namespace = self.module.MODS_NAMESPACE
         self.module.RELEASE_KEY = self.public
         self.signing = self.key
         self.module.fetch_json = self.fetch
@@ -103,7 +117,8 @@ class UpdateSelection(unittest.TestCase):
                                if manifest == item["assets"][0]["browser_download_url"])).encode()
         if url == manifest:
             return body
-        return signed(self.signing, Path(self.keys.name) / "omd-release.json", body).with_suffix(".json.sig").read_bytes()
+        namespace = self.mods_namespace if manifest.endswith("/omd-mods.json") else self.module.SIGNING_NAMESPACE
+        return signed(self.signing, Path(self.keys.name) / "manifest.json", body, namespace).with_suffix(".json.sig").read_bytes()
 
     def check(self, **settings):
         self.settings = settings
@@ -425,6 +440,110 @@ class UpdateSelection(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no longer verifies"):
                 self.module.transaction(None, self.root, self.current, None, manifest["url"], manifest["sha256"],
                                         "platform", None, bad)
+
+    def bundled(self):
+        record = json.loads((self.current / "prefix/install.json").read_text()) | {
+            "mod_api": "1.0.0", "packages": {"omd_btw": {}, "omd_files": {}}, "mods_bundle": {"serial": 1}}
+        (self.current / "prefix/install.json").write_text(json.dumps(record))
+        (self.current / "prefix/management/runtime").mkdir(parents=True, exist_ok=True)
+        (self.current / "prefix/management/runtime/mods.lock.json").write_text(json.dumps({"packages": {
+            "omd_btw": {"package_sha256": "0" * 64}, "omd_files": {"package_sha256": "2" * 64}}}))
+
+    def test_mod_bundles_verify_in_their_own_namespace_and_offer_only_changed_installed_mods(self):
+        self.bundled()
+        self.published = [release("0.0.9"), mods(1), mods(2), mods(3, omd="0.0.9")]
+        found = self.check()["mods"]
+        self.assertEqual((found["serial"], found["changed"], found["notes"]), (2, ["omd_btw"], "mods 2"))
+        self.assertEqual(self.module.notice(self.module.state(self.root))["mods"]["changed"], ["omd_btw"])
+        self.published = [mods(1)]
+        self.assertIsNone(self.check()["mods"])
+        for published, settings, error in (([mods(2, mod_api="2.0.0")], {}, None),
+                                           ([mods(2, packages={"omd_btw": "0" * 64})], {}, None),
+                                           ([mods(2)], {"pin": "0.1.0"}, None),
+                                           ([mods(2, omd="0.1.1") | {"tag_name": "mods-0.1.0-2"}], {}, "malformed"),
+                                           ([mods(2)], {}, "signature does not verify")):
+            with self.subTest(error=error, settings=settings):
+                self.published = published
+                self.mods_namespace = self.module.SIGNING_NAMESPACE if error == "signature does not verify" else self.module.MODS_NAMESPACE
+                result = self.check(**settings)
+                self.assertIsNone(result["mods"])
+                if error:
+                    self.assertIn(error, result["error"])
+
+    def test_mod_updates_follow_auto_requests_release_precedence_and_roll_back(self):
+        self.bundled()
+        self.published = [mods(2)]
+        calls, failing = [], []
+        payload = self.root / "payload"
+        payload.mkdir()
+        (payload / "mods.lock.json").write_text(json.dumps({"packages": {
+            "omd_btw": {"package_sha256": "1" * 64}, "omd_new": {"package_sha256": "2" * 64}}}))
+        self.module.download = lambda url, expected, destination: calls.append(("download", url))
+        self.module.extract = lambda archive, destination: payload
+
+        def package(generation, upstream, bin_dir, *arguments):
+            calls.append(arguments[:1])
+            if failing:
+                raise ValueError(failing.pop())
+            return json.dumps({"updated": ["omd_btw"]})
+        self.module.package = package
+        self.module.prune = lambda *arguments: None
+        args = types.SimpleNamespace(session=os.getpid(), bin_dir=self.root / "bin", action=None, value=None, yes=False)
+        self.settings = {"auto": "off"}
+        self.write_settings()
+        self.module.tick(args, self.root, self.current)
+        self.assertEqual(calls, [])
+        self.settings = {"auto": "on"}
+        self.write_settings()
+        failing.append("missing_host_features")
+        with self.assertRaisesRegex(ValueError, "missing_host_features"):
+            self.module.apply_mods(args, self.root, self.current, self.module.state(self.root)["mods"])
+        calls.clear()
+        self.module.tick(args, self.root, self.current)
+        self.assertEqual(calls, [])
+        self.module.save(self.root, failed_mods=None)
+        self.module.tick(args, self.root, self.current)
+        self.assertEqual(calls, [("download", self.published[0]["assets"][2]["browser_download_url"]), ("mods-update",)])
+        saved = self.module.state(self.root)
+        self.assertEqual((saved["mods"], saved["last_mods"]["changed"]), (None, ["omd_btw"]))
+        calls.clear()
+        self.module.mod_request = lambda *arguments: {"id": "mods-0.1.0-2#1", "mods": 2, "omd": "0.1.0"}
+        self.module.check(args, self.root, self.current)
+        self.module.launch(args, self.root, self.current)
+        self.assertEqual(calls[-1], ("mods-update",))
+        applied = []
+        self.module.apply = lambda args, root, current, available: applied.append(available["version"])
+        self.published = [release("0.2.0"), mods(2)]
+        calls.clear()
+        self.module.manual(args, self.root, self.current)
+        self.assertEqual((applied, calls), (["0.2.0"], []))
+        self.published = [mods(2)]
+        self.assertEqual(self.module.manual(args, self.root, self.current)["mods_updated"], ["omd_btw"])
+        (self.current / "prefix/mods-previous").mkdir()
+        record = json.loads((self.current / "prefix/install.json").read_text()) | {"mods_bundle": {"serial": 2}}
+        (self.current / "prefix/install.json").write_text(json.dumps(record))
+        calls.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.module.rollback(args, self.root, args.bin_dir, self.current)
+        self.assertEqual(calls, [("mods-rollback",)])
+        self.assertEqual(self.module.state(self.root)["held_mods"], {"omd": "0.1.0", "serial": 2})
+        calls.clear()
+        self.module.tick(args, self.root, self.current)
+        self.assertEqual(calls, [])
+
+    def test_a_built_mod_bundle_extracts_with_the_installer_and_matches_its_manifest(self):
+        from scripts import mods_bundle
+        planned = {"omd": "0.1.0", "serial": 4, "changed": ["omd_update"], "needs_release": [], "commits": ["abc fix"]}
+        with patch.object(mods_bundle, "plan", return_value=planned):
+            manifest = mods_bundle.build(self.root / "bundle", "c" * 40)
+        archive = self.root / "bundle" / manifest["archive"]
+        self.assertEqual((manifest["archive"], manifest["sha256"]), ("omd-mods-0.1.0-4.tar.xz", self.module.digest(archive)))
+        payload = self.module.extract(archive, self.root / "unpacked")
+        lock = json.loads((payload / "mods.lock.json").read_text())
+        self.assertEqual({identifier: package["package_sha256"] for identifier, package in lock["packages"].items()}, manifest["packages"])
+        for identifier, package in lock["packages"].items():
+            for name, sha256 in package["files"].items():
+                self.assertEqual(self.module.digest(payload / "sources" / identifier / name), sha256)
 
     def test_release_lists_come_only_from_github_or_a_loopback_server(self):
         for url in ("https://api.github.com/repos/dzkchen/oh-my-diff/releases?per_page=20", "https://127.0.0.1:8443/releases"):

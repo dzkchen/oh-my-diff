@@ -53,10 +53,41 @@ The release version is in `runtime/release.lock.json`. Release notes and `CHANGE
    gh release view vVERSION
    ```
 
+## Publish first-party mod updates
+
+Fixes to `mods/first-party` can reach users of the current release without a new release. The Mods workflow builds
+a bundle of every first-party mod on `main` and publishes it as the GitHub release `mods-VERSION-N`, where VERSION is
+`release_pin.omd` in `extensions/index.json` and N counts up. Installs of exactly that VERSION take the mods that
+differ from what they have. Mods new since the release, and a mod API change, wait for the next release.
+
+1. Check what would ship:
+
+   ```sh
+   python3 -m scripts.mods_bundle plan
+   ```
+
+   `changed` lists the mods that differ from the `vVERSION` tag and `needs_release` lists new mods it skips. A
+   changed mod's `required_features` must all be in that release's host, or installs refuse the bundle.
+2. Optional: dry-run it. It checks, builds and signs, then prints the publish command:
+
+   ```sh
+   gh workflow run mods.yml --ref main -f dry_run=true
+   ```
+
+3. Publish:
+
+   ```sh
+   gh workflow run mods.yml --ref main
+   ```
+
+To withdraw a bad bundle, revert the fix on `main` and publish again: the higher N replaces it. Users who already
+updated can run `omd update rollback`.
+
 ## How releases are signed
 
 Publication signs `omd-release.json` (`ssh-keygen -Y sign`, namespace `oh-my-diff-release`) with the
-`OMD_RELEASE_SIGNING_KEY` secret. The installer (`install.sh`) and `scripts/authority_broker.py` verify it against a
+`OMD_RELEASE_SIGNING_KEY` secret. Mod bundles sign `omd-mods.json` with the same key in the namespace
+`oh-my-diff-mods`, so neither manifest passes for the other. The installer (`install.sh`) and `scripts/authority_broker.py` verify it against a
 pinned public key. To rotate the key, change both pins and the secret together.
 
 ## Withdraw a release

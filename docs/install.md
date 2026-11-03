@@ -69,7 +69,7 @@ Then run `codex` and type `/mods`. The `/mods` screen lists your installed mods 
 ## Update
 
 ```sh
-omd update            # install the newest release
+omd update            # install the newest release, or the newest first-party mod updates
 omd update rollback   # undo the last update
 omd update enable     # install updates automatically
 ```
@@ -77,6 +77,11 @@ omd update enable     # install updates automatically
 While other OMD sessions are open, the update waits for your next `codex` start. Mods, settings and sign-in are
 kept. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
 update anyway.
+
+Between releases, OMD can publish fixes to the mods it ships on their own. These updates keep your OMD version and
+leave each mod on or off as it was. `omd update` installs them when no newer release is out, `/update` offers them, and
+automatic updates install them in the background. A version pin turns them off. `omd update rollback` undoes the last
+one. A first-party mod that needs a newer OMD waits for the next release.
 
 To change how updates work, such as the release channel, the check cadence or a version pin, use `/update` in
 `codex` or the [`omd update` commands](commands.md#omd-itself).
