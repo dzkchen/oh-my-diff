@@ -1,6 +1,7 @@
 import type { ModAPI, TurnActivity } from '../../api.d.ts';
 
 const INSTRUCTION = 'Resume the interrupted task. First check the workspace, conversation and running processes to find the last completed step, partial edits and side effects. Continue from the first unfinished step without redoing or reverting finished work, then run the relevant verification.';
+const FOLLOW_UP = 'Continue the task. First check the workspace, conversation and running processes for the current state, then act on the note below and run the relevant verification.';
 
 function counted(values: string[]): string[] {
   const counts = new Map<string, number>();
@@ -15,13 +16,14 @@ function list(values: string[]): string {
 }
 
 function summary(turn: TurnActivity): string {
-  const clip = (text: string) => [...text.replace(/\s+/g, ' ')].slice(0, 120).join('');
+  // Strip control characters, not just whitespace: tool names and file paths land in the submitted prompt, so a newline in either would inject lines into it.
+  const clip = (text: string) => [...text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim()].slice(0, 120).join('');
   const detail = turn.error ? `${turn.error.category}: ${turn.error.message}` : turn.reason;
   const lines = [`- Last turn: ${turn.outcome}${detail ? ` (${clip(detail)})` : ''}`];
   const unfinished = counted(turn.tool_calls.filter(call => call.finished_at === null || call.outcome === 'aborted')
-    .map(call => `${call.tool} (${call.outcome ?? 'no recorded result'})`));
+    .map(call => `${clip(call.tool)} (${call.outcome ?? 'no recorded result'})`));
   const running = turn.processes.filter(item => item.running === true).map(item => `${item.kind} ${clip(item.command)}`);
-  const files = turn.files.map(file => file.path);
+  const files = turn.files.map(file => clip(file.path));
   if (unfinished.length) lines.push(`- Unfinished tool calls: ${list(unfinished)}`);
   if (running.length) lines.push(`- Still running: ${list(running)}`);
   if (files.length) lines.push(`- Files changed in that turn: ${list(files)}`);
@@ -38,6 +40,6 @@ export default function activate(api: ModAPI) {
     if (turn?.outcome === 'running') return { display: 'A turn is running. Use /continue after it stops.' };
     const interrupted = turn !== undefined && turn.outcome !== 'completed';
     if (!interrupted && !note) return { display: 'No interrupted or failed turn to continue. Use /continue <note> to continue anyway.' };
-    return { submit: [INSTRUCTION, note && `Note: ${note}`, interrupted && summary(turn)].filter(Boolean).join('\n\n') };
+    return { submit: [interrupted ? INSTRUCTION : FOLLOW_UP, note && `Note: ${note}`, interrupted && summary(turn)].filter(Boolean).join('\n\n') };
   }, { description: 'Resume the interrupted task in this session' });
 }
