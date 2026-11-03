@@ -10,6 +10,7 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 
 - Terminal panes: Allow and remember on a sandboxed start saves the approval for that workspace, mod, command and executable, so the same start doesn't ask again until its access or executable changes
 - /btw: `/btw` alone opens a side conversation panel that lists earlier exchanges and takes a follow-up question
+- Workspace: arrange panels with the keyboard alone (m, then Shift+arrows, T and = / -), F6 shows or hides the panels from the prompt, and number keys focus a panel whose tab is showing
 
 ### Changed
 
@@ -21,6 +22,7 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 - Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list
 - Status line: usage limits refresh while idle, and an empty snapshot clears old limits
 - Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt
+- Workspace: a panel that goes away no longer leaves its screen mode behind, a key set twice is reported instead of silently turning another off, and focusing Changes no longer reruns git status every time
 
 ## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
 
