@@ -24,12 +24,14 @@
       {
         "label": "Fixed",
         "items": [
+          "Usage: tool calls no longer rewrite the mod's whole saved state while the usage dialog is closed, and an agent event that changes nothing is skipped",
           "Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list",
           "Status line: usage limits refresh while idle, and an empty snapshot clears old limits",
           "Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt",
           "Workspace: a panel that goes away no longer leaves its screen mode behind, a key set twice is reported instead of silently turning another off, and focusing Changes no longer reruns git status every time",
           "Claude CLI: turning off extra usage in the mod's settings file now stops at extra usage too, instead of only the `/mods` setting counting",
           "Frecency: outside a Git repository `@` completion runs `git status` at most every 30 seconds instead of on every keystroke, deleted changed files are no longer offered, and slash or shell commands no longer count as file uses",
+          "Advisor: automatic `failure` and `loop` consults cool down, once per call every 10 minutes and once every 2 minutes overall, so an agent retrying one failing command no longer pays for a second model on every other failure",
           "Claude CLI: `/claude login` works when the mod was installed from the catalog, instead of failing with setup_must_run_from_installed_mod after sign-in"
         ]
       }
