@@ -50,6 +50,8 @@ Change settings in `/mods`.
 - Quota windows are listed per account (Codex, Claude, Cursor), each under the account that reported it. No window
   depends on which model route (model setup) you're using.
 - Cache expiry shows only when the provider reports how long its cache lasts.
+- Running tools list the calls started while the dialog is open, so the mod doesn't rewrite its state on every tool
+  call when nothing shows them.
 - The budget only warns. OMD's own spending limits, such as a paid profile's allowance, still decide what runs.
 - Claude and OpenRouter usage need `omd_claude_cli` or `omd_profiles`. See
   [Use other providers](../../../docs/use-other-providers.md).
