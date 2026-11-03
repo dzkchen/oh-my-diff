@@ -41,6 +41,19 @@ class SourceRules(unittest.TestCase):
                 f"{features[0]} is both required and optional",
             ])
 
+    def test_manifest_limits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fixture"
+            path.mkdir()
+            (path / "index.ts").write_text("export default function activate() {}")
+            (path / "mod.json").write_text(json.dumps({"id": "fixture", "description": "x" * 161, "padding": "x" * 8200}))
+            self.assertEqual(check.static_problems(path), [
+                f"mod.json: {len((path / 'mod.json').read_bytes())} bytes exceeds the 8192-byte manifest limit",
+                "description must be 1 to 160 characters",
+            ])
+            (path / "mod.json").write_text(json.dumps({"id": "fixture", "description": "x" * 160}))
+            self.assertEqual(check.static_problems(path), [])
+
 
 if __name__ == "__main__":
     unittest.main()

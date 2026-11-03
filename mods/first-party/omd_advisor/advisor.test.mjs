@@ -147,6 +147,32 @@ test('advisor sends the newest complete history records within the section budge
   assert.match(run([...records.slice(0, 2), { ...records[2], content: [{ type: 'input_text', text: 'y'.repeat(4000) }] }]), /omitted: the newest history record exceeds/);
 });
 
+test('automatic consults cool down per failing call and across calls, so a retry loop does not consult every second failure', () => {
+  let state = null;
+  let consults = 0;
+  const fail = (command, now) => {
+    const fixture = consultHost({ 'model.complete': () => (consults++, { text: 'Check the path.' }) });
+    const reply = invoke({ call_id: `c${now}`, tool: 'exec_command', arguments: { cmd: command }, success: false, text: 'Process exited with code 1', tail: 'no such file', bytes: 30 },
+      fixture.host, { ...consultOptions({ triggers: ['failure'], share: [] }), event: 'tool_output', state, virtual_time_ms: now });
+    state = reply.state;
+    return reply.value;
+  };
+  const t = 1_000_000_000;
+  assert.equal(fail('make', t), null);
+  assert.match(fail('make', t + 1_000).append, /^Independent advisor \(failure, advisory\): Check the path\./);
+  for (const at of [2_000, 3_000, 4_000, 5_000]) assert.equal(fail('make', t + at), null);
+  assert.equal(consults, 1, 'the same failing call waits 10 minutes');
+  assert.equal(fail('npm test', t + 30_000), null);
+  assert.equal(fail('npm test', t + 31_000), null);
+  assert.equal(consults, 1, 'another call waits out the 2-minute gap');
+  fail('npm test', t + 200_000);
+  assert.match(fail('npm test', t + 201_000).append, /Check the path/);
+  fail('make', t + 700_000);
+  assert.match(fail('make', t + 701_000).append, /Check the path/);
+  assert.equal(consults, 3);
+  assert.ok(Object.keys(state.watch.consulted).length <= 2);
+});
+
 test('incomplete one-shot advice keeps its partial text and reports why it stopped', () => {
   for (const stop_reason of ['max_output_tokens', null]) {
     const fixture = consultHost({ 'model.complete': () => ({ status: 'incomplete', text: 'Partial advice', stop_reason }) });
