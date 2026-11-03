@@ -23,6 +23,7 @@ The first turn after that asks once whether the mod may run `git`.
 | --- | --- |
 | `/undo` | Puts back every file the last recorded turn changed: edited and deleted files get their old content, and files it created are deleted |
 | `/undo force` | The same, even over edits you made after that turn; those edits are saved first, so `/redo` brings them back |
+| `/undo show` | Previews what `/undo` would do: each file with the lines the turn added and removed, which files it created or deleted, and which you've edited since. It changes nothing, and works while a turn runs |
 | `/redo` | Brings back what the last `/undo` removed |
 | `/undo list` | The recorded turns, newest first, with the files each changed |
 
