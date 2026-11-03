@@ -579,6 +579,22 @@ test('account selection affects only new threads and a refused selection leaves 
   assert.equal(calls.some(call => call.operation === 'app.request'), false);
 });
 
+test('a profile added outside the session is listed and selectable without a resume', () => {
+  const calls = [];
+  const rows = [route('work', 'included_subscription')];
+  const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload }, ({ operation, arguments: args }) => {
+    calls.push({ operation, args });
+    if (operation === 'routes.select') return { route: rows.find(row => row.name === args.route), effective_at: 'new_thread' };
+    return { 'routes.list': rows, 'terminal.prompt': { status: 'accepted' }, 'events.publish': { delivered: 1, dropped: 0 },
+      'sidecars.status': { running: true }, 'store.get': null, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'packages.list': installed }[operation];
+  });
+  const state = invoke(null, 'start', {}).state;
+  rows.push(route('spare', 'included_subscription'));
+  const selected = invoke(state, 'command', 'use spare', 'profile');
+  assert.doesNotMatch(selected.value.display, /Unknown profile/);
+  assert.deepEqual(calls.findLast(call => call.operation === 'routes.select').args, { route: 'spare', scope: 'new_threads' });
+});
+
 test('the switcher meters the active account, cycles with Alt+s and adds or removes accounts in the session', () => {
   const calls = [];
   const kv = {};
