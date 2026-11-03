@@ -45,11 +45,72 @@ def installed_fixture(base):
 def uninstalling(record):
     return (patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"),
             patch.object(profiles.authority_broker, "deployed", return_value=False),
+            patch.object(profiles.authority_broker, "POLICY", Path(record["store"]).parent / "system-policy.json"),
+            patch.object(profiles, "CURSOR_DATA", Path(record["store"]).parent / "cursor-data"),
             patch.object(profiles.shutil, "which", return_value="/usr/bin/true"),
             patch.object(profiles.support, "binary_identity"))
 
 
 class ProfileModeTests(unittest.TestCase):
+    def test_account_purge_logs_out_only_isolated_named_claude_accounts_and_cleans_cursor_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            stores = base / "stores"
+            home = base / "shared-claude"
+            home.mkdir()
+            (home / "credentials").write_text("shared login")
+            for selection in ("platform", "full"):
+                accounts = stores / selection / "routes/claude/accounts"
+                (accounts / "work").mkdir(parents=True)
+                (accounts / "default").mkdir()
+                (accounts / "external").symlink_to(home, target_is_directory=True)
+            (stores / "external").symlink_to(home, target_is_directory=True)
+            cursor = base / "cursor-data"
+            cursor.mkdir(mode=0o700)
+            (cursor / "agents.json").write_text("private state")
+            prefix = base / "releases/generation/prefix"
+            record = {"store": str(stores / "full"), "prefix": str(prefix), "update": {"root": str(base)}}
+            calls = []
+
+            def logout(arguments, **options):
+                calls.append((arguments, options))
+                return subprocess.CompletedProcess(arguments, 0)
+
+            env = {"CLAUDE_CONFIG_DIR": str(home), "CLAUDE_SECURESTORAGE_CONFIG_DIR": str(home),
+                   "ANTHROPIC_API_KEY": "inherited", "CLAUDE_CODE_OAUTH_TOKEN": "inherited"}
+            with patch.dict(os.environ, env), patch.object(profiles.shutil, "which", return_value="/fixture/claude"), \
+                    patch.object(profiles, "CURSOR_DATA", cursor), patch.object(profiles.subprocess, "run", side_effect=logout):
+                result = profiles.purge_accounts(record)
+            self.assertEqual(result["signed_out_claude_accounts"], 2)
+            self.assertEqual({call[1]["env"]["CLAUDE_CONFIG_DIR"] for call in calls},
+                             {str(stores / selection / "routes/claude/accounts/work") for selection in ("platform", "full")})
+            self.assertTrue(all(call[0] == ["/fixture/claude", "auth", "logout"] for call in calls))
+            self.assertTrue(all(not any(name.startswith("ANTHROPIC_") or name.startswith("CLAUDE_") and name != "CLAUDE_CONFIG_DIR"
+                                       for name in options["env"]) for _, options in calls))
+            self.assertFalse(cursor.exists())
+            self.assertEqual((home / "credentials").read_text(), "shared login")
+
+    def test_uninstall_purge_keeps_the_install_and_accounts_when_isolated_logout_fails(self):
+        for failure in ("missing", "failed", "timeout"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                base = Path(temporary).resolve()
+                prefix, bin_dir, record = installed_fixture(base)
+                account = Path(record["store"]) / "routes/claude/accounts/work"
+                account.mkdir(parents=True)
+                (account / "credentials").write_text("keep for retry")
+                with contextlib.ExitStack() as stack:
+                    for item in uninstalling(record):
+                        stack.enter_context(item)
+                    stack.enter_context(patch.object(profiles.shutil, "which", side_effect=lambda command, **kwargs:
+                        None if command == "claude" and failure == "missing" else "/fixture/claude" if command == "claude" else "/usr/bin/true"))
+                    stack.enter_context(patch.object(profiles.subprocess, "run", side_effect=subprocess.TimeoutExpired("claude", 10)
+                        if failure == "timeout" else lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1)))
+                    with self.assertRaisesRegex(ValueError, "Claude.*sign.out|sign.out.*Claude"):
+                        profiles.uninstall(prefix, bin_dir, purge=True)
+                self.assertTrue((bin_dir / "codex").exists())
+                self.assertFalse((prefix / profiles.UNINSTALL_JOURNAL).exists())
+                self.assertEqual((account / "credentials").read_text(), "keep for retry")
+
     def test_every_selection_keeps_the_background_server_off(self):
         for selection in ("platform", "full", "direct"):
             with self.subTest(selection=selection):
@@ -117,14 +178,17 @@ class ProfileModeTests(unittest.TestCase):
             managed = {**record, "update": {"python": "python3", "installer": str(base / "installer"), "root": "/omd/root"}}
             for current, argv, expected in (
                     (managed, ["uninstall", "--keep-broker"], "installer uninstall --root /omd/root --keep-broker"),
+                    (managed, ["uninstall", "--purge"], "installer uninstall --root /omd/root --purge"),
                     (managed, ["update"], "installer update --root /omd/root"),
                     (record, ["uninstall", "--keep-broker"], "control uninstall --keep-broker"),
+                    (record, ["uninstall", "--purge"], "control uninstall --purge"),
                     (record, ["update"], "tool update /omd/store"),
                     (record, ["help", "--all"], "tool --help")):
                 with self.subTest(managed="update" in current, argv=argv):
                     launcher = base / "omd"
                     launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
-                    run = subprocess.run(["sh", launcher, *argv], capture_output=True, text=True, check=True)
+                    run = subprocess.run(["sh", launcher, *argv], capture_output=True, text=True, check=True,
+                                         env={**os.environ, "OMD_MOD_STORE": ""})
                     self.assertEqual(run.stdout.strip(), expected)
 
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
@@ -145,6 +209,102 @@ class ProfileModeTests(unittest.TestCase):
                         self.assertTrue(profiles.uninstall(prefix, bin_dir)["uninstalled"])
                         self.assertFalse(prefix.exists())
                         self.assertEqual(list(bin_dir.iterdir()), [])
+
+    def test_uninstall_purge_removes_the_store_and_resumes_after_a_store_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            prefix, bin_dir, record = installed_fixture(base)
+            store = Path(record["store"])
+            store.mkdir()
+            (store / "credentials.json").write_text("owned")
+            home = Path(record["shared_state"]["codex_home"])
+            home.mkdir()
+            (home / "config.toml").write_text('model = "user-model"\n')
+            original = shutil.rmtree
+
+            def remove(path, *args, **kwargs):
+                if Path(path) == store:
+                    raise PermissionError("store is locked")
+                return original(path, *args, **kwargs)
+
+            with contextlib.ExitStack() as stack:
+                for item in uninstalling(record):
+                    stack.enter_context(item)
+                with patch.object(profiles.shutil, "rmtree", side_effect=remove), self.assertRaisesRegex(PermissionError, "store is locked"):
+                    profiles.uninstall(prefix, bin_dir, purge=True)
+                self.assertTrue((prefix / profiles.UNINSTALL_JOURNAL).is_file())
+                result = profiles.uninstall(prefix, bin_dir)
+            self.assertEqual(result["purged_mod_store"], str(store))
+            self.assertFalse(prefix.exists())
+            self.assertFalse(store.exists())
+            self.assertEqual((home / "config.toml").read_text(), 'model = "user-model"\n')
+
+    def test_uninstall_purge_refuses_shared_codex_state_before_removal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            prefix, bin_dir, record = installed_fixture(Path(temporary).resolve())
+            record["store"] = record["shared_state"]["codex_home"]
+            with contextlib.ExitStack() as stack:
+                for item in uninstalling(record):
+                    stack.enter_context(item)
+                with self.assertRaisesRegex(ValueError, "Codex state"):
+                    profiles.uninstall(prefix, bin_dir, purge=True)
+            self.assertTrue(prefix.exists())
+            self.assertTrue((bin_dir / "codex").exists())
+
+    def test_uninstall_purge_unlinks_a_replaced_store_without_following_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            prefix, bin_dir, record = installed_fixture(base)
+            external = base / "external"
+            external.mkdir()
+            (external / "source.ts").write_text("user source")
+            store = Path(record["store"])
+            store.symlink_to(external, target_is_directory=True)
+            with contextlib.ExitStack() as stack:
+                for item in uninstalling(record):
+                    stack.enter_context(item)
+                profiles.uninstall(prefix, bin_dir, purge=True)
+            self.assertFalse(store.is_symlink())
+            self.assertEqual((external / "source.ts").read_text(), "user source")
+
+    def test_uninstall_purge_requires_the_managed_coordinator_and_broker_removal(self):
+        for managed, keep in ((True, False), (False, True)):
+            with self.subTest(managed=managed, keep=keep), tempfile.TemporaryDirectory() as temporary:
+                prefix, bin_dir, record = installed_fixture(Path(temporary).resolve())
+                if managed:
+                    record["update"] = {"root": str(prefix.parent)}
+                with contextlib.ExitStack() as stack:
+                    for item in uninstalling(record):
+                        stack.enter_context(item)
+                    with self.assertRaisesRegex(ValueError, "omd uninstall --purge" if managed else "remove the broker first"):
+                        profiles.uninstall(prefix, bin_dir, keep_broker=keep, purge=True)
+                self.assertTrue((bin_dir / "codex").exists())
+                self.assertTrue(prefix.exists())
+
+    def test_uninstall_purge_requires_privileged_cleanup_and_default_reports_remaining_policy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            prefix, bin_dir, record = installed_fixture(base)
+            policy = base / "system/policy.json"
+            policy.parent.mkdir()
+            policy.write_text("{}")
+            with contextlib.ExitStack() as stack:
+                for item in uninstalling(record):
+                    stack.enter_context(item)
+                stack.enter_context(patch.object(profiles.authority_broker, "POLICY", policy))
+                with self.assertRaisesRegex(ValueError, "omd-package broker uninstall --purge"):
+                    profiles.uninstall(prefix, bin_dir, purge=True)
+                result = profiles.uninstall(prefix, bin_dir)
+            self.assertEqual(result["preserved_administrator_policy"], [str(policy)])
+            self.assertTrue(policy.is_file())
+
+    def test_broker_uninstall_forwards_purge_and_other_actions_reject_it(self):
+        with patch.object(profiles, "load", return_value={}), patch.object(profiles, "check", return_value=(None, None)), \
+                patch.object(profiles.authority_broker, "main", return_value={"deployed": False}) as invoked:
+            profiles.broker(Path("/prefix"), Path("/bin"), "uninstall", purge=True)
+            invoked.assert_called_once_with(["uninstall", "--purge"])
+            with self.assertRaisesRegex(ValueError, "only valid with broker uninstall"):
+                profiles.broker(Path("/prefix"), Path("/bin"), "install", purge=True)
 
     def test_identical_files_across_generations_and_catalog_are_one_inode(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -49,6 +49,7 @@ These experimental features have no registry entry of their own:
 | `api.uiState` and command views | [Session UI state](state-and-storage.md#session-ui-state-apiuistate) and [command views](commands-and-composer.md#command-views) |
 | `process_streams_v1` | `framing: "raw"` on `process.start` |
 | `process_raster_v1`, `raster_pixels_v1` | Processes that feed a raster frames or raw pixel buffers |
+| `route_new_threads_v1` | `routes.select` with `scope: "new_threads"`, for future terminal threads |
 | `completion_tokens_v1` | `api.completion` token triggers |
 | `settings_file_v1` | `api.settingsFile` and the settings file |
 | `terminal_focus_v1` | Focus regions, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus` |

@@ -69,6 +69,7 @@ class UpdateSelection(unittest.TestCase):
         self.module = installer()
         self.temporary = tempfile.TemporaryDirectory(prefix="omd-update-test-", dir="/private/tmp")
         self.root = Path(self.temporary.name).resolve()
+        self.module.BROKER_POLICY = self.root / "system-policy.json"
         self.current = self.root / "releases" / ("0" * 32)
         store = self.root / "stores/platform"
         (store / "sources/omd_update").mkdir(parents=True)
@@ -828,9 +829,150 @@ class UpdateSelection(unittest.TestCase):
             holder.close()
             waiter.close()
             waited.join(5)
-        self.assertEqual(sorted(path.name for path in self.root.iterdir()), [".install.lock", "bin", "catalog", "releases", "stores"])
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), [".install.lock", "bin", "releases", "stores"])
         self.assertEqual(list((self.root / "releases").iterdir()), [])
         self.assertTrue((self.root / "stores/platform/mods.json").is_file())
+
+    def test_uninstall_removes_catalog_and_purge_removes_stores_without_touching_codex(self):
+        for purge in (False, True):
+            with self.subTest(purge=purge), tempfile.TemporaryDirectory(dir=self.root) as temporary:
+                root = Path(temporary)
+                current = root / "releases" / ("1" * 32)
+                (current / "prefix").mkdir(parents=True)
+                (current / "prefix/install.json").write_text("{}")
+                (current / "receipt.json").write_text("{}")
+                (root / "current").symlink_to(current)
+                for relative in ("catalog/mod/source.ts", "stores/full/credentials.json", "objects/source"):
+                    path = root / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("owned")
+                codex = root / "codex"
+                codex.mkdir()
+                (codex / "config.toml").write_text("user settings")
+                (root / "stores/full/external-source").symlink_to(codex, target_is_directory=True)
+                (root / "personal.txt").write_text("user file")
+                printed = []
+                calls = []
+
+                def package(generation, upstream, bin_dir, action, *args):
+                    calls.append(action)
+                    if action != "purge-accounts":
+                        shutil.rmtree(generation / "prefix")
+
+                with patch.object(self.module, "package", side_effect=package), \
+                        patch.object(self.module, "status"), patch.object(self.module, "broker_deployed", return_value=False), \
+                        patch("builtins.print", side_effect=printed.append):
+                    self.module.uninstall(types.SimpleNamespace(session=None, purge=purge), root, root / "bin", current)
+                result = json.loads(printed[0])
+                self.assertTrue(result["uninstalled"])
+                self.assertFalse((root / "catalog").exists())
+                self.assertFalse((root / "objects").exists())
+                self.assertEqual((root / "stores/full/credentials.json").exists(), not purge)
+                self.assertIn("purged_stores" if purge else "preserved_stores", result)
+                if not purge:
+                    self.assertIn("--purge", result["purge_option"])
+                self.assertEqual((codex / "config.toml").read_text(), "user settings")
+                self.assertEqual((root / "personal.txt").read_text(), "user file")
+                self.assertEqual(calls, ["purge-accounts", "uninstall"] if purge else ["uninstall"])
+
+    def test_uninstall_cleanup_failure_is_reported_and_the_purge_journal_resumes(self):
+        bin_dir = self.root / "bin"
+        (self.root / "catalog").mkdir()
+        (self.root / "catalog/source.ts").write_text("cached")
+        original = shutil.rmtree
+
+        def remove(path, *args, **kwargs):
+            if Path(path) == self.root / "catalog":
+                raise PermissionError("catalog is locked")
+            return original(path, *args, **kwargs)
+
+        def package(generation, *args):
+            if "purge-accounts" not in args:
+                shutil.rmtree(generation / "prefix")
+
+        with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
+                patch.object(self.module, "broker_deployed", return_value=False), patch.object(self.module.shutil, "rmtree", side_effect=remove), \
+                self.assertRaisesRegex(PermissionError, "catalog is locked"):
+            self.module.uninstall(types.SimpleNamespace(session=None, purge=True), self.root, bin_dir, self.current)
+        journal = self.root / "update/journal.json"
+        self.assertTrue(json.loads(journal.read_text())["purge"])
+        args = types.SimpleNamespace(bin_dir=bin_dir)
+        result = self.module.resume_uninstall(args, self.root)
+        self.assertTrue(result["uninstalled"])
+        self.assertFalse((self.root / "stores").exists())
+        self.assertFalse((self.root / "catalog").exists())
+        self.assertFalse(journal.exists())
+
+    def test_uninstall_purge_unlinks_a_replaced_store_without_following_it(self):
+        with tempfile.TemporaryDirectory(dir=self.root) as temporary:
+            root = Path(temporary)
+            (root / "releases").mkdir()
+            self.module.update_dir(root)
+            (root / "update/journal.json").write_text("{}")
+            (root / "stores").symlink_to(self.root / "stores", target_is_directory=True)
+            self.module.uninstalled(root, purge=True)
+            self.assertFalse((root / "stores").is_symlink())
+            self.assertTrue((self.root / "stores/platform/mods.json").is_file())
+
+    def test_uninstall_purge_requires_privileged_cleanup_and_default_reports_remaining_policy(self):
+        policy = self.root / "system/policy.json"
+        policy.parent.mkdir()
+        policy.write_text("{}")
+        args = types.SimpleNamespace(session=None, purge=True)
+        with patch.object(self.module, "BROKER_POLICY", policy):
+            for deployed in (True, False):
+                with self.subTest(deployed=deployed), patch.object(self.module, "broker_deployed", return_value=deployed), \
+                        self.assertRaisesRegex(ValueError, "omd-package broker uninstall --purge"):
+                    self.module.uninstall(args, self.root, self.root / "bin", self.current)
+                self.assertTrue((self.current / "prefix/install.json").exists())
+            self.module.update_dir(self.root)
+            self.assertEqual(self.module.uninstalled(self.root)["preserved_administrator_policy"], [str(policy)])
+        self.assertTrue(policy.is_file())
+
+    def test_uninstall_purge_keeps_the_current_install_when_account_signout_fails(self):
+        with patch.object(self.module, "package", side_effect=ValueError("Could not sign out OMD Claude account work")) as called, \
+                patch.object(self.module, "status"), patch.object(self.module, "broker_deployed", return_value=False), \
+                self.assertRaisesRegex(ValueError, "Could not sign out"):
+            self.module.uninstall(types.SimpleNamespace(session=None, purge=True), self.root, self.root / "bin", self.current)
+        self.assertEqual(called.call_args.args[-1], "purge-accounts")
+        self.assertTrue((self.current / "prefix/install.json").is_file())
+        self.assertTrue((self.root / "stores/platform/mods.json").is_file())
+        self.assertFalse((self.root / "update/journal.json").exists())
+
+    def test_uninstall_waits_for_an_inflight_download_before_removing_its_cache(self):
+        update = self.module.update_dir(self.root)
+        (update / "journal.json").write_text("{}")
+        held = self.module.flocked(update / ".stage.lock")
+        done = threading.Event()
+        errors = []
+
+        def cleanup():
+            try:
+                self.module.uninstalled(self.root, purge=True)
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=cleanup)
+        worker.start()
+        try:
+            self.assertFalse(done.wait(0.1), "cleanup removed a download's cache while it was still locked")
+            self.assertTrue((update / "journal.json").is_file())
+        finally:
+            held.close()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertFalse(update.exists())
+
+    def test_background_tick_does_not_recreate_update_files_during_or_after_uninstall(self):
+        with self.module.flocked(self.root / ".install.lock"), \
+                patch.object(self.module, "probe", side_effect=AssertionError("started a check while uninstalling")):
+            self.module.tick(types.SimpleNamespace(), self.root, self.current)
+        self.assertFalse((self.root / "update").exists())
+        self.module.tick(types.SimpleNamespace(), self.root, None)
+        self.assertFalse((self.root / "update").exists())
 
     def test_rollback_recovers_a_damaged_current_installation(self):
         bin_dir = self.root / "bin"

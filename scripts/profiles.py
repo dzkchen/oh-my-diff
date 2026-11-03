@@ -31,6 +31,7 @@ PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
+CURSOR_DATA = Path("/private/tmp") / f"omd-cursor-{os.getuid()}"
 MODS_MARKER = ".mods-applying.json"
 ROUTES = {"profiles": "omd_profiles"}
 CODEX_VALUE_OPTIONS = {"-c", "--config", "--enable", "--disable", "-m", "--model", "--local-provider", "-p", "--profile",
@@ -342,7 +343,7 @@ def omd_help(record, tool):
     rows.append(("Oh My Diff", [*([("omd update", "Install the newest release"),
                                    ("omd update status", "Check the install and update settings"),
                                    ("omd update rollback", "Undo the last update")] if record.get("update") else []),
-                                ("omd uninstall", "Remove OMD; your Codex settings and sessions stay"),
+                                ("omd uninstall [--purge]", "Remove OMD; --purge removes its mod data and sign-ins too; Codex data stays"),
                                 ("omd help --all", "Every command and flag")]))
     lines = ["", "${b}Oh My Diff${r}  Codex CLI, extended with mods", "",
              "Run ${b}codex${r} as usual, and type ${b}/mods${r} inside it to turn mods on or off."]
@@ -628,7 +629,8 @@ def route(prefix, bin_dir, name, args):
         raise ValueError(f"unknown {name} model {wanted}; choose one of {', '.join(item['slug'] for item in models['models'])}")
     launcher = bin_dir / "codex"
     os.execv(launcher, [str(launcher), "-c", f"model_provider={json.dumps(identifier)}", "-c", f"model={json.dumps(model)}",
-                        "-c", f"model_catalog_json={json.dumps(provider['catalog'])}", *args.codex])
+                        "-c", f"model_catalog_json={json.dumps(provider['catalog'])}",
+                        *(["-c", 'web_search="disabled"'] if name == "profiles" else []), *args.codex])
 
 
 def session_options(codex):
@@ -989,10 +991,14 @@ def signed_manifest(prefix):
     return manifest
 
 
-def broker(prefix, bin_dir, action, also=()):
+def broker(prefix, bin_dir, action, also=(), purge=False):
+    if purge and action != "uninstall":
+        raise ValueError("--purge is only valid with broker uninstall")
     record = load(prefix)
     _, manager = check(record, bin_dir)
     arguments = [action]
+    if purge:
+        arguments.append("--purge")
     if action in ("install", "pin"):
         prefixes = [prefix, *(support.resolved(other) for other in also)]
         pins = set().union(*(pinned_binaries(load(item)) for item in prefixes))
@@ -1024,14 +1030,68 @@ def administrator_policy(prefix, bin_dir, action, source=None):
     return result
 
 
-def uninstall(prefix, bin_dir, keep_broker=False):
+def purge_accounts(record):
+    stores = [Path(record["store"])]
+    if update := record.get("update"):
+        root = support.resolved(update["root"])
+        if support.resolved(record["prefix"]).parents[2] != root:
+            raise ValueError("managed installation root changed")
+        directory = root / "stores"
+        stores = list(directory.iterdir()) if directory.is_dir() and not directory.is_symlink() else []
+    accounts = []
+    for store in stores:
+        directory = store / "routes/claude/accounts"
+        if not directory.is_dir() or directory.resolve() != directory:
+            continue
+        accounts.extend(path for path in sorted(directory.iterdir()) if path.is_dir() and not path.is_symlink()
+                        and re.fullmatch(r"[a-z][a-z0-9_-]{0,23}", path.name) and path.name not in ("default", "api"))
+    claude = shutil.which("claude") if accounts else None
+    if accounts and not claude:
+        raise ValueError("Claude CLI is required to sign out OMD's isolated accounts; install claude and retry --purge")
+    env = {name: value for name, value in os.environ.items() if not name.startswith(("ANTHROPIC_", "CLAUDE_"))}
+    for account in accounts:
+        try:
+            result = subprocess.run([claude, "auth", "logout"], env={**env, "CLAUDE_CONFIG_DIR": str(account)},
+                                    capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ValueError(f"Could not sign out OMD Claude account {account.name}; its store is kept for retry") from error
+        if result.returncode:
+            raise ValueError(f"Could not sign out OMD Claude account {account.name}; its store is kept for retry")
+    if CURSOR_DATA.is_symlink():
+        CURSOR_DATA.unlink()
+    elif CURSOR_DATA.exists():
+        info = CURSOR_DATA.stat()
+        if not CURSOR_DATA.is_dir() or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ValueError(f"Cursor's OMD data directory is not private to this user: {CURSOR_DATA}")
+        shutil.rmtree(CURSOR_DATA)
+    return {"signed_out_claude_accounts": len(accounts)}
+
+
+def uninstall(prefix, bin_dir, keep_broker=False, purge=False):
     journal = prefix / UNINSTALL_JOURNAL
     resuming = journal.is_file()
     record = json.loads(journal.read_text()) if resuming else load(prefix)
     if not resuming:
         check(record, bin_dir)
+    purge = purge or record.get("purge_mod_store", False)
     if authority_broker.deployed() and not keep_broker:
-        raise ValueError("the authority broker is deployed; run omd-package broker uninstall first")
+        raise ValueError(f"the authority broker is deployed; run omd-package broker uninstall{' --purge' if purge else ''} first")
+    policies = [path for path in (authority_broker.POLICY, authority_broker.POLICY.with_name("policy.json.previous"))
+                if path.exists() or path.is_symlink()]
+    if purge and policies:
+        raise ValueError("administrator policy files remain; run omd-package broker uninstall --purge first: "
+                         + ", ".join(map(str, policies)))
+    if purge:
+        if keep_broker:
+            raise ValueError("--purge cannot keep a broker that may still hold OMD sign-ins; remove the broker first")
+        if record.get("update"):
+            raise ValueError("use omd uninstall --purge to remove all managed installations and their stores")
+        _, _, store = paths(prefix, bin_dir, record["store"])
+        shared = [support.resolved(record["shared_state"][key]) for key in ("codex_home", "codex_sqlite_home")
+                  if record["shared_state"].get(key)]
+        if any(support.within(store, state) or support.within(state, store) for state in shared):
+            raise ValueError("mod store must be separate from shared Codex state")
+        record = {**record, "purge_mod_store": True}
     managed = {prefix / "install.json", journal, Path(record["binary"]["installed_path"]),
                Path(record["code_mode_host"]["installed_path"]), Path(record["broker"]["installed_path"]),
                Path(record["runner"]["installed_path"]),
@@ -1058,6 +1118,8 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     if not found:
         raise ValueError("no upstream codex remains on PATH; refusing to remove the launcher")
     support.binary_identity(found)
+    if purge:
+        purge_accounts(record)
     plugins = remove_plugins(record, prefix)
     record = {**record, "upstream": str(support.resolved(found))}
     support.atomic_text(journal, json.dumps(record))
@@ -1092,6 +1154,12 @@ def removed(prefix, bin_dir, record):
     for name, expected in launchers(record).items():
         if ours(bin_dir / name, expected):
             (bin_dir / name).unlink()
+    if record.get("purge_mod_store"):
+        store = Path(record["store"])
+        if store.is_symlink():
+            store.unlink()
+        elif store.exists():
+            shutil.rmtree(store)
     for path in prefix.iterdir():
         if path.is_dir() and not path.is_symlink():
             shutil.rmtree(path)
@@ -1099,8 +1167,11 @@ def removed(prefix, bin_dir, record):
             path.unlink()
     journal.unlink()
     prefix.rmdir()
-    return {"uninstalled": True, "preserved_mod_store": record["store"], "shared_state": record["shared_state"],
-            "upstream": record["upstream"]}
+    return {"uninstalled": True, "purged_mod_store" if record.get("purge_mod_store") else "preserved_mod_store": record["store"],
+            "shared_state": record["shared_state"], "upstream": record["upstream"],
+            "preserved_administrator_policy": [str(path) for path in
+                (authority_broker.POLICY, authority_broker.POLICY.with_name("policy.json.previous")) if path.exists() or path.is_symlink()],
+            **({} if record.get("purge_mod_store") else {"purge_option": "omd uninstall --purge removes OMD mod data and saved sign-ins too"})}
 
 
 def main():
@@ -1121,6 +1192,7 @@ def main():
     install_parser.add_argument("--attach-store", action="store_true")
     install_parser.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
     commands.add_parser("reconcile", help="restore this installation's first-party mod sources in its store (used by install.sh)")
+    commands.add_parser("purge-accounts", help="sign out isolated accounts before uninstall (used by install.sh)")
     mods_parser = commands.add_parser("mods-update", help="apply a verified first-party mod bundle (used by install.sh)")
     mods_parser.add_argument("--bundle", type=Path, required=True)
     mods_parser.add_argument("--serial", type=int, required=True)
@@ -1153,12 +1225,14 @@ def main():
     broker_parser.add_argument("action", choices=("install", "pin", "status", "reset", "uninstall"))
     broker_parser.add_argument("--also", type=Path, action="append", default=[],
                                help="also pin the binaries of another installation prefix")
+    broker_parser.add_argument("--purge", action="store_true", help="with broker uninstall, also remove the administrator policy and its backup")
     policy_parser = commands.add_parser("policy", help="install, roll back, remove or explain the administrator policy file (sudo)")
     policy_parser.add_argument("action", choices=("install", "rollback", "remove", "explain"))
     policy_parser.add_argument("file", type=Path, nargs="?")
     uninstall_parser = commands.add_parser("uninstall", help="remove this installation and its launchers")
     uninstall_parser.add_argument("--keep-broker", action="store_true",
                                   help="remove this installation while another one keeps using the authority broker")
+    uninstall_parser.add_argument("--purge", action="store_true", help="also remove this installation's mod data and saved sign-ins; Codex data stays")
     args = parser.parse_args()
     # The launcher runs from its management directory; commands act on the caller's directory.
     os.chdir(os.environ.pop("OMD_PACKAGE_CWD", "."))
@@ -1172,6 +1246,10 @@ def main():
             return
     elif args.command == "reconcile":
         result = reconcile(prefix, bin_dir)
+    elif args.command == "purge-accounts":
+        record = load(prefix)
+        check(record, bin_dir)
+        result = purge_accounts(record)
     elif args.command == "mods-update":
         result = update_mods(prefix, bin_dir, args.bundle.resolve(), args.serial)
     elif args.command == "mods-rollback":
@@ -1189,11 +1267,11 @@ def main():
     elif args.command == "plugins":
         result = register_plugins(prefix, bin_dir)
     elif args.command == "broker":
-        result = broker(prefix, bin_dir, args.action, args.also)
+        result = broker(prefix, bin_dir, args.action, args.also, args.purge)
     elif args.command == "policy":
         result = administrator_policy(prefix, bin_dir, args.action, args.file)
     else:
-        result = uninstall(prefix, bin_dir, args.keep_broker)
+        result = uninstall(prefix, bin_dir, args.keep_broker, args.purge)
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

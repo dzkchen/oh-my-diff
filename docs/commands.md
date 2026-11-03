@@ -75,7 +75,7 @@ set.
 | `omd update cadence daily\|weekly` | How often to check |
 | `omd update channel stable\|prerelease\|nightly` | Which releases to follow |
 | `omd update pin VERSION\|none` | Stay on one version, or stop pinning |
-| `omd uninstall` | Remove OMD; Codex settings and sessions stay |
+| `omd uninstall [--purge]` | Remove OMD; `--purge` also removes OMD mod data and saved sign-ins; Codex data stays |
 | `omd mini` | Start Codex in the [scrollback-first interface](../mods/first-party/omd_mini/README.md) (experimental: `omd install omd_mini`, then turn it on) |
 
 ### Shell commands from mods
@@ -98,8 +98,9 @@ Manages the install profile. It prints JSON, except `status` without `--json`.
 | `omd-package contract list\|status\|plan\|select\|clear [ID@VERSION]` | List, show or select the workflow contract for this repository |
 | `omd-package plugins` | Register the OMD+ plugin marketplace with Codex ([plugins](../plugins/README.md)) |
 | `omd-package broker install\|pin\|status\|reset\|uninstall` | Deploy or manage the authority broker (needs `sudo`) |
+| `omd-package broker uninstall --purge` | Remove the broker, its protected credentials, the administrator policy and its rollback copy (needs `sudo`) |
 | `omd-package policy install\|rollback\|remove\|explain [FILE]` | Manage the administrator policy file (needs `sudo`) |
-| `omd-package uninstall [--keep-broker]` | Remove this installation |
+| `omd-package uninstall [--keep-broker] [--purge]` | Remove this installation; `--purge` also removes its mod store (use `omd uninstall --purge` for managed installs) |
 
 The installer uses `omd-package install` and `omd-package reconcile`; you don't run them yourself.
 
@@ -156,6 +157,7 @@ The install command in [Install Oh My Diff](install.md#install) runs `install.sh
 | `--root DIR` | `~/.local/share/oh-my-diff` | Where OMD keeps releases and mod stores |
 | `--bin-dir DIR` | `~/.local/bin` | Where the `codex`, `omd` and other commands go |
 | `--upstream PATH` | `codex` on your `PATH` | The upstream Codex executable OMD builds on, at the version line the release needs |
+| `uninstall --purge` | mod data stays without `--purge` | Remove OMD's mod stores and saved sign-ins too; Codex data stays |
 
 An existing command in the bin folder is renamed to `NAME.before-omd` and comes back on uninstall.
 

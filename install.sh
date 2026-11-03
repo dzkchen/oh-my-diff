@@ -71,6 +71,7 @@ NETWORK_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, http.cli
 DOWNLOAD_ATTEMPTS = 3
 DOWNLOAD_WAIT = "Waiting for the background update check or download to finish…"
 BROKER_DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
+BROKER_POLICY = Path("/Library/Application Support/OhMyDiff/policy.json")
 WEBSITE = "https://www.ohmydiff.me"
 DOCS = "https://github.com/dzkchen/oh-my-diff/blob/v{}/docs/install.md"
 MARK = ("╭─╮ ╭╮╭╮ ┌─╮", "│ │ │╰╯│ │ │", "╰─╯ ╵  ╵ └─╯")
@@ -755,8 +756,14 @@ def rollback(args, root, bin_dir, current):
 def uninstall(args, root, bin_dir, current):
     if not current:
         fail("No managed OMD installation is active.")
+    purge = getattr(args, "purge", False)
     if broker_deployed():
-        fail("The authority broker is deployed; run omd-package broker uninstall first (it removes protected credentials).")
+        fail(f"The authority broker is deployed; run omd-package broker uninstall{' --purge' if purge else ''} first (it removes protected credentials).")
+    policies = [path for path in (BROKER_POLICY, BROKER_POLICY.with_name("policy.json.previous"))
+                if path.exists() or path.is_symlink()]
+    if purge and policies:
+        fail("Administrator policy files remain; run omd-package broker uninstall --purge first: "
+             + ", ".join(map(str, policies)))
     upstream = Path(upstream_binary(args, current)["path"])
     check_links(root, bin_dir)
     refuse_sessions(root, args.session)
@@ -776,7 +783,9 @@ def uninstall(args, root, bin_dir, current):
         (root / "previous").unlink(missing_ok=True)
     if failures:
         fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
-    write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir)})
+    if purge:
+        package(current, upstream, bin_dir, "purge-accounts")
+    write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir), "purge": purge})
     restore_links(root, bin_dir)
     try:
         remove_generation(current, upstream, bin_dir)
@@ -785,19 +794,45 @@ def uninstall(args, root, bin_dir, current):
             set_links(root, bin_dir)
             (root / "update/journal.json").unlink()
         raise
-    print(json.dumps(uninstalled(root) | {"restored_upstream": str(upstream)}, indent=2))
+    print(json.dumps(uninstalled(root, purge) | {"restored_upstream": str(upstream)}, indent=2))
 
 
-def uninstalled(root):
-    (root / "current").unlink(missing_ok=True)
-    for leftover in [*(root / "releases").iterdir(), root / "update", root / "sessions", root / "objects"]:
-        shutil.rmtree(leftover, ignore_errors=True)
-    return {"uninstalled": True, "preserved_stores": str(root / "stores")}
+def uninstalled(root, purge=False):
+    with flocked(update_dir(root) / ".stage.lock", DOWNLOAD_WAIT):
+        return finish_uninstall(root, purge)
+
+
+def finish_uninstall(root, purge):
+    journal = root / "update/journal.json"
+    leftovers = [*(root / "releases").iterdir(), root / "catalog", root / "sessions", root / "objects"]
+    if purge:
+        leftovers.append(root / "stores")
+    for leftover in leftovers:
+        if leftover.is_symlink() or not leftover.is_dir():
+            leftover.unlink(missing_ok=True)
+        else:
+            shutil.rmtree(leftover)
+    for name in ("current", "previous"):
+        (root / name).unlink(missing_ok=True)
+    for leftover in (root / "update").iterdir():
+        if leftover == journal:
+            continue
+        if leftover.is_dir() and not leftover.is_symlink():
+            shutil.rmtree(leftover)
+        else:
+            leftover.unlink()
+    journal.unlink(missing_ok=True)
+    (root / "update").rmdir()
+    return {"uninstalled": True, "purged_stores" if purge else "preserved_stores": str(root / "stores"),
+            "preserved_administrator_policy": [str(path) for path in
+                (BROKER_POLICY, BROKER_POLICY.with_name("policy.json.previous")) if path.exists() or path.is_symlink()],
+            **({} if purge else {"purge_option": "omd uninstall --purge removes OMD mod data and saved sign-ins too"})}
 
 
 def resume_uninstall(args, root):
     journal = root / "update/journal.json"
-    name = read_json(journal, {}).get("uninstall") if journal.exists() else None
+    entry = read_json(journal, {}) if journal.exists() else {}
+    name = entry.get("uninstall")
     if name is None:
         return None
     if not (isinstance(name, str) and re.fullmatch(r"[0-9a-f]{32}", name)):
@@ -809,7 +844,7 @@ def resume_uninstall(args, root):
         return None
     restore_links(root, args.bin_dir)
     remove_generation(generation, None, args.bin_dir)
-    return uninstalled(root)
+    return uninstalled(root, entry.get("purge", False))
 
 
 def update_dir(root):
@@ -1365,7 +1400,15 @@ def committed(root, current, action):
 
 
 def tick(args, root, current):
-    lock = flocked(update_dir(root) / ".stage.lock")
+    if not current or not current.is_dir():
+        return
+    gate = flocked(root / ".install.lock")
+    if not gate:
+        return
+    with gate:
+        if pointer(root, "current") != current or (root / "update/journal.json").exists():
+            return
+        lock = flocked(update_dir(root) / ".stage.lock")
     if not lock:
         return
     with lock:
@@ -1515,11 +1558,14 @@ def main():
     parser.add_argument("--upstream", type=Path)
     parser.add_argument("--root", type=Path, default=Path.home() / ".local/share/oh-my-diff")
     parser.add_argument("--bin-dir", type=Path)
+    parser.add_argument("--purge", action="store_true", help="with uninstall, also remove OMD mod data and saved sign-ins; Codex data stays")
     parser.add_argument("--session", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--unattended", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.action and args.command != "update":
         parser.error("only update takes an action")
+    if args.purge and args.command != "uninstall":
+        parser.error("--purge is only valid with uninstall")
     args.root = args.root.expanduser().resolve()
     root = args.root
     journal = read_json(root / "update/journal.json", {}) if root.is_dir() else {}

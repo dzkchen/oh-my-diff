@@ -114,11 +114,11 @@
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
         "index.ts": "b408c5e93e29afef3ead0c87bf1af221bfedbaa77e759806145da43754c04138",
         "mod.json": "3cd3eaf6b6ceb5b4b0ed062edbb1376ff43f3d3fb179f1a17ed48e4af241c062",
-        "setup.mjs": "144dde59759bf8050a55d48fc1e278d1dfb6aeea66258304c660fe5aa356dae5",
+        "setup.mjs": "e90ace529042c2194ecafd6f0b99ce1e6077fef65c43ef80a86564d43c0b9dde",
         "transport.mjs": "9bf5f85e4ba5f509f547e7729363a22d620dd757cadef5acc2a990b0e254b9cb"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "91d7aaa6710520f307bd95a57edd40f4917613cbe8e0962bd22f201afd92a5ea",
+      "package_sha256": "5de12d8f30505ef5898a60b123cdc8fcd5badd0f637c7d611404f9e6c131e10f",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.0"
     },
@@ -632,7 +632,6 @@
         "lifecycle",
         "model",
         "threads",
-        "middleware",
         "exec",
         "credentials",
         "events",
@@ -646,14 +645,14 @@
       "extension_type": "mod",
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
-        "index.ts": "4ca4bf152fb5cf9ba8ae6033df92b66a41df33d266a264bc648c14056f6fbd70",
-        "mod.json": "431aee2c72bb3de527c2799f73575204e243ca71687ff51a9737de90c5423c6f",
+        "index.ts": "46dd392011b5fdaf6df86cd6ea6ced0f8ca4532e659afe52a85b16bb8b654794",
+        "mod.json": "a835b061a4d17c602e1d88949089ca7e881da9c60105da9160c687a892918247",
         "profiles.ts": "055218534d017dc89da265abc6d5a0e21253a781367ce329f3a7d8c5ebd532e4",
-        "router.mjs": "b2482f1d74963649e8910a951e69a7a95f50ecae8ba29d650600facddb43d859",
-        "setup.mjs": "92514c7ecf5a4d30510ae23cce01d038ac8b7f15b0f1324e4957b65e451d079a"
+        "router.mjs": "8af36400c295812c48a26998e709161bb66973e4592a200be033d7542dbe5449",
+        "setup.mjs": "64a902dd4886671d0dbf5cf23382b4b05c01b53342126bbf3c45f0018e0e117e"
       },
       "id": "omd_profiles",
-      "package_sha256": "91f6a16dcde9d87e0222a0aec04f332c40a0639cada4069603e091b928078f72",
+      "package_sha256": "fd09579d8498a180e5829ffaaf9ea836fc175c317f8e41236212af217b06520c",
       "source": "mods/first-party/omd_profiles",
       "version": "1.0.0"
     },
