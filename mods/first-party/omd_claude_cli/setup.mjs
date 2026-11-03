@@ -157,13 +157,16 @@ async function setup(name, action, login) {
     if (!known) throw new Error(`claude_account_unknown: ${name}`);
     if (known.config_dir && await owned(known.config_dir).catch(() => false)) {
       signedOut = signOut(await findCli().catch(() => null), known.config_dir);
+      if (!signedOut) throw new Error(`claude_sign_out_failed: ${name} and its sign-in were kept; check Claude CLI and Keychain access, then retry /claude remove ${name}`);
       await rm(known.config_dir, { recursive: true, force: true });
     }
   } else {
     if (!['subscription', 'api'].includes(action)) throw new Error('claude_billing_must_be_subscription_or_api');
     const config = name === 'default' ? null : login || join(directory, 'accounts', name);
     if (config && !known) discard = async () => {
-      signOut(await findCli().catch(() => null), config);
+      if (await owned(config).catch(() => false) && !signOut(await findCli().catch(() => null), config)) {
+        throw new Error(`claude_sign_out_failed: ${name}'s sign-in directory was kept; check Claude CLI and Keychain access, then retry /claude login ${action === 'api' ? 'api ' : ''}${name}`);
+      }
       await rm(join(directory, 'accounts', name), { recursive: true, force: true });
     };
     try {

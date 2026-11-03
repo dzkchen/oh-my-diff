@@ -323,7 +323,7 @@ export async function forward(body, profile, inbound, response, signal, owner = 
   const url = through(profile);
   if (profile.protocol === 'responses') {
     const headers = Object.fromEntries(Object.entries(inbound).filter(([key]) => !DROPPED.includes(key)));
-    const upstream = await post(url, headers, JSON.stringify({ ...body, model: profile.model }), signal);
+    const upstream = await post(url, headers, JSON.stringify({ ...body, model: profile.model, ...profile.kind === 'chatgpt' ? { store: false } : {} }), signal);
     response.writeHead(upstream.statusCode, Object.fromEntries(Object.entries(upstream.headers).filter(([key]) => !['transfer-encoding', 'connection', 'content-length'].includes(key))));
     const learn = /^text\/event-stream/.test(upstream.headers['content-type'] ?? '')
       && frames(event => event?.type === 'response.output_item.done' && event.item?.type === 'reasoning' && remember(owner, identity(event.item), accountOf(profile)), lenient);

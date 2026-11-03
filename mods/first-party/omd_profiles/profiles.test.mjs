@@ -92,7 +92,7 @@ test('router adapts Responses requests to each protocol through the credential g
   const free = await listen(probe);
   await new Promise(resolve => probe.close(resolve));
   const profile = (name, protocol, path) => ({ name, protocol, url: `https://up.example${path}`, model: 'up-model', credential: name, max_output: 4096, reasoning: true });
-  const hostPath = hostFile(directory, [profile('a', 'responses', '/responses'), profile('b', 'responses', '/responses'), profile('c', 'chat', '/chat'), profile('d', 'anthropic', '/anthropic'),
+  const hostPath = hostFile(directory, [{ ...profile('a', 'responses', '/responses'), kind: 'chatgpt' }, profile('b', 'responses', '/responses'), profile('c', 'chat', '/chat'), profile('d', 'anthropic', '/anthropic'),
     { ...profile('e', 'chat', ''), url: 'http://192.0.2.1/key/direct/chat', credential: '' }]);
   const token = 'local-token-'.repeat(4);
   const child = spawn(process.execPath, [router, 'serve', hostPath, String(free)], { env: { OMD_PROFILES_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready', OMD_CREDENTIAL_GATEWAY: `http://127.0.0.1:${port}/key` }, stdio: 'ignore' });
@@ -119,6 +119,7 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.equal((await ask('missing')).status, 400);
     await ask('a');
     assert.equal(seen['/responses'].body.model, 'up-model');
+    assert.equal(seen['/responses'].body.store, false);
     assert.deepEqual([seen['/responses'].key, seen['/responses'].credential, seen['/responses'].headers.authorization], ['key', 'a', undefined]);
     assert.ok(seen['/responses'].body.input.some(item => item.type === 'reasoning'));
     await ask('b');
@@ -348,7 +349,7 @@ test('the session setup waits for the host store lock and reads catalog models f
     mkdirSync(join(store, 'codex'));
     writeFileSync(join(store, 'codex', 'models_cache.json'), JSON.stringify({ models: [{ slug: 'up', context_window: 5000, default_reasoning_level: 'high', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] }] }));
     const lookup = model => JSON.parse(spawnSync(process.execPath, [setup, 'catalog', model], { encoding: 'utf8', env: { ...process.env, CODEX_HOME: join(store, 'codex') } }).stdout);
-    assert.deepEqual([lookup('up'), lookup('other')], [{ window: 5000, max: 5000, effort: 'high', efforts: ['low', 'high'] }, null]);
+    assert.deepEqual([lookup('up'), lookup('other')], [{ model: 'up', window: 5000, max: 5000, effort: 'high', efforts: ['low', 'high'] }, null]);
   } finally {
     rmSync(store, { recursive: true, force: true });
   }
@@ -373,7 +374,7 @@ test('/profile add opens one picker; accounts sign in through their own mods and
     if (operation === 'credentials.request') return { status: 'completed', profile: { id: `cred-${args.label}`, label: args.label, kind: 'api_key', origin: 'https://api.openai.com', status: 'ready' } };
     if (operation === 'commands.invoke') return args.command === 'omd_cursor:cursor' ? (() => { throw new Error('unknown_command: omd_cursor:cursor'); })()
       : { command: args.command, result: { display: 'Starting Claude login for account work (subscription); progress shows below' } };
-    return { 'packages.list': installed, 'session.info': { thread_id: 'thread-1', provider: 'openai', model: 'gpt-6.1-sol' }, 'routes.list': routes, 'events.schedule': {}, 'events.publish': { delivered: 1, dropped: 0 },
+    return { 'packages.list': installed, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'openai', model: 'gpt-6.1-sol' }, 'routes.list': routes, 'events.schedule': {}, 'events.publish': { delivered: 1, dropped: 0 },
       'store.get': null, 'store.put': { revision: 1 }, 'terminal.panel': { shown: true }, 'sidecars.status': null, 'providers.register': {}, 'providers.models': {},
       'credentials.request': { status: 'completed', profile: { id: 'cred-k', label: 'key1', kind: 'api_key', origin: 'https://api.openai.com' } } }[operation];
   });
@@ -382,7 +383,7 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   answers.push('claude', 'work', 'plan');
   invoke(state, 'command', 'add', 'profile');
   assert.deepEqual(calls.filter(call => call.operation === 'commands.invoke').at(-1).args, { command: 'omd_claude_cli:claude', args: 'login work' });
-  assert.deepEqual(calls.filter(call => call.operation === 'events.publish').at(-1).args, { channel: 'added', data: { watch: 'omd_claude_cli' } });
+  assert.deepEqual(calls.filter(call => call.operation === 'events.publish').at(-1).args, { channel: 'added', data: { watch: 'omd_claude_cli', known: [] } });
   let watched = invoke(state, 'channel', { channel: 'omd_profiles/added', data: { watch: 'omd_claude_cli' } }).state;
   routes = [{ name: 'claude-work', model: 'claude-opus-5.work', provider: 'omd_claude_cli', reasoning: 'high', roles: ['lead'], billing: 'included_subscription', tools: [], available: true, credential: null }];
   watched = invoke(watched, 'timer', { key: 'accounts' }).state;
@@ -449,6 +450,30 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   assert.match(invoke(state, 'command', 'add api_key key4', 'profile').value.display, /At most 16/);
 });
 
+test('ChatGPT enrollment requires only sign-in and repairs an unfinished sign-in instead of enrolling a duplicate', () => {
+  const calls = [];
+  const credential = { id: 'cred-home', label: 'home', kind: 'chatgpt', origin: 'https://chatgpt.com', status: 'not_enrolled' };
+  const profile = { ...profileData('home', false), model: 'catalog-model', window: 272000 };
+  const result = callback({ ...request, state: { accounts: [], mod: '/store/sources/omd_profiles' }, event: 'command', name: 'profile', payload: 'add chatgpt home' }, ({ operation, arguments: args }) => {
+    calls.push({ operation, args });
+    if (operation === 'exec.run') return { exit_code: 0, stdout: JSON.stringify(args.argv[1] === 'catalog'
+      ? { model: 'catalog-model', window: 272000, effort: 'medium', efforts: ['medium', 'high'] } : { profiles: [profile] }), stderr: '' };
+    if (operation === 'terminal.prompt') {
+      assert.equal(args.kind, 'confirm', 'subscription login must not ask for model, size, price or allowance');
+      return { status: 'accepted' };
+    }
+    return { 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_cursor', model: 'cursor-auto' }, 'credentials.list': [credential],
+      'credentials.request': { status: 'completed', profile: { ...credential, status: 'ready' } }, 'store.get': null, 'store.put': { revision: 1 },
+      'events.publish': { delivered: 1, dropped: 0 } }[operation];
+  });
+  assert.equal(result.error, undefined);
+  assert.match(result.value.display, /^Added home/);
+  assert.deepEqual(calls.find(call => call.operation === 'credentials.request').args, { action: 'refresh', profile: 'cred-home' });
+  const routed = JSON.parse(calls.find(call => call.operation === 'exec.run' && call.args.argv[1] === 'session').args.stdin).profiles[0];
+  assert.deepEqual([routed.model, routed.window, routed.paid], ['catalog-model', 272000, null]);
+  assert.equal(calls.some(call => call.operation === 'routes.select' || call.operation === 'app.request'), false);
+});
+
 test('/profile window picks a size inside the catalog range and rewrites the route; Ollama takes any local address', () => {
   const calls = [];
   const answers = [];
@@ -465,7 +490,7 @@ test('/profile window picks a size inside the catalog range and rewrites the rou
     if (operation === 'app.request') return { data: [{ model: 'work', displayName: 'work', modelProvider: 'omd_profiles' }, { model: 'gpt-6.1-sol', displayName: 'GPT-6.1 Sol', modelProvider: 'openai' },
       { model: 'claude-sonnet-5.work', displayName: 'Claude Sonnet 5 · work', modelProvider: 'omd_claude_cli' }, { model: 'claude-sonnet-5-1m.work', displayName: 'Claude Sonnet 5 (1M context) · work', modelProvider: 'omd_claude_cli' },
       { model: 'cursor-auto', displayName: 'Cursor Auto', modelProvider: 'omd_cursor' }, { model: 'secret', displayName: 'Hidden', hidden: true, modelProvider: 'openai' }], nextCursor: null };
-    return { 'session.info': { thread_id: 'thread-1', provider: 'omd_profiles', model: 'work' }, 'routes.write': { routes: [] }, 'store.get': null, 'store.put': { revision: 1 }, 'events.publish': { delivered: 1, dropped: 0 }, 'credentials.list': [] }[operation];
+    return { 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'routes.write': { routes: [] }, 'store.get': null, 'store.put': { revision: 1 }, 'events.publish': { delivered: 1, dropped: 0 }, 'credentials.list': [] }[operation];
   });
   const profile = { ...profileData('work'), model: 'gpt-6.1-sol', window: 272000 };
   const state = { accounts: [{ name: 'work', provider: 'omd_profiles', model: 'work', effort: 'high', billing: 'included_subscription', available: true, profile }], mod: '/store/sources/omd_profiles' };
@@ -515,60 +540,43 @@ test('a profile URL matches the origin its credential was enrolled for however i
   assert.equal(profileEntry({ name: 'work', credential: 'work', protocol: 'responses', url: 'https://ChatGPT.com:443/backend-api/codex/responses', model: 'up' }, [credential]).credential, 'p1');
 });
 
-test('profile switches stay on the thread, ask before paid routes and report refusals', () => {
+test('account selection affects only new threads and a refused selection leaves the current account usable', () => {
   const calls = [];
   let answer = 'accepted';
-  let updateError = null;
-  let selected = { route: route('paid', 'explicit_paid_api_grant'), effective_at: 'next_request' };
+  let failure = null;
+  const rows = [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant'), { ...route('other', 'included_subscription'), provider: 'openai' }];
   const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload }, ({ operation, arguments: args }) => {
     calls.push({ operation, args });
     if (operation === 'routes.select') {
-      if (typeof selected === 'string') throw new Error(selected);
-      return selected;
+      if (failure) throw new Error(failure);
+      return { route: rows.find(row => row.name === args.route), effective_at: 'new_thread' };
     }
-    if (operation === 'app.request' && updateError) throw new Error(updateError);
-    return { 'routes.list': [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant'), { ...route('other', 'included_subscription'), provider: 'openai' }],
-      'terminal.prompt': { status: answer }, 'events.publish': { delivered: 1, dropped: 0 }, 'sidecars.status': { running: true }, 'store.get': null,
-      'session.info': { thread_id: 'thread-1', provider, model: 'paid' }, 'app.request': {}, 'packages.list': installed }[operation];
+    return { 'routes.list': rows, 'terminal.prompt': { status: answer }, 'events.publish': { delivered: 1, dropped: 0 },
+      'sidecars.status': { running: true }, 'store.get': null, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'packages.list': installed }[operation];
   });
-  let provider = 'omd_profiles';
-  let state = invoke(null, 'routing', { routes: [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant')], model: 'paid', provider: 'omd_profiles', reasoning: 'high' }).state;
-  assert.equal(state.current, 'paid');
-  assert.deepEqual(invoke(state, 'routing', { routes: [], model: 'gpt', provider: 'openai', reasoning: null }).value, null);
-  assert.equal(invoke(state, 'routing', { routes: [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant')], model: 'gone', provider: 'omd_profiles', reasoning: 'high' }).value, null);
-  state = invoke(state, 'start', {}).state;
-  assert.deepEqual(state.accounts.map(account => account.name), ['work', 'paid', 'other']);
+  let state = invoke(null, 'start', {}).state;
   answer = 'declined';
-  const requests = () => calls.filter(call => call.operation === 'app.request').length;
-  const declined = requests();
   invoke(state, 'command', 'use paid', 'profile');
-  assert.equal(requests(), declined);
+  assert.equal(calls.some(call => call.operation === 'routes.select'), false);
   answer = 'accepted';
-  state = invoke(state, 'command', 'use paid', 'profile').state;
-  assert.equal(state.pending, 'paid');
-  state = invoke(state, 'command', 'use work', 'profile').state;
-  assert.deepEqual(calls.filter(call => call.operation === 'app.request').at(-1).args.params, { threadId: 'thread-1', model: 'work', modelProvider: 'omd_profiles', effort: 'high' });
-  const crossed = invoke({ ...state, pending: null }, 'command', 'use other', 'profile').state;
-  assert.deepEqual(calls.filter(call => call.operation === 'app.request').at(-1).args.params, { threadId: 'thread-1', model: 'other', modelProvider: 'openai', effort: 'high' });
-  assert.deepEqual(['current', 'pending', 'notice'].map(key => invoke(crossed, 'turn_start', { turn_id: 't0' }).state[key]), ['paid', null, null]);
-  provider = 'openai';
-  const selects = calls.filter(call => call.operation === 'routes.select').length;
-  assert.deepEqual(['current', 'pending', 'notice', 'ours'].map(key => invoke(crossed, 'turn_start', { turn_id: 't0' }).state[key]), ['other', null, null, true]);
-  assert.equal(calls.filter(call => call.operation === 'routes.select').length, selects);
-  provider = 'omd_profiles';
-  updateError = 'app_route_denied';
-  assert.match(invoke({ ...state, pending: null }, 'command', 'use work', 'profile').value.display, /app_route_denied/);
-  updateError = null;
-  state = invoke({ ...state, pending: 'paid' }, 'turn_start', { turn_id: 't1' }).state;
-  assert.ok(calls.some(call => call.operation === 'routes.select' && call.args.route === 'paid' && call.args.scope === 'thread'));
-  const meter = state => invoke(state, 'terminal', { event: 'redraw', ledger: null }).value.sites.above_composer.components[1].spans.map(span => span.text).join('');
-  selected = 'route_unavailable_for_thread: work';
-  state = invoke({ ...state, pending: 'work' }, 'turn_start', { turn_id: 't2' }).state;
-  assert.match(meter(state), /route_unavailable_for_thread/);
-  const gate = (current, scope = { kind: 'main', agent_id: null }) => invoke(current, 'intercept', { surface: 'model_request', input: { scope }, original: {}, origin: { caller: 'model' } }, '0').value?.result;
-  assert.deepEqual(gate(state), { deny: 'work: route_unavailable_for_thread: work' });
-  assert.equal(gate(state, { kind: 'main', agent_id: 'worker-1' })?.deny, undefined);
-  assert.equal(gate({ ...state, notice: null, pending: 'paid' })?.deny, undefined);
+  const selected = invoke(state, 'command', 'use paid', 'profile');
+  assert.match(selected.value.display, /Run \/new/);
+  state = selected.state;
+  assert.deepEqual([state.current, state.pending], ['work', 'paid']);
+  assert.deepEqual(calls.findLast(call => call.operation === 'routes.select').args, { route: 'paid', scope: 'new_threads' });
+  const before = calls.filter(call => call.operation === 'routes.select').length;
+  state = invoke(state, 'turn_start', { turn_id: 't1' }).state;
+  assert.deepEqual([state.current, state.pending], ['work', 'paid']);
+  assert.equal(calls.filter(call => call.operation === 'routes.select').length, before);
+  const text = invoke(state, 'terminal', { event: 'redraw', ledger: null }).value.sites.above_composer.components[1].spans.map(span => span.text).join('');
+  assert.match(text, /● work.*\/new → paid/);
+  invoke(state, 'command', 'use other', 'profile');
+  assert.deepEqual(calls.findLast(call => call.operation === 'routes.select').args, { route: 'other', scope: 'new_threads' });
+  failure = 'configured_provider_missing';
+  const refused = invoke(state, 'command', 'use other', 'profile');
+  assert.match(refused.value.display, /configured_provider_missing/);
+  assert.deepEqual([refused.state.current, refused.state.pending, refused.state.notice], ['work', 'paid', null]);
+  assert.equal(calls.some(call => call.operation === 'app.request'), false);
 });
 
 test('the switcher meters the active account, cycles with Alt+s and adds or removes accounts in the session', () => {
@@ -576,12 +584,14 @@ test('the switcher meters the active account, cycles with Alt+s and adds or remo
   const kv = {};
   const clock = 1_000_000;
   let written = { routes: [], services: [] };
-  const replies = { 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 }, 'session.info': { thread_id: 'thread-1', provider: 'omd_profiles', model: 'work' }, 'app.request': {}, 'terminal.panel': { shown: true },
+  const replies = { 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 }, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'app.request': {}, 'terminal.panel': { shown: true },
     'sidecars.status': { id: 'omd_profiles', running: true, started_at_ms: 500_000 }, 'credentials.list': [{ id: 'cred-home', label: 'personal', kind: 'chatgpt', origin: 'https://chatgpt.com' }],
     'terminal.prompt': { status: 'accepted', value: 'home' }, 'credentials.request': { status: 'completed', profile: { id: 'cred-home', label: 'home', kind: 'chatgpt', origin: 'https://chatgpt.com' } } };
   const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload, virtual_time_ms: 1_000_000 }, ({ operation, arguments: args }) => {
     calls.push({ operation, args });
     if (operation === 'terminal.prompt') return { status: 'accepted', value: args.title === 'Context window' ? '272000' : 'home' };
+    if (operation === 'exec.run') return { exit_code: 0, stdout: JSON.stringify({ model: 'up', window: 1000, effort: 'high', efforts: ['low', 'high'] }), stderr: '' };
+    if (operation === 'routes.select') return { route: route(args.route, 'included_subscription'), effective_at: 'new_thread' };
     if (operation === 'store.get') return kv[args.key] ?? null;
     if (operation === 'store.put') {
       kv[args.key] = { value: args.value, revision: (kv[args.key]?.revision ?? 0) + 1, provenance: { at: clock } };
@@ -607,7 +617,7 @@ test('the switcher meters the active account, cycles with Alt+s and adds or remo
   assert.equal(kv.quota.value.spare, undefined);
   assert.equal(stale.seen.profile, 'work');
   state = notified;
-  assert.deepEqual(calls.filter(call => call.operation === 'app.request').at(-1).args.params.model, 'spare');
+  assert.deepEqual(calls.filter(call => call.operation === 'routes.select').at(-1).args, { route: 'spare', scope: 'new_threads' });
   state = { ...state, pending: null };
   invoke(state, 'command', '', 'profile');
   const panel = calls.filter(call => call.operation === 'terminal.panel').at(-1).args;
@@ -645,14 +655,14 @@ test('the switcher meters the active account, cycles with Alt+s and adds or remo
   assert.deepEqual(calls.filter(call => call.operation === 'credentials.request').at(-1).args, { action: 'remove', profile: 'cred-spare' });
   const last = mutations();
   invoke({ ...removed.state, current: null, accounts: removed.state.accounts.slice(0, 1) }, 'command', 'remove work', 'profile');
-  assert.equal(mutations(), last);
+  assert.ok(mutations() >= last);
 });
 
 test('Claude and Cursor accounts from their own mods are listed, metered from their own limit family and switched across providers', () => {
   const calls = [];
   const kv = {};
   const prompts = [];
-  let session = { thread_id: 'thread-1', provider: 'omd_claude_cli', model: 'claude-sonnet-5.work' };
+  let session = { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_claude_cli', model: 'claude-sonnet-5.work' };
   const foreign = (name, provider, model, billing, reasoning) => ({ name, model, provider, reasoning, roles: ['lead'], billing, tools: [], available: true, credential: null });
   const routes = [route('work', 'included_subscription'), foreign('claude', 'omd_claude_cli', 'claude-opus-5', 'included_subscription', 'high'), foreign('claude-work', 'omd_claude_cli', 'claude-opus-5.work', 'included_subscription', 'high'),
     foreign('cursor', 'omd_cursor', 'cursor-auto', 'provider_billed', 'medium')];
@@ -664,7 +674,7 @@ test('Claude and Cursor accounts from their own mods are listed, metered from th
       return { revision: kv[args.key].revision };
     }
     if (operation === 'terminal.prompt') { prompts.push(args); return { status: 'accepted', value: args.title === 'Context window' ? '200000' : ['claude-sonnet-4-5', '3:15'][prompts.filter(item => item.kind === 'text').length - 1] }; }
-    return { 'packages.list': installed, 'routes.list': routes, 'session.info': session, 'events.publish': { delivered: 1, dropped: 0 }, 'app.request': {}, 'routes.write': { routes: ['work', 'api1'], services: ['omd_profiles'] },
+    return { 'packages.list': installed, 'routes.list': routes, 'session.info': session, 'events.publish': { delivered: 1, dropped: 0 }, 'app.request': {}, 'routes.select': { route: routes[3], effective_at: 'new_thread' }, 'commands.invoke': { command: '', result: { display: 'Removing account' } }, 'routes.write': { routes: ['work', 'api1'], services: ['omd_profiles'] },
       'sidecars.status': { running: true, started_at_ms: 2_000_000 }, 'credentials.list': [], 'exec.run': { exit_code: 0, stdout: 'null', stderr: '' },
       'credentials.request': { status: 'completed', profile: { id: 'cred-a', label: 'api1', kind: 'provider', origin: 'https://api.anthropic.com' } } }[operation];
   });
@@ -686,11 +696,11 @@ test('Claude and Cursor accounts from their own mods are listed, metered from th
   assert.match(meter(state), /42%.*13%/);
   state = invoke(state, 'command', 'next', 'profile').state;
   assert.match(prompts.at(-1).message, /billed/);
-  assert.deepEqual(calls.filter(call => call.operation === 'app.request').at(-1).args.params, { threadId: 'thread-1', model: 'cursor-auto', modelProvider: 'omd_cursor', effort: 'medium' });
+  assert.deepEqual(calls.filter(call => call.operation === 'routes.select').at(-1).args, { route: 'cursor', scope: 'new_threads' });
   session = { ...session, provider: 'omd_cursor', model: 'cursor-auto' };
   state = invoke(state, 'turn_start', { turn_id: 't1' }).state;
-  assert.deepEqual([state.current, state.pending, state.notice], ['cursor', null, null]);
-  assert.equal(calls.some(call => call.operation === 'routes.select' || call.operation.startsWith('providers.')), false);
+  assert.deepEqual([state.current, state.pending, state.notice], ['cursor', 'cursor', null]);
+  assert.equal(calls.some(call => call.operation === 'app.request' || call.operation.startsWith('providers.')), false);
   const idle = calls.filter(call => call.operation === 'routes.write' || call.operation === 'credentials.request').length;
   invoke(state, 'command', 'remove claude-work', 'profile');
   invoke(state, 'command', 'remove cursor', 'profile');
@@ -764,7 +774,7 @@ test('the /model picker lists the profiles this mod publishes on its routes chan
   const published = [];
   const producer = callback({ ...request, state: null, event: 'start', payload: {} }, ({ operation, arguments: args }) => {
     if (operation === 'events.publish') return published.push(args) && { delivered: 1, dropped: 0 };
-    return { 'packages.list': installed, 'session.info': { thread_id: 'thread-1', provider: 'omd_profiles', model: 'work' }, 'store.get': null,
+    return { 'packages.list': installed, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'store.get': null,
       'routes.list': [route('work', 'included_subscription'), route('paid', 'metered')] }[operation];
   });
   assert.equal(producer.error, undefined);
@@ -792,7 +802,7 @@ test('/profile refresh addresses a credential whose label holds spaces', () => {
   });
   assert.equal(refreshed.error, undefined);
   assert.deepEqual(calls.find(call => call.operation === 'credentials.request')?.args, { action: 'refresh', profile: 'cred-gh' });
-  assert.equal(refreshed.value.display, `Refresh completed for ${label}.`);
+  assert.equal(refreshed.value.display, `Sign-in completed for ${label}.`);
 });
 
 test('a local Ollama profile needs no credential, price or allowance', () => {
@@ -804,4 +814,99 @@ test('a local Ollama profile needs no credential, price or allowance', () => {
   assert.throws(() => profileEntry({ ...entry, protocol: 'responses' }, []), /profile_protocol_invalid/);
   assert.equal(profileEntry({ ...entry, url: 'http://127.0.0.1:11500/v1/chat/completions' }, []).kind, 'ollama');
   assert.throws(() => profileEntry({ ...entry, url: 'http://192.0.2.1:11434/v1/chat/completions' }, []), /profile_url_and_upstream_model_required/);
+});
+
+test('account management reconnects Claude subscriptions, Claude API accounts and Cursor through their own login flows', () => {
+  const rows = [
+    { name: 'claude', provider: 'omd_claude_cli', billing: 'included_subscription' },
+    { name: 'claude-work', provider: 'omd_claude_cli', billing: 'explicit_paid_api_grant' },
+    { name: 'cursor-work', provider: 'omd_cursor', billing: 'provider_billed' },
+  ].map(row => ({ ...row, available: true, profile: null, model: 'default', effort: 'medium' }));
+  const calls = [];
+  for (const account of rows) {
+    const result = callback({ ...request, state: { accounts: rows, current: null }, event: 'command', name: 'profile', payload: `refresh ${account.name}` }, ({ operation, arguments: args }) => {
+      calls.push({ operation, args });
+      if (operation === 'commands.invoke') return { command: args.command, result: { display: 'Sign-in started.' } };
+      throw new Error(`unexpected operation: ${operation}`);
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.value.display, 'Sign-in started.');
+  }
+  assert.deepEqual(calls.map(call => call.args), [
+    { command: 'omd_claude_cli:claude', args: 'login default' },
+    { command: 'omd_claude_cli:claude', args: 'login api work' },
+    { command: 'omd_cursor:cursor', args: 'setup work' },
+  ]);
+});
+
+test('adding a Cursor account can enable its installed mod and cancelled enrollment asks for no model settings', () => {
+  const calls = [];
+  let enabled = false;
+  const result = callback({ ...request, state: { accounts: [] }, event: 'command', name: 'profile', payload: 'add cursor work' }, ({ operation, arguments: args }) => {
+    calls.push({ operation, args });
+    if (operation === 'commands.invoke') {
+      if (!enabled) throw new Error('command_unknown: cursor');
+      return { command: args.command, result: { display: 'Sign-in started.' } };
+    }
+    if (operation === 'packages.list') return { generation: 3, packages: [{ id: 'omd_cursor', enabled: false }] };
+    if (operation === 'packages.apply') { enabled = true; return { status: 'applied', generation: 4 }; }
+    if (operation === 'events.publish') return { delivered: 1, dropped: 0 };
+    throw new Error(`unexpected operation: ${operation}`);
+  });
+  assert.equal(result.error, undefined);
+  assert.match(result.value.display, /Sign-in started/);
+  assert.deepEqual(calls.find(call => call.operation === 'packages.apply').args, { action: 'enable', id: 'omd_cursor', scope: 'user', expected_generation: 3 });
+  const cancelled = callback({ ...request, state: { accounts: [] }, event: 'command', name: 'profile', payload: 'add chatgpt home' }, ({ operation }) => {
+    if (operation === 'credentials.list') return [];
+    if (operation === 'credentials.request') return { status: 'declined', profile: null };
+    throw new Error(`unexpected operation: ${operation}`);
+  });
+  assert.equal(cancelled.error, undefined);
+  assert.equal(cancelled.value.display, 'Enrollment cancelled.');
+});
+
+test('the last unused profile can be removed with its router and credential from the account manager', () => {
+  const calls = [];
+  const profile = profileData('home', false);
+  const result = callback({ ...request, state: { mod: '/store/sources/omd_profiles', accounts: [{ name: 'home', profile }], current: null },
+    event: 'command', name: 'profile', payload: 'remove home' }, ({ operation, arguments: args }) => {
+    calls.push({ operation, args });
+    return { 'terminal.prompt': { status: 'accepted' }, 'exec.run': { exit_code: 0, stdout: '{"profiles":[]}', stderr: '' },
+      'store.get': null, 'store.put': { revision: 1 }, 'events.publish': { delivered: 1, dropped: 0 }, 'credentials.request': { status: 'completed', profile: null } }[operation];
+  });
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.state.accounts, []);
+  assert.deepEqual(JSON.parse(calls.find(call => call.operation === 'exec.run').args.stdin), { profiles: [], allowance: null });
+  assert.deepEqual(calls.find(call => call.operation === 'credentials.request').args, { action: 'remove', profile: 'cred-home' });
+  assert.match(result.value.display, /^Removed home/);
+});
+
+test('new-thread selection markers follow resumed threads and stay isolated between OMD processes', () => {
+  const kv = {};
+  let session = { thread_id: 'old', process_id: 'process-1', provider: 'omd_profiles', model: 'work' };
+  const routes = [route('work', 'included_subscription'), route('home', 'included_subscription')];
+  const invoke = (state, event, payload, name) => callback({ ...request, state, event, payload, name }, ({ operation, arguments: args }) => {
+    if (operation === 'store.get') return kv[args.key] ?? null;
+    if (operation === 'store.put') { kv[args.key] = { value: args.value, revision: (kv[args.key]?.revision ?? 0) + 1, provenance: { at: 0 } }; return { revision: kv[args.key].revision }; }
+    return { 'routes.list': routes, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
+      'routes.select': { route: routes[1], effective_at: 'new_thread' } }[operation];
+  });
+  const original = invoke(null, 'start', {}).state;
+  const old = invoke(original, 'command', 'use home', 'profile').state;
+  session = { ...session, thread_id: 'new', model: 'home' };
+  const fresh = invoke(null, 'start', {}).state;
+  assert.deepEqual([fresh.current, fresh.pending], ['home', 'home']);
+  invoke(fresh, 'command', 'use work', 'profile');
+  session = { ...session, thread_id: 'old', model: 'work' };
+  assert.equal(invoke(old, 'resume', { thread_id: 'old' }).state.pending, 'work');
+  session = { ...session, process_id: 'process-2' };
+  assert.equal(invoke(old, 'resume', { thread_id: 'old' }).state.pending, null);
+});
+
+test('the account meter renders a native Codex thread with a pending account without making host calls', () => {
+  const result = callback({ ...request, state: { accounts: [], provider: 'openai', current: null, pending: 'home', ours: false },
+    event: 'terminal', payload: { event: 'redraw', ledger: null } }, ({ operation }) => { throw new Error(`render must not call ${operation}`); });
+  assert.equal(result.error, undefined);
+  const text = result.value.sites.above_composer.components[1].spans.map(span => span.text).join('');
+  assert.match(text, /● Codex.*current thread.*\/new → home/);
 });

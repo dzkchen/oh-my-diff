@@ -51,7 +51,7 @@ covers billing, several accounts and limits.
    Pick a ChatGPT account, a Claude or Cursor account, an OpenAI or Anthropic API key, a local Ollama (no key, no allowance; `http://localhost:11434` or another local address), or another provider by URL.
    Sign-in and key entry happen in the session. The first time you add a paid key, the session asks for a spending
    allowance in USD. When the account is added, the session prints `Added NAME.` and how to switch to it.
-3. Switch with `/profile`, `/profile use NAME`, or Alt+s for the next account.
+3. Select an account with `/profile`, `/profile use NAME`, or Alt+s, then run `/new`. Existing and resumed threads keep their account.
 
 Alt+s needs Option-as-Alt in Kitty and Ghostty; `/profile next` works in every terminal.
 
@@ -82,7 +82,7 @@ Run `/cursor setup NAME` to add another account, and `/cursor setup` again when 
 
 With `omd_profiles` on, `/profile` lists every account from every provider, including the Claude and Cursor accounts
 that `omd_claude_cli` and `omd_cursor` add, with the limits each one last reported. Alt+s or `/profile next`
-switches to the next one.
+selects the next one for `/new`. Each account opens a menu to select it, sign in again or remove it. ChatGPT subscription sign-in asks for no model name, context window, price or spending allowance.
 
 ## Run subagents on another provider
 

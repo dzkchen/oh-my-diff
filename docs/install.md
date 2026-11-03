@@ -109,15 +109,34 @@ If you installed the authority broker, an optional macOS service that protects c
 omd-package broker uninstall
 ```
 
+To remove an administrator policy and its rollback copy too, run `omd-package broker uninstall --purge` instead.
+This needs `sudo` and also works after the broker itself has been removed. A complete purge below requires this
+step whenever those policy files remain.
+
 Then remove OMD:
 
 ```sh
 omd uninstall
 ```
 
-This removes OMD and its Codex plugins, and puts back any command in `~/.local/bin` that the installer renamed to
-`NAME.before-omd`. Codex data stays. Mod settings stay in `~/.local/share/oh-my-diff/stores`. Delete that folder to
-remove them.
+This removes OMD, its release and catalog caches, and its Codex plugins, and puts back any command in
+`~/.local/bin` that the installer renamed to `NAME.before-omd`. Codex settings, accounts and sessions stay.
+OMD mod settings, data and saved sign-ins stay in `~/.local/share/oh-my-diff/stores` by default.
+
+To remove OMD's mod data and saved sign-ins too, use this instead:
+
+```sh
+omd uninstall --purge
+```
+
+This removes both install profiles' stores. Shared Codex data and mods' source folders outside the install root
+stay. OMD's named Claude accounts are signed out with `claude auth logout` before their directories and Keychain
+items are removed; your shared/default Claude Code login stays. Keep the Claude CLI installed until this finishes.
+If sign-out fails, purge stops and keeps the account directories for retry. Cursor's private agent data and cache
+under `/private/tmp/omd-cursor-UID` are removed too.
+
+An empty `releases` folder and the installer coordination lock can remain; keeping the lock prevents an
+already waiting installer from racing another installation. Remove the authority broker first if deployed.
 
 If the `omd` command is gone, run OMD's management script directly. It also takes `status` and `rollback`:
 

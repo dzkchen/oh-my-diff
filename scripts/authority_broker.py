@@ -226,26 +226,40 @@ def reset():
     return {"reset": "grants and evidence anchors removed; credentials kept"}
 
 
-def uninstall():
+def uninstall(purge=False):
+    policies = [path for path in (POLICY, POLICY.with_name("policy.json.previous")) if path.exists() or path.is_symlink()]
     for label in (LABEL, POWER_LABEL):
-        run("/bin/launchctl", "bootout", f"system/{label}", check=False)
+        stopped = run("/bin/launchctl", "bootout", f"system/{label}", check=False)
+        if stopped.returncode and run("/bin/launchctl", "print", f"system/{label}", check=False).returncode == 0:
+            raise ValueError(f"broker service is still running: {label}")
     if POWER_RECORD.is_file():
         try:
             previous = json.loads(POWER_RECORD.read_text()).get("previous") is True
         except (ValueError, AttributeError):
             previous = False
         run("/usr/bin/pmset", "-a", "disablesleep", "1" if previous else "0")
-    for path in (DAEMON, POWER_DAEMON, HELPER, Path(SOCKET), Path(POWER_SOCKET), POWER_RECORD):
-        path.unlink(missing_ok=True)
-    shutil.rmtree(TOOLS, ignore_errors=True)
     for name in RIGHTS:
-        run("/usr/bin/security", "authorizationdb", "remove", name, check=False)
-    shutil.rmtree(ROOT, ignore_errors=True)
+        removed = run("/usr/bin/security", "authorizationdb", "remove", name, check=False)
+        if removed.returncode and run("/usr/bin/security", "authorizationdb", "read", name, check=False).returncode == 0:
+            raise ValueError(f"broker authorization right remains: {name}")
+    if ROOT.exists():
+        shutil.rmtree(ROOT)
+    if purge:
+        for path in policies:
+            path.unlink(missing_ok=True)
+    for record in (f"/Users/{ACCOUNT}", f"/Groups/{ACCOUNT}"):
+        removed = run("/usr/bin/dscl", ".", "-delete", record, check=False)
+        if removed.returncode and run("/usr/bin/dscl", ".", "-read", record, check=False).returncode == 0:
+            raise ValueError(f"broker account record remains: {record}")
+    for path in (POWER_DAEMON, HELPER, Path(SOCKET), Path(POWER_SOCKET), POWER_RECORD):
+        path.unlink(missing_ok=True)
+    if TOOLS.exists():
+        shutil.rmtree(TOOLS)
     if ROOT.parent.is_dir() and not any(ROOT.parent.iterdir()):
         ROOT.parent.rmdir()
-    for record in (f"/Users/{ACCOUNT}", f"/Groups/{ACCOUNT}"):
-        run("/usr/bin/dscl", ".", "-delete", record, check=False)
-    return {"deployed": False}
+    DAEMON.unlink(missing_ok=True)
+    return {"deployed": False, **({"purged_administrator_policy" if purge else "preserved_administrator_policy":
+                                  [str(path) for path in policies]} if policies else {})}
 
 
 def policy(action, source=None):
@@ -295,7 +309,8 @@ def main(argv=None):
     pin_parser.add_argument("--add", action="store_true", help="keep the existing pins")
     commands.add_parser("status", help="show whether the broker is deployed")
     commands.add_parser("reset", help="remove grants and evidence anchors, keep credentials (sudo)")
-    commands.add_parser("uninstall", help="remove the broker, its account and all broker state (sudo)")
+    commands.add_parser("uninstall", help="remove the broker, its account and all broker state (sudo)").add_argument(
+        "--purge", action="store_true", help="also remove the administrator policy and its backup")
     commands.add_parser("policy-install", help="install the root-owned administrator policy file (sudo)").add_argument(
         "source", type=Path)
     commands.add_parser("policy-rollback", help="swap the administrator policy file with the one it replaced (sudo)")
@@ -320,7 +335,7 @@ def main(argv=None):
         return {"pins": write_pins([path.resolve() for path in args.pin], args.manifest, args.tooling.resolve(), args.add)}
     if args.command.startswith("policy-"):
         return policy(args.command, getattr(args, "source", None))
-    return reset() if args.command == "reset" else uninstall()
+    return reset() if args.command == "reset" else uninstall(args.purge)
 
 
 if __name__ == "__main__":

@@ -16466,6 +16466,133 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..770811d96dee6363791daa103a925f44
          };
 
          handle_token_count_event(
+diff --git a/codex-rs/app-server/src/config_manager.rs b/codex-rs/app-server/src/config_manager.rs
+index 461920b677da7a40530837e354d89190ad18550f..0979f7d0ae97eab25ed60c9f4ae8aa35a547b61c 100644
+--- a/codex-rs/app-server/src/config_manager.rs
++++ b/codex-rs/app-server/src/config_manager.rs
+@@ -430,24 +430,12 @@ impl ConfigManager {
+         Ok(CloudStartupConfig { bootstrap, config })
+     }
+
+-    /// Admits resumed threads and input only on the currently selected provider.
+     pub(crate) async fn check_thread_model_provider_for_input(
+         &self,
+         current: &Config,
+     ) -> std::io::Result<()> {
+         self.check_thread_model_provider(current).await?;
+-        let configured = self
+-            .load_latest_config(Some(current.cwd.to_path_buf()))
+-            .await?;
+-        if current.model_provider_id != configured.model_provider_id {
+-            return Err(std::io::Error::new(
+-                std::io::ErrorKind::InvalidInput,
+-                ModelProviderError::ModelProviderMismatch {
+-                    model_provider: current.model_provider_id.clone(),
+-                    current_model_provider: configured.model_provider_id,
+-                },
+-            ));
+-        }
++        self.load_latest_config(Some(current.cwd.to_path_buf())).await?;
+         Ok(())
+     }
+
+@@ -550,11 +538,6 @@ impl ConfigManager {
+                 .and_then(serde_json::Value::as_str)
+                 .map(str::to_owned)
+         });
+-        // Resolve the selection before the saved provider is applied as a resume override.
+-        let current_provider = self
+-            .load_latest_config(typesafe_overrides.cwd.clone().or_else(|| cwd.clone()))
+-            .await
+-            .map(|config| config.model_provider_id);
+         self.load_with_validation(
+             &self.current_cli_overrides(),
+             request_overrides,
+@@ -584,6 +567,7 @@ impl ConfigManager {
+                     if !config.model_providers.contains_key(provider)
+                         && !built_in_model_providers(config.openai_base_url.clone())
+                             .contains_key(provider)
++                        && codex_model_provider_info::runtime_provider(provider).is_none()
+                     {
+                         return Err(std::io::Error::new(
+                             std::io::ErrorKind::NotFound,
+@@ -593,21 +577,6 @@ impl ConfigManager {
+                         ));
+                     }
+                 }
+-                let current_provider = current_provider?;
+-                for provider in [
+-                    saved_provider.unwrap_or(requested_provider),
+-                    requested_provider,
+-                ] {
+-                    if provider != current_provider {
+-                        return Err(std::io::Error::new(
+-                            std::io::ErrorKind::InvalidInput,
+-                            ModelProviderError::ModelProviderMismatch {
+-                                model_provider: provider.to_owned(),
+-                                current_model_provider: current_provider,
+-                            },
+-                        ));
+-                    }
+-                }
+                 Ok(())
+             },
+         )
+diff --git a/codex-rs/app-server/src/config_manager_provider_tests.rs b/codex-rs/app-server/src/config_manager_provider_tests.rs
+index 1f2129d69d3b64b8e06a61db4e050db4ab146985..9a008020f348dd753ebf356c1cef8425f82609ae 100644
+--- a/codex-rs/app-server/src/config_manager_provider_tests.rs
++++ b/codex-rs/app-server/src/config_manager_provider_tests.rs
+@@ -262,11 +262,10 @@ async fn catalog_reload_uses_latest_model_provider() -> Result<()> {
+     Ok(())
+ }
+
+-/// Invocation overrides and selected profiles still define the current provider.
+ #[test_case("model_provider", "gateway"; "explicit_provider")]
+ #[test_case("profile", "gateway-profile"; "selected_profile")]
+ #[tokio::test]
+-async fn input_provider_check_uses_effective_selection(key: &str, value: &str) -> Result<()> {
++async fn input_provider_check_retains_session_selection(key: &str, value: &str) -> Result<()> {
+     let home = tempdir()?;
+     std::fs::write(
+         home.path().join("config.toml"),
+@@ -305,18 +304,26 @@ name = "Gateway"
+         .await?;
+     let default_manager =
+         ConfigManager::without_managed_config_for_tests(home.path().to_path_buf());
+-    let error = default_manager
++    default_manager
+         .check_thread_model_provider_for_input(&current)
+-        .await
+-        .unwrap_err();
+-    assert_eq!(
+-        error
+-            .get_ref()
+-            .and_then(|error| error.downcast_ref::<ModelProviderError>()),
+-        Some(&ModelProviderError::ModelProviderMismatch {
+-            model_provider: "gateway".into(),
+-            current_model_provider: "openai".into(),
+-        })
++        .await?;
++    let resumed = default_manager
++        .load_for_resume(
++            Some("gateway"),
++            None,
++            ConfigOverrides {
++                model_provider: Some("gateway".into()),
++                ..Default::default()
++            },
++            None,
++        )
++        .await?;
++    assert_eq!(resumed.model_provider_id, "gateway");
++    assert!(
++        default_manager
++            .load_for_resume(Some("missing"), None, ConfigOverrides::default(), None)
++            .await
++            .is_err()
+     );
+     Ok(())
+ }
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
 index 733df70ed545b29b7e5ef3ef8a9bf37e474cad0d..3dbb9d28323b76d3d66358757718e26946ad98b2 100644
 --- a/codex-rs/app-server/src/extensions.rs
@@ -18805,6 +18932,89 @@ index c9604f1b09a53dbed6b75075cc1b23711408f411..e4189d1597095d12332c07f2fd9f92d3
      }
  }
 
+diff --git a/codex-rs/app-server/tests/suite/v2/model_provider_enforcement_tests.rs b/codex-rs/app-server/tests/suite/v2/model_provider_enforcement_tests.rs
+index f5bda49c8ab9d68ded2e8e9d7e9c2339817e7023..08342bfbb8a078f06078d04a24b425bb9e698ee2 100644
+--- a/codex-rs/app-server/tests/suite/v2/model_provider_enforcement_tests.rs
++++ b/codex-rs/app-server/tests/suite/v2/model_provider_enforcement_tests.rs
+@@ -42,7 +42,6 @@ use wiremock::MockServer;
+
+ #[test_case("other"; "selection_changes")]
+ #[test_case("gateway"; "definition_changes")]
+-#[test_case("default"; "default_selection_changes")]
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn provider_requirement_changes_reject_inputs_to_existing_threads(
+     required_selection: &str,
+@@ -136,23 +135,10 @@ base_url = "{}/v1"
+     } else {
+         requirements.replace(gateway.uri(), &other.uri())
+     };
+-    let provider_error = if required_selection == "default" {
+-        let path = home.path().join("config.toml");
+-        let config = std::fs::read_to_string(&path)?;
+-        std::fs::write(
+-            path,
+-            config.replace("model_provider = \"gateway\"", "model_provider = \"other\""),
+-        )?;
+-        codex_app_server_protocol::ModelProviderError::ModelProviderMismatch {
+-            model_provider: "gateway".into(),
+-            current_model_provider: "other".into(),
+-        }
+-    } else {
+-        std::fs::write(requirements_path, updated)?;
+-        codex_app_server_protocol::ModelProviderError::ModelProviderPolicyConflict {
+-            model_provider: "gateway".into(),
+-            required_model_provider: required_selection.into(),
+-        }
++    std::fs::write(requirements_path, updated)?;
++    let provider_error = codex_app_server_protocol::ModelProviderError::ModelProviderPolicyConflict {
++        model_provider: "gateway".into(),
++        required_model_provider: required_selection.into(),
+     };
+     let expected_error = JSONRPCErrorError {
+         code: -32600,
+@@ -283,7 +269,7 @@ base_url = "{}/v1"
+ }
+
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+-async fn provider_selection_can_be_restored_for_existing_threads() -> Result<()> {
++async fn provider_default_changes_keep_existing_threads_on_their_provider() -> Result<()> {
+     let provider = MockServer::start().await;
+     let home = TempDir::new()?;
+     MockResponsesConfig::new(&provider.uri()).write(home.path())?;
+@@ -315,19 +301,8 @@ async fn provider_selection_can_be_restored_for_existing_threads() -> Result<()>
+         ..Default::default()
+     };
+     let id = server.send_turn_start_request(params.clone()).await?;
+-    let error = server
+-        .read_stream_until_error_message(RequestId::Integer(id))
+-        .await?;
+-    assert_eq!(
+-        error.error.data,
+-        Some(serde_json::to_value(
+-            codex_app_server_protocol::ModelProviderError::ModelProviderMismatch {
+-                model_provider: "mock_provider".into(),
+-                current_model_provider: "openai".into(),
+-            }
+-        )?)
+-    );
+-    assert!(requests.requests().is_empty());
++    let _: TurnStartResponse = server.read_response(id).await?;
++    server.read_stream_until_notification_message("turn/completed").await?;
+     let id = server
+         .send_raw_request(
+             "thread/read",
+@@ -337,11 +312,6 @@ async fn provider_selection_can_be_restored_for_existing_threads() -> Result<()>
+     let read: codex_app_server_protocol::ThreadReadResponse = server.read_response(id).await?;
+     assert_eq!(read.thread.model_provider, "mock_provider");
+     std::fs::write(path, original)?;
+-    let id = server.send_turn_start_request(params).await?;
+-    let _: TurnStartResponse = server.read_response(id).await?;
+-    server
+-        .read_stream_until_notification_message("turn/completed")
+-        .await?;
+     assert_eq!(requests.requests().len(), 1);
+     Ok(())
+ }
 diff --git a/codex-rs/app-server/tests/suite/v2/rate_limits.rs b/codex-rs/app-server/tests/suite/v2/rate_limits.rs
 index 76057f8ea1db49a0622b7eb75139027a31cc298f..07202265eeb612b5684de7efe291a1b6f11b2f75 100644
 --- a/codex-rs/app-server/tests/suite/v2/rate_limits.rs
@@ -18834,7 +19044,7 @@ index 76057f8ea1db49a0622b7eb75139027a31cc298f..07202265eeb612b5684de7efe291a1b6
                  ),
              ]
 diff --git a/codex-rs/app-server/tests/suite/v2/thread_resume.rs b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
-index 8badd1164822817f163d4385a91cf24dc7f88a68..d3009c49a373f716296d8ebf24b53d221b91abc9 100644
+index 8badd1164822817f163d4385a91cf24dc7f88a68..26e88a181c53be52436dabe36f2d86b4c63060f3 100644
 --- a/codex-rs/app-server/tests/suite/v2/thread_resume.rs
 +++ b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
 @@ -453,7 +453,7 @@ async fn wait_for_responses_request_count(
@@ -18879,6 +19089,28 @@ index 8badd1164822817f163d4385a91cf24dc7f88a68..d3009c49a373f716296d8ebf24b53d22
 
      Ok(())
  }
+@@ -6905,7 +6896,7 @@ async fn thread_resume_returns_provider_error_even_with_provider_override(
+ }
+
+ #[test_case::test_case(false; "missing_definition")]
+-#[test_case::test_case(true; "provider_mismatch")]
++#[test_case::test_case(true; "retained_provider")]
+ #[tokio::test]
+ async fn thread_resume_recovers_after_provider_configuration_is_restored(
+     configured: bool,
+@@ -6941,6 +6932,12 @@ async fn thread_resume_recovers_after_provider_configuration_is_restored(
+         ..Default::default()
+     };
+     let id = client.send_thread_resume_request(params.clone()).await?;
++    if configured {
++        let resumed: ThreadResumeResponse = client.read_response(id).await?;
++        assert_eq!(resumed.model_provider, "old_provider");
++        return Ok(());
++    }
++
+     let error = client
+         .read_stream_until_error_message(RequestId::Integer(id))
+         .await?;
 diff --git a/codex-rs/async-utils/src/lib.rs b/codex-rs/async-utils/src/lib.rs
 index 5b93457a64fdaae10467dc6599a8945eacc17d1c..a93c86205ac465fde7780e43805daf51c61d287a 100644
 --- a/codex-rs/async-utils/src/lib.rs
@@ -33898,7 +34130,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582f95daa81 100644
+index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d4aeacd88 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -33912,16 +34144,17 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
  mod model_defaults;
  mod new_session;
  mod quick_dials;
-@@ -668,6 +672,8 @@ pub(crate) struct App {
+@@ -668,6 +672,9 @@ pub(crate) struct App {
      pending_managed_worktree_transition: Option<Box<crate::app_event::ManagedWorktreeTransition>>,
      /// Holds notifications until the new widget is attached on a fresh loop iteration.
      pending_managed_worktree_attach: Option<Box<working_directory::ManagedWorktreeAttach>>,
 +    /// When a visible mod command finished, so its history cell draws at once.
 +    mod_result_finished: Option<Instant>,
++    new_thread_route: Option<new_session::NewThreadRoute>,
      /// Keeps protected screens quarantined until initialized chat receives genuine user input.
      startup_protected_input_boundary: bool,
      /// Keeps that boundary armed while an approval waits for the typing-idle timer or a visible
-@@ -970,6 +976,9 @@ impl App {
+@@ -970,6 +977,9 @@ impl App {
          {
              self.chat_widget.interrupt_config_editor_transition();
          }
@@ -33931,7 +34164,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
 
          if self.overlay.is_none()
              && self
-@@ -980,6 +989,13 @@ impl App {
+@@ -980,6 +990,13 @@ impl App {
              return Ok(AppRunControl::Continue);
          }
 
@@ -33945,7 +34178,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
          let mut event = if let TuiEvent::Key(mut key_event) = event {
              let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
              if self.should_recover_vim_insert_escape(key_event)
-@@ -1001,6 +1017,19 @@ impl App {
+@@ -1001,6 +1018,19 @@ impl App {
              event
          };
 
@@ -33965,7 +34198,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
          self.cancel_primed_browsing_for_event(&event);
          let voice_toggle = |app: &Self, key: KeyEvent| {
              key.kind == KeyEventKind::Press
-@@ -1014,7 +1043,11 @@ impl App {
+@@ -1014,7 +1044,11 @@ impl App {
          };
          // Transcript interactions consume otherwise-unhandled keys; let enabled voice controls
          // reach App.
@@ -33978,7 +34211,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
              if voice_toggle(self, *key)
                  && (!self.transcript_view.owns_interaction_key(*key)
                      || self.transcript_view.is_select_mode()))
-@@ -1112,6 +1145,7 @@ impl App {
+@@ -1112,6 +1146,7 @@ impl App {
 
          match &event {
              TuiEvent::FocusLost => {
@@ -33986,7 +34219,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
                  self.chat_widget
                      .set_sparkle_terminal_focus(/*focused*/ false);
                  let now = Instant::now();
-@@ -1124,6 +1158,7 @@ impl App {
+@@ -1124,6 +1159,7 @@ impl App {
                  }
              }
              TuiEvent::FocusGained => {
@@ -33994,7 +34227,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
                  self.recap.note_focus_gained();
              }
              _ => {}
-@@ -1145,6 +1180,10 @@ impl App {
+@@ -1145,6 +1181,10 @@ impl App {
                      // [tui-textarea]: https://github.com/rhysd/tui-textarea/blob/4d18622eeac13b309e0ff6a55a46ac6706da68cf/src/textarea.rs#L782-L783
                      // [iTerm2]: https://github.com/gnachman/iTerm2/blob/5d0c0d9f68523cbd0494dad5422998964a2ecd8d/sources/iTermPasteHelper.m#L206-L216
                      let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
@@ -34005,7 +34238,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
                      if self.backtrack.primed && !pasted.is_empty() {
                          if self.backtrack.overlay_preview_active {
                              self.cancel_transcript_browsing(tui);
-@@ -1235,6 +1274,10 @@ impl App {
+@@ -1235,6 +1275,10 @@ impl App {
          }
          // Both transcript owners must consume completions before automatic work advances.
          if idle_draw {
@@ -34016,7 +34249,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
              tui.clipboard.advance(tui.frame_requester());
          }
          Ok(AppRunControl::Continue)
-@@ -1250,7 +1293,109 @@ impl App {
+@@ -1250,7 +1294,109 @@ impl App {
          Ok(())
      }
 
@@ -34126,7 +34359,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1269,33 +1414,56 @@ impl App {
+@@ -1269,33 +1415,56 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -34190,7 +34423,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
              Ok(rendered_area)
          })
      }
-@@ -1305,6 +1473,7 @@ impl App {
+@@ -1305,6 +1474,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -34198,8 +34431,23 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..5480a6b7ef83880a483f10595e6a2582
          let chat_widget = self.chat_widget.as_renderable();
          render(chat_widget.desired_height(width), &chat_widget)
      }
+diff --git a/codex-rs/tui/src/app/agents_overview.rs b/codex-rs/tui/src/app/agents_overview.rs
+index 3cb5a425a9eea2391fccc852a9aee840c712af5e..acbaefefb8ff9506d908a2b2a5490b638cb4aaa8 100644
+--- a/codex-rs/tui/src/app/agents_overview.rs
++++ b/codex-rs/tui/src/app/agents_overview.rs
+@@ -1117,6 +1117,10 @@ impl App {
+                 .or_else(|| self.model_catalog.models.first())
+                 .map(|model| model.model.clone());
+         }
++        if let Err(error) = self.apply_new_thread_route(&mut config) {
++            self.add_agents_overview_error(format!("{error:#}"));
++            return None;
++        }
+         Some((config, remote_cwd))
+     }
+
 diff --git a/codex-rs/tui/src/app/agents_overview_new.rs b/codex-rs/tui/src/app/agents_overview_new.rs
-index d8ddafc880fd514dfeaaf5d6f0ef196f56525e53..1f54c93098effb060d3501898bae3b2705fd1dff 100644
+index d8ddafc880fd514dfeaaf5d6f0ef196f56525e53..c7ba53fa94b8c0645879057dd9d7d2b17e095ee3 100644
 --- a/codex-rs/tui/src/app/agents_overview_new.rs
 +++ b/codex-rs/tui/src/app/agents_overview_new.rs
 @@ -21,6 +21,9 @@ impl Drop for PendingWorktree {
@@ -34212,7 +34460,33 @@ index d8ddafc880fd514dfeaaf5d6f0ef196f56525e53..1f54c93098effb060d3501898bae3b27
              if let Err(error) = result {
                  tracing::error!(path = %checkout.root.display(), %error, "Could not remove unclaimed worktree");
              }
-@@ -308,9 +311,12 @@ impl App {
+@@ -156,13 +159,18 @@ impl App {
+         let result = StartupDraftPump::run_with_optional_draft(
+             startup_draft.as_deref_mut(),
+             tui,
+-            Box::pin(app_server.start_thread_with_session_start_source(
+-                &local_settings,
+-                &config,
+-                /*session_start_source*/ None,
+-                remote_cwd.as_deref(),
+-                selected_profile.as_ref(),
+-            )),
++            Box::pin(
++                app_server.start_thread_with_session_start_source(
++                    &local_settings,
++                    &config,
++                    /*session_start_source*/ None,
++                    remote_cwd.as_deref(),
++                    selected_profile.as_ref(),
++                    self.new_thread_route
++                        .as_ref()
++                        .map(|_| config.model_provider_id.as_str()),
++                ),
++            ),
+         )
+         .await;
+         let started = match result {
+@@ -308,9 +316,12 @@ impl App {
                              base: Some(base),
                          })
                      })
@@ -35141,6 +35415,248 @@ index 240700e2e9824903aef5152121001126970ee8cf..24d9e1aef8db9811bcd68539c018702d
              Ok(()) => {
                  let effort_label = effort
                      .as_ref()
+diff --git a/codex-rs/tui/src/app/new_session.rs b/codex-rs/tui/src/app/new_session.rs
+index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1df6fa6822f65caddee081d6b9681d23931d4085 100644
+--- a/codex-rs/tui/src/app/new_session.rs
++++ b/codex-rs/tui/src/app/new_session.rs
+@@ -6,6 +6,140 @@ use super::*;
+ use codex_config::ConfigLayerSource;
+ use codex_protocol::config_types::ServiceTier;
+
++pub(super) struct NewThreadRoute {
++    caller: String,
++    source: String,
++    name: String,
++}
++
++impl NewThreadRoute {
++    fn read(&self) -> Result<serde_json::Value> {
++        color_eyre::eyre::ensure!(
++            super::mod_surface::caller_source(&self.caller).as_deref() == Some(&self.source),
++            "route_owner_changed: select a route again"
++        );
++        let paths = crate::omd::mod_paths()
++            .ok_or_else(|| color_eyre::eyre::eyre!("mod store is not configured"))?;
++        let store = paths
++            .store
++            .ok_or_else(|| color_eyre::eyre::eyre!("mod store is not configured"))?;
++        let host: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(store.join("host.json"))?)?;
++        let routes = host["routes"]
++            .as_array()
++            .ok_or_else(|| color_eyre::eyre::eyre!("routes_invalid"))?;
++        let selected = routes
++            .iter()
++            .find(|route| {
++                route["name"] == self.name
++                    && route["roles"]
++                        .as_array()
++                        .is_some_and(|roles| roles.iter().any(|role| role == "lead"))
++                    && route["mods"].as_array().is_none_or(|mods| {
++                        mods.is_empty() || mods.iter().any(|id| id == &self.caller)
++                    })
++            })
++            .cloned()
++            .ok_or_else(|| color_eyre::eyre::eyre!("route_not_configured: {}", self.name))?;
++        color_eyre::eyre::ensure!(
++            routes
++                .iter()
++                .filter(|route| {
++                    route["model"] == selected["model"]
++                        && route["provider"] == selected["provider"]
++                        && route["roles"]
++                            .as_array()
++                            .is_some_and(|roles| roles.iter().any(|role| role == "lead"))
++                })
++                .count()
++                == 1,
++            "route_ambiguous_for_new_thread: {}",
++            self.name
++        );
++        Ok(selected)
++    }
++}
++
++#[cfg(test)]
++mod route_tests {
++    use super::*;
++    use serde_json::json;
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn new_thread_route_changes_defaults_without_mutating_existing_threads() -> Result<()> {
++        let root = tempfile::tempdir()?;
++        let store = root.path().canonicalize()?;
++        std::fs::write(
++            store.join("mod-status.json"),
++            serde_json::to_vec(&json!({"mods": [{"id": "route_fixture", "sha256": "source"}]}))?,
++        )?;
++        let _environment = crate::omd::tests::omd_environment(&store);
++        let mut app = super::super::test_support::make_test_app().await;
++        let active_model = app.config.model.clone();
++        let active_provider = app.config.model_provider_id.clone();
++        app.config
++            .model_providers
++            .insert("next-provider".into(), app.config.model_provider.clone());
++        let route = json!({"name": "next", "model": "other-model", "provider": "next-provider",
++            "reasoning_effort": "high", "roles": ["lead"], "mods": ["route_fixture"]});
++        std::fs::write(
++            store.join("host.json"),
++            serde_json::to_vec(&json!({"routes": [route]}))?,
++        )?;
++        let arguments = json!({"route": "next", "scope": "new_threads"});
++        let result = app
++            .select_new_thread_route(
++                "route_fixture",
++                &arguments,
++                codex_omd::app_routes::InvocationContext::User,
++            )
++            .map_err(color_eyre::eyre::Report::msg)?;
++        assert_eq!(result["effective_at"], "new_thread");
++        assert!(
++            app.select_new_thread_route(
++                "route_fixture",
++                &arguments,
++                codex_omd::app_routes::InvocationContext::Event
++            )
++            .is_err()
++        );
++        let mut next = app.config.clone();
++        app.apply_new_thread_route(&mut next)?;
++        assert_eq!(next.model.as_deref(), Some("other-model"));
++        assert_eq!(next.model_provider_id, "next-provider");
++        assert_eq!(next.web_search_mode.value(), codex_protocol::config_types::WebSearchMode::Disabled);
++        assert_eq!(
++            next.model_reasoning_effort,
++            Some(codex_protocol::openai_models::ReasoningEffort::High)
++        );
++        assert_eq!(app.config.model, active_model);
++        assert_eq!(app.config.model_provider_id, active_provider);
++        assert_eq!(next.permissions, app.config.permissions);
++        std::fs::write(
++            store.join("host.json"),
++            serde_json::to_vec(
++                &json!({"routes": [route, {"name": "ambiguous", "model": "other-model", "provider": "next-provider", "roles": ["lead"]}]}),
++            )?,
++        )?;
++        assert!(
++            app.apply_new_thread_route(&mut next)
++                .unwrap_err()
++                .to_string()
++                .contains("route_ambiguous")
++        );
++        std::fs::write(store.join("host.json"), br#"{"routes": []}"#)?;
++        assert!(
++            app.apply_new_thread_route(&mut next)
++                .unwrap_err()
++                .to_string()
++                .contains("route_not_configured")
++        );
++        assert_eq!(app.config.model, active_model);
++        Ok(())
++    }
++}
++
+ pub(crate) fn has_launch_setting(
+     config: &Config,
+     cli_kv_overrides: &[(String, TomlValue)],
+@@ -60,6 +194,88 @@ pub(super) fn overlay_new_session_defaults(
+ }
+
+ impl App {
++    pub(super) fn select_new_thread_route(
++        &mut self,
++        caller: &str,
++        arguments: &serde_json::Value,
++        context: codex_omd::app_routes::InvocationContext,
++    ) -> std::result::Result<serde_json::Value, String> {
++        use serde_json::json;
++        if context != codex_omd::app_routes::InvocationContext::User {
++            return Err("host_operation_user_only: routes.select new_threads".into());
++        }
++        if arguments["scope"] != "new_threads"
++            || arguments.as_object().is_none_or(|args| args.len() != 2)
++        {
++            return Err("route_scope_invalid".into());
++        }
++        let selected = NewThreadRoute {
++            caller: caller.to_owned(),
++            source: super::mod_surface::caller_source(caller).ok_or("host_caller_inactive")?,
++            name: arguments["route"]
++                .as_str()
++                .ok_or("route_name_invalid")?
++                .to_owned(),
++        };
++        let route = selected.read().map_err(|error| error.to_string())?;
++        let mut config = self.config.clone();
++        Self::apply_route_defaults(&mut config, &route).map_err(|error| error.to_string())?;
++        let rates = &route["rates"];
++        let billing = if rates["included_subscription"] == true {
++            "included_subscription"
++        } else if rates["provider_billed"] == true {
++            "provider_billed"
++        } else {
++            "explicit_paid_api_grant"
++        };
++        self.new_thread_route = Some(selected);
++        Ok(
++            json!({"route": {"name": route["name"], "model": route["model"], "provider": route["provider"],
++            "reasoning": route["reasoning_effort"], "roles": route["roles"], "billing": billing,
++            "tools": route.get("tools").cloned().unwrap_or(json!([])), "available": true,
++            "credential": route.get("credential").cloned().unwrap_or(serde_json::Value::Null)}, "effective_at": "new_thread"}),
++        )
++    }
++
++    fn apply_route_defaults(config: &mut Config, route: &serde_json::Value) -> Result<()> {
++        let provider = route["provider"]
++            .as_str()
++            .ok_or_else(|| color_eyre::eyre::eyre!("route_provider_invalid"))?;
++        color_eyre::eyre::ensure!(
++            config
++                .config_layer_stack
++                .required_model_provider()
++                .is_none_or(|required| required == provider),
++            "model_provider_required_by_policy"
++        );
++        let definition = config
++            .model_providers
++            .get(provider)
++            .cloned()
++            .or_else(|| codex_model_provider_info::runtime_provider(provider))
++            .ok_or_else(|| color_eyre::eyre::eyre!("configured_provider_missing: {provider}"))?;
++        config.model = Some(
++            route["model"]
++                .as_str()
++                .ok_or_else(|| color_eyre::eyre::eyre!("route_model_invalid"))?
++                .to_owned(),
++        );
++        config.model_provider_id = provider.to_owned();
++        config.model_provider = definition;
++        if route["rates"]["provider_billed"] != true {
++            config.web_search_mode.set(codex_protocol::config_types::WebSearchMode::Disabled)?;
++        }
++        config.model_reasoning_effort = serde_json::from_value(route["reasoning_effort"].clone())?;
++        Ok(())
++    }
++
++    pub(super) fn apply_new_thread_route(&self, config: &mut Config) -> Result<()> {
++        if let Some(selected) = &self.new_thread_route {
++            Self::apply_route_defaults(config, &selected.read()?)?;
++        }
++        Ok(())
++    }
++
+     pub(super) async fn load_new_session_config(
+         &mut self,
+         app_server: &AppServerSession,
+@@ -106,6 +322,7 @@ impl App {
+                 &self.harness_overrides,
+             );
+         }
++        self.apply_new_thread_route(&mut config)?;
+         Ok((config, local_settings))
+     }
+ }
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
 index 312185ebdd04eae1a7d5b58e5e38bdf0f64e067d..80d87a452bd31b2fd0d6a6b4aa8e0eb7082b6dad 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
@@ -36062,7 +36578,7 @@ index 632ac8b4defedf7eb37217a195ca42fed4df7015..928adeb4f92800b883bf38ee83cde19a
          let mut cell_displays = VecDeque::new();
          let mut rendered_rows = 0usize;
 diff --git a/codex-rs/tui/src/app/session_lifecycle.rs b/codex-rs/tui/src/app/session_lifecycle.rs
-index c7dc18d544a064d4bc684b0a54e3e86be76731f6..4ff9efd0bda7aca5b3c6e6efb4a21be11d184271 100644
+index c7dc18d544a064d4bc684b0a54e3e86be76731f6..a4f73df8cbcc7dd45ee1fb9d70b5100679761eca 100644
 --- a/codex-rs/tui/src/app/session_lifecycle.rs
 +++ b/codex-rs/tui/src/app/session_lifecycle.rs
 @@ -529,6 +529,9 @@ impl App {
@@ -36117,6 +36633,16 @@ index c7dc18d544a064d4bc684b0a54e3e86be76731f6..4ff9efd0bda7aca5b3c6e6efb4a21be1
      pub(super) fn should_attach_live_thread_for_selection(&self, thread_id: ThreadId) -> bool {
          self.agent_navigation
              .get(&thread_id)
+@@ -1056,6 +1094,9 @@ impl App {
+                 session_start_source,
+                 /*remote_cwd_override*/ None,
+                 /*selected_profile*/ None,
++                self.new_thread_route
++                    .as_ref()
++                    .map(|_| config.model_provider_id.as_str()),
+             )
+             .await
+         {
 diff --git a/codex-rs/tui/src/app/side.rs b/codex-rs/tui/src/app/side.rs
 index 8ac0adfeab6708624d89b5dd55d5cdfa8703fc7c..f4ff79ba6b6073686dc08792dc086b5d75d11054 100644
 --- a/codex-rs/tui/src/app/side.rs
@@ -36192,18 +36718,19 @@ index 8aa1bca71b37199ea5aa9956871c68de2b0c1dc5..0891416752835569c704d229e810b9a7
 
 
 diff --git a/codex-rs/tui/src/app/startup.rs b/codex-rs/tui/src/app/startup.rs
-index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..1f65b6e731a56a844024d01ab7edb30a6c492750 100644
+index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..ea297c01e178e08fd4bfa773388e540284cae7c9 100644
 --- a/codex-rs/tui/src/app/startup.rs
 +++ b/codex-rs/tui/src/app/startup.rs
-@@ -1071,6 +1071,7 @@ See the Codex keymap documentation for supported actions and examples."
+@@ -1071,6 +1071,8 @@ See the Codex keymap documentation for supported actions and examples."
              pending_managed_worktree_created: None,
              pending_managed_worktree_transition: None,
              pending_managed_worktree_attach: None,
 +            mod_result_finished: None,
++            new_thread_route: None,
              startup_protected_input_boundary: true,
              startup_pending_protected_request: false,
              account_email_request_id: None,
-@@ -1249,7 +1250,7 @@ See the Codex keymap documentation for supported actions and examples."
+@@ -1249,7 +1251,7 @@ See the Codex keymap documentation for supported actions and examples."
          let mut pending_resize: Option<(ratatui::layout::Size, Instant)> = None;
          let mut reconnect = None;
          let mut waiting_for_initial_session_configured = wait_for_initial_session_configured;
@@ -36212,7 +36739,7 @@ index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..1f65b6e731a56a844024d01ab7edb30a
 
          #[cfg(not(debug_assertions))]
          let pre_loop_exit_reason = if let Some(latest_version) = upgrade_version {
-@@ -1685,6 +1686,7 @@ See the Codex keymap documentation for supported actions and examples."
+@@ -1685,6 +1687,7 @@ See the Codex keymap documentation for supported actions and examples."
          if let Err(err) = backends.shutdown().await {
              tracing::warn!(error = %err, "failed to shut down embedded app server");
          }
@@ -36221,7 +36748,7 @@ index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..1f65b6e731a56a844024d01ab7edb30a
          let clear_result = tui.terminal.clear();
          if let Some(task) = app.daemon_restart.take()
 diff --git a/codex-rs/tui/src/app/test_support.rs b/codex-rs/tui/src/app/test_support.rs
-index a0efb33101b4f3b5a31d15e10815cbf8064cb890..9da84f630f519bc499212994799af0db5c8cdd5e 100644
+index a0efb33101b4f3b5a31d15e10815cbf8064cb890..d461106e958c8f808c707150c0c8de387ecad1bd 100644
 --- a/codex-rs/tui/src/app/test_support.rs
 +++ b/codex-rs/tui/src/app/test_support.rs
 @@ -14,6 +14,7 @@ use codex_models_manager::test_support::get_model_offline_for_tests;
@@ -36232,16 +36759,17 @@ index a0efb33101b4f3b5a31d15e10815cbf8064cb890..9da84f630f519bc499212994799af0db
      let test_codex_home = chat_widget.test_codex_home.take();
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-@@ -118,6 +119,7 @@ pub(crate) async fn make_test_app() -> Box<App> {
+@@ -118,6 +119,8 @@ pub(crate) async fn make_test_app() -> Box<App> {
          pending_managed_worktree_created: None,
          pending_managed_worktree_transition: None,
          pending_managed_worktree_attach: None,
 +        mod_result_finished: None,
++        new_thread_route: None,
          startup_protected_input_boundary: false,
          startup_pending_protected_request: false,
          account_email_request_id: None,
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index a2d219157e81a9e140b07ad5d505a4bbc030b96e..6da546fb7823e53ec4dd9c4720ab84da0b8fef51 100644
+index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0f59c9dcc 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
 @@ -138,6 +138,7 @@ use codex_utils_absolute_path::test_support::PathExt;
@@ -36338,15 +36866,16 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..6da546fb7823e53ec4dd9c4720ab84da
      let test_codex_home = chat_widget.test_codex_home.take();
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-@@ -6505,6 +6542,7 @@ async fn make_test_app() -> Box<App> {
+@@ -6505,6 +6542,8 @@ async fn make_test_app() -> Box<App> {
          pending_managed_worktree_created: None,
          pending_managed_worktree_transition: None,
          pending_managed_worktree_attach: None,
 +        mod_result_finished: None,
++        new_thread_route: None,
          startup_protected_input_boundary: false,
          startup_pending_protected_request: false,
          account_email_request_id: None,
-@@ -6526,6 +6564,7 @@ pub(super) async fn make_test_app_with_channels() -> (
+@@ -6526,6 +6565,7 @@ pub(super) async fn make_test_app_with_channels() -> (
  ) {
      let (mut chat_widget, app_event_tx, rx, op_rx) =
          boxed_future!(make_chatwidget_manual_with_sender()).await;
@@ -36354,15 +36883,16 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..6da546fb7823e53ec4dd9c4720ab84da
      let test_codex_home = chat_widget.test_codex_home.take();
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-@@ -6631,6 +6670,7 @@ pub(super) async fn make_test_app_with_channels() -> (
+@@ -6631,6 +6671,8 @@ pub(super) async fn make_test_app_with_channels() -> (
              pending_managed_worktree_created: None,
              pending_managed_worktree_transition: None,
              pending_managed_worktree_attach: None,
 +            mod_result_finished: None,
++            new_thread_route: None,
              startup_protected_input_boundary: false,
              startup_pending_protected_request: false,
              account_email_request_id: None,
-@@ -8682,6 +8722,159 @@ async fn remembered_current_cwd_stays_at_launch_across_in_app_resumes() -> Resul
+@@ -8682,6 +8724,159 @@ async fn remembered_current_cwd_stays_at_launch_across_in_app_resumes() -> Resul
      Ok(())
  }
 
@@ -36522,7 +37052,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..6da546fb7823e53ec4dd9c4720ab84da
  #[tokio::test]
  async fn prompt_edit_reverts_earlier_and_first_visible_prompts_in_place() -> Result<()> {
      // Allocate the whole scenario before Tokio polls it on the test thread.
-@@ -9909,6 +10102,41 @@ async fn changing_cyber_model_reasoning_preserves_selected_permissions() {
+@@ -9909,6 +10104,41 @@ async fn changing_cyber_model_reasoning_preserves_selected_permissions() {
      .await;
  }
 
@@ -36604,7 +37134,7 @@ index 587a63f7d69f997fb7ce2adb40a31f7afd624d73..fc7ecf3a11b27c17def1cd54a750b897
          .await;
          if matches!(selection, SessionSelection::StartFresh) {
 diff --git a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
-index 9123904c5117dbf0c7c653826bea32110deaf0c1..c798b535be23b66a90195aaf3b53569ad6faa094 100644
+index 9123904c5117dbf0c7c653826bea32110deaf0c1..1275f3db82accba7c19d3bfeaccc4c9a36496824 100644
 --- a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
 +++ b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
 @@ -119,11 +119,16 @@ async fn command_center_new_keeps_startup_draft_visible_through_handoff() -> Res
@@ -36629,6 +37159,14 @@ index 9123904c5117dbf0c7c653826bea32110deaf0c1..c798b535be23b66a90195aaf3b53569a
          tui.set_owned_screen(/*owned*/ false)?;
          server.shutdown().await?;
      }
+@@ -733,6 +738,7 @@ async fn command_center_new_preserves_only_selected_server_profiles() -> Result<
+             /*session_start_source*/ None,
+             /*remote_cwd_override*/ None,
+             Some(&selection),
++            None,
+         )
+         .await?;
+     app.enqueue_primary_thread_session(started.session, started.turns)
 diff --git a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs b/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
 index 8b612c8e916b3dd03005a01b1ced4fdd7c12db65..4794ffe49e38ee9645ce85c2656be611c69b4dd6 100644
 --- a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
@@ -37081,6 +37619,18 @@ index e8f36e183f4375a64c621c71518792ef00445a42..6c3afba799d27174e905754ed3499ab7
  async fn warning_notice_keeps_details_in_transcript_and_preserves_draft() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      let mut tui = crate::tui::test_support::make_test_tui()?;
+diff --git a/codex-rs/tui/src/app/working_directory.rs b/codex-rs/tui/src/app/working_directory.rs
+index b15fb9af8abe4fcc88bfb533ef228a732f083171..0b2bcaa2741304a8ce6c3f89771ea02664e97e5f 100644
+--- a/codex-rs/tui/src/app/working_directory.rs
++++ b/codex-rs/tui/src/app/working_directory.rs
+@@ -467,6 +467,7 @@ impl App {
+                     /*session_start_source*/ None,
+                     /*remote_cwd_override*/ None,
+                     selected_profile.as_ref(),
++                    None,
+                 )
+                 .await
+         };
 diff --git a/codex-rs/tui/src/app_backtrack.rs b/codex-rs/tui/src/app_backtrack.rs
 index 691136baafab616f69775ec6d2582a0c6a9e1f2a..705de2e2240b4a83c851b27aadd3fb0a0ccc9ee6 100644
 --- a/codex-rs/tui/src/app_backtrack.rs
@@ -37208,10 +37758,48 @@ index 2adc3036ae932a2cf873062c13b2775da3c8333a..b04d74f46e0416d7d638f518b0287b42
      /// Same-host task results for the active unified mention query.
      TaskSearchResult {
 diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
-index 683e7328e2a1992ad5605f0350d606c624e9dc55..da20d2a0903673e006b3f0dc9750981d5dc0b51a 100644
+index 683e7328e2a1992ad5605f0350d606c624e9dc55..a37cd77f9a0e9b8b7c770ca25c5e194917156ea2 100644
 --- a/codex-rs/tui/src/app_server_session.rs
 +++ b/codex-rs/tui/src/app_server_session.rs
-@@ -2031,6 +2031,8 @@ pub(crate) fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
+@@ -935,6 +935,7 @@ impl AppServerSession {
+             /*session_start_source*/ None,
+             /*remote_cwd_override*/ None,
+             /*selected_profile*/ None,
++            None,
+         )
+         .await
+     }
+@@ -946,6 +947,7 @@ impl AppServerSession {
+         session_start_source: Option<ThreadStartSource>,
+         remote_cwd_override: Option<&std::path::Path>,
+         selected_profile: Option<&PermissionProfileSelection>,
++        selected_provider: Option<&str>,
+     ) -> Result<AppServerStartedThread> {
+         if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Server
+             && selected_profile.is_some()
+@@ -963,12 +965,18 @@ impl AppServerSession {
+             session_start_source,
+         );
+         if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
+-            params.model_provider = self
+-                .model_provider_override
+-                .clone()
++            params.model_provider = selected_provider
++                .map(str::to_owned)
++                .or_else(|| self.model_provider_override.clone())
+                 .or(params.model_provider);
+             params.daybreak_enabled =
+                 (config.daybreak_enabled && !config.ephemeral).then_some(true);
++            if selected_provider.is_some() {
++                params.config.get_or_insert_with(HashMap::new).insert(
++                    "web_search".into(),
++                    serde_json::to_value(config.web_search_mode.value())?,
++                );
++            }
+         }
+         if let Some(selected_profile) = selected_profile {
+             params.runtime_workspace_roots = None;
+@@ -2031,6 +2039,8 @@ pub(crate) fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
          // `model/list` already returns models filtered for the active client/auth context.
          supported_in_api: true,
          input_modalities: model.input_modalities,
@@ -37220,7 +37808,7 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..da20d2a0903673e006b3f0dc9750981d
      }
  }
 
-@@ -3008,6 +3010,7 @@ mod tests {
+@@ -3008,6 +3018,7 @@ mod tests {
              spend_control_reached: None,
              plan_type: None,
              rate_limit_reached_type: None,
@@ -37228,7 +37816,7 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..da20d2a0903673e006b3f0dc9750981d
          }
      }
 
-@@ -3027,6 +3030,8 @@ mod tests {
+@@ -3027,6 +3038,8 @@ mod tests {
              display_name: "Current model".to_string(),
              description: "A test model".to_string(),
              model_specialty: None,
@@ -37288,6 +37876,49 @@ index 956bb96372ba14d684e60ba31ad84e51eb406fc8..a29594c2867c3e43b8f9ca3822910221
      config: &Config,
      local_settings: &crate::local_settings::LocalSettings,
      width: u16,
+diff --git a/codex-rs/tui/src/app_server_session/prompt_history_tests.rs b/codex-rs/tui/src/app_server_session/prompt_history_tests.rs
+index 6743f85a16c0822415019aaad481623c13081d63..5a0484cd585beaf6213b8c39a4f5c1f908fda789 100644
+--- a/codex-rs/tui/src/app_server_session/prompt_history_tests.rs
++++ b/codex-rs/tui/src/app_server_session/prompt_history_tests.rs
+@@ -60,6 +60,7 @@ async fn lifecycle_metadata_uses_local_prompt_history() -> Result<()> {
+                 /*session_start_source*/ None,
+                 /*remote_cwd_override*/ None,
+                 /*selected_profile*/ None,
++                None,
+             )
+             .await?;
+         assert_eq!(started.session.message_history, expected);
+diff --git a/codex-rs/tui/src/app_server_session/provider_selection_tests.rs b/codex-rs/tui/src/app_server_session/provider_selection_tests.rs
+index 5cd0235f83efefbeb7f5ac82c76b2cbccfe102e8..41aa381e243f9009d1b73cde12123384f9753bdf 100644
+--- a/codex-rs/tui/src/app_server_session/provider_selection_tests.rs
++++ b/codex-rs/tui/src/app_server_session/provider_selection_tests.rs
+@@ -82,6 +82,26 @@ requires_openai_auth = false
+             (expected, expected)
+         );
+     }
++    server.model_provider_override = Some("server-provider".into());
++    let selected = server
++        .start_thread_with_session_start_source(
++            &local_settings,
++            &client_config,
++            None,
++            None,
++            None,
++            Some("client-provider"),
++        )
++        .await?;
++    assert_eq!(selected.session.model_provider_id, "client-provider");
++    assert_eq!(
++        server
++            .start_thread(&client_config)
++            .await?
++            .session
++            .model_provider_id,
++        "server-provider"
++    );
+     server.model_provider_override = None;
+     let path = home.path().join("config.toml");
+     let updated = std::fs::read_to_string(&path)?.replacen(
 diff --git a/codex-rs/tui/src/bottom_pane/approval_overlay.rs b/codex-rs/tui/src/bottom_pane/approval_overlay.rs
 index 0fee868894641774ad7af3a69c68220e3e100d3c..7379ed74265a673e040ff2a179bdb6c136ba816a 100644
 --- a/codex-rs/tui/src/bottom_pane/approval_overlay.rs
@@ -75400,10 +76031,10 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..89804dbb724f408e3fc745639ebd4f7f1a11980e
+index 0000000000000000000000000000000000000000..36e226fe10692f4488f0ada3965ea6732afa3fc5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,862 @@
+@@ -0,0 +1,864 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -75934,7 +76565,9 @@ index 0000000000000000000000000000000000000000..89804dbb724f408e3fc745639ebd4f7f
 +        "events.schedule" => delivery::schedule(core, lead, caller, request.arguments),
 +        "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
 +        "turns.activity" => activity::read(core, lead, request.arguments).await,
-+        "routes.select" => select_route(lead, caller.id, request.arguments),
++        "routes.select" if request.arguments["scope"] != "new_threads" => {
++            select_route(lead, caller.id, request.arguments)
++        }
 +        "models.context_window" => {
 +            let arguments = request.arguments;
 +            blocking(Box::new(move || {
@@ -103026,10 +103659,10 @@ index 0000000000000000000000000000000000000000..333060130f2fd47f9b6dd447e77affa8
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..720b9b8f3a6c7adbae974aea9c0f57c2fcd00d44
+index 0000000000000000000000000000000000000000..9825ebea9087d204b3e8874fe3dbd37ffb6d8f20
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1631 @@
+@@ -0,0 +1,1633 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -103103,6 +103736,7 @@ index 0000000000000000000000000000000000000000..720b9b8f3a6c7adbae974aea9c0f57c2
 +    "packages.apply",
 +    "routes.add",
 +    "routes.write",
++    "routes.select",
 +    "contract.select",
 +    "terminal.open",
 +    "terminal.prompt",
@@ -103402,6 +104036,7 @@ index 0000000000000000000000000000000000000000..720b9b8f3a6c7adbae974aea9c0f57c2
 +pub fn needs_terminal(operation: &str, arguments: &Value) -> bool {
 +    USER_ONLY_OPERATIONS.contains(&operation)
 +        || operation == "prompts.consent"
++        || (operation == "routes.select" && arguments["scope"] == "new_threads")
 +        || (operation == "terminal.pty" && arguments["action"] == "start")
 +}
 +
@@ -112901,10 +113536,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..39225c730d2fe980058d7c5e224772f877e8b787
+index 0000000000000000000000000000000000000000..5c074d99a727595c70b580b19b9f57c8d4c8212b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7004 @@
+@@ -0,0 +1,7005 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -113276,6 +113911,7 @@ index 0000000000000000000000000000000000000000..39225c730d2fe980058d7c5e224772f8
 +    "terminal_editor_v1",
 +    "pty_programs_v1",
 +    "route_reload_v1",
++    "route_new_threads_v1",
 +    "route_write_v1",
 +    "model_context_window_v1",
 +    "power_hold_v1",
@@ -123780,7 +124416,7 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..687129a79f11d8c804ee18bc58c06685f79685bd
+index 0000000000000000000000000000000000000000..b31e91e89f784d9c2a876ccadce177b16fc5b996
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,227 @@
@@ -123870,7 +124506,7 @@ index 0000000000000000000000000000000000000000..687129a79f11d8c804ee18bc58c06685
 +    "credentials.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/65"}}},
 +    "credentials.request": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"anyOf":[{"const":"chatgpt"},{"const":"api_key"}]},"label":{"type":"string"},"provider":{"type":"string"}},"required":["action","kind","label"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"provider"},"label":{"type":"string"},"provider":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"secret"},"label":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"anyOf":[{"const":"remove"},{"const":"refresh"}]},"profile":{"type":"string"}},"required":["action","profile"]}]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"completed"},{"const":"declined"}]},"profile":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/65"}]}},"required":["status","profile"]}},
 +    "models.context_window": {"arguments":{"type":"object","properties":{"model":{"type":"string"},"tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["model"]},"result":{"type":"object","properties":{"model":{"type":"string"},"tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"max":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["model","tokens","max"]}},
-+    "routes.select": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"scope":{"anyOf":[{"const":"thread"},{"const":"next_request"}]}},"required":["route","scope"]},"result":{"type":"object","properties":{"route":{"$ref":"#/$defs/33"},"effective_at":{"const":"next_request"}},"required":["route","effective_at"]}},
++    "routes.select": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"scope":{"anyOf":[{"const":"thread"},{"const":"next_request"},{"const":"new_threads"}]}},"required":["route","scope"]},"result":{"type":"object","properties":{"route":{"$ref":"#/$defs/33"},"effective_at":{"anyOf":[{"const":"next_request"},{"const":"new_thread"}]}},"required":["route","effective_at"]}},
 +    "turns.activity": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"thread_id":{"type":"string"},"turn_id":{"type":"string"},"last":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"turns":{"type":"array","items":{"type":"object","properties":{"turn_id":{"type":"string"},"started_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"ended_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"const":"error"},{"const":"unknown"},{"const":"completed"},{"const":"interrupted"},{"const":"running"},{"const":"aborted"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/52"},"unrecorded_end":{"type":"boolean"},"tool_calls":{"type":"array","items":{"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"started_at":{"type":"string"},"finished_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"type":"null"},{"type":"string"}]},"output_replaced":{"type":"object","properties":{"mod":{"type":"string"},"original_sha256":{"type":"string"},"replacement_sha256":{"type":"string"}},"required":["mod","original_sha256","replacement_sha256"]}},"required":["call_id","tool","started_at","finished_at","outcome"]}},"processes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"anyOf":[{"const":"exec"},{"const":"managed"}]},"command":{"type":"string"},"running":{"anyOf":[{"type":"null"},{"const":false},{"const":true}]},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["id","kind","command","running","exit_code"]}},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"before":{"anyOf":[{"type":"null"},{"type":"string"}]},"after":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"external"},{"const":"exec"},{"const":"tool"},{"const":"transaction"},{"const":"rescan"}]}},"required":["path","before","after","source"]}},"truncated":{"type":"boolean"}},"required":["turn_id","started_at","ended_at","outcome","reason","error","unrecorded_end","tool_calls","processes","files","truncated"]}},"recording":{"type":"boolean"}},"required":["turns","recording"]}},
 +    "turns.abort": {"arguments":{"type":"object","properties":{"turn_id":{"type":"string"}},"required":["turn_id"]},"result":{"type":"object","properties":{"accepted":{"type":"boolean"}},"required":["accepted"]}},
 +    "terminal.selection": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"text":{"anyOf":[{"type":"null"},{"type":"string"}]},"truncated":{"type":"boolean"}},"required":["text","truncated"]}},
@@ -159268,10 +159904,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f33c200f93d4a551696eb753b6ec00cdd36d036e
+index 0000000000000000000000000000000000000000..f8fd7e2f9aa23fcc1d0d552549108a66f57a7d8f
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2627 @@
+@@ -0,0 +1,2628 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -159497,7 +160133,7 @@ index 0000000000000000000000000000000000000000..f33c200f93d4a551696eb753b6ec00cd
 +    }
 +}
 +
-+fn caller_source(caller: &str) -> Option<String> {
++pub(super) fn caller_source(caller: &str) -> Option<String> {
 +    crate::omd::mod_status()?["mods"]
 +        .as_array()?
 +        .iter()
@@ -161100,6 +161736,7 @@ index 0000000000000000000000000000000000000000..f33c200f93d4a551696eb753b6ec00cd
 +                }
 +                _ => Err("routes_write_confirmation_missing".into()),
 +            },
++            "routes.select" => self.select_new_thread_route(&call.caller, &call.arguments, call.context),
 +            "composer.read" => {
 +                let mut draft = self.chat_widget.mod_composer_read();
 +                draft_resources(&call.caller, call.thread.as_deref(), &mut draft).map(|()| draft)
@@ -161899,6 +162536,19 @@ index 0000000000000000000000000000000000000000..f33c200f93d4a551696eb753b6ec00cd
 +        assert!(!approval.stored());
 +    }
 +}
+diff --git a/codex-rs/tui/src/app/tests/.new_session_tests.rs.pending-snap b/codex-rs/tui/src/app/tests/.new_session_tests.rs.pending-snap
+new file mode 100644
+index 0000000000000000000000000000000000000000..7752a68ae7d129d3ffaeed1d96146076ec6b78d9
+--- /dev/null
++++ b/codex-rs/tui/src/app/tests/.new_session_tests.rs.pending-snap
+@@ -0,0 +1,7 @@
++{"run_id":"1793695362-107928000","line":373,"new":{"module_name":"codex_tui__app__tests__session_lifecycle_requests__new_session_tests","snapshot_name":"replacement_uses_server_defaults_and_preserves_explicit_launch_settings","metadata":{"source":"tui/src/app/tests/new_session_tests.rs","assertion_line":373,"expression":"rendered"},"snapshot":"› Ask Oh My Diff to do anything\n\n  Oh My Diff · mods inactive · see /omd · server-model high · <PROJECT>"},"old":{"module_name":"codex_tui__app__tests__session_lifecycle_requests__new_session_tests","metadata":{},"snapshot":"› Ask Codex to do anything\n\n  server-model high · <PROJECT>"}}
++{"run_id":"1793695586-184600000","line":456,"new":null,"old":null}
++{"run_id":"1793695586-184600000","line":454,"new":null,"old":null}
++{"run_id":"1793695586-184600000","line":373,"new":null,"old":null}
++{"run_id":"1793697461-804586000","line":456,"new":null,"old":null}
++{"run_id":"1793697461-804586000","line":454,"new":null,"old":null}
++{"run_id":"1793697461-804586000","line":373,"new":null,"old":null}
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..27fe722f2d143943373c6d26098a6ecc76482b74

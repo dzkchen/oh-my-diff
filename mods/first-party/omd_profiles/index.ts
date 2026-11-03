@@ -5,7 +5,7 @@ type Window = { minutes: number | null; used: number; resets: number | null };
 type Quota = { windows: Window[]; at: number };
 type Account = { name: string; provider: string; model: string; effort: string; billing: string; available: boolean; profile: Profile | null };
 type Listed = { model: string; displayName: string; hidden?: boolean; modelProvider?: string | null };
-type Saved = { accounts: Account[]; mod?: string; watch?: { provider: string; known: string[]; polls: number } | null; current: string | null; notice: string | null; pending: string | null; ours: boolean; seen: { profile: string; windows: string } | null; quota: Record<string, Quota> };
+type Saved = { accounts: Account[]; mod?: string; provider?: string; watch?: { provider: string; known: string[]; polls: number } | null; current: string | null; notice: string | null; pending: string | null; pending_process?: string; ours: boolean; seen: { profile: string; windows: string } | null; quota: Record<string, Quota> };
 
 const USAGE = 'usage: /profile [list | next | use NAME | add [chatgpt|claude|cursor|api_key|anthropic|ollama NAME] | add provider NAME HTTPS_URL | add ollama NAME [URL] | window [PROFILE|MODEL] | remove NAME | refresh NAME]';
 const KINDS = [['chatgpt', 'ChatGPT account'], ['claude', 'Claude account'], ['cursor', 'Cursor account'], ['api_key', 'OpenAI API key'],
@@ -16,9 +16,9 @@ const SIZES = [128_000, 200_000, 272_000, 400_000, 1_000_000];
 const LOCAL_SIZES = [4096, 8192, 32_768, 131_072];
 const NODE_MISSING = 'Node.js was not found on PATH. Install it (brew install node, or from nodejs.org), restart OMD, then try again.';
 const PANEL = { command: 'omd_profiles:profile', args: 'panel' };
-const PROVIDERS: Record<string, { label: string; family: string; command: string; prefix: string }> = {
-  omd_claude_cli: { label: 'Claude', family: 'claude', command: '/claude remove', prefix: 'claude' },
-  omd_cursor: { label: 'Cursor', family: 'cursor', command: '/cursor remove', prefix: 'cursor' },
+const PROVIDERS: Record<string, { label: string; family: string; prefix: string }> = {
+  omd_claude_cli: { label: 'Claude', family: 'claude', prefix: 'claude' },
+  omd_cursor: { label: 'Cursor', family: 'cursor', prefix: 'cursor' },
 };
 
 export default function activate(api: ModAPI) {
@@ -46,11 +46,11 @@ export default function activate(api: ModAPI) {
   const remember = (change: (quota: Record<string, Quota>) => void) => update<Record<string, Quota>>('quota', quota => { const next = quota ?? {}; change(next); return next; });
   const refresh = () => {
     const routes = api.host.tryCall('routes.list', null);
-    if (!routes.ok) return;
+    if (!routes.ok || !Array.isArray(routes.value)) return;
     const accounts = routes.value.filter(route => route.roles.includes('lead') && (route.provider !== PROVIDER || route.data))
       .map(route => ({ name: route.name, provider: route.provider, model: route.model, effort: route.reasoning, billing: route.billing, available: route.available,
         profile: route.provider === PROVIDER ? profilesOf([route])[0] : null }));
-    const { provider, model } = api.session();
+    const { provider, model, process_id } = api.session();
     const { current } = saved();
     const prefix = PROVIDERS[provider]?.prefix;
     const named = prefix && model?.includes('.') ? `${prefix}-${model.slice(model.lastIndexOf('.') + 1)}` : null;
@@ -59,7 +59,9 @@ export default function activate(api: ModAPI) {
       ?? mine.find(account => prefix && account.name === prefix) ?? mine.find(account => account.name === current);
     const listed = saved().mod ? null : api.host.tryCall('packages.list', { fields: ['id', 'path'] });
     const mod = listed?.ok ? listed.value.packages.find(item => item.id === PROVIDER)?.path : undefined;
-    store({ accounts, quota: quotas().quota, ours: accounts.some(account => account.provider === provider), current: on?.name ?? null, ...mod ? { mod } : {} });
+    const selections = shared('selection').value as Record<string, string> | null;
+    const pending = selections?.[process_id] ?? (saved().pending_process === process_id ? saved().pending : null);
+    store({ accounts, provider, quota: quotas().quota, pending, pending_process: process_id, ours: accounts.some(account => account.provider === provider), current: on?.name ?? null, ...mod ? { mod } : {} });
   };
   const ensure = () => {
     const status = api.host.tryCall('sidecars.status', { id: PROVIDER });
@@ -98,13 +100,18 @@ export default function activate(api: ModAPI) {
     if (route) api.state.set({ ...saved(), current: route.name, ours: true } as unknown as Json);
     return route ? { route: route.name } : null;
   });
-  api.on('start', refresh);
-  api.on('resume', refresh);
+  const load = () => {
+    refresh();
+    if (owned(saved().accounts).length) api.host.tryCall('events.schedule', { key: 'provider', delay_ms: 1_000 });
+  };
+  api.on('start', load);
+  api.on('resume', load);
   const watching = () => {
     const watch = saved().watch;
     if (!watch) return;
     const found = saved().accounts.some(account => account.provider === watch.provider && !watch.known.includes(account.name));
-    if (found || watch.polls >= 60) return store({ watch: null });
+    if (found) return store({ watch: null });
+    if (watch.polls >= 360) return store({ watch: null, notice: 'Sign-in did not publish an account. Open /claude or /cursor for its status, then retry /profile add.' });
     store({ watch: { ...watch, polls: watch.polls + 1 } });
     api.host.tryCall('events.schedule', { key: 'accounts', delay_ms: 5_000 });
   };
@@ -113,26 +120,20 @@ export default function activate(api: ModAPI) {
     refresh();
     const provider = (data as { watch?: string } | null)?.watch;
     if (!provider) return ensure();
-    store({ watch: { provider, known: saved().accounts.filter(account => account.provider === provider).map(account => account.name), polls: 0 } });
+    const known = (data as { known?: string[] } | null)?.known ?? saved().accounts.filter(account => account.provider === provider).map(account => account.name);
+    store({ watch: { provider, known, polls: 0 } });
     watching();
   });
   api.on('timer', ({ key }) => {
+    if (key === 'provider') return ensure();
     if (key !== 'accounts') return;
     refresh();
     watching();
   });
-  // State is per thread: a requested switch applies to the thread it was asked in, at its next turn.
   api.on('turn_start', () => {
     refresh();
-    const { pending, accounts } = saved();
-    const target = accounts.find(account => account.name === pending);
     const provider = api.session().provider;
     if (provider === PROVIDER) ensure();
-    if (!pending) return;
-    if (target?.provider !== provider) return store({ pending: null, notice: null });
-    if (provider !== PROVIDER) return store({ current: pending, pending: null, notice: null });
-    const selected = api.host.tryCall('routes.select', { route: pending, scope: 'thread' });
-    store(selected.ok ? { current: pending, pending: null, notice: null } : { pending: null, notice: `${pending}: ${selected.error}` });
   });
   api.on('app_notification', ({ method, params }) => {
     const { accounts, current, seen: last } = saved();
@@ -149,25 +150,22 @@ export default function activate(api: ModAPI) {
     const quota = remember(all => { all[account.name] = { windows: seen, at: Date.now() }; });
     api.state.set({ ...saved(), seen: { profile: account.name, windows: key }, ...quota ? { quota } : {} } as unknown as Json);
   });
-  api.intercept('model_request', { match: { scope: { kind: 'main' } } }, (event, next) => {
-    const { notice } = saved();
-    return notice && !event.scope.agent_id ? { deny: notice } : next(event);
-  });
   api.on('terminal', () => {
     const { accounts, current, notice, pending, ours, quota } = saved();
-    if (!ours) return null;
+    if (!ours && !pending) return null;
     const now = Date.now();
-    const active = accounts.find(account => account.name === (pending ?? current));
-    const spans: TerminalSpan[] = [{ text: `● ${fit(pending ?? current ?? '?', 24)}`, tone: 'accent', bold: true }];
+    const active = accounts.find(account => account.name === current);
+    const provider = saved().provider ?? 'Codex';
+    const spans: TerminalSpan[] = [{ text: `● ${fit(current ?? (provider === 'openai' ? 'Codex' : provider), 24)}`, tone: 'accent', bold: true }];
     const part = (text: string, tone: TerminalSpan['tone'] = 'muted') => spans.push({ text: ' · ', tone: 'muted' }, { text, tone });
-    if (notice) part(`switch failed: ${fit(notice, 60)}`, 'failure');
-    else if (pending) part('switches at the next turn');
-    else if (!active) part('unknown account');
+    if (notice) part(fit(notice, 60), 'failure');
+    else if (!active) part(ours ? 'unknown account' : 'current thread');
     else if (!quota[active.name]) part(billed(active));
     else {
       for (const slot of windows(quota[active.name], now)) part(slot.used === null ? `${slot.name} reset` : `${slot.name} ${bar(slot.used)} ${slot.used}%`, slot.used !== null && slot.used >= 90 ? 'attention' : 'normal');
       part(ago(now - quota[active.name].at));
     }
+    if (pending) part(`/new → ${fit(pending, 24)}`);
     if (accounts.length > 1) part('Alt+s next · /profile');
     return { sites: { above_composer: { mode: 'wrap', components: [{ type: 'slot' }, { type: 'line', id: 'omd_profiles_meter', label: 'Profile', spans }] } },
       keybindings: { 'Alt+s': { command: 'omd_profiles:profile', args: 'next' } } };
@@ -177,18 +175,17 @@ export default function activate(api: ModAPI) {
     if (!account) return `Unknown profile ${label || '(none)'}. ${USAGE}`;
     if (!account.available) return `Profile ${account.name} is unavailable.`;
     if (account.billing !== 'included_subscription') {
-      const message = account.billing === 'provider_billed' ? `${account.name} (${account.model}) is billed by your ${kind(account)} account beyond its included usage. Switch at the next request?`
-        : `${account.name} (${account.model}) bills its API account per request. Switch at the next request?`;
+      const message = account.billing === 'provider_billed' ? `${account.name} is billed by your ${kind(account)} account beyond its included usage. Use it for new threads?`
+        : `${account.name} bills its API account per request. Use it for new threads?`;
       const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title: 'Use a paid account', message });
       if (!answer.ok || answer.value.status !== 'accepted') return 'Kept the current profile.';
     }
-    const session = api.host.tryCall('session.info', null);
-    if (!session.ok) return 'Profile switch failed: current thread unavailable.';
-    const updated = api.host.tryCall('app.request', { method: 'thread/settings/update', params: { threadId: session.value.thread_id, model: account.model,
-      modelProvider: account.provider, effort: account.effort } });
+    const updated = api.host.tryCall('routes.select', { route: account.name, scope: 'new_threads' });
     if (!updated.ok) return `Profile switch failed: ${updated.error}`;
-    store({ pending: account.name, notice: null });
-    return `Switching this thread to ${account.name} (${kind(account)}) at its next turn; its attachments and tool history are kept. Earlier reasoning is not sent to another account${account.profile && account.profile.protocol !== 'responses' ? ', and Chat Completions or Anthropic profiles get no hosted tools' : ''}.`;
+    const process = api.session().process_id;
+    update<Record<string, string>>('selection', selections => ({ ...selections, [process]: account.name }));
+    store({ pending: account.name, pending_process: process, notice: null });
+    return `${account.name} (${kind(account)}) selected for new threads. Run /new to use it. This thread keeps its current account.`;
   };
   const choose = (title: string, message: string, options: string[][]) => {
     const picked = api.host.tryCall('terminal.prompt', { kind: 'choice', title, message, options: options.map(([value, label]) => ({ value, label })) });
@@ -205,8 +202,8 @@ export default function activate(api: ModAPI) {
     if (!run.ok) return { error: run.error.startsWith('exec_program_unavailable') ? NODE_MISSING : run.error };
     return run.value.exit_code === 0 ? { stdout: run.value.stdout } : { error: run.value.stderr.trim() };
   };
-  const catalog = (model: string): { window: number; max: number; effort: string; efforts: string[] } | { error: string } | null => {
-    const found = setup(['catalog', model]);
+  const catalog = (model?: string): { model?: string; window: number; max: number; effort: string; efforts: string[] } | { error: string } | null => {
+    const found = setup(['catalog', ...model ? [model] : []]);
     if ('error' in found) return found.error === NODE_MISSING ? found : null;
     try { return JSON.parse(found.stdout); } catch { return null; }
   };
@@ -275,6 +272,12 @@ export default function activate(api: ModAPI) {
       `${name} now uses a ${tokens(size)}-token context window, which new threads use; if this thread still shows the old size, start a new one with /new.${local ? ` Start Ollama with OLLAMA_CONTEXT_LENGTH=${size} so it really serves that much.` : ''}`);
   };
   const write = (profiles: Profile[], done: string) => {
+    if (!profiles.length) {
+      const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title: 'Remove the last account', message: 'Remove its model route and stop the profile router?' });
+      if (!answer.ok || answer.value.status !== 'accepted') return 'Profiles unchanged.';
+      const run = setup(['session'], JSON.stringify({ profiles: [], allowance: null }));
+      return 'error' in run ? `Profiles unchanged: ${run.error}` : adopt([], done);
+    }
     const written = api.host.tryCall('routes.write', { routes: profiles.map(routeFor), services: serviceFor(profiles) });
     if (!written.ok) return `Profiles unchanged: ${written.error}`;
     if ('status' in written.value) return 'Profiles unchanged.';
@@ -330,9 +333,10 @@ export default function activate(api: ModAPI) {
     const credentialKind = kindName === 'provider' || kindName === 'anthropic' ? 'provider' : kindName;
     const enroll = () => {
       const listed = api.host.tryCall('credentials.list', null);
-      const kept = (listed.ok ? listed.value : []).find(item => item.label === name && item.kind === credentialKind && item.origin === origin(endpoint) && item.status === 'ready');
-      if (kept) return kept;
-      const enrolled = api.host.tryCall('credentials.request', credentialKind === 'provider'
+      const kept = (listed.ok ? listed.value : []).find(item => item.label === name);
+      if (kept && (kept.kind !== credentialKind || kept.origin !== origin(endpoint))) return `The sign-in name ${name} is already used for another provider. Choose another name.`;
+      if (kept?.status === 'ready') return kept;
+      const enrolled = api.host.tryCall('credentials.request', kept ? { action: 'refresh', profile: kept.id } : credentialKind === 'provider'
         ? { action: 'enroll', kind: 'provider', label: name, provider: kindName === 'anthropic' ? 'anthropic' : name, origin: origin(endpoint)! }
         : { action: 'enroll', kind: kindName as 'chatgpt' | 'api_key', label: name });
       if (!enrolled.ok) return enrolled.error;
@@ -341,22 +345,29 @@ export default function activate(api: ModAPI) {
     const base = profiles.find(profile => profile.name === current) ?? profiles[0];
     const fixed = kindName === 'provider' ? null : kindName === 'anthropic' ? 'anthropic' : local ? 'chat' : 'responses';
     const template = kindName === 'chatgpt' ? [base, ...profiles].find(profile => profile?.kind === 'chatgpt') : undefined;
+    const credential = local ? null : enroll();
+    if (typeof credential === 'string') return credential;
+    const kept = credential ? ` The sign-in "${name}" was kept: /profile add reuses it, /profile remove ${name} drops it.` : '';
     const where = kindName === 'provider' ? url : kindName === 'anthropic' ? 'the Anthropic API, for example claude-sonnet-4-5'
       : kindName === 'chatgpt' ? 'ChatGPT, for example gpt-6.1-sol' : local ? 'your Ollama, for example llama3.3 (ollama list shows the models you pulled)' : 'the OpenAI API, for example gpt-6.1-sol';
-    const model = template?.model ?? ask('Upstream model', `Model name at ${where}`);
+    const subscription = kindName === 'chatgpt';
+    const session = api.session();
+    const automatic = subscription ? template?.model ?? (session.provider === 'openai' ? session.model : null) : null;
+    const defaultModel = subscription ? catalog(automatic ?? undefined) : null;
+    if (defaultModel && 'error' in defaultModel) return `${defaultModel.error}.${kept}`;
+    const model = subscription ? automatic ?? defaultModel?.model : ask('Upstream model', `Model name at ${where}`);
+    if (subscription && !model) return `Your account is signed in, but the Codex model catalog is unavailable. Retry /profile add chatgpt ${name} after connecting to ChatGPT.${kept}`;
     if (!model) return 'Cancelled.';
     const listed = profiles.find(profile => profile.model === model);
-    const known = local ? null : catalog(model);
+    const known = subscription ? defaultModel : local ? null : catalog(model);
     if (known && 'error' in known) return known.error;
-    const size = pickWindow(model, local, known ?? (listed ? { window: listed.window } : null));
+    const size = subscription ? known?.window ?? template?.window ?? null : pickWindow(model, local, known ?? (listed ? { window: listed.window } : null));
+    if (size === null) return `Your account is signed in, but ${model} is missing from the Codex catalog. Retry after refreshing /model.${kept}`;
     if (typeof size === 'string') return size;
     const paid = kindName === 'chatgpt' || local ? null : ask('Price', `INPUT_USD:OUTPUT_USD per million tokens, for example ${kindName === 'anthropic' ? '3:15' : '1.25:10'}`);
     if (kindName !== 'chatgpt' && !local && !paid) return 'Cancelled.';
     const protocol = fixed ?? choose('Protocol', `How ${url} speaks`, [['chat', 'Chat Completions'], ['anthropic', 'Anthropic Messages'], ['responses', 'OpenAI Responses']]);
     if (!protocol) return 'Cancelled.';
-    const credential = local ? null : enroll();
-    if (typeof credential === 'string') return credential;
-    const kept = credential ? ` The sign-in "${name}" was kept: /profile add reuses it, /profile remove ${name} drops it.` : '';
     let profile: Profile;
     try {
       profile = { ...profileEntry({ name, credential: credential?.id, protocol, url: endpoint, model, window: size, paid,
@@ -366,7 +377,7 @@ export default function activate(api: ModAPI) {
       if (!(error instanceof Error)) throw error;
       return `${error.message}.${kept}`;
     }
-    const done = `Added ${name}. Switch with Alt+s or /profile use ${name}; it applies at this thread's next turn. /profile window ${name} changes its context window size.${local ? ` Start Ollama with OLLAMA_CONTEXT_LENGTH=${size} so it serves all of it.` : ''}`;
+    const done = `Added ${name}. Select it with /profile use ${name}, then /new.${local ? ` Start Ollama with OLLAMA_CONTEXT_LENGTH=${size} so it serves all of it.` : ''}`;
     const next = [...profiles, profile];
     const upfront = !base?.router && profile.paid ? allowance() : null;
     if (!base?.router && profile.paid && upfront === null) return `Cancelled: paid profiles need an allowance.${kept}`;
@@ -380,20 +391,32 @@ export default function activate(api: ModAPI) {
   const subscription = (kindName: string, name: string) => {
     if (!ACCOUNT.test(name) || name === 'api') return 'Account names start with a letter and use lowercase letters, digits, _ or - (at most 24).';
     const claude = kindName === 'claude';
+    const known = saved().accounts.filter(account => account.provider === (claude ? 'omd_claude_cli' : 'omd_cursor')).map(account => account.name);
     const billing = claude ? choose('Claude billing', 'Use your Claude plan or Console API credits', [['plan', 'Claude plan (Pro, Max, Team or Enterprise)'], ['api', 'Console API credits']]) : 'plan';
     if (!billing) return 'Cancelled.';
-    const invoked = api.host.tryCall('commands.invoke', claude ? { command: 'omd_claude_cli:claude', args: `login ${billing === 'api' ? 'api ' : ''}${name}` } : { command: 'omd_cursor:cursor', args: `setup ${name}` });
+    const command = claude ? { command: 'omd_claude_cli:claude', args: `login ${billing === 'api' ? 'api ' : ''}${name}` } : { command: 'omd_cursor:cursor', args: `setup ${name}` };
+    let invoked = api.host.tryCall('commands.invoke', command);
+    if (!invoked.ok && /command_unknown|unknown_command/.test(invoked.error)) {
+      const id = claude ? 'omd_claude_cli' : 'omd_cursor';
+      const listed = api.host.tryCall('packages.list', { fields: ['id', 'enabled'] });
+      if (listed.ok && listed.value.packages.some(item => item.id === id)) {
+        const enabled = api.host.tryCall('packages.apply', { action: 'enable', id, scope: 'user', expected_generation: listed.value.generation });
+        if (!enabled.ok) return `Sign-in did not start: ${enabled.error}`;
+        if (enabled.value.status === 'declined') return 'Cancelled.';
+        invoked = api.host.tryCall('commands.invoke', command);
+      }
+    }
     if (!invoked.ok) return `${claude ? 'Claude' : 'Cursor'} sign-in did not start: ${invoked.error}. Turn on ${claude ? 'omd_claude_cli' : 'omd_cursor'} in /mods first.`;
     if ('status' in invoked.value) return 'Cancelled.';
-    api.host.tryCall('events.publish', { channel: 'added', data: { watch: claude ? 'omd_claude_cli' : 'omd_cursor' } });
+    api.host.tryCall('events.publish', { channel: 'added', data: { watch: claude ? 'omd_claude_cli' : 'omd_cursor', known } });
     const display = (invoked.value.result as { display?: string } | null)?.display;
-    return `${display ?? 'Sign-in started.'} When it finishes, the account shows here and in /model.`;
+    return `${display ?? 'Sign-in started.'} When it finishes, select the account in /profile, then run /new.`;
   };
   const begin = (kindName?: string, given?: string, url?: string) => {
     const kind = kindName || choose('Add an account', 'What to add', KINDS);
     if (!KINDS.some(([value]) => value === kind)) return kind ? USAGE : 'Cancelled.';
     const account = kind === 'claude' || kind === 'cursor';
-    const name = given || ask(account ? 'Account name' : 'Profile name', account
+    const name = given || ask('Account name', account
       ? `Lowercase letters, digits, _ or -, for example work${kind === 'claude' ? '; default uses your Claude Code login' : ''}`
       : 'Lowercase letters, digits, _ or -, for example work2');
     if (!name) return 'Cancelled.';
@@ -406,11 +429,16 @@ export default function activate(api: ModAPI) {
   };
   const remove = (name: string) => {
     const { accounts, current, pending } = saved();
+    if (name === current) return `${name} is in use by this thread. Start a new thread on another account before removing it.`;
+    if (name === pending) return `${name} is selected for new threads. Select another account before removing it.`;
     const profiles = owned(accounts);
     const foreign = accounts.find(account => account.name === name && !account.profile);
     if (foreign) {
       const from = PROVIDERS[foreign.provider];
-      return `${name} comes from ${foreign.provider}; remove it there${from ? ` with ${from.command} ${name === from.prefix ? 'default' : name.slice(from.prefix.length + 1)}` : ''}.`;
+      if (!from) return `${name} comes from ${foreign.provider}; remove it with that provider.`;
+      const removed = api.host.tryCall('commands.invoke', { command: `${foreign.provider}:${from.family === 'claude' ? 'claude' : 'cursor'}`, args: `remove ${name === from.prefix ? 'default' : name.slice(from.prefix.length + 1)}` });
+      if (!removed.ok) return `Account not removed: ${removed.error}`;
+      return 'status' in removed.value ? 'Account kept.' : (removed.value.result as { display?: string } | null)?.display ?? `Removing ${name}.`;
     }
     const profile = profiles.find(item => item.name === name);
     const credential = profile?.credential ?? (() => {
@@ -421,7 +449,6 @@ export default function activate(api: ModAPI) {
     const user = profile ? undefined : profiles.find(item => item.credential === credential);
     if (user) return `${name} is the sign-in of profile ${user.name}; remove that profile instead.`;
     if (profile && (profile.name === current || profile.name === pending)) return `${name} is this thread's profile; switch to another one first.`;
-    if (profile && profiles.length === 1) return `${name} is the last profile; remove it with omd-package profiles --setup --remove ${name}.`;
     if (profile) {
       const result = write(profiles.filter(item => item !== profile), '');
       if (result) return result;
@@ -432,32 +459,54 @@ export default function activate(api: ModAPI) {
     return done.ok ? `Removed ${name}${done.value.status === 'completed' ? ' and its sign-in' : '; its sign-in was kept'}.` : `Removed ${name}; its sign-in was kept: ${done.error}`;
   };
   const describe = (account: Account, quota: Record<string, Quota>, now: number) =>
-    `${kind(account)} · ${account.profile?.model ?? account.model} · ${summary(account, quota[account.name], now)}`;
+    `${kind(account)} · ${account.billing === 'included_subscription' ? 'subscription' : account.profile?.model ?? account.model} · ${summary(account, quota[account.name], now)}`;
+  const reconnect = (name: string) => {
+    const account = saved().accounts.find(item => item.name === name);
+    const from = account && PROVIDERS[account.provider];
+    if (account && from) {
+      const label = name === from.prefix ? 'default' : name.slice(from.prefix.length + 1);
+      const invoked = api.host.tryCall('commands.invoke', { command: `${account.provider}:${from.family === 'claude' ? 'claude' : 'cursor'}`,
+        args: from.family === 'claude' ? `login ${account.billing === 'included_subscription' ? '' : 'api '}${label}` : `setup ${label}` });
+      return !invoked.ok ? `Sign-in did not start: ${invoked.error}` : 'status' in invoked.value ? 'Cancelled.'
+        : (invoked.value.result as { display?: string } | null)?.display ?? 'Sign-in started.';
+    }
+    const credentials = api.host.tryCall('credentials.list', null);
+    const credential = (credentials.ok ? credentials.value : []).find(item => item.id === account?.profile?.credential || item.label === name || item.id === name);
+    if (!credential) return `Unknown sign-in ${name}`;
+    const done = api.host.tryCall('credentials.request', { action: 'refresh', profile: credential.id });
+    return done.ok ? `Sign-in ${done.value.status} for ${credential.label}.` : done.error;
+  };
   const panel = (result?: string) => {
     const { accounts, current, pending } = saved();
     const { quota } = quotas();
     const now = Date.now();
     const items: TerminalPanelItem[] = [
-      ...accounts.map(account => ({ id: `use:${account.name}`, kind: 'action' as const,
-        label: `${account.name === (pending ?? current) ? '●' : '○'} ${account.name}${account.available ? '' : ' (unavailable)'}`,
+      ...accounts.map(account => ({ id: `account:${account.name}`, kind: 'action' as const,
+        label: `${account.name === current ? '●' : '○'} ${account.name}${account.name === current ? ' (this thread)' : ''}${account.name === pending ? ' (next /new)' : ''}${account.available ? '' : ' (unavailable)'}`,
         description: describe(account, quota, now) })),
       { id: 'add', kind: 'action', label: '+ Add an account…', description: 'ChatGPT, Claude or Cursor account, OpenAI or Anthropic API key, local Ollama, or another provider' },
       { id: 'window', kind: 'action', label: 'Change a context window…', description: 'How much of a thread a model sees before Codex compacts it' },
-      ...owned(accounts).length > 1 ? [{ id: 'remove', kind: 'action' as const, label: 'Remove a profile…', description: 'Drops its route and, if unused, its sign-in' }] : [],
     ];
-    const shown = api.host.tryCall('terminal.panel', { title: 'Profiles', subtitle: result ? fit(result, 200) : 'Enter switches this thread at its next turn · Alt+s cycles', items, action: PANEL });
+    const shown = api.host.tryCall('terminal.panel', { title: 'Accounts', subtitle: result ? fit(result, 200) : 'Enter manages an account · choose an account, then /new · Alt+s cycles', items, action: PANEL });
     return shown.ok ? null : { display: `Profiles: ${shown.error}` };
   };
 
   api.command('profile', value => {
     const [op = '', label = '', extra = '', url = ''] = String(value ?? '').trim().split(/\s+/);
+    if (!op || op === 'list') refresh();
     const { accounts, current, pending, notice } = saved();
     const named = (name: string) => accounts.find(item => item.name === name);
     if (!op) return panel();
     if (op === 'panel') {
       const [action, target = ''] = label.split(':');
       if (!action) return panel();
-      const display = action === 'use' ? use(named(target), target)
+      const display = action === 'account' ? (() => {
+        const account = named(target);
+        if (!account) return `Account ${target} is no longer available.`;
+        const picked = choose(target, describe(account, quotas().quota, Date.now()), [
+          ['use', 'Use for new threads (/new)'], ['refresh', 'Sign in again / replace key'], ['remove', 'Remove account']]);
+        return picked === 'use' ? use(account, target) : picked === 'refresh' ? reconnect(target) : picked === 'remove' ? remove(target) : 'Cancelled.';
+      })() : action === 'use' ? use(named(target), target)
         : action === 'add' ? begin(target)
         : action === 'window' ? resize(target)
         : action === 'remove' ? (() => {
@@ -469,7 +518,7 @@ export default function activate(api: ModAPI) {
     if (op === 'list') {
       if (!accounts.length) return { display: 'No profiles yet. Add one with /profile add.' };
       const { quota } = quotas();
-      return { display: [...notice ? [`Last switch failed: ${notice}`] : [], ...accounts.map(account =>
+      return { display: [...notice ? [`Account notice: ${notice}`] : [], ...accounts.map(account =>
         `${account.name === (pending ?? current) ? '●' : '○'} ${account.name} · ${describe(account, quota, Date.now())}${account.available ? '' : ' · unavailable'}`)].join('\n') };
     }
     if (op === 'next') {
@@ -484,12 +533,8 @@ export default function activate(api: ModAPI) {
     if (op === 'remove' && label) return { display: remove(label) };
     if (op === 'refresh' && label) {
       const target = String(value ?? '').trim().slice(op.length).trim();
-      const credentials = api.host.tryCall('credentials.list', null);
-      const credential = (credentials.ok ? credentials.value : []).find(item => item.label === target || item.id === target);
-      if (!credential) return { display: `Unknown credential ${target}` };
-      const done = api.host.tryCall('credentials.request', { action: 'refresh', profile: credential.id });
-      return { display: done.ok ? `Refresh ${done.value.status} for ${credential.label}.` : done.error };
+      return { display: reconnect(target) };
     }
     return { display: USAGE };
-  }, { description: 'Switch between ChatGPT, API-key, provider, Claude and Cursor accounts, and add or remove profiles; switching applies at this thread\'s next turn' });
+  }, { description: 'Manage ChatGPT, Claude, Cursor and API accounts; select an account for /new' });
 }

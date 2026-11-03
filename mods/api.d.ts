@@ -460,7 +460,7 @@ export interface HostOperations {
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   /** Requires model_context_window_v1: sets (tokens), clears (null) or reads a model's context window from each thread's next turn (other sessions: the turn after), capped at its maximum. */
   'models.context_window': { arguments: { model: string; tokens?: number | null }; result: { model: string; tokens: number | null; max: number | null } };
-  'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
+  'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' | 'new_threads' }; result: { route: RouteInfo; effective_at: 'next_request' | 'new_thread' } };
   'turns.activity': { arguments: { thread_id?: string; turn_id?: string; last?: number } | null; result: { turns: TurnActivity[]; recording: boolean } };
   /** Requires turn_abort_v1; acceptance precedes cancellation cleanup. */
   'turns.abort': { arguments: { turn_id: string }; result: { accepted: boolean } };

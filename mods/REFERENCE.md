@@ -658,6 +658,7 @@ These experimental features have no registry entry of their own:
 | `api.uiState` and command views | [Session UI state](reference/state-and-storage.md#session-ui-state-apiuistate) and [command views](reference/commands-and-composer.md#command-views) |
 | `process_streams_v1` | `framing: "raw"` on `process.start` |
 | `process_raster_v1`, `raster_pixels_v1` | Processes that feed a raster frames or raw pixel buffers |
+| `route_new_threads_v1` | `routes.select` with `scope: "new_threads"`, for future terminal threads |
 | `completion_tokens_v1` | `api.completion` token triggers |
 | `settings_file_v1` | `api.settingsFile` and the settings file |
 | `terminal_focus_v1` | Focus regions, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus` |
@@ -5437,7 +5438,7 @@ needs a grant.
 
 - [`routes.list`](#routeslist) returns the routes visible to the calling mod, plus `data` on the caller's own routes
   ([route writes](#route-writes-route_write_v1)).
-- [`routes.select`](#routesselect) applies a lead route to the next request or the thread.
+- [`routes.select`](#routesselect) applies a lead route to the next request, the thread or future new threads.
 - The `routing` replacement returns `{route}` to choose a configured lead route at thread start.
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](reference/model-requests.md#model-requests-and-streams-model_turn_interception_v1)).
@@ -5467,22 +5468,29 @@ const routes = api.host.call('routes.list', null).filter(route => route.availabl
 ### `routes.select`
 
 ```text
-routes.select {route, scope} → {route: RouteInfo, effective_at: 'next_request'}
+routes.select {route, scope} → {route: RouteInfo, effective_at: 'next_request' | 'new_thread'}
 ```
 
-`routes.select` (capability `model`) applies a configured lead route to the calling thread.
+`routes.select` (capability `model`) selects a configured lead route.
 
 | Argument | Type | Meaning |
 | --- | --- | --- |
 | `route` | string | The name of a lead route the caller may use |
-| `scope` | `'next_request'` or `'thread'` | Apply the route to the next request only, or to every later request of the thread |
+| `scope` | `'next_request'`, `'thread'` or `'new_threads'` | Apply to the next request, the calling thread, or future new threads in this terminal session |
 
-The route takes effect from the next request. A lead route added to `host.json` after the thread started is
+`new_threads` requires `route_new_threads_v1` and a local user command. It selects model, provider and effort for
+`/new` and other fresh terminal threads, returning `effective_at: 'new_thread'`. Existing and resumed threads keep
+their settings. It overrides launch defaults for those new threads, never writes global Codex config, and is lost
+when the terminal process exits. Missing, ambiguous or changed-owner routes fail without falling back to another
+account. Routes must have a unique model/provider pair. Routes that do not delegate billing to the provider
+start with hosted web search disabled, because separate tool charges are outside their token rates.
+
+The other scopes take effect from the next request. A lead route added to `host.json` after the thread started is
 admitted when it is on the thread's provider ([route reload](#route-reload-route_reload_v1)).
 
 | Error | When |
 | --- | --- |
-| `route_scope_invalid` | `scope` is neither `next_request` nor `thread` |
+| `route_scope_invalid` | `scope` is not `next_request`, `thread` or `new_threads` |
 | `route_not_configured: ROUTE` | No lead route with that name is open to the caller; after an invalid `host.json` edit the message adds why |
 | `route_unavailable_for_thread: ROUTE` | The thread has no lead route account, or the route is on another provider |
 
