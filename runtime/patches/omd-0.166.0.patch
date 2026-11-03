@@ -42547,7 +42547,7 @@ index aaa32e195147665d9425958cf718d90dacaab2af..503ae83f016db116da1888fc90a7a230
  #[cfg(test)]
  pub(crate) use model::ExecCall;
 diff --git a/codex-rs/tui/src/exec_cell/model.rs b/codex-rs/tui/src/exec_cell/model.rs
-index a99ea4909587e6e518267b8bc3bb7ad4723d4279..0a6694897a3f8c81e99c01e05c0de453098cc4fd 100644
+index a99ea4909587e6e518267b8bc3bb7ad4723d4279..b628399fa47f3a9132d8351f84311b2bd7239488 100644
 --- a/codex-rs/tui/src/exec_cell/model.rs
 +++ b/codex-rs/tui/src/exec_cell/model.rs
 @@ -78,14 +78,19 @@ pub(crate) struct ExecCall {
@@ -42620,16 +42620,19 @@ index a99ea4909587e6e518267b8bc3bb7ad4723d4279..0a6694897a3f8c81e99c01e05c0de453
                  call.output
                      .get_or_insert_with(CommandOutput::default)
                      .exit_code = 1;
-@@ -182,7 +199,7 @@ impl ExecCell {
+@@ -182,7 +199,10 @@ impl ExecCell {
      }
 
      pub(crate) fn is_exploring_cell(&self) -> bool {
 -        self.group.calls.iter().all(Self::is_exploring_call)
-+        self.group.calls.iter().all(|call| self.is_exploring_call(call))
++        self.group
++            .calls
++            .iter()
++            .all(|call| self.is_exploring_call(call))
      }
 
      pub(crate) fn is_active(&self) -> bool {
-@@ -230,17 +247,18 @@ impl ExecCell {
+@@ -230,17 +250,18 @@ impl ExecCell {
          true
      }
 
@@ -42659,10 +42662,10 @@ index a99ea4909587e6e518267b8bc3bb7ad4723d4279..0a6694897a3f8c81e99c01e05c0de453
  }
 
 diff --git a/codex-rs/tui/src/exec_cell/render.rs b/codex-rs/tui/src/exec_cell/render.rs
-index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..fdc873789405410c405aaae94f6e21a52cc5fb49 100644
+index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..61e16bc879b603dc352e82f94cb867a70e65107c 100644
 --- a/codex-rs/tui/src/exec_cell/render.rs
 +++ b/codex-rs/tui/src/exec_cell/render.rs
-@@ -210,6 +210,139 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
+@@ -210,6 +210,143 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
  }
 
  impl HistoryCell for ExecCell {
@@ -42759,10 +42762,14 @@ index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..fdc873789405410c405aaae94f6e21a5
 +            && (calls.len() > 1
 +                || !self.group_exec
 +                || !first.parsed.is_empty()
-+                    && first.parsed.iter().all(|parsed| matches!(parsed,
-+                        ParsedCommand::Read { .. }
-+                            | ParsedCommand::ListFiles { .. }
-+                            | ParsedCommand::Search { .. })));
++                    && first.parsed.iter().all(|parsed| {
++                        matches!(
++                            parsed,
++                            ParsedCommand::Read { .. }
++                                | ParsedCommand::ListFiles { .. }
++                                | ParsedCommand::Search { .. }
++                        )
++                    }));
 +        let props = if exploring {
 +            let status = if running {
 +                "running"
@@ -42802,7 +42809,7 @@ index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..fdc873789405410c405aaae94f6e21a5
      fn append_reasoning(&mut self, cell: Box<dyn HistoryCell>) -> Result<(), Box<dyn HistoryCell>> {
          if self.is_exploring_cell() {
              self.group.push_detail(std::sync::Arc::from(cell));
-@@ -333,8 +466,15 @@ impl ExecCell {
+@@ -333,8 +470,15 @@ impl ExecCell {
              ])
              .into(),
          );
@@ -42819,16 +42826,21 @@ index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..fdc873789405410c405aaae94f6e21a5
          let mut out_indented = Vec::new();
          let nonzero_exit = |call: &ExecCall| {
              call.duration
-@@ -344,7 +484,7 @@ impl ExecCell {
+@@ -344,15 +488,17 @@ impl ExecCell {
          };
          while let Some((call, remaining)) = calls.split_first() {
              let exit_code = nonzero_exit(call);
 -            let reads_only = call
-+            let reads_only = !call.parsed.is_empty() && call
-                 .parsed
-                 .iter()
-                 .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }));
-@@ -353,6 +493,7 @@ impl ExecCell {
+-                .parsed
+-                .iter()
+-                .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }));
++            let reads_only = !call.parsed.is_empty()
++                && call
++                    .parsed
++                    .iter()
++                    .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }));
+             let group_len = if reads_only && exit_code.is_none() {
+                 1 + remaining
                      .iter()
                      .take_while(|next| {
                          nonzero_exit(next).is_none()
@@ -42836,7 +42848,7 @@ index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..fdc873789405410c405aaae94f6e21a5
                              && next
                                  .parsed
                                  .iter()
-@@ -378,6 +519,8 @@ impl ExecCell {
+@@ -378,6 +524,8 @@ impl ExecCell {
                      "Read",
                      Itertools::intersperse(names.into_iter().map(Into::into), ", ".dim()).collect(),
                  )]
@@ -42845,7 +42857,7 @@ index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..fdc873789405410c405aaae94f6e21a5
              } else {
                  let mut lines = Vec::new();
                  for parsed in &call.parsed {
-@@ -443,13 +586,7 @@ impl ExecCell {
+@@ -443,13 +591,7 @@ impl ExecCell {
                  out_indented.extend(wrapped);
              }
          }
@@ -42860,7 +42872,7 @@ index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..fdc873789405410c405aaae94f6e21a5
      }
 
      fn command_display_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-@@ -1100,6 +1237,11 @@ mod tests {
+@@ -1100,6 +1242,11 @@ mod tests {
          let preview = cell.display_lines(/*width*/ 60);
          cell.group.calls[0].start_time = None;
          cell.mark_failed();
@@ -78968,10 +78980,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cc8341dea427aaecc192779596589ee495a7fe6e
+index 0000000000000000000000000000000000000000..f1dce5f09dc371025c60ef038abcdcd4d31ab782
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5425 @@
+@@ -0,0 +1,5433 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -81402,12 +81414,20 @@ index 0000000000000000000000000000000000000000..cc8341dea427aaecc192779596589ee4
 +        return;
 +    };
 +    let extension = mods(&fixture.core);
-+    extension.views.diagnostic(&fixture.lead.host, "routing", Some("failed".into()));
++    extension
++        .views
++        .diagnostic(&fixture.lead.host, "routing", Some("failed".into()));
 +    let before = extension.views.published().unwrap();
-+    extension.views.diagnostic(&fixture.lead.host, "turn_evidence", None);
-+    extension.views.diagnostic(&fixture.lead.host, "routing", Some("failed".into()));
++    extension
++        .views
++        .diagnostic(&fixture.lead.host, "turn_evidence", None);
++    extension
++        .views
++        .diagnostic(&fixture.lead.host, "routing", Some("failed".into()));
 +    assert!(Arc::ptr_eq(&before, &extension.views.published().unwrap()));
-+    extension.views.diagnostic(&fixture.lead.host, "routing", None);
++    extension
++        .views
++        .diagnostic(&fixture.lead.host, "routing", None);
 +    assert!(extension.views.published().unwrap().diagnostics.is_empty());
 +}
 +
@@ -103784,10 +103804,10 @@ index 0000000000000000000000000000000000000000..4e16a564e8717190b10d32394c2a0e98
 +mod tests;
 diff --git a/codex-rs/omd/src/builtins_tests.rs b/codex-rs/omd/src/builtins_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8cdc7d0857ab3080e465723c7eee918345954bfe
+index 0000000000000000000000000000000000000000..7add8f6e1ee5d3234f3d71142e6f37d0ebbde966
 --- /dev/null
 +++ b/codex-rs/omd/src/builtins_tests.rs
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,81 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -103859,10 +103879,13 @@ index 0000000000000000000000000000000000000000..8cdc7d0857ab3080e465723c7eee9183
 +#[test]
 +fn command_grouping_is_opt_in_and_combines_owners() {
 +    let controls = BuiltinControls::parse(&json!({"group_exec": true})).unwrap();
-+    assert!(BuiltinSnapshot::from_controls(&[
-+        ("one".into(), controls),
-+        ("two".into(), BuiltinControls::default()),
-+    ]).group_exec);
++    assert!(
++        BuiltinSnapshot::from_controls(&[
++            ("one".into(), controls),
++            ("two".into(), BuiltinControls::default()),
++        ])
++        .group_exec
++    );
 +    assert!(!BuiltinSnapshot::from_controls(&[]).group_exec);
 +    assert!(BuiltinControls::parse(&json!({"group_exec": "yes"})).is_err());
 +}
@@ -177144,10 +177167,10 @@ index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9057a7e01affa3ab8e204a152031c4f154377225
+index 0000000000000000000000000000000000000000..9a2fa3e715099bebef7d497c4eb3d13e8c879d50
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1219 @@
+@@ -0,0 +1,1215 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -177845,11 +177868,7 @@ index 0000000000000000000000000000000000000000..9057a7e01affa3ab8e204a152031c4f1
 +        let current = Arc::new(move || {
 +            with(|state| CONTEXT_EPOCH.load(Ordering::Acquire) == epoch && state.thread == thread)
 +        });
-+        crate::mod_runtime::broadcast_event_guarded(
-+            event,
-+            with_dropped(payload, dropped),
-+            current,
-+        );
++        crate::mod_runtime::broadcast_event_guarded(event, with_dropped(payload, dropped), current);
 +    }
 +}
 +
@@ -188664,10 +188683,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6054ff88bfe6537cdf7d205339d0fb586317d862
+index 0000000000000000000000000000000000000000..94d93616096ef36f277183d10d969508f0d543ac
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,822 @@
+@@ -0,0 +1,829 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -189450,8 +189469,15 @@ index 0000000000000000000000000000000000000000..6054ff88bfe6537cdf7d205339d0fb58
 +        assert!(single.render_members(80).is_empty());
 +        assert_eq!(single.render_target().unwrap().props["kind"], "exec");
 +        assert_eq!(grouped.render_members(80).len(), 2);
-+        assert!(grouped.display_lines(80).iter().any(|line| line.to_string().contains("cargo test")));
-+        assert!(!call(codex_app_server_protocol::CommandExecutionSource::Agent).is_exploring_cell());
++        assert!(
++            grouped
++                .display_lines(80)
++                .iter()
++                .any(|line| line.to_string().contains("cargo test"))
++        );
++        assert!(
++            !call(codex_app_server_protocol::CommandExecutionSource::Agent).is_exploring_cell()
++        );
 +        assert!(!single.add_call(
 +            "after-disable".into(),
 +            vec!["cargo".into(), "check".into()],
