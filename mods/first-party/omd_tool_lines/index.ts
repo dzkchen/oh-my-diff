@@ -38,7 +38,7 @@ const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   return `${kept.join('')}…`;
 };
 
-const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : noun === 'search' ? 'es' : 's'}`;
 const lines = (count: number | null, status: RenderToolCall['status']) => count == null || status === 'running' ? null : plural(count, 'line');
 
 const duration = (ms: number | null) => {
@@ -104,17 +104,21 @@ const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null =>
 
 const group = (calls: RenderExecCall[]): Row => {
   const failed = calls.filter(call => call.status === 'failed' || call.status === 'interrupted');
+  const interrupted = calls.filter(call => call.status === 'interrupted');
   const running = calls.filter(call => call.status === 'running');
   const latest = running.at(-1) ?? failed.at(-1) ?? calls.at(-1)!;
   const counts = new Map<string, number>();
   for (const call of calls) {
-    const name = exec(call).name;
+    const label = exec(call).name;
+    const name = label === 'Shell' ? 'command' : label.toLowerCase();
     counts.set(name, (counts.get(name) ?? 0) + 1);
   }
   return {
-    name: [...counts].map(([name, count]) => `${count} ${name.toLowerCase()}${count === 1 ? '' : 's'}`).join(', '),
+    name: [...counts].map(([name, count]) => plural(count, name)).join(', '),
     args: exec(latest).args,
-    marker: [running.length ? `${running.length} running` : null, failed.length ? `${failed.length} failed` : running.length ? null : 'ok',
+    marker: [running.length ? `${running.length} running` : null,
+      failed.length > interrupted.length ? `${failed.length - interrupted.length} failed` : null,
+      interrupted.length ? `${interrupted.length} interrupted` : failed.length || running.length ? null : 'ok',
       duration(calls.reduce((total, call) => total + (call.duration_ms ?? 0), 0))],
     failed: failed.length > 0, running: running.length > 0,
   };

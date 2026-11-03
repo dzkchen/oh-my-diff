@@ -51,6 +51,7 @@ export type FinalRequestPage = {
 };
 export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
 /** `turns_started` counts turns this process started in the thread; `process_id` identifies the OMD process. */
+export type RouteModel = { model: string; display_name: string; efforts: string[]; default_effort: string; context_window: number };
 export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; omd_version?: string; model: string; provider: string; route: string | null; turns_started: number; process_id: string };
 export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
 export type UsageSummary = {
@@ -397,8 +398,10 @@ export interface HostOperations {
   'sessions.read': { arguments: { session_id: string; revision: string; handle: string; cursor?: number; max_bytes?: number }; result: { session: SessionSummary; records: SessionRecord[]; cursor: number | null; bytes: number; projection: string; projection_truncated: boolean } };
   'sessions.snapshot': { arguments: { call_ids?: string[] }; result: { evidence: ResourceRef; provenance: { sha256: string; bytes: number; items: number; revision: number } } };
   'routes.list': { arguments: null; result: RouteInfo[] };
-  /** Without `mod` (routes_add_self_v1): a plan route for the caller, needing only `agents`. */
-  'routes.add': { arguments: { mod?: string }; result: { route: string } | Declined };
+  /** Without `mod` (routes_add_self_v1): a plan route for the caller, needing only `agents`. With `model` (routes_add_model_v1): that ChatGPT catalog model and `effort` (default: the model's) instead of the conversation's. */
+  'routes.add': { arguments: { mod?: string; model?: string; effort?: string }; result: { route: string } | Declined };
+  /** Requires routes_add_model_v1: the signed-in ChatGPT catalog `routes.add` accepts, with each model's usable context window. */
+  'routes.models': { arguments: { mod?: string }; result: RouteModel[] };
   /** Requires route_write_v1: replaces the caller's lead routes and service grants in `host.json` after the user confirms. */
   'routes.write': { arguments: { routes: HostRoute[]; services?: ServiceGrantUpdate[] }; result: { routes: string[]; services: string[]; unchanged?: true } | Declined };
   'task.status': { arguments: null; result: { ledger: Ledger; limits: Json; worker_limits: Json } };
@@ -563,7 +566,7 @@ export interface Events {
     content?: string; target?: string; edge?: 'left' | 'right' | 'top' | 'bottom' | 'center'; columns?: number; rows?: number }; output: void };
   /** The latest value a component module posted this frame. */
   component_post: { input: { component: string; module: string; client?: string; data: Json }; output: void };
-  view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null; dropped?: number }; output: void };
+  view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay' | 'thread'; view_id: string | null; dropped?: number }; output: void };
   focus: { input: { focused: boolean; dropped?: number }; output: void };
   config_change: { input: { key: string; original: Json; effective: Json; source: string; scope: 'codex' | 'mod'; caller: string }; output: void };
   peer_message: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json; sent_at_ms: number }; output: void };

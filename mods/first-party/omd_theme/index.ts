@@ -8,7 +8,7 @@ type Speed = 'off' | 'slow' | 'normal';
 type Density = 'sparse' | 'normal' | 'dense';
 type Prefs = { scene: string; speed: Speed; density: Density; calm: boolean; image: Sample | null; family: string };
 type Area = { x: number; y: number; columns: number; rows: number };
-type View = { columns: number; rows: number; reduced: boolean; color: boolean; colors: string; phase: string | null; surface: string | null; chat: Area | null; welcome: boolean; raster: string };
+type View = { columns: number; rows: number; reduced: boolean; color: boolean; colors: string; phase: string | null; surface: string | null; chat: Area | null; raster: string };
 type State = { prefs: Prefs | null; view: View | null; run: number; switched: { from: string; at: number } | null; busy: boolean; keep?: { id: string; cell: string } };
 type Remembered = { selected?: string; query?: string };
 type Tick = { run: number; drawn: number; width: number; height: number; look: string; misses: number };
@@ -92,7 +92,9 @@ export default function activate(api: ModAPI) {
     write({ ...patch, prefs });
     api.host.tryCall('store.put', { key: 'prefs', value: prefs as unknown as { [key: string]: Json }, expected_revision: stored()?.revision ?? null, scope: 'user' });
   };
-  const schedule = (tick: Tick, delay: number) => api.host.call('events.schedule', { key: tickKey(tick), delay_ms: Math.max(16, Math.round(delay)) });
+  const schedule = (tick: Tick, delay: number) => {
+    if (read().prefs?.scene !== 'off') api.host.call('events.schedule', { key: tickKey(tick), delay_ms: Math.max(16, Math.round(delay)) });
+  };
   const first = (run: number): Tick => ({ run, drawn: -1, width: 0, height: 0, look: '0', misses: 0 });
   const restart = () => {
     const run = Date.now();
@@ -107,6 +109,11 @@ export default function activate(api: ModAPI) {
 
   api.on('start', begin);
   api.on('resume', begin);
+  api.on('view', ({ phase, view }) => {
+    if (phase !== 'opened' || view !== 'thread' || read().prefs) return;
+    write({ prefs: load() });
+    restart();
+  });
   api.on('channel', ({ channel, data }) => {
     if (channel === 'omd_theme/wake' && typeof data === 'number') schedule(first(data), 16);
   });
@@ -188,8 +195,8 @@ export default function activate(api: ModAPI) {
     const s = read();
     const client = input.client;
     const view: View | null = client ? { columns: client.columns, rows: client.rows, reduced: client.reduced_motion, color: client.graphics !== 'text', colors: client.colors ?? 'truecolor',
-      phase: input.presentation?.phase ?? null, surface: input.presentation?.surface ?? null, chat: client.chat ?? null, welcome: client.welcome !== null,
-      raster: s.view?.raster ?? rasterFor(input.presentation?.thread_id ?? `fresh${s.run}`) } : s.view;
+      phase: input.presentation?.phase ?? null, surface: input.presentation?.surface ?? null, chat: client.chat ?? null,
+      raster: s.view?.raster ?? rasterFor(input.ledger?.thread_id ?? input.presentation?.thread_id ?? `fresh${s.run}`) } : s.view;
     if (JSON.stringify(view) !== JSON.stringify(s.view)) write({ view });
     const prefs = s.prefs;
     if (!prefs || !view) return null;

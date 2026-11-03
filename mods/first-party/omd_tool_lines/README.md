@@ -1,10 +1,12 @@
 # omd_tool_lines
 
-Groups adjacent agent shell commands into one transcript line with counts, the latest active or failed command,
-and running and failure totals. Other tools stay on one line with short arguments and their result. It's on by default in OMD+. OMD Core doesn't include it.
+Groups adjacent agent shell commands into one transcript line with counts, the latest active, failed or interrupted
+command, and running, failure and interruption totals. Other tools stay on one line with short arguments and their
+result. It's on by default in OMD+. OMD Core doesn't include it.
 
 ```text
-• 8 shells cargo test -p codex-omd · ok · 41.3s
+• 8 commands cargo test -p codex-omd · ok · 41.3s
+✗ 2 searches needle · 1 interrupted · 0.2s
 • Edit tui/src/transcript_view/layout.rs · +9 −3
 ✗ Shell pnpm lint · exit 1 · 18 lines · 2.4s
 ```
@@ -33,13 +35,17 @@ It has no settings.
 
 ## Needs and limits
 
-- Groups show a failure count marked `✗`; expand the group for each command and its exit code.
+- It uses the `terminal` and `builtins` capabilities to draw tool rows and group shell commands. Its host needs
+  `render_hooks_v1`, `builtins_v1` and `transcript_exec_groups_v1`.
+- Groups show failed and interrupted command counts separately, marked `✗`; expand the group for each command
+  and its exit code.
 - Shell commands join their group when they start, so its running count includes commands such as `cargo test`.
 - Individual failures stay on one line, marked `✗` with the exit code.
 - Your own `!cmd` commands, approvals, `/diff` and the assistant's messages look the same as before.
 - Inline sessions (`--no-alt-screen`) print one-line rows to scrollback. `Ctrl+T` shows them in full.
 - Narrow terminals shorten names and arguments.
-- Turning the mod off brings back the standard rows at once.
+- Turning the mod off brings back the standard drawing and stops grouping new commands. Existing command groups
+  stay grouped.
 
 ## More
 

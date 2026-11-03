@@ -136,7 +136,7 @@ user contexts. A user context can call only:
 - `workspace.read/list/stat/check_access/transaction/backup/restore`
 - `store.*`
 - the user-action operations (`app.request`, `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`,
-  `packages.*`, `routes.add`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
+  `packages.*`, `routes.add`, `routes.models`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
 - `turns.activity`
 - `events.publish`
@@ -145,7 +145,7 @@ A service call from a user context works only when its provider needs no other h
 
 Component input callbacks also run in the terminal, but not as user actions. They can't call `terminal.selection`,
 `terminal.copy`, `terminal.panel`, `credentials.request`, `terminal.import_file`, `builtins.invoke`,
-`commands.invoke`, `config.set`, `packages.apply`, `routes.add`, `routes.write`, `contract.select` or
+`commands.invoke`, `config.set`, `packages.apply`, `routes.add`, `routes.models`, `routes.write`, `contract.select` or
 `settings.write`.
 
 To run any other operation (`task.*`, `contract.*`, other `routes.*`, `evidence.*`,

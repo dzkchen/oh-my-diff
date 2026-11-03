@@ -2422,6 +2422,21 @@ async fn session_snapshots_need_the_sessions_tools_capability() {
     assert_eq!(refused, "capability_denied: sessions_tools");
 }
 
+#[test]
+fn unchanged_diagnostics_do_not_publish_another_snapshot() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let extension = mods(&fixture.core);
+    extension.views.diagnostic(&fixture.lead.host, "routing", Some("failed".into()));
+    let before = extension.views.published().unwrap();
+    extension.views.diagnostic(&fixture.lead.host, "turn_evidence", None);
+    extension.views.diagnostic(&fixture.lead.host, "routing", Some("failed".into()));
+    assert!(Arc::ptr_eq(&before, &extension.views.published().unwrap()));
+    extension.views.diagnostic(&fixture.lead.host, "routing", None);
+    assert!(extension.views.published().unwrap().diagnostics.is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn aborted_turn_clears_stale_evidence_diagnostics() {
     let Some(fixture) = fixture(&[]) else {

@@ -22,13 +22,13 @@ test('a run of shell calls becomes one summary with failure and running counts',
   const calls = [exec('one'), exec('two', 'failed'), exec('three', 'running')];
   const result = render({ kind: 'explore', call_id: 'one', status: 'running', calls });
   assert.equal(result.value.result.tree.length, 1);
-  assert.match(text(result), /3 shells.*cargo test three.*1 running.*1 failed/);
+  assert.match(text(result), /3 commands.*cargo test three.*1 running.*1 failed/);
 });
 
 test('completed groups summarize their calls without listing every command', () => {
   const result = render({ kind: 'explore', call_id: 'one', status: 'completed', calls: [exec('one'), exec('two')] });
   assert.equal(result.value.result.tree.length, 1);
-  assert.match(text(result), /2 shells.*cargo test two.*ok/);
+  assert.match(text(result), /2 commands.*cargo test two.*ok/);
   assert.doesNotMatch(text(result), /cargo test one/);
 });
 
@@ -36,4 +36,11 @@ test('expanded groups and user shell commands keep the native output', () => {
   for (const props of [{ kind: 'explore', calls: [exec('one'), exec('two')], expanded: true }, { ...exec('one'), user_shell: true }]) {
     assert.deepEqual(render(props).value.result.tree, [{ type: 'native' }]);
   }
+});
+
+test('search groups pluralize their name and distinguish interrupted commands', () => {
+  const calls = [exec('one'), exec('two', 'interrupted')].map(call => ({ ...call, parsed: [{ type: 'search', cmd: 'rg needle', query: 'needle', path: '.' }] }));
+  const result = render({ kind: 'explore', call_id: 'one', status: 'interrupted', calls });
+  assert.match(text(result), /2 searches.*1 interrupted/);
+  assert.doesNotMatch(text(result), /failed|\bok\b/);
 });

@@ -133,6 +133,8 @@ same way: the underlay is dropped and the conflict names that mod.
   raster. Before the first draw a blit is `terminal_blit_unknown`. After a resize the old frame draws clipped until a
   blit at the new size starts a fresh raster; a reply with `frame: 1` and `queued: 1` means the raster restarted, so
   send it whole.
+- Suspended frames are cached by repository, thread, raster key and mod owner. Returning to another context never
+  draws a cached frame from the previous one; an evicted frame needs a fresh blit.
 - Its glyphs are painted after the transcript and before the bottom pane, so popups clear them. Its background
   tint is painted after the bottom pane and before selection, layout regions, the sidebar, overlays, the `welcome`
   site and dialogs, so all of those draw over it.

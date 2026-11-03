@@ -320,6 +320,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "continuation_middleware_v1",
     "builtins_v1",
     "transcript_exec_groups_v1",
+    "terminal_thread_view_v1",
     "contracts_v2",
     "framed_process_v1",
     "process_streams_v1",
@@ -418,6 +419,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_pty_v2",
     "terminal_welcome_hidden_v1",
     "routes_add_self_v1",
+    "routes_add_model_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -506,6 +508,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "packages.apply",
     "packages.reload",
     "routes.add",
+    "routes.models",
     "routes.write",
     "settings.write",
     "terminal.open",

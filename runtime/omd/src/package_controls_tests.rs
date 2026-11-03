@@ -337,6 +337,58 @@ fn listing_offers_host_routes_and_marks_required_selections() {
 }
 
 #[test]
+fn route_choices_add_connected_provider_lead_routes_that_workers_accept() {
+    set_connected_models(|provider, model| {
+        provider == "fixture-provider" && model == "fixture-live"
+    });
+    let (_temp, store, root) = setup();
+    let path = fixture_package(&root, "routed_mod", &["commands"], json!([]));
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+    manifest["settings_schema"] =
+        json!({"type": "object", "properties": {"route": {"type": "string", "choices": "routes"}}});
+    std::fs::write(path.join("mod.json"), manifest.to_string()).unwrap();
+    let sha256 = ModStore::inspect_package(&path).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(path.clone(), &sha256, vec!["commands".into()], "user")
+        .unwrap();
+    store.require(&path).unwrap();
+    let repository = root.join("repo");
+    let revoked = root.join("revoked.json");
+    std::fs::write(&revoked, json!({"repositories": []}).to_string()).unwrap();
+    let lead = |name: &str, model: &str, extra: Value| {
+        let mut route = json!({"name": name, "provider": "fixture-provider", "model": model, "roles": ["lead"]});
+        route
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        route
+    };
+    std::fs::write(
+        store.root().join("host.json"),
+        json!({"routes": [
+            {"name": "worker", "roles": ["worker"]},
+            lead("connected", "fixture-live", json!({})),
+            lead("connected-mine", "fixture-live", json!({"mods": ["routed_mod"]})),
+            lead("connected-theirs", "fixture-live", json!({"mods": ["another_mod"]})),
+            lead("connected-revoked", "fixture-live", json!({"grant": {"path": revoked}})),
+            lead("disconnected", "fixture-gone", json!({})),
+            lead("both-roles", "fixture-live", json!({"roles": ["lead", "worker"], "mods": ["another_mod"]})),
+            {"name": "other-provider", "provider": "elsewhere", "model": "fixture-live", "roles": ["lead"]}]})
+        .to_string(),
+    )
+    .unwrap();
+    let listed = list_fields(&store, None, Value::Null, Some(&repository)).unwrap();
+    assert_eq!(
+        listed["packages"][0]["settings_schema"]["properties"]["route"]["enum"],
+        json!(["worker", "connected", "connected-mine"])
+    );
+}
+
+#[test]
 fn index_pages_follow_the_cursor_to_the_last_entry() {
     let (_temp, store, root) = setup();
     let library = fixture_package(&root, "library_mod", &["store"], json!([]));

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "as_of": "2026-11-02",
+  "as_of": "2026-11-03",
   "host": {
     "codex": "0.166.0",
     "omd": "1.4.1",
@@ -62,6 +62,7 @@
       "continuation_middleware_v1",
       "builtins_v1",
       "transcript_exec_groups_v1",
+      "terminal_thread_view_v1",
       "contracts_v2",
       "framed_process_v1",
       "process_streams_v1",
@@ -159,7 +160,8 @@
       "terminal_colors_v1",
       "terminal_pty_v2",
       "terminal_welcome_hidden_v1",
-      "routes_add_self_v1"
+      "routes_add_self_v1",
+      "routes_add_model_v1"
     ]
   },
   "apis": [

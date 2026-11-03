@@ -12,7 +12,7 @@ pub struct ModHostCall {
 impl ModHostCall {
     fn package_target(&self) -> Option<&'static str> {
         match self.operation.as_str() {
-            "routes.add" => Some("mod"),
+            "routes.add" | "routes.models" => Some("mod"),
             "settings.write" => Some("id"),
             _ => None,
         }
@@ -106,7 +106,7 @@ impl ModHostCall {
             "config.set" => Ok("config.write"),
             "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
             | "packages.reload" | "routes.write" => Ok("packages"),
-            "routes.add" => Ok("agents"),
+            "routes.add" | "routes.models" => Ok("agents"),
             "settings.write" => Ok("commands"),
             "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
             "mcp.connect" | "mcp.disconnect" => Ok("mcp"),

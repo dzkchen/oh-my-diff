@@ -85,11 +85,13 @@ impl Views {
         self.published.lock().ok()?.clone()
     }
 
-    fn update(&self, owner: &Host, change: impl FnOnce(&mut State)) {
+    fn update(&self, owner: &Host, change: impl FnOnce(&mut State) -> bool) {
         let Ok(mut state) = self.state.lock() else {
             return;
         };
-        change(&mut state);
+        if !change(&mut state) {
+            return;
+        }
         state.snapshot.native_diagnostics = state
             .diagnostics
             .iter()
@@ -150,19 +152,25 @@ impl Views {
                     .diagnostics
                     .insert(format!("terminal:{index}"), visible(&diagnostic, 512));
             }
+            true
         });
     }
 
     pub(super) fn diagnostic(&self, owner: &Host, key: &str, message: Option<String>) {
-        self.update(owner, |state| match message {
-            Some(message) => {
-                state
-                    .diagnostics
-                    .insert(key.to_owned(), visible(&message, 512));
+        self.update(owner, |state| {
+            let message = message.map(|message| visible(&message, 512));
+            if state.diagnostics.get(key) == message.as_ref() {
+                return false;
             }
-            None => {
-                state.diagnostics.remove(key);
+            match message {
+                Some(message) => {
+                    state.diagnostics.insert(key.to_owned(), message);
+                }
+                None => {
+                    state.diagnostics.remove(key);
+                }
             }
+            true
         });
     }
 
@@ -178,6 +186,7 @@ impl Views {
                 title: visible(label, 128),
                 lines: lines[start..].to_vec(),
             });
+            true
         });
     }
 
@@ -194,6 +203,7 @@ impl Views {
             });
             let excess = state.snapshot.activity.len().saturating_sub(32);
             state.snapshot.activity.drain(..excess);
+            true
         });
     }
 }

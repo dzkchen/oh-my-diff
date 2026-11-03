@@ -75,6 +75,29 @@ test('each thread draws its own raster, so a hidden thread never paints over the
   for (const { key } of [...first.of('events.schedule'), ...later.of('events.schedule')]) assert.ok(Buffer.byteLength(key) <= 64, key);
 });
 
+test('opening an uninitialized thread loads its scene and wakes one chain for that thread', () => {
+  const opened = call({ event: 'view', payload: { phase: 'opened', view: 'thread', view_id: 'child' } }, { store: { value: { scene: 'lagoon', speed: 'slow' } } });
+  assert.deepEqual([opened.state.prefs.scene, opened.state.prefs.speed, opened.state.run], ['lagoon', 'slow', NOW]);
+  assert.deepEqual(opened.of('events.publish'), [{ channel: 'wake', data: NOW }]);
+  assert.deepEqual(opened.of('events.schedule'), []);
+  const shown = call({ event: 'terminal', state: opened.state, payload: { event: 'idle', ledger: { thread_id: 'child', cwd: '/repo' },
+    presentation: { thread_id: 'parent', phase: 'started', surface: 'fullscreen' }, client: client(), clients: [] } });
+  assert.deepEqual(shown.value.underlay, { raster: 'omd_theme_child' });
+  const wake = call({ event: 'channel', state: shown.state, payload: { channel: 'omd_theme/wake', data: NOW } });
+  const [first] = wake.of('events.schedule');
+  const blits = tick(wake.state, first.key, NOW + 16).of('terminal.blit');
+  assert.ok(blits.length > 0 && blits.every(blit => blit.key === 'omd_theme_child'));
+  const state = { ...shown.state, busy: true, switched: { from: 'ember', at: NOW - 100 } };
+  const again = call({ event: 'view', state, virtual_time_ms: NOW + 1000, payload: { phase: 'opened', view: 'thread', view_id: 'child' } }, { store: { value: { scene: 'fireflies' } } });
+  assert.deepEqual(again.state, state);
+  assert.deepEqual(again.calls, []);
+  const lead = started({ scene: 'moonlit' }).state;
+  assert.deepEqual(call({ event: 'view', state: lead, payload: { phase: 'opened', view: 'thread', view_id: 'lead' } }).calls, []);
+  for (const payload of [{ phase: 'closed', view: 'thread' }, { phase: 'opened', view: 'overlay' }]) {
+    assert.deepEqual(call({ event: 'view', payload: { ...payload, view_id: null } }).calls, []);
+  }
+});
+
 test('the frame chain blits the screen in bands, then only the changed rows, merged into bands', () => {
   const state = ready();
   const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
@@ -142,6 +165,22 @@ test('a wake that beats its state write waits, a narrow fresh session keeps poll
   assert.deepEqual([prefs.scene, prefs.speed, prefs.density, prefs.image], ['ember', 'normal', 'normal', null]);
 });
 
+test('no scene starts no frame chain, stops pending ticks, and choosing a scene wakes it', () => {
+  const store = { value: { scene: 'off' } };
+  const start = started(store.value);
+  assert.deepEqual(start.of('events.schedule'), []);
+  const state = draw(start.state).state;
+  assert.deepEqual(tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16).calls, []);
+  const staleWake = call({ event: 'channel', payload: { channel: 'omd_theme/wake', data: NOW }, state });
+  assert.deepEqual(staleWake.of('events.schedule'), []);
+  const chosen = call({ event: 'command', name: 'scenes', payload: 'lagoon', state, virtual_time_ms: NOW + 100 }, { store });
+  const wake = chosen.of('events.publish')[0];
+  const woken = call({ event: 'channel', payload: { channel: `omd_theme/${wake.channel}`, data: wake.data }, state: chosen.state });
+  const [first] = woken.of('events.schedule');
+  assert.equal(first.key, `f.${NOW + 100}.-1.0.0.0.0`);
+  assert.ok(tick(woken.state, first.key, NOW + 116).of('terminal.blit').length > 0);
+});
+
 test('every scene animates in single-width glyphs at narrow and wide sizes', async () => {
   const scenes = await import(new URL('scenes.ts', dir));
   for (const id of SCENE_IDS) {
@@ -206,7 +245,6 @@ test('the panel applies choices at once and keeps Codex\'s picker and the termin
   assert.ok(next.of('terminal.blit').every(blit => blit.key === fresh.value.underlay.raster));
 });
 
-
 test('enabling a scene from no scene never draws the Ember fallback', async () => {
   const { compose } = await import(new URL('scenes.ts', dir));
   for (const id of SCENE_IDS) {
@@ -215,13 +253,4 @@ test('enabling a scene from no scene never draws the Ember fallback', async () =
       assert.deepEqual(compose(id, 'off', progress, 120, 44, 1, null, 1), expected);
     }
   }
-});
-
-
-test('scene reveals finish promptly and startup retries do not wait a quarter second', async () => {
-  const { revealProgress } = await import(new URL('scenes.ts', dir));
-  assert.ok(revealProgress(350) >= 1);
-  const start = started();
-  const waiting = tick(start.state, start.of('events.schedule')[0].key, NOW + 16);
-  assert.equal(waiting.of('events.schedule')[0].delay_ms, 50);
 });

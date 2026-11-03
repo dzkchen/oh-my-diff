@@ -1264,15 +1264,15 @@ fn thread_scoped_terminal_handlers_wait_for_a_thread_without_diagnostics() {
     let path = package(
         &root,
         "fixture",
-        "export default api => api.on('terminal', () => ({greeting:'ready'}))",
-        &["terminal"],
+        "export default api => api.on('terminal', () => { api.state.set(Number(api.state.get() ?? 0)+1); return {greeting:String(api.state.get())}; })",
+        &["terminal", "store"],
     );
     let manifest_path = path.join("mod.json");
     let mut manifest: Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     manifest["state_scope"] = json!("thread");
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    trust(&store, &path, &["terminal"]);
+    trust(&store, &path, &["terminal", "store"]);
     let mut runtime = host(&temp);
     let preview = runtime.terminal_view(
         json!({"event":"startup","ledger":null,"presentation":{"thread_id":null,"phase":"fresh"}}),
@@ -1280,16 +1280,19 @@ fn thread_scoped_terminal_handlers_wait_for_a_thread_without_diagnostics() {
     );
     assert!(preview.diagnostics.is_empty(), "{:?}", preview.diagnostics);
     assert!(preview.contributors.is_empty());
-    let live = runtime.terminal_view(json!({"event":"start","ledger":{"thread_id":"t1"}}), || {
-        true
-    });
-    assert!(live.diagnostics.is_empty(), "{:?}", live.diagnostics);
-    assert_eq!(
-        live.view.greeting.as_deref(),
-        Some("ready"),
-        "{}",
-        runtime.status()
-    );
+    for (thread, count) in [("t1", "1"), ("t2", "1"), ("t1", "2")] {
+        let live = runtime.terminal_view(
+            json!({"event":"start","ledger":{"thread_id":thread}}),
+            || true,
+        );
+        assert!(live.diagnostics.is_empty(), "{:?}", live.diagnostics);
+        assert_eq!(
+            live.view.greeting.as_deref(),
+            Some(count),
+            "{}",
+            runtime.status()
+        );
+    }
 }
 
 #[test]

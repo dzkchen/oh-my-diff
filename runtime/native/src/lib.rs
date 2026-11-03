@@ -210,6 +210,10 @@ pub fn install(
     });
     let root = host.root.clone();
     model_windows::load(&root);
+    codex_omd::package_controls::set_connected_models(|provider, model| {
+        codex_models_manager::runtime_models::find(model)
+            .is_some_and(|(owner, _)| owner == provider)
+    });
     mods::install(registry, host).or_else(|error| inactive(&root, error))
 }
 
