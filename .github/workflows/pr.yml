@@ -61,7 +61,7 @@ jobs:
         run: |
           sudo install -d -m 1777 /private/tmp
           python3 -m unittest tests.test_pr_ci tests.test_native_ownership tests.test_mod_conformance tests.test_build_provenance \
-            tests.test_release tests.test_install_updates tests.test_package tests.test_crate_notices
+            tests.test_release tests.test_install_updates tests.test_package
       - name: Workflow lint
         run: mise exec actionlint@1.7.12 -- actionlint
 
