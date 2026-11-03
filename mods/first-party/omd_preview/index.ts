@@ -132,7 +132,9 @@ export default function activate(api: ModAPI) {
       return text && !clean(text).trim() ? refuse('no printable text') : show(path, kind, text, more);
     }
     const stored = watches(api.host.call('store.get', { key: 'watch' }));
-    const watch = watched ? [...new Set([...stored.watch, path])] : stored.watch;
+    const listed = watched ? [...new Set([...stored.watch, path])] : stored.watch;
+    const present = listed.length > MAX_WATCHES ? api.host.call('workspace.stat', { paths: stored.watch }).files : {};
+    const watch = listed.length > MAX_WATCHES ? listed.filter(item => item === path || present[item]) : listed;
     if (watch.length > MAX_WATCHES) return { display: `At most ${MAX_WATCHES} files can be watched; use /preview unwatch` };
     const result = open(render(outputFor(path), path, path, undefined, watch.includes(path)), path);
     if (!watched) return result;

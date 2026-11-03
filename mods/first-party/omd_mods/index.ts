@@ -366,7 +366,8 @@ export default function activate(api: ModAPI) {
     if (target) return presenting(target, { ...state, review: null, choosing: null, notice: null });
     const next = act(state, verb, rest.join(' ')) ?? saved();
     store(next);
-    return { display: [next.notice, next.review && `${reviewText(next.review)}\nRun /mods apply or /mods cancel`].filter(Boolean).join('\n') || 'No change' };
+    const fallback = verb === 'cancel' ? state.review || state.choosing ? 'Cancelled' : 'Nothing to cancel' : 'No change';
+    return { display: [next.notice, next.review && `${reviewText(next.review)}\nRun /mods apply or /mods cancel`].filter(Boolean).join('\n') || fallback };
   }, { description: 'Browse and install mods, turn them on or off and change their settings' });
 
   const wrap = (text: string) => text.split(' ').reduce<string[]>((rows, word) => {
