@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 
+from scripts import build_provenance
 from scripts.pr_ci import gate, needs_native
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".github/scripts"))
@@ -104,6 +105,18 @@ class HostedJobs(unittest.TestCase):
                 self.assertTrue(set(ci.SUITE_CRATES[suite]) <= set(selected))
                 self.assertTrue(set(ci.HELPERS) <= set(selected))
         self.assertEqual(ci.scope("core"), ci.scope("core-integration"))
+
+    def test_build_targets_match_shipped_binaries_and_required_test_helpers(self):
+        shipped = [name for flag, name in zip(build.BUILD, build.BUILD[1:]) if flag == "--bin"]
+        self.assertCountEqual(shipped, build_provenance.BINARIES)
+        self.assertNotIn("--bins", build.BUILD)
+        expected = {"omd-runner", "codex", "codex-code-mode-host", "rmcp_test_server", "test_stdio_server",
+                    "test_streamable_http_server", "test_mcp_2026_stdio_server", "test_mcp_2026_discovery_stdio_server"}
+        for job in ("native", "core"):
+            args = self.steps(job)["test helper binaries"].argv
+            selected = {name for flag, name in zip(args, args[1:]) if flag == "--bin"}
+            self.assertEqual(selected, expected)
+            self.assertNotIn("--bins", args)
 
     def test_runner_is_built_with_the_packages_of_the_test_run(self):
         args = ["nextest", "run", "--locked", "-p", "codex-core", "-p", "codex-omd-runner", "--lib"]

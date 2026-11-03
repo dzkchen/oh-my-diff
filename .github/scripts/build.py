@@ -21,7 +21,8 @@ TMP = Path(os.environ.get("OMD_WORK_ROOT", "/private/tmp"))
 SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
-         "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bins"]
+         "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bin", "codex-code-mode-host", "--bin", "omd",
+         "--bin", "omd-contract", "--bin", "omd-broker", "--bin", "omd-mod", "--bin", "omd-runner"]
 CHECK = ["check", "--locked", "-p", "codex-cli", "-p", "codex-exec", "-p", "codex-omd", "-p", "codex-omd-runner",
          "-p", "codex-omd-extension", "-p", "codex-tui", "-p", "codex-core", "-p", "codex-core-plugins", "-p", "codex-git-utils",
          "--tests"]
