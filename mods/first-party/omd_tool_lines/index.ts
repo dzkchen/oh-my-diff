@@ -17,10 +17,15 @@ const widthOf = (text: string) => ASCII.test(text) ? text.length : [...segmenter
 
 const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   if (cells < 1 || chars < 1 || limit < 3) return '';
-  const flat = text.replace(/\s+/g, ' ').trim();
-  if (ASCII.test(flat)) return flat.length <= Math.min(cells, chars, limit) ? flat : `${flat.slice(0, Math.min(cells - 1, chars - 1, limit - 3))}…`;
+  // Slice before flattening: renders refit the same command every frame, so a huge heredoc must not be scanned whole each time. Kept output never exceeds min(chars, limit) code units, so one past that bound is enough to detect truncation.
+  const bound = Math.min(chars, limit) + 1;
+  const cut = text.length > bound;
+  let sliced = cut ? text.slice(0, bound) : text;
+  if (cut && sliced.charCodeAt(sliced.length - 1) >= 0xd800 && sliced.charCodeAt(sliced.length - 1) <= 0xdbff) sliced = sliced.slice(0, -1);
+  const flat = sliced.replace(/\s+/g, ' ').trim();
+  if (ASCII.test(flat)) return !cut && flat.length <= Math.min(cells, chars, limit) ? flat : `${flat.slice(0, Math.min(cells - 1, chars - 1, limit - 3))}…`;
   const all = [...flat];
-  if (all.length <= chars && widthOf(flat) <= cells && bytes(flat) <= limit) return flat;
+  if (!cut && all.length <= chars && widthOf(flat) <= cells && bytes(flat) <= limit) return flat;
   const kept: string[] = [];
   let width = 1;
   let size = 3;

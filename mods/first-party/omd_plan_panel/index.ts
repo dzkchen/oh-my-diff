@@ -40,20 +40,31 @@ export default function activate(api: ModAPI) {
         status: (Object.hasOwn(GLYPH, String(item.status)) ? item.status : 'pending') as Status,
       }));
       state.plans[thread] = { steps, seq: ++state.seq };
-      const newest = Object.keys(state.plans).sort((a, b) => state.plans[b].seq - state.plans[a].seq);
-      while (newest.length > 1 && (newest.length > THREADS || utf8.encode(JSON.stringify(state)).length > BYTES)) delete state.plans[newest.pop()!];
+      // Evict finished plans first, then the oldest, so an active plan outlives a completed one.
+      const finished = (key: string) => state.plans[key].steps.every(step => step.status === 'completed');
+      const evict = Object.keys(state.plans).sort((a, b) => Number(finished(b)) - Number(finished(a)) || state.plans[a].seq - state.plans[b].seq);
+      while (evict.length > 1 && (evict.length > THREADS || utf8.encode(JSON.stringify(state)).length > BYTES)) delete state.plans[evict.shift()!];
     } else if (method === 'turn/started' && state.plans[thread]?.steps.every(step => step.status === 'completed')) delete state.plans[thread];
     else return;
     save(state);
   });
 
   api.command('todos', value => {
+    const arg = String(value ?? '').trim();
+    if (arg === 'clear') {
+      const state = load();
+      const thread = api.session().thread_id;
+      if (!thread || !state.plans[thread]) return { display: 'No plan to clear for this thread.' };
+      delete state.plans[thread];
+      save(state);
+      return { display: 'Plan cleared.' };
+    }
     const current = view();
-    if (String(value ?? '').trim() === 'toggle') current.collapsed = !current.collapsed;
+    if (arg === 'toggle') current.collapsed = !current.collapsed;
     else current.all = !current.all;
     api.uiState.set(current as unknown as Json);
     return null;
-  }, { description: 'Toggle the plan panel between its row limit and every step (/todos toggle or Alt+p collapses it)' });
+  }, { description: 'Toggle the plan panel between its row limit and every step (/todos toggle or Alt+p collapses it); /todos clear drops the plan for this thread' });
 
   api.on('terminal', ({ ledger }): TerminalPatch | null => {
     const steps = ledger ? load().plans[ledger.thread_id]?.steps ?? [] : [];
