@@ -133,7 +133,7 @@ test('a turn darkens and pauses the scene, a still scene draws once, and both on
 
 test('a wake that beats its state write waits, a narrow fresh session keeps polling, and stale stored choices fall back', () => {
   const state = ready();
-  assert.deepEqual(tick(state, `f.${NOW + 5}.-1.0.0.0.0`, NOW + 20).of('events.schedule'), [{ key: `f.${NOW + 5}.-1.0.0.0.1`, delay_ms: 250 }]);
+  assert.deepEqual(tick(state, `f.${NOW + 5}.-1.0.0.0.0`, NOW + 20).of('events.schedule'), [{ key: `f.${NOW + 5}.-1.0.0.0.1`, delay_ms: 50 }]);
   const narrow = draw(state, { columns: 50 }).state;
   assert.deepEqual(tick(narrow, `f.${NOW}.-1.0.0.0.0`, NOW + 5000).of('events.schedule'), [{ key: `f.${NOW}.-1.0.0.0.0`, delay_ms: 1000 }]);
   assert.deepEqual(tick(draw(state, { surface: 'inline' }).state, `f.${NOW}.-1.0.0.0.0`, NOW + 5000).calls, []);
@@ -204,4 +204,24 @@ test('the panel applies choices at once and keeps Codex\'s picker and the termin
   const next = tick(sent.state, frame.of('events.schedule')[0].key, NOW + 141);
   assert.ok(next.of('terminal.blit').length > 0);
   assert.ok(next.of('terminal.blit').every(blit => blit.key === fresh.value.underlay.raster));
+});
+
+
+test('enabling a scene from no scene never draws the Ember fallback', async () => {
+  const { compose } = await import(new URL('scenes.ts', dir));
+  for (const id of SCENE_IDS) {
+    const expected = compose(id, null, 1, 120, 44, 1, null, 1);
+    for (const progress of [0, 0.1, 0.5]) {
+      assert.deepEqual(compose(id, 'off', progress, 120, 44, 1, null, 1), expected);
+    }
+  }
+});
+
+
+test('scene reveals finish promptly and startup retries do not wait a quarter second', async () => {
+  const { revealProgress } = await import(new URL('scenes.ts', dir));
+  assert.ok(revealProgress(350) >= 1);
+  const start = started();
+  const waiting = tick(start.state, start.of('events.schedule')[0].key, NOW + 16);
+  assert.equal(waiting.of('events.schedule')[0].delay_ms, 50);
 });

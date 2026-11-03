@@ -65,3 +65,11 @@ fn removed_features_must_be_known_and_compose_from_every_owner() {
         vec!["one".to_owned(), "two".to_owned()]
     );
 }
+
+#[test]
+fn command_grouping_is_opt_in_and_combines_owners() {
+    let controls = BuiltinControls::parse(&json!({"group_exec": true})).unwrap();
+    assert!(BuiltinSnapshot::from_controls(&[("one".into(), controls)]).group_exec);
+    assert!(!BuiltinSnapshot::from_controls(&[]).group_exec);
+    assert!(BuiltinControls::parse(&json!({"group_exec": "yes"})).is_err());
+}

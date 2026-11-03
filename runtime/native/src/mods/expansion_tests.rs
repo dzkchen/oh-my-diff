@@ -2423,6 +2423,203 @@ async fn session_snapshots_need_the_sessions_tools_capability() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn turn_evidence_survives_reload_and_clears_stale_diagnostics() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["lifecycle", "sessions"],
+        manifest: Value::Null,
+        source: "export default api => api.on('turn_end', () => null)",
+    }]) else {
+        return;
+    };
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&fixture.lead.host.repository)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let _manager = attach_thread(&mut fixture).await;
+    let cursor = super::super::evidence::begin(&fixture.core, &fixture.lead)
+        .await
+        .unwrap();
+    let generation = fixture.core.runtime.lock().unwrap().generation();
+    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
+    install(
+        &store,
+        &fixture._dir.path().join("packages"),
+        &Package {
+            id: "late",
+            capabilities: &["lifecycle", "sessions"],
+            manifest: Value::Null,
+            source: "export default api => api.on('turn_end', () => null)",
+        },
+    );
+    assert!(
+        fixture
+            .core
+            .runtime
+            .lock()
+            .unwrap()
+            .refresh_authority()
+            .unwrap()
+    );
+    assert!(fixture.core.runtime.lock().unwrap().generation() > generation);
+    let private = super::super::evidence::finish(
+        &fixture.core,
+        &fixture.lead,
+        &cursor,
+        "turn-reloaded",
+        "completed",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        private.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["observer"]
+    );
+    assert!(private["observer"]["evidence"].is_object());
+    let extension = mods(&fixture.core);
+    extension.views.diagnostic(
+        &fixture.lead.host,
+        "turn_evidence",
+        Some("evidence_generation_changed".into()),
+    );
+    assert_eq!(
+        extension.views.published().unwrap().diagnostics,
+        vec!["evidence_generation_changed"]
+    );
+    extension.turns.lock().unwrap().insert(
+        fixture.lead.thread.to_string(),
+        super::super::TurnRecord {
+            turn_id: "turn-cleared".into(),
+            error: None,
+            evidence: Some(cursor),
+        },
+    );
+    let session_store = ExtensionData::new("session");
+    let thread_store = ExtensionData::new(fixture.lead.thread.to_string());
+    thread_store.insert(fixture.lead.clone());
+    let turn_store = ExtensionData::new("turn-cleared");
+    extension
+        .on_turn_stop(codex_extension_api::TurnStopInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+        })
+        .await;
+    assert!(extension.views.published().unwrap().diagnostics.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turn_evidence_excludes_replaced_and_disabled_subscribers() {
+    for changed_source in [false, true] {
+        let packages = ["observer", "stable"].map(|id| Package {
+            id,
+            capabilities: &["lifecycle", "sessions"],
+            manifest: Value::Null,
+            source: "export default api => api.on('turn_end', () => null)",
+        });
+        let Some(mut fixture) = fixture(&packages) else {
+            return;
+        };
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&fixture.lead.host.repository)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let _manager = attach_thread(&mut fixture).await;
+        let cursor = super::super::evidence::begin(&fixture.core, &fixture.lead)
+            .await
+            .unwrap();
+        let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
+        let path = fixture
+            ._dir
+            .path()
+            .join("packages/observer")
+            .canonicalize()
+            .unwrap();
+        if changed_source {
+            std::fs::write(
+                path.join("index.ts"),
+                "export default api => api.on('turn_end', () => {})",
+            )
+            .unwrap();
+            let inspected = ModStore::inspect_package(&path).unwrap();
+            store
+                .trust(
+                    path.clone(),
+                    inspected["sha256"].as_str().unwrap(),
+                    vec!["lifecycle".into(), "sessions".into()],
+                    "user",
+                )
+                .unwrap();
+            store.enable(&path, true).unwrap();
+        } else {
+            store.enable(&path, false).unwrap();
+        }
+        assert!(
+            fixture
+                .core
+                .runtime
+                .lock()
+                .unwrap()
+                .refresh_authority()
+                .unwrap()
+        );
+        let private = super::super::evidence::finish(
+            &fixture.core,
+            &fixture.lead,
+            &cursor,
+            "turn-reloaded",
+            "completed",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            private.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["stable"]
+        );
+        store
+            .enable(
+                &fixture
+                    ._dir
+                    .path()
+                    .join("packages/stable")
+                    .canonicalize()
+                    .unwrap(),
+                false,
+            )
+            .unwrap();
+        assert!(
+            fixture
+                .core
+                .runtime
+                .lock()
+                .unwrap()
+                .refresh_authority()
+                .unwrap()
+        );
+        assert!(
+            super::super::evidence::finish(
+                &fixture.core,
+                &fixture.lead,
+                &cursor,
+                "turn-without-subscribers",
+                "completed",
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn evidence_replaces_a_partial_leftover_but_keeps_complete_records() {
     let Some(fixture) = fixture(&[]) else {
         return;

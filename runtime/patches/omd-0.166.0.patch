@@ -38959,7 +38959,7 @@ index 6dca72b967401eb12ddea3eedcbad743c3062bc5..1c565d210673b0e9f80fa6cfc8914fa0
  }
 
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index 5e4dee0ff5220ffbfcd92f88be3320ef2cd0e7d1..a184b3e19ad2759edbc7a852adfd98d1a19db10f 100644
+index 5e4dee0ff5220ffbfcd92f88be3320ef2cd0e7d1..4139b72b03b3a281b99be3857f9ea102c559cc0b 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
 @@ -73,6 +73,11 @@ use std::time::Duration;
@@ -39029,7 +39029,22 @@ index 5e4dee0ff5220ffbfcd92f88be3320ef2cd0e7d1..a184b3e19ad2759edbc7a852adfd98d1
      pub(crate) fn composer_text_with_pending(&self) -> String {
          self.composer.current_text_with_pending()
      }
-@@ -1525,6 +1547,42 @@ impl BottomPane {
+@@ -1431,6 +1453,14 @@ impl BottomPane {
+     }
+
+     /// Hide the status indicator while leaving task-running state untouched.
++    pub(crate) fn sync_task_status_indicator(&mut self) {
++        if self.is_task_running() {
++            self.ensure_status_indicator();
++        } else {
++            self.hide_status_indicator();
++        }
++    }
++
+     pub(crate) fn hide_status_indicator(&mut self) {
+         if self.status.take().is_some() {
+             self.request_redraw();
+@@ -1525,6 +1555,42 @@ impl BottomPane {
          }
      }
 
@@ -39072,7 +39087,7 @@ index 5e4dee0ff5220ffbfcd92f88be3320ef2cd0e7d1..a184b3e19ad2759edbc7a852adfd98d1
      /// Replace the active selection view when it matches `view_id`.
      pub(crate) fn replace_selection_view_if_active(
          &mut self,
-@@ -1902,6 +1960,13 @@ impl BottomPane {
+@@ -1902,6 +1968,13 @@ impl BottomPane {
          self.view_stack.last().and_then(|view| view.view_id())
      }
 
@@ -39086,7 +39101,7 @@ index 5e4dee0ff5220ffbfcd92f88be3320ef2cd0e7d1..a184b3e19ad2759edbc7a852adfd98d1
      /// Return true when the pane is in the regular composer state without any
      /// overlays or popups and not running a task. This is the safe context to
      /// use Esc-Esc for backtracking from the main view.
-@@ -2322,6 +2387,10 @@ impl BottomPane {
+@@ -2322,6 +2395,10 @@ impl BottomPane {
              || self.composer.is_in_paste_burst()
      }
 
@@ -40918,6 +40933,24 @@ index 79a90185372e2941a374eb00703bcb0fae7e0ad5..8837b33acea9998eb97fd37e62104de2
              | SlashCommand::Plan
              | SlashCommand::Goal
              | SlashCommand::Side
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__single_line_final_answer_hides_working_status.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__single_line_final_answer_hides_working_status.snap
+index dfa6b7a09b1543c876afa85bac21a8bc0e35f297..f5b6cdd6e1043ad83c9f62cafaafd4ec1a733764 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__single_line_final_answer_hides_working_status.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__single_line_final_answer_hides_working_status.snap
+@@ -3,11 +3,11 @@ source: tui/src/chatwidget/tests/status_and_layout.rs
+ expression: normalize_snapshot_paths(terminal.backend().vt100().screen().contents())
+ ---
+
+-› count to 1
+-
+
+ • 1
+
++• Working (0s • esc to interrupt)
++
+
+ › Ask Codex to do anything
+
 diff --git a/codex-rs/tui/src/chatwidget/status_controls.rs b/codex-rs/tui/src/chatwidget/status_controls.rs
 index 046c55bc19b6ad1b256a33f408fa8876e3e0e488..0515c1dc1a670cfceee2c3e9c39d1c09c3259e7f 100644
 --- a/codex-rs/tui/src/chatwidget/status_controls.rs
@@ -41042,6 +41075,78 @@ index 997c3a2be6f3597815e5a876c5f9c3fd59fe87e1..34427628248fe8a0b370c6c2c0bc1b16
          parse_items_with_invalids(self.configured_status_line_items())
      }
 
+diff --git a/codex-rs/tui/src/chatwidget/streaming.rs b/codex-rs/tui/src/chatwidget/streaming.rs
+index 6229fd735a415ec0a0dfd1763740d0bee7075392..159079ab5d527f7b4452bb00c89149af8c86a34b 100644
+--- a/codex-rs/tui/src/chatwidget/streaming.rs
++++ b/codex-rs/tui/src/chatwidget/streaming.rs
+@@ -108,10 +108,8 @@ impl ChatWidget {
+             } else {
+                 crate::app_event::ConsolidationScrollbackReflow::IfResizeReflowRan
+             };
+-            // Match newline-committed streaming behavior: once assistant output is ready to be
+-            // committed into history, hide the inline status row so transcript content replaces it.
+             if cell.is_some() {
+-                self.bottom_pane.hide_status_indicator();
++                self.bottom_pane.sync_task_status_indicator();
+             }
+             let deferred_history_cell =
+                 if scrollback_reflow == crate::app_event::ConsolidationScrollbackReflow::Required {
+@@ -463,7 +461,7 @@ impl ChatWidget {
+         {
+             self.prepare_assistant_message();
+             self.mark_safety_buffering_agent_message_started();
+-            self.bottom_pane.hide_status_indicator();
++            self.bottom_pane.sync_task_status_indicator();
+             let context = self.thread_id.and_then(|thread_id| {
+                 crate::inline_visualization::InlineVisualizationContext::from_config(
+                     &self.config,
+@@ -537,10 +535,6 @@ impl ChatWidget {
+
+     /// Runs a commit tick for the current stream queue snapshot.
+     ///
+-    /// `scope` controls whether this call may commit in smooth mode or only when catch-up
+-    /// is currently active. While lines are actively streaming we hide the status row to avoid
+-    /// duplicate "in progress" affordances. Restoration is gated separately so we only re-show
+-    /// the row after commentary completion once stream queues are idle.
+     pub(super) fn run_commit_tick_with_scope(&mut self, scope: CommitTickScope) {
+         let now = Instant::now();
+         let outcome = run_commit_tick(
+@@ -551,7 +545,7 @@ impl ChatWidget {
+             now,
+         );
+         for cell in outcome.cells {
+-            self.bottom_pane.hide_status_indicator();
++            self.bottom_pane.sync_task_status_indicator();
+             self.add_boxed_history(cell);
+         }
+         if scope == CommitTickScope::AnyMode || outcome.has_controller {
+@@ -600,7 +594,7 @@ impl ChatWidget {
+
+     pub(super) fn handle_stream_finished(&mut self) {
+         if self.task_complete_pending {
+-            self.bottom_pane.hide_status_indicator();
++            self.bottom_pane.sync_task_status_indicator();
+             self.task_complete_pending = false;
+         }
+         // A completed stream indicates non-exec content was just inserted.
+@@ -668,7 +662,7 @@ impl ChatWidget {
+                 return self.clear_active_stream_tail();
+             }
+
+-            self.bottom_pane.hide_status_indicator();
++            self.bottom_pane.sync_task_status_indicator();
+             let cell = history_cell::StreamingAgentTailCell::new(
+                 tail_lines,
+                 controller.tail_starts_stream(),
+@@ -697,7 +691,7 @@ impl ChatWidget {
+                 return self.clear_active_stream_tail();
+             }
+
+-            self.bottom_pane.hide_status_indicator();
++            self.bottom_pane.sync_task_status_indicator();
+             let cell = history_cell::StreamingPlanTailCell::new(
+                 tail_lines,
+                 !controller.tail_starts_stream(),
 diff --git a/codex-rs/tui/src/chatwidget/tests.rs b/codex-rs/tui/src/chatwidget/tests.rs
 index 42f292b52b0af893e7b1621b7e164b2db1b4fbbe..45fbbd15e9d828501d2de340b758878ceffcfdd4 100644
 --- a/codex-rs/tui/src/chatwidget/tests.rs
@@ -41056,7 +41161,7 @@ index 42f292b52b0af893e7b1621b7e164b2db1b4fbbe..45fbbd15e9d828501d2de340b758878c
 
  #[path = "tests/questions_tests.rs"]
 diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..76e40f30a02af69fba71c667b920fff91ec7f8f7 100644
+index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..065f85928860c8984ea870ca2593d8035e210e4d 100644
 --- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
 @@ -70,6 +70,38 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
@@ -41098,6 +41203,28 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..76e40f30a02af69fba71c667b920fff9
  #[tokio::test]
  async fn session_header_uses_catalog_display_name_without_changing_model() {
      let slug = "us.openai.gpt-5.6-luna";
+@@ -1883,7 +1915,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
+     assert_eq!(chat.status_state.current_status.header, "Working");
+     assert_eq!(chat.status_state.current_status.details, None);
+     assert!(chat.status_state.retry_status_header.is_none());
+-    assert!(chat.bottom_pane.status_widget().is_none());
++    assert!(chat.bottom_pane.status_widget().is_some());
+     assert!(chat.active_cell_is_stream_tail());
+ }
+
+diff --git a/codex-rs/tui/src/chatwidget/tests/compaction_tests.rs b/codex-rs/tui/src/chatwidget/tests/compaction_tests.rs
+index 291dc844f40957af725f78dee245815e81c161b2..0b51235e4f3a1d6ae5e5205fb0e6287184b3cc27 100644
+--- a/codex-rs/tui/src/chatwidget/tests/compaction_tests.rs
++++ b/codex-rs/tui/src/chatwidget/tests/compaction_tests.rs
+@@ -36,7 +36,7 @@ async fn compaction_status_survives_follow_up_and_preserves_turn_time() {
+         .reset_status_timer(Duration::from_secs(/*secs*/ 600));
+     chat.on_agent_message_delta("Previous commentary\n".to_string());
+     chat.on_commit_tick();
+-    assert!(!chat.bottom_pane.status_indicator_visible());
++    assert!(chat.bottom_pane.status_indicator_visible());
+     chat.handle_server_notification(compaction_started("compact-1"), /*replay_kind*/ None);
+     chat.on_commit_tick();
+     assert!(chat.bottom_pane.status_indicator_visible());
 diff --git a/codex-rs/tui/src/chatwidget/tests/composer_submission.rs b/codex-rs/tui/src/chatwidget/tests/composer_submission.rs
 index 4b77a7722db2ba338e1c7034a54bc7ac59ae8f65..734e1715b0187166b8eea564439fded02d4c96a2 100644
 --- a/codex-rs/tui/src/chatwidget/tests/composer_submission.rs
@@ -41155,6 +41282,19 @@ index 4b77a7722db2ba338e1c7034a54bc7ac59ae8f65..734e1715b0187166b8eea564439fded0
  #[tokio::test]
  async fn reconnect_keeps_queue_paused_after_pending_compact() {
      let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
+diff --git a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
+index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..4b20c1cf33ae8c780390f3fa111a4361569d99a4 100644
+--- a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
++++ b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
+@@ -864,7 +864,7 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
+             .reset_status_timer(Duration::from_secs(/*secs*/ 125));
+         handle_agent_message_delta(&mut chat, "Final response.\n");
+         chat.on_commit_tick();
+-        assert!(!chat.bottom_pane.status_indicator_visible());
++        assert!(chat.bottom_pane.status_indicator_visible());
+
+         complete_assistant_message(
+             &mut chat,
 diff --git a/codex-rs/tui/src/chatwidget/tests/helpers.rs b/codex-rs/tui/src/chatwidget/tests/helpers.rs
 index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..da9b51cfaea9f2dc97d690d3147672b980c9833d 100644
 --- a/codex-rs/tui/src/chatwidget/tests/helpers.rs
@@ -41280,6 +41420,65 @@ index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..da9b51cfaea9f2dc97d690d3147672b9
  }
 
  pub(super) fn strip_osc8_for_snapshot(text: &str) -> String {
+diff --git a/codex-rs/tui/src/chatwidget/tests/history_replay.rs b/codex-rs/tui/src/chatwidget/tests/history_replay.rs
+index 434aaa19cf819a771e41301afa6a081cb208d3c3..7be6fd01cf16ad6ade17079331c3973b978b811e 100644
+--- a/codex-rs/tui/src/chatwidget/tests/history_replay.rs
++++ b/codex-rs/tui/src/chatwidget/tests/history_replay.rs
+@@ -1786,7 +1786,7 @@ async fn thread_snapshot_replayed_stream_recovery_restores_previous_status_heade
+     assert_eq!(chat.status_state.current_status.header, "Working");
+     assert_eq!(chat.status_state.current_status.details, None);
+     assert!(chat.status_state.retry_status_header.is_none());
+-    assert!(chat.bottom_pane.status_widget().is_none());
++    assert!(chat.bottom_pane.status_widget().is_some());
+     assert!(chat.active_cell_is_stream_tail());
+ }
+
+@@ -1806,6 +1806,6 @@ async fn stream_recovery_restores_previous_status_header() {
+     assert_eq!(chat.status_state.current_status.header, "Working");
+     assert_eq!(chat.status_state.current_status.details, None);
+     assert!(chat.status_state.retry_status_header.is_none());
+-    assert!(chat.bottom_pane.status_widget().is_none());
++    assert!(chat.bottom_pane.status_widget().is_some());
+     assert!(chat.active_cell_is_stream_tail());
+ }
+diff --git a/codex-rs/tui/src/chatwidget/tests/mcp_startup.rs b/codex-rs/tui/src/chatwidget/tests/mcp_startup.rs
+index 58bc2153d13d2b4f4cdc4a9af760a6541232bdf0..eddd829bfc9d696cafa7f23638d77abd66763197 100644
+--- a/codex-rs/tui/src/chatwidget/tests/mcp_startup.rs
++++ b/codex-rs/tui/src/chatwidget/tests/mcp_startup.rs
+@@ -150,17 +150,17 @@ async fn mcp_startup_header_booting_snapshot() {
+ }
+
+ #[tokio::test]
+-async fn mcp_startup_updates_preserve_streaming_status_suppression() {
++async fn mcp_startup_updates_preserve_visible_working_status() {
+     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+     chat.set_mcp_startup_expected_servers(["alpha".into(), "beta".into()]);
+     handle_turn_started(&mut chat, "turn-1");
+     chat.on_agent_message_delta("Partial response\n".into());
+     chat.on_commit_tick();
+-    assert!(!chat.bottom_pane.status_indicator_visible());
++    assert!(chat.bottom_pane.status_indicator_visible());
+
+     notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Ready);
+     assert!(chat.bottom_pane.is_task_running());
+-    assert!(!chat.bottom_pane.status_indicator_visible());
++    assert!(chat.bottom_pane.status_indicator_visible());
+ }
+
+ #[tokio::test]
+diff --git a/codex-rs/tui/src/chatwidget/tests/plan_mode.rs b/codex-rs/tui/src/chatwidget/tests/plan_mode.rs
+index 5b9ded0f4b5eb769dc96d85a128cb38c8b26e62f..cd4b827f2733087098ed4ef24987ec97d92c6345 100644
+--- a/codex-rs/tui/src/chatwidget/tests/plan_mode.rs
++++ b/codex-rs/tui/src/chatwidget/tests/plan_mode.rs
+@@ -1115,7 +1115,7 @@ async fn plan_completion_restores_status_indicator_after_streaming_plan_output()
+     chat.on_commit_tick();
+     drain_insert_history(&mut rx);
+
+-    assert_eq!(chat.bottom_pane.status_indicator_visible(), false);
++    assert_eq!(chat.bottom_pane.status_indicator_visible(), true);
+     assert_eq!(chat.bottom_pane.is_task_running(), true);
+
+     chat.on_plan_item_completed("- Step 1\n".to_string());
 diff --git a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
 index 54e1f1fc67cc518cbbb7350725d1d234670f989c..d82c0f7c447f463e19ffd659204c0edfe8b21b90 100644
 --- a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
@@ -41439,7 +41638,7 @@ index d6537e354d9344d7715d5f8332026be424338639..d4e981ed0a23a50bbe4e0c94bcf6b097
 
    Luna Reserve default · /tmp/project
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
-index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..533c582df15d8f9e7f69632cb89c01b77260a163 100644
+index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1f4ab1ed9 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 @@ -863,6 +863,7 @@ async fn status_line_uses_secondary_fallback_for_unsupported_window() {
@@ -41554,6 +41753,111 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..533c582df15d8f9e7f69632cb89c01b7
      }));
 
      assert!(matches!(
+@@ -2260,7 +2274,7 @@ async fn streaming_final_answer_keeps_task_running_state() {
+     drain_insert_history(&mut rx);
+
+     assert!(chat.bottom_pane.is_task_running());
+-    assert!(!chat.bottom_pane.status_indicator_visible());
++    assert!(chat.bottom_pane.status_indicator_visible());
+
+     chat.bottom_pane
+         .set_composer_text("queued submission".to_string(), Vec::new(), Vec::new());
+@@ -2286,7 +2300,7 @@ async fn answer_phase_controls_working_status_snapshot() {
+     for (phase, working_visible, snapshot) in [
+         (
+             MessagePhase::FinalAnswer,
+-            false,
++            true,
+             "single_line_final_answer_hides_working_status",
+         ),
+         (
+@@ -2465,7 +2479,7 @@ fn assert_goal_paused_event(
+ }
+
+ #[tokio::test]
+-async fn idle_commit_ticks_do_not_restore_status_without_commentary_completion() {
++async fn idle_commit_ticks_keep_status_visible_until_turn_completion() {
+     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+     chat.on_task_started();
+@@ -2475,12 +2489,11 @@ async fn idle_commit_ticks_do_not_restore_status_without_commentary_completion()
+     chat.on_commit_tick();
+     drain_insert_history(&mut rx);
+
+-    assert_eq!(chat.bottom_pane.status_indicator_visible(), false);
++    assert_eq!(chat.bottom_pane.status_indicator_visible(), true);
+     assert_eq!(chat.bottom_pane.is_task_running(), true);
+
+-    // A second idle tick should not toggle the row back on and cause jitter.
+     chat.on_commit_tick();
+-    assert_eq!(chat.bottom_pane.status_indicator_visible(), false);
++    assert_eq!(chat.bottom_pane.status_indicator_visible(), true);
+ }
+
+ #[tokio::test]
+@@ -2498,7 +2511,7 @@ async fn final_answer_completion_restores_status_indicator_for_pending_steer() {
+     chat.on_commit_tick();
+     drain_insert_history(&mut rx);
+
+-    assert_eq!(chat.bottom_pane.status_indicator_visible(), false);
++    assert_eq!(chat.bottom_pane.status_indicator_visible(), true);
+     assert_eq!(chat.bottom_pane.is_task_running(), true);
+
+     chat.bottom_pane.set_composer_text(
+@@ -2553,7 +2566,7 @@ async fn commentary_completion_restores_status_indicator_before_exec_begin() {
+     chat.on_commit_tick();
+     drain_insert_history(&mut rx);
+
+-    assert_eq!(chat.bottom_pane.status_indicator_visible(), false);
++    assert_eq!(chat.bottom_pane.status_indicator_visible(), true);
+
+     complete_assistant_message(
+         &mut chat,
+@@ -2982,7 +2995,7 @@ async fn stream_error_restores_hidden_status_indicator() {
+     chat.on_agent_message_delta("Preamble line\n".to_string());
+     chat.on_commit_tick();
+     drain_insert_history(&mut rx);
+-    assert!(!chat.bottom_pane.status_indicator_visible());
++    assert!(chat.bottom_pane.status_indicator_visible());
+
+     let msg = "Reconnecting... 2/5";
+     let details = "Idle timeout waiting for SSE";
+@@ -4879,7 +4892,7 @@ async fn unterminated_prose_is_visible_before_completion() {
+         }
+
+         assert!(draw_rx.try_recv().is_ok());
+-        assert!(!chat.bottom_pane.status_indicator_visible());
++        assert!(chat.bottom_pane.status_indicator_visible());
+         let snapshot = if mode == ModeKind::Plan {
+             assert_eq!(
+                 chat.plan_stream_controller.as_ref().unwrap().queued_lines(),
+@@ -4943,7 +4956,7 @@ async fn newline_agent_delta_redraws_stream_tail_after_noop_catch_up() {
+     chat.on_task_started();
+     chat.handle_streaming_delta("Earlier line\n".to_string());
+     chat.on_commit_tick();
+-    assert!(!chat.bottom_pane.status_indicator_visible());
++    assert!(chat.bottom_pane.status_indicator_visible());
+     while draw_rx.try_recv().is_ok() {}
+
+     chat.handle_streaming_delta("Intro line\n| Step | Owner |\n".to_string());
+@@ -4972,7 +4985,7 @@ async fn newline_plan_delta_redraws_stream_tail_after_noop_catch_up() {
+     chat.on_task_started();
+     chat.on_plan_delta("Earlier line\n".to_string());
+     chat.on_commit_tick();
+-    assert!(!chat.bottom_pane.status_indicator_visible());
++    assert!(chat.bottom_pane.status_indicator_visible());
+     while draw_rx.try_recv().is_ok() {}
+
+     chat.on_plan_delta("Intro line\n| Step | Owner |\n".to_string());
+@@ -5065,7 +5078,7 @@ async fn reasoning_delta_restores_recreated_status_indicator_header() {
+     chat.on_agent_message_delta("Preamble line\n".to_string());
+     chat.on_commit_tick();
+     drain_insert_history(&mut rx);
+-    assert!(!chat.bottom_pane.status_indicator_visible());
++    assert!(chat.bottom_pane.status_indicator_visible());
+
+     begin_unified_exec_startup(&mut chat, "call-1", "proc-1", "sleep 2");
+     let status = chat
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs b/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs
 index 81d948749a1aacc364f6a87af0c30abecb97e428..0454b0627139d8c6aecbb26b2b89fc06433c5af6 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs
@@ -42148,7 +42452,7 @@ index aaa32e195147665d9425958cf718d90dacaab2af..503ae83f016db116da1888fc90a7a230
  #[cfg(test)]
  pub(crate) use model::ExecCall;
 diff --git a/codex-rs/tui/src/exec_cell/model.rs b/codex-rs/tui/src/exec_cell/model.rs
-index a99ea4909587e6e518267b8bc3bb7ad4723d4279..f5f64595279d626f34fe65999576f391a8a53c50 100644
+index a99ea4909587e6e518267b8bc3bb7ad4723d4279..db32a418ec915af7bcd2a5b42bf3c0ac3850b78e 100644
 --- a/codex-rs/tui/src/exec_cell/model.rs
 +++ b/codex-rs/tui/src/exec_cell/model.rs
 @@ -79,6 +79,8 @@ pub(crate) struct ExecCall {
@@ -42216,8 +42520,43 @@ index a99ea4909587e6e518267b8bc3bb7ad4723d4279..f5f64595279d626f34fe65999576f391
                  call.output
                      .get_or_insert_with(CommandOutput::default)
                      .exit_code = 1;
+@@ -182,7 +195,7 @@ impl ExecCell {
+     }
+
+     pub(crate) fn is_exploring_cell(&self) -> bool {
+-        self.group.calls.iter().all(Self::is_exploring_call)
++        self.group.calls.len() > 1 || self.group.calls.iter().all(Self::is_exploring_call)
+     }
+
+     pub(crate) fn is_active(&self) -> bool {
+@@ -232,15 +245,16 @@ impl ExecCell {
+
+     pub(super) fn is_exploring_call(call: &ExecCall) -> bool {
+         !matches!(call.source, ExecCommandSource::UserShell)
+-            && !call.parsed.is_empty()
+-            && call.parsed.iter().all(|p| {
+-                matches!(
+-                    p,
+-                    ParsedCommand::Read { .. }
+-                        | ParsedCommand::ListFiles { .. }
+-                        | ParsedCommand::Search { .. }
+-                )
+-            })
++            && (crate::omd::builtins().group_exec
++                || !call.parsed.is_empty()
++                    && call.parsed.iter().all(|p| {
++                        matches!(
++                            p,
++                            ParsedCommand::Read { .. }
++                                | ParsedCommand::ListFiles { .. }
++                                | ParsedCommand::Search { .. }
++                        )
++                    }))
+     }
+ }
+
 diff --git a/codex-rs/tui/src/exec_cell/render.rs b/codex-rs/tui/src/exec_cell/render.rs
-index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..fce032d6f970c826ba35ffa0813399aa77dfac6f 100644
+index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..1e15a3bc6a448280f654a23c1df0f9d6a01894b3 100644
 --- a/codex-rs/tui/src/exec_cell/render.rs
 +++ b/codex-rs/tui/src/exec_cell/render.rs
 @@ -210,6 +210,124 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
@@ -42225,7 +42564,7 @@ index 22a0ea7d320f3e5f1ade29c03df3398a1e35de96..fce032d6f970c826ba35ffa0813399aa
 
  impl HistoryCell for ExecCell {
 +    fn render_members(&self) -> Vec<crate::history_cell::RenderMember<'_>> {
-+        if !self.is_exploring_cell() {
++        if !self.is_exploring_cell() || crate::omd::builtins().group_exec {
 +            return Vec::new();
 +        }
 +        let Some(target) = self.render_target() else {
@@ -68267,10 +68606,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e25592342088d43c2a873c1539b2621a7ba46dd9
+index 0000000000000000000000000000000000000000..8230ef12a80a465b4aa256376032456067be469c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2631 @@
+@@ -0,0 +1,2632 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -69601,26 +69940,27 @@ index 0000000000000000000000000000000000000000..e25592342088d43c2a873c1539b2621a
 +                payload.get("error").cloned(),
 +            );
 +            let private = match &turn.evidence {
-+                Some(cursor) => match evidence::finish(
-+                    &self.core,
-+                    &lead,
-+                    cursor,
-+                    &turn.turn_id,
-+                    payload["outcome"].as_str().unwrap_or("error"),
-+                )
-+                .await
-+                {
-+                    Ok(value) => value,
-+                    Err(error) => {
-+                        self.views
-+                            .diagnostic(&self.host, "turn_evidence", Some(error));
-+                        BTreeMap::new()
-+                    }
-+                },
-+                None => BTreeMap::new(),
++                Some(cursor) => {
++                    evidence::finish(
++                        &self.core,
++                        &lead,
++                        cursor,
++                        &turn.turn_id,
++                        payload["outcome"].as_str().unwrap_or("error"),
++                    )
++                    .await
++                }
++                None => Ok(BTreeMap::new()),
 +            };
-+            self.event_with_private("turn_end", payload, Some(&*lead), private)
-+                .await;
++            self.views
++                .diagnostic(&self.host, "turn_evidence", private.as_ref().err().cloned());
++            self.event_with_private(
++                "turn_end",
++                payload,
++                Some(&*lead),
++                private.unwrap_or_default(),
++            )
++            .await;
 +        })
 +    }
 +
@@ -75153,10 +75493,10 @@ index 0000000000000000000000000000000000000000..eda428223c228b1320fe440307df0ee2
 +}
 diff --git a/codex-rs/ext/omd/src/mods/evidence.rs b/codex-rs/ext/omd/src/mods/evidence.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f44b5488ef
+index 0000000000000000000000000000000000000000..ef30cf59de5fc637ed390c6fbf63851c61f3053c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/evidence.rs
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,231 @@
 +use super::*;
 +
 +pub(super) struct Cursor {
@@ -75165,25 +75505,27 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +    paused: bool,
 +    invalid: bool,
 +    offset: usize,
-+    generation: u64,
-+    owners: Vec<String>,
++    owners: BTreeMap<String, String>,
 +    pub tools: Vec<Value>,
 +    usage_start: Value,
 +}
 +
-+fn subscribers(runtime: &ModHost) -> Vec<String> {
++fn subscribers(runtime: &ModHost) -> BTreeMap<String, String> {
 +    let mut owners = runtime.subscribers_with_capability("turn_end", "sessions");
 +    owners.extend(runtime.subscribers_with_capability("turn_end", "turn_evidence"));
-+    owners.sort();
-+    owners.dedup();
-+    owners
++    runtime
++        .owners()
++        .into_iter()
++        .filter(|(id, _)| owners.contains(id))
++        .map(|(id, owner)| (id, owner.sha256))
++        .collect()
 +}
 +
 +pub(super) async fn begin(core: &Core, lead: &Lead) -> Option<Cursor> {
 +    let runtime = core.runtime.clone();
-+    let (owners, generation) = tokio::task::spawn_blocking(move || {
++    let owners = tokio::task::spawn_blocking(move || {
 +        let runtime = runtime.lock().ok()?;
-+        Some((subscribers(&runtime), runtime.generation()))
++        Some(subscribers(&runtime))
 +    })
 +    .await
 +    .ok()
@@ -75205,7 +75547,6 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +        paused: false,
 +        invalid: false,
 +        offset: history.review_items().count(),
-+        generation,
 +        owners,
 +        tools: Vec::new(),
 +        usage_start: json!(lead.session.task.cost_capture().ok()),
@@ -75282,22 +75623,18 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +    outcome: &str,
 +) -> Result<BTreeMap<String, Value>, String> {
 +    let runtime = core.runtime.clone();
-+    let (owners, generation, sources) = tokio::task::spawn_blocking(move || {
++    let owners = tokio::task::spawn_blocking(move || {
 +        let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-+        Ok::<_, String>((
-+            subscribers(&runtime),
-+            runtime.generation(),
-+            runtime
-+                .owners()
-+                .into_iter()
-+                .map(|(id, owner)| (id, owner.sha256))
-+                .collect::<BTreeMap<_, _>>(),
-+        ))
++        Ok::<_, String>(subscribers(&runtime))
 +    })
 +    .await
 +    .map_err(|e| e.to_string())??;
-+    if generation != cursor.generation {
-+        return Err("evidence_generation_changed".into());
++    let owners = owners
++        .into_iter()
++        .filter(|(owner, source)| cursor.owners.get(owner) == Some(source))
++        .collect::<BTreeMap<_, _>>();
++    if owners.is_empty() {
++        return Ok(BTreeMap::new());
 +    }
 +    let thread = lead
 +        .host
@@ -75344,14 +75681,7 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +    )?;
 +    let root = lead.host.root.clone();
 +    let mut results = BTreeMap::new();
-+    for owner in owners
-+        .into_iter()
-+        .filter(|owner| cursor.owners.contains(owner))
-+    {
-+        let source = sources
-+            .get(&owner)
-+            .cloned()
-+            .ok_or("evidence_owner_unavailable")?;
++    for (owner, source) in owners {
 +        let data = codex_omd::scoped_data::ScopedDataHost::new(
 +            root.clone(),
 +            lead.host.repository.clone(),
@@ -78421,10 +78751,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b878bf7be50e23ef0bdfd4aaabbd8e2023e45a76
+index 0000000000000000000000000000000000000000..a47251f8df74a2e4522a51ee42dcf529c3621d31
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5163 @@
+@@ -0,0 +1,5360 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -80847,6 +81177,203 @@ index 0000000000000000000000000000000000000000..b878bf7be50e23ef0bdfd4aaabbd8e20
 +    .await
 +    .unwrap_err();
 +    assert_eq!(refused, "capability_denied: sessions_tools");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn turn_evidence_survives_reload_and_clears_stale_diagnostics() {
++    let Some(mut fixture) = fixture(&[Package {
++        id: "observer",
++        capabilities: &["lifecycle", "sessions"],
++        manifest: Value::Null,
++        source: "export default api => api.on('turn_end', () => null)",
++    }]) else {
++        return;
++    };
++    assert!(
++        std::process::Command::new("git")
++            .args(["init", "--quiet"])
++            .current_dir(&fixture.lead.host.repository)
++            .status()
++            .unwrap()
++            .success()
++    );
++    let _manager = attach_thread(&mut fixture).await;
++    let cursor = super::super::evidence::begin(&fixture.core, &fixture.lead)
++        .await
++        .unwrap();
++    let generation = fixture.core.runtime.lock().unwrap().generation();
++    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
++    install(
++        &store,
++        &fixture._dir.path().join("packages"),
++        &Package {
++            id: "late",
++            capabilities: &["lifecycle", "sessions"],
++            manifest: Value::Null,
++            source: "export default api => api.on('turn_end', () => null)",
++        },
++    );
++    assert!(
++        fixture
++            .core
++            .runtime
++            .lock()
++            .unwrap()
++            .refresh_authority()
++            .unwrap()
++    );
++    assert!(fixture.core.runtime.lock().unwrap().generation() > generation);
++    let private = super::super::evidence::finish(
++        &fixture.core,
++        &fixture.lead,
++        &cursor,
++        "turn-reloaded",
++        "completed",
++    )
++    .await
++    .unwrap();
++    assert_eq!(
++        private.keys().map(String::as_str).collect::<Vec<_>>(),
++        vec!["observer"]
++    );
++    assert!(private["observer"]["evidence"].is_object());
++    let extension = mods(&fixture.core);
++    extension.views.diagnostic(
++        &fixture.lead.host,
++        "turn_evidence",
++        Some("evidence_generation_changed".into()),
++    );
++    assert_eq!(
++        extension.views.published().unwrap().diagnostics,
++        vec!["evidence_generation_changed"]
++    );
++    extension.turns.lock().unwrap().insert(
++        fixture.lead.thread.to_string(),
++        super::super::TurnRecord {
++            turn_id: "turn-cleared".into(),
++            error: None,
++            evidence: Some(cursor),
++        },
++    );
++    let session_store = ExtensionData::new("session");
++    let thread_store = ExtensionData::new(fixture.lead.thread.to_string());
++    thread_store.insert(fixture.lead.clone());
++    let turn_store = ExtensionData::new("turn-cleared");
++    extension
++        .on_turn_stop(codex_extension_api::TurnStopInput {
++            session_store: &session_store,
++            thread_store: &thread_store,
++            turn_store: &turn_store,
++        })
++        .await;
++    assert!(extension.views.published().unwrap().diagnostics.is_empty());
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn turn_evidence_excludes_replaced_and_disabled_subscribers() {
++    for changed_source in [false, true] {
++        let packages = ["observer", "stable"].map(|id| Package {
++            id,
++            capabilities: &["lifecycle", "sessions"],
++            manifest: Value::Null,
++            source: "export default api => api.on('turn_end', () => null)",
++        });
++        let Some(mut fixture) = fixture(&packages) else {
++            return;
++        };
++        assert!(
++            std::process::Command::new("git")
++                .args(["init", "--quiet"])
++                .current_dir(&fixture.lead.host.repository)
++                .status()
++                .unwrap()
++                .success()
++        );
++        let _manager = attach_thread(&mut fixture).await;
++        let cursor = super::super::evidence::begin(&fixture.core, &fixture.lead)
++            .await
++            .unwrap();
++        let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
++        let path = fixture
++            ._dir
++            .path()
++            .join("packages/observer")
++            .canonicalize()
++            .unwrap();
++        if changed_source {
++            std::fs::write(
++                path.join("index.ts"),
++                "export default api => api.on('turn_end', () => {})",
++            )
++            .unwrap();
++            let inspected = ModStore::inspect_package(&path).unwrap();
++            store
++                .trust(
++                    path.clone(),
++                    inspected["sha256"].as_str().unwrap(),
++                    vec!["lifecycle".into(), "sessions".into()],
++                    "user",
++                )
++                .unwrap();
++            store.enable(&path, true).unwrap();
++        } else {
++            store.enable(&path, false).unwrap();
++        }
++        assert!(
++            fixture
++                .core
++                .runtime
++                .lock()
++                .unwrap()
++                .refresh_authority()
++                .unwrap()
++        );
++        let private = super::super::evidence::finish(
++            &fixture.core,
++            &fixture.lead,
++            &cursor,
++            "turn-reloaded",
++            "completed",
++        )
++        .await
++        .unwrap();
++        assert_eq!(
++            private.keys().map(String::as_str).collect::<Vec<_>>(),
++            vec!["stable"]
++        );
++        store
++            .enable(
++                &fixture
++                    ._dir
++                    .path()
++                    .join("packages/stable")
++                    .canonicalize()
++                    .unwrap(),
++                false,
++            )
++            .unwrap();
++        assert!(
++            fixture
++                .core
++                .runtime
++                .lock()
++                .unwrap()
++                .refresh_authority()
++                .unwrap()
++        );
++        assert!(
++            super::super::evidence::finish(
++                &fixture.core,
++                &fixture.lead,
++                &cursor,
++                "turn-without-subscribers",
++                "completed",
++            )
++            .await
++            .unwrap()
++            .is_empty()
++        );
++    }
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -102673,10 +103200,10 @@ index 0000000000000000000000000000000000000000..ffb19d6a9449bd11c68b12fa2d230173
 +}
 diff --git a/codex-rs/omd/src/builtins.rs b/codex-rs/omd/src/builtins.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1ad64fe4f76b8ede6d86712d93f8d3aa8d2c186a
+index 0000000000000000000000000000000000000000..4e16a564e8717190b10d32394c2a0e9884b67671
 --- /dev/null
 +++ b/codex-rs/omd/src/builtins.rs
-@@ -0,0 +1,274 @@
+@@ -0,0 +1,279 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -102731,6 +103258,8 @@ index 0000000000000000000000000000000000000000..1ad64fe4f76b8ede6d86712d93f8d3aa
 +#[serde(deny_unknown_fields)]
 +pub struct BuiltinControls {
 +    #[serde(default)]
++    pub group_exec: bool,
++    #[serde(default)]
 +    pub commands: HiddenCommands,
 +    #[serde(default)]
 +    pub modes: Disabled,
@@ -102751,6 +103280,8 @@ index 0000000000000000000000000000000000000000..1ad64fe4f76b8ede6d86712d93f8d3aa
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 +#[serde(deny_unknown_fields)]
 +pub struct BuiltinSnapshot {
++    #[serde(default)]
++    pub group_exec: bool,
 +    pub schema: u32,
 +    pub hidden_commands: BTreeMap<String, Vec<String>>,
 +    pub disabled_modes: BTreeMap<String, Vec<String>>,
@@ -102849,6 +103380,7 @@ index 0000000000000000000000000000000000000000..1ad64fe4f76b8ede6d86712d93f8d3aa
 +            ..Self::default()
 +        };
 +        for (owner, controls) in controls {
++            snapshot.group_exec |= controls.group_exec;
 +            for command in &controls.commands.hide {
 +                snapshot
 +                    .hidden_commands
@@ -102953,10 +103485,10 @@ index 0000000000000000000000000000000000000000..1ad64fe4f76b8ede6d86712d93f8d3aa
 +mod tests;
 diff --git a/codex-rs/omd/src/builtins_tests.rs b/codex-rs/omd/src/builtins_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..333060130f2fd47f9b6dd447e77affa871e062e4
+index 0000000000000000000000000000000000000000..9be855e263b6bcf6b2b2071c56b5637752a9e183
 --- /dev/null
 +++ b/codex-rs/omd/src/builtins_tests.rs
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,75 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -103023,6 +103555,14 @@ index 0000000000000000000000000000000000000000..333060130f2fd47f9b6dd447e77affa8
 +        snapshot.removed_features["prevent_idle_sleep"],
 +        vec!["one".to_owned(), "two".to_owned()]
 +    );
++}
++
++#[test]
++fn command_grouping_is_opt_in_and_combines_owners() {
++    let controls = BuiltinControls::parse(&json!({"group_exec": true})).unwrap();
++    assert!(BuiltinSnapshot::from_controls(&[("one".into(), controls)]).group_exec);
++    assert!(!BuiltinSnapshot::from_controls(&[]).group_exec);
++    assert!(BuiltinControls::parse(&json!({"group_exec": "yes"})).is_err());
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
@@ -112901,10 +113441,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..39225c730d2fe980058d7c5e224772f877e8b787
+index 0000000000000000000000000000000000000000..fa6a3c6a0c7900ca8a8a661cbec054ecbb2acf8a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7004 @@
+@@ -0,0 +1,7013 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -113226,6 +113766,7 @@ index 0000000000000000000000000000000000000000..39225c730d2fe980058d7c5e224772f8
 +    "final_request_policy_v1",
 +    "continuation_middleware_v1",
 +    "builtins_v1",
++    "transcript_exec_groups_v1",
 +    "contracts_v2",
 +    "framed_process_v1",
 +    "process_streams_v1",
@@ -119028,6 +119569,14 @@ index 0000000000000000000000000000000000000000..39225c730d2fe980058d7c5e224772f8
 +        let mut results = Vec::new();
 +        let mut stale = Vec::new();
 +        for id in self.event_ids("terminal") {
++            if thread.is_none()
++                && self
++                    .loaded
++                    .get(&id)
++                    .is_some_and(|loaded| loaded.package.state_scope == "thread")
++            {
++                continue;
++            }
 +            let own = payload.own(&id);
 +            let key = self
 +                .terminal_state_key(&id, thread.as_deref())
@@ -147640,10 +148189,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a342581f0112e2d1cd083f96e22ca81cd0c8c968
+index 0000000000000000000000000000000000000000..513721a797317241e25c2790b2926169ede18815
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5130 @@
+@@ -0,0 +1,5166 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -148900,6 +149449,42 @@ index 0000000000000000000000000000000000000000..a342581f0112e2d1cd083f96e22ca81c
 +    snapshot.activity[0].label = "bad\u{1b}".into();
 +    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
 +    assert!(codex_omd::ModViewSnapshot::read(&path).is_err());
++}
++
++#[test]
++fn thread_scoped_terminal_handlers_wait_for_a_thread_without_diagnostics() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
++    let path = package(
++        &root,
++        "fixture",
++        "export default api => api.on('terminal', () => ({greeting:'ready'}))",
++        &["terminal"],
++    );
++    let manifest_path = path.join("mod.json");
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["state_scope"] = json!("thread");
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    trust(&store, &path, &["terminal"]);
++    let mut runtime = host(&temp);
++    let preview = runtime.terminal_view(
++        json!({"event":"startup","ledger":null,"presentation":{"thread_id":null,"phase":"fresh"}}),
++        || true,
++    );
++    assert!(preview.diagnostics.is_empty(), "{:?}", preview.diagnostics);
++    assert!(preview.contributors.is_empty());
++    let live = runtime.terminal_view(json!({"event":"start","ledger":{"thread_id":"t1"}}), || {
++        true
++    });
++    assert!(live.diagnostics.is_empty(), "{:?}", live.diagnostics);
++    assert_eq!(
++        live.view.greeting.as_deref(),
++        Some("ready"),
++        "{}",
++        runtime.status()
++    );
 +}
 +
 +#[test]
@@ -170876,10 +171461,10 @@ index 0000000000000000000000000000000000000000..76157c5a6184321ce87a5ff8c9ea8e29
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047c0a08931
+index 0000000000000000000000000000000000000000..676a6648169a90c816cb360f1db992441231e56c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,691 @@
+@@ -0,0 +1,686 @@
 +use codex_omd::ModColor;
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Rect;
@@ -170892,6 +171477,7 @@ index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047
 +use serde_json::json;
 +use std::collections::BTreeMap;
 +use std::collections::BTreeSet;
++use std::collections::VecDeque;
 +use std::sync::Mutex;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -171041,6 +171627,19 @@ index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047
 +}
 +
 +static RASTERS: Mutex<BTreeMap<String, Raster>> = Mutex::new(BTreeMap::new());
++static SUSPENDED: Mutex<VecDeque<(String, Raster)>> = Mutex::new(VecDeque::new());
++
++pub(crate) fn suspend(id: &str) {
++    let Some(raster) = rasters().remove(id) else {
++        return;
++    };
++    let mut suspended = SUSPENDED.locked();
++    suspended.retain(|(key, _)| key != id);
++    suspended.push_back((id.to_owned(), raster));
++    while suspended.len() > 4 {
++        suspended.pop_front();
++    }
++}
 +
 +fn rasters() -> std::sync::MutexGuard<'static, BTreeMap<String, Raster>> {
 +    RASTERS.locked()
@@ -171354,7 +171953,6 @@ index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047
 +}
 +
 +const UNDERLAY_GUTTER: u16 = 2;
-+const UNDERLAY_GLASS: f32 = 0.35;
 +const UNDERLAY_MIN_COLUMNS: u16 = 60;
 +
 +fn underlay_blank(cell: &ratatui::buffer::Cell) -> bool {
@@ -171391,6 +171989,16 @@ index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047
 +        );
 +    }
 +    let mut rasters = rasters();
++    if !rasters.contains_key(id) {
++        let mut suspended = SUSPENDED.locked();
++        if let Some(index) = suspended
++            .iter()
++            .position(|(key, raster)| key == id && Some(raster.owner.as_str()) == owner)
++            && let Some((key, raster)) = suspended.remove(index)
++        {
++            rasters.insert(key, raster);
++        }
++    }
 +    if rasters
 +        .get(id)
 +        .is_some_and(|raster| Some(raster.owner.as_str()) != owner)
@@ -171443,7 +172051,6 @@ index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047
 +    });
 +}
 +
-+/// Underlay colour, drawn after the native frame outside `kept`: the raster's background on every default-background cell and, lifted like Codex lifts it, on its raised surface (menus, prompts), where faint glyphs show past each row's text.
 +pub(crate) fn underlay_tint(
 +    snapshot: &codex_omd::ModViewSnapshot,
 +    screen: Rect,
@@ -171457,54 +172064,27 @@ index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047
 +                ModColor::Rgb(r, g, b)
 +            });
 +        let light = crate::terminal_palette::default_bg().is_some_and(crate::color::is_light);
-+        let raised = crate::style::user_message_style().bg;
 +        let empty = |cell: &ratatui::buffer::Cell| cell.symbol() == " " && cell.modifier.is_empty();
 +        for row in 0..screen.height.min(raster.height) {
 +            let y = screen.y + row;
 +            let columns = screen.width.min(raster.width);
-+            let glass = (0..columns)
-+                .rev()
-+                .find(|column| {
-+                    let cell = &buffer[(screen.x + column, y)];
-+                    raised.is_some() && Some(cell.bg) == raised && !empty(cell)
-+                })
-+                .map_or(0, |column| column + 1 + UNDERLAY_GUTTER);
 +            for column in 0..columns {
 +                let x = screen.x + column;
 +                let source = &raster.cells
 +                    [usize::from(row) * usize::from(raster.width) + usize::from(column)];
-+                let Some(mut background) = source.bg else {
++                let Some(background) = source.bg else {
 +                    continue;
 +                };
 +                if kept.iter().any(|area| area.contains((x, y).into())) {
 +                    continue;
 +                }
 +                let cell = &mut buffer[(x, y)];
-+                let lifted = raised.is_some() && Some(cell.bg) == raised;
-+                if lifted {
-+                    let [r, g, b] = crate::mod_ui::rgb(background);
-+                    let (r, g, b) = crate::style::user_message_bg_rgb((r, g, b));
-+                    background = ModColor::Rgb(r, g, b);
-+                } else if cell.bg != Color::Reset {
++                if cell.bg != Color::Reset {
 +                    continue;
 +                }
 +                let behind = crate::mod_ui::rgb(background);
 +                cell.set_bg(crate::mod_ui::color_at(background, level));
 +                if empty(cell) {
-+                    if lifted
-+                        && column >= glass
-+                        && let Some(fg) = source.fg
-+                        && !matches!(source.symbol.as_str(), "" | " ")
-+                    {
-+                        let [r, g, b] = crate::mod_ui::rgb(fg);
-+                        let (r, g, b) = crate::color::blend(
-+                            (r, g, b),
-+                            (behind[0], behind[1], behind[2]),
-+                            UNDERLAY_GLASS,
-+                        );
-+                        cell.set_symbol(&source.symbol)
-+                            .set_fg(crate::mod_ui::color_at(ModColor::Rgb(r, g, b), level));
-+                    }
 +                    continue;
 +                }
 +                let fg = match cell.fg {
@@ -171573,10 +172153,10 @@ index 0000000000000000000000000000000000000000..3897b38b0459c48807f5eb99f514e047
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee88b91564b94686a3d16d18a8f7e4f7f3e6c792
+index 0000000000000000000000000000000000000000..a2e20ea4fe5152526381b3bf982e46cc1e3e3d8c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,617 @@
+@@ -0,0 +1,630 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -172058,7 +172638,7 @@ index 0000000000000000000000000000000000000000..ee88b91564b94686a3d16d18a8f7e4f7
 +
 +#[test]
 +#[serial_test::serial]
-+fn underlay_tints_default_cells_and_puts_glyphs_past_text_and_faintly_on_raised_glass() {
++fn underlay_tints_default_cells_and_preserves_raised_prompt_surfaces() {
 +    let now = Instant::now();
 +    let key = "underlay_scene";
 +    let mut snapshot = codex_omd::ModViewSnapshot::default();
@@ -172160,18 +172740,31 @@ index 0000000000000000000000000000000000000000..ee88b91564b94686a3d16d18a8f7e4f7
 +        underlay_tint(&snapshot, screen, &[], &mut menu, level);
 +        menu
 +    });
-+    let lifted = crate::style::user_message_bg_rgb((0x44, 0x55, 0x66));
 +    assert_eq!(
 +        menu[(0, 2)].bg,
-+        crate::mod_ui::color_at(ModColor::Rgb(lifted.0, lifted.1, lifted.2), level)
++        crate::terminal_palette::with_test_default_colors(colors, || {
++            crate::style::user_message_style().bg.unwrap()
++        })
 +    );
 +    let glass = (0..64).map(|x| menu[(x, 2)].symbol()).collect::<String>();
-+    assert_eq!(glass, format!("menu  {}", "x".repeat(58)));
-+    let (r, g, b) = crate::color::blend((0x11, 0x22, 0x33), lifted, 0.35);
-+    assert_eq!(
-+        menu[(10, 2)].fg,
-+        crate::terminal_palette::rgb_color((r, g, b))
-+    );
++    assert_eq!(glass, format!("menu{}", " ".repeat(60)));
++    crate::terminal_palette::with_test_default_colors(colors, || {
++        let mut prompt = Buffer::empty(screen);
++        prompt.set_style(screen, crate::style::user_message_style());
++        prompt.set_string(0, 0, "a long wrapped prompt", Style::default());
++        prompt.set_string(0, 1, "with another line", Style::default());
++        let native = prompt.clone();
++        underlay_glyphs(&snapshot, screen, screen, &[], &mut prompt, level, now);
++        underlay_tint(&snapshot, screen, &[], &mut prompt, level);
++        assert_eq!(prompt, native);
++    });
++    suspend(key);
++    retain(&BTreeSet::new());
++    let mut returned = Buffer::empty(screen);
++    underlay_glyphs(&snapshot, screen, screen, &[], &mut returned, level, now);
++    underlay_tint(&snapshot, screen, &[], &mut returned, level);
++    assert_eq!(returned[(0, 0)].symbol(), "x");
++    assert_eq!(returned[(0, 0)].bg, tinted);
 +    let light = crate::terminal_probe::DefaultColors {
 +        fg: (20, 20, 20),
 +        bg: (240, 240, 240),
@@ -177797,10 +178390,10 @@ index 0000000000000000000000000000000000000000..010703e1cda8c601ee75f9c257a5faf5
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b1ad60a56b99ef7e286d8166e7ea504d32136794
+index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3a93eab32
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5927 @@
+@@ -0,0 +1,5939 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -179243,22 +179836,34 @@ index 0000000000000000000000000000000000000000..b1ad60a56b99ef7e286d8166e7ea504d
 +}
 +
 +pub(crate) fn invalidate_context() {
-+    crate::mod_components::invalidate();
 +    crate::mod_render::clear_tool_notices();
 +    let (_, snapshot) = crate::omd::mod_snapshot();
 +    let context = crate::mod_runtime::active_context();
-+    let matches_context = matches_context(&snapshot, context.as_ref());
-+    *BLOCKED_SNAPSHOT.locked() = (!matches_context).then_some((snapshot.epoch, snapshot.revision));
++    let published_matches = matches_context(&snapshot, context.as_ref());
++    *BLOCKED_SNAPSHOT.locked() =
++        (!published_matches).then_some((snapshot.epoch, snapshot.revision));
 +    // `refresh` draws nothing until a publication matches the new context, so the same repository's startup preview stays up.
-+    if !matches_context
-+        && context.is_some_and(|context| {
-+            with_cache(|cache| {
-+                cache.startup_repository.as_deref() == Some(context.repository.as_path())
-+            }) == Some(true)
-+        })
-+    {
++    if context.as_ref().is_some_and(|context| {
++        with_cache(|cache| {
++            cache.startup_repository.as_deref() == Some(context.repository.as_path())
++                || matches_context(&cache.snapshot, Some(context))
++        }) == Some(true)
++    }) {
 +        return;
 +    }
++    if let Some(id) = with_cache(|cache| {
++        cache
++            .snapshot
++            .view
++            .underlay
++            .as_ref()
++            .map(|underlay| underlay.raster.clone())
++    })
++    .flatten()
++    {
++        crate::mod_raster::suspend(&id);
++    }
++    crate::mod_components::invalidate();
 +    *CACHE
 +        .write()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
@@ -183981,10 +184586,10 @@ index 0000000000000000000000000000000000000000..9f178f292257e36d63b98bfe1e5d0c40
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..665e397f5ae37540a3e0daa810b44435e40378fb
+index 0000000000000000000000000000000000000000..bcb41e6409d090bc4a0792b228ff209a23805dc6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2782 @@
+@@ -0,0 +1,2789 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -185023,10 +185628,13 @@ index 0000000000000000000000000000000000000000..665e397f5ae37540a3e0daa810b44435
 +        .unwrap();
 +    };
 +    publish(&ModViewSnapshot::default());
-+    let mut startup = snapshot(serde_json::json!({"greeting": "preview"}));
++    let key = "startup_underlay";
++    let mut startup =
++        snapshot(serde_json::json!({"greeting": "preview", "underlay":{"raster":key}}));
 +    startup.input = serde_json::json!({"event": "startup", "ledger": null,
 +        "presentation": {"thread_id": null, "phase": "fresh"}});
 +    startup_preview(Some(startup), &repository);
++    crate::mod_raster::track(key, None, Some("fixture"), 80, (80, 24));
 +    let thread = codex_protocol::ThreadId::new();
 +    let attach = |thread_id| {
 +        crate::mod_runtime::synchronize_context(crate::mod_runtime::ModContext {
@@ -185038,6 +185646,7 @@ index 0000000000000000000000000000000000000000..665e397f5ae37540a3e0daa810b44435
 +        refresh();
 +    };
 +    attach(Some(thread));
++    assert_eq!(crate::mod_raster::rendered(key), Some((80, 24)));
 +    let mut thread_less = snapshot(serde_json::json!({"greeting": "thread-less"}));
 +    thread_less.epoch = 1;
 +    thread_less.input = serde_json::json!({"event": "start",
@@ -185045,7 +185654,7 @@ index 0000000000000000000000000000000000000000..665e397f5ae37540a3e0daa810b44435
 +    publish(&thread_less);
 +    refresh();
 +    assert_eq!(greeting().as_deref(), Some("preview"));
-+    let mut live = snapshot(serde_json::json!({"greeting": "live"}));
++    let mut live = snapshot(serde_json::json!({"greeting": "live", "underlay":{"raster":key}}));
 +    live.epoch = 1;
 +    live.revision = 1;
 +    live.input = serde_json::json!({"event": "start",
@@ -185053,7 +185662,10 @@ index 0000000000000000000000000000000000000000..665e397f5ae37540a3e0daa810b44435
 +    publish(&live);
 +    refresh();
 +    assert_eq!(greeting().as_deref(), Some("live"));
++    invalidate_context();
++    assert_eq!(crate::mod_raster::rendered(key), Some((80, 24)));
 +    attach(None);
++    assert_eq!(crate::mod_raster::rendered(key), None);
 +}
 +
 +#[test]
@@ -186891,10 +187503,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1b77209aae1266637ff173e261fd3e6e7615fe86
+index 0000000000000000000000000000000000000000..7d5051a061b4089f74a8f9b878536e1071d063bd
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,776 @@
+@@ -0,0 +1,808 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -187610,7 +188222,7 @@ index 0000000000000000000000000000000000000000..1b77209aae1266637ff173e261fd3e6e
 +        std::fs::write(
 +            store.join(codex_omd::builtins_snapshot(&launch)),
 +            serde_json::json!({"schema":1,"hidden_commands":{"plan":["fixture"]},
-+                "disabled_modes":{},"disabled_surfaces":{"status_line":["fixture"]},
++                "disabled_modes":{},"group_exec":true,"disabled_surfaces":{"status_line":["fixture"]},
 +                "replaced_commands":{"review":["fixture","review"]}})
 +            .to_string(),
 +        )
@@ -187632,6 +188244,29 @@ index 0000000000000000000000000000000000000000..1b77209aae1266637ff173e261fd3e6e
 +                        if item.invocation == "review"
 +                ))
 +        );
++        assert!(builtins().group_exec);
++        let call = |source| {
++            crate::exec_cell::new_active_exec_command(
++                "grouped".into(),
++                vec!["cargo".into(), "test".into()],
++                Vec::new(),
++                source,
++                None,
++                false,
++            )
++        };
++        let mut grouped = call(codex_app_server_protocol::CommandExecutionSource::Agent);
++        assert!(grouped.add_call(
++            "second".into(),
++            vec!["cargo".into(), "check".into()],
++            Vec::new(),
++            codex_app_server_protocol::CommandExecutionSource::Agent,
++            None
++        ));
++        assert!(call(codex_app_server_protocol::CommandExecutionSource::Agent).is_exploring_cell());
++        assert!(
++            !call(codex_app_server_protocol::CommandExecutionSource::UserShell).is_exploring_cell()
++        );
 +        assert!(status_line_disabled());
 +        assert_eq!(
 +            codex_omd::BuiltinSnapshot::read(&store, &store.join("sessions")),
@@ -187647,6 +188282,15 @@ index 0000000000000000000000000000000000000000..1b77209aae1266637ff173e261fd3e6e
 +        assert!(builtins().command_hidden("plan"));
 +        let _direct = EnvGuard::set(MODE_ENV, Some("upstream_direct"));
 +        assert!(!builtins().command_hidden("plan"));
++        assert!(grouped.is_exploring_cell());
++        use crate::history_cell::HistoryCell;
++        assert_eq!(
++            grouped.render_target().unwrap().props["calls"]
++                .as_array()
++                .unwrap()
++                .len(),
++            2
++        );
 +    }
 +
 +    #[test]

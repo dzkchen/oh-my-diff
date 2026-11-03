@@ -319,6 +319,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "final_request_policy_v1",
     "continuation_middleware_v1",
     "builtins_v1",
+    "transcript_exec_groups_v1",
     "contracts_v2",
     "framed_process_v1",
     "process_streams_v1",
@@ -6121,6 +6122,14 @@ impl ModHost {
         let mut results = Vec::new();
         let mut stale = Vec::new();
         for id in self.event_ids("terminal") {
+            if thread.is_none()
+                && self
+                    .loaded
+                    .get(&id)
+                    .is_some_and(|loaded| loaded.package.state_scope == "thread")
+            {
+                continue;
+            }
             let own = payload.own(&id);
             let key = self
                 .terminal_state_key(&id, thread.as_deref())

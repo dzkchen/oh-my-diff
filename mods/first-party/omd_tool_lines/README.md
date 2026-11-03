@@ -1,10 +1,10 @@
 # omd_tool_lines
 
-Shows each tool call the agent makes, such as a command it runs or a file it edits, as one transcript line: the tool,
-its short arguments and the result. It's on by default in OMD+. OMD Core doesn't include it.
+Groups adjacent agent shell commands into one transcript line with counts, the latest active or failed command,
+and running and failure totals. Other tools stay on one line with short arguments and their result. It's on by default in OMD+. OMD Core doesn't include it.
 
 ```text
-• Shell cargo test -p codex-omd · ok · 214 lines · 41.3s
+• 8 shells cargo test -p codex-omd · ok · 41.3s
 • Edit tui/src/transcript_view/layout.rs · +9 −3
 ✗ Shell pnpm lint · exit 1 · 18 lines · 2.4s
 ```
@@ -23,7 +23,7 @@ omd mods disable omd_tool_lines
 
 | Command or key | What it does |
 | --- | --- |
-| Click a tool line | Open or close the full output for that row. |
+| Click a tool line | Open or close the full output for that row or command group. |
 | `F4`, then `Up` or `Down`, then `Enter` | The same, from the keyboard. |
 | `Ctrl+T` | Open the full transcript, where every row is shown in full. |
 
@@ -33,7 +33,8 @@ It has no settings.
 
 ## Needs and limits
 
-- Failures stay on one line, marked `✗` with the exit code.
+- Groups show a failure count marked `✗`; expand the group for each command and its exit code.
+- Individual failures stay on one line, marked `✗` with the exit code.
 - Your own `!cmd` commands, approvals, `/diff` and the assistant's messages look the same as before.
 - Inline sessions (`--no-alt-screen`) print one-line rows to scrollback. `Ctrl+T` shows them in full.
 - Narrow terminals shorten names and arguments.

@@ -39,14 +39,13 @@ You can also type:
 | Your image | A PNG or JPEG you choose, drawn as glyph tiles with a slow light sweep |
 
 Every picture is made of two-cell tiles that each contain a glyph, tinted over a color gradient. Choosing a scene
-applies it at once with a circular reveal. On a fresh session the scene shows at full strength in place of the OMD logo
+applies it at once, with a circular reveal between scenes. Enabling a scene from No scene shows it directly. On a fresh session the scene shows at full strength in place of the OMD logo
 and the welcome text.
 
 Once anything else is on screen, the scene stays behind it, darkened:
 
 - Its colors fill every cell that has the default background.
-- The prompt box, menus such as `/theme` and `/mods`, and your submitted prompts look like frosted glass with the
-  scene faintly visible through them.
+- The prompt box, menus such as `/theme` and `/mods`, and submitted prompts keep their opaque backgrounds.
 - Its glyphs appear only in blank space past the end of each line and never over images, so text stays readable and
   OMD's copies never include them. The terminal's own selection, such as Shift-drag, copies what the screen shows.
 - On a light terminal, text that would be hard to read over the dark scene gets a readable color.
