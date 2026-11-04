@@ -3,6 +3,8 @@ mod bridge;
 mod chain;
 mod code_cache;
 mod operation_validation;
+mod configuration_overrides;
+pub use configuration_overrides::ConfigurationOverrides;
 mod persisted;
 mod render;
 pub use chain::ModChain;
@@ -3309,6 +3311,8 @@ pub struct ModHost {
     generation: u64,
     configuration_sha256: String,
     configuration_stamp: Option<ConfigurationStamp>,
+    configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
+    override_revision: Option<u64>,
     /// The configuration whose timed-out inspections were already retried once.
     inspect_retried: String,
     /// A pending retry and the leniency (`initial`) of the reload it repeats.
@@ -3892,12 +3896,24 @@ impl ModHost {
         repository: Option<&Path>,
         active: &dyn Fn() -> bool,
     ) -> Result<Self> {
+        Self::open_with_overrides(root, tool_validator, repository, active, Arc::default())
+    }
+
+    pub fn open_with_overrides(
+        root: PathBuf,
+        tool_validator: fn(&Value) -> Result<()>,
+        repository: Option<&Path>,
+        active: &dyn Fn() -> bool,
+        configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
+    ) -> Result<Self> {
         let store = ModStore::open(root)?;
         let mut host = Self {
             store,
             generation: 0,
             configuration_sha256: String::new(),
             configuration_stamp: None,
+            configuration_overrides,
+            override_revision: None,
             inspect_retried: String::new(),
             inspect_retry: None,
             ui_configuration: None,
@@ -4074,8 +4090,24 @@ impl ModHost {
         self.inspect_retry = None;
     }
 
+    pub fn configuration_overrides(&self) -> Arc<Mutex<ConfigurationOverrides>> {
+        Arc::clone(&self.configuration_overrides)
+    }
+
+    pub fn set_configuration_overrides(&mut self, owner: Arc<Mutex<ConfigurationOverrides>>) {
+        self.callback_verdicts.clear();
+        self.configuration_overrides = owner;
+        self.override_revision = None;
+        self.configuration_stamp = None;
+    }
+
+    fn current_overrides(&self) -> ConfigurationOverrides {
+        self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
     fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
         !self.inspect_retry_due()
+            && self.override_revision == Some(self.current_overrides().revision())
             && stamp.is_some()
             && *stamp == self.configuration_stamp
             && self
@@ -4129,7 +4161,8 @@ impl ModHost {
             Ok(deployment) => (deployment, None),
             Err(error) => (policy::ManagedDeployment::default(), Some(error)),
         };
-        let retrying = hash == self.configuration_sha256;
+        let retrying = hash == self.configuration_sha256
+            && self.override_revision == Some(self.current_overrides().revision());
         if retrying && !self.inspect_retry_due() {
             self.configuration_stamp = self.settled(stamp);
             return Ok(false);
@@ -4195,6 +4228,14 @@ impl ModHost {
         }
         let administered = selections.len();
         selections.extend(config.mods.iter().cloned());
+        let overrides = {
+            let mut owner = self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner);
+            owner.retain(&selections)?;
+            owner.clone()
+        };
+        for selection in &mut selections {
+            selection.enabled = overrides.enabled(selection);
+        }
         self.managed = managed;
         self.policies = selections
             .iter()
@@ -4263,6 +4304,18 @@ impl ModHost {
             }
             let (settings_file, file_settings) = self.store.settings_file(&package, &selection);
             selection.settings.extend(file_settings);
+            match overrides.settings(&selection, &package, &selection.settings) {
+                Ok(settings) => selection.settings = settings,
+                Err(error) => {
+                    rejected.push(ModRejection {
+                        path: selection.path.clone(),
+                        id: Some(id),
+                        scope: selection.scope.clone(),
+                        reason: error.to_string(),
+                    });
+                    continue;
+                }
+            }
             // An unchanged trusted selection and adapter keep their inspection; another host's also needs the state it ran with.
             let unchanged = |previous: &&Loaded| {
                 previous.error.is_none()
@@ -4462,6 +4515,7 @@ impl ModHost {
             self.inspect_retry = None;
         }
         self.configuration_sha256 = hash;
+        self.override_revision = Some(overrides.revision());
         self.configuration_stamp = self.settled(stamp);
         let key = (self.store.root.clone(), self.project.clone());
         let mut inspected: BTreeMap<_, _> = self
@@ -5369,6 +5423,7 @@ impl ModHost {
             && *stamp == modified
             && *sha256 == self.configuration_sha256
             && *granted == grant
+            && self.override_revision == Some(self.current_overrides().revision())
         {
             return Ok(());
         }
@@ -5414,7 +5469,9 @@ impl ModHost {
             .get(&loaded.package.id)
             .unwrap_or(&loaded.selection);
         // An unchanged authority inventory cannot introduce a different precedence winner.
-        let unchanged = hash == self.configuration_sha256;
+        let overrides = self.current_overrides();
+        let unchanged = hash == self.configuration_sha256
+            && self.override_revision == Some(overrides.revision());
         if !unchanged {
             self.configuration_stamp = None;
         }
@@ -5436,6 +5493,9 @@ impl ModHost {
                 .filter(|selection| selection.path == loaded.selection.path)
                 .count();
             selections.retain(|selection| selection.path == loaded.selection.path);
+        }
+        for selection in &mut selections {
+            selection.enabled = overrides.enabled(selection);
         }
         let selected = Self::select(
             &selections,

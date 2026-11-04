@@ -422,13 +422,20 @@ fn initialize(
 ) -> Result<Arc<Mods>, String> {
     let registration =
         codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-    let runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-        .map_err(|e| e.to_string())?;
-    let input_runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-        .map_err(|e| e.to_string())?;
-    let persist_runtime =
-        ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-            .map_err(|e| e.to_string())?;
+    let owner = Arc::default();
+    let open = || {
+        ModHost::open_with_overrides(
+            host.root.clone(),
+            validate_tool_schema,
+            Some(&host.repository),
+            &|| true,
+            Arc::clone(&owner),
+        )
+        .map_err(|error| error.to_string())
+    };
+    let runtime = open()?;
+    let input_runtime = open()?;
+    let persist_runtime = open()?;
     let persist_required = persist_runtime.required_surfaces();
     services::define_providers(&host.config, |id| runtime.grants(id).is_some());
     let _ = host.persist_json("mod-status.json", &runtime.status());

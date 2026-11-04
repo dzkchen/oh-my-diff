@@ -188,6 +188,7 @@ pub use mods::ModRenderSite;
 pub use mods::ModScreenAnchor;
 pub use mods::ModSelectOption;
 pub use mods::ModSelection;
+pub use mods::ConfigurationOverrides;
 pub use mods::ModSidebarSide;
 pub use mods::ModSiteMode;
 pub use mods::ModSpacing;

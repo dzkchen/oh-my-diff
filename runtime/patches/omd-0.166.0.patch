@@ -69771,10 +69771,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a0ed18df122f7299b1889d56bb9178e1e259da71
+index 0000000000000000000000000000000000000000..c3273d9b1f8c5292af8344ae4baa4ce2299e8e01
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2633 @@
+@@ -0,0 +1,2640 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -70199,13 +70199,20 @@ index 0000000000000000000000000000000000000000..a0ed18df122f7299b1889d56bb9178e1
 +) -> Result<Arc<Mods>, String> {
 +    let registration =
 +        codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-+    let runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-+        .map_err(|e| e.to_string())?;
-+    let input_runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-+        .map_err(|e| e.to_string())?;
-+    let persist_runtime =
-+        ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-+            .map_err(|e| e.to_string())?;
++    let owner = Arc::default();
++    let open = || {
++        ModHost::open_with_overrides(
++            host.root.clone(),
++            validate_tool_schema,
++            Some(&host.repository),
++            &|| true,
++            Arc::clone(&owner),
++        )
++        .map_err(|error| error.to_string())
++    };
++    let runtime = open()?;
++    let input_runtime = open()?;
++    let persist_runtime = open()?;
 +    let persist_required = persist_runtime.required_surfaces();
 +    services::define_providers(&host.config, |id| runtime.grants(id).is_some());
 +    let _ = host.persist_json("mod-status.json", &runtime.status());
@@ -112810,10 +112817,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b3652968d83edbb
+index 0000000000000000000000000000000000000000..cccca8afe67c751f6546b36a3d07fc0902bfe0f2
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,265 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -113004,6 +113011,7 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub use mods::ModScreenAnchor;
 +pub use mods::ModSelectOption;
 +pub use mods::ModSelection;
++pub use mods::ConfigurationOverrides;
 +pub use mods::ModSidebarSide;
 +pub use mods::ModSiteMode;
 +pub use mods::ModSpacing;
@@ -114725,15 +114733,17 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a3aabed8c
+index 0000000000000000000000000000000000000000..1a9f74e555001539e0f4e13d62c1029c38d4ac0f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7017 @@
+@@ -0,0 +1,7077 @@
 +mod author;
 +mod bridge;
 +mod chain;
 +mod code_cache;
 +mod operation_validation;
++mod configuration_overrides;
++pub use configuration_overrides::ConfigurationOverrides;
 +mod persisted;
 +mod render;
 +pub use chain::ModChain;
@@ -118040,6 +118050,8 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +    generation: u64,
 +    configuration_sha256: String,
 +    configuration_stamp: Option<ConfigurationStamp>,
++    configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
++    override_revision: Option<u64>,
 +    /// The configuration whose timed-out inspections were already retried once.
 +    inspect_retried: String,
 +    /// A pending retry and the leniency (`initial`) of the reload it repeats.
@@ -118623,12 +118635,24 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +        repository: Option<&Path>,
 +        active: &dyn Fn() -> bool,
 +    ) -> Result<Self> {
++        Self::open_with_overrides(root, tool_validator, repository, active, Arc::default())
++    }
++
++    pub fn open_with_overrides(
++        root: PathBuf,
++        tool_validator: fn(&Value) -> Result<()>,
++        repository: Option<&Path>,
++        active: &dyn Fn() -> bool,
++        configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
++    ) -> Result<Self> {
 +        let store = ModStore::open(root)?;
 +        let mut host = Self {
 +            store,
 +            generation: 0,
 +            configuration_sha256: String::new(),
 +            configuration_stamp: None,
++            configuration_overrides,
++            override_revision: None,
 +            inspect_retried: String::new(),
 +            inspect_retry: None,
 +            ui_configuration: None,
@@ -118805,8 +118829,24 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +        self.inspect_retry = None;
 +    }
 +
++    pub fn configuration_overrides(&self) -> Arc<Mutex<ConfigurationOverrides>> {
++        Arc::clone(&self.configuration_overrides)
++    }
++
++    pub fn set_configuration_overrides(&mut self, owner: Arc<Mutex<ConfigurationOverrides>>) {
++        self.callback_verdicts.clear();
++        self.configuration_overrides = owner;
++        self.override_revision = None;
++        self.configuration_stamp = None;
++    }
++
++    fn current_overrides(&self) -> ConfigurationOverrides {
++        self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner).clone()
++    }
++
 +    fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
 +        !self.inspect_retry_due()
++            && self.override_revision == Some(self.current_overrides().revision())
 +            && stamp.is_some()
 +            && *stamp == self.configuration_stamp
 +            && self
@@ -118860,7 +118900,8 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +            Ok(deployment) => (deployment, None),
 +            Err(error) => (policy::ManagedDeployment::default(), Some(error)),
 +        };
-+        let retrying = hash == self.configuration_sha256;
++        let retrying = hash == self.configuration_sha256
++            && self.override_revision == Some(self.current_overrides().revision());
 +        if retrying && !self.inspect_retry_due() {
 +            self.configuration_stamp = self.settled(stamp);
 +            return Ok(false);
@@ -118926,6 +118967,14 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +        }
 +        let administered = selections.len();
 +        selections.extend(config.mods.iter().cloned());
++        let overrides = {
++            let mut owner = self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner);
++            owner.retain(&selections)?;
++            owner.clone()
++        };
++        for selection in &mut selections {
++            selection.enabled = overrides.enabled(selection);
++        }
 +        self.managed = managed;
 +        self.policies = selections
 +            .iter()
@@ -118994,6 +119043,18 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +            }
 +            let (settings_file, file_settings) = self.store.settings_file(&package, &selection);
 +            selection.settings.extend(file_settings);
++            match overrides.settings(&selection, &package, &selection.settings) {
++                Ok(settings) => selection.settings = settings,
++                Err(error) => {
++                    rejected.push(ModRejection {
++                        path: selection.path.clone(),
++                        id: Some(id),
++                        scope: selection.scope.clone(),
++                        reason: error.to_string(),
++                    });
++                    continue;
++                }
++            }
 +            // An unchanged trusted selection and adapter keep their inspection; another host's also needs the state it ran with.
 +            let unchanged = |previous: &&Loaded| {
 +                previous.error.is_none()
@@ -119193,6 +119254,7 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +            self.inspect_retry = None;
 +        }
 +        self.configuration_sha256 = hash;
++        self.override_revision = Some(overrides.revision());
 +        self.configuration_stamp = self.settled(stamp);
 +        let key = (self.store.root.clone(), self.project.clone());
 +        let mut inspected: BTreeMap<_, _> = self
@@ -120100,6 +120162,7 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +            && *stamp == modified
 +            && *sha256 == self.configuration_sha256
 +            && *granted == grant
++            && self.override_revision == Some(self.current_overrides().revision())
 +        {
 +            return Ok(());
 +        }
@@ -120145,7 +120208,9 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +            .get(&loaded.package.id)
 +            .unwrap_or(&loaded.selection);
 +        // An unchanged authority inventory cannot introduce a different precedence winner.
-+        let unchanged = hash == self.configuration_sha256;
++        let overrides = self.current_overrides();
++        let unchanged = hash == self.configuration_sha256
++            && self.override_revision == Some(overrides.revision());
 +        if !unchanged {
 +            self.configuration_stamp = None;
 +        }
@@ -120167,6 +120232,9 @@ index 0000000000000000000000000000000000000000..acebbd3d28030814586b1a512288135a
 +                .filter(|selection| selection.path == loaded.selection.path)
 +                .count();
 +            selections.retain(|selection| selection.path == loaded.selection.path);
++        }
++        for selection in &mut selections {
++            selection.enabled = overrides.enabled(selection);
 +        }
 +        let selected = Self::select(
 +            &selections,
@@ -125613,6 +125681,232 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +        std::fs::write(&path, corrupt).unwrap();
 +        let line: Value = serde_json::from_slice(&cache.line(1 << 20).unwrap()).unwrap();
 +        assert_eq!(line, json!({"code_cache": {"a": {"data": "d"}, "b": null}}));
++    }
++}
+diff --git a/codex-rs/omd/src/mods/configuration_overrides.rs b/codex-rs/omd/src/mods/configuration_overrides.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..a0a0266bb290ee0f7123170b81393b561b0e8e24
+--- /dev/null
++++ b/codex-rs/omd/src/mods/configuration_overrides.rs
+@@ -0,0 +1,220 @@
++use super::*;
++
++#[derive(Clone, Debug, Default)]
++pub struct ConfigurationOverrides {
++    revision: u64,
++    entries: BTreeMap<String, Override>,
++}
++
++#[derive(Clone, Debug, Default)]
++struct Override {
++    enabled: Option<bool>,
++    settings: BTreeMap<String, Value>,
++}
++
++impl ConfigurationOverrides {
++    pub fn revision(&self) -> u64 {
++        self.revision
++    }
++
++    pub fn set_enabled(&mut self, selection: &ModSelection, enabled: bool) -> Result<()> {
++        Self::writable(selection)?;
++        if selection.required {
++            return Err(failure("configuration_override_forbidden"));
++        }
++        self.bump()?;
++        self.entries.entry(Self::key(selection)).or_default().enabled = Some(enabled);
++        Ok(())
++    }
++
++    pub fn write_settings(
++        &mut self,
++        selection: &ModSelection,
++        package: &ModPackage,
++        inherited: &BTreeMap<String, Value>,
++        values: &serde_json::Map<String, Value>,
++    ) -> Result<BTreeMap<String, Value>> {
++        Self::writable(selection)?;
++        let key = Self::key(selection);
++        let mut entry = self.entries.get(&key).cloned().unwrap_or_default();
++        entry.settings.extend(values.clone());
++        let settings = Self::resolve_settings(&entry, package, inherited)?;
++        self.bump()?;
++        self.entries.insert(key, entry);
++        Ok(settings)
++    }
++
++    pub fn reset(&mut self, selection: &ModSelection) -> Result<()> {
++        self.bump()?;
++        self.entries.remove(&Self::key(selection));
++        Ok(())
++    }
++
++    pub fn reset_setting(&mut self, selection: &ModSelection, name: &str) -> Result<()> {
++        self.bump()?;
++        if let Some(entry) = self.entries.get_mut(&Self::key(selection)) {
++            entry.settings.remove(name);
++        }
++        Ok(())
++    }
++
++    pub fn enabled(&self, selection: &ModSelection) -> bool {
++        if selection.required || Self::writable(selection).is_err() {
++            return selection.enabled;
++        }
++        self.entries
++            .get(&Self::key(selection))
++            .and_then(|entry| entry.enabled)
++            .unwrap_or(selection.enabled)
++    }
++
++    pub fn settings(
++        &self,
++        selection: &ModSelection,
++        package: &ModPackage,
++        inherited: &BTreeMap<String, Value>,
++    ) -> Result<BTreeMap<String, Value>> {
++        match self.entries.get(&Self::key(selection)) {
++            Some(entry) if Self::writable(selection).is_ok() => {
++                Self::resolve_settings(entry, package, inherited)
++            }
++            _ => Ok(effective_settings(package.settings_schema.as_ref(), inherited)),
++        }
++    }
++
++    pub fn retain(&mut self, selections: &[ModSelection]) -> Result<()> {
++        let current: BTreeSet<_> = selections.iter().map(Self::key).collect();
++        if self.entries.keys().any(|key| !current.contains(key)) {
++            self.bump()?;
++            self.entries.retain(|key, _| current.contains(key));
++        }
++        Ok(())
++    }
++
++    fn resolve_settings(
++        entry: &Override,
++        package: &ModPackage,
++        inherited: &BTreeMap<String, Value>,
++    ) -> Result<BTreeMap<String, Value>> {
++        let mut settings = declared_settings(package.settings_schema.as_ref(), inherited);
++        for (name, value) in &entry.settings {
++            if value.is_null() {
++                settings.remove(name);
++            } else {
++                settings.insert(name.clone(), value.clone());
++            }
++        }
++        validate_settings(package, &settings)?;
++        Ok(effective_settings(package.settings_schema.as_ref(), &settings))
++    }
++
++    fn key(selection: &ModSelection) -> String {
++        store::grant(&json!(selection))
++    }
++
++    fn writable(selection: &ModSelection) -> Result<()> {
++        if selection.scope == MANAGED_SCOPE || !selection.authority_current() {
++            return Err(failure("configuration_override_forbidden"));
++        }
++        Ok(())
++    }
++
++    fn bump(&mut self) -> Result<()> {
++        self.revision = self.revision.checked_add(1).ok_or_else(|| failure("revision_overflow"))?;
++        Ok(())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn selection() -> ModSelection {
++        serde_json::from_value(json!({
++            "path": "/example/package", "sha256": "trusted", "enabled": true,
++            "capabilities": [], "scope": "user"
++        })).unwrap()
++    }
++
++    #[test]
++    fn independent_owners_inherit_current_defaults_after_reset() {
++        let mut saved = selection();
++        let mut a = ConfigurationOverrides::default();
++        let b = ConfigurationOverrides::default();
++        let grant = store::grant(&json!(saved));
++        a.set_enabled(&saved, false).unwrap();
++        assert!(!a.enabled(&saved));
++        assert!(b.enabled(&saved));
++        assert!(saved.enabled);
++        assert_eq!(grant, store::grant(&json!(saved)));
++        saved.enabled = false;
++        a.set_enabled(&saved, true).unwrap();
++        assert!(a.enabled(&saved));
++        assert!(!b.enabled(&saved));
++        a.reset(&saved).unwrap();
++        assert!(!a.enabled(&saved));
++        assert!(!ConfigurationOverrides::default().enabled(&saved));
++    }
++
++    #[test]
++    fn authority_changes_and_removal_discard_bindings() {
++        let mut saved = selection();
++        let mut overrides = ConfigurationOverrides::default();
++        overrides.set_enabled(&saved, false).unwrap();
++        saved.sha256 = "replacement".into();
++        assert!(overrides.enabled(&saved));
++        overrides.retain(&[saved.clone()]).unwrap();
++        saved.sha256 = "trusted".into();
++        assert!(overrides.enabled(&saved));
++        overrides.set_enabled(&saved, false).unwrap();
++        overrides.retain(&[]).unwrap();
++        assert!(overrides.enabled(&saved));
++    }
++
++    #[test]
++    fn required_managed_and_expired_selections_are_authoritative() {
++        for change in ["required", "managed", "expired"] {
++            let mut saved = selection();
++            let mut overrides = ConfigurationOverrides::default();
++            overrides.set_enabled(&saved, false).unwrap();
++            match change {
++                "required" => saved.required = true,
++                "managed" => saved.scope = MANAGED_SCOPE.into(),
++                _ => saved.expires_at = Some(0),
++            }
++            assert!(overrides.set_enabled(&saved, false).is_err());
++            assert!(overrides.enabled(&saved));
++        }
++    }
++
++    #[test]
++    fn settings_validate_atomically_and_null_differs_from_reset() {
++        let saved = selection();
++        let package: ModPackage = serde_json::from_value(json!({
++            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
++            "state_version": 1, "capabilities": [],
++            "settings_schema": {"type": "object", "additionalProperties": false,
++                "properties": {"color": {"type": "string", "default": "blue"}}}
++        })).unwrap();
++        let inherited = BTreeMap::from([
++            ("color".into(), json!("red")),
++            ("removed".into(), json!(1)),
++        ]);
++        let mut overrides = ConfigurationOverrides::default();
++        let values = json!({"color": "green"});
++        overrides.write_settings(&saved, &package, &inherited, values.as_object().unwrap()).unwrap();
++        let revision = overrides.revision();
++        let bad = json!({"color": 42});
++        assert!(overrides.write_settings(&saved, &package, &inherited, bad.as_object().unwrap()).is_err());
++        assert_eq!(overrides.revision(), revision);
++        let unknown = json!({"removed": 2});
++        assert!(overrides.write_settings(&saved, &package, &inherited, unknown.as_object().unwrap()).is_err());
++        assert_eq!(overrides.revision(), revision);
++        assert_eq!(overrides.settings(&saved, &package, &inherited).unwrap()["color"], "green");
++        let null = json!({"color": null});
++        assert_eq!(overrides.write_settings(&saved, &package, &inherited, null.as_object().unwrap()).unwrap()["color"], "blue");
++        overrides.reset_setting(&saved, "color").unwrap();
++        assert_eq!(overrides.settings(&saved, &package, &inherited).unwrap()["color"], "red");
++        assert_eq!(inherited["color"], "red");
 +    }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
@@ -149621,10 +149915,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2fd97e5ebb2dd3ca957b0936a21243e833433bd3
+index 0000000000000000000000000000000000000000..a78b3bb5ca84fa9213526af6d64e20ade8e3fc67
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5169 @@
+@@ -0,0 +1,5247 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -154793,6 +155087,84 @@ index 0000000000000000000000000000000000000000..2fd97e5ebb2dd3ca957b0936a21243e8
 +            .unwrap(),
 +        json!("##")
 +    );
++}
++
++#[test]
++fn configuration_owners_reload_independently_without_writing_defaults() {
++    let (temp, store, path) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
++    let saved = std::fs::read(store.root().join("mods.json")).unwrap();
++    let config: Value = serde_json::from_slice(&saved).unwrap();
++    let selection = serde_json::from_value(config["mods"][0].clone()).unwrap();
++    let mut first = host(&temp);
++    let mut second = host(&temp);
++    let owner = first.configuration_overrides();
++    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
++    assert!(first.refresh_due());
++    first.reload().unwrap();
++    assert!(first.status()["mods"].as_array().unwrap().is_empty());
++    second.reload().unwrap();
++    assert_eq!(second.status()["mods"][0]["id"], "fixture");
++    assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
++    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
++    second.set_configuration_overrides(owner.clone());
++    second.reload().unwrap();
++    assert!(second.status()["mods"].as_array().unwrap().is_empty());
++    store.enable(&path, false).unwrap();
++    owner.lock().unwrap().set_enabled(&selection, true).unwrap();
++    first.reload().unwrap();
++    assert_eq!(first.status()["mods"][0]["id"], "fixture");
++    let generation = first.generation();
++    assert_eq!(first.invoke("fixture", generation, "command", "value", Value::Null).unwrap(), json!(1));
++    owner.lock().unwrap().reset(&selection).unwrap();
++    first.reload().unwrap();
++    assert!(first.status()["mods"].as_array().unwrap().is_empty());
++}
++
++#[test]
++fn configuration_owner_settings_override_files_and_reset_to_latest_inheritance() {
++    let (temp, store, path) = fixture("export default api => api.command('read', () => JSON.stringify(api.settings))", &["commands"]);
++    let manifest = path.join("mod.json");
++    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
++    value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"schema"}},"additionalProperties":false});
++    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
++    trust(&store, &path, &["commands"]);
++    let selection = store.configuration().unwrap().mods[0].clone();
++    let package = serde_json::from_value(value).unwrap();
++    let settings = store.root().join("settings");
++    std::fs::create_dir_all(&settings).unwrap();
++    std::fs::write(settings.join("fixture.json"), r#"{"mode":"file"}"#).unwrap();
++    let mut a = host(&temp);
++    let mut b = host(&temp);
++    let saved = std::fs::read(store.root().join("mods.json")).unwrap();
++    let owner = a.configuration_overrides();
++    owner.lock().unwrap().write_settings(&selection, &package, &selection.settings, json!({"mode":"local"}).as_object().unwrap()).unwrap();
++    let read = |runtime: &mut ModHost| {
++        runtime.reload().unwrap();
++        runtime.invoke("fixture", runtime.generation(), "command", "read", Value::Null).unwrap()
++    };
++    assert_eq!(read(&mut a), json!(r#"{"mode":"local"}"#));
++    assert_eq!(read(&mut b), json!(r#"{"mode":"file"}"#));
++    std::fs::write(settings.join("fixture.json"), r#"{"mode":"latest"}"#).unwrap();
++    assert_eq!(read(&mut a), json!(r#"{"mode":"local"}"#));
++    owner.lock().unwrap().reset_setting(&selection, "mode").unwrap();
++    assert_eq!(read(&mut a), json!(r#"{"mode":"latest"}"#));
++    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
++}
++
++#[test]
++fn configuration_owner_applies_before_initial_activation() {
++    let (temp, store, _) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
++    let selection = store.configuration().unwrap().mods[0].clone();
++    let owner = std::sync::Arc::new(std::sync::Mutex::new(codex_omd::ConfigurationOverrides::default()));
++    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
++    for _ in 0..3 {
++        let runtime = ModHost::open_with_overrides(
++            store.root().to_path_buf(), |_| Ok(()), Some(temp.path()), &|| true, owner.clone(),
++        ).unwrap();
++        assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
++        assert!(std::sync::Arc::ptr_eq(&runtime.configuration_overrides(), &owner));
++    }
++    assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644

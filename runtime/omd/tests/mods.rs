@@ -5167,3 +5167,81 @@ fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
         json!("##")
     );
 }
+
+#[test]
+fn configuration_owners_reload_independently_without_writing_defaults() {
+    let (temp, store, path) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
+    let saved = std::fs::read(store.root().join("mods.json")).unwrap();
+    let config: Value = serde_json::from_slice(&saved).unwrap();
+    let selection = serde_json::from_value(config["mods"][0].clone()).unwrap();
+    let mut first = host(&temp);
+    let mut second = host(&temp);
+    let owner = first.configuration_overrides();
+    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
+    assert!(first.refresh_due());
+    first.reload().unwrap();
+    assert!(first.status()["mods"].as_array().unwrap().is_empty());
+    second.reload().unwrap();
+    assert_eq!(second.status()["mods"][0]["id"], "fixture");
+    assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
+    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+    second.set_configuration_overrides(owner.clone());
+    second.reload().unwrap();
+    assert!(second.status()["mods"].as_array().unwrap().is_empty());
+    store.enable(&path, false).unwrap();
+    owner.lock().unwrap().set_enabled(&selection, true).unwrap();
+    first.reload().unwrap();
+    assert_eq!(first.status()["mods"][0]["id"], "fixture");
+    let generation = first.generation();
+    assert_eq!(first.invoke("fixture", generation, "command", "value", Value::Null).unwrap(), json!(1));
+    owner.lock().unwrap().reset(&selection).unwrap();
+    first.reload().unwrap();
+    assert!(first.status()["mods"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn configuration_owner_settings_override_files_and_reset_to_latest_inheritance() {
+    let (temp, store, path) = fixture("export default api => api.command('read', () => JSON.stringify(api.settings))", &["commands"]);
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"schema"}},"additionalProperties":false});
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+    let selection = store.configuration().unwrap().mods[0].clone();
+    let package = serde_json::from_value(value).unwrap();
+    let settings = store.root().join("settings");
+    std::fs::create_dir_all(&settings).unwrap();
+    std::fs::write(settings.join("fixture.json"), r#"{"mode":"file"}"#).unwrap();
+    let mut a = host(&temp);
+    let mut b = host(&temp);
+    let saved = std::fs::read(store.root().join("mods.json")).unwrap();
+    let owner = a.configuration_overrides();
+    owner.lock().unwrap().write_settings(&selection, &package, &selection.settings, json!({"mode":"local"}).as_object().unwrap()).unwrap();
+    let read = |runtime: &mut ModHost| {
+        runtime.reload().unwrap();
+        runtime.invoke("fixture", runtime.generation(), "command", "read", Value::Null).unwrap()
+    };
+    assert_eq!(read(&mut a), json!(r#"{"mode":"local"}"#));
+    assert_eq!(read(&mut b), json!(r#"{"mode":"file"}"#));
+    std::fs::write(settings.join("fixture.json"), r#"{"mode":"latest"}"#).unwrap();
+    assert_eq!(read(&mut a), json!(r#"{"mode":"local"}"#));
+    owner.lock().unwrap().reset_setting(&selection, "mode").unwrap();
+    assert_eq!(read(&mut a), json!(r#"{"mode":"latest"}"#));
+    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+}
+
+#[test]
+fn configuration_owner_applies_before_initial_activation() {
+    let (temp, store, _) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
+    let selection = store.configuration().unwrap().mods[0].clone();
+    let owner = std::sync::Arc::new(std::sync::Mutex::new(codex_omd::ConfigurationOverrides::default()));
+    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
+    for _ in 0..3 {
+        let runtime = ModHost::open_with_overrides(
+            store.root().to_path_buf(), |_| Ok(()), Some(temp.path()), &|| true, owner.clone(),
+        ).unwrap();
+        assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
+        assert!(std::sync::Arc::ptr_eq(&runtime.configuration_overrides(), &owner));
+    }
+    assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
+}
