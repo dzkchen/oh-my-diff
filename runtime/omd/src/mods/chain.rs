@@ -105,24 +105,6 @@ impl Core<'_> {
 
 type HostFn<'h> = dyn FnMut(&str, ModHostCall) -> Result<Value> + 'h;
 
-fn glob(pattern: &str, text: &str) -> bool {
-    let parts = pattern.split('*').collect::<Vec<_>>();
-    let [first, .., last] = parts.as_slice() else {
-        return pattern == text;
-    };
-    if text.len() < first.len() + last.len() || !text.starts_with(first) || !text.ends_with(last) {
-        return false;
-    }
-    let (mut at, end) = (first.len(), text.len() - last.len());
-    parts[1..parts.len() - 1].iter().all(|part| {
-        let found = text[at..end].find(part);
-        if let Some(found) = found {
-            at += found + part.len();
-        }
-        found.is_some()
-    })
-}
-
 pub struct SendPolicy {
     pub required: bool,
     pub unavailable: Option<String>,
@@ -1182,10 +1164,7 @@ fn effective_call(
             .unwrap_or_default())
     })?;
     let namespace = crate::mods::host_namespace(&call.operation, &call.arguments);
-    if withheld
-        .iter()
-        .any(|pattern| crate::mods::namespace_matches(pattern, &namespace))
-    {
+    if withheld.iter().any(|pattern| glob(pattern, &namespace)) {
         return Err(failure(format!("capability_withheld: {namespace}")));
     }
     if let Some(missing) = call
@@ -1879,11 +1858,10 @@ fn admission(result: &Value, scope: &[String]) -> std::result::Result<Vec<String
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    match withheld.iter().find(|namespace| {
-        !scope
-            .iter()
-            .any(|pattern| crate::mods::namespace_matches(pattern, namespace))
-    }) {
+    match withheld
+        .iter()
+        .find(|namespace| !scope.iter().any(|pattern| glob(pattern, namespace)))
+    {
         Some(namespace) => Err(format!(
             "admission_policy_invalid: {namespace} is outside policy.namespaces"
         )),

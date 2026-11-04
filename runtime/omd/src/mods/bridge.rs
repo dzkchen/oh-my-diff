@@ -184,7 +184,7 @@ fn authorize(loaded: &Loaded, call: &ModHostCall) -> Result<()> {
     if loaded
         .withheld
         .iter()
-        .any(|pattern| namespace_matches(pattern, &namespace))
+        .any(|pattern| glob(pattern, &namespace))
     {
         return Err(failure(format!("capability_withheld: {namespace}")));
     }
