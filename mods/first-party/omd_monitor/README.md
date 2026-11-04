@@ -1,6 +1,6 @@
 # omd_monitor
 
-Lets the agent wait on a background command, a file change, or a GitHub run or deployment without checking again and
+Lets the agent wait on a background command, a file change, or a GitHub pull request, run or deployment without checking again and
 again. It sets up one monitor, keeps working, and gets one message when the thing finishes, fails or times out. It's off by default in OMD+. OMD Core doesn't include it.
 
 ## Turn it on
@@ -31,14 +31,35 @@ one.
 | Command | What it does |
 | --- | --- |
 | `/monitor` | List this thread's monitors and the allowed GitHub repositories |
+| `/monitor process SESSION [exit\|success\|failure] [SECONDS]` | Watch a background command (default: exit, 24 hours) |
+| `/monitor files change\|exists\|absent PATH...` | Watch workspace paths for up to 24 hours |
+| `/monitor run owner/repo NUMBER [SECONDS]` | Watch an Actions run for success |
+| `/monitor deployment owner/repo NUMBER [SECONDS]` | Watch a deployment for success |
+| `/monitor pr owner/repo NUMBER [SECONDS]` | Watch the PR’s reported checks for up to 24 hours and notify the agent |
 | `/monitor allow owner/repo` | Let monitors read that repository through your `gh` login |
 | `/monitor revoke owner/repo` | End this thread's monitors of that repository with the outcome `revoked` |
 | `/monitor cancel ID` | End one monitor and tell the model with a `cancelled` message (the model's own cancel sends none) |
 
-For example, run `/monitor allow your-org/your-repo` before asking the agent to wait for a GitHub Actions run there.
+For example, run `/monitor allow your-org/your-repo` once, then `/monitor pr your-org/your-repo 123`, or ask the agent to monitor that PR. The agent receives the result without repeated model turns.
 Monitors in other threads check the allowed list again only when their adapter reports a state change, its end or the
 timeout. They end as `revoked` then, so until that moment they can keep polling. The status line shows `monitoring N`
 while any monitor is active.
+
+### Builds, tests and generated files
+
+Ask the agent to start a build or test command in the background and monitor its session until success with a
+suitable timeout. The agent can attach a short `label`, such as `release build` or `integration tests`, to any
+monitor; it appears in lists and the delivered result. A failed build includes its exit code and an output excerpt.
+For an existing background session, use `/monitor process SESSION success 1800`.
+
+To wait for generated output, use `/monitor files exists build/result.json`. To wait for another edit to existing
+files, use `/monitor files change src`. To wait for a lock to disappear, use `/monitor files absent tmp/build.lock`.
+All paths must be workspace-relative; slash commands split paths on whitespace, so ask the agent for paths with
+spaces or a custom file timeout. Gitignored build output cannot be watched; use the build's process session.
+`exists` and `absent` require every listed path, while `change` fires on the first change.
+
+Direct watch commands request setup in a native callback. Setup then reports the monitor id or an error in the
+transcript. GitHub commands accept an optional timeout in seconds (default: 24 hours). An already satisfied condition also delivers its result to the agent.
 
 ### The message
 
@@ -68,7 +89,7 @@ restarted. A plain `/resume` in the same OMD process keeps it watching until its
 | --- | --- | --- |
 | `process` | A background `exec_command` session the agent started (its session id or call id) | Push from Codex. No polling. |
 | `files` | Up to 8 workspace paths, until they change, exist or are absent | Push, through a workspace watch. No polling. |
-| `github` | A GitHub Actions run or a deployment's statuses of an allowed repository | Bounded polling by an adapter, because GitHub has no push to a local CLI. |
+| `github` | A PR’s reported checks, a GitHub Actions run or a deployment's statuses of an allowed repository | Bounded polling by an adapter, because GitHub has no push to a local CLI. |
 
 - Codex reports the end of a backgrounded command as an `item/completed` notification, and the mod reads its exit
   code and the end of its output.
@@ -82,7 +103,8 @@ notifications, and adapter lines with a repeated or older sequence number, are i
 
 The GitHub adapter (`github.mjs`) is a read-only script the mod starts with `node` as a managed process:
 
-- It runs only `gh api --method GET` against `repos/OWNER/REPO/actions/runs/ID` or
+- For a PR it reads its head, check runs, commit statuses and GitHub merge state. It waits for reported checks to finish and for GitHub to report a clean merge state; a changed head or closed PR ends the monitor. The observed head is retained across restarts. It pages through check runs within the deadline. Incomplete or duplicate pages never produce a success. Before success it reads the checks and statuses again and rechecks the head and merge state; concurrent changes postpone completion. Empty legacy statuses do not block check-only PRs. For more than 1,000 check suites, it evaluates their aggregate results instead of the limited check-runs endpoint. The result is a snapshot: recheck the PR head and merge gate before merging.
+- It runs only `gh api --method GET` against PR, commit check and status endpoints or `repos/OWNER/REPO/actions/runs/ID` or
   `repos/OWNER/REPO/deployments/ID/statuses`.
 - It polls every `poll_seconds`, never past the monitor's timeout. For a long timeout it polls more slowly, so at most
   720 polls cover it. A 24-hour timeout polls about every 2 minutes.
@@ -115,7 +137,7 @@ Change settings in `/mods`.
   `not delivered` for that monitor.
 - A revoked or expired `os` grant stops the adapter. Its monitors report `revoked` or `source lost` at the next
   start, resume or process event.
-- A command that ends without an exit code (for example one you declined) reads
+- A command that ends without an exit code (for example one you declined) never counts as success. Its result reads
   `ended without an exit code (status ...)`.
 
 ## More

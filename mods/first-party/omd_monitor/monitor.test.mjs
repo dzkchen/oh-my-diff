@@ -9,7 +9,7 @@ const assets = { 'github.mjs': { text: readFileSync(new URL('./github.mjs', impo
 const NOW = 1_800_000_000_000;
 
 function world(init = {}) {
-  return { timers: new Map(), watches: new Map(), procs: new Map(), outbox: new Map(), sent: [], steers: [], queued: [], published: [], repos: [], fs: {},
+  return { timers: new Map(), watches: new Map(), procs: new Map(), outbox: new Map(), sent: [], steers: [], queued: [], published: [], notices: [], repos: [], fs: {},
     turns: [{ turn_id: 'turn-1', outcome: 'running', processes: [] }], terminals: null, declineSteer: false, startError: null, steerError: null, thread: 't1', ...init };
 }
 
@@ -39,7 +39,9 @@ function answer(w, { operation: op, arguments: args }) {
     case 'workspace.stat': return { files: Object.fromEntries(args.paths.map(path => [path, w.fs[path] ?? null])) };
     case 'workspace.watch': w.watches.set(args.key, args); return { watch_id: `watch-${args.key}` };
     case 'workspace.unwatch': return { stopped: w.watches.delete(args.key) };
-    case 'process.which': return { found: [{ name: 'node', path: '/bin/node', sha256: 'a'.repeat(64) }] };
+    case 'process.which':
+      if (w.whichError) throw new Error(w.whichError);
+      return { found: [{ name: 'node', path: '/bin/node', sha256: 'a'.repeat(64) }] };
     case 'process.status':
       if (!w.procs.has(args.session)) throw new Error('process_not_found');
       return { session: args.session, running: true, idle_ms: 0 };
@@ -55,7 +57,7 @@ function answer(w, { operation: op, arguments: args }) {
     case 'process.stop': return { stopped: w.procs.delete(args.session) };
     case 'store.get': return w.repos === null ? null : { value: w.repos, revision: 1, provenance: {} };
     case 'store.put': w.repos = args.value; return { revision: 2 };
-    case 'terminal.notice': return { shown: true };
+    case 'terminal.notice': w.notices.push(args); return { shown: true };
     default: throw new Error(`unexpected ${op}`);
   }
 }
@@ -535,4 +537,64 @@ test('a forked thread arms its copied monitors under its own keys, and a timer l
   w.timers.delete('t2/deadline');
   watch(w, { source: 'process', session_id: '7', timeout_s: 900 }, fork);
   assert.equal(w.timers.get('t2/deadline'), 600_000);
+});
+
+test('/monitor pr starts a PR watcher after repository permission', () => {
+  const w = world({ repos: ['acme/app'] });
+  const result = run(w, 'command', 'pr Acme/App 42', null, { name: 'monitor' });
+  assert.match(result.value.display, /Requested monitor for Acme\/App PR #42/);
+  channel(w, 'watch', w.published[0].data, null);
+  assert.deepEqual(w.procs.get('mon_t1_m1').arguments.slice(3, 7), ['adapter', 'pr', 'acme/app', '42']);
+});
+
+test('PR head is persisted and passed to a restarted adapter', () => {
+  const w = world({ repos: ['acme/app'] });
+  const armed = watch(w, { source: 'github', repo: 'acme/app', pr_number: '42' });
+  const head = 'a'.repeat(40);
+  w.outbox.set('mon_t1_m1', [{ seq: 1, state: 'pending', head }]);
+  const progress = run(w, 'process_event', { session: 'mon_t1_m1', kind: 'output', bytes: 80 }, armed.state);
+  assert.equal(monitor(progress.state).head, head);
+  w.procs.clear();
+  run(w, 'resume', { restarted: true }, progress.state);
+  assert.equal(w.procs.get('mon_t1_m1').arguments.at(-1), head);
+});
+
+test('direct workflows hop to native callbacks and label build results', () => {
+  for (const command of ['process 4242 success 60', 'files exists build/out', 'run acme/app 9 120', 'deployment acme/app 9']) {
+    const w = world({ repos: ['acme/app'], fs: { build: { kind: 'dir' } } });
+    const request = run(w, 'command', command, null, { name: 'monitor' });
+    assert.match(request.value.display, /Requested monitor/);
+    assert.deepEqual(request.ops, ['store.get', 'events.publish']);
+    if (command.startsWith('run ')) assert.equal(w.published[0].data.timeout_s, '120');
+    const setup = channel(w, 'watch', w.published[0].data, null);
+    assert.equal(monitor(setup.state).status, 'active');
+  }
+  const w = world();
+  const armed = watch(w, { source: 'process', session_id: '4242', label: 'release build' });
+  channel(w, 'exit', { item: item({ exitCode: 1 }) }, armed.state);
+  assert.match(w.steers[0].params.input[0].text, /release build: process 4242/);
+});
+
+test('direct subscriptions deliver immediate outcomes', () => {
+  const w = world({ fs: { ready: { kind: 'file' } } });
+  const done = channel(w, 'watch', { source: 'files', paths: ['ready'], until: 'exists', timeout_s: 60 }, null);
+  assert.equal(monitor(done.state).status, 'done');
+  assert.equal(w.steers.length, 1);
+});
+
+test('a completed command without an exit code never claims success', () => {
+  const w = world();
+  const state = watch(w, { source: 'process', session_id: '4242', until: 'success' }).state;
+  const ended = channel(w, 'exit', { item: item({ exitCode: null }) }, state);
+  assert.equal(monitor(ended.state).outcome, 'failure');
+  assert.match(monitor(ended.state).summary, /without an exit code/);
+});
+
+
+test('native setup errors reach the transcript with their original discovery reason', () => {
+  const w = world({ repos: ['acme/app'], whichError: 'grant_expired: os' });
+  const result = channel(w, 'watch', { source: 'github', repo: 'acme/app', pr_number: '9', timeout_s: 60 }, null);
+  assert.match(w.notices[0].text, /cannot discover node: grant_expired: os/);
+  assert.equal(result.state, null);
+  assert.equal(w.procs.size, 0);
 });
