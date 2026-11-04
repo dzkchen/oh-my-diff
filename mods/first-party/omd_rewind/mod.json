@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "omd_rewind",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Records the files each turn changes and puts them back as they were before an earlier turn with /rewind",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_rewind"},
+  "capabilities": ["commands", "interception", "input", "lifecycle", "exec", "fs.read", "fs.write", "store", "inventory"],
+  "compatibility": {"required_features": ["exec_v1", "workspace_fs_v1", "state_scopes_v1", "store_v1", "lifecycle_events_v1", "continuation_middleware_v1"]},
+  "settings_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+}

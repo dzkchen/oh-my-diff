@@ -75,6 +75,7 @@ on with `omd mods enable ID`. [Support](support.md#versions) lists the Node vers
 | [`omd_loop_guard`](../mods/first-party/omd_loop_guard/README.md) | Tells the agent when a tool call keeps returning the same error or output, so it changes approach instead of looping | |
 | [`omd_env_bootstrap`](../mods/first-party/omd_env_bootstrap/README.md) | Snapshots the workspace once per thread (OS, files, languages, toolchains, test commands, git) and keeps it in the cached prompt prefix | |
 | [`omd_plan_anchor`](../mods/first-party/omd_plan_anchor/README.md) | Repeats the open plan steps at the end of a tool result every few calls | `update_plan` turned on: [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) or `[tools.update_plan] enabled = true`, which costs each new thread's first-request prompt cache |
+| [`omd_rewind`](../mods/first-party/omd_rewind/README.md) | `/rewind` puts the files back as they were before an earlier turn, undoing the agent's edits from `apply_patch`, edit tools and shell commands | Git for shell edits to committed files |
 
 In a [small benchmark](benchmarks/harness-mods.md), `omd_observation_mask`, `omd_verify_stop`, `omd_edit_guard` and
 `omd_env_bootstrap`, with the `omd-output-budget` component, cost an estimated 25% less than stock Codex (95% CI 19%

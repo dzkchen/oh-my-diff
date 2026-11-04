@@ -619,6 +619,12 @@
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Owns when the open plan steps are restated after a tool result, through a tool interceptor that keeps the last accepted update_plan in its thread-scoped state; experimental, installed by no profile."
+    },
+    {
+      "path": "mods/first-party/omd_rewind",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns per-turn file checkpoints and the /rewind command, through a tool interceptor that backs up uncommitted files once per turn, workspace_change records in its thread-scoped state and workspace.restore; experimental, installed by no profile."
     }
   ],
   "synthetic_fixtures": [

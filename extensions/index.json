@@ -235,6 +235,22 @@
       "support_status": "experimental"
     },
     {
+      "id": "omd_rewind",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Records the files each turn changes and puts them back as they were before an earlier turn with /rewind",
+      "source": "mods/first-party/omd_rewind",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.4.1; mod API 1.0.0; continuation_middleware_v1, exec_v1, lifecycle_events_v1, state_scopes_v1, store_v1, workspace_fs_v1; shell edits need Git",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "OMD 1.4.1 (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
       "id": "omd_continue",
       "version": "1.0.0",
       "extension_type": "mod",

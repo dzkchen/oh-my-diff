@@ -680,6 +680,29 @@
       "source": "mods/first-party/omd_programmable_context",
       "version": "1.0.0"
     },
+    "omd_rewind": {
+      "api": "1.0.0",
+      "capabilities": [
+        "commands",
+        "interception",
+        "input",
+        "lifecycle",
+        "exec",
+        "fs.read",
+        "fs.write",
+        "store",
+        "inventory"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "f53e704d906df94b30c24d351324cd02a03fb0b238803cbaa14a554fa1a0833f",
+        "mod.json": "6eaab082118809ec9d06b8ef270e9dcd3c0d2e0307d54da412d3d9341859da39"
+      },
+      "id": "omd_rewind",
+      "package_sha256": "ab92c4fa770dc73c5cd3c05261118d89ff56be27ee180fd7b5d9d1c83111188d",
+      "source": "mods/first-party/omd_rewind",
+      "version": "1.0.0"
+    },
     "omd_source_knowledge": {
       "api": "1.0.0",
       "capabilities": [
