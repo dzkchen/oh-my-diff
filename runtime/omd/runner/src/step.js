@@ -1,6 +1,7 @@
 const omd = globalThis.__omd;
 globalThis.__step = async line => {
   omd.serve(line);
+  if (omd.request.session_activation) return globalThis.__dispatch();
   let value = null;
   try {
     value = await (omd.request.event === 'component' ? omd.component : omd.intercept)(omd.request.payload) ?? null;

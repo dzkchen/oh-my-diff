@@ -3,6 +3,7 @@ if (typeof globalThis.__activate !== 'function') throw new Error('default_export
 const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
 await globalThis.__activate(activation);
 globalThis.__omd.ready();
+globalThis.__dispatch = async () => {
 let value = null;
 try {
 if (request.event !== 'inspect') {
@@ -22,5 +23,8 @@ if (globalThis.__omd.pending()) throw new Error('swallowed_host_suspension');
   if (error !== globalThis.__omd.suspension) throw error;
 }
 if (globalThis.__omd.calls.length < (request.receipts ?? []).length) throw new Error('host_call_replay_diverged');
-globalThis.__result = JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
+return JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
   calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
+
+};
+globalThis.__result = await globalThis.__dispatch();

@@ -344,6 +344,8 @@ pub fn validate_environment_set(arguments: &Value) -> Result<(String, Option<Str
     Ok((input.name, value))
 }
 
+pub const TIMER_DATA_BYTES: usize = 65_536;
+
 pub fn validate_timer_request(operation: &str, arguments: &Value) -> Result<(String, u64), String> {
     if operation == "events.cancel" {
         return arguments["key"]
@@ -356,12 +358,21 @@ pub fn validate_timer_request(operation: &str, arguments: &Value) -> Result<(Str
     struct Input {
         key: String,
         delay_ms: u64,
+        data: Option<Value>,
     }
     let input: Input =
         serde_json::from_value(arguments.clone()).map_err(|error| error.to_string())?;
     if input.key.is_empty() || input.key.len() > 64 || !(16..=86_400_000).contains(&input.delay_ms)
     {
         return Err("timer_invalid".into());
+    }
+    if let Some(data) = input.data
+        && serde_json::to_vec(&data)
+            .map_err(|error| error.to_string())?
+            .len()
+            > TIMER_DATA_BYTES
+    {
+        return Err("timer_data_limit".into());
     }
     Ok((input.key, input.delay_ms))
 }
