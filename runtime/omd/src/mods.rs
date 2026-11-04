@@ -12,12 +12,7 @@ pub use chain::access_receipt;
 pub use chain::compose_rows;
 pub use chain::continue_operation;
 pub use chain::intercept_shared;
-pub use persisted::PERSIST_CHUNK_BYTES;
 pub use persisted::PERSIST_WITHHELD;
-pub use persisted::PersistedRewrite;
-pub use persisted::persist_changed_by;
-pub use persisted::persist_chunks;
-pub use persisted::persist_cut;
 pub use persisted::persist_texts;
 pub use render::MOD_RENDER_COMPONENTS;
 pub use render::client_component_unmount;
@@ -28,12 +23,10 @@ pub use render::component_unmount;
 pub use render::render_shared;
 mod packages;
 mod view;
-pub use view::MOD_KEY_LIMIT;
 pub use view::MOD_TEXT_BYTES;
 pub use view::ModActivity;
 pub use view::ModAnchor;
 pub use view::ModBorder;
-pub use view::ModBoxAccent;
 pub use view::ModBoxBorder;
 pub use view::ModBoxStyle;
 pub use view::ModColor;
@@ -49,11 +42,6 @@ pub use view::ModKeyAction;
 pub use view::ModKeyContext;
 pub use view::ModKeys;
 pub use view::ModLayout;
-pub use view::ModLayoutLeaf;
-pub use view::ModLayoutSplit;
-pub use view::ModLayoutTabs;
-pub use view::ModListRow;
-pub use view::ModOffset;
 pub use view::ModOverlay;
 pub use view::ModOverlayClip;
 pub use view::ModPaint;
@@ -70,21 +58,16 @@ pub use view::ModSpan;
 pub use view::ModSplit;
 pub use view::ModStyle;
 pub use view::ModSurfacePaint;
-pub use view::ModTab;
-pub use view::ModTheme;
-pub use view::ModThemePatch;
 pub use view::ModTone;
 pub use view::ModView;
 pub use view::ModViewConflict;
 pub use view::ModViewPatch;
 pub use view::ModViewSnapshot;
 pub use view::component_ids_of;
-pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
 pub use view::mod_component_id;
 pub use view::mod_key_name;
 pub use view::owned_command;
-pub use view::valid_glyphs;
 mod outcome;
 pub use outcome::ModCommandOutcome;
 mod package_manager;
@@ -1844,18 +1827,22 @@ pub fn host_namespace(operation: &str, arguments: &Value) -> String {
     }
 }
 
-pub fn namespace_matches(pattern: &str, namespace: &str) -> bool {
-    match pattern.split_once('*') {
-        None => pattern == namespace,
-        Some((prefix, rest)) => {
-            namespace.starts_with(prefix)
-                && (0..=namespace.len() - prefix.len()).any(|skip| {
-                    namespace
-                        .get(prefix.len() + skip..)
-                        .is_some_and(|tail| namespace_matches(rest, tail))
-                })
-        }
+pub(crate) fn glob(pattern: &str, text: &str) -> bool {
+    let parts = pattern.split('*').collect::<Vec<_>>();
+    let [first, .., last] = parts.as_slice() else {
+        return pattern == text;
+    };
+    if text.len() < first.len() + last.len() || !text.starts_with(first) || !text.ends_with(last) {
+        return false;
     }
+    let (mut at, end) = (first.len(), text.len() - last.len());
+    parts[1..parts.len() - 1].iter().all(|part| {
+        let found = text[at..end].find(part);
+        if let Some(found) = found {
+            at += found + part.len();
+        }
+        found.is_some()
+    })
 }
 
 pub const DELEGABLE_APPROVAL_KINDS: &[&str] = &["exec", "stdin", "patch", "mcp_tool", "network"];
@@ -2888,8 +2875,6 @@ struct Reply {
     #[serde(default)]
     calls: Vec<ModHostCall>,
     #[serde(default)]
-    host_call: Option<ModHostCall>,
-    #[serde(default)]
     updates: Vec<String>,
     #[serde(skip)]
     receipts: Vec<Value>,
@@ -3062,6 +3047,24 @@ type CallbackVerdict = (Instant, Option<FileStamp>, String, String);
 #[cfg(test)]
 mod reload_tests {
     use super::*;
+
+    #[test]
+    fn glob_matches_any_run_of_characters() {
+        for (pattern, text, expected) in [
+            ("*", "", true),
+            ("*", "anything", true),
+            ("service:x/*", "service:x/read", true),
+            ("service:x/*", "service:y/read", false),
+            ("a*b*c", "abc", true),
+            ("a*b*c", "a-b-b-c", true),
+            ("a*b*c", "acb", false),
+            ("a*a", "a", false),
+            ("exact", "exact", true),
+            ("exact", "exactly", false),
+        ] {
+            assert_eq!(glob(pattern, text), expected, "{pattern} vs {text}");
+        }
+    }
 
     #[test]
     fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
@@ -5642,9 +5645,7 @@ impl ModHost {
             }
         })?;
         if let Some(error) = &loaded.error {
-            return Err(failure(format!(
-                "mod_failed: {error}; reload it with /omd (Reload mods)"
-            )));
+            return Err(failure(format!("mod_failed: {error}")));
         }
         self.check_callback_authority(&loaded)?;
         loaded.session_key = self.session_key(id, thread)?;

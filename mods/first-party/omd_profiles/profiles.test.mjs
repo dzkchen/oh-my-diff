@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { callback, runnerSync } from '../../../tests/mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter, chatEvents, anthropicEvents } from './router.mjs';
 import { origin, profileEntry, routeFor, serviceFor } from './profiles.ts';
 
@@ -783,11 +783,12 @@ test('the /model picker lists the profiles this mod publishes on its routes chan
   const picker = JSON.parse(readFileSync(new URL('mod.json', folder), 'utf8'));
   const base = { source: readFileSync(new URL('index.ts', folder), 'utf8'), filename: fileURLToPath(new URL('index.ts', folder)), entrypoint: 'index.ts',
     api: picker.api, capabilities: picker.capabilities, settings: { layout: 'compact', brand: 'oh my diff' }, hook_budget_ms: 10000 };
-  const consumed = runnerSync({ ...base, state: null, event: 'channel', payload: { channel: 'omd_profiles/routes', data } });
+  const unexpected = call => assert.fail(`unexpected ${call.operation}`);
+  const consumed = callback({ ...base, state: null, event: 'channel', payload: { channel: 'omd_profiles/routes', data } }, unexpected);
   assert.equal(consumed.error, undefined);
   const input = { component: 'list', viewport: { columns: 100, rows: 40 }, props: { view_id: 'model', title: 'Choose model', subtitle: null, selected: 0,
     items: [{ order: 0, label: 'model', description: '', current: true, disabled: false }] } };
-  const rendered = runnerSync({ ...base, state: consumed.state, event: 'intercept', name: '0', payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } });
+  const rendered = callback({ ...base, state: consumed.state, event: 'intercept', name: '0', payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } }, unexpected);
   assert.equal(rendered.error, undefined);
   const texts = rendered.value.result.tree.filter(component => component.id?.startsWith('omd_picker_profile_')).map(component => component.text);
   assert.deepEqual(texts, ['● work · work', '○ paid · paid · paid']);

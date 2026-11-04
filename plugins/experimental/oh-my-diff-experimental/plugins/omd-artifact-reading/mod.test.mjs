@@ -1,30 +1,31 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runnerSync } from '../../../../../tests/mod_runner.mjs';
+import { callback } from '../../../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./mod/index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod/mod.json', import.meta.url), 'utf8'));
 const request = { uri: 'github://owner/repo/issues/1', max_bytes: 1024 };
 const response = { canonical_uri: request.uri, canonical_url: 'https://github.com/owner/repo/issues/1', identity: 'owner/repo', revision: 'rev', text: 'issue', anchors: ['issue:1'], cursor: null, truncated: false };
 
-function invoke(receipts = []) {
-  const input = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {}, event: 'virtual_read', name: 'github', payload: request, receipts };
-  return runnerSync(input);
+function invoke(host) {
+  const calls = [];
+  const input = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {}, event: 'virtual_read', name: 'github', payload: request };
+  return { ...callback(input, call => { calls.push(call); return host(call); }), calls };
 }
 
+const sidecar = { operation: 'sidecars.invoke', arguments: { id: 'omd_github_read', input: request } };
+
 test('GitHub virtual read uses the generic sidecar operation and preserves bounded untrusted response', () => {
-  const first = invoke();
-  assert.deepEqual(first.registrations.virtual_reads, [{ scheme: 'github', version: '1.0.0' }]);
-  assert.deepEqual(first.host_call, { operation: 'sidecars.invoke', arguments: { id: 'omd_github_read', input: request } });
-  const done = invoke([{ call: first.host_call, value: { provider: 'omd_github_read', program_sha256: 'a'.repeat(64), source_hashes: {}, result: response, untrusted: true } }]);
+  const done = invoke(() => ({ provider: 'omd_github_read', program_sha256: 'a'.repeat(64), source_hashes: {}, result: response, untrusted: true }));
+  assert.deepEqual(done.registrations.virtual_reads, [{ scheme: 'github', version: '1.0.0' }]);
+  assert.deepEqual(done.calls, [sidecar]);
   assert.deepEqual(done.value, response);
 });
 
 test('GitHub virtual read fails closed when sidecar authority or response is unavailable', () => {
-  const first = invoke();
-  const denied = invoke([{ call: first.host_call, error: 'sidecar_not_authorized' }]);
+  const denied = invoke(() => { throw new Error('sidecar_not_authorized'); });
   assert.match(denied.error, /sidecar_not_authorized/);
-  const malformed = invoke([{ call: first.host_call, value: { result: { error: 'upstream_unavailable' } } }]);
+  const malformed = invoke(() => ({ result: { error: 'upstream_unavailable' } }));
   assert.match(malformed.error, /upstream_unavailable/);
 });

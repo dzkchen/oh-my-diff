@@ -872,12 +872,7 @@ fn callback<'s>(
     set(scope, global, "__activate", activate);
     let dispatch = compile(scope, DISPATCH, "dispatch", false).ok_or(None)?;
     link(scope, dispatch, refuse_import)?;
-    evaluate(
-        scope,
-        dispatch,
-        watchdog,
-        (request["interactive"] != true).then_some(budget),
-    )?;
+    evaluate(scope, dispatch, watchdog, None)?;
     let result = get(scope, global, "__result").ok_or(None)?;
     let result = v8::Local::<v8::String>::try_from(result).map_err(|_| None)?;
     if result.length() > OUTPUT_LIMIT {
