@@ -554,6 +554,7 @@ export interface Events {
   approval_result: { input: { id: string; kind: string; decision: 'approved' | 'approved_for_session' | 'amended' | 'denied' | 'aborted' | 'timed_out'; source: 'user' | 'guardian' | 'hook' | 'mod' | 'policy'; mod?: string }; output: void };
   tool_output: { input: { call_id: string; tool: string; arguments: Json; success: boolean; text: string; tail: string | null; bytes: number }; output: null | { append: string } };
   completion: { input: { kind: 'mention'; query: string; candidates: { path: string; score: number }[] } | { kind: 'argument'; command: string; query: string; line: string }; output: null | { items: { path: string }[] } | { items: { insert: string }[] } };
+  /** Runs without a native task host; prepare host-backed data in an earlier callback. */
   history: { input: { thread_id: string; agent_id: string | null; model: string | null; items: HistoryItem[] }; output: null | HistoryEdit };
   tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json; success_per_call?: boolean }[] } };
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };

@@ -38,6 +38,17 @@ It submits nothing when:
 - A turn is running. It refuses with a short message.
 - The last turn completed, or no turn was recorded, and you added no note. It shows a short message instead.
 
+## Smaller context on continuation
+
+The optional [`omd_observation_mask`](../omd_observation_mask/README.md#hide-outputs-only-when-continuing) integration
+keeps old tool outputs available through paged recall while omitting their full text from model requests.
+Enable both mods and set observation masking's `mode` to `continue`. `/continue` then requests masking after estimated
+cache expiry; `/continue --compact [note]` forces the request when cache status is unknown or still warm.
+The same interruption checks apply. Without the integration, `--compact` displays setup guidance and submits nothing.
+
+This removes eligible tool-output bulk, not the conversation's user messages or instructions. It makes no summarization
+request. Existing idle compaction remains independent, so disable that mod for a continuation-only workflow.
+
 ## Settings
 
 It has no settings.

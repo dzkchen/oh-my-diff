@@ -1444,7 +1444,7 @@ A package over the per-callback text limit is refused by inspection, install and
 const sent = api.host.tryCall('process.exchange', { session: session(m), send: [{ src: api.assets.read('github.mjs').text }], wait_ms: 0 });
 ```
 
-That call is from [`omd_monitor`](first-party/omd_monitor/index.ts).
+That call is from [`omd_monitor`](first-party/omd_monitor/index.ts). The mod owns its watch/list/cancel subscriptions, persistence, timeouts and delivery; companion plugin guidance teaches the agent when to subscribe and how to handle results. Enabling the mod with its declared grants is sufficient to watch repositories through the user’s `gh` login.
 
 ### Installed package manifests
 
@@ -6211,6 +6211,9 @@ Runs on Apple Silicon macOS.
 
 `replace('history')` receives a bounded view of each model request's items and may return `{drop?, replace?,
 insert?}`.
+
+This callback runs without a native task host: operations such as `evidence.read` and `session.info` are unavailable.
+Prepare host-backed data in an earlier command or tool callback and carry it into history through mod state.
 
 Each item in the view contains `index`, `type`, `role`, `call_id`, `editable`, a 2 KiB text preview, the byte size and
 the `images` count.
