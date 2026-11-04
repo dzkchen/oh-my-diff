@@ -115,12 +115,15 @@ test('PR monitoring fails closed when check results are truncated', async () => 
   gh.done();
 });
 
-test('a PR with passing checks waits while the merge gate is blocked', async () => {
+test('completed PR checks report success while merge readiness is blocked', async () => {
   const sha = 'a'.repeat(40);
   const pr = { state: 'open', mergeable_state: 'blocked', head: { sha } };
-  const gh = fakeGh([pr, { total_count: 1 }, { total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] }, { state: 'success', total_count: 0 }, pr]);
+  const suites = { total_count: 1 };
+  const checks = { total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] };
+  const status = { state: 'success', total_count: 0 };
+  const gh = fakeGh([pr, suites, checks, status, pr, suites, checks, status, pr]);
   const result = await adapt(gh, ['pr', 'acme/app', '9', '1', '1', soon(60000)]);
-  assert.deepEqual(result.lines.map(line => line.state), ['pending', 'stopped']);
+  assert.deepEqual(result.lines.map(line => [line.state, line.conclusion]), [['completed', 'success']]);
   gh.done();
 });
 
@@ -214,5 +217,80 @@ test('a slow GitHub request is bounded by the monitor deadline', async () => {
     assert.equal(result.lines.at(-1).reason, 'timeout');
     assert.equal(result.lines.some(line => line.terminal), false);
     assert.ok(Date.now() - started < 1800);
+  } finally { gh.done(); }
+});
+
+
+test('PR checks select the test merge commit and report its identity', async () => {
+  const sha = 'a'.repeat(40), merge = 'b'.repeat(40);
+  const pr = { state: 'open', head: { sha }, merge_commit_sha: merge };
+  const suites = { total_count: 1 };
+  const checks = { total_count: 1, check_runs: [{ id: 1, status: 'completed', conclusion: 'success' }] };
+  const status = { state: 'pending', total_count: 0 };
+  const gh = fakeGh([pr, suites, checks, status, pr, suites, checks, status, pr]);
+  try {
+    const result = await adapt(gh, ['pr', 'acme/app', '9', '1', '1', soon(60000)]);
+    assert.equal(result.lines[0].conclusion, 'success');
+    assert.equal(result.lines[0].check_sha, merge);
+    assert.ok(gh.calls().filter(call => call.includes('/commits/')).every(call => call.includes(merge)));
+  } finally { gh.done(); }
+});
+
+
+test('test merge statuses select the merge commit, while an empty merge falls back to head checks', async () => {
+  const sha = 'a'.repeat(40), merge = 'b'.repeat(40);
+  const pr = { state: 'open', head: { sha }, merge_commit_sha: merge };
+  const empty = { total_count: 0 };
+  const emptyStatus = { state: 'pending', total_count: 0 };
+  const checks = { total_count: 1, check_runs: [{ id: 1, status: 'completed', conclusion: 'success' }] };
+  const goodStatus = { state: 'success', total_count: 1 };
+  for (const hasStatus of [true, false]) {
+    const gh = fakeGh(hasStatus
+      ? [pr, empty, goodStatus, { ...empty, check_runs: [] }, goodStatus, pr, empty, { ...empty, check_runs: [] }, goodStatus, pr]
+      : [pr, empty, emptyStatus, { total_count: 1 }, checks, emptyStatus, pr, { total_count: 1 }, checks, emptyStatus, pr, empty, emptyStatus]);
+    try {
+      const result = await adapt(gh, ['pr', 'acme/app', '9', '1', '1', soon(60000)]);
+      assert.equal(result.lines[0].conclusion, 'success');
+      assert.equal(result.lines[0].check_sha, hasStatus ? merge : sha);
+    } finally { gh.done(); }
+  }
+});
+
+test('a resumed PR watcher rejects a replaced test merge check source', async () => {
+  const sha = 'a'.repeat(40), merge = 'b'.repeat(40);
+  const gh = fakeGh([{ state: 'open', head: { sha }, merge_commit_sha: merge }, { total_count: 1 }]);
+  try {
+    const result = await adapt(gh, ['pr', 'acme/app', '9', '1', '1', soon(60000), sha, 'c'.repeat(40)]);
+    assert.equal(result.lines[0].state, 'check source changed');
+    assert.equal(result.lines[0].conclusion, 'failure');
+    assert.ok(gh.calls().every(call => !call.includes('/check-runs')));
+  } finally { gh.done(); }
+});
+
+test('a PR with no checks yet can discover merge checks on the next poll', async () => {
+  const sha = 'a'.repeat(40), merge = 'b'.repeat(40);
+  const pr = { state: 'open', head: { sha }, merge_commit_sha: merge };
+  const empty = { total_count: 0 }, status = { state: 'pending', total_count: 0 };
+  const suites = { total_count: 1 };
+  const checks = { total_count: 1, check_runs: [{ id: 1, status: 'completed', conclusion: 'success' }] };
+  const gh = fakeGh([pr, empty, status, empty, { ...empty, check_runs: [] }, status, pr,
+    pr, suites, checks, status, pr, suites, checks, status, pr]);
+  try {
+    const result = await adapt(gh, ['pr', 'acme/app', '9', '1', '2', soon(60000)]);
+    assert.deepEqual(result.lines.map(line => [line.state, line.check_sha]), [['pending', undefined], ['completed', merge]]);
+  } finally { gh.done(); }
+});
+
+test('head success is withheld when merge checks appear during verification', async () => {
+  const sha = 'a'.repeat(40), merge = 'b'.repeat(40);
+  const pr = { state: 'open', head: { sha }, merge_commit_sha: merge };
+  const empty = { total_count: 0 }, status = { state: 'pending', total_count: 0 };
+  const suites = { total_count: 1 };
+  const checks = { total_count: 1, check_runs: [{ id: 1, status: 'completed', conclusion: 'success' }] };
+  const gh = fakeGh([pr, empty, status, suites, checks, status, pr, suites, checks, status, pr, suites]);
+  try {
+    const result = await adapt(gh, ['pr', 'acme/app', '9', '1', '1', soon(60000)]);
+    assert.ok(result.lines.every(line => line.conclusion !== 'success'));
+    assert.equal(result.lines.at(-1).reason, 'poll limit');
   } finally { gh.done(); }
 });

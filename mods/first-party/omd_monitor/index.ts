@@ -6,7 +6,7 @@ type Base = { id: string; until: string; thread: string; created: number; deadli
   outcome?: string; summary?: string; delivered?: string; watching?: boolean; excerpt?: string; recheck?: number };
 type Proc = Base & { source: 'process'; proc: string };
 type Files = Base & { source: 'files'; paths: string[]; debounce_ms: number; watch_id?: string };
-type GitHub = Base & { source: 'github'; repo: string; kind: 'run' | 'deployment' | 'pr'; remote: string; head?: string };
+type GitHub = Base & { source: 'github'; repo: string; kind: 'run' | 'deployment' | 'pr'; remote: string; head?: string; check_sha?: string };
 type Mon = Proc | Files | GitHub;
 type Fail = { message: string; revoked: boolean };
 type State = { n: number; mons: Mon[]; due?: number };
@@ -29,7 +29,7 @@ const MAX_PATHS = 8;
 const KEEP_DONE = 8;
 const REPO = /^(?!\.+\/)[\w.-]+\/(?!\.+$)[\w.-]+$/;
 const REVOKED = new Set(['grant_expired', 'os_access_denied']);
-const USAGE = 'Monitor a build: /monitor process SESSION [exit|success|failure] [SECONDS]\nFiles: /monitor files change|exists|absent PATH...\nGitHub: /monitor allow owner/repo · /monitor pr|run|deployment owner/repo NUMBER [SECONDS]\nStop: /monitor cancel ID';
+const USAGE = 'Monitor a build: /monitor process SESSION [exit|success|failure] [SECONDS]\nFiles: /monitor files change|exists|absent PATH...\nGitHub: /monitor pr|run|deployment owner/repo NUMBER [SECONDS]\nStop: /monitor cancel ID';
 export const BOOT = "import{createInterface as c}from'node:readline';const l=await new Promise(r=>c({input:process.stdin}).once('line',r));process.stdin.destroy();await import('data:text/javascript,'+encodeURIComponent(JSON.parse(l).src))";
 
 const clip = (text: string, bytes: number) => {
@@ -72,8 +72,6 @@ export default function activate(api: ModAPI) {
   const tag = (m: Mon) => `${m.thread}_${m.id}`;
   const session = (m: Mon) => `mon_${tag(m)}`;
   const describe = (m: Mon): string => m.label ? `${m.label}: ${describe({ ...m, label: undefined })}` : m.source === 'process' ? `process ${m.proc}` : m.source === 'files' ? `files ${m.paths.join(', ')}` : `github ${m.repo} ${m.kind} ${m.remote}`;
-  const grant = () => api.host.tryCall('store.get', { key: 'repos', scope: 'user' });
-  const listed = (read: ReturnType<typeof grant>): string[] => read.ok && Array.isArray(read.value?.value) ? read.value.value as string[] : [];
   const ends = (m: Proc, item: Row) => m.proc === item.id || (item.processId != null && m.proc === String(item.processId));
 
   const teardown = (m: Mon) => {
@@ -192,7 +190,6 @@ export default function activate(api: ModAPI) {
   };
 
   const armGithub = (m: GitHub): Fail | null => {
-    if (!listed(grant()).includes(m.repo)) return { message: `permission: ${m.repo} is not allowed; ask the user to run /monitor allow ${m.repo}`, revoked: true };
     if (api.host.tryCall('process.status', { session: session(m) }).ok) return null;
     const found = api.host.tryCall('process.which', { names: ['node'], sandbox: 'none' });
     const node = found.ok ? found.value.found[0] : null;
@@ -201,7 +198,7 @@ export default function activate(api: ModAPI) {
     const left = Math.max(1, Math.round((m.deadline - Date.now()) / 1000));
     const every = Math.max(pollSeconds, Math.ceil(left / (MAX_POLLS - 1)));
     const started = api.host.tryCall('process.start', { session: session(m), name: 'node', path: node.path, sha256: node.sha256, sandbox: 'none', framing: 'ndjson', notify: ['output', 'exit'],
-      arguments: ['--input-type=module', '-e', BOOT, 'adapter', m.kind, m.repo, m.remote, String(every), String(Math.ceil(left / every) + 1), String(m.deadline), m.head ?? ''] });
+      arguments: ['--input-type=module', '-e', BOOT, 'adapter', m.kind, m.repo, m.remote, String(every), String(Math.ceil(left / every) + 1), String(m.deadline), m.head ?? '', m.check_sha ?? ''] });
     if (!started.ok) return fail(`the GitHub adapter did not start: ${started.error.startsWith('process_session_limit_or_duplicate') ? 'OMD allows 5 background processes per mod and 8 in total; cancel a GitHub monitor or wait for one to finish' : started.error}`, started.error);
     m.last_seq = 0;
     delete m.recheck;
@@ -226,6 +223,7 @@ export default function activate(api: ModAPI) {
         if (m.status !== 'active' || !(line.seq > m.last_seq)) continue;
         m.last_seq = line.seq;
         if (m.kind === 'pr' && /^[a-f0-9]{40}$/i.test(line.head ?? '')) m.head = line.head;
+        if (m.kind === 'pr' && /^[a-f0-9]{40}$/i.test(line.check_sha ?? '')) m.check_sha = line.check_sha;
         const link = /^https:\/\/[^\s`]+$/.test(line.url) ? ` - ${line.url}` : '';
         if (line.state === 'stopped') finish(m, line.reason === 'timeout' || line.reason === 'poll limit' ? 'timeout' : 'source lost', `the GitHub adapter stopped: ${line.reason}`, fires);
         else if (line.terminal) finish(m, verdict(m, line.conclusion === 'success'), `${m.kind} ${line.state}${line.conclusion ? ` (${line.conclusion})` : ''}${m.kind === 'pr' ? '; verify the PR head and merge gate before merging' : ''}${link}`, fires);
@@ -238,7 +236,7 @@ export default function activate(api: ModAPI) {
   const watch = (input: Json): Json => createWatch(input);
 
   api.tool({ name: 'watch', label: 'Watch for an event',
-    description: 'Subscribe ONCE to be told when something happens, then keep working on other things. Never sleep, poll or re-check: when the condition is met, it fails or timeout_s passes, a message starting with [omd_monitor] arrives (inside the running turn, or as a queued turn when idle) with the monitor id, the outcome and a short excerpt. This only watches; it never starts a build, process or deployment. source "process": a background exec_command session you started (session_id is the session ID it printed, or its call id); push-based, no polling. source "files": workspace-relative paths (until change, exists or absent); push-based, no polling. source "github": a pull request and its checks (pr_number), a GitHub Actions run (run_id) or a deployment (deployment_id) of a repository the user allowed with /monitor allow; GitHub has no push, so a read-only gh adapter polls GET endpoints every 30 s (setting, at least 15 s; slower when timeout_s needs more than 720 polls) until timeout_s. At most the max_monitors setting (default 6) monitors are active per thread.',
+    description: 'Subscribe ONCE to be told when something happens, then keep working on other things. Never sleep, poll or re-check: when the condition is met, it fails or timeout_s passes, a message starting with [omd_monitor] arrives (inside the running turn, or as a queued turn when idle) with the monitor id, the outcome and a short excerpt. This only watches; it never starts a build, process or deployment. source "process": a background exec_command session you started (session_id is the session ID it printed, or its call id); push-based, no polling. source "files": workspace-relative paths (until change, exists or absent); push-based, no polling. source "github": a pull request and its checks (pr_number), a GitHub Actions run (run_id) or a deployment (deployment_id) through the user’s gh login; GitHub has no push, so a read-only gh adapter polls GET endpoints every 30 s (setting, at least 15 s; slower when timeout_s needs more than 720 polls) until timeout_s. At most the max_monitors setting (default 6) monitors are active per thread.',
     parameters: { type: 'object', properties: {
       source: { type: 'string', enum: ['process', 'files', 'github'] },
       until: { type: 'string', enum: ['exit', 'success', 'failure', 'change', 'exists', 'absent', 'completed'], description: 'process: exit (default), success, failure. files: change (default), exists, absent. github: completed (default), success, failure.' },
@@ -248,7 +246,7 @@ export default function activate(api: ModAPI) {
       paths: { type: 'array', items: { type: 'string' }, description: 'files: up to 8 workspace-relative paths. until exists and absent need every path; a file directly in the repository root cannot be awaited.' },
       debounce_ms: { type: 'number', description: 'files: quiet time before a change is reported, 100 to 10000 (default 500).' },
       repo: { type: 'string', description: 'github: owner/repo.' },
-      pr_number: { type: 'string', description: 'github: pull request number. Watches all reported checks on its current head; reports if the head changes.' },
+      pr_number: { type: 'string', description: 'github: pull request number. Watches reported checks on the test merge commit when present, otherwise the head; reports if the head or check source changes. Completion does not imply merge readiness.' },
       run_id: { type: 'string', description: 'github: Actions run id.' },
       deployment_id: { type: 'string', description: 'github: deployment id.' } },
     required: ['source', 'timeout_s'], additionalProperties: false } }, watch);
@@ -335,8 +333,6 @@ export default function activate(api: ModAPI) {
         const seconds = typeof item.durationMs === 'number' ? ` after ${Math.round(item.durationMs / 1000)} s` : '';
         exited(m, item.status === 'declined' ? null : item.exitCode ?? null, seconds, fires, tail(item.tail), String(item.status ?? ''));
       }
-    } else if (channel === 'omd_monitor/revoke') {
-      for (const m of active(s)) if (m.source === 'github' && m.repo === body.repo) finish(m, 'revoked', `permission to monitor ${m.repo} was revoked by the user`, fires);
     } else if (channel === 'omd_monitor/cancel') {
       cancel(s, String(body.id), 'the user cancelled this monitor', fires);
     }
@@ -349,12 +345,6 @@ export default function activate(api: ModAPI) {
     const m = only(active(s), 'github').find(item => session(item) === id);
     if (!m) return;
     const fires: Mon[] = [];
-    const read = grant();
-    if (read.ok && !listed(read).includes(m.repo)) {
-      finish(m, 'revoked', `permission to monitor ${m.repo} was revoked by the user`, fires);
-      commit(s, fires);
-      return;
-    }
     const stopped = drain(m, fires);
     if (m.status === 'active') {
       if (stopped) finish(m, 'source lost', LOST, fires);
@@ -422,18 +412,6 @@ export default function activate(api: ModAPI) {
 
   api.command('monitor', (input): Json => {
     const [verb = '', arg = '', number = '', ...rest] = String(input ?? '').trim().split(/\s+/).filter(Boolean);
-    const stored = grant();
-    const repos = listed(stored);
-    if (verb === 'allow' || verb === 'revoke') {
-      const repo = arg.toLowerCase();
-      if (!REPO.test(repo)) return { display: `Usage: ${USAGE}` };
-      const next = verb === 'allow' ? [...new Set([...repos, repo])] : repos.filter(item => item !== repo);
-      const saved = api.host.tryCall('store.put', { key: 'repos', value: next, expected_revision: stored.ok && stored.value ? stored.value.revision : null, scope: 'user' });
-      if (!saved.ok) return { display: `Not saved (${saved.error.split(':')[0]}); run it again` };
-      const hop = verb === 'revoke' ? api.host.tryCall('events.publish', { channel: 'revoke', data: { repo } }) : null;
-      const sent = hop?.ok && hop.value.delivered;
-      return { display: verb === 'allow' ? `Monitors may read ${repo} through your gh login (PR checks, Actions runs and deployment statuses, GET only). /monitor revoke ${repo} undoes it` : `${repo} is no longer allowed; ${sent ? "this thread's monitors are cancelled, other threads' end" : "its monitors end"} at their next GitHub update${sent ? '' : '; run it again to cancel this thread\'s now'}` };
-    }
     if (['pr', 'run', 'deployment', 'process', 'files'].includes(verb)) {
       let args: Row;
       if (verb === 'process') args = { source: 'process', session_id: arg, until: number || 'exit', timeout_s: rest[0] ?? 86400 };
@@ -449,6 +427,6 @@ export default function activate(api: ModAPI) {
     }
     if (verb) return { display: `Usage: ${USAGE}` };
     const rows = load().mons.map(m => `${m.id} ${m.status === 'active' ? `watching ${describe(m)} until ${m.until}, ${Math.max(0, Math.round((m.deadline - Date.now()) / 1000))} s left` : `${describe(m)}: ${m.outcome} (${m.delivered ?? 'no message'})`}`);
-    return { display: [rows.length ? rows.join('\n') : 'No active or recent monitors. Ask the agent to monitor a PR or other event.', `GitHub repositories allowed: ${repos.join(', ') || 'none'}`, USAGE].join('\n') };
-  }, { description: 'List event monitors, allow or revoke GitHub repositories for them, cancel one', args_hint: 'process|files|pr|run|deployment|allow|revoke|cancel' });
+    return { display: [rows.length ? rows.join('\n') : 'No active or recent monitors. Ask the agent to monitor a PR or other event.', USAGE].join('\n') };
+  }, { description: 'List event monitors or cancel one', args_hint: 'process|files|pr|run|deployment|cancel' });
 }

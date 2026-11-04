@@ -500,12 +500,12 @@
       ],
       "extension_type": "mod",
       "files": {
-        "github.mjs": "ea1b2710f58b3faa4ffaae10a1fbf6665166495030ff6c31de3c447353bc11ee",
-        "index.ts": "5ea1a04d1cf7dd8957fda75b775f54264e4794423b0b19fdd990eba90164288e",
+        "github.mjs": "122f3888832bbc37f2f8c69452baedfa6ff5b41eaacbb99d8491d329d2d4083f",
+        "index.ts": "0950b167c9b46056adf4613e7d5e8ab8381a68b5365cbfb824bc7cc58e2d7420",
         "mod.json": "8d35f793ae2473f60179f5f9305ed4f820ef2a1764b0d8c210fec5ad0cd89aa9"
       },
       "id": "omd_monitor",
-      "package_sha256": "86b19aa7a50f8e576294025b8da60d08e91071a2d5a8c5004ee8a00c572f5a04",
+      "package_sha256": "10cbf6b07c3f2f92a6b1a98cc119dc925af50150f160a65b6f205a887c901287",
       "source": "mods/first-party/omd_monitor",
       "version": "1.0.0"
     },

@@ -55,8 +55,6 @@ function answer(w, { operation: op, arguments: args }) {
       return { session: args.session, messages: (w.outbox.get(args.session) ?? []).splice(0), running: true };
     }
     case 'process.stop': return { stopped: w.procs.delete(args.session) };
-    case 'store.get': return w.repos === null ? null : { value: w.repos, revision: 1, provenance: {} };
-    case 'store.put': w.repos = args.value; return { revision: 2 };
     case 'terminal.notice': w.notices.push(args); return { shown: true };
     default: throw new Error(`unexpected ${op}`);
   }
@@ -247,15 +245,8 @@ test('until exists awaits a missing file through its directory and fires on the 
   assert.match(gone.steers[0].params.input[0].text, /the files are now absent/);
 });
 
-test('/monitor allow and revoke gate GitHub monitors and revoke cancels them with a reason', () => {
-  const w = world({ repos: null });
-  assert.match(watch(w, { source: 'github', repo: 'acme/app', run_id: '5' }).value.error, /not allowed; ask the user to run \/monitor allow acme\/app/);
-  const allowed = run(w, 'command', 'allow Acme/App', null, { name: 'monitor' });
-  assert.deepEqual(w.repos, ['acme/app']);
-  assert.match(allowed.value.display, /acme\/app/);
-  assert.deepEqual(allowed.calls.filter(call => call.operation === 'store.put').map(call => call.arguments.scope), ['user']);
-  assert.match(run(w, 'command', 'allow nonsense', null, { name: 'monitor' }).value.display, /Usage/);
-
+test('GitHub monitors start with declared grants and no repository approval', () => {
+  const w = world();
   const armed = watch(w, { source: 'github', repo: 'acme/app', deployment_id: '12', until: 'success' });
   assert.equal(armed.value.status, 'watching');
   const start = w.procs.get('mon_t1_m1');
@@ -265,17 +256,12 @@ test('/monitor allow and revoke gate GitHub monitors and revoke cancels them wit
   assert.equal(start.arguments[8], String(Math.ceil(600 / 30) + 1));
   assert.equal(start.arguments[9], String(NOW + 600_000));
   assert.deepEqual(w.sent, [{ src: assets['github.mjs'].text }]);
-  const other = watch(w, { source: 'process', session_id: '1' }, armed.state);
-
-  run(w, 'command', 'revoke acme/app', other.state, { name: 'monitor' });
-  assert.deepEqual(w.repos, []);
-  assert.deepEqual(w.published.at(-1), { channel: 'revoke', data: { repo: 'acme/app' } });
-  const applied = channel(w, 'revoke', { repo: 'acme/app' }, other.state);
-  assert.equal(w.procs.size, 0);
-  assert.match(w.steers[0].params.input[0].text, /m1 \(github acme\/app deployment 12\) revoked: permission to monitor acme\/app was revoked by the user/);
-  assert.deepEqual([monitor(applied.state).outcome, monitor(applied.state, 'm2').status], ['revoked', 'active']);
-  assert.equal(w.timers.size, 1);
-  assert.match(watch(w, { source: 'github', repo: 'acme/app', run_id: '5' }, applied.state).value.error, /not allowed/);
+  assert.ok(armed.ops.every(op => !op.startsWith('store.')));
+  for (const verb of ['allow', 'revoke']) {
+    const result = run(w, 'command', `${verb} acme/app`, armed.state, { name: 'monitor' });
+    assert.match(result.value.display, /Usage/);
+    assert.ok(result.ops.every(op => !op.startsWith('store.')));
+  }
 });
 
 test('adapter lines fire once: stale, duplicate and out-of-order sequence numbers are ignored', () => {
@@ -344,9 +330,9 @@ test('resume re-arms what survives and reports lost, revoked and expired monitor
   assert.deepEqual([...w.timers.keys()], ['t1/deadline']);
   assert.deepEqual([1, 2, 3, 4, 5].map(id => monitor(resumed.state, `m${id}`).status), ['done', 'done', 'active', 'active', 'done']);
 
-  const revoked = world({ repos: [], fs: { dist: { kind: 'dir' } } });
+  const revoked = world({ whichError: 'os_access_denied', fs: { dist: { kind: 'dir' } } });
   const gone = run(revoked, 'start', null, resumed.state, { now: NOW + 120_000 });
-  assert.match(revoked.steers.at(-1)?.params.input[0].text ?? revoked.queued[0].prompt, /m4 \(github acme\/app run 9\) revoked: permission: acme\/app is not allowed/);
+  assert.match(revoked.steers.at(-1)?.params.input[0].text ?? revoked.queued[0].prompt, /m4 \(github acme\/app run 9\) revoked: cannot discover node: os_access_denied/);
   assert.deepEqual([1, 2, 3, 4, 5].map(id => monitor(gone.state, `m${id}`).status), ['done', 'done', 'active', 'done', 'done']);
   assert.deepEqual([...revoked.timers.keys()], ['t1/deadline']);
 });
@@ -437,26 +423,6 @@ test('resume keeps a monitor whose process fell out of recent turns unless OMD a
   assert.equal(monitor(lost.state).outcome, 'source lost');
 });
 
-test('an adapter line ends a monitor as revoked when its repository is no longer allowed, even on another thread', () => {
-  const w = world({ repos: ['acme/app'] });
-  const armed = watch(w, { source: 'github', repo: 'acme/app', run_id: '9' });
-  w.repos = [];
-  w.outbox.set('mon_t1_m1', [{ seq: 1, state: 'queued' }]);
-  const ended = run(w, 'process_event', { session: 'mon_t1_m1', kind: 'output', bytes: 1 }, armed.state);
-  assert.equal(monitor(ended.state).outcome, 'revoked');
-  assert.equal(w.procs.size, 0);
-  assert.equal(w.timers.size, 0);
-  assert.match(w.steers[0].params.input[0].text, /m1 \(github acme\/app run 9\) revoked: permission to monitor acme\/app was revoked/);
-});
-
-test('a revoke that cannot reach this thread says the monitors end at their next update', () => {
-  const w = world({ repos: ['acme/app'] });
-  const sent = run(w, 'command', 'revoke acme/app', null, { name: 'monitor' });
-  assert.match(sent.value.display, /this thread's monitors are cancelled, other threads' end at their next GitHub update/);
-  const lost = world({ repos: ['acme/app'], undelivered: true });
-  assert.match(run(lost, 'command', 'revoke acme/app', null, { name: 'monitor' }).value.display, /its monitors end at their next GitHub update; run it again/);
-});
-
 test('an unavailable workspace_change fires an until change monitor only for its own watch', () => {
   const w = world({ fs: { dist: { kind: 'dir' } } });
   const armed = watch(w, { source: 'files', paths: ['dist'] });
@@ -539,7 +505,7 @@ test('a forked thread arms its copied monitors under its own keys, and a timer l
   assert.equal(w.timers.get('t2/deadline'), 600_000);
 });
 
-test('/monitor pr starts a PR watcher after repository permission', () => {
+test('/monitor pr starts a PR watcher with declared grants', () => {
   const w = world({ repos: ['acme/app'] });
   const result = run(w, 'command', 'pr Acme/App 42', null, { name: 'monitor' });
   assert.match(result.value.display, /Requested monitor for Acme\/App PR #42/);
@@ -551,12 +517,12 @@ test('PR head is persisted and passed to a restarted adapter', () => {
   const w = world({ repos: ['acme/app'] });
   const armed = watch(w, { source: 'github', repo: 'acme/app', pr_number: '42' });
   const head = 'a'.repeat(40);
-  w.outbox.set('mon_t1_m1', [{ seq: 1, state: 'pending', head }]);
+  w.outbox.set('mon_t1_m1', [{ seq: 1, state: 'pending', head, check_sha: 'b'.repeat(40) }]);
   const progress = run(w, 'process_event', { session: 'mon_t1_m1', kind: 'output', bytes: 80 }, armed.state);
   assert.equal(monitor(progress.state).head, head);
   w.procs.clear();
   run(w, 'resume', { restarted: true }, progress.state);
-  assert.equal(w.procs.get('mon_t1_m1').arguments.at(-1), head);
+  assert.deepEqual(w.procs.get('mon_t1_m1').arguments.slice(-2), [head, 'b'.repeat(40)]);
 });
 
 test('direct workflows hop to native callbacks and label build results', () => {
@@ -564,7 +530,7 @@ test('direct workflows hop to native callbacks and label build results', () => {
     const w = world({ repos: ['acme/app'], fs: { build: { kind: 'dir' } } });
     const request = run(w, 'command', command, null, { name: 'monitor' });
     assert.match(request.value.display, /Requested monitor/);
-    assert.deepEqual(request.ops, ['store.get', 'events.publish']);
+    assert.deepEqual(request.ops, ['events.publish']);
     if (command.startsWith('run ')) assert.equal(w.published[0].data.timeout_s, '120');
     const setup = channel(w, 'watch', w.published[0].data, null);
     assert.equal(monitor(setup.state).status, 'active');

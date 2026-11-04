@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const [kind, repo, id, every, max, until, savedHead] = process.argv.slice(2);
+const [kind, repo, id, every, max, until, savedHead, savedCheck] = process.argv.slice(2);
 const FINAL = new Set(['success', 'failure', 'error', 'inactive']);
 const TIMEOUT_MS = 20_000;
 const MAX_FAILURES = 3;
@@ -34,6 +34,7 @@ const observe = body => {
 };
 
 let head = /^[a-f0-9]{40}$/i.test(savedHead ?? '') ? savedHead : undefined;
+let checkSha = /^[a-f0-9]{40}$/i.test(savedCheck ?? '') ? savedCheck : undefined;
 async function pull(program) {
   const pr = await read(program);
   const sha = pr.head?.sha;
@@ -41,8 +42,22 @@ async function pull(program) {
   if (head && head !== sha) return { state: 'head changed', conclusion: 'failure', terminal: true, head, url: pr.html_url };
   head = sha;
   if (pr.state !== 'open') return { state: 'closed', conclusion: 'failure', terminal: true, url: pr.html_url };
-  const base = `repos/${repo}/commits/${sha}`;
-  const suites = await read(program, `${base}/check-suites?per_page=100`);
+  const merge = pr.merge_commit_sha;
+  const mergeChecks = async () => {
+    if (!/^[a-f0-9]{40}$/i.test(merge ?? '') || merge === sha) return null;
+    const base = `repos/${repo}/commits/${merge}`;
+    const suites = await read(program, `${base}/check-suites?per_page=100`);
+    if (!Number.isInteger(suites.total_count) || suites.total_count < 0) throw new Error('check results incomplete');
+    if (suites.total_count > 0) return suites;
+    const status = await read(program, `${base}/status?per_page=100`);
+    if (!Number.isInteger(status.total_count) || status.total_count < 0 || !['success', 'failure', 'error', 'pending'].includes(status.state)) throw new Error('check results incomplete');
+    return status.total_count > 0 ? suites : null;
+  };
+  let suites = await mergeChecks();
+  const source = suites ? merge : sha;
+  if (checkSha && checkSha !== source) return { state: 'check source changed', conclusion: 'failure', terminal: true, head, check_sha: checkSha, url: pr.html_url };
+  const base = `repos/${repo}/commits/${source}`;
+  suites ??= await read(program, `${base}/check-suites?per_page=100`);
   if (!Number.isInteger(suites.total_count) || suites.total_count < 0) throw new Error('check results incomplete');
   const field = suites.total_count > 1000 ? 'check_suites' : 'check_runs';
   const path = `${base}/${field.replace('_', '-')}?per_page=100`;
@@ -66,7 +81,9 @@ async function pull(program) {
   const pending = runs.some(run => run.status !== 'completed') || (status.total_count > 0 && status.state === 'pending');
   const failed = runs.some(run => run.status === 'completed' && !['success', 'neutral', 'skipped'].includes(run.conclusion)) || ['failure', 'error'].includes(status.state);
   const count = runs.length + status.total_count;
-  const ready = !pending && count > 0 && latest.mergeable_state === 'clean';
+  if (count > 0) checkSha = source;
+  if (latest.merge_commit_sha !== pr.merge_commit_sha) throw new Error('check source changed');
+  const ready = !pending && count > 0;
   if (ready && !failed) {
     const again = await read(program, `${base}/check-suites?per_page=100`);
     if (again.total_count !== suites.total_count) throw new Error('check results changed');
@@ -77,11 +94,12 @@ async function pull(program) {
     const finalPR = await read(program);
     if (finalPR.head?.sha !== sha) return { state: 'head changed', conclusion: 'failure', terminal: true, head, url: finalPR.html_url };
     if (finalPR.state !== 'open') return { state: 'closed', conclusion: 'failure', terminal: true, head, url: finalPR.html_url };
-    if ((finalStatus.total_count > 0 && finalStatus.state !== 'success') || finalStatus.total_count !== status.total_count || finalPR.mergeable_state !== 'clean') throw new Error('check results changed');
+    if (source === sha && await mergeChecks()) throw new Error('check source changed');
+    if ((finalStatus.total_count > 0 && finalStatus.state !== 'success') || finalStatus.total_count !== status.total_count || finalPR.merge_commit_sha !== pr.merge_commit_sha) throw new Error('check results changed');
   }
   if (Date.now() >= Number(until)) throw new Error('timeout');
   const terminal = !pending && count > 0 && (failed || ready);
-  return { state: terminal ? 'completed' : 'pending', conclusion: terminal ? failed ? 'failure' : 'success' : undefined, terminal, head, url: pr.html_url };
+  return { state: terminal ? 'completed' : 'pending', conclusion: terminal ? failed ? 'failure' : 'success' : undefined, terminal, head, check_sha: checkSha, url: pr.html_url };
 }
 
 async function main() {
@@ -96,12 +114,12 @@ async function main() {
     try {
       const seen = kind === 'pr' ? await pull(program) : observe(await read(program));
       failures = 0;
-      const key = `${seen.state}/${seen.conclusion ?? ''}/${seen.head ?? ''}`;
+      const key = `${seen.state}/${seen.conclusion ?? ''}/${seen.head ?? ''}/${seen.check_sha ?? ''}`;
       if (key !== last || seen.terminal) emit(seen);
       last = key;
       if (seen.terminal) return;
     } catch (error) {
-      if (head && !last) { emit({ state: 'pending', head, terminal: false }); last = `pending//${head}`; }
+      if (head && !last) { emit({ state: 'pending', head, check_sha: checkSha, terminal: false }); last = `pending//${head}`; }
       if (Date.now() >= Number(until)) return emit({ state: 'stopped', reason: 'timeout' });
       if (++failures >= MAX_FAILURES) return emit({ state: 'stopped', reason: `gh failed: ${error.message}` });
     }

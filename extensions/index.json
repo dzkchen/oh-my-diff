@@ -872,6 +872,27 @@
         "mod API 1.0.0"
       ],
       "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd-monitor",
+      "version": "1.0.0",
+      "extension_type": "plugin",
+      "capability": "Agent guidance for subscriptions to builds, files and CI through omd_monitor",
+      "source": "plugins/experimental/oh-my-diff-experimental/plugins/omd-monitor",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.166.0; OMD 1.4.1; enabled omd_monitor with its declared grants",
+      "tested_versions": [
+        "Codex 0.166.0",
+        "mod API 1.0.0 (offline fixtures)"
+      ],
+      "support_status": "experimental",
+      "components": [
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-monitor"
+        }
+      ]
     }
   ]
 }
