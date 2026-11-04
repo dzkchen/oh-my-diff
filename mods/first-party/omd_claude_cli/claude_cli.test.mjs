@@ -678,8 +678,9 @@ test('login runs as a background process that says the sign-in link once and rep
   const event = (kind, data, state) => modEvent('process_event', { session, kind, bytes: 1 }, state, answer(data));
   const output = event('output', `\u001b[1mOpening browser\u001b[0m\nVisit: ${link}\n`, started.state);
   assert.equal(notices(output.calls).filter(text => text.includes(link)).length, 1);
-  assert.ok(manifest.subscriptions.channels.includes('omd_claude_cli/code'));
-  const code = (state, alive) => channel('code', { code: 'abc' }, state, alive);
+  assert.ok(!manifest.subscriptions.channels.includes('omd_claude_cli/code'));
+  const code = (state, alive) => modEvent('command', 'code abc', state, answer('', alive), 'claude');
+  assert.equal(code(output.state).calls.some(call => call.operation === 'events.publish'), false);
   assert.deepEqual(code(output.state).calls.find(call => call.operation === 'process.exchange').arguments, { session, wait_ms: 0, send: ['abc\n'] });
   for (const waiting of [code(null), code(output.state, false)]) assert.equal(waiting.calls.some(call => call.operation === 'process.exchange' && call.arguments.send), false);
   assert.equal(channel('login', { billing: 'api' }, output.state).calls.some(call => call.operation === 'process.start'), false);

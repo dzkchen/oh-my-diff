@@ -437,20 +437,19 @@ fn inspect_package(
     package.validate()?;
     let source = read_file(&package.entrypoint)?;
     let mut hash = Sha256::new();
-    hash.update(&manifest);
-    hash.update([0]);
-    hash.update(package.entrypoint.as_bytes());
-    hash.update([0]);
-    hash.update(&source);
+    let mut record = |bytes: &[u8]| {
+        hash.update((bytes.len() as u64).to_be_bytes());
+        hash.update(bytes);
+    };
+    record(&manifest);
+    record(package.entrypoint.as_bytes());
+    record(&source);
     let mut captured = None;
     for (event, script) in &package.lifecycle {
-        hash.update([0]);
-        hash.update(event.as_bytes());
-        hash.update([0]);
-        hash.update(script.as_bytes());
-        hash.update([0]);
+        record(event.as_bytes());
+        record(script.as_bytes());
         let content = read_file(script)?;
-        hash.update(&content);
+        record(&content);
         if lifecycle == Some(event.as_str()) {
             captured = Some(content);
         }
@@ -463,10 +462,8 @@ fn inspect_package(
         if text > 1024 * 1024 {
             return Err(failure(format!("package_text_input_limit: {}", package.id)));
         }
-        hash.update([0]);
-        hash.update(asset.as_bytes());
-        hash.update([0]);
-        hash.update(&content);
+        record(asset.as_bytes());
+        record(&content);
         if collect_assets && let Ok(text) = String::from_utf8(content) {
             assets.insert(asset.clone(), text);
         }
@@ -1539,5 +1536,24 @@ impl ModStore {
             &Self::state_name(id, scope),
             &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
         )
+    }
+}
+
+#[cfg(test)]
+mod digest_framing_tests {
+    use super::*;
+
+    #[test]
+    fn binary_asset_boundaries_have_distinct_digests() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().canonicalize().unwrap();
+        std::fs::write(path.join("mod.json"), serde_json::to_vec(&json!({"schema":1,"id":"framing","version":"1.0.0","api":crate::MOD_API_VERSION,"state_version":1,"capabilities":[],"assets":["a.json","b.json"]})).unwrap()).unwrap();
+        std::fs::write(path.join("index.ts"), "export default () => {}").unwrap();
+        std::fs::write(path.join("a.json"), b"x\0b.json\0y").unwrap();
+        std::fs::write(path.join("b.json"), b"z").unwrap();
+        let first = inspect_package(&path, false, None).unwrap().2;
+        std::fs::write(path.join("a.json"), b"x").unwrap();
+        std::fs::write(path.join("b.json"), b"y\0b.json\0z").unwrap();
+        assert_ne!(first, inspect_package(&path, false, None).unwrap().2);
     }
 }

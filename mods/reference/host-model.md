@@ -141,6 +141,9 @@ user contexts. A user context can call only:
 - `turns.activity`
 - `events.publish`
 
+Slash command callbacks can also call `process.status` and `process.exchange` on their own existing managed
+processes. Starting, finding or stopping a process still requires a session callback.
+
 A service call from a user context works only when its provider needs no other host operation.
 
 Component input callbacks also run in the terminal, but not as user actions. They can't call `terminal.selection`,
@@ -149,7 +152,7 @@ Component input callbacks also run in the terminal, but not as user actions. The
 `settings.write`.
 
 To run any other operation (`task.*`, `contract.*`, other `routes.*`, `evidence.*`,
-`workspace.snapshot/fingerprint`, `process.*`, `agents.*`), publish an event with `events.publish` and do the work in
+`workspace.snapshot/fingerprint`, other `process.*`, `agents.*`), publish an event with `events.publish` and do the work in
 the mod's own `channel` handler, which runs with the session.
 
 ## Runtime waits and hook skips
