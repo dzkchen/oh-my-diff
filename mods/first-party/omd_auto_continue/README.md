@@ -32,7 +32,9 @@ A transcript note tells you that the request timed out. The model receives the t
 doesn't change any earlier message, so the provider can still reuse its cache of the conversation.
 
 The deadline starts when the request appears. Delayed delivery or a repeated notification does not extend it.
-Requests explicitly addressed to another thread are ignored.
+Requests explicitly addressed to another thread are ignored. That includes a sub-agent's approval blocking its lead:
+an automatic decline would fail the delegated task, so those requests stay pending for you instead of being answered
+on the timeout.
 
 ## Settings
 

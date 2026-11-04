@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -161,11 +162,24 @@ def create_account():
 
 
 def write_root(path, data, mode):
-    temporary = path.with_name(f".{path.name}.{os.getpid()}")
-    temporary.write_bytes(data)
-    os.chown(temporary, 0, 0)
-    os.chmod(temporary, mode)
-    os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = f".{path.name}.{secrets.token_hex(16)}"
+    try:
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                output.write(data)
+                output.flush()
+                os.fchown(output.fileno(), 0, 0)
+                os.fchmod(output.fileno(), mode)
+            os.replace(temporary, path.name, src_dir_fd=directory, dst_dir_fd=directory)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+    finally:
+        os.close(directory)
 
 
 def write_pins(binaries, manifests, tooling, add=False):
@@ -220,8 +234,30 @@ def install(helper, tooling, binaries, manifests):
 
 
 def reset():
-    for grants in (ROOT / "stores").glob("*/grants.json"):
-        grants.unlink()
+    root = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            stores = os.open("stores", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+        except FileNotFoundError:
+            stores = None
+        if stores is not None:
+            try:
+                for name in os.listdir(stores):
+                    try:
+                        store = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=stores)
+                    except (NotADirectoryError, FileNotFoundError):
+                        continue
+                    try:
+                        try:
+                            os.unlink("grants.json", dir_fd=store)
+                        except FileNotFoundError:
+                            pass
+                    finally:
+                        os.close(store)
+            finally:
+                os.close(stores)
+    finally:
+        os.close(root)
     shutil.rmtree(ROOT / "anchors", ignore_errors=True)
     return {"reset": "grants and evidence anchors removed; credentials kept"}
 

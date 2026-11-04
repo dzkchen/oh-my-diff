@@ -402,16 +402,30 @@ export default function activate(api: ModAPI) {
   });
   api.on('compaction_start', ({ trigger }) => hud(state => { state.compaction = { ...state.compaction, started: state.compaction.started + 1, start: Date.now(), trigger }; }));
   api.on('compaction_end', () => hud(state => { state.compaction = { ...state.compaction, installed: state.compaction.installed + 1, end: Date.now() }; }));
-  api.on('agent', ({ agent }) => hud(state => {
-    state.agents[agent.agent_id ?? agent.thread_id] = { role: agent.role ?? agent.origin, status: agent.status, at: Date.now() };
-    const ids = Object.keys(state.agents).sort((a, b) => state.agents[b].at - state.agents[a].at);
-    for (const id of ids.slice(12)) delete state.agents[id];
-  }));
-  api.on('tool_call', ({ call_id, tool }) => hud(state => {
-    state.tools[call_id] = { tool, at: Date.now() };
-    for (const id of Object.keys(state.tools).slice(0, -16)) delete state.tools[id];
-  }));
-  api.on('tool_result', ({ call_id }) => hud(state => { delete state.tools[call_id]; }));
+  api.on('agent', ({ agent }) => {
+    const state = saved();
+    const id = agent.agent_id ?? agent.thread_id;
+    const role = agent.role ?? agent.origin;
+    const known = state.hud.agents[id];
+    if (known?.role === role && known.status === agent.status) return;
+    state.hud.agents[id] = { role, status: agent.status, at: Date.now() };
+    const ids = Object.keys(state.hud.agents).sort((a, b) => state.hud.agents[b].at - state.hud.agents[a].at);
+    for (const old of ids.slice(12)) delete state.hud.agents[old];
+    save(state);
+  });
+  api.on('tool_call', ({ call_id, tool }) => {
+    const state = saved();
+    if (!state.open) return;
+    state.hud.tools[call_id] = { tool, at: Date.now() };
+    for (const id of Object.keys(state.hud.tools).slice(0, -16)) delete state.hud.tools[id];
+    save(state);
+  });
+  api.on('tool_result', ({ call_id }) => {
+    const state = saved();
+    if (!(call_id in state.hud.tools)) return;
+    delete state.hud.tools[call_id];
+    save(state);
+  });
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update = object(params);
     const thread = thread_id ?? update.threadId ?? null;

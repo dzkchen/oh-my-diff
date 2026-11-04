@@ -66,7 +66,7 @@ class SignedReleaseAnchorTest(unittest.TestCase):
             older = signed(key, base / "older/omd-release.json",
                            json.dumps({"schema": 1, "version": "1.0.0-rc.1", "artifacts": newer}).encode())
             with mock.patch.object(authority_broker, "RELEASE_KEY", public), \
-                    mock.patch.multiple(authority_broker, ROOT=base, COPY=copy), mock.patch("os.chown"), \
+                    mock.patch.multiple(authority_broker, ROOT=base, COPY=copy), mock.patch("os.fchown"), mock.patch("os.chown"), \
                     mock.patch.object(authority_broker, "cdhash", side_effect=lambda path: hashed.append(path) or path.read_text()):
                 with self.assertRaisesRegex(ValueError, "stray is not listed"):
                     authority_broker.write_pins([codex, stray], [manifest], tooling)
@@ -110,7 +110,7 @@ class PowerHelperDaemonTest(unittest.TestCase):
                                         signed_cdhashes=lambda *_: ["pin"], create_account=lambda: None,
                                         run=lambda *arguments, **_: commands.append(arguments) or mock.Mock(returncode=0)), \
                     mock.patch("grp.getgrnam", return_value=mock.Mock(gr_gid=301)), \
-                    mock.patch("shutil.chown"), mock.patch("os.chown"):
+                    mock.patch("shutil.chown"), mock.patch("os.fchown"), mock.patch("os.chown"):
                 authority_broker.install(base / "omd-broker", base / "tooling.py", [], [])
                 power = plistlib.loads(paths["POWER_DAEMON"].read_bytes())
                 self.assertEqual(power["ProgramArguments"], [str(paths["HELPER"]), "power"])
@@ -200,7 +200,7 @@ class AdministratorPolicyFileTest(unittest.TestCase):
             first, second = base / "first.json", base / "second.json"
             first.write_text(json.dumps({"schema": 1}))
             second.write_text(json.dumps({"schema": 1, "managed_only": True}))
-            with mock.patch.object(authority_broker, "POLICY", policy), mock.patch("os.chown"):
+            with mock.patch.object(authority_broker, "POLICY", policy), mock.patch("os.fchown"), mock.patch("os.chown"):
                 authority_broker.policy("policy-install", first)
                 self.assertFalse(previous.exists())
                 self.assertEqual(policy.stat().st_mode & 0o777, 0o644)

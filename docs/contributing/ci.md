@@ -88,3 +88,6 @@ no dependency license or scheduled vulnerability checks.
 - [CI caching](ci-caching.md): the download and compile caches, for maintainers changing the workflows
 - [Change the patched Codex code](runtime.md)
 - [tests/README.md](../../tests/README.md): how tests are discovered and which runner runs each kind
+
+Upstream Codex acceptance binaries are pinned in `upstream-binaries.lock.json`. When advancing Codex, retain pins
+needed by the previous release and add the GitHub release asset SHA-256 for the new tag. CI checks it before extraction.

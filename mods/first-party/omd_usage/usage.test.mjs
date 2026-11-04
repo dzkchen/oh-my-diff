@@ -165,3 +165,17 @@ test('native thread dollars replace the configured-rate estimate and the budget 
   assert.equal(ended.state.hud.native, 9, 'a budget refreshes native usage with the dialog closed');
   assert.ok(ended.calls.some(item => item.operation === 'terminal.notice'), 'the refreshed spend crosses the budget');
 });
+
+test('tool and agent events write state only when the dialog shows them or something changed', () => {
+  const event = (state, name, payload, now = NOW) => call(usageMod, { event: name, payload, state, settings: hud, virtual_time_ms: now }).state;
+  assert.equal(event(null, 'tool_call', { call_id: 'c1', tool: 'exec_command' }), null, 'a closed dialog skips running-tool writes');
+  assert.equal(event(null, 'tool_result', { call_id: 'c1' }), null);
+  const shown = event({ open: true }, 'tool_call', { call_id: 'c2', tool: 'exec_command' });
+  assert.deepEqual(Object.keys(shown.hud.tools), ['c2']);
+  assert.deepEqual(event(shown, 'tool_result', { call_id: 'c2' }).hud.tools, {});
+  const agent = { agent_id: 'a1', thread_id: 't1', role: 'explorer', origin: 'spawn', status: 'running' };
+  const seen = event(null, 'agent', { agent });
+  assert.equal(seen.hud.agents.a1.status, 'running');
+  assert.equal(event(seen, 'agent', { agent }, NOW + 60_000).hud.agents.a1.at, NOW, 'an unchanged agent status is not rewritten');
+  assert.equal(event(seen, 'agent', { agent: { ...agent, status: 'completed' } }).hud.agents.a1.status, 'completed');
+});
