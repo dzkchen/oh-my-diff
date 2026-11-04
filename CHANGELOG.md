@@ -4,7 +4,7 @@ Generated from [`release/changelog.json`](release/changelog.json) by `mise run r
 
 ## [1.4.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.2) — 2026-11-03
 
-Signed first-party mod updates between releases, account switching for new threads, keyboard workspace arranging, and theme, terminal and uninstall fixes.
+Signed mod updates, account switching for new threads, keyboard panel arranging, turn undo and redo, and fixes for themes and overlapping turns.
 
 ### New
 
@@ -23,6 +23,9 @@ Signed first-party mod updates between releases, account switching for new threa
 - Theme: switching themes no longer flashes, scene transitions are shorter, and prompts and menus stay opaque over the scene
 - OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact and omd_preview move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default
 - Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace
+- Monitors: watch several sources together, check pull-request completion, and run the next action when a watch settles
+- Continue: cache-aware observation masking preserves recent context while reducing repeated tool output in a continued conversation
+- Mod authors: session activations, background jobs, timer payloads and assistant-message identities support work that continues across callbacks
 
 ### Fixed
 
@@ -40,6 +43,11 @@ Signed first-party mod updates between releases, account switching for new threa
 - Frecency: outside a Git repository `@` completion runs `git status` at most every 30 seconds instead of on every keystroke, deleted changed files are no longer offered, slash or shell commands no longer count as file uses, and a mention counts only if its turn starts within 2 minutes
 - Advisor: automatic `failure` and `loop` consults cool down, once per call every 10 minutes and once every 2 minutes overall, so an agent retrying one failing command no longer pays for a second model on every other failure
 - Claude CLI: `/claude login` works when the mod was installed from the catalog, instead of failing with setup_must_run_from_installed_mod after sign-in
+- Input: typing stays responsive when turns overlap, and delayed callbacks keep the session that owns them
+- Status line: child tools no longer trigger a diagnostic error in session timers
+- Continue: saved originals are checked before history processing, and masking progress stays isolated to its route
+- Installer: release verification and cleanup refuse unsafe inputs, and provider setup keeps credentials within its approved access
+- Mods: corrected caching, saved state and prompt sanitization in first-party mods
 
 ## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
 
