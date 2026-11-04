@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "f2ac377208e2c9bbce4e52f61c397becfbec4f76ce3523e482cd300c23acaf1e"
+    "sha256": "01d07a3b9c799fc5982e9139afa311ac3aba6c20d101536ad1a28766da1b2ff5"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -215,7 +215,7 @@
     },
     "codex-rs/app-server/src/bespoke_event_handling.rs": {
       "before": "c6f220dae8f746ce98c15c23d2038c6720b1a9433f1f459edfe18a7dd6c84d2e",
-      "after": "ca919409e63d334c2a4950bb546fe2126eef605eb72bdd4662b155c6f801fd39"
+      "after": "3e54d710ef91bc25bd71989298ac81ec20e4b3088bc9b96a98f1a25c5d13cfeb"
     },
     "codex-rs/app-server/src/config_manager.rs": {
       "before": "64568b07bc395b5fcd8f37a3dc062c81a3fd1657a0f9dad6a59db163af5e0a5e",
@@ -2043,7 +2043,7 @@
     },
     "codex-rs/tui/src/app/tests/safety_buffering.rs": {
       "before": "ca02cee3b6111714dbb76933004096b271024c6605bea1e7a1b398117b3a8c2f",
-      "after": "10e44d18e06cf4460cac90ad96740f16a233f0f0157eceb54c54cb8df316e5ed"
+      "after": "e1dbe856ffb67d12a280e4df8cef66cea45d4a7351469c8fde33d0aef256e563"
     },
     "codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap": {
       "before": "f4253409b749a42205ffb14ae1c9272f8ffb96456f473a18f2f57226c8919c4b",
@@ -2341,6 +2341,10 @@
       "before": "3444d6ce053a8657dd1fa71577cef78063349bb16b3b98d4b757c1958caf4435",
       "after": "8ba37ee25d09add0b5c8c02f4654f1dbb35ebe72e19014c78ff174e92cf8477f"
     },
+    "codex-rs/tui/src/chatwidget/safety_buffering.rs": {
+      "before": "dbedbbc8c1ec1e454b301a4cad288d2788b587c4da47d28a7125c37c69b902ec",
+      "after": "c609962c0363983ba2d1bb0752d1a735748e0fedc2948f033451cdb69902ebf4"
+    },
     "codex-rs/tui/src/chatwidget/session_flow.rs": {
       "before": "ae99739b757a0c1b339e1b61ae2a1f3e0cbc4aa097bea4ff26ae64cd6c931f6b",
       "after": "377d364af66bd8249bd8e682d5e2f1514fe9573804c9111a8f9903442e0bf17b"
@@ -2379,7 +2383,7 @@
     },
     "codex-rs/tui/src/chatwidget/tests/app_server.rs": {
       "before": "4aa3560bbb6eaf344117bf4381fd3ec8309992827454a646a7b458bb4d184ab5",
-      "after": "55d509734de72b64e118db071313db064ae8e59f62f8a6a61f23eae2611bb25b"
+      "after": "354e851a7b8c589d8fe1baefadcd753d20838258a324d4cd010ee58a3ee8553f"
     },
     "codex-rs/tui/src/chatwidget/tests/compaction_tests.rs": {
       "before": "73c39492a13e6c5c1767579ec0e4d76b0b9ef7964fde3fc1ad16778ab6c19d24",

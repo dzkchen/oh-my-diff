@@ -16489,7 +16489,7 @@ index b4553fc0be0c9207c27a78a1289bcf72243f18a2..ff68c351c98a116ffcb8ad096109a68a
  serde_json = { workspace = true }
  sha2 = { workspace = true }
 diff --git a/codex-rs/app-server/src/bespoke_event_handling.rs b/codex-rs/app-server/src/bespoke_event_handling.rs
-index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8529f2110 100644
+index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..4890edf019b12f18cdcd2fcf7d5cf8c55f50070d 100644
 --- a/codex-rs/app-server/src/bespoke_event_handling.rs
 +++ b/codex-rs/app-server/src/bespoke_event_handling.rs
 @@ -189,13 +189,25 @@ pub(crate) async fn apply_bespoke_event_handling(
@@ -16564,18 +16564,20 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
              handle_turn_interrupted(
                  conversation_id,
                  event_turn_id,
-@@ -1401,7 +1422,9 @@ async fn apply_canonical_item_completed_side_effects(
+@@ -1401,9 +1422,9 @@ async fn apply_canonical_item_completed_side_effects(
              let observed_start = thread_state
                  .lock()
                  .await
 -                .turn_summary
+-                .command_start_times
+-                .remove(&item.id);
 +                .turn_summaries
-+                .entry(event.turn_id.clone())
-+                .or_default()
-                 .command_start_times
-                 .remove(&item.id);
++                .get_mut(&event.turn_id)
++                .and_then(|summary| summary.command_start_times.remove(&item.id));
              // A client can already be displaying the command's approval-time start.
-@@ -1450,7 +1473,9 @@ async fn start_command_execution_item(
+             event.started_at_ms = observed_start.or(event.started_at_ms);
+         }
+@@ -1450,7 +1471,9 @@ async fn start_command_execution_item(
      let first_start = thread_state
          .lock()
          .await
@@ -16586,18 +16588,20 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
          .record_command_start(item_id.clone(), started_at_ms);
      if first_start {
          let notification = ItemStartedNotification::new(
-@@ -1495,7 +1520,9 @@ async fn complete_command_execution_item(
+@@ -1495,9 +1518,9 @@ async fn complete_command_execution_item(
      let Some(started_at_ms) = thread_state
          .lock()
          .await
 -        .turn_summary
+-        .command_start_times
+-        .remove(&item_id)
 +        .turn_summaries
-+        .entry(turn_id.clone())
-+        .or_default()
-         .command_start_times
-         .remove(&item_id)
++        .get_mut(&turn_id)
++        .and_then(|summary| summary.command_start_times.remove(&item_id))
      else {
-@@ -1532,11 +1559,11 @@ async fn complete_command_execution_item(
+         return;
+     };
+@@ -1532,11 +1555,11 @@ async fn complete_command_execution_item(
  }
 
  async fn find_and_remove_turn_summary(
@@ -16611,7 +16615,7 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
  }
 
  async fn handle_turn_complete(
-@@ -1546,7 +1573,7 @@ async fn handle_turn_complete(
+@@ -1546,7 +1569,7 @@ async fn handle_turn_complete(
      outgoing: &ThreadScopedOutgoingMessageSender,
      thread_state: &Arc<Mutex<ThreadState>>,
  ) {
@@ -16620,7 +16624,7 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
 
      let (status, error, last_agent_message) = match turn_summary.last_error {
          Some(error) => (TurnStatus::Failed, Some(error), None),
-@@ -1577,7 +1604,7 @@ async fn handle_turn_interrupted(
+@@ -1577,7 +1600,7 @@ async fn handle_turn_interrupted(
      outgoing: &ThreadScopedOutgoingMessageSender,
      thread_state: &Arc<Mutex<ThreadState>>,
  ) {
@@ -16629,7 +16633,7 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
 
      emit_turn_completed_with_status(
          conversation_id,
-@@ -1602,12 +1629,13 @@ async fn handle_turn_interrupted(
+@@ -1602,12 +1625,13 @@ async fn handle_turn_interrupted(
  }
 
  async fn respond_to_pending_interrupts(
@@ -16644,7 +16648,7 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
      };
 
      for request_id in pending {
-@@ -1645,13 +1673,13 @@ async fn handle_token_count_event(
+@@ -1645,13 +1669,15 @@ async fn handle_token_count_event(
      }
  }
 
@@ -16656,15 +16660,17 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
 +async fn handle_error(turn_id: &str, error: TurnError, thread_state: &Arc<Mutex<ThreadState>>) {
      let mut state = thread_state.lock().await;
 -    state.turn_summary.last_error = Some(error);
-+    state
-+        .turn_summaries
-+        .entry(turn_id.to_string())
-+        .or_default()
-+        .last_error = Some(error);
++    if state.active_turn_id() == Some(turn_id) || state.turn_summaries.contains_key(turn_id) {
++        state
++            .turn_summaries
++            .entry(turn_id.to_string())
++            .or_default()
++            .last_error = Some(error);
++    }
  }
 
  async fn handle_error_notification(
-@@ -1661,7 +1689,7 @@ async fn handle_error_notification(
+@@ -1661,7 +1687,7 @@ async fn handle_error_notification(
      outgoing: &ThreadScopedOutgoingMessageSender,
      thread_state: &Arc<Mutex<ThreadState>>,
  ) {
@@ -16673,21 +16679,42 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
      outgoing
          .send_server_notification(ServerNotification::Error(ErrorNotification {
              error,
-@@ -2110,9 +2138,11 @@ async fn on_command_execution_request_approval_response(
-         // For zsh-fork subcommand approvals, approval_id is present and
-         // item_id points to the parent command item.
+@@ -2112,9 +2138,9 @@ async fn on_command_execution_request_approval_response(
          if approval_id.is_some() {
--            let state = thread_state.lock().await;
-+            let mut state = thread_state.lock().await;
+             let state = thread_state.lock().await;
              state
 -                .turn_summary
+-                .command_start_times
+-                .contains_key(&item_id)
 +                .turn_summaries
-+                .entry(event_turn_id.clone())
-+                .or_default()
-                 .command_start_times
-                 .contains_key(&item_id)
++                .get(&event_turn_id)
++                .is_some_and(|summary| summary.command_start_times.contains_key(&item_id))
          } else {
-@@ -3080,13 +3110,155 @@ mod tests {
+             false
+         }
+@@ -2210,6 +2236,21 @@ mod tests {
+         Arc::new(Mutex::new(ThreadState::default()))
+     }
+
++    async fn start_test_turn(state: &Arc<Mutex<ThreadState>>, turn_id: &str) {
++        state.lock().await.track_current_turn_event(
++            turn_id,
++            &EventMsg::TurnStarted(codex_protocol::protocol::TurnStartedEvent {
++                turn_attribution: None,
++                turn_id: turn_id.to_string(),
++                root_turn_id: None,
++                trace_id: None,
++                started_at: None,
++                model_context_window: None,
++                collaboration_mode_kind: Default::default(),
++            }),
++        );
++    }
++
+     const TEST_TURN_COMPLETED_AT: i64 = 1_716_000_456;
+     const TEST_TURN_DURATION_MS: i64 = 1_234;
+
+@@ -3080,13 +3121,202 @@ mod tests {
          assert!(response.strict_auto_review);
      }
 
@@ -16834,18 +16861,65 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
 +        assert!(thread_state.lock().await.turn_summaries.is_empty());
 +    }
 +
++    #[tokio::test]
++    async fn non_turn_errors_do_not_accumulate_turn_summaries() {
++        let state = new_thread_state();
++        for index in 0..32 {
++            handle_error(
++                &format!("failed-operation-{index}"),
++                TurnError {
++                    message: "operation failed before a turn started".to_string(),
++                    codex_error_info: Some(V2CodexErrorInfo::Other),
++                    misalignment: None,
++                    additional_details: None,
++                },
++                &state,
++            )
++            .await;
++        }
++        assert!(state.lock().await.turn_summaries.is_empty());
++        state.lock().await.track_current_turn_event(
++            "review",
++            &EventMsg::EnteredReviewMode(codex_protocol::protocol::EnteredReviewModeEvent {
++                target: codex_protocol::protocol::ReviewTarget::Custom {
++                    instructions: "review this".to_string(),
++                },
++                user_facing_hint: None,
++                turn_id: Some("review".to_string()),
++                item_id: Some("review-item".to_string()),
++            }),
++        );
++        assert_eq!(state.lock().await.active_turn_id(), Some("review"));
++        assert!(state.lock().await.turn_summaries.is_empty());
++        handle_error(
++            "review",
++            TurnError {
++                message: "review failed".to_string(),
++                codex_error_info: Some(V2CodexErrorInfo::Other),
++                misalignment: None,
++                additional_details: None,
++            },
++            &state,
++        )
++        .await;
++        let summary = find_and_remove_turn_summary("review", &state).await;
++        assert_eq!(summary.last_error.unwrap().message, "review failed");
++        assert!(state.lock().await.turn_summaries.is_empty());
++    }
++
      #[tokio::test]
      async fn test_handle_error_records_message() -> Result<()> {
 -        let conversation_id = ThreadId::new();
          let thread_state = new_thread_state();
 
++        start_test_turn(&thread_state, "turn-1").await;
          handle_error(
 -            conversation_id,
 +            "turn-1",
              TurnError {
                  misalignment: None,
                  message: "boom".to_string(),
-@@ -3097,7 +3269,7 @@ mod tests {
+@@ -3097,7 +3327,7 @@ mod tests {
          )
          .await;
 
@@ -16854,25 +16928,29 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
          assert_eq!(
              turn_summary.last_error,
              Some(TurnError {
-@@ -3540,7 +3712,7 @@ mod tests {
+@@ -3539,8 +3769,9 @@ mod tests {
+         let conversation_id = ThreadId::new();
          let event_turn_id = "interrupt1".to_string();
          let thread_state = new_thread_state();
++        start_test_turn(&thread_state, &event_turn_id).await;
          handle_error(
 -            conversation_id,
 +            &event_turn_id,
              TurnError {
                  misalignment: None,
                  message: "oops".to_string(),
-@@ -3595,7 +3767,7 @@ mod tests {
+@@ -3594,8 +3825,9 @@ mod tests {
+         let conversation_id = ThreadId::new();
          let event_turn_id = "complete_err1".to_string();
          let thread_state = new_thread_state();
++        start_test_turn(&thread_state, &event_turn_id).await;
          handle_error(
 -            conversation_id,
 +            &event_turn_id,
              TurnError {
                  misalignment: None,
                  message: "bad".to_string(),
-@@ -3752,6 +3924,7 @@ mod tests {
+@@ -3752,6 +3984,7 @@ mod tests {
              spend_control_reached: None,
              plan_type: None,
              rate_limit_reached_type: None,
@@ -16880,18 +16958,22 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8
          };
 
          handle_token_count_event(
-@@ -3846,7 +4019,7 @@ mod tests {
+@@ -3845,8 +4078,9 @@ mod tests {
+
          // Turn 1 on conversation A
          let a_turn1 = "a_turn1".to_string();
++        start_test_turn(&thread_state, &a_turn1).await;
          handle_error(
 -            conversation_a,
 +            &a_turn1,
              TurnError {
                  misalignment: None,
                  message: "a1".to_string(),
-@@ -3868,7 +4041,7 @@ mod tests {
+@@ -3867,8 +4101,9 @@ mod tests {
+
          // Turn 1 on conversation B
          let b_turn1 = "b_turn1".to_string();
++        start_test_turn(&thread_state, &b_turn1).await;
          handle_error(
 -            conversation_b,
 +            &b_turn1,
@@ -37958,7 +38040,7 @@ index 6a02e1d7203366b03b6af9dd9f89e32b5e7d8db0..2b0d8ea29b374f147384232fa4364a50
      let placeholder = "/tmp/project";
      let padded_placeholder = format!(
 diff --git a/codex-rs/tui/src/app/tests/safety_buffering.rs b/codex-rs/tui/src/app/tests/safety_buffering.rs
-index 8fe1861c74591ed99a4121a73f7f6ebf677d9b12..e196ca529430936f2723ea685b48472fc76affeb 100644
+index 8fe1861c74591ed99a4121a73f7f6ebf677d9b12..13f68e50a0a217b1da57b3d863d53f769df28356 100644
 --- a/codex-rs/tui/src/app/tests/safety_buffering.rs
 +++ b/codex-rs/tui/src/app/tests/safety_buffering.rs
 @@ -547,7 +547,9 @@ stream_max_retries = 0
@@ -37972,6 +38054,57 @@ index 8fe1861c74591ed99a4121a73f7f6ebf677d9b12..e196ca529430936f2723ea685b48472f
      assert!(
          std::iter::from_fn(|| app_event_rx.try_recv().ok())
              .all(|event| !matches!(event, AppEvent::CodexOp(AppCommand::UserTurn { .. })))
+@@ -843,8 +845,30 @@ goals = true
+     if let Some(committed_steer) = committed_steer {
+         submit_prompt(&mut app, committed_steer);
+         let steer = next_user_turn_event(&mut app_event_rx);
++        let AppCommand::UserTurn {
++            client_user_message_id,
++            ..
++        } = &steer
++        else {
++            panic!("steer should be a user turn");
++        };
++        let client_id = client_user_message_id.clone();
+         app.submit_thread_op(&mut app_server, source_thread_id, steer)
+             .await?;
++        loop {
++            let event = tokio::time::timeout(Duration::from_secs(5), app_event_rx.recv())
++                .await
++                .expect("steer submission should finish")
++                .expect("app events should remain open");
++            let submitted = matches!(&event, AppEvent::UserTurnSubmissionFinished { completion, .. }
++                if matches!(&completion.op, AppCommand::UserTurn { client_user_message_id, .. }
++                    if client_user_message_id == &client_id));
++            Box::pin(app.handle_event(&mut tui, &mut app_server, event)).await?;
++            drain_active_thread_events(&mut app);
++            if submitted {
++                break;
++            }
++        }
+         let _ = release_active_response
+             .take()
+             .expect("active response should still be gated")
+@@ -1091,6 +1115,19 @@ goals = true
+             /*expected_request_count*/ 2,
+         )
+         .await;
++        loop {
++            let event = tokio::time::timeout(Duration::from_secs(5), app_event_rx.recv())
++                .await
++                .expect("retry submission should finish")
++                .expect("app events should remain open");
++            let submitted = matches!(&event, AppEvent::UserTurnSubmissionFinished { thread_id, .. }
++                if *thread_id == first_retry_thread_id);
++            Box::pin(app.handle_event(&mut tui, &mut app_server, event)).await?;
++            drain_active_thread_events(&mut app);
++            if submitted {
++                break;
++            }
++        }
+         app.handle_app_server_event(
+             &app_server,
+             AppServerEvent::ServerNotification(Box::new(
 diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
 index 335071a07742e41b50ce0eb62805f740d019b586..b37853d5ce444e707eb518538fc06f796c46409e 100644
 --- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
@@ -42943,6 +43076,104 @@ index fbe40068bcf39c0677f5161f02fcc1350fe94d74..aa6a5da2f29859f3b5f5f527999f2757
                  );
              }
              ThreadItemPayload::EnteredReviewMode { review, .. } => {
+diff --git a/codex-rs/tui/src/chatwidget/safety_buffering.rs b/codex-rs/tui/src/chatwidget/safety_buffering.rs
+index 4b7d512f4954853f42f610a0dac44989d1b85edf..b457c6913b7bd4a5d81ce4212882a093a0448b02 100644
+--- a/codex-rs/tui/src/chatwidget/safety_buffering.rs
++++ b/codex-rs/tui/src/chatwidget/safety_buffering.rs
+@@ -30,7 +30,8 @@ impl Renderable for SafetyBufferingHeader {
+
+ #[derive(Debug)]
+ struct ActiveSafetyBuffering {
+-    turn_id: String,
++    notification: ModelSafetyBufferingUpdatedNotification,
++    replay_kind: Option<ReplayKind>,
+     last_prompt_had_retry: bool,
+     agent_message_started: bool,
+ }
+@@ -43,7 +44,21 @@ pub(super) struct SafetyBufferingState {
+
+ impl ChatWidget {
+     pub(crate) fn record_safety_buffering_turn(&mut self, turn_id: String, turn: &AppCommand) {
++        let notification = self
++            .safety_buffering
++            .active
++            .as_ref()
++            .filter(|active| {
++                active.notification.turn_id == turn_id
++                    && active.replay_kind.is_none()
++                    && !active.last_prompt_had_retry
++                    && !active.agent_message_started
++            })
++            .map(|active| active.notification.clone());
+         self.safety_buffering.submitted_turn = Some((turn_id, turn.clone()));
++        if let Some(notification) = notification {
++            self.on_model_safety_buffering_updated(notification, None);
++        }
+     }
+
+     pub(super) fn reset_safety_buffering_for_turn_start(&mut self) {
+@@ -78,11 +93,9 @@ impl ChatWidget {
+
+     pub(crate) fn can_retry_safety_buffered_turn(&self, turn_id: &str) -> bool {
+         self.turn_lifecycle.agent_turn_running
+-            && self
+-                .safety_buffering
+-                .active
+-                .as_ref()
+-                .is_some_and(|active| active.turn_id == turn_id && !active.agent_message_started)
++            && self.safety_buffering.active.as_ref().is_some_and(|active| {
++                active.notification.turn_id == turn_id && !active.agent_message_started
++            })
+     }
+
+     pub(crate) fn prepare_safety_buffered_retry_submission(&mut self, prompt: UserMessage) {
+@@ -106,6 +119,7 @@ impl ChatWidget {
+         notification: ModelSafetyBufferingUpdatedNotification,
+         replay_kind: Option<ReplayKind>,
+     ) {
++        let retained_notification = notification.clone();
+         let ModelSafetyBufferingUpdatedNotification {
+             turn_id,
+             show_buffering_ui,
+@@ -116,11 +130,9 @@ impl ChatWidget {
+             || !self.turn_lifecycle.agent_turn_running
+             || self.safety_recourse.is_some()
+             || self.turn_lifecycle.last_turn_id.as_deref() != Some(turn_id.as_str())
+-            || self
+-                .safety_buffering
+-                .active
+-                .as_ref()
+-                .is_some_and(|active| active.turn_id == turn_id && active.agent_message_started)
++            || self.safety_buffering.active.as_ref().is_some_and(|active| {
++                active.notification.turn_id == turn_id && active.agent_message_started
++            })
+         {
+             return;
+         }
+@@ -129,7 +141,7 @@ impl ChatWidget {
+                 .safety_buffering
+                 .active
+                 .as_ref()
+-                .is_some_and(|active| active.turn_id == turn_id)
++                .is_some_and(|active| active.notification.turn_id == turn_id)
+             {
+                 self.bottom_pane
+                     .dismiss_view_by_id(SAFETY_BUFFERING_PROMPT_VIEW_ID);
+@@ -160,11 +172,12 @@ impl ChatWidget {
+             .safety_buffering
+             .active
+             .as_ref()
+-            .filter(|active| active.turn_id == turn_id);
++            .filter(|active| active.notification.turn_id == turn_id);
+         let should_show_prompt =
+             previous_active.is_none_or(|active| active.last_prompt_had_retry != can_offer_retry);
+         self.safety_buffering.active = Some(ActiveSafetyBuffering {
+-            turn_id: turn_id.clone(),
++            notification: retained_notification,
++            replay_kind,
+             last_prompt_had_retry: can_offer_retry,
+             agent_message_started: false,
+         });
 diff --git a/codex-rs/tui/src/chatwidget/session_flow.rs b/codex-rs/tui/src/chatwidget/session_flow.rs
 index a1ff412d4d50995912ed5b96cf02fcf1bee24ff5..fde7af5e688dc05df05015d52a5abffa590d358d 100644
 --- a/codex-rs/tui/src/chatwidget/session_flow.rs
@@ -43489,7 +43720,7 @@ index 42f292b52b0af893e7b1621b7e164b2db1b4fbbe..45fbbd15e9d828501d2de340b758878c
 
  #[path = "tests/questions_tests.rs"]
 diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..ebc9d51dc8bc5f9ef52224f08dc572f4115a399d 100644
+index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..3b17f6a8b72efd04208d76d297b06cc733a7f061 100644
 --- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
 @@ -8,6 +8,270 @@ use pretty_assertions::assert_eq;
@@ -43823,7 +44054,60 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..ebc9d51dc8bc5f9ef52224f08dc572f4
      (thread_id, turn_id, turn)
  }
 
-@@ -1883,7 +2184,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
+@@ -253,6 +554,52 @@ fn open_safety_buffering_retry_confirmation(
+     assert!(render_bottom_popup(chat, /*width*/ 80).contains("Stop this attempt and retry?"));
+ }
+
++#[tokio::test]
++async fn safety_buffering_offers_retry_after_delayed_start_response() {
++    for state in ["waiting", "streamed", "completed", "replayed"] {
++        let (mut chat, mut events, mut ops) = make_chatwidget_manual(None).await;
++        let thread_id = ThreadId::new();
++        let turn_id = "delayed-start";
++        chat.thread_id = Some(thread_id);
++        chat.submit_user_message(UserMessage::from("Explain the request"));
++        let op = next_submit_op(&mut ops);
++        chat.handle_server_notification(
++            ServerNotification::TurnStarted(TurnStartedNotification {
++                thread_id: thread_id.to_string(),
++                turn: lifecycle_turn(turn_id, AppServerTurnStatus::InProgress),
++            }),
++            None,
++        );
++        chat.handle_server_notification(
++            ServerNotification::ModelSafetyBufferingUpdated(safety_buffering_notification(
++                thread_id,
++                turn_id,
++                Some("faster-model"),
++            )),
++            (state == "replayed").then_some(ReplayKind::ThreadSnapshot),
++        );
++        assert!(!render_bottom_popup(&chat, 80).contains("Retry with a faster model"));
++        match state {
++            "streamed" => chat.on_agent_message_delta("answer".to_string()),
++            "completed" => chat.on_task_complete(None, None, false),
++            _ => {}
++        }
++        chat.handle_user_turn_submission_result(&crate::app_event::UserTurnSubmissionResult {
++            op,
++            result: Ok(crate::app_event::UserTurnSubmissionOutcome::Started(
++                turn_id.to_string(),
++            )),
++        });
++        assert_eq!(
++            render_bottom_popup(&chat, 80).contains("Retry with a faster model"),
++            state == "waiting"
++        );
++        if state == "waiting" {
++            open_safety_buffering_retry_confirmation(&mut chat, &mut events);
++        }
++    }
++}
++
+ #[tokio::test]
+ async fn safety_buffering_offers_one_retry_with_app_wording() {
+     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+@@ -1883,7 +2230,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
      assert_eq!(chat.status_state.current_status.header, "Working");
      assert_eq!(chat.status_state.current_status.details, None);
      assert!(chat.status_state.retry_status_header.is_none());
