@@ -26,6 +26,7 @@ Signed mod updates, account switching for new threads, keyboard panel arranging,
 - Monitors: watch several sources together, check pull-request completion, and run the next action when a watch settles
 - Continue: cache-aware observation masking preserves recent context while reducing repeated tool output in a continued conversation
 - Mod authors: session activations, background jobs, timer payloads and assistant-message identities support work that continues across callbacks
+- Repair nightly lint and asynchronous submission test fixtures. (#399)
 
 ### Fixed
 
