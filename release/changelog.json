@@ -1,7 +1,7 @@
 [
   {
     "version": "1.4.2",
-    "date": "2026-11-03",
+    "date": "2026-11-04",
     "title": "Oh My Diff 1.4.2",
     "summary": "Signed mod updates, account switching for new threads, keyboard panel arranging, turn undo and redo, and fixes for themes and overlapping turns.",
     "sections": [
@@ -27,8 +27,7 @@
           "Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace",
           "Monitors: watch several sources together, check pull-request completion, and run the next action when a watch settles",
           "Continue: cache-aware observation masking preserves recent context while reducing repeated tool output in a continued conversation",
-          "Mod authors: session activations, background jobs, timer payloads and assistant-message identities support work that continues across callbacks",
-          "Repair nightly lint and asynchronous submission test fixtures. (#399)"
+          "Mod authors: session activations, background jobs, timer payloads and assistant-message identities support work that continues across callbacks"
         ]
       },
       {

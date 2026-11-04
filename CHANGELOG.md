@@ -2,7 +2,7 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
-## [1.4.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.2) — 2026-11-03
+## [1.4.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.2) — 2026-11-04
 
 Signed mod updates, account switching for new threads, keyboard panel arranging, turn undo and redo, and fixes for themes and overlapping turns.
 
@@ -26,7 +26,6 @@ Signed mod updates, account switching for new threads, keyboard panel arranging,
 - Monitors: watch several sources together, check pull-request completion, and run the next action when a watch settles
 - Continue: cache-aware observation masking preserves recent context while reducing repeated tool output in a continued conversation
 - Mod authors: session activations, background jobs, timer payloads and assistant-message identities support work that continues across callbacks
-- Repair nightly lint and asynchronous submission test fixtures. (#399)
 
 ### Fixed
 
