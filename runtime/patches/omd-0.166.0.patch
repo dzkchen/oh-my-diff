@@ -42872,7 +42872,7 @@ index 7d0c7403b50611b9b1a15fb4eb8a695bb3f3a3be..dda6d8a128c742854ffd4a2b2c5a283d
 
          // Persist the submitted text to cross-session message history. Mentions are encoded into
 diff --git a/codex-rs/tui/src/chatwidget/interrupts.rs b/codex-rs/tui/src/chatwidget/interrupts.rs
-index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..b71f641a14560dfc4420ffdebff6f05c2e01a3b5 100644
+index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..11876a4bc769a4afdac0c6f71e2ed7efb344b065 100644
 --- a/codex-rs/tui/src/chatwidget/interrupts.rs
 +++ b/codex-rs/tui/src/chatwidget/interrupts.rs
 @@ -26,7 +26,7 @@ pub(crate) enum QueuedInterrupt {
@@ -42884,7 +42884,7 @@ index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..b71f641a14560dfc4420ffdebff6f05c
  }
 
  #[derive(Default)]
-@@ -92,7 +92,11 @@ impl InterruptManager {
+@@ -92,7 +92,16 @@ impl InterruptManager {
      }
 
      pub(crate) fn push_item_completed(&mut self, item: ThreadItemPayload) {
@@ -42892,12 +42892,17 @@ index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..b71f641a14560dfc4420ffdebff6f05c
 +        self.push_item_completed_with_duration(item, None);
 +    }
 +
-+    pub(crate) fn push_item_completed_with_duration(&mut self, item: ThreadItemPayload, duration_ms: Option<u64>) {
-+        self.queue.push_back(QueuedInterrupt::ItemCompleted(item, duration_ms));
++    pub(crate) fn push_item_completed_with_duration(
++        &mut self,
++        item: ThreadItemPayload,
++        duration_ms: Option<u64>,
++    ) {
++        self.queue
++            .push_back(QueuedInterrupt::ItemCompleted(item, duration_ms));
      }
 
      /// Settle background activity at turn end without opening queued prompts.
-@@ -101,8 +105,8 @@ impl InterruptManager {
+@@ -101,8 +110,8 @@ impl InterruptManager {
          while let Some(queued) = self.queue.pop_front() {
              match queued {
                  QueuedInterrupt::ItemStarted(item) => chat.handle_queued_item_started_now(item),
@@ -42908,7 +42913,7 @@ index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..b71f641a14560dfc4420ffdebff6f05c
                  }
                  prompt => pending_prompts.push_back(prompt),
              }
-@@ -131,8 +135,8 @@ impl InterruptManager {
+@@ -131,8 +140,8 @@ impl InterruptManager {
                  QueuedInterrupt::RequestPermissions(ev) => chat.handle_request_permissions_now(ev),
                  QueuedInterrupt::RequestUserInput(ev) => chat.handle_request_user_input_now(ev),
                  QueuedInterrupt::ItemStarted(item) => chat.handle_queued_item_started_now(item),
@@ -42919,7 +42924,7 @@ index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..b71f641a14560dfc4420ffdebff6f05c
                  }
              }
          }
-@@ -164,7 +168,7 @@ impl QueuedInterrupt {
+@@ -164,7 +173,7 @@ impl QueuedInterrupt {
                  matches!(request, ResolvedAppServerRequest::UserInput { call_id }
                      if ev.item_id == call_id.as_str())
              }
@@ -44391,7 +44396,7 @@ index 42f292b52b0af893e7b1621b7e164b2db1b4fbbe..45fbbd15e9d828501d2de340b758878c
 
  #[path = "tests/questions_tests.rs"]
 diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..49ddc14bb62ca74ebb5ab5f4c789716a1c73d576 100644
+index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..34f2a903dc260a79973a3ffa2c63ec03e53768e0 100644
 --- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
 @@ -8,6 +8,270 @@ use pretty_assertions::assert_eq;
@@ -44787,7 +44792,7 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..49ddc14bb62ca74ebb5ab5f4c789716a
      let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
      let item = AppServerThreadItemPayload::FileChange {
-@@ -1276,9 +1623,28 @@ async fn live_app_server_file_change_item_started_preserves_changes() {
+@@ -1276,9 +1623,35 @@ async fn live_app_server_file_change_item_started_preserves_changes() {
          /*replay_kind*/ None,
      );
 
@@ -44800,10 +44805,17 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..49ddc14bb62ca74ebb5ab5f4c789716a
 +    };
 +    chat.handle_server_notification(
 +        ServerNotification::ItemCompleted(ItemCompletedNotification::new(
-+            "thread-1".to_string(), "turn-1".to_string(),
-+            AppServerThreadItemPayload::FileChange { id, changes, status: AppServerPatchApplyStatus::Completed },
-+            Some(0), 42,
-+        )), None,
++            "thread-1".to_string(),
++            "turn-1".to_string(),
++            AppServerThreadItemPayload::FileChange {
++                id,
++                changes,
++                status: AppServerPatchApplyStatus::Completed,
++            },
++            Some(0),
++            42,
++        )),
++        None,
 +    );
 +    let mut cells = Vec::new();
 +    while let Ok(event) = rx.try_recv() {
@@ -44819,7 +44831,7 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..49ddc14bb62ca74ebb5ab5f4c789716a
      let AppServerThreadItemPayload::FileChange { id, changes, .. } = item else {
          unreachable!()
      };
-@@ -1883,7 +2249,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
+@@ -1883,7 +2256,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
      assert_eq!(chat.status_state.current_status.header, "Working");
      assert_eq!(chat.status_state.current_status.details, None);
      assert!(chat.status_state.retry_status_header.is_none());
@@ -44828,20 +44840,90 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..49ddc14bb62ca74ebb5ab5f4c789716a
      assert!(chat.active_cell_is_stream_tail());
  }
 
-@@ -2289,3 +2655,40 @@ async fn sqlite_log_write_warning_is_visible_in_warnings() {
+@@ -2289,3 +2662,117 @@ async fn sqlite_log_write_warning_is_visible_in_warnings() {
          super::helpers::render_bottom_popup(&chat, /*width*/ 80)
      );
  }
 +
 +#[tokio::test]
++async fn declined_patch_completion_matches_replay_for_each_queue_flush() {
++    for flush in ["immediate", "all", "activity"] {
++        let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
++        let started = AppServerThreadItemPayload::FileChange {
++            id: "patch-declined".into(),
++            changes: vec![FileUpdateChange {
++                path: "declined.txt".into(),
++                kind: PatchChangeKind::Add,
++                diff: "hello\n".into(),
++            }],
++            status: AppServerPatchApplyStatus::InProgress,
++        };
++        chat.handle_server_notification(
++            ServerNotification::ItemStarted(ItemStartedNotification::new(
++                "thread-1".into(),
++                "turn-1".into(),
++                started.clone(),
++                0,
++            )),
++            None,
++        );
++        assert!(drain_insert_history(&mut rx).is_empty());
++        if flush != "immediate" {
++            chat.interrupts.push_item_started(started.clone());
++        }
++        let AppServerThreadItemPayload::FileChange { id, changes, .. } = started else {
++            unreachable!()
++        };
++        let declined = AppServerThreadItemPayload::FileChange {
++            id,
++            changes,
++            status: AppServerPatchApplyStatus::Declined,
++        };
++        chat.handle_server_notification(
++            ServerNotification::ItemCompleted(ItemCompletedNotification::new(
++                "thread-1".into(),
++                "turn-1".into(),
++                declined.clone(),
++                Some(0),
++                73,
++            )),
++            None,
++        );
++        if flush != "immediate" {
++            assert!(drain_insert_history(&mut rx).is_empty());
++            let mut queue = std::mem::take(&mut chat.interrupts);
++            if flush == "all" {
++                queue.flush_all(&mut chat);
++            } else {
++                queue.flush_activity(&mut chat);
++            }
++            chat.interrupts = queue;
++        }
++        let live = drain_insert_history(&mut rx);
++        assert_eq!(live.len(), 1, "{flush}: declined patch needs one final row");
++        let live = lines_to_single_string(&live[0]);
++        assert!(live.contains("Patch application declined"), "{live}");
++        chat.replay_thread_item(declined, "turn-1".into(), ReplayKind::ResumeInitialMessages);
++        let replay = drain_insert_history(&mut rx);
++        assert_eq!(replay.len(), 1);
++        assert_eq!(lines_to_single_string(&replay[0]), live, "{flush}");
++    }
++}
++
++#[tokio::test]
 +async fn patch_completion_retains_final_status_and_duration_when_deferred() {
-+    for status in [AppServerPatchApplyStatus::Completed, AppServerPatchApplyStatus::Failed] {
++    for status in [
++        AppServerPatchApplyStatus::Completed,
++        AppServerPatchApplyStatus::Failed,
++    ] {
 +        for deferred in [false, true] {
 +            let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
 +            let item = AppServerThreadItemPayload::FileChange {
 +                id: "patch-final".into(),
 +                changes: vec![FileUpdateChange {
-+                    path: "final.txt".into(), kind: PatchChangeKind::Add, diff: "hello\n".into(),
++                    path: "final.txt".into(),
++                    kind: PatchChangeKind::Add,
++                    diff: "hello\n".into(),
 +                }],
 +                status: status.clone(),
 +            };
@@ -44864,7 +44946,14 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..49ddc14bb62ca74ebb5ab5f4c789716a
 +            }
 +            assert_eq!(targets.len(), 1);
 +            assert_eq!(targets[0].id, "patch-final");
-+            assert_eq!(targets[0].props["status"], if status == AppServerPatchApplyStatus::Completed { "completed" } else { "failed" });
++            assert_eq!(
++                targets[0].props["status"],
++                if status == AppServerPatchApplyStatus::Completed {
++                    "completed"
++                } else {
++                    "failed"
++                }
++            );
 +            assert_eq!(targets[0].props["duration_ms"], 73);
 +        }
 +    }
@@ -44940,7 +45029,7 @@ index 4b77a7722db2ba338e1c7034a54bc7ac59ae8f65..734e1715b0187166b8eea564439fded0
  async fn reconnect_keeps_queue_paused_after_pending_compact() {
      let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
 diff --git a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
-index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..4a9fcd0ab33c0803dbd0eaf5e81080ec3b89ec98 100644
+index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..7c6aeed78641f63e64963439c28e2d603eb34ba5 100644
 --- a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
 @@ -2,6 +2,70 @@ use super::*;
@@ -45066,10 +45155,11 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..4a9fcd0ab33c0803dbd0eaf5e81080ec
      let blob = lines_to_single_string(cells.last().unwrap());
      insta::assert_snapshot!(blob, @"
      • Added foo.txt (+16 -0)
-@@ -1665,26 +1744,6 @@ async fn apply_patch_events_emit_history_cells() {
+@@ -1664,27 +1743,6 @@ async fn apply_patch_events_emit_history_cells() {
+         15 +line 15
          16 +line 16
      ");
-
+-
 -    // 3) End apply success -> success cell
 -    let mut end_changes = HashMap::new();
 -    end_changes.insert(
@@ -45093,7 +45183,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..4a9fcd0ab33c0803dbd0eaf5e81080ec
  }
 
  #[tokio::test]
-@@ -1718,7 +1777,15 @@ async fn apply_patch_manual_approval_adjusts_header() {
+@@ -1718,7 +1776,15 @@ async fn apply_patch_manual_approval_adjusts_header() {
              content: "hello\n".to_string(),
          },
      );
@@ -45110,7 +45200,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..4a9fcd0ab33c0803dbd0eaf5e81080ec
 
      let cells = drain_insert_history(&mut rx);
      assert!(!cells.is_empty(), "expected apply block cell to be sent");
-@@ -1764,7 +1831,15 @@ async fn apply_patch_manual_flow_snapshot() {
+@@ -1764,7 +1830,15 @@ async fn apply_patch_manual_flow_snapshot() {
              content: "hello\n".to_string(),
          },
      );
@@ -45793,7 +45883,7 @@ index 81d948749a1aacc364f6a87af0c30abecb97e428..0454b0627139d8c6aecbb26b2b89fc06
 
      assert_eq!(
 diff --git a/codex-rs/tui/src/chatwidget/tool_lifecycle.rs b/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
-index 9f13cc572bec0cfdbacc367ec21df66517addeb7..b11283468f75562f701b55d645836cd7b80bee83 100644
+index 9f13cc572bec0cfdbacc367ec21df66517addeb7..9f31e4bd7a367f8ec6f2ad16dd09fa82d97f4331 100644
 --- a/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
 +++ b/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
 @@ -8,13 +8,16 @@ use crate::thread_transcript::tools::McpHistory;
@@ -45886,7 +45976,7 @@ index 9f13cc572bec0cfdbacc367ec21df66517addeb7..b11283468f75562f701b55d645836cd7
          self.flush_answer_stream_with_separator();
          self.add_to_history(cell);
          self.request_redraw();
-@@ -163,14 +172,31 @@ impl ChatWidget {
+@@ -163,14 +172,44 @@ impl ChatWidget {
          }
      }
 
@@ -45897,7 +45987,12 @@ index 9f13cc572bec0cfdbacc367ec21df66517addeb7..b11283468f75562f701b55d645836cd7
 +        item: ThreadItemPayload,
 +        duration_ms: Option<u64>,
 +    ) {
-+        let ThreadItemPayload::FileChange { id, changes, status } = item else {
++        let ThreadItemPayload::FileChange {
++            id,
++            changes,
++            status,
++        } = item
++        else {
              return;
          };
 -        // If the patch was successful, just let the "Edited" block stand.
@@ -45911,7 +46006,8 @@ index 9f13cc572bec0cfdbacc367ec21df66517addeb7..b11283468f75562f701b55d645836cd7
 +                        id,
 +                        file_update_changes_to_display(changes),
 +                        &self.config.cwd,
-+                    ).with_duration_ms(duration_ms),
++                    )
++                    .with_duration_ms(duration_ms),
 +                );
 +            }
 +            codex_app_server_protocol::PatchApplyStatus::Failed => {
@@ -45920,16 +46016,27 @@ index 9f13cc572bec0cfdbacc367ec21df66517addeb7..b11283468f75562f701b55d645836cd7
 +                        .with_duration_ms(duration_ms),
 +                );
 +            }
-+            _ => {}
++            codex_app_server_protocol::PatchApplyStatus::Declined => {
++                self.add_to_history(history_cell::new_info_event(
++                    "Patch application declined".to_string(),
++                    None,
++                ));
++            }
++            codex_app_server_protocol::PatchApplyStatus::Completed
++            | codex_app_server_protocol::PatchApplyStatus::InProgress => {}
          }
      }
 
-@@ -309,13 +335,13 @@ impl ChatWidget {
+@@ -309,13 +348,17 @@ impl ChatWidget {
          }
      }
 
 -    pub(crate) fn handle_queued_item_completed_now(&mut self, item: ThreadItemPayload) {
-+    pub(crate) fn handle_queued_item_completed_now(&mut self, item: ThreadItemPayload, duration_ms: Option<u64>) {
++    pub(crate) fn handle_queued_item_completed_now(
++        &mut self,
++        item: ThreadItemPayload,
++        duration_ms: Option<u64>,
++    ) {
          match item {
              item @ ThreadItemPayload::CommandExecution { .. } => {
                  self.handle_command_execution_completed_now(item);
@@ -69736,10 +69843,10 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f19b28df49ec464adb3d02c91e99ed837aa77cd8
+index 0000000000000000000000000000000000000000..0fc7c80e59650fc37a8cc514518dd05be43f1d19
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,859 @@
+@@ -0,0 +1,865 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -70528,10 +70635,17 @@ index 0000000000000000000000000000000000000000..f19b28df49ec464adb3d02c91e99ed83
 +    fn canonical_store_root_normalizes_aliases_and_refuses_relative_paths() {
 +        let store = tempfile::tempdir().unwrap();
 +        let canonical = store.path().canonicalize().unwrap();
-+        assert_eq!(canonical_store_root(&canonical.join(".")).unwrap(), canonical);
++        assert_eq!(
++            canonical_store_root(&canonical.join(".")).unwrap(),
++            canonical
++        );
 +        assert!(canonical_store_root(std::path::Path::new("relative-store")).is_err());
 +        let alternate_case = canonical.with_file_name(
-+            canonical.file_name().unwrap().to_string_lossy().to_uppercase(),
++            canonical
++                .file_name()
++                .unwrap()
++                .to_string_lossy()
++                .to_uppercase(),
 +        );
 +        if alternate_case.exists() {
 +            assert_eq!(canonical_store_root(&alternate_case).unwrap(), canonical);
@@ -70545,31 +70659,30 @@ index 0000000000000000000000000000000000000000..f19b28df49ec464adb3d02c91e99ed83
 +            let mut registry = ExtensionRegistryBuilder::default();
 +            let error = install(&mut registry, Weak::new()).unwrap_err();
 +            let root = PathBuf::from(std::env::var_os(codex_omd::MOD_STORE_ENV).unwrap());
-+            let status: serde_json::Value = serde_json::from_slice(
-+                &std::fs::read(root.join("mod-status.json")).unwrap(),
-+            ).unwrap();
++            let status: serde_json::Value =
++                serde_json::from_slice(&std::fs::read(root.join("mod-status.json")).unwrap())
++                    .unwrap();
 +            assert_eq!(status["activation_error"], error);
++            assert_eq!(status["mods"], serde_json::json!([]));
++            assert_eq!(status["rejected"], serde_json::json!([]));
 +            return;
 +        }
 +        let store = tempfile::tempdir().unwrap();
 +        let result = std::process::Command::new(std::env::current_exe().unwrap())
-+            .args(["--exact", "tests::activation_failure_writes_status_before_returning"])
++            .args([
++                "--exact",
++                "tests::activation_failure_writes_status_before_returning",
++            ])
 +            .env(CHILD, "1")
 +            .env(codex_omd::MODE_ENV, "invalid-mode")
 +            .env(codex_omd::MOD_STORE_ENV, store.path())
-+            .output().unwrap();
-+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
-+    }
-+
-+    #[test]
-+    fn activation_error_status_retains_reason() {
-+        let store = tempfile::tempdir().unwrap();
-+        inactive(store.path(), "early activation failed".into()).unwrap();
-+        let status: serde_json::Value = serde_json::from_slice(
-+            &std::fs::read(store.path().join("mod-status.json")).unwrap(),
-+        ).unwrap();
-+        assert_eq!(status["activation_error"], "early activation failed");
-+        assert_eq!(status["mods"], serde_json::json!([]));
++            .output()
++            .unwrap();
++        assert!(
++            result.status.success(),
++            "{}",
++            String::from_utf8_lossy(&result.stdout)
++        );
 +    }
 +
 +    #[test]
@@ -179086,10 +179199,10 @@ index 0000000000000000000000000000000000000000..c774f3c1004e1d4b2bb580a75ecf37c5
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0e2ee2b6ee6f2032514781b6b2503d2974582f00
+index 0000000000000000000000000000000000000000..001234b061b22284220bafb5ad112ecd4c531539
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,805 @@
+@@ -0,0 +1,799 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -179113,7 +179226,7 @@ index 0000000000000000000000000000000000000000..0e2ee2b6ee6f2032514781b6b2503d29
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +
 +crate::omd::isolated_static! { MESSAGE_HISTORY: Mutex<std::collections::BTreeMap<String, bool>> =
-+    Mutex::new(std::collections::BTreeMap::new()) }
++Mutex::new(std::collections::BTreeMap::new()) }
 +
 +pub(crate) fn remember_message_history(thread: &str, canonical: bool) {
 +    MESSAGE_HISTORY.with(|message_history_state| {
@@ -179296,7 +179409,7 @@ index 0000000000000000000000000000000000000000..0e2ee2b6ee6f2032514781b6b2503d29
 +crate::omd::isolated_static! { FRAMES: Mutex<Option<crate::tui::FrameRequester>> = Mutex::new(None) }
 +crate::omd::isolated_static! { TOOL_NOTICES: Mutex<VecDeque<ToolNotice>> = Mutex::new(VecDeque::new()) }
 +crate::omd::isolated_static! { DRAWN_CALLS: Mutex<std::collections::BTreeSet<String>> =
-+    Mutex::new(std::collections::BTreeSet::new()) }
++Mutex::new(std::collections::BTreeSet::new()) }
 +
 +struct ToolNotice {
 +    call_id: String,
@@ -179413,32 +179526,26 @@ index 0000000000000000000000000000000000000000..0e2ee2b6ee6f2032514781b6b2503d29
 +
 +/// Screen columns, for hooked components laid out before their final width is known.
 +pub(crate) fn columns() -> u16 {
-+    COLUMNS.with(|columns_state| {
-+        match columns_state.load(Ordering::Relaxed) {
++    COLUMNS.with(
++        |columns_state| match columns_state.load(Ordering::Relaxed) {
 +            0 => 80,
 +            columns => columns,
-+        }
-+    })
++        },
++    )
 +}
 +
 +pub(crate) fn enabled() -> bool {
-+    HOOKED.with(|hooked_state| {
-+        hooked_state.load(Ordering::Relaxed)
-+    })
++    HOOKED.with(|hooked_state| hooked_state.load(Ordering::Relaxed))
 +}
 +
 +/// Changes whenever a hook result changes what a retained layout drew.
 +pub(crate) fn epoch() -> u64 {
-+    EPOCH.with(|epoch_state| {
-+        epoch_state.load(Ordering::Relaxed)
-+    })
++    EPOCH.with(|epoch_state| epoch_state.load(Ordering::Relaxed))
 +}
 +
 +/// Advances whenever a hook answer changes, so layouts cached for the live cell redraw.
 +pub(crate) fn live_epoch() -> u64 {
-+    LIVE_EPOCH.with(|live_epoch_state| {
-+        live_epoch_state.load(Ordering::Relaxed)
-+    })
++    LIVE_EPOCH.with(|live_epoch_state| live_epoch_state.load(Ordering::Relaxed))
 +}
 +
 +/// A new view revision may follow a state change, so finished renders are asked again; each instance's last tree stands until its answer arrives.
@@ -179897,10 +180004,10 @@ index 0000000000000000000000000000000000000000..0e2ee2b6ee6f2032514781b6b2503d29
 +}
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..af25f6a089aed8769cc8f902cb3ab94018c2d5a7
+index 0000000000000000000000000000000000000000..bb23f7f7e27365f5a91fa771d1199e611dd28906
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,257 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -180147,16 +180254,20 @@ index 0000000000000000000000000000000000000000..af25f6a089aed8769cc8f902cb3ab940
 +            assert_eq!(engine.cleared, 42);
 +            engine.cleared = 43;
 +        });
-+    })).join().unwrap();
++    }))
++    .join()
++    .unwrap();
 +    engine(|engine| assert_eq!(engine.cleared, 43));
 +    std::thread::spawn(|| {
 +        assert_eq!(columns(), 80);
 +        engine(|engine| assert_eq!(engine.cleared, 0));
-+    }).join().unwrap();
++    })
++    .join()
++    .unwrap();
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f1c7cc42b9f6ff00de1442980b3d25886ac626ad
+index 0000000000000000000000000000000000000000..c1f94fb4c4f8d2f5fbafedbf07e675dbf668e9f8
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
 @@ -0,0 +1,1805 @@
@@ -180231,7 +180342,9 @@ index 0000000000000000000000000000000000000000..f1c7cc42b9f6ff00de1442980b3d2588
 +}) }
 +
 +#[cfg(test)]
-+pub(crate) fn inherit_test_context(run: impl FnOnce() + Send + 'static) -> impl FnOnce() + Send + 'static {
++pub(crate) fn inherit_test_context(
++    run: impl FnOnce() + Send + 'static,
++) -> impl FnOnce() + Send + 'static {
 +    let context = ACTIVE_CONTEXT.capture();
 +    move || {
 +        ACTIVE_CONTEXT.replace(context);
@@ -180316,9 +180429,7 @@ index 0000000000000000000000000000000000000000..f1c7cc42b9f6ff00de1442980b3d2588
 +}
 +
 +pub(crate) fn current(invocation: &ModInvocation) -> bool {
-+    ACTIVE_CONTEXT.with(|active_context_state| {
-+        active_context_state.locked().current(invocation)
-+    })
++    ACTIVE_CONTEXT.with(|active_context_state| active_context_state.locked().current(invocation))
 +}
 +
 +pub(crate) fn context_unchanged() -> (u64, impl Fn() -> bool + Send + Sync + 'static) {
@@ -180331,14 +180442,14 @@ index 0000000000000000000000000000000000000000..f1c7cc42b9f6ff00de1442980b3d2588
 +    #[cfg(not(test))]
 +    {
 +        let epoch = ACTIVE_CONTEXT.with(|state| state.locked().epoch);
-+        (epoch, move || ACTIVE_CONTEXT.with(|state| state.locked().epoch == epoch))
++        (epoch, move || {
++            ACTIVE_CONTEXT.with(|state| state.locked().epoch == epoch)
++        })
 +    }
 +}
 +
 +pub(crate) fn active_context() -> Option<ModContext> {
-+    ACTIVE_CONTEXT.with(|active_context_state| {
-+        active_context_state.locked().context.clone()
-+    })
++    ACTIVE_CONTEXT.with(|active_context_state| active_context_state.locked().context.clone())
 +}
 +
 +pub(crate) fn active_repository() -> Option<std::path::PathBuf> {
@@ -181967,10 +182078,10 @@ index 0000000000000000000000000000000000000000..f1c7cc42b9f6ff00de1442980b3d2588
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb0f7e8fd0
+index 0000000000000000000000000000000000000000..98ede54c4a84fe3018d3c1f1ad27f6ade26a73bc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,784 @@
+@@ -0,0 +1,787 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -182086,17 +182197,20 @@ index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb
 +            let _ = entered.send(());
 +            current
 +        });
-+        finished.send(()).unwrap();
++        finished
++            .send(crate::mod_ui::startup_context_matches(
++                &worker_repository,
++                "new",
++            ))
++            .unwrap();
 +    });
 +    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
 +    active.store(false, Ordering::SeqCst);
 +    let cancelled = completion.recv_timeout(Duration::from_secs(5));
 +    drop(busy);
 +    worker.join().unwrap();
-+    let published = crate::mod_ui::startup_context_matches(&repository, "new");
 +    *HOST.lock().unwrap() = previous;
-+    cancelled.unwrap();
-+    assert!(!published);
++    assert!(!cancelled.unwrap());
 +}
 +
 +#[test]
@@ -185195,10 +185309,10 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a58c11440
+index 0000000000000000000000000000000000000000..bcf2fbab275b2325de2fbd2b03a1d99edb5be465
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,6031 @@
+@@ -0,0 +1,6041 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -186168,7 +186282,9 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +        let lines: Arc<[HyperlinkLine]> = match language {
 +            Some(language) => {
 +                match (!language.is_empty())
-+                    .then(|| crate::render::highlight::highlight_code_to_styled_spans(text, language))
++                    .then(|| {
++                        crate::render::highlight::highlight_code_to_styled_spans(text, language)
++                    })
 +                    .flatten()
 +                {
 +                    Some(lines) => lines
@@ -186247,7 +186363,8 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +        }
 +        let previous = std::mem::replace(&mut *applied, requested.clone());
 +        match requested {
-+            Some(name) => match crate::render::highlight::resolve_theme_with_configured_home(&name) {
++            Some(name) => match crate::render::highlight::resolve_theme_with_configured_home(&name)
++            {
 +                Some(theme) => {
 +                    crate::render::highlight::set_syntax_theme(theme);
 +                    None
@@ -186258,9 +186375,10 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +            },
 +            None => {
 +                if previous.is_some()
-+                    && let Some(theme) = crate::render::highlight::resolve_theme_with_configured_home(
-+                        &crate::render::highlight::configured_theme_name(),
-+                    )
++                    && let Some(theme) =
++                        crate::render::highlight::resolve_theme_with_configured_home(
++                            &crate::render::highlight::configured_theme_name(),
++                        )
 +                {
 +                    crate::render::highlight::set_syntax_theme(theme);
 +                }
@@ -186776,9 +186894,7 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +}
 +
 +pub(crate) fn status_segments_stale() -> bool {
-+    APPLIED_STATUS.with(|applied_status_state| {
-+        *applied_status_state.locked() != status_segments()
-+    })
++    APPLIED_STATUS.with(|applied_status_state| *applied_status_state.locked() != status_segments())
 +}
 +
 +pub(crate) fn status_segments() -> Vec<String> {
@@ -186871,7 +186987,8 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +pub(crate) fn dialog_visible(snapshot: &ModViewSnapshot) -> bool {
 +    INTERACTION.with(|interaction_state| {
 +        site(&snapshot.view, "dialog").is_some_and(|dialog| {
-+            !dialog.components.is_empty() && interaction_state.locked().dismissed != Some(dialog_key(dialog))
++            !dialog.components.is_empty()
++                && interaction_state.locked().dismissed != Some(dialog_key(dialog))
 +        })
 +    })
 +}
@@ -189796,7 +189913,8 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +        help.selected = help.selected.min(rows.len().saturating_sub(1));
 +        let width = screen.width.saturating_sub(4).min(72);
 +        let body = u16::try_from(rows.len()).unwrap_or(u16::MAX).max(1);
-+        let height = (body + 3 + u16::from(help.query.is_some())).min(screen.height.saturating_sub(2));
++        let height =
++            (body + 3 + u16::from(help.query.is_some())).min(screen.height.saturating_sub(2));
 +        if width < 24 || height < 4 {
 +            return;
 +        }
@@ -190031,12 +190149,14 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +        if let Some(focused) = interaction.focused.clone()
 +            && interaction.key_panes.contains(&focused)
 +        {
-+            if !all_keys && (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
++            if !all_keys && (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL)
++            {
 +                interaction.focused = None;
 +                return None;
 +            }
 +            let region = interaction.component_region.get(&focused).cloned();
-+            if let Some((name, action)) = context_binding(key, region.as_deref(), composer_empty, true)
++            if let Some((name, action)) =
++                context_binding(key, region.as_deref(), composer_empty, true)
 +            {
 +                return Some(run_context(&mut interaction, name, action, composer_empty));
 +            }
@@ -190096,7 +190216,9 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +            .and_then(|focused| interaction.targets.get(focused))
 +            .is_some_and(|target| match (key.code, key.modifiers) {
 +                (KeyCode::Enter | KeyCode::Up | KeyCode::Down, KeyModifiers::NONE) => true,
-+                (KeyCode::Char(' '), KeyModifiers::NONE) => !matches!(target, ComponentTarget::Pane),
++                (KeyCode::Char(' '), KeyModifiers::NONE) => {
++                    !matches!(target, ComponentTarget::Pane)
++                }
 +                (KeyCode::Left | KeyCode::Right, KeyModifiers::NONE) => {
 +                    matches!(target, ComponentTarget::Select { .. })
 +                }
@@ -190106,7 +190228,8 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +            && !target_key
 +            && !repeated
 +            && !modal(&interaction, key)
-+            && let Some((name, action)) = context_binding(key, region.as_deref(), composer_empty, false)
++            && let Some((name, action)) =
++                context_binding(key, region.as_deref(), composer_empty, false)
 +        {
 +            return Some(run_context(&mut interaction, name, action, composer_empty));
 +        }
@@ -190222,8 +190345,8 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +        }
 +        if !repeated
 +            && region.is_none()
-+            && let Some(binding) =
-+                context_binding(key, None, composer_empty, false).filter(|(_, action)| !blocked(action))
++            && let Some(binding) = context_binding(key, None, composer_empty, false)
++                .filter(|(_, action)| !blocked(action))
 +        {
 +            return Some(ModInput::Binding(binding.0, binding.1));
 +        }
@@ -190387,9 +190510,7 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +
 +/// Whether a shown dialog keeps `key` from native handling, including a mod binding refused for shadowing a native key.
 +pub(crate) fn modal_key(key: KeyEvent) -> bool {
-+    INTERACTION.with(|interaction_state| {
-+        modal(&interaction_state.locked(), key)
-+    })
++    INTERACTION.with(|interaction_state| modal(&interaction_state.locked(), key))
 +}
 +
 +pub(crate) fn holds_keys() -> bool {
@@ -190506,7 +190627,8 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +            return true;
 +        }
 +        let bounded = &text[..text.floor_char_boundary(PASTE_BYTES)];
-+        if let Some(ComponentTarget::Terminal(session, binding, _)) = interaction.targets.get(&focused)
++        if let Some(ComponentTarget::Terminal(session, binding, _)) =
++            interaction.targets.get(&focused)
 +        {
 +            crate::mod_pty::paste(binding.as_ref(), session, bounded);
 +            return true;
@@ -191155,7 +191277,9 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +        let panes = interaction
 +            .collapsed
 +            .iter()
-+            .filter(|(id, _)| interaction.component_owners.get(*id).map(String::as_str) == Some(caller))
++            .filter(|(id, _)| {
++                interaction.component_owners.get(*id).map(String::as_str) == Some(caller)
++            })
 +            .map(|(id, collapsed)| {
 +                serde_json::json!({
 +                    "id": id,
@@ -191232,10 +191356,10 @@ index 0000000000000000000000000000000000000000..522f19742c93ca0f7ee3df923ea0d96a
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e3866fac88856c6014c453f4b274cfede977e0e5
+index 0000000000000000000000000000000000000000..db9882f2468090380f949e1c1e1441148fbf1788
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,261 @@
 +use super::*;
 +use crate::omd::LockExt;
 +use std::sync::Arc;
@@ -191306,7 +191430,8 @@ index 0000000000000000000000000000000000000000..e3866fac88856c6014c453f4b274cfed
 +            let mod_rows;
 +            let rows = match site {
 +                FooterSite::Above => {
-+                    let mut rows = if let Some(site) = self::site(&snapshot.view, "above_composer") {
++                    let mut rows = if let Some(site) = self::site(&snapshot.view, "above_composer")
++                    {
 +                        component_rows(&site.components, width, &mut interaction, look)
 +                    } else {
 +                        snapshot
@@ -191440,7 +191565,8 @@ index 0000000000000000000000000000000000000000..e3866fac88856c6014c453f4b274cfed
 +            INTERACTION.with(|interaction_state| {
 +                let (mods, host) = self.split(area);
 +                let interaction = interaction_state.locked();
-+                let scroll = focused_scroll(&self.rows[..self.host_from], mods.height, &interaction);
++                let scroll =
++                    focused_scroll(&self.rows[..self.host_from], mods.height, &interaction);
 +                drop(interaction);
 +                crate::terminal_hyperlinks::HyperlinkParagraph::new(
 +                    &self.lines[scroll..self.host_from],
@@ -191497,10 +191623,10 @@ index 0000000000000000000000000000000000000000..e3866fac88856c6014c453f4b274cfed
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2e0c0b96ab0aac28a85cdbf478c242aea1aaed8
+index 0000000000000000000000000000000000000000..65c9174fc026515d34581b793d8ffdd4f6b90e78
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2869 @@
+@@ -0,0 +1,2881 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -192921,7 +193047,10 @@ index 0000000000000000000000000000000000000000..e2e0c0b96ab0aac28a85cdbf478c242a
 +        markdown_lines(&format!("**b** x{block} ").repeat(3000), 40);
 +    }
 +    let cached = MARKDOWN.with(|state| {
-+        state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len()
++        state
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .len()
 +    });
 +    assert!(cached < 20, "{cached} entries");
 +}
@@ -193135,7 +193264,11 @@ index 0000000000000000000000000000000000000000..e2e0c0b96ab0aac28a85cdbf478c242a
 +    }
 +    assert_eq!(texts(NoticePlacement::Toast), ["4", "3", "2"]);
 +    NOTICES.with(|state| {
-+        state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).0.clear();
++        state
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .0
++            .clear();
 +    });
 +}
 +
@@ -194338,7 +194471,10 @@ index 0000000000000000000000000000000000000000..e2e0c0b96ab0aac28a85cdbf478c242a
 +                crate::mod_ui::preview(snapshot);
 +                barrier.wait();
 +                assert_eq!(crate::mod_ui::session_title_suffix().as_deref(), Some(name));
-+                assert_eq!(crate::mod_runtime::active_context().unwrap().repository, repository);
++                assert_eq!(
++                    crate::mod_runtime::active_context().unwrap().repository,
++                    repository
++                );
 +            })
 +        });
 +        for thread in threads {
@@ -194362,7 +194498,9 @@ index 0000000000000000000000000000000000000000..e2e0c0b96ab0aac28a85cdbf478c242a
 +    assert!(std::thread::spawn(move || first()).join().unwrap());
 +    std::thread::spawn(crate::mod_runtime::inherit_test_context(move || {
 +        assert_eq!(crate::mod_runtime::active_context(), Some(context));
-+    })).join().unwrap();
++    }))
++    .join()
++    .unwrap();
 +    crate::mod_runtime::synchronize_context(crate::mod_runtime::ModContext {
 +        thread_id: None,
 +        repository: std::path::PathBuf::from("replacement"),
@@ -194494,10 +194632,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3b9adc6f2dea215b7c60d64dcf9f65b094f1cc7d
+index 0000000000000000000000000000000000000000..67b074ac58d8eef20d45d6e4223af3bf7b9a284f
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,889 @@
+@@ -0,0 +1,898 @@
 +use codex_omd::FileStamp;
 +
 +#[cfg(not(test))]
@@ -194515,11 +194653,15 @@ index 0000000000000000000000000000000000000000..3b9adc6f2dea215b7c60d64dcf9f65b0
 +}
 +
 +#[cfg(test)]
-+pub(crate) struct TestShared<T: 'static>(&'static std::thread::LocalKey<std::cell::RefCell<std::sync::Arc<T>>>);
++pub(crate) struct TestShared<T: 'static>(
++    &'static std::thread::LocalKey<std::cell::RefCell<std::sync::Arc<T>>>,
++);
 +
 +#[cfg(test)]
 +impl<T> TestShared<T> {
-+    pub(crate) const fn new(key: &'static std::thread::LocalKey<std::cell::RefCell<std::sync::Arc<T>>>) -> Self {
++    pub(crate) const fn new(
++        key: &'static std::thread::LocalKey<std::cell::RefCell<std::sync::Arc<T>>>,
++    ) -> Self {
 +        Self(key)
 +    }
 +
@@ -194722,13 +194864,16 @@ index 0000000000000000000000000000000000000000..3b9adc6f2dea215b7c60d64dcf9f65b0
 +}
 +
 +pub(crate) fn store_root() -> Option<PathBuf> {
-+    static CACHE: Memo<PathBuf, Option<PathBuf>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
++    static CACHE: Memo<PathBuf, Option<PathBuf>> =
++        std::sync::Mutex::new(std::collections::BTreeMap::new());
 +    if !is_active() {
 +        return None;
 +    }
 +    let root = PathBuf::from(std::env::var_os(codex_omd::MOD_STORE_ENV)?);
 +    memo(&CACHE, root.clone(), || {
-+        root.is_absolute().then(|| root.canonicalize().ok()).flatten()
++        root.is_absolute()
++            .then(|| root.canonicalize().ok())
++            .flatten()
 +    })
 +}
 +
@@ -195214,12 +195359,14 @@ index 0000000000000000000000000000000000000000..3b9adc6f2dea215b7c60d64dcf9f65b0
 +        )
 +    }
 +
++    #[cfg(unix)]
 +    #[test]
 +    #[serial]
 +    fn store_root_normalizes_filesystem_aliases() {
 +        let directory = TempDir::new().unwrap();
 +        let store = directory.path().canonicalize().unwrap();
-+        let alias = store.join(".");
++        let alias = store.join("store-alias");
++        std::os::unix::fs::symlink(&store, &alias).unwrap();
 +        let _environment = omd_environment(&alias);
 +        assert_eq!(store_root(), Some(store));
 +    }

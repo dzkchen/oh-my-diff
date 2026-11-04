@@ -786,10 +786,17 @@ mod tests {
     fn canonical_store_root_normalizes_aliases_and_refuses_relative_paths() {
         let store = tempfile::tempdir().unwrap();
         let canonical = store.path().canonicalize().unwrap();
-        assert_eq!(canonical_store_root(&canonical.join(".")).unwrap(), canonical);
+        assert_eq!(
+            canonical_store_root(&canonical.join(".")).unwrap(),
+            canonical
+        );
         assert!(canonical_store_root(std::path::Path::new("relative-store")).is_err());
         let alternate_case = canonical.with_file_name(
-            canonical.file_name().unwrap().to_string_lossy().to_uppercase(),
+            canonical
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_uppercase(),
         );
         if alternate_case.exists() {
             assert_eq!(canonical_store_root(&alternate_case).unwrap(), canonical);
@@ -803,31 +810,30 @@ mod tests {
             let mut registry = ExtensionRegistryBuilder::default();
             let error = install(&mut registry, Weak::new()).unwrap_err();
             let root = PathBuf::from(std::env::var_os(codex_omd::MOD_STORE_ENV).unwrap());
-            let status: serde_json::Value = serde_json::from_slice(
-                &std::fs::read(root.join("mod-status.json")).unwrap(),
-            ).unwrap();
+            let status: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("mod-status.json")).unwrap())
+                    .unwrap();
             assert_eq!(status["activation_error"], error);
+            assert_eq!(status["mods"], serde_json::json!([]));
+            assert_eq!(status["rejected"], serde_json::json!([]));
             return;
         }
         let store = tempfile::tempdir().unwrap();
         let result = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "tests::activation_failure_writes_status_before_returning"])
+            .args([
+                "--exact",
+                "tests::activation_failure_writes_status_before_returning",
+            ])
             .env(CHILD, "1")
             .env(codex_omd::MODE_ENV, "invalid-mode")
             .env(codex_omd::MOD_STORE_ENV, store.path())
-            .output().unwrap();
-        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
-    }
-
-    #[test]
-    fn activation_error_status_retains_reason() {
-        let store = tempfile::tempdir().unwrap();
-        inactive(store.path(), "early activation failed".into()).unwrap();
-        let status: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(store.path().join("mod-status.json")).unwrap(),
-        ).unwrap();
-        assert_eq!(status["activation_error"], "early activation failed");
-        assert_eq!(status["mods"], serde_json::json!([]));
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
     }
 
     #[test]
