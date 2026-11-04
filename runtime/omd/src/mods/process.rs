@@ -716,6 +716,7 @@ where
         request_line(
             &[
                 "event",
+                "activation_id",
                 "name",
                 "payload",
                 "receipts",

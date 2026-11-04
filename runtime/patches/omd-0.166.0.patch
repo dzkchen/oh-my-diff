@@ -93188,7 +93188,7 @@ index 0000000000000000000000000000000000000000..1be17343954a7f675b6043f83ef4bdf5
 +}
 diff --git a/codex-rs/omd/runner/src/bootstrap.js b/codex-rs/omd/runner/src/bootstrap.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..e99b457601c7d067609aeb961579a4052e97234a
+index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d587366021e1670f
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/bootstrap.js
 @@ -0,0 +1,929 @@
@@ -93254,7 +93254,7 @@ index 0000000000000000000000000000000000000000..e99b457601c7d067609aeb961579a405
 +// A warm render runner answers the next render with the activated mod, from that render's own input.
 +function serve(line) {
 +  const next = JSON.parse(line);
-+  Object.assign(request, { event: next.event ?? request.event, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
++  Object.assign(request, { event: next.event ?? request.event, activation_id: next.activation_id, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
 +  receipts = request.receipts;
 +  if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
 +  clockRead = false;
@@ -131068,10 +131068,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef6c59a7bfe0c015a59349e2c5e13b7d1477d962
+index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c94912b98496f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,1024 @@
+@@ -0,0 +1,1025 @@
 +use super::Result;
 +use super::code_cache::CacheRoot;
 +use super::code_cache::CodeCache;
@@ -131790,6 +131790,7 @@ index 0000000000000000000000000000000000000000..ef6c59a7bfe0c015a59349e2c5e13b7d
 +        request_line(
 +            &[
 +                "event",
++                "activation_id",
 +                "name",
 +                "payload",
 +                "receipts",
@@ -132098,10 +132099,10 @@ index 0000000000000000000000000000000000000000..ef6c59a7bfe0c015a59349e2c5e13b7d
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..dbb9132d5d57c200c9eb10c5dd163f3b9ef8b3b9
+index 0000000000000000000000000000000000000000..720458fff400e3965c624ca2c582c462578d62eb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,354 @@
+@@ -0,0 +1,382 @@
 +use super::WARM;
 +use super::evaluate_warm;
 +use super::sandboxed;
@@ -132111,6 +132112,34 @@ index 0000000000000000000000000000000000000000..dbb9132d5d57c200c9eb10c5dd163f3b
 +use std::time::Duration;
 +
 +const BUDGET: Duration = Duration::from_secs(2);
++
++#[test]
++fn mounted_component_refreshes_background_activation_identity() {
++    let mut request = json!({
++        "source": "export default api => { const job = api.background('refresh', value => value); api.component('status', {view: () => ({type: 'text', text: job.get().status})}); };",
++        "filename": "/fixture/jobs/index.ts", "api": crate::MOD_API_VERSION,
++        "capabilities": ["store", "events", "terminal"],
++        "surface": {"events": {"timer": "events"}, "replacements": [], "middleware": [], "state": "store", "contracts": "contracts"},
++        "settings": {}, "event": "component", "name": "status", "session_model": true,
++        "state_scope": "thread", "interactive": true, "serve": true, "hook_budget_ms": 1000,
++        "payload": {"instance": "status", "columns": 80, "rows": 1, "now": 0}
++    });
++    for (activation, status) in [("first", "pending"), ("second", "completed")] {
++        request["activation_id"] = json!(activation);
++        request["state"] = json!({"background_refresh": {"activation": activation, "status": status, "token": 1}});
++        let reply = evaluate_warm(
++            "component-job-activation",
++            &request,
++            None,
++            BUDGET,
++            &|| true,
++            &mut |_| unreachable!(),
++        )
++        .unwrap();
++        assert_eq!(reply["value"]["tree"][0]["text"], status);
++    }
++    super::invalidate_warm("component-job-activation");
++}
 +
 +#[test]
 +fn reused_process_resets_callback_globals_and_reloads_source() {

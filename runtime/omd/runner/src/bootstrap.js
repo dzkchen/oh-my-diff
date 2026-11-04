@@ -60,7 +60,7 @@ let receipts = request.receipts ?? [];
 // A warm render runner answers the next render with the activated mod, from that render's own input.
 function serve(line) {
   const next = JSON.parse(line);
-  Object.assign(request, { event: next.event ?? request.event, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
+  Object.assign(request, { event: next.event ?? request.event, activation_id: next.activation_id, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
   if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
   clockRead = false;

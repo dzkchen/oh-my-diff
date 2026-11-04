@@ -45,3 +45,26 @@ test('background jobs require session lifetime and thread-scoped state', () => {
   assert.match(runnerSync({...request, session_model: false}).error, /background_requires_session_activation/);
   assert.match(runnerSync({...request, state_scope: 'store'}).error, /background_requires_thread_state/);
 });
+
+test('mounted components read job status after the session activation changes', () => {
+  const request = {
+    source: `export default api => {
+      const job = api.background('refresh', input => input);
+      api.component('status', {view: () => ({type: 'text', text: job.get().status})});
+    };`,
+    filename: '/fixture/jobs/index.ts', entrypoint: 'index.ts', api: '1.0.0',
+    capabilities: ['store', 'events', 'terminal'], surface, event: 'component', name: 'status',
+    state: {background_refresh: {activation: 'first', status: 'pending', token: 1}}, settings: {},
+    session_model: true, state_scope: 'thread', activation_id: 'first',
+    interactive: true, serve: true, hook_budget_ms: 1000,
+    payload: {instance: 'status', columns: 80, rows: 1, now: 0},
+  };
+  const input = [request, {...request, activation_id: 'second',
+    state: {background_refresh: {activation: 'second', status: 'completed', result: 'ok', token: 1}},
+  }].map(value => JSON.stringify(value)).join('\n') + '\n';
+  const result = spawnSync(runner, [], {input, encoding: 'utf8', timeout: 10000});
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
+  const frames = result.stdout.trim().split('\n').map(line => JSON.parse(line)).filter(value => !value.ready);
+  assert.deepEqual(frames.map(frame => frame.value.tree[0].text), ['pending', 'completed']);
+});
