@@ -2,24 +2,37 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
-## [1.4.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.1) — 2026-11-02
+## [1.4.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.2) — 2026-11-04
 
-A leaner OMD+ with untested mods and plugins moved to Experimental, remembered sandboxed terminal starts, and fixes for /btw, the files browser, the status line and themes.
+Signed mod updates, account switching for new threads, keyboard panel arranging, turn undo and redo, and fixes for themes and overlapping turns.
 
 ### New
 
+- Mod updates: fixes to first-party mods now arrive between releases as signed mod updates; `omd update`, `/update` and automatic updates apply them, and `omd update rollback` undoes them
+- Accounts: `/profile` chooses the account that `/new` uses without changing existing threads, and subscription setup discovers model defaults instead of asking for model names, context sizes or pricing
+- Uninstall: `omd uninstall --purge` also signs out OMD accounts and clears caches, keeping shared Codex data
 - Terminal panes: Allow and remember on a sandboxed start saves the approval for that workspace, mod, command and executable, so the same start doesn't ask again until its access or executable changes
 - /btw: `/btw` alone opens a side conversation panel that lists earlier exchanges and takes a follow-up question
 - Workspace: arrange panels with the keyboard alone (m, then Shift+arrows, T and = / -), F6 shows or hides the panels from the prompt, and number keys focus a panel whose tab is showing
+- Undo: the experimental omd_checkpoint snapshots your files around each turn, so `/undo` puts back what the agent changed in the last turn and `/redo` brings it back, with `/undo show` to preview it first; it never overwrites edits you made since without `/undo force`
 - Theme: an Aurora scene; the northern lights flare when a turn finishes, so you can tell from across the room that the agent is done
 
 ### Changed
 
+- Shell commands: adjacent agent shell commands collapse into one expandable summary with running and failure counts
+- Theme: switching themes no longer flashes, scene transitions are shorter, and prompts and menus stay opaque over the scene
 - OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact and omd_preview move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default
 - Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace
+- Monitors: watch several sources together, check pull-request completion, and run the next action when a watch settles
+- Continue: cache-aware observation masking preserves recent context while reducing repeated tool output in a continued conversation
+- Mod authors: session activations, background jobs, timer payloads and assistant-message identities support work that continues across callbacks
 
 ### Fixed
 
+- Accounts: threads keep their provider across account switches and resumes, and account setup works again; reconnecting and removing ChatGPT, Claude, Cursor and API accounts now work the same way
+- Theme: resizing the terminal keeps the theme background
+- Working indicator: stays visible until the active task finishes
+- Uninstall: a cleanup that fails partway can be retried
 - Mods, updates and preview: `/mods cancel` says whether it dropped a waiting change, the updates panel labels times as UTC and hides update settings on installs the OMD installer didn't make, and `/preview FILE --watch` frees the place of a watched file that was deleted
 - Usage: tool calls no longer rewrite the mod's whole saved state while the usage dialog is closed, and an agent event that changes nothing is skipped
 - Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list
@@ -30,6 +43,11 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 - Frecency: outside a Git repository `@` completion runs `git status` at most every 30 seconds instead of on every keystroke, deleted changed files are no longer offered, slash or shell commands no longer count as file uses, and a mention counts only if its turn starts within 2 minutes
 - Advisor: automatic `failure` and `loop` consults cool down, once per call every 10 minutes and once every 2 minutes overall, so an agent retrying one failing command no longer pays for a second model on every other failure
 - Claude CLI: `/claude login` works when the mod was installed from the catalog, instead of failing with setup_must_run_from_installed_mod after sign-in
+- Input: typing stays responsive when turns overlap, and delayed callbacks keep the session that owns them
+- Status line: child tools no longer trigger a diagnostic error in session timers
+- Continue: saved originals are checked before history processing, and masking progress stays isolated to its route
+- Installer: release verification and cleanup refuse unsafe inputs, and provider setup keeps credentials within its approved access
+- Mods: corrected caching, saved state and prompt sanitization in first-party mods
 
 ## [1.4.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.0) — 2026-11-02
 

@@ -16,6 +16,19 @@ pub struct PackageControl {
     generation: u64,
 }
 
+impl PackageControl {
+    pub fn scope(&self) -> Option<&str> {
+        self.request
+            .as_ref()
+            .map(|request| request.scope.as_str())
+            .or_else(|| {
+                self.selection
+                    .as_ref()
+                    .map(|selection| selection.scope.as_str())
+            })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Selection {
     path: PathBuf,

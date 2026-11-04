@@ -12,12 +12,7 @@ pub use chain::access_receipt;
 pub use chain::compose_rows;
 pub use chain::continue_operation;
 pub use chain::intercept_shared;
-pub use persisted::PERSIST_CHUNK_BYTES;
 pub use persisted::PERSIST_WITHHELD;
-pub use persisted::PersistedRewrite;
-pub use persisted::persist_changed_by;
-pub use persisted::persist_chunks;
-pub use persisted::persist_cut;
 pub use persisted::persist_texts;
 pub use render::MOD_RENDER_COMPONENTS;
 pub use render::client_component_unmount;
@@ -28,12 +23,10 @@ pub use render::component_unmount;
 pub use render::render_shared;
 mod packages;
 mod view;
-pub use view::MOD_KEY_LIMIT;
 pub use view::MOD_TEXT_BYTES;
 pub use view::ModActivity;
 pub use view::ModAnchor;
 pub use view::ModBorder;
-pub use view::ModBoxAccent;
 pub use view::ModBoxBorder;
 pub use view::ModBoxStyle;
 pub use view::ModColor;
@@ -49,11 +42,6 @@ pub use view::ModKeyAction;
 pub use view::ModKeyContext;
 pub use view::ModKeys;
 pub use view::ModLayout;
-pub use view::ModLayoutLeaf;
-pub use view::ModLayoutSplit;
-pub use view::ModLayoutTabs;
-pub use view::ModListRow;
-pub use view::ModOffset;
 pub use view::ModOverlay;
 pub use view::ModOverlayClip;
 pub use view::ModPaint;
@@ -70,21 +58,16 @@ pub use view::ModSpan;
 pub use view::ModSplit;
 pub use view::ModStyle;
 pub use view::ModSurfacePaint;
-pub use view::ModTab;
-pub use view::ModTheme;
-pub use view::ModThemePatch;
 pub use view::ModTone;
 pub use view::ModView;
 pub use view::ModViewConflict;
 pub use view::ModViewPatch;
 pub use view::ModViewSnapshot;
 pub use view::component_ids_of;
-pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
 pub use view::mod_component_id;
 pub use view::mod_key_name;
 pub use view::owned_command;
-pub use view::valid_glyphs;
 mod outcome;
 pub use outcome::ModCommandOutcome;
 mod package_manager;
@@ -275,6 +258,10 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_copy_v1",
     "environment_overrides_v1",
     "timers_16ms_v1",
+    "timer_data_v1",
+    "session_activation_v1",
+    "background_jobs_v1",
+    "assistant_message_identity_v1",
     "author_diagnostics_v1",
     "author_offline_runner_v1",
     "author_tooling_v1",
@@ -764,6 +751,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("workspace_pre_rename", "fs.write"),
     ("turn_start", "lifecycle"),
     ("turn_end", "lifecycle"),
+    ("assistant_message", "lifecycle"),
     ("compaction_start", "lifecycle"),
     ("compaction_end", "lifecycle"),
     ("agent_end", "lifecycle"),
@@ -1839,18 +1827,22 @@ pub fn host_namespace(operation: &str, arguments: &Value) -> String {
     }
 }
 
-pub fn namespace_matches(pattern: &str, namespace: &str) -> bool {
-    match pattern.split_once('*') {
-        None => pattern == namespace,
-        Some((prefix, rest)) => {
-            namespace.starts_with(prefix)
-                && (0..=namespace.len() - prefix.len()).any(|skip| {
-                    namespace
-                        .get(prefix.len() + skip..)
-                        .is_some_and(|tail| namespace_matches(rest, tail))
-                })
-        }
+pub(crate) fn glob(pattern: &str, text: &str) -> bool {
+    let parts = pattern.split('*').collect::<Vec<_>>();
+    let [first, .., last] = parts.as_slice() else {
+        return pattern == text;
+    };
+    if text.len() < first.len() + last.len() || !text.starts_with(first) || !text.ends_with(last) {
+        return false;
     }
+    let (mut at, end) = (first.len(), text.len() - last.len());
+    parts[1..parts.len() - 1].iter().all(|part| {
+        let found = text[at..end].find(part);
+        if let Some(found) = found {
+            at += found + part.len();
+        }
+        found.is_some()
+    })
 }
 
 pub const DELEGABLE_APPROVAL_KINDS: &[&str] = &["exec", "stdin", "patch", "mcp_tool", "network"];
@@ -2883,8 +2875,6 @@ struct Reply {
     #[serde(default)]
     calls: Vec<ModHostCall>,
     #[serde(default)]
-    host_call: Option<ModHostCall>,
-    #[serde(default)]
     updates: Vec<String>,
     #[serde(skip)]
     receipts: Vec<Value>,
@@ -2904,6 +2894,7 @@ struct Loaded {
     source: Arc<str>,
     assets: Arc<BTreeMap<String, Value>>,
     request_metadata: Arc<OnceLock<(Value, String, [u8; 32])>>,
+    session_key: Option<String>,
     /// The store's code cache; `None` runs without one.
     code_cache: Option<Arc<code_cache::CacheRoot>>,
     adapter: Option<Value>,
@@ -3056,6 +3047,24 @@ type CallbackVerdict = (Instant, Option<FileStamp>, String, String);
 #[cfg(test)]
 mod reload_tests {
     use super::*;
+
+    #[test]
+    fn glob_matches_any_run_of_characters() {
+        for (pattern, text, expected) in [
+            ("*", "", true),
+            ("*", "anything", true),
+            ("service:x/*", "service:x/read", true),
+            ("service:x/*", "service:y/read", false),
+            ("a*b*c", "abc", true),
+            ("a*b*c", "a-b-b-c", true),
+            ("a*b*c", "acb", false),
+            ("a*a", "a", false),
+            ("exact", "exact", true),
+            ("exact", "exactly", false),
+        ] {
+            assert_eq!(glob(pattern, text), expected, "{pattern} vs {text}");
+        }
+    }
 
     #[test]
     fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
@@ -3540,6 +3549,50 @@ fn invoke(
         }
         payload => payload,
     };
+    let retained = !(matches!(
+        event,
+        "terminal"
+            | "inspect"
+            | "workspace_pre_rename"
+            | "command_list"
+            | "config_list"
+            | "component"
+    ) || event == "intercept"
+        && matches!(
+            payload["surface"].as_str(),
+            Some("render" | "input" | "mention" | "history_persist")
+        ));
+    let activation_key = if retained {
+        access.with(|runtime| {
+            if !active() {
+                return Err(failure("callback_cancelled"));
+            }
+            if generation != runtime.generation {
+                return Err(failure("stale_mod_generation"));
+            }
+            let loaded = runtime
+                .loaded
+                .get(id)
+                .cloned()
+                .ok_or_else(|| failure("mod_disabled"))?;
+            runtime.check_callback_authority(&loaded)?;
+            runtime.session_key(id, thread.as_deref())
+        })?
+    } else {
+        None
+    };
+    let _activation = activation_key
+        .as_ref()
+        .map(|key| process::Stepping::enter_guarded(key, active))
+        .transpose()?;
+    let authority_active = active;
+    let admitted = || {
+        authority_active()
+            && activation_key
+                .as_ref()
+                .is_none_or(|key| process::session_current(key))
+    };
+    let active: &dyn Fn() -> bool = &admitted;
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
     let now_ms = crate::peers::now_ms();
@@ -3548,6 +3601,9 @@ fn invoke(
         let replaying = !replay.is_empty();
         let mut invocation =
             access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
+        if retained && invocation.loaded.session_key != activation_key {
+            return Err(failure("callback_cancelled"));
+        }
         if invocation.migrate {
             invocation.loaded.state =
                 packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
@@ -3658,12 +3714,14 @@ fn invoke(
             }
             reply = Err(failure("state_conflict: reload before retry"));
         }
+        let session_key = activation_key.clone();
         let receipts = reply.as_ref().ok().map(|reply| reply.receipts.clone());
         match access
             .with(|runtime| runtime.finish(id, generation, event, name, invocation, reply, active))
         {
             Err(error)
                 if started.elapsed() < budget
+                    && session_key.is_none()
                     && error.to_string().starts_with("state_conflict") =>
             {
                 let Some(receipts) = receipts else {
@@ -3671,7 +3729,14 @@ fn invoke(
                 };
                 replay = receipts;
             }
-            result => return result,
+            result => {
+                if result.is_err()
+                    && let Some(key) = session_key
+                {
+                    process::invalidate_activation(&key);
+                }
+                return result;
+            }
         }
     }
 }
@@ -3815,6 +3880,9 @@ impl ModHost {
         command: Option<(&str, Value)>,
         runs: usize,
     ) -> Result<Value> {
+        let _thread = StateThread::enter(
+            bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())),
+        );
         let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
         let mut usage = (0, 0);
         let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
@@ -4030,7 +4098,63 @@ impl ModHost {
         }
     }
 
+    fn session_owner(&self, loaded: &Loaded) -> String {
+        digest(
+            json!([
+                self.store.root,
+                self.project,
+                loaded.package.id,
+                loaded.selection.scope
+            ])
+            .to_string()
+            .as_bytes(),
+        )
+    }
+
+    fn session_key(&self, id: &str, thread: Option<&str>) -> Result<Option<String>> {
+        let Some(loaded) = self.loaded.get(id) else {
+            return Ok(None);
+        };
+        if !loaded
+            .package
+            .compatibility
+            .required_features
+            .iter()
+            .any(|feature| feature == "session_activation_v1")
+        {
+            return Ok(None);
+        }
+        let Some(thread) = thread else {
+            return Ok(None);
+        };
+        let reset = UI_RESETS
+            .lock()
+            .ok()
+            .and_then(|resets| resets.get(&self.store.root).copied());
+        let binding = digest(
+            json!([
+                loaded.selection,
+                loaded.adapter,
+                loaded.settings_file,
+                loaded.withheld,
+                reset
+            ])
+            .to_string()
+            .as_bytes(),
+        );
+        process::session_key(&self.session_owner(loaded), thread, &binding).map(Some)
+    }
+
+    pub fn release_thread_activations(&self, thread: &str) {
+        for loaded in self.loaded.values() {
+            process::invalidate_session_owner(&self.session_owner(loaded), Some(thread));
+        }
+    }
+
     pub fn reload(&mut self) -> Result<bool> {
+        for loaded in self.loaded.values() {
+            process::invalidate_session_owner(&self.session_owner(loaded), None);
+        }
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
@@ -4335,6 +4459,7 @@ impl ModHost {
                 source: source.into(),
                 assets: Arc::new(assets),
                 request_metadata: Arc::new(OnceLock::new()),
+                session_key: None,
                 code_cache: caching.then(cache_root),
                 selection,
                 state: Value::Null,
@@ -4425,6 +4550,19 @@ impl ModHost {
             if next.get(id).is_none_or(|loaded| {
                 !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
             }) {
+                process::invalidate_session_owner(
+                    &digest(
+                        json!([
+                            self.store.root,
+                            self.project,
+                            previous.package.id,
+                            previous.selection.scope
+                        ])
+                        .to_string()
+                        .as_bytes(),
+                    ),
+                    None,
+                );
                 previous.clear_ui();
             }
         }
@@ -5507,11 +5645,10 @@ impl ModHost {
             }
         })?;
         if let Some(error) = &loaded.error {
-            return Err(failure(format!(
-                "mod_failed: {error}; reload it with /omd (Reload mods)"
-            )));
+            return Err(failure(format!("mod_failed: {error}")));
         }
         self.check_callback_authority(&loaded)?;
+        loaded.session_key = self.session_key(id, thread)?;
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         let mut migrate = false;
         loaded.state = match self

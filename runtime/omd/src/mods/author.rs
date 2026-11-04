@@ -1,6 +1,8 @@
 use super::*;
 use std::collections::VecDeque;
 
+type OfflineTimers = BTreeMap<(Option<String>, String, String), (u64, Option<Value>)>;
+
 #[derive(Default)]
 struct OfflineHost {
     replies: BTreeMap<String, VecDeque<Value>>,
@@ -8,7 +10,7 @@ struct OfflineHost {
     violations: Vec<String>,
     now_ms: u64,
     /// Live timers are per thread: (thread, owner, key), firing in the thread that scheduled them.
-    timers: BTreeMap<(Option<String>, String, String), u64>,
+    timers: OfflineTimers,
     thread: Option<String>,
     /// Mods with `state_scope: "thread"`; the others' timers share the one session thread, as live.
     thread_scoped: std::collections::BTreeSet<String>,
@@ -233,7 +235,7 @@ impl OfflineHost {
                     .ok_or_else(|| failure("offline_time_overflow"))?;
                 self.timers.insert(
                     (self.timer_thread(caller), caller.to_owned(), key.clone()),
-                    deadline,
+                    (deadline, call.arguments.get("data").cloned()),
                 );
                 return Ok(json!({"key": key, "delay_ms": delay}));
             }
@@ -505,12 +507,12 @@ impl ModHost {
                     .ok_or_else(|| failure("offline_virtual_time_overflow"))?;
                 let mut fired = Vec::new();
                 // Due timers fire in due order at their own virtual time; a handler may reschedule.
-                while let Some(((thread, owner, key), due)) = host
+                while let Some(((thread, owner, key), (due, data))) = host
                     .timers
                     .iter()
-                    .filter(|(_, due)| **due <= until)
-                    .min_by_key(|(_, due)| **due)
-                    .map(|(timer, due)| (timer.clone(), *due))
+                    .filter(|(_, (due, _))| *due <= until)
+                    .min_by_key(|(_, (due, _))| *due)
+                    .map(|(timer, value)| (timer.clone(), value.clone()))
                 {
                     if fired.len() >= 256 {
                         return Err(failure("offline_timer_limit"));
@@ -521,12 +523,16 @@ impl ModHost {
                     self.virtual_time_ms = Some(due);
                     host.thread = thread.clone().or_else(bound_thread);
                     let _thread = StateThread::enter(host.thread.clone());
+                    let mut payload = json!({"key": key});
+                    if let Some(data) = data {
+                        payload["data"] = data;
+                    }
                     let value = self.invoke_scoped_with(
                         &owner,
                         self.generation,
                         "timer",
                         "",
-                        json!({"key": key}),
+                        payload,
                         || active,
                         |caller, call| host.call(caller, call),
                     );

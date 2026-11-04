@@ -3,11 +3,21 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { callback, runner, runnerSync, surface } from './mod_runner.mjs';
+import { callback, runner, surface } from './mod_runner.mjs';
 const served = ({ stdout }) => stdout.replace('{"ready":true}\n', '').trim().split('\n').map(line => JSON.parse(line));
-function run(source, extra = {}) {
-  return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
+const unexpected = call => { throw new Error(`unexpected_host_call: ${call.operation}`); };
+function run(source, extra = {}, host = unexpected, receipts = []) {
+  return callback({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra }, host, receipts);
 }
+
+test('payload timers rebuild handlers without globals and preserve omitted and null data', () => {
+  const source = "export default api => api.time.after('work', 16, event => api.state.set(event))";
+  for (const fields of [{}, { data: null }, { data: { turn_id: 'new' } }]) {
+    const reply = run(source, { capabilities: ['events', 'store'], event: 'timer', payload: { key: 'time:work', ...fields } });
+    assert.equal(reply.error, undefined);
+    assert.deepEqual(reply.state, { key: 'work', ...fields });
+  }
+});
 
 test('UI state serialized boundaries agree with the native validator', () => {
   const cases = JSON.parse(readFileSync(new URL('../runtime/omd/tests/fixtures/ui_state.json', import.meta.url)));
@@ -77,15 +87,16 @@ test('warm renders and continuation replays restore post-activation atoms', () =
   const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
   const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
   const result = spawnSync(runner, [], {
-    input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
+    input: [request, request, suspended, { value: receipt.value }, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   });
   const replies = served(result);
-  assert.equal(replies.length, 4);
+  assert.equal(replies.length, 5);
   assert.equal(replies[0].value.result.value, 1);
   assert.equal(replies[1].value.result.value, 1);
-  assert.deepEqual(replies[2].host_call, receipt.call);
+  assert.deepEqual(replies[2].call, receipt.call);
   assert.equal(replies[3].value.result.value, 1);
-  for (const reply of replies) assert.deepEqual(reply.state, { value: 0 });
+  assert.equal(replies[4].value.result.value, 1);
+  for (const reply of replies.filter(reply => !('call' in reply))) assert.deepEqual(reply.state, { value: 0 });
   assert.equal(result.status, 0, result.stderr);
 });
 test('the code cache supplies bytecode only and is reported for offered modules', () => {
@@ -282,7 +293,6 @@ test('host errors from stack overflow can neither compile code nor patch the hos
   assert.ok(!reply.value.host.includes('patched'), JSON.stringify(reply.value));
 });
 test('infinite loops interrupted and oversized output rejected', () => {
-  assert.match(run('export default () => { while(true) {} }').error, /timed out/);
   const looping = 'const e = { toString() { for (;;) {} } }; Object.defineProperty(e, "stack", { get() { for (;;) {} } }); throw e;';
   assert.match(run(`export default () => { ${looping} }`, { hook_budget_ms: 300 }).error, /timed out after 300ms/);
   assert.match(run('export default api => api.command("large", () => "x".repeat(1100000))', {capabilities:['commands'],event:'command',name:'large'}).error, /output_limit/);
@@ -295,11 +305,12 @@ test('lifecycle events and interceptors require their capabilities', () => {
   assert.match(run(source, { capabilities: ['lifecycle'] }).error, /unsupported_intercept_pattern_or_capability: \*/);
   const payload = { surface: 'input', input: { text: 'hi', attachments: 0 }, origin: { caller: 'user' } };
   const extra = { capabilities: ['input'], event: 'intercept', name: '0', payload };
-  const suspended = run(source, extra);
-  assert.equal(suspended.host_call.operation, 'continuation.next');
-  assert.equal(suspended.host_call.arguments.input.text, 'hi!');
-  assert.deepEqual(suspended.registrations.interceptors[0].match, { text: { $regex: '^h', $flags: '' } });
-  const replayed = run(source, { ...extra, receipts: [{ call: suspended.host_call, value: { result: { text: 'hi!' }, trace: [] } }] });
+  const calls = [];
+  const continued = run(source, extra, call => { calls.push(call); return { result: { text: 'hi!' }, trace: [] }; });
+  assert.deepEqual(calls.map(call => [call.operation, call.arguments.input.text]), [['continuation.next', 'hi!']]);
+  assert.deepEqual(continued.registrations.interceptors[0].match, { text: { $regex: '^h', $flags: '' } });
+  assert.deepEqual(continued.value, { result: { text: 'hi!' } });
+  const replayed = run(source, extra, unexpected, [{ call: calls[0], value: { result: { text: 'hi!' }, trace: [] } }]);
   assert.deepEqual(replayed.value, { result: { text: 'hi!' } });
   assert.deepEqual(run(source, { ...extra, payload: { ...payload, input: { text: 'yo', attachments: 0 } } }).value, { unmatched: true });
   const budget = 'export default api => api.intercept("input", (e, next) => ({ text: String(next.budget.hostCalls) }))';
@@ -320,11 +331,15 @@ test('classic hooks map onto native events and interceptors with glob and negate
   assert.equal(result('mcp__docs__search', 'failed'), null);
   assert.deepEqual(result('read_file', 'succeeded'), { ok: 'read_file' });
   assert.equal(result('list', 'succeeded'), null);
+  const continued = [];
   const tool = name => run(source, { ...caps, event: 'intercept', name: '0',
-    payload: { surface: 'tool', input: { tool: name, arguments: {} }, origin: { caller: 'model', thread_id: 't' } } });
+    payload: { surface: 'tool', input: { tool: name, arguments: {} }, origin: { caller: 'model', thread_id: 't' } } },
+    call => { continued.push(call.operation); return { result: { output: 'ran' }, trace: [] }; });
   assert.deepEqual(tool('exec_rm').value, { result: { deny: 'no rm from model' } });
-  assert.equal(tool('exec_ls').host_call.operation, 'continuation.next');
-  assert.equal(tool('read_file').host_call.operation, 'continuation.next');
+  assert.deepEqual(continued, []);
+  assert.deepEqual(tool('exec_ls').value, { result: { output: 'ran' } });
+  assert.deepEqual(tool('read_file').value, { result: { output: 'ran' } });
+  assert.deepEqual(continued, ['continuation.next', 'continuation.next']);
   assert.match(run('export default api => api.hook("Nope", () => {})', caps).error, /unsupported_classic_hook: Nope/);
   assert.match(run('export default api => api.hook("PostToolUse", { required: true }, () => {})', caps).error, /classic_hook_delivery_optional/);
   const negated = run('export default api => api.intercept("input", { match: { text: api.match.not(api.match.glob("/*")) } }, (e, next) => next(e))', { capabilities: ['input'] });

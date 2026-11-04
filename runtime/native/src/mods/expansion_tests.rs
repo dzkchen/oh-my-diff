@@ -2278,6 +2278,7 @@ fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
         key: key.into(),
         source: "source".into(),
         incarnation: 0,
+        data: None,
     };
     for item in [
         timer("a", "one"),
@@ -2299,6 +2300,90 @@ fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
     assert!(
         matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(16)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timer_data_replacement_cancellation_and_owner_release_use_existing_slots() {
+    fn timer_count(state: &State) -> usize {
+        state
+            .pending
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|pending| matches!(pending, delivery::Pending::Timer { .. }))
+            .count()
+    }
+    async fn queued(state: &State) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while timer_count(state) == 0 {
+                state.wake.notified().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["events", "store", "commands"],
+        manifest: Value::Null,
+        source: "export default api => { api.on('timer', e => api.state.set(e)); api.command('seen', () => api.state.get()); }",
+    }]) else {
+        return;
+    };
+    let (core, lead) = (&fixture.core, &fixture.lead);
+    core.expansion.core.set(Arc::downgrade(core)).unwrap();
+    let (generation, grants) = {
+        let runtime = core.runtime.lock().unwrap();
+        (runtime.generation(), runtime.grants("observer"))
+    };
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let caller = Caller {
+        id: "observer",
+        source: &source,
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let schedule = |data: Value| {
+        delivery::schedule(
+            core,
+            lead,
+            &caller,
+            json!({"key": "k", "delay_ms": 16, "data": data}),
+        )
+    };
+    schedule(json!("old")).unwrap();
+    queued(&core.expansion).await;
+    assert_eq!(timer_count(&core.expansion), 1);
+    assert_eq!(
+        schedule(json!("x".repeat(65_535))).unwrap_err(),
+        "timer_data_limit"
+    );
+    assert_eq!(timer_count(&core.expansion), 1);
+    schedule(json!({"turn_id": "new"})).unwrap();
+    assert!(core.expansion.pending.lock().unwrap().iter().filter(|pending| matches!(pending, delivery::Pending::Timer { .. })).all(|pending| {
+        matches!(pending, delivery::Pending::Timer { data: Some(data), .. } if *data == json!({"turn_id": "new"}))
+    }));
+    queued(&core.expansion).await;
+    delivery::deliver(core).await;
+    let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
+    assert_eq!(
+        command(core, "observer", "seen"),
+        json!({"key": "k", "data": {"turn_id": "new"}})
+    );
+    assert!(core.expansion.timers.lock().unwrap().is_empty());
+    schedule(Value::Null).unwrap();
+    queued(&core.expansion).await;
+    assert_eq!(
+        delivery::cancel(core, lead, "observer", &json!({"key": "k"})).unwrap(),
+        json!({"cancelled": true})
+    );
+    assert_eq!(timer_count(&core.expansion), 0);
+    schedule(json!("released")).unwrap();
+    delivery::release_owner(core, "observer");
+    assert!(core.expansion.timers.lock().unwrap().is_empty());
+    assert_eq!(timer_count(&core.expansion), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]

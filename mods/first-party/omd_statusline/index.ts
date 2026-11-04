@@ -251,11 +251,15 @@ export default function activate(api: ModAPI) {
     data.agents[agent.agent_id ?? agent.thread_id] = agent.status;
     for (const id of Object.keys(data.agents).slice(0, -16)) delete data.agents[id];
   }));
-  api.on('tool_call', ({ call_id }) => update(data => {
-    data.tools[call_id] = Date.now();
-    for (const id of Object.keys(data.tools).slice(0, -16)) delete data.tools[id];
-  }));
-  api.on('tool_result', ({ call_id, tool }) => {
+  api.on('tool_call', ({ call_id, agent_id }) => {
+    if (agent_id) return;
+    update(data => {
+      data.tools[call_id] = Date.now();
+      for (const id of Object.keys(data.tools).slice(0, -16)) delete data.tools[id];
+    });
+  });
+  api.on('tool_result', ({ call_id, tool, agent_id, thread_id }) => {
+    if (agent_id || thread_id && saved().thread && thread_id !== saved().thread) return;
     update(data => { delete data.tools[call_id]; });
     if (/patch|edit|write|exec|shell/.test(tool)) gitSoon.start();
   });

@@ -1,8 +1,10 @@
 import type { HistoryItem, Json, ModAPI, ResourceRef } from '../../api.d.ts';
 
 type Kept = { tool: string; reference: ResourceRef | null; bytes: number; failed_edit: boolean };
+type Cache = { identity: string; provider: string; model: string; route: string; ttl: number; expires: number };
 type State = {
-  masked: Record<string, string>; kept: string[]; pinned: string[]; calls: Record<string, Kept>;
+  cache: Cache | null; continuation: { prompt: string; force: boolean; readable: string[] } | null;
+  masked: Record<string, string>; kept: string[]; pinned: string[]; calls: Record<string, Kept>; visible: string[];
   advances: number; hidden_bytes: number; pending_bytes: number; last_saved_bytes: number;
 };
 
@@ -64,27 +66,89 @@ export default function activate(api: ModAPI) {
   const keepRecent = Math.max(1, size(api.settings.keep_recent, 10));
   const minBytes = size(api.settings.min_bytes, 1024);
   const batchBytes = size(api.settings.batch_bytes, 32_768);
+  const continuationOnly = api.settings.mode === 'continue';
+  const minutes = Number(api.settings.cache_ttl_minutes) || 0;
 
   const load = (): State => ({
-    masked: {}, kept: [], pinned: [], calls: {}, advances: 0, hidden_bytes: 0, pending_bytes: 0, last_saved_bytes: 0,
+    cache: null, continuation: null, masked: {}, kept: [], pinned: [], calls: {}, visible: [], advances: 0, hidden_bytes: 0, pending_bytes: 0, last_saved_bytes: 0,
     ...(api.state.get() as Partial<State> | null ?? {}),
   });
   const save = (state: State) => api.state.set(state as unknown as Json);
   const lookup = (callId: string) => load().calls[callId] ?? null;
 
+  const cold = (state: State) => {
+    const cache = state.cache;
+    const session = api.session();
+    return cache !== null && cache.ttl > 0 && cache.expires <= Date.now()
+      && cache.provider === session.provider && cache.model === session.model
+      && (session.route ?? 'session') === cache.route;
+  };
+
+  if (continuationOnly) {
+    api.on('model_response', response => {
+      if (response.scope.kind !== 'main' || response.scope.agent_id || response.synthetic
+        || !['completed', 'incomplete'].includes(response.status)) return;
+      const state = load();
+      const identity = JSON.stringify([response.provider, response.route, response.credential, response.requested_model, response.served_model]);
+      const reported = (response.usage as { omd_cache_ttl_seconds?: unknown } | null)?.omd_cache_ttl_seconds;
+      const read = (response.cache.read_tokens ?? 0) > 0;
+      const openai = response.provider === 'openai';
+      const skipped = ['ollama', 'lmstudio', 'oss'].includes(response.provider)
+        || (!minutes && openai && ['included_subscription', 'unpriced'].includes(response.cost.basis));
+      const ttl = skipped ? 0 : minutes ? minutes * 60_000
+        : typeof reported === 'number' && Number.isFinite(reported) && reported > 0 ? reported * 1000
+        : read && state.cache?.identity === identity ? state.cache.ttl
+        : openai && (read || (response.cache.write_tokens ?? 0) > 0) ? 30 * 60_000 : 0;
+      const at = response.timing.started_at_ms;
+      if (state.cache && at < state.cache.expires - state.cache.ttl) return;
+      save({ ...state, cache: { identity, provider: response.provider, model: response.requested_model, route: response.route,
+        ttl: Number.isFinite(at) && at > 0 && at <= Date.now() ? ttl : 0, expires: at + ttl } });
+    });
+    api.intercept('command', async (event, next) => {
+      if (event.command !== 'continue' || event.owner !== 'omd_continue' || event.active_turn) return next(event);
+      const force = /^--compact(?:\s|$)/.test(event.args.trim());
+      const result = await next(force ? { ...event, args: event.args.trim().replace(/^--compact(?:\s+|$)/, '') } : event);
+      const value = result.result;
+      if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.submit !== 'string') return result;
+      const state = load();
+      if (!force && !cold(state)) return result;
+      const calls = { ...state.calls };
+      const readable: string[] = [];
+      const candidates = state.visible.map(id => [id, calls[id]] as const).filter(([id, record]) => record?.reference && !record.failed_edit
+        && !Object.hasOwn(state.masked, id) && !state.kept.includes(id) && !state.pinned.includes(id)).slice(0, 16);
+      for (const [id, record] of candidates) {
+        if (record.reference && api.host.tryCall('evidence.read', { reference: record.reference, max_bytes: 4 }).ok) readable.push(id);
+        else calls[id] = { ...record, reference: null };
+      }
+      const submit = `${value.submit}\n\nOlder tool outputs may be omitted from this continuation. Use their recall references only for a specific missing fact and read the smallest relevant page. Historical output describes past state: verify files and processes before repeating actions. Do not rerun a command just to recover its output, especially if it has side effects.`;
+      save({ ...state, calls, continuation: { prompt: submit.slice(0, 512), force, readable } });
+      return { result: { ...value, submit } };
+    });
+    api.on('resume', () => save({ ...load(), continuation: null }));
+    api.on('compaction_end', event => {
+      if (event.outcome === 'compacted' || event.outcome === 'replaced') save({ ...load(), cache: null, continuation: null });
+    });
+  }
+
   api.replace('history', event => {
     if (event.agent_id) return null;
     const state = load();
     const outputs = event.items.filter(isOutput);
+    const request = state.continuation;
+    const advance = !continuationOnly || Boolean(request && event.items.at(-1)?.text?.startsWith(request.prompt)
+      && (request.force || Boolean(state.cache && event.model === state.cache.model && state.cache.expires <= Date.now())));
     const recent = new Set(outputs.slice(-keepRecent).map(item => item.call_id));
     const pending = outputs.filter(item => item.editable && item.bytes >= minBytes && !recent.has(item.call_id)
+      && (!continuationOnly || Boolean(state.calls[item.call_id]?.reference))
       && !Object.hasOwn(state.masked, item.call_id) && !state.kept.includes(item.call_id) && !state.pinned.includes(item.call_id));
-    let next = { ...state, pending_bytes: sum(pending) };
-    if (pending.length && next.pending_bytes >= batchBytes) {
+    const visible = continuationOnly ? outputs.filter(item => state.calls[item.call_id]).map(item => item.call_id) : state.visible;
+    let next = { ...state, visible, continuation: null, pending_bytes: sum(pending) };
+    if (advance && pending.length && next.pending_bytes >= batchBytes) {
       const present = new Set(outputs.map(item => item.call_id));
       const masked = Object.fromEntries(Object.entries(state.masked).filter(([id]) => present.has(id)));
       const kept = state.kept.filter(id => present.has(id));
-      const batch = pending.slice(0, Math.max(0, Math.min(ADVANCE, MASKED - Object.keys(masked).length)));
+      const batch = pending.filter(item => !continuationOnly || state.calls[item.call_id]?.failed_edit || request?.readable.includes(item.call_id))
+        .slice(0, Math.max(0, Math.min(continuationOnly ? 16 : ADVANCE, MASKED - Object.keys(masked).length)));
       let hidden = 0;
       for (const item of batch) {
         const record = state.calls[item.call_id] ?? null;
@@ -95,12 +159,13 @@ export default function activate(api: ModAPI) {
           hidden += item.bytes;
         }
       }
-      if (batch.length) next = { ...next, masked, kept, advances: state.advances + 1, hidden_bytes: state.hidden_bytes + hidden, pending_bytes: sum(pending.slice(batch.length)) };
+      if (batch.length) next = { ...next, masked, kept, advances: state.advances + 1, hidden_bytes: state.hidden_bytes + hidden, pending_bytes: sum(pending.filter(item => !Object.hasOwn(masked, item.call_id) && !kept.includes(item.call_id)
+        && (!continuationOnly || Boolean(next.calls[item.call_id]?.reference)))) };
     }
     const replace = outputs.filter(item => item.editable && Object.hasOwn(next.masked, item.call_id))
       .map(item => ({ index: item.index, text: next.masked[item.call_id], saved: item.bytes - next.masked[item.call_id].length }));
     const saved = replace.reduce((total, item) => total + Math.max(0, item.saved), 0);
-    if (next.advances !== state.advances || next.pending_bytes !== state.pending_bytes || saved !== state.last_saved_bytes) save({ ...next, last_saved_bytes: saved });
+    if (state.continuation || JSON.stringify(visible) !== JSON.stringify(state.visible) || next.advances !== state.advances || next.pending_bytes !== state.pending_bytes || saved !== state.last_saved_bytes) save({ ...next, last_saved_bytes: saved });
     return replace.length ? { replace: replace.map(({ index, text }) => ({ index, text })) } : null;
   });
 
@@ -157,6 +222,7 @@ export default function activate(api: ModAPI) {
     const other = breaks.ok && breaks.value ? breaks.value.value as { count: number; last: string } : null;
     return {
       display: [
+        `Mode: ${continuationOnly ? 'only on /continue after estimated cache expiry, or /continue --compact' : 'automatic batches'}`,
         `Observation masking: keeps the newest ${keepRecent} tool outputs and outputs under ${minBytes} bytes; hides older ones in batches of at least ${batchBytes} bytes`,
         `${Object.keys(state.masked).length} outputs hidden in ${state.advances} batches (each batch breaks the prompt cache once) · about ${tokens(state.hidden_bytes)} tokens hidden`,
         `about ${tokens(state.last_saved_bytes)} tokens not resent with each request · ${tokens(state.pending_bytes)} tokens waiting for the next batch`,

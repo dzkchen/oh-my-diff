@@ -106,6 +106,50 @@ fn caller<'a>(capabilities: &'a [String], environment: &'a [String], origin: Ori
 static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
+fn timer_data_is_bounded_by_serialized_utf8_bytes() {
+    use codex_omd::host::{TIMER_DATA_BYTES, validate_timer_request};
+
+    for data in [
+        Value::Null,
+        json!({"path": "src/a.ts"}),
+        json!("x".repeat(TIMER_DATA_BYTES - 2)),
+        json!("😀".repeat((TIMER_DATA_BYTES - 2) / 4)),
+    ] {
+        assert!(
+            validate_timer_request(
+                "events.schedule",
+                &json!({"key": "k", "delay_ms": 16, "data": data})
+            )
+            .is_ok()
+        );
+    }
+    for data in [
+        json!("x".repeat(TIMER_DATA_BYTES - 1)),
+        json!("😀".repeat(TIMER_DATA_BYTES / 4)),
+        json!("\n".repeat(TIMER_DATA_BYTES / 2)),
+    ] {
+        assert_eq!(
+            validate_timer_request(
+                "events.schedule",
+                &json!({"key": "k", "delay_ms": 16, "data": data})
+            )
+            .unwrap_err(),
+            "timer_data_limit"
+        );
+    }
+    assert!(
+        validate_timer_request("events.schedule", &json!({"key": "k", "delay_ms": 16})).is_ok()
+    );
+    assert!(
+        validate_timer_request(
+            "events.schedule",
+            &json!({"key": "k", "delay_ms": 16, "unknown": null})
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn scoped_environment_is_private_bounded_and_applies_to_future_children() {
     let _slot = exec_slot();
     let (_temp, _, data, authority) = setup();

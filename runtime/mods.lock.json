@@ -95,6 +95,28 @@
       "source": "mods/first-party/omd_btw",
       "version": "1.0.0"
     },
+    "omd_checkpoint": {
+      "api": "1.0.0",
+      "capabilities": [
+        "commands",
+        "lifecycle",
+        "inventory",
+        "store",
+        "exec",
+        "os",
+        "fs.read",
+        "fs.write"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "bff87dc587e07c5af8487843f1e352d4ca7fa011a38de7724be535cc87b03aeb",
+        "mod.json": "3fcea719f74df7206653d3adcde1dd36b78ab2ffcbb2cd66f5e4034fa4f16aab"
+      },
+      "id": "omd_checkpoint",
+      "package_sha256": "49d93923dbcf7f510fde7ffba4ce9c451702ba5ab08472e9240daa876c9c6a2b",
+      "source": "mods/first-party/omd_checkpoint",
+      "version": "1.0.0"
+    },
     "omd_claude_cli": {
       "api": "1.0.0",
       "capabilities": [
@@ -130,13 +152,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "0b0e5a9e8702c87cc12c4ea1213fd0e719a4c886774249261fe8534483dbfc95",
-        "mod.json": "02d3e7c7579aef117fb64237ed2e1e32ec452247f7aebb167646a489016d5e98"
+        "index.ts": "d3c93f2914e7df7d4f7d121181ba9ecf4de9d2c735343c4b3618313ba5025458",
+        "mod.json": "be1d0617cbc7fb532bd64eddfc004b4ed3f022aa4f861dcf6c1fa8b192d27306"
       },
       "id": "omd_continue",
-      "package_sha256": "cb266258dd2527da02b6a4f388b2ab58da293dca635c2a52f3c6826c6dd29c6b",
+      "package_sha256": "d08ed350b46781bc18460e89ac787d4fdaec416927f37ce914bb4ab49776d5bd",
       "source": "mods/first-party/omd_continue",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     "omd_cursor": {
       "api": "1.0.0",
@@ -500,12 +522,12 @@
       ],
       "extension_type": "mod",
       "files": {
-        "github.mjs": "ccb81420d0c4358effc70018c07c84207bb5de89cf995f2d67dbbd516b3b9bd9",
-        "index.ts": "34456a5624ae8938d941be4a7e9a02ceba3abdb813b16dc3ecbd42062d959977",
-        "mod.json": "e4a645008e0a14bc765389ea1d336f6dc1fa06e79b59475e9734c2bbfaa67ba5"
+        "github.mjs": "122f3888832bbc37f2f8c69452baedfa6ff5b41eaacbb99d8491d329d2d4083f",
+        "index.ts": "0950b167c9b46056adf4613e7d5e8ab8381a68b5365cbfb824bc7cc58e2d7420",
+        "mod.json": "8d35f793ae2473f60179f5f9305ed4f820ef2a1764b0d8c210fec5ad0cd89aa9"
       },
       "id": "omd_monitor",
-      "package_sha256": "57698acb68e7f50bf8da9e7f9b6dcf274fde377519b11ae4820064f7c5467122",
+      "package_sha256": "8ae66505d7f86272f8f2deeec9622471ddefc64cec65f5016a05dcdaed4c72ab",
       "source": "mods/first-party/omd_monitor",
       "version": "1.0.0"
     },
@@ -517,17 +539,20 @@
         "middleware",
         "tools",
         "store",
-        "commands"
+        "commands",
+        "model",
+        "lifecycle",
+        "inventory"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "f3b05dd9807a4381af1b8829ab2522f29407a98d4d7104e0255194c9375d64a4",
-        "mod.json": "150ace474938ff72ac7d7e3712b590dae644b57de6011a74ed92899eb37a0da4"
+        "index.ts": "75055827784bc19e46c56827fa80dc908efd429cb925af7e223010437e7abe27",
+        "mod.json": "772a63fc93b7d33c0eb38bd6ab0d65626374ddff47e2b1ca138ab79258f56d81"
       },
       "id": "omd_observation_mask",
-      "package_sha256": "6d038e28ff2bf6a8d83b132bdba1738fc071996fbe05f132baa140c15d60a08a",
+      "package_sha256": "5ea06e7e43b4e2bde291d812cbf994d701d6de15dc1c1bd4854c4b501eac9764",
       "source": "mods/first-party/omd_observation_mask",
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     "omd_plan_anchor": {
       "api": "1.0.0",
@@ -719,13 +744,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "56bacf9086ab27086937649e51da30e91e652f5bf93deb7e95ef87b158552b78",
+        "index.ts": "b417f7f11e787d81a1963f7fe7f030b57ab40ac52546eae4b8762602dfc5ebe4",
         "mod.json": "65f02d2d39406ec864f43546140171fc3a907e73c3a12449d2066ace99823644",
         "segments.ts": "2438253ef87247e2b21b5df0a2caa288ba3b35b2140ed1df841426cab4650aed",
         "sources.ts": "266de1ec754427fac93ea4135236d6e1766c20947fddc8e5c96e74869e3d05b2"
       },
       "id": "omd_statusline",
-      "package_sha256": "fc59ab8caff4da16b154b4dbbd17d39933f36ec8fc77079383f35aaef2039f0d",
+      "package_sha256": "cf3a1dbe92d1bcbfe66b08355dba7c0caedef5817852ab2cc407cef6b3c58f09",
       "source": "mods/first-party/omd_statusline",
       "version": "1.0.1"
     },

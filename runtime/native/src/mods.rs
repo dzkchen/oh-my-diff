@@ -1433,14 +1433,12 @@ impl TurnLifecycleContributor for Mods {
     fn on_item_completed<'a>(
         &'a self,
         thread_store: &'a codex_extension_api::ExtensionData,
-        _turn_store: &'a codex_extension_api::ExtensionData,
+        turn_store: &'a codex_extension_api::ExtensionData,
         item: &'a codex_protocol::items::TurnItem,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             let thread = thread_store.level_id();
-            if let codex_protocol::items::TurnItem::AgentMessage(message) = item
-                && self.inventory.contains(thread)
-            {
+            if let codex_protocol::items::TurnItem::AgentMessage(message) = item {
                 let text = message
                     .content
                     .iter()
@@ -1448,7 +1446,15 @@ impl TurnLifecycleContributor for Mods {
                         codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
                     })
                     .collect::<String>();
-                self.inventory.answer(thread, &text);
+                if self.inventory.contains(thread) {
+                    self.inventory.answer(thread, &text);
+                }
+                if let Some(lead) = ThreadId::from_string(thread)
+                    .ok()
+                    .and_then(|thread| self.core.expansion.thread(thread))
+                {
+                    self.core.event("assistant_message", json!({"thread_id": thread, "turn_id": turn_store.level_id(), "message_id": format!("{}:{}", turn_store.level_id(), message.id), "text": text.chars().take(8192).collect::<String>(), "truncated": text.chars().count() > 8192}), Some(&lead)).await;
+                }
             }
         })
     }
