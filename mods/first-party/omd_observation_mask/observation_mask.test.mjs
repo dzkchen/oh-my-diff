@@ -10,6 +10,7 @@ const settings = { keep_recent: 2, min_bytes: 1000, batch_bytes: 10_000 };
 function run(event, name, payload, { state = null, store = new Map(), host = {}, settings: overrideSettings = {}, now = 1_800_000_000_000 } = {}) {
   const calls = [];
   const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: { ...settings, ...overrideSettings }, virtual_time_ms: now, event, name, payload }, call => {
+    assert.notEqual(event, 'history', 'history runs without a native task host');
     calls.push(call);
     if (call.operation === 'store.get') return store.has(call.arguments.key) ? { value: store.get(call.arguments.key), revision: 1, provenance: {} } : null;
     if (call.operation === 'store.put') return store.set(call.arguments.key, call.arguments.value), { revision: 1 };
@@ -133,6 +134,7 @@ function continuation(event, name, payload, options = {}) {
   } });
 }
 function requestContinue(state, { args = '', now = NOW + 6 * minute, result = { submit: 'Resume task' }, owner = 'omd_continue', active_turn = false, host = {} } = {}) {
+  state = state && { visible: Object.keys(state.calls ?? {}), ...state };
   const input = { command: 'continue', args, owner, active_turn, immediate: false };
   const response = continuation('intercept', '0', { surface: 'command', input, original: input, origin: { caller: 'engine' } }, {
     state, now, host: { 'continuation.next': ({ input: forwarded }) => ({ result: { result: typeof result === 'function' ? result(forwarded) : result }, trace: [] }), ...host },
@@ -147,7 +149,7 @@ function continueView(prompt = 'Resume task', sizes = [6000, 6000, 6000, 6000, 6
 
 test('continue mode hides only after a successful cold continuation and freezes the boundary afterwards', () => {
   let state = continuation('model_response', '', cached()).state;
-  state = { ...state, calls: records() };
+  state = { ...state, calls: records(), visible: Object.keys(records()) };
   const ordinary = continuation('history', '', continueView(), { state, now: NOW + 6 * minute });
   assert.equal(ordinary.value, null);
   const warm = requestContinue(state, { now: NOW + minute });
@@ -179,13 +181,29 @@ test('forced continuation works without cache evidence and forwards the note wit
   }
 });
 
+test('continuation checks originals before entering the history hook without a native task host', () => {
+  for (const args of ['', '--compact']) {
+    const observed = continuation('model_response', '', cached()).state;
+    const calls = { ...records(), absent: { ...records().c0, reference: { reference: 'absent', sha256: 's' } } };
+    const ordinary = continuation('history', '', continueView(), { state: { ...observed, calls } });
+    const command = requestContinue(ordinary.state, { args });
+    const hidden = continuation('history', '', continueView(command.value.result.submit), { state: command.state, now: NOW + 6 * minute,
+      host: { 'evidence.read': () => { throw new Error('host_operation_unavailable: requires a native task'); } } });
+    assert.equal(Object.keys(replaced(hidden.value)).length, 4);
+    assert.ok(command.calls.some(call => call.operation === 'evidence.read'));
+    assert.equal(command.calls.some(call => call.arguments?.reference?.reference === 'absent'), false);
+    assert.equal(hidden.calls.length, 0);
+    assert.deepEqual(hidden.state.calls, command.state.calls);
+  }
+});
+
 test('continuation cannot hide missing or unreadable originals, failed edits, pinned or recent outputs', () => {
   const calls = records();
   calls.c0.reference = null;
   calls.c1.failed_edit = true;
-  const forced = requestContinue({ calls, pinned: ['c2'] }, { args: '--compact' });
-  const hidden = continuation('history', '', continueView(forced.value.result.submit), { state: forced.state, settings: { batch_bytes: 0 },
+  const forced = requestContinue({ calls, pinned: ['c2'] }, { args: '--compact',
     host: { 'evidence.read': () => { throw new Error('evidence expired'); } } });
+  const hidden = continuation('history', '', continueView(forced.value.result.submit), { state: forced.state, settings: { batch_bytes: 0 } });
   assert.equal(hidden.value, null);
   assert.equal(hidden.state.hidden_bytes, 0);
   const again = requestContinue({ calls: records() }, { args: '--compact' });
@@ -267,23 +285,23 @@ test('expired originals cannot block later readable outputs across continuations
   } };
   let hidden;
   for (let n = 0; n < 2; n++) {
-    const command = requestContinue(state, { args: '--compact' });
-    hidden = continuation('history', '', continueView(command.value.result.submit, Array(20).fill(6000)), { state: command.state, host });
+    const command = requestContinue(state, { args: '--compact', host });
+    hidden = continuation('history', '', continueView(command.value.result.submit, Array(20).fill(6000)), { state: command.state });
     state = hidden.state;
     assert.equal(state.pending_bytes, n === 0 ? 12_000 : 0);
     assert.equal(state.calls.c0.reference, null);
   }
   assert.deepEqual(Object.keys(replaced(hidden.value)).map(Number), [33, 35]);
-  assert.deepEqual(reads, Array.from({ length: 18 }, (_, n) => `r${n}`));
+  assert.deepEqual(reads, Array.from({ length: 20 }, (_, n) => `r${n}`));
 });
 
 test('readability probes allow an original beginning with a multi-byte character', () => {
-  const command = requestContinue({ calls: records() }, { args: '--compact' });
-  const hidden = continuation('history', '', continueView(command.value.result.submit), { state: command.state,
+  const command = requestContinue({ calls: records() }, { args: '--compact',
     host: { 'evidence.read': ({ max_bytes }) => {
       if (max_bytes < Buffer.byteLength('😀')) throw new Error('resource_page_too_small');
       return { text: '😀', cursor: 4, bytes: 6000 };
     } } });
+  const hidden = continuation('history', '', continueView(command.value.result.submit), { state: command.state });
   assert.equal(Object.keys(replaced(hidden.value)).length, 4);
 });
 

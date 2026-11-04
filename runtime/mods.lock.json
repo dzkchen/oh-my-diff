@@ -524,11 +524,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "b25792fbaf633b7fc532df98c89a7eabf8317de83773c3a58c11a341fca59301",
+        "index.ts": "75055827784bc19e46c56827fa80dc908efd429cb925af7e223010437e7abe27",
         "mod.json": "772a63fc93b7d33c0eb38bd6ab0d65626374ddff47e2b1ca138ab79258f56d81"
       },
       "id": "omd_observation_mask",
-      "package_sha256": "5378b9c2fd364a75121287ff07a536c4557c8fa77103f1d46cd89e4615472eeb",
+      "package_sha256": "6a6ac8cbd9b4d7cbf2c0cd3c3f13bc929e5955f1c9299e216607fc089044dfd0",
       "source": "mods/first-party/omd_observation_mask",
       "version": "1.1.0"
     },

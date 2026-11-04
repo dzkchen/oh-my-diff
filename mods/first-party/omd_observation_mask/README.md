@@ -36,8 +36,9 @@ A successful `/continue [note]` hides an eligible batch only after the estimated
 `/continue --compact [note]` requests the same masking without a cache estimate. It still obeys `keep_recent`,
 `min_bytes` and `batch_bytes`; it does not call a summarizing model or native `/compact`.
 
-Only outputs whose saved originals are readable at that point can be newly hidden in this mode. At most 16 originals
-are checked per continuation. An original that fails the read check stays visible and is skipped on later continuations.
+Only outputs whose saved originals pass a read check during the successful `/continue` command can be newly hidden
+in this mode. At most 16 unmasked originals from the latest history view are checked per continuation; the following model request
+still applies the history eligibility rules. An original that fails the read check stays visible and is skipped on later continuations.
 The model receives guidance to recall a specific missing fact in small pages and verify
 current files and processes before repeating actions. User messages, instructions and tool calls stay in context.
 The placeholders stay identical on later requests; another continuation is needed to hide another batch. Resume
