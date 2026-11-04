@@ -211,3 +211,15 @@ test('an identity collision warning is shown before accepting trust', () => {
   const panel = invoke('panel user', { ui_state: result.ui });
   assert.ok(JSON.stringify(panel.panels).includes(warning));
 });
+
+test('an id installed in both scopes asks for the scope instead of acting on the first copy', () => {
+  const packages = [logo, { ...logo, scope: 'project' }];
+  for (const typed of ['disable omd_logo', 'omd_logo', 'mod omd_logo']) {
+    const reply = invoke(typed, { packages });
+    assert.match(reply.value.display, /user:omd_logo or project:omd_logo/);
+    assert.ok(!operations(reply).includes('packages.apply'));
+  }
+  let sent;
+  invoke('disable project:omd_logo', { packages, 'packages.apply': args => { sent = args; return { status: 'declined' }; } });
+  assert.equal(sent.scope, 'project');
+});
