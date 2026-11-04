@@ -670,16 +670,16 @@
       "extension_type": "mod",
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
-        "index.ts": "a873931d53be7a46fad89cca9a9b46a92dc09646393cb3c823a25e1ca1167906",
-        "mod.json": "c59e00bd5f79a4f32d37c3f2d238119b82e90fa8b66314a98b3fc47f6b18631c",
+        "index.ts": "a5de6b14ee2f0948b38b21239bd1d6fb0077983f2cd5f9d3b8fa24703b109691",
+        "mod.json": "391615fc7595399fe659463b91eb8da5b8ebf0a46b8980a48ed6ff3b3598c1c9",
         "profiles.ts": "055218534d017dc89da265abc6d5a0e21253a781367ce329f3a7d8c5ebd532e4",
         "router.mjs": "8af36400c295812c48a26998e709161bb66973e4592a200be033d7542dbe5449",
         "setup.mjs": "64a902dd4886671d0dbf5cf23382b4b05c01b53342126bbf3c45f0018e0e117e"
       },
       "id": "omd_profiles",
-      "package_sha256": "836e1e7ce33a1fad88fbb66384e625d416aaf9bb7dbb804287d1265f659878f0",
+      "package_sha256": "a6db01febb4472b6bfd0c831cb5ed1fffed6a811194306058ccb3c3a5cd14372",
       "source": "mods/first-party/omd_profiles",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     "omd_programmable_context": {
       "api": "1.0.0",
