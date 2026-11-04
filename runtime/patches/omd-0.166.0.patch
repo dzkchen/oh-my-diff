@@ -117542,7 +117542,7 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4e7dae43530ef1f187c145fa94ed18309d6320a1
+index 0000000000000000000000000000000000000000..c5ee6d8c470a19e87e47259abb2ffc74551565fb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,7154 @@
@@ -121097,7 +121097,7 @@ index 0000000000000000000000000000000000000000..4e7dae43530ef1f187c145fa94ed1830
 +        }
 +        payload => payload,
 +    };
-+    let retained = !matches!(
++    let retained = !(matches!(
 +        event,
 +        "terminal"
 +            | "inspect"
@@ -121105,11 +121105,11 @@ index 0000000000000000000000000000000000000000..4e7dae43530ef1f187c145fa94ed1830
 +            | "command_list"
 +            | "config_list"
 +            | "component"
-+    ) && !(event == "intercept"
++    ) || (event == "intercept"
 +        && matches!(
 +            payload["surface"].as_str(),
 +            Some("render" | "input" | "mention" | "history_persist")
-+        ));
++        )));
 +    let activation_key = if retained {
 +        access.with(|runtime| {
 +            if !active() {
@@ -125820,7 +125820,7 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..02a27755bc37ddc0625bd546f90782d18f2e617c
+index 0000000000000000000000000000000000000000..06cbc1f80d4a38c3ea8976ea40aeaf5ae54fb90b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,530 @@
@@ -126139,17 +126139,17 @@ index 0000000000000000000000000000000000000000..02a27755bc37ddc0625bd546f90782d1
 +    let render = event == "intercept" && request["payload"]["surface"] == "render";
 +    let component = event == "component";
 +    let session = loaded.session_key.as_ref().filter(|_| {
-+        !render
-+            && !component
-+            && !matches!(
++        !(render
++            || component
++            || matches!(
 +                event,
 +                "terminal" | "inspect" | "workspace_pre_rename" | "command_list" | "config_list"
 +            )
-+            && !(event == "intercept"
++            || (event == "intercept"
 +                && matches!(
 +                    request["payload"]["surface"].as_str(),
 +                    Some("input" | "mention" | "history_persist")
-+                ))
++                )))
 +    });
 +    request.invocation["activation_id"] = json!(loaded.session_key);
 +    request.invocation["session_activation"] = json!(session.is_some());

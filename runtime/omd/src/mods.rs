@@ -3549,7 +3549,7 @@ fn invoke(
         }
         payload => payload,
     };
-    let retained = !matches!(
+    let retained = !(matches!(
         event,
         "terminal"
             | "inspect"
@@ -3557,11 +3557,11 @@ fn invoke(
             | "command_list"
             | "config_list"
             | "component"
-    ) && !(event == "intercept"
+    ) || (event == "intercept"
         && matches!(
             payload["surface"].as_str(),
             Some("render" | "input" | "mention" | "history_persist")
-        ));
+        )));
     let activation_key = if retained {
         access.with(|runtime| {
             if !active() {

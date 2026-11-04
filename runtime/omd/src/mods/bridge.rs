@@ -313,17 +313,17 @@ pub(super) fn run(
     let render = event == "intercept" && request["payload"]["surface"] == "render";
     let component = event == "component";
     let session = loaded.session_key.as_ref().filter(|_| {
-        !render
-            && !component
-            && !matches!(
+        !(render
+            || component
+            || matches!(
                 event,
                 "terminal" | "inspect" | "workspace_pre_rename" | "command_list" | "config_list"
             )
-            && !(event == "intercept"
+            || (event == "intercept"
                 && matches!(
                     request["payload"]["surface"].as_str(),
                     Some("input" | "mention" | "history_persist")
-                ))
+                )))
     });
     request.invocation["activation_id"] = json!(loaded.session_key);
     request.invocation["session_activation"] = json!(session.is_some());
