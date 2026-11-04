@@ -169,6 +169,31 @@ test('/undo restores modified, deleted and untracked files, removes new ones, an
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('/undo show previews the last turn per file, flags later edits and changes nothing', () => {
+  const root = repo();
+  try {
+    const s = session(root);
+    assert.match(s.command('undo', 'show'), /No turn with file changes/);
+    s.turn('t-1', agent(root));
+    const files = ['a.txt', 'b.txt', 'new.txt', 'notes.txt'].map(path => text(root, path));
+    const shown = s.command('undo', 'show');
+    assert.match(shown, /^\/undo would undo the \d\d:\d\d UTC turn, 6 files /);
+    assert.match(shown, /\n  a\.txt: \+1 -1\n/);
+    assert.match(shown, /\n  b\.txt: deleted by the turn \(\+0 -1\); \/undo brings it back\n/);
+    assert.match(shown, /\n  new\.txt: created by the turn \(\+1 -0\); \/undo deletes it\n/);
+    assert.match(shown, /\n  deep\/dir\/blob\.bin: created by the turn \(binary\)/);
+    assert.match(shown, /\n  tool\.sh: mode only\n/);
+    assert.match(shown, /\nRun \/undo to apply it\.$/);
+    write(root, 'a.txt', 'my fix after the turn\n');
+    const drifted = s.command('undo', 'show');
+    assert.match(drifted, /\n  a\.txt: \+1 -1 \[changed since\]\n/);
+    assert.match(drifted, /\n1 file changed since the turn, so \/undo will refuse; \/undo force/);
+    assert.deepEqual(['b.txt', 'new.txt', 'notes.txt'].map(path => text(root, path)), files.slice(1));
+    assert.equal(sh(root, 'for-each-ref', 'refs/omd/checkpoints/').trim().split('\n').length, 2, 'a preview pins nothing');
+    assert.match(s.command('undo'), /^Not done: 1 file changed since: a\.txt/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('edits made after the turn block /undo until force, and force keeps them for /redo', () => {
   const root = repo();
   try {
@@ -249,7 +274,7 @@ test('outside a Git repository or without write access it explains itself and ch
     s.turn('t-1', agent(root));
     assert.match(s.command('undo'), /^Not done: this session can't write /);
     assert.equal(text(root, 'a.txt'), 'two\n');
-    assert.match(s.command('undo', 'nonsense'), /^Usage: \/undo \[force\|list\]/);
+    assert.match(s.command('undo', 'nonsense'), /^Usage: \/undo \[force\|show\|list\]/);
   } finally {
     rmSync(plain, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });

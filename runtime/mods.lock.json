@@ -109,11 +109,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "de504b155b62130b6c38c8049628838593246726ead1f43850ecbe6f88830eae",
+        "index.ts": "bff87dc587e07c5af8487843f1e352d4ca7fa011a38de7724be535cc87b03aeb",
         "mod.json": "3fcea719f74df7206653d3adcde1dd36b78ab2ffcbb2cd66f5e4034fa4f16aab"
       },
       "id": "omd_checkpoint",
-      "package_sha256": "cc3b3d072415feb50d30831fca5e17f5c01a981b263b5a6c1293dff2226e48da",
+      "package_sha256": "49d93923dbcf7f510fde7ffba4ce9c451702ba5ab08472e9240daa876c9c6a2b",
       "source": "mods/first-party/omd_checkpoint",
       "version": "1.0.0"
     },

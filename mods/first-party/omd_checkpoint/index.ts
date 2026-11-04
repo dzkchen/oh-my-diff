@@ -2,7 +2,7 @@ import type { Json, ModAPI, ResourceRef } from '../../api.d.ts';
 
 type Repo = { top: string; gitdir: string };
 type Snap = { commit: string; tree: string };
-type Change = { path: string; target: string | null };
+type Change = { path: string; target: string | null; status: string };
 type Entry = {
   thread: string; turn: string; outcome: string; at: number; before: string; after: string; count: number; paths: string[];
   undone: { at: number; before: string; after: string } | null;
@@ -142,9 +142,34 @@ export default function activate(api: ModAPI) {
     for (let index = 0; index + 1 < fields.length; index += 2) {
       const [, , blob, , status] = fields[index].split(' ');
       if (!status) throw new Error('git diff output could not be read');
-      out.push({ path: fields[index + 1], target: /^0+$/.test(blob) ? null : blob });
+      out.push({ path: fields[index + 1], target: /^0+$/.test(blob) ? null : blob, status: status[0] });
     }
     return out;
+  };
+  const counts = (r: Repo, target: string, source: string) => {
+    const out = new Map<string, string>();
+    for (const record of paged(r.top, ['diff', '--numstat', '-z', '--no-renames', '--ignore-submodules=all', target, source]).split('\0')) {
+      const [added, removed, ...path] = record.split('\t');
+      if (path.length) out.set(path.join('\t'), added === '-' ? 'binary' : added === '0' && removed === '0' ? 'mode only' : `+${added} -${removed}`);
+    }
+    return out;
+  };
+  const preview = (r: Repo, entry: Entry) => {
+    const moved = changes(r, entry.before, entry.after);
+    const lines = counts(r, entry.before, entry.after);
+    const current = snapshot(r, `${entry.thread}-preview`, 'omd checkpoint: preview');
+    const drifted = new Set(changes(r, entry.after, current.commit).map(change => change.path));
+    const rows = moved.slice(0, SHOWN).map(change => {
+      const size = lines.get(change.path) ?? 'binary';
+      const what = change.status === 'A' ? `created by the turn (${size}); /undo deletes it` : change.status === 'D' ? `deleted by the turn (${size}); /undo brings it back` : size;
+      return `  ${change.path}: ${what}${drifted.has(change.path) ? ' [changed since]' : ''}`;
+    });
+    const later = moved.filter(change => drifted.has(change.path)).length;
+    return [
+      `/undo would undo the ${clock(entry.at)} UTC turn, ${plural(moved.length, 'file')} (+ lines the turn added, - lines it removed):`,
+      ...rows, ...moved.length > SHOWN ? [`  and ${moved.length - SHOWN} more`] : [],
+      later ? `${plural(later, 'file')} changed since the turn, so /undo will refuse; /undo force undoes anyway and keeps your edits for /redo.` : 'Run /undo to apply it.',
+    ].join('\n');
   };
   const stats = (paths: string[]) => {
     const files: Record<string, { kind: string; sha256?: string } | null> = {};
@@ -273,16 +298,23 @@ export default function activate(api: ModAPI) {
       return { display: ['Checkpoints in this repository, newest first:', ...entries.slice().reverse().map((entry, index) =>
         `${index + 1}. ${clock(entry.at)} UTC, ${entry.outcome} turn, ${plural(entry.count, 'file')}${entry.undone ? ' (undone; /redo restores it)' : ''}: ${listed(entry.paths, entry.count)}`)].join('\n') };
     }
-    if (words.length && words[0] !== 'force') return { display: 'Usage: /undo [force|list]' };
-    if (running(state)) return { display: 'A turn is running. Use /undo after it ends.' };
+    if (words.length && !['force', 'show'].includes(words[0])) return { display: 'Usage: /undo [force|show|list]' };
     const entry = entries.filter(item => !item.undone).at(-1);
+    if (words[0] === 'show' && entry) {
+      try {
+        return { display: preview(repo(), entry) };
+      } catch (error) {
+        return fail(error);
+      }
+    }
+    if (words[0] !== 'show' && running(state)) return { display: 'A turn is running. Use /undo after it ends.' };
     if (!entry) return { display: entries.length ? 'Every recorded turn is already undone. /redo brings the last one back.' : `No turn with file changes recorded in this repository yet.${state.error ? ` Last problem: ${state.error}` : ''}` };
     return apply(state,
       r => revert(r, entry.thread, entry.before, entry.after, words[0] === 'force' ? null
         : 'Undoing would overwrite those edits. Run /undo force to undo anyway; the current files are saved first, so /redo brings them back.'),
       outcome => { entry.undone = { at: Date.now(), before: outcome.current.commit, after: outcome.after.commit }; },
       done => `Undid the ${clock(entry.at)} UTC turn: ${done} /redo puts it back. Commits and branches are unchanged.`);
-  }, { description: 'Undo the file changes of the last turn in this repository: /undo, /undo force, /undo list', args_hint: '[force|list]' });
+  }, { description: 'Undo the file changes of the last turn in this repository: /undo, /undo show, /undo force, /undo list', args_hint: '[force|show|list]' });
 
   api.command('redo', input => {
     const words = String(input ?? '').trim().split(/\s+/).filter(Boolean);
