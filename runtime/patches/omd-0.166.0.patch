@@ -42392,10 +42392,10 @@ index fd7fb8f86c37c4d995eb5ba905ec22ffa0e084b4..55eab1a439ef865f68f804fae8d93bdc
              return false;
          }
 diff --git a/codex-rs/tui/src/chatwidget/input_restore.rs b/codex-rs/tui/src/chatwidget/input_restore.rs
-index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..844aded2ef37cbcb06df9130d9b358a7aa30aaa6 100644
+index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..fa747f550a789bdb922c2234108a3a4957c9629d 100644
 --- a/codex-rs/tui/src/chatwidget/input_restore.rs
 +++ b/codex-rs/tui/src/chatwidget/input_restore.rs
-@@ -351,6 +351,20 @@ impl ChatWidget {
+@@ -351,6 +351,24 @@ impl ChatWidget {
          true
      }
 
@@ -42408,7 +42408,11 @@ index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..844aded2ef37cbcb06df9130d9b358a7
 +        else {
 +            return false;
 +        };
-+        let steer = self.input_queue.pending_steers.remove(index).unwrap();
++        let steer = self
++            .input_queue
++            .pending_steers
++            .remove(index)
++            .expect("pending steer index was found in the queue");
 +        self.input_queue.pending_steers.push_front(steer);
 +        self.enqueue_rejected_steer()
 +    }
@@ -42416,7 +42420,7 @@ index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..844aded2ef37cbcb06df9130d9b358a7
      /// Handle a turn aborted due to user interrupt (Esc), budget exhaustion,
      /// or review completion.
      /// When there are queued user messages, restore them into the composer
-@@ -374,17 +388,21 @@ impl ChatWidget {
+@@ -374,17 +392,21 @@ impl ChatWidget {
                      /*hint*/ None,
                  ));
              } else {
@@ -50877,10 +50881,10 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
              let visible = self.entries[index].layout.row_count() > 0;
              if index + 1 != self.entries.len() {
 diff --git a/codex-rs/tui/src/transcript_view/layout_tests.rs b/codex-rs/tui/src/transcript_view/layout_tests.rs
-index 2cb45fbc8d9d1914da5c627e032f7a86faea3ad5..032620a3c392a3302c173dbe3369867c7285f97a 100644
+index 2cb45fbc8d9d1914da5c627e032f7a86faea3ad5..54f2e4a4515fc2e9746249a44c8c923de57b3d38 100644
 --- a/codex-rs/tui/src/transcript_view/layout_tests.rs
 +++ b/codex-rs/tui/src/transcript_view/layout_tests.rs
-@@ -13,6 +13,49 @@ struct Cell {
+@@ -13,6 +13,51 @@ struct Cell {
      mutable: bool,
  }
 
@@ -50912,9 +50916,11 @@ index 2cb45fbc8d9d1914da5c627e032f7a86faea3ad5..032620a3c392a3302c173dbe3369867c
 +fn cached_text_activity_does_not_recompute_disclosure_for_image_visibility() {
 +    let cell = Arc::new(ActivityCell::default());
 +    let cells: Vec<Arc<dyn HistoryCell>> = vec![cell.clone()];
-+    let mut view = TranscriptView::default();
-+    view.area = Rect::new(0, 0, 80, 24);
-+    view.image_protocol = Some(crate::pets::ImageProtocol::Kitty);
++    let mut view = TranscriptView {
++        area: Rect::new(0, 0, 80, 24),
++        image_protocol: Some(crate::pets::ImageProtocol::Kitty),
++        ..Default::default()
++    };
 +    view.cache.begin_frame();
 +    let first = view.entry_layout(&cells, 0, false).unwrap();
 +    let disclosures = cell.disclosures.load(Ordering::Relaxed);
@@ -177541,10 +177547,10 @@ index 0000000000000000000000000000000000000000..1f4bd7e660e5d609571f2f7a2eb22e2d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3bea68827cd061c3c0eb9138ae156fb55222f684
+index 0000000000000000000000000000000000000000..c774f3c1004e1d4b2bb580a75ecf37c59eebbbbc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,739 @@
+@@ -0,0 +1,743 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -178030,8 +178036,10 @@ index 0000000000000000000000000000000000000000..3bea68827cd061c3c0eb9138ae156fb5
 +fn underlay_resize_keeps_the_frame_and_fills_new_edges() {
 +    let now = Instant::now();
 +    let key = "underlay-resize";
-+    let mut snapshot = codex_omd::ModViewSnapshot::default();
-+    snapshot.input = json!({"ledger": {"cwd": "/repo", "thread_id": "resize"}});
++    let mut snapshot = codex_omd::ModViewSnapshot {
++        input: json!({"ledger": {"cwd": "/repo", "thread_id": "resize"}}),
++        ..Default::default()
++    };
 +    snapshot.view.underlay = serde_json::from_value(json!({"raster": key})).unwrap();
 +    snapshot.component_owners.insert(key.into(), "owner".into());
 +    let level = Some(StdoutColorLevel::TrueColor);
@@ -178137,8 +178145,10 @@ index 0000000000000000000000000000000000000000..3bea68827cd061c3c0eb9138ae156fb5
 +fn underlay_tints_default_cells_and_preserves_raised_prompt_surfaces() {
 +    let now = Instant::now();
 +    let key = "underlay_scene";
-+    let mut snapshot = codex_omd::ModViewSnapshot::default();
-+    snapshot.input = json!({"ledger": {"cwd": "/underlay-repo", "thread_id": "underlay-thread"}});
++    let mut snapshot = codex_omd::ModViewSnapshot {
++        input: json!({"ledger": {"cwd": "/underlay-repo", "thread_id": "underlay-thread"}}),
++        ..Default::default()
++    };
 +    snapshot.view.underlay = serde_json::from_value(json!({"raster": key})).expect("underlay");
 +    snapshot.component_owners.insert(key.into(), "owner".into());
 +    let level = Some(StdoutColorLevel::TrueColor);
@@ -181017,7 +181027,7 @@ index 0000000000000000000000000000000000000000..59d1f29e0f8628cc46cc830ffad359ff
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac5a059ea0
+index 0000000000000000000000000000000000000000..92f5aa72d2ad4262083a3f9bdfab81843e5d3ed2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
 @@ -0,0 +1,787 @@
@@ -181068,7 +181078,7 @@ index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac
 +        input: serde_json::json!({"event":"idle","ledger":{"thread_id":"previous"}}),
 +        ..Default::default()
 +    };
-+    let terminal = runtime.terminal_view(snapshot.input.clone(), &|| true);
++    let terminal = runtime.terminal_view(snapshot.input.clone(), || true);
 +    assert_eq!(terminal.diagnostics.len(), 1);
 +    snapshot.native_diagnostics = vec!["native evidence diagnostic".into()];
 +    snapshot.diagnostics = terminal
