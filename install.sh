@@ -241,9 +241,9 @@ def profile_choice(args):
             output.write(f"  {paint('Pick a profile', '1')}\n\n"
                          f"    {paint('1', '36')}  {paint('OMD+', '1')}       Core plus the first-party mod collection and bundled plugins.\n"
                          "                  Default mods start on; turn on the rest in /mods.\n"
-                         "                  Among them: a prompt unanswered for two minutes is declined,\n"
-                         "                  a large idle chat is compacted (losing detail and cancelling\n"
-                         "                  a pending approval), and /plan is removed.\n\n"
+                         "                  Among them: after two minutes unanswered, an approval or\n"
+                         "                  MCP request is declined, a permission request is denied,\n"
+                         "                  and a question gets \"use your best judgment\".\n\n"
                          f"    {paint('2', '36')}  {paint('OMD Core', '1')}   Patched Codex, mod manager, typed author tools,\n"
                          "                  and the logo, /mods and update mods.\n\n")
             while True:
