@@ -16489,10 +16489,390 @@ index b4553fc0be0c9207c27a78a1289bcf72243f18a2..ff68c351c98a116ffcb8ad096109a68a
  serde_json = { workspace = true }
  sha2 = { workspace = true }
 diff --git a/codex-rs/app-server/src/bespoke_event_handling.rs b/codex-rs/app-server/src/bespoke_event_handling.rs
-index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..770811d96dee6363791daa103a925f4404483008 100644
+index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..456109803465c7e06edc735c7a39c0a8529f2110 100644
 --- a/codex-rs/app-server/src/bespoke_event_handling.rs
 +++ b/codex-rs/app-server/src/bespoke_event_handling.rs
-@@ -3752,6 +3752,7 @@ mod tests {
+@@ -189,13 +189,25 @@ pub(crate) async fn apply_bespoke_event_handling(
+                 .await;
+         }
+         EventMsg::TurnComplete(turn_complete_event) => {
+-            // All per-thread requests are bound to a turn, so abort them.
+-            outgoing.abort_pending_server_requests().await;
+-            respond_to_pending_interrupts(&thread_state, &outgoing).await;
+-            let turn_failed = thread_state.lock().await.turn_summary.last_error.is_some();
+-            thread_watch_manager
+-                .note_turn_completed(&conversation_id.to_string(), turn_failed)
+-                .await;
++            let current = thread_state
++                .lock()
++                .await
++                .active_turn_id()
++                .is_none_or(|id| id == event_turn_id);
++            if current {
++                // All per-thread requests are bound to a turn, so abort them.
++                outgoing.abort_pending_server_requests().await;
++                let turn_failed = thread_state
++                    .lock()
++                    .await
++                    .turn_summaries
++                    .get(&event_turn_id)
++                    .is_some_and(|summary| summary.last_error.is_some());
++                thread_watch_manager
++                    .note_turn_completed(&conversation_id.to_string(), turn_failed)
++                    .await;
++            }
++            respond_to_pending_interrupts(&event_turn_id, &thread_state, &outgoing).await;
+             handle_turn_complete(
+                 conversation_id,
+                 event_turn_id,
+@@ -1079,7 +1091,9 @@ pub(crate) async fn apply_bespoke_event_handling(
+                 CoreTurnItem::CommandExecution(item) => thread_state
+                     .lock()
+                     .await
+-                    .turn_summary
++                    .turn_summaries
++                    .entry(event.turn_id.clone())
++                    .or_default()
+                     .record_command_start(item.id.clone(), event.started_at_ms),
+                 _ => true,
+             };
+@@ -1242,13 +1256,20 @@ pub(crate) async fn apply_bespoke_event_handling(
+         }
+         // If this is a TurnAborted, reply to any pending interrupt requests.
+         EventMsg::TurnAborted(turn_aborted_event) => {
+-            // All per-thread requests are bound to a turn, so abort them.
+-            outgoing.abort_pending_server_requests().await;
+-            respond_to_pending_interrupts(&thread_state, &outgoing).await;
+-
+-            thread_watch_manager
+-                .note_turn_interrupted(&conversation_id.to_string())
+-                .await;
++            let current = thread_state
++                .lock()
++                .await
++                .active_turn_id()
++                .is_none_or(|id| id == event_turn_id);
++            if current {
++                // All per-thread requests are bound to a turn, so abort them.
++                outgoing.abort_pending_server_requests().await;
++
++                thread_watch_manager
++                    .note_turn_interrupted(&conversation_id.to_string())
++                    .await;
++            }
++            respond_to_pending_interrupts(&event_turn_id, &thread_state, &outgoing).await;
+             handle_turn_interrupted(
+                 conversation_id,
+                 event_turn_id,
+@@ -1401,7 +1422,9 @@ async fn apply_canonical_item_completed_side_effects(
+             let observed_start = thread_state
+                 .lock()
+                 .await
+-                .turn_summary
++                .turn_summaries
++                .entry(event.turn_id.clone())
++                .or_default()
+                 .command_start_times
+                 .remove(&item.id);
+             // A client can already be displaying the command's approval-time start.
+@@ -1450,7 +1473,9 @@ async fn start_command_execution_item(
+     let first_start = thread_state
+         .lock()
+         .await
+-        .turn_summary
++        .turn_summaries
++        .entry(turn_id.clone())
++        .or_default()
+         .record_command_start(item_id.clone(), started_at_ms);
+     if first_start {
+         let notification = ItemStartedNotification::new(
+@@ -1495,7 +1520,9 @@ async fn complete_command_execution_item(
+     let Some(started_at_ms) = thread_state
+         .lock()
+         .await
+-        .turn_summary
++        .turn_summaries
++        .entry(turn_id.clone())
++        .or_default()
+         .command_start_times
+         .remove(&item_id)
+     else {
+@@ -1532,11 +1559,11 @@ async fn complete_command_execution_item(
+ }
+
+ async fn find_and_remove_turn_summary(
+-    _conversation_id: ThreadId,
++    turn_id: &str,
+     thread_state: &Arc<Mutex<ThreadState>>,
+ ) -> TurnSummary {
+     let mut state = thread_state.lock().await;
+-    std::mem::take(&mut state.turn_summary)
++    state.turn_summaries.remove(turn_id).unwrap_or_default()
+ }
+
+ async fn handle_turn_complete(
+@@ -1546,7 +1573,7 @@ async fn handle_turn_complete(
+     outgoing: &ThreadScopedOutgoingMessageSender,
+     thread_state: &Arc<Mutex<ThreadState>>,
+ ) {
+-    let turn_summary = find_and_remove_turn_summary(conversation_id, thread_state).await;
++    let turn_summary = find_and_remove_turn_summary(&event_turn_id, thread_state).await;
+
+     let (status, error, last_agent_message) = match turn_summary.last_error {
+         Some(error) => (TurnStatus::Failed, Some(error), None),
+@@ -1577,7 +1604,7 @@ async fn handle_turn_interrupted(
+     outgoing: &ThreadScopedOutgoingMessageSender,
+     thread_state: &Arc<Mutex<ThreadState>>,
+ ) {
+-    let turn_summary = find_and_remove_turn_summary(conversation_id, thread_state).await;
++    let turn_summary = find_and_remove_turn_summary(&event_turn_id, thread_state).await;
+
+     emit_turn_completed_with_status(
+         conversation_id,
+@@ -1602,12 +1629,13 @@ async fn handle_turn_interrupted(
+ }
+
+ async fn respond_to_pending_interrupts(
++    turn_id: &str,
+     thread_state: &Arc<Mutex<ThreadState>>,
+     outgoing: &ThreadScopedOutgoingMessageSender,
+ ) {
+     let pending = {
+         let mut state = thread_state.lock().await;
+-        std::mem::take(&mut state.pending_interrupts)
++        state.pending_interrupts.remove(turn_id).unwrap_or_default()
+     };
+
+     for request_id in pending {
+@@ -1645,13 +1673,13 @@ async fn handle_token_count_event(
+     }
+ }
+
+-async fn handle_error(
+-    _conversation_id: ThreadId,
+-    error: TurnError,
+-    thread_state: &Arc<Mutex<ThreadState>>,
+-) {
++async fn handle_error(turn_id: &str, error: TurnError, thread_state: &Arc<Mutex<ThreadState>>) {
+     let mut state = thread_state.lock().await;
+-    state.turn_summary.last_error = Some(error);
++    state
++        .turn_summaries
++        .entry(turn_id.to_string())
++        .or_default()
++        .last_error = Some(error);
+ }
+
+ async fn handle_error_notification(
+@@ -1661,7 +1689,7 @@ async fn handle_error_notification(
+     outgoing: &ThreadScopedOutgoingMessageSender,
+     thread_state: &Arc<Mutex<ThreadState>>,
+ ) {
+-    handle_error(conversation_id, error.clone(), thread_state).await;
++    handle_error(event_turn_id, error.clone(), thread_state).await;
+     outgoing
+         .send_server_notification(ServerNotification::Error(ErrorNotification {
+             error,
+@@ -2110,9 +2138,11 @@ async fn on_command_execution_request_approval_response(
+         // For zsh-fork subcommand approvals, approval_id is present and
+         // item_id points to the parent command item.
+         if approval_id.is_some() {
+-            let state = thread_state.lock().await;
++            let mut state = thread_state.lock().await;
+             state
+-                .turn_summary
++                .turn_summaries
++                .entry(event_turn_id.clone())
++                .or_default()
+                 .command_start_times
+                 .contains_key(&item_id)
+         } else {
+@@ -3080,13 +3110,155 @@ mod tests {
+         assert!(response.strict_auto_review);
+     }
+
++    #[tokio::test]
++    async fn stale_terminal_event_keeps_the_new_turn_running() -> Result<()> {
++        let codex_home = TempDir::new()?;
++        let config = load_default_config_for_test(&codex_home).await;
++        let thread_manager = Arc::new(
++            codex_core::test_support::thread_manager_with_models_provider_and_home(
++                CodexAuth::create_dummy_chatgpt_auth_for_testing(),
++                config.model_provider.clone(),
++                config.codex_home.to_path_buf(),
++                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
++            ),
++        );
++        let codex_core::NewThread {
++            thread_id, thread, ..
++        } = thread_manager
++            .start_thread(codex_core::StartThreadOptions::new(config))
++            .await?;
++        for terminal in [
++            EventMsg::TurnComplete(turn_complete_event("old")),
++            EventMsg::TurnAborted(turn_aborted_event("old")),
++        ] {
++            let state = new_thread_state();
++            for id in ["old", "new"] {
++                state.lock().await.track_current_turn_event(
++                    id,
++                    &EventMsg::TurnStarted(codex_protocol::protocol::TurnStartedEvent {
++                        turn_attribution: None,
++                        turn_id: id.to_string(),
++                        root_turn_id: None,
++                        trace_id: None,
++                        started_at: None,
++                        model_context_window: None,
++                        collaboration_mode_kind: Default::default(),
++                    }),
++                );
++            }
++            state
++                .lock()
++                .await
++                .track_current_turn_event("old", &terminal);
++            {
++                let mut state = state.lock().await;
++                state
++                    .pending_interrupts
++                    .insert("old".to_string(), Vec::new());
++                state
++                    .pending_interrupts
++                    .insert("new".to_string(), Vec::new());
++            }
++            let watch = ThreadWatchManager::new();
++            watch.note_turn_started(&thread_id.to_string()).await;
++            let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
++            let outgoing = ThreadScopedOutgoingMessageSender::new(
++                Arc::new(OutgoingMessageSender::new(
++                    tx,
++                    codex_analytics::AnalyticsEventsClient::disabled(),
++                )),
++                vec![ConnectionId(1)],
++                thread_id,
++            );
++            apply_bespoke_event_handling(
++                Event {
++                    id: "old".to_string(),
++                    msg: terminal,
++                },
++                thread_id,
++                thread.clone(),
++                thread_manager.clone(),
++                outgoing,
++                state.clone(),
++                watch.clone(),
++            )
++            .await;
++            assert!(matches!(
++                recv_broadcast_notification(&mut rx).await?,
++                ServerNotification::TurnCompleted(_)
++            ));
++            assert_eq!(watch.running_turn_count().await, 1);
++            let state = state.lock().await;
++            assert!(!state.pending_interrupts.contains_key("old"));
++            assert!(state.pending_interrupts.contains_key("new"));
++        }
++        Ok(())
++    }
++
++    #[tokio::test]
++    async fn overlapping_turn_summaries_keep_start_attribution() {
++        let thread_state = new_thread_state();
++        for (id, started_at) in [("old", 42), ("new", 99)] {
++            thread_state.lock().await.track_current_turn_event(
++                id,
++                &EventMsg::TurnStarted(codex_protocol::protocol::TurnStartedEvent {
++                    turn_attribution: None,
++                    turn_id: id.to_string(),
++                    root_turn_id: None,
++                    trace_id: None,
++                    started_at: Some(started_at),
++                    model_context_window: None,
++                    collaboration_mode_kind: Default::default(),
++                }),
++            );
++            thread_state.lock().await.track_current_turn_event(
++                id,
++                &EventMsg::ItemCompleted(ItemCompletedEvent {
++                    thread_id: ThreadId::new(),
++                    turn_id: id.to_string(),
++                    item: CoreTurnItem::AgentMessage(CoreAgentMessageItem {
++                        id: format!("answer-{id}"),
++                        content: vec![CoreAgentMessageContent::Text {
++                            text: id.to_string(),
++                        }],
++                        phase: None,
++                        memory_citation: None,
++                        delivery: None,
++                        questions: None,
++                    }),
++                    started_at_ms: None,
++                    completed_at_ms: 0,
++                }),
++            );
++        }
++        handle_error(
++            "new",
++            TurnError {
++                message: "new failed".to_string(),
++                codex_error_info: None,
++                misalignment: None,
++                additional_details: None,
++            },
++            &thread_state,
++        )
++        .await;
++        let summary = find_and_remove_turn_summary("old", &thread_state).await;
++        assert_eq!(summary.started_at, Some(42));
++        assert!(summary.last_error.is_none());
++        assert_eq!(summary.last_agent_message.unwrap().id(), "answer-old");
++        let summary = find_and_remove_turn_summary("new", &thread_state).await;
++        assert_eq!(summary.started_at, Some(99));
++        assert_eq!(summary.last_error.unwrap().message, "new failed");
++        assert_eq!(summary.last_agent_message.unwrap().id(), "answer-new");
++        assert!(thread_state.lock().await.turn_summaries.is_empty());
++    }
++
+     #[tokio::test]
+     async fn test_handle_error_records_message() -> Result<()> {
+-        let conversation_id = ThreadId::new();
+         let thread_state = new_thread_state();
+
+         handle_error(
+-            conversation_id,
++            "turn-1",
+             TurnError {
+                 misalignment: None,
+                 message: "boom".to_string(),
+@@ -3097,7 +3269,7 @@ mod tests {
+         )
+         .await;
+
+-        let turn_summary = find_and_remove_turn_summary(conversation_id, &thread_state).await;
++        let turn_summary = find_and_remove_turn_summary("turn-1", &thread_state).await;
+         assert_eq!(
+             turn_summary.last_error,
+             Some(TurnError {
+@@ -3540,7 +3712,7 @@ mod tests {
+         let event_turn_id = "interrupt1".to_string();
+         let thread_state = new_thread_state();
+         handle_error(
+-            conversation_id,
++            &event_turn_id,
+             TurnError {
+                 misalignment: None,
+                 message: "oops".to_string(),
+@@ -3595,7 +3767,7 @@ mod tests {
+         let event_turn_id = "complete_err1".to_string();
+         let thread_state = new_thread_state();
+         handle_error(
+-            conversation_id,
++            &event_turn_id,
+             TurnError {
+                 misalignment: None,
+                 message: "bad".to_string(),
+@@ -3752,6 +3924,7 @@ mod tests {
              spend_control_reached: None,
              plan_type: None,
              rate_limit_reached_type: None,
@@ -16500,6 +16880,24 @@ index a4130d93fd98a6fc887dcaa193cae7a8266d7ece..770811d96dee6363791daa103a925f44
          };
 
          handle_token_count_event(
+@@ -3846,7 +4019,7 @@ mod tests {
+         // Turn 1 on conversation A
+         let a_turn1 = "a_turn1".to_string();
+         handle_error(
+-            conversation_a,
++            &a_turn1,
+             TurnError {
+                 misalignment: None,
+                 message: "a1".to_string(),
+@@ -3868,7 +4041,7 @@ mod tests {
+         // Turn 1 on conversation B
+         let b_turn1 = "b_turn1".to_string();
+         handle_error(
+-            conversation_b,
++            &b_turn1,
+             TurnError {
+                 misalignment: None,
+                 message: "b1".to_string(),
 diff --git a/codex-rs/app-server/src/config_manager.rs b/codex-rs/app-server/src/config_manager.rs
 index 461920b677da7a40530837e354d89190ad18550f..0979f7d0ae97eab25ed60c9f4ae8aa35a547b61c 100644
 --- a/codex-rs/app-server/src/config_manager.rs
@@ -17891,9 +18289,18 @@ index 1d5c3c7056057512591ff64d952947495176fe75..db392d4b376368505f2d6ebd4838a190
 
          let codex_linux_sandbox_exe = self.arg0_paths.codex_linux_sandbox_exe.clone();
 diff --git a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
-index a6d8250d60259befb9c233b0bfdb6bbffffc76e2..dc9eddef272f9585ec8a8e4275aa66be919801b3 100644
+index a6d8250d60259befb9c233b0bfdb6bbffffc76e2..0b8fda4f9564a2fdb033492ab0da04b2e5bd950f 100644
 --- a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
+@@ -550,7 +550,7 @@ async fn start_listener(
+                         let mut thread_state = thread_state.lock().await;
+                         thread_state.track_current_turn_event(&event.id, &event.msg);
+                         let terminal = matches!(event.msg, EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_))
+-                            .then(|| thread_state.turn_summary.clone());
++                            .then(|| thread_state.turn_summaries.get(&event.id).cloned().unwrap_or_default());
+                         (thread_state.experimental_raw_events, terminal)
+                     };
+                     if matches!(
 @@ -850,6 +850,18 @@ pub(super) async fn wait_for_thread_shutdown(thread: &Arc<CodexThread>) -> Threa
      }
  }
@@ -18587,7 +18994,7 @@ index 9ec1298cb9432a5e653935c7f949735550598c8e..aec4d63acd178d4385bd422a9661bd56
 +    }
  }
 diff --git a/codex-rs/app-server/src/request_processors/turn_processor.rs b/codex-rs/app-server/src/request_processors/turn_processor.rs
-index f310c4ac65a9ff2ce3a6ff50efee326223b35c77..9374302dc5ba362ef79c8f7ad9d850b39a2dd26e 100644
+index f310c4ac65a9ff2ce3a6ff50efee326223b35c77..3fc12b06c16ee2dcdac5876a32e5e2586b10207d 100644
 --- a/codex-rs/app-server/src/request_processors/turn_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/turn_processor.rs
 @@ -126,6 +126,7 @@ struct ThreadSettingsBuildParams {
@@ -18646,6 +19053,35 @@ index f310c4ac65a9ff2ce3a6ff50efee326223b35c77..9374302dc5ba362ef79c8f7ad9d850b3
                      service_tier: params.service_tier,
                      effort: params.effort,
                      summary: params.summary,
+@@ -1444,7 +1451,11 @@ impl TurnRequestProcessor {
+                 {
+                     return Err(invalid_request("no active turn to interrupt"));
+                 }
+-                thread_state.pending_interrupts.push(request_id.clone());
++                thread_state
++                    .pending_interrupts
++                    .entry(turn_id.clone())
++                    .or_default()
++                    .push(request_id.clone());
+             }
+
+             self.outgoing
+@@ -1464,9 +1475,12 @@ impl TurnRequestProcessor {
+                 if !is_startup_interrupt {
+                     let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
+                     let mut thread_state = thread_state.lock().await;
+-                    thread_state
+-                        .pending_interrupts
+-                        .retain(|pending_request_id| pending_request_id != request_id);
++                    if let Some(pending) = thread_state.pending_interrupts.get_mut(&turn_id) {
++                        pending.retain(|pending_request_id| pending_request_id != request_id);
++                        if pending.is_empty() {
++                            thread_state.pending_interrupts.remove(&turn_id);
++                        }
++                    }
+                 }
+                 let interrupt_target = if is_startup_interrupt {
+                     "startup"
 diff --git a/codex-rs/app-server/src/request_serialization.rs b/codex-rs/app-server/src/request_serialization.rs
 index efd2f5e70d0b080890448893c1a8dd7e866ff079..616b5d6dbaeb704c66772586a87d57cdb0d524a9 100644
 --- a/codex-rs/app-server/src/request_serialization.rs
@@ -18676,10 +19112,49 @@ index efd2f5e70d0b080890448893c1a8dd7e866ff079..616b5d6dbaeb704c66772586a87d57cd
                  Self::Thread { thread_id },
                  RequestSerializationAccess::Exclusive,
 diff --git a/codex-rs/app-server/src/thread_state.rs b/codex-rs/app-server/src/thread_state.rs
-index 6189a05c47467d6a63beecce296bb51bc353f936..82455f568eaab588dbc373816192a2c45c6aaad2 100644
+index 6189a05c47467d6a63beecce296bb51bc353f936..ea9936702421feed9db03afdc62f2b166dc89855 100644
 --- a/codex-rs/app-server/src/thread_state.rs
 +++ b/codex-rs/app-server/src/thread_state.rs
-@@ -718,6 +718,20 @@ impl ThreadStateManager {
+@@ -35,7 +35,7 @@ use tokio::sync::oneshot;
+ use tokio::sync::watch;
+ use tracing::error;
+
+-type PendingInterruptQueue = Vec<ConnectionRequestId>;
++type PendingInterruptQueue = HashMap<String, Vec<ConnectionRequestId>>;
+
+ // The unload that inserts an entry owns its removal. Dropping the sender wakes deferred
+ // listener attachment only after that unload finishes cleanup.
+@@ -120,7 +120,7 @@ impl TurnSummary {
+ pub(crate) struct ThreadState {
+     goal_resume_lock: Arc<Mutex<()>>,
+     pub(crate) pending_interrupts: PendingInterruptQueue,
+-    pub(crate) turn_summary: TurnSummary,
++    pub(crate) turn_summaries: HashMap<String, TurnSummary>,
+     pub(crate) last_terminal_turn_id: Option<String>,
+     /// Lets an internal runtime replacement wait until the old listener has processed Core's
+     /// `ShutdownComplete` event before that listener is superseded.
+@@ -225,7 +225,10 @@ impl ThreadState {
+
+     pub(crate) fn track_current_turn_event(&mut self, event_turn_id: &str, event: &EventMsg) {
+         if let EventMsg::TurnStarted(payload) = event {
+-            self.turn_summary.started_at = payload.started_at;
++            self.turn_summaries
++                .entry(event_turn_id.to_string())
++                .or_default()
++                .started_at = payload.started_at;
+         }
+         if let EventMsg::ItemCompleted(payload) = event
+             && let CoreTurnItem::AgentMessage(item) = &payload.item
+@@ -234,7 +237,7 @@ impl ThreadState {
+                 matches!(content, CoreAgentMessageContent::Text { text } if !text.trim().is_empty())
+             })
+         {
+-            self.turn_summary.last_agent_message = Some(ThreadItem::from(payload));
++            self.turn_summaries.entry(event_turn_id.to_string()).or_default().last_agent_message = Some(ThreadItem::from(payload));
+         }
+         self.current_turn_history
+             .handle_event_for_history_mode(event, self.history_mode);
+@@ -718,6 +721,20 @@ impl ThreadStateManager {
          true
      }
 
@@ -34465,6 +34940,18 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
          let chat_widget = self.chat_widget.as_renderable();
          render(chat_widget.desired_height(width), &chat_widget)
      }
+diff --git a/codex-rs/tui/src/app/agent_status_feed.rs b/codex-rs/tui/src/app/agent_status_feed.rs
+index 1dee7b6dfca219d12e05b8406013eb35cd1d7afe..c7ca1d114088d02a16cdd641b4482d9941b27a96 100644
+--- a/codex-rs/tui/src/app/agent_status_feed.rs
++++ b/codex-rs/tui/src/app/agent_status_feed.rs
+@@ -93,6 +93,7 @@ impl AgentStatusThreadPreview {
+                 },
+                 ThreadBufferedEvent::Request(_)
+                 | ThreadBufferedEvent::HistoryEntryResponse(_)
++                | ThreadBufferedEvent::UserTurnSubmission(_)
+                 | ThreadBufferedEvent::FeedbackSubmission(_) => continue,
+             };
+             if !seen_item_ids.insert(item.id().to_string()) {
 diff --git a/codex-rs/tui/src/app/agents_overview.rs b/codex-rs/tui/src/app/agents_overview.rs
 index 3cb5a425a9eea2391fccc852a9aee840c712af5e..acbaefefb8ff9506d908a2b2a5490b638cb4aaa8 100644
 --- a/codex-rs/tui/src/app/agents_overview.rs
@@ -34643,6 +35130,54 @@ index be5c7760857da682fec5883b35d22845a766ccb0..273f8a8281f3f8d122053815009c99c4
              | ServerRequest::ApplyPatchApproval { .. }
              | ServerRequest::ExecCommandApproval { .. } => None,
          }
+diff --git a/codex-rs/tui/src/app/background_requests.rs b/codex-rs/tui/src/app/background_requests.rs
+index ad5f6e3d7ba4bd74e1c5e00efac3a6e72ac66506..0aa17e4b5b0f67b03e31c8c0e9cdee355b20b6fd 100644
+--- a/codex-rs/tui/src/app/background_requests.rs
++++ b/codex-rs/tui/src/app/background_requests.rs
+@@ -673,6 +673,43 @@ impl App {
+         }
+     }
+
++    pub(super) async fn enqueue_user_turn_submission(
++        &mut self,
++        thread_id: ThreadId,
++        event: Arc<crate::app_event::UserTurnSubmissionResult>,
++    ) {
++        let (sender, store) = {
++            let Some(channel) = self.thread_event_channels.get(&thread_id) else {
++                return;
++            };
++            (channel.sender.clone(), Arc::clone(&channel.store))
++        };
++
++        let should_send = {
++            let mut guard = store.lock().await;
++            if !guard.active {
++                guard.push_buffered_event(ThreadBufferedEvent::UserTurnSubmission(event.clone()));
++            }
++            guard.active
++        };
++
++        if should_send {
++            match sender.try_send(ThreadBufferedEvent::UserTurnSubmission(event)) {
++                Ok(()) => {}
++                Err(TrySendError::Full(event)) => {
++                    tokio::spawn(async move {
++                        if let Err(err) = sender.send(event).await {
++                            tracing::warn!("thread {thread_id} event channel closed: {err}");
++                        }
++                    });
++                }
++                Err(TrySendError::Closed(_)) => {
++                    tracing::warn!("thread {thread_id} event channel closed");
++                }
++            }
++        }
++    }
++
+     pub(super) async fn enqueue_thread_feedback_event(
+         &mut self,
+         thread_id: ThreadId,
 diff --git a/codex-rs/tui/src/app/clipboard.rs b/codex-rs/tui/src/app/clipboard.rs
 index 40b882ed18d36b965f79f675378c0e94f3b3ed1b..c7edd365b13c07575fa875c3bb47dfcc5e07f15e 100644
 --- a/codex-rs/tui/src/app/clipboard.rs
@@ -34954,7 +35489,7 @@ index 1d328eae53536d0899756dde97a2c23329771e76..bc18b805b620cb9450de010ffc823587
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 550965d65ebb02b1d4f8bf0af92649037cb64446..43440f19103c3275387d46925d8fc6a78dd4f8e5 100644
+index 550965d65ebb02b1d4f8bf0af92649037cb64446..025b6a08691f1c60c6ac47e9ee0cdda72854ee75 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -24,6 +24,9 @@ use codex_app_server_protocol::ThreadGoalStatus;
@@ -35158,7 +35693,23 @@ index 550965d65ebb02b1d4f8bf0af92649037cb64446..43440f19103c3275387d46925d8fc6a7
              }
              AppEvent::TurnTipReady { thread_id, turn_id } => {
                  self.turn_tips.ready(thread_id, &turn_id, self.transcript_cells.last());
-@@ -1765,8 +1922,18 @@ impl App {
+@@ -1072,6 +1229,15 @@ impl App {
+             AppEvent::ImagesPrepared(id) => {
+                 self.chat_widget.on_images_prepared(id);
+             }
++            AppEvent::UserTurnSubmissionFinished { backend_id, thread_id, completion } => {
++                if backend_id == app_server.backend_id() {
++                    if let Err(error) = &completion.result
++                        && self.recover_transport_error(error.as_ref()) {
++                        return Ok(AppRunControl::Continue);
++                    }
++                    self.enqueue_user_turn_submission(thread_id, completion).await;
++                }
++            }
+             AppEvent::CodexOp(mut op) => {
+                 if let AppCommand::OverrideTurnContext {
+                     cwd,
+@@ -1765,8 +1931,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -35177,7 +35728,7 @@ index 550965d65ebb02b1d4f8bf0af92649037cb64446..43440f19103c3275387d46925d8fc6a7
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -3121,6 +3288,14 @@ impl App {
+@@ -3121,6 +3297,14 @@ impl App {
                  self.select_agent_thread(tui, app_server, thread_id)
                      .await?;
              }
@@ -36628,7 +37179,7 @@ index 632ac8b4defedf7eb37217a195ca42fed4df7015..928adeb4f92800b883bf38ee83cde19a
          let mut cell_displays = VecDeque::new();
          let mut rendered_rows = 0usize;
 diff --git a/codex-rs/tui/src/app/session_lifecycle.rs b/codex-rs/tui/src/app/session_lifecycle.rs
-index c7dc18d544a064d4bc684b0a54e3e86be76731f6..f17f16b42e89ef0327b6217977e6f4c032a350d2 100644
+index c7dc18d544a064d4bc684b0a54e3e86be76731f6..39a71c056e2155b6f80755b0a85c8cbd17ee6b99 100644
 --- a/codex-rs/tui/src/app/session_lifecycle.rs
 +++ b/codex-rs/tui/src/app/session_lifecycle.rs
 @@ -529,6 +529,9 @@ impl App {
@@ -36683,7 +37234,15 @@ index c7dc18d544a064d4bc684b0a54e3e86be76731f6..f17f16b42e89ef0327b6217977e6f4c0
      pub(super) fn should_attach_live_thread_for_selection(&self, thread_id: ThreadId) -> bool {
          self.agent_navigation
              .get(&thread_id)
-@@ -1031,7 +1069,7 @@ impl App {
+@@ -913,6 +951,7 @@ impl App {
+                         server_request_thread_id(request) == Some(thread_id)
+                     }
+                     ThreadBufferedEvent::HistoryEntryResponse(_)
++                    | ThreadBufferedEvent::UserTurnSubmission(_)
+                     | ThreadBufferedEvent::FeedbackSubmission(_) => true,
+                 });
+                 let previous_pending = std::mem::take(&mut self.pending_app_server_requests);
+@@ -1031,7 +1070,7 @@ impl App {
          // Start a fresh in-memory session while preserving resumability via persisted rollout
          // history. If an initial message is provided, `enqueue_primary_thread_session` suppresses it
          // until the new session is configured and any replayed turns have been rendered.
@@ -36692,7 +37251,7 @@ index c7dc18d544a064d4bc684b0a54e3e86be76731f6..f17f16b42e89ef0327b6217977e6f4c0
              Ok(config) => config,
              Err(err) => {
                  if let Some(message) = initial_user_message {
-@@ -1043,12 +1081,6 @@ impl App {
+@@ -1043,12 +1082,6 @@ impl App {
                  return;
              }
          };
@@ -36705,7 +37264,7 @@ index c7dc18d544a064d4bc684b0a54e3e86be76731f6..f17f16b42e89ef0327b6217977e6f4c0
          match app_server
              .start_thread_with_session_start_source(
                  &self.local_settings,
-@@ -1056,6 +1088,9 @@ impl App {
+@@ -1056,6 +1089,9 @@ impl App {
                  session_start_source,
                  /*remote_cwd_override*/ None,
                  /*selected_profile*/ None,
@@ -37180,10 +37739,23 @@ index 6b1551c61aaf7696a363968d8698c9d912a39bb7..651e2de90133e6874878f19112cec0d0
      app.ensure_thread_channel(source_thread_id);
      let mut tui = crate::tui::test_support::make_test_tui()?;
 diff --git a/codex-rs/tui/src/app/tests/agents_navigation_tests.rs b/codex-rs/tui/src/app/tests/agents_navigation_tests.rs
-index 820eae3d4bf0708cde8b6df0e9d3ceb80fedba8b..5f56add488c5bae5c9091954f60e72f05a74e4e1 100644
+index 820eae3d4bf0708cde8b6df0e9d3ceb80fedba8b..f815ab46af0359767d3ef977c924d685e525e13e 100644
 --- a/codex-rs/tui/src/app/tests/agents_navigation_tests.rs
 +++ b/codex-rs/tui/src/app/tests/agents_navigation_tests.rs
-@@ -121,7 +121,8 @@ async fn externally_archived_thread_keeps_advertised_agents_navigation() -> Resu
+@@ -33,12 +33,6 @@ async fn agents_navigation_requires_shared_app_server() -> Result<()> {
+         );
+         app.replace_chat_widget(ChatWidget::new_with_app_event(init));
+         while events.try_recv().is_ok() {}
+-        let composer = render_bottom_popup(&app.chat_widget, /*width*/ 96);
+-        assert_eq!(composer.contains("← for agents"), enabled);
+-        if matches!(app.app_server_target, AppServerTarget::Remote { .. }) {
+-            let footer = composer.lines().last().expect("composer footer").trim();
+-            insta::assert_snapshot!(normalize_snapshot_paths(footer), @"GPT-5.6-Sol default · /tmp/project · ← for agents");
+-        }
+         app.handle_tui_event(
+             &mut tui,
+             &mut app_server,
+@@ -121,7 +115,8 @@ async fn externally_archived_thread_keeps_advertised_agents_navigation() -> Resu
              .await?;
      }
      assert!(app.chat_widget.composer_is_empty());
@@ -37548,6 +38120,18 @@ index 9fe4a7663bdbd4555fd1d4679dd56bd55f517514..44317197a6d77d2b2963e883b519648c
      );
      // The source remains available to terminal scrollback in both presentation modes.
      for mode in [HistoryRenderMode::Rich, HistoryRenderMode::Raw] {
+diff --git a/codex-rs/tui/src/app/thread_event_buffer.rs b/codex-rs/tui/src/app/thread_event_buffer.rs
+index 0e01361aae2ae0a2b5e1bb191d7eec289d1779d2..f2bb72e10e4e41d245003de2bac3034b38a1ee3c 100644
+--- a/codex-rs/tui/src/app/thread_event_buffer.rs
++++ b/codex-rs/tui/src/app/thread_event_buffer.rs
+@@ -70,6 +70,7 @@ impl ThreadEventStore {
+                     .pending_interactive_replay
+                     .note_evicted_server_request(request.as_ref()),
+                 ThreadBufferedEvent::HistoryEntryResponse(_)
++                | ThreadBufferedEvent::UserTurnSubmission(_)
+                 | ThreadBufferedEvent::FeedbackSubmission(_) => {}
+             }
+         }
 diff --git a/codex-rs/tui/src/app/thread_event_buffer_tests.rs b/codex-rs/tui/src/app/thread_event_buffer_tests.rs
 index ec7e1e066b51ec373656cc29de6bf073bc928983..d5f62399570ad8a902edab380beccf001e40a918 100644
 --- a/codex-rs/tui/src/app/thread_event_buffer_tests.rs
@@ -37596,10 +38180,69 @@ index ec7e1e066b51ec373656cc29de6bf073bc928983..d5f62399570ad8a902edab380beccf00
 +    assert!(store.waits_on_user());
  }
 diff --git a/codex-rs/tui/src/app/thread_events.rs b/codex-rs/tui/src/app/thread_events.rs
-index f810d38745a57baeb05502a43852397b27b5e7b1..fc003fec620fa7767029274e06180b632680a8ea 100644
+index f810d38745a57baeb05502a43852397b27b5e7b1..4f72592e41bc1c1620dce150774b25a6f0b769a0 100644
 --- a/codex-rs/tui/src/app/thread_events.rs
 +++ b/codex-rs/tui/src/app/thread_events.rs
-@@ -519,9 +519,12 @@ impl ThreadEventStore {
+@@ -20,6 +20,7 @@ pub(super) struct ThreadEventSnapshot {
+
+ #[derive(Debug, Clone)]
+ pub(super) enum ThreadBufferedEvent {
++    UserTurnSubmission(Arc<crate::app_event::UserTurnSubmissionResult>),
+     Notification(Box<ServerNotification>),
+     Request(Box<ServerRequest>),
+     HistoryEntryResponse(HistoryLookupResponse),
+@@ -67,6 +68,9 @@ pub(super) enum ThreadEventAttachment {
+
+ #[derive(Debug)]
+ pub(super) struct ThreadEventStore {
++    pub(super) submission_tail: Option<tokio::sync::oneshot::Receiver<()>>,
++    pub(super) submissions_in_flight: usize,
++    pub(super) interrupt_pending_start: bool,
+     pub(super) session: Option<ThreadSessionState>,
+     pub(super) turns: Vec<Turn>,
+     pub(super) buffer: VecDeque<ThreadBufferedEvent>,
+@@ -100,7 +104,9 @@ impl ThreadEventStore {
+             return true;
+         }
+         match event {
+-            ThreadBufferedEvent::Request(_) | ThreadBufferedEvent::FeedbackSubmission(_) => true,
++            ThreadBufferedEvent::Request(_)
++            | ThreadBufferedEvent::FeedbackSubmission(_)
++            | ThreadBufferedEvent::UserTurnSubmission(_) => true,
+             ThreadBufferedEvent::Notification(notification) => matches!(
+                 notification.as_ref(),
+                 ServerNotification::HookStarted(_)
+@@ -114,6 +120,9 @@ impl ThreadEventStore {
+
+     pub(super) fn new(capacity: usize) -> Self {
+         Self {
++            submission_tail: None,
++            submissions_in_flight: 0,
++            interrupt_pending_start: false,
+             session: None,
+             turns: Vec::new(),
+             buffer: VecDeque::new(),
+@@ -354,7 +363,8 @@ impl ThreadEventStore {
+                 ThreadBufferedEvent::Request(_)
+                 | ThreadBufferedEvent::Notification(_)
+                 | ThreadBufferedEvent::HistoryEntryResponse(_)
+-                | ThreadBufferedEvent::FeedbackSubmission(_) => None,
++                | ThreadBufferedEvent::FeedbackSubmission(_)
++                | ThreadBufferedEvent::UserTurnSubmission(_) => None,
+             })
+             .collect()
+     }
+@@ -383,7 +393,8 @@ impl ThreadEventStore {
+                         .should_replay_snapshot_request(request.as_ref()),
+                     ThreadBufferedEvent::Notification(_)
+                     | ThreadBufferedEvent::HistoryEntryResponse(_)
+-                    | ThreadBufferedEvent::FeedbackSubmission(_) => true,
++                    | ThreadBufferedEvent::FeedbackSubmission(_)
++                    | ThreadBufferedEvent::UserTurnSubmission(_) => true,
+                 })
+                 .cloned()
+                 .collect(),
+@@ -519,9 +530,12 @@ impl ThreadEventStore {
          PendingInteractiveReplayState::op_can_change_state(op)
      }
 
@@ -37613,7 +38256,7 @@ index f810d38745a57baeb05502a43852397b27b5e7b1..fc003fec620fa7767029274e06180b63
      }
 
      pub(super) fn side_parent_pending_status(&self) -> Option<SideParentStatus> {
-@@ -959,7 +962,7 @@ mod tests {
+@@ -959,7 +973,7 @@ mod tests {
          }
 
          assert_eq!(store.buffer.len(), 2);
@@ -37622,7 +38265,7 @@ index f810d38745a57baeb05502a43852397b27b5e7b1..fc003fec620fa7767029274e06180b63
          assert_eq!(store.active_turn_id(), Some("turn-1"));
      }
 
-@@ -984,7 +987,7 @@ mod tests {
+@@ -984,7 +998,7 @@ mod tests {
 
          let snapshot = store.snapshot();
          assert!(snapshot.events.is_empty());
@@ -37632,7 +38275,7 @@ index f810d38745a57baeb05502a43852397b27b5e7b1..fc003fec620fa7767029274e06180b63
 
      #[test]
 diff --git a/codex-rs/tui/src/app/thread_routing.rs b/codex-rs/tui/src/app/thread_routing.rs
-index e4ecae0ec92756ab19ad65dcb11779acb64794d6..bdcd3148857e732649a1d81e004ef792ea4e16f7 100644
+index e4ecae0ec92756ab19ad65dcb11779acb64794d6..0f45a8d64299ea579e03f241d2f42cad1a0cb338 100644
 --- a/codex-rs/tui/src/app/thread_routing.rs
 +++ b/codex-rs/tui/src/app/thread_routing.rs
 @@ -445,6 +445,7 @@ impl App {
@@ -37658,7 +38301,21 @@ index e4ecae0ec92756ab19ad65dcb11779acb64794d6..bdcd3148857e732649a1d81e004ef792
              if let Err(err) =
                  codex_message_history::append_entry(&text, thread_id, &history_config).await
              {
-@@ -975,7 +984,7 @@ impl App {
+@@ -699,6 +708,13 @@ impl App {
+                     (channel.sender.clone(), Arc::clone(&channel.store))
+                 };
+                 self.reset_backtrack_state();
++                if turn_id.is_empty() {
++                    let mut store = thread_event_store.lock().await;
++                    if store.submissions_in_flight > 0 {
++                        store.interrupt_pending_start = true;
++                        return Ok(true);
++                    }
++                }
+                 if !turn_id.is_empty() {
+                     let mut store = thread_event_store.lock().await;
+                     if store.pending_interrupt_turn_id.as_deref() == Some(turn_id.as_str()) {
+@@ -975,7 +991,7 @@ impl App {
              }
 
              let store = store.lock().await;
@@ -37667,6 +38324,39 @@ index e4ecae0ec92756ab19ad65dcb11779acb64794d6..bdcd3148857e732649a1d81e004ef792
                  pending_thread_ids.push(thread_id);
              }
          }
+@@ -1502,6 +1518,10 @@ impl App {
+                 ThreadBufferedEvent::FeedbackSubmission(event) => {
+                     self.enqueue_thread_feedback_event(thread_id, event).await;
+                 }
++                ThreadBufferedEvent::UserTurnSubmission(completion) => {
++                    self.enqueue_user_turn_submission(thread_id, completion)
++                        .await;
++                }
+             }
+         }
+         self.chat_widget
+@@ -1975,6 +1995,10 @@ impl App {
+             ThreadBufferedEvent::FeedbackSubmission(event) => {
+                 self.handle_feedback_thread_event(event);
+             }
++            ThreadBufferedEvent::UserTurnSubmission(completion) => {
++                self.chat_widget
++                    .handle_user_turn_submission_result(&completion);
++            }
+         }
+         if needs_refresh {
+             self.refresh_status_line();
+@@ -2005,6 +2029,10 @@ impl App {
+             ThreadBufferedEvent::FeedbackSubmission(event) => {
+                 self.handle_feedback_thread_event(event);
+             }
++            ThreadBufferedEvent::UserTurnSubmission(completion) => {
++                self.chat_widget
++                    .handle_user_turn_submission_result(&completion);
++            }
+         }
+     }
+
 diff --git a/codex-rs/tui/src/app/thread_settings.rs b/codex-rs/tui/src/app/thread_settings.rs
 index 6ad9d672b5862afad7f0d5dcf6b1bc497f6e33d6..01c09a90d8641e7f279505f96a7ba9692cfbc276 100644
 --- a/codex-rs/tui/src/app/thread_settings.rs
@@ -37741,6 +38431,585 @@ index 00775bba50a642025f173fd679f7116b21c81bd9..7128ea9f12ba3cda4b72600395b9e854
                  visibility,
                  config,
              ));
+diff --git a/codex-rs/tui/src/app/user_turn_submission.rs b/codex-rs/tui/src/app/user_turn_submission.rs
+index 229d21e22b0b8c57098a4daa8ae0a0849475184c..52353301082f451041ef64ceffc987366ba25ce0 100644
+--- a/codex-rs/tui/src/app/user_turn_submission.rs
++++ b/codex-rs/tui/src/app/user_turn_submission.rs
+@@ -3,6 +3,13 @@
+ //! This is the single app-server submission path for both new user turns and steering.
+
+ use super::*;
++use crate::app_event::UserTurnSubmissionOutcome;
++use crate::app_event::UserTurnSubmissionResult;
++use codex_app_server_protocol::ClientRequest;
++use codex_app_server_protocol::TurnInterruptParams;
++use codex_app_server_protocol::TurnInterruptResponse;
++use codex_app_server_protocol::TurnSteerParams;
++use codex_app_server_protocol::TurnSteerResponse;
+
+ pub(super) async fn try_submit_user_turn(
+     app: &mut App,
+@@ -28,90 +35,16 @@ pub(super) async fn try_submit_user_turn(
+     else {
+         return Ok(false);
+     };
+-    if let Some(turn_id) = app.active_turn_id_for_thread(thread_id).await {
+-        if *turn_trigger != "user" {
+-            color_eyre::eyre::bail!("the fork already has an active turn");
+-        }
+-        let mut steer_turn_id = turn_id;
+-        let mut retried_after_turn_mismatch = false;
+-        loop {
+-            match app_server
+-                .turn_steer(
+-                    thread_id,
+-                    steer_turn_id.clone(),
+-                    client_user_message_id.clone(),
+-                    items.to_vec(),
+-                )
+-                .await
+-            {
+-                Ok(_) => {
+-                    if app.active_thread_id == Some(thread_id)
+-                        && app.chat_widget.thread_id() == Some(thread_id)
+-                    {
+-                        crate::startup_recovery::acknowledged(client_user_message_id);
+-                    }
+-                    return Ok(true);
+-                }
+-                Err(error) => {
+-                    if let Some(turn_error) = active_turn_not_steerable_turn_error(&error) {
+-                        if !app.chat_widget.enqueue_rejected_steer() {
+-                            app.chat_widget.add_error_message(turn_error.message);
+-                        }
+-                        return Ok(true);
+-                    }
+-                    match active_turn_steer_race(&error) {
+-                        Some(ActiveTurnSteerRace::Missing) => {
+-                            if let Some(channel) = app.thread_event_channels.get(&thread_id) {
+-                                let mut store = channel.store.lock().await;
+-                                store.clear_active_turn_id();
+-                            }
+-                            break;
+-                        }
+-                        Some(ActiveTurnSteerRace::ExpectedTurnMismatch { actual_turn_id })
+-                            if !retried_after_turn_mismatch && actual_turn_id != steer_turn_id =>
+-                        {
+-                            // Review flows can swap the active turn before the TUI
+-                            // processes the corresponding notification. Retry once with
+-                            // the server-reported turn id so non-steerable review turns
+-                            // still fall through to the existing queueing behavior.
+-                            if let Some(channel) = app.thread_event_channels.get(&thread_id) {
+-                                let mut store = channel.store.lock().await;
+-                                store.set_active_turn_id(actual_turn_id.clone());
+-                            }
+-                            steer_turn_id = actual_turn_id;
+-                            retried_after_turn_mismatch = true;
+-                        }
+-                        Some(ActiveTurnSteerRace::ExpectedTurnMismatch { actual_turn_id }) => {
+-                            if let Some(channel) = app.thread_event_channels.get(&thread_id) {
+-                                let mut store = channel.store.lock().await;
+-                                store.set_active_turn_id(actual_turn_id);
+-                            }
+-                            return Err(error.into());
+-                        }
+-                        None => return Err(error.into()),
+-                    }
+-                }
+-            }
+-        }
+-    }
+     let eligible_account = app.chat_widget.daybreak_account_eligible();
+     let enabled = app.chat_widget.daybreak_enabled
+         && !app.chat_widget.side_conversation_active()
+         && !app.side_threads.contains_key(&thread_id);
+-    let cyber_access_program = match crate::daybreak::program_for_turn(
++    let cyber_access_program = crate::daybreak::program_for_turn(
+         &app.chat_widget.model_catalog().models,
+         model,
+         eligible_account,
+         enabled,
+-    ) {
+-        Ok(program) => program,
+-        Err(message) => {
+-            if !app.chat_widget.handle_turn_start_rejection(message.clone()) {
+-                app.chat_widget.add_error_message(message);
+-            }
+-            return Ok(true);
+-        }
+-    };
++    );
+     let config = app.chat_widget.config_ref();
+     let selected_profile = app.pending_server_profiles.get(&thread_id).or_else(|| {
+         app.agents_overview
+@@ -156,30 +89,444 @@ pub(super) async fn try_submit_user_turn(
+         }),
+         explicit_profile.and_then(RuntimePermissionProfileOverride::turn_permission_profile),
+     );
+-    let response = app_server
+-        .turn_start(
++    let start = app_server.turn_start(
++        thread_id,
++        turn_trigger,
++        client_user_message_id.clone(),
++        items.to_vec(),
++        cwd.clone(),
++        turn_approval_policy,
++        turn_approvals_reviewer,
++        permissions_override,
++        config.permissions.user_visible_workspace_roots(),
++        model.to_string(),
++        effort.clone(),
++        *summary,
++        service_tier.clone(),
++        collaboration_mode.clone(),
++        final_output_json_schema.clone(),
++        cyber_access_program
++            .as_ref()
++            .ok()
++            .copied()
++            .flatten()
++            .map(Into::into),
++    );
++    let handle = app_server.request_handle();
++    let steer_ids = [app_server.next_request_id(), app_server.next_request_id()];
++    let interrupt_id = app_server.next_request_id();
++    let backend_id = app_server.backend_id();
++    let events = app.app_event_tx.clone();
++    let store = Arc::clone(&app.ensure_thread_channel(thread_id).store);
++    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
++    let previous = {
++        let mut state = store.lock().await;
++        state.submissions_in_flight += 1;
++        state.submission_tail.replace(done_rx)
++    };
++    let op = op.clone();
++    let client_id = client_user_message_id.clone();
++    let items = items.to_vec();
++    let trigger = *turn_trigger;
++    tokio::spawn(async move {
++        if let Some(previous) = previous {
++            let _ = previous.await;
++        }
++        let result: Result<UserTurnSubmissionOutcome> = async {
++            let active = store.lock().await.active_turn_id.clone();
++            if let Some(mut turn_id) = active {
++                if trigger != "user" {
++                    color_eyre::eyre::bail!("the fork already has an active turn");
++                }
++                for (attempt, request_id) in steer_ids.into_iter().enumerate() {
++                    let result = handle
++                        .request_typed::<TurnSteerResponse>(ClientRequest::TurnSteer {
++                            request_id,
++                            params: TurnSteerParams {
++                                thread_id: thread_id.to_string(),
++                                expected_turn_id: turn_id.clone(),
++                                client_user_message_id: Some(client_id.clone()),
++                                input: items.clone(),
++                                responsesapi_client_metadata: None,
++                                responsesapi_client_metadata_patch: None,
++                                additional_context: None,
++                            },
++                        })
++                        .await;
++                    match result {
++                        Ok(response) => {
++                            return Ok(UserTurnSubmissionOutcome::Steered(response.turn_id));
++                        }
++                        Err(error) => {
++                            if let Some(error) = active_turn_not_steerable_turn_error(&error) {
++                                return Ok(UserTurnSubmissionOutcome::RejectedSteer(error));
++                            }
++                            match active_turn_steer_race(&error) {
++                                Some(ActiveTurnSteerRace::Missing) => {
++                                    let mut state = store.lock().await;
++                                    if state.active_turn_id.as_deref() == Some(turn_id.as_str()) {
++                                        state.clear_active_turn_id();
++                                    }
++                                    break;
++                                }
++                                Some(ActiveTurnSteerRace::ExpectedTurnMismatch {
++                                    actual_turn_id,
++                                }) => {
++                                    store
++                                        .lock()
++                                        .await
++                                        .set_active_turn_id(actual_turn_id.clone());
++                                    if attempt == 0 && actual_turn_id != turn_id {
++                                        turn_id = actual_turn_id;
++                                        continue;
++                                    }
++                                    return Err(error.into());
++                                }
++                                None => return Err(error.into()),
++                            }
++                        }
++                    }
++                }
++            }
++            cyber_access_program.map_err(|message| color_eyre::eyre::eyre!(message))?;
++            let response = start.await?;
++            Ok(UserTurnSubmissionOutcome::Started(response.turn.id))
++        }
++        .await;
++        if matches!(
++            &result,
++            Ok(UserTurnSubmissionOutcome::Started(_) | UserTurnSubmissionOutcome::Steered(_))
++        ) {
++            crate::startup_recovery::acknowledged(&client_id);
++        }
++        let interrupt_turn = {
++            let mut state = store.lock().await;
++            state.submissions_in_flight -= 1;
++            let interrupted = std::mem::take(&mut state.interrupt_pending_start);
++            match &result {
++                Ok(
++                    UserTurnSubmissionOutcome::Started(id) | UserTurnSubmissionOutcome::Steered(id),
++                ) if interrupted => Some(id.clone()),
++                _ => None,
++            }
++        };
++        events.send(AppEvent::UserTurnSubmissionFinished {
++            backend_id,
+             thread_id,
+-            turn_trigger,
+-            client_user_message_id.clone(),
+-            items.to_vec(),
+-            cwd.clone(),
+-            turn_approval_policy,
+-            turn_approvals_reviewer,
+-            permissions_override,
+-            config.permissions.user_visible_workspace_roots(),
+-            model.to_string(),
+-            effort.clone(),
+-            *summary,
+-            service_tier.clone(),
+-            collaboration_mode.clone(),
+-            final_output_json_schema.clone(),
+-            cyber_access_program.map(Into::into),
++            completion: Arc::new(UserTurnSubmissionResult {
++                op,
++                result: result.map_err(Arc::new),
++            }),
++        });
++        if let Some(turn_id) = interrupt_turn {
++            let result = handle
++                .request_typed::<TurnInterruptResponse>(ClientRequest::TurnInterrupt {
++                    request_id: interrupt_id,
++                    params: TurnInterruptParams {
++                        thread_id: thread_id.to_string(),
++                        turn_id,
++                    },
++                })
++                .await;
++            if let Err(error) = result {
++                tracing::warn!(%error, "pending turn interrupt failed");
++            }
++        }
++        let _ = done_tx.send(());
++    });
++    Ok(true)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use codex_app_server_client::CloudCommand;
++    use codex_app_server_client::CloudOperation;
++
++    struct Fixture {
++        app: Box<App>,
++        server: AppServerSession,
++        commands: mpsc::Receiver<CloudCommand>,
++        events: mpsc::UnboundedReceiver<AppEvent>,
++        thread_id: ThreadId,
++    }
++
++    impl Fixture {
++        async fn new() -> Self {
++            let mut app = crate::app::test_support::make_test_app().await;
++            let (client, commands, _server_events) =
++                codex_app_server_client::CloudClient::channel(8);
++            let server = AppServerSession::new(
++                crate::backend_id::BackendId::new(),
++                codex_app_server_client::AppServerClient::Cloud(client),
++                crate::app_server_session::ThreadParamsMode::Cloud,
++            );
++            let (tx, events) = mpsc::unbounded_channel();
++            app.app_event_tx = crate::app_event_sender::AppEventSender::new(tx);
++            Self {
++                app,
++                server,
++                commands,
++                events,
++                thread_id: ThreadId::new(),
++            }
++        }
++
++        async fn submit(&mut self, id: &str) {
++            let op = AppCommand::user_turn(
++                "user",
++                id.to_string(),
++                Vec::new(),
++                self.app.config.cwd.to_path_buf(),
++                codex_app_server_protocol::AskForApproval::Never,
++                None,
++                "gpt-5.5".to_string(),
++                None,
++                None,
++                None,
++                None,
++                None,
++            );
++            assert!(
++                tokio::time::timeout(
++                    Duration::from_millis(100),
++                    try_submit_user_turn(&mut self.app, &mut self.server, self.thread_id, &op)
++                )
++                .await
++                .expect("input handler must not wait for the server")
++                .unwrap()
++            );
++        }
++
++        async fn command(&mut self) -> CloudCommand {
++            tokio::time::timeout(Duration::from_secs(2), self.commands.recv())
++                .await
++                .unwrap()
++                .unwrap()
++        }
++
++        async fn completion(&mut self) -> Arc<UserTurnSubmissionResult> {
++            let event = tokio::time::timeout(Duration::from_secs(2), self.events.recv())
++                .await
++                .unwrap()
++                .unwrap();
++            let AppEvent::UserTurnSubmissionFinished {
++                backend_id,
++                thread_id,
++                completion,
++            } = event
++            else {
++                panic!("submission result expected");
++            };
++            assert_eq!(backend_id, self.server.backend_id());
++            assert_eq!(thread_id, self.thread_id);
++            completion
++        }
++    }
++
++    fn reject(command: CloudCommand, message: &str) {
++        command
++            .response
++            .send(Ok(Err(codex_app_server_protocol::JSONRPCErrorError {
++                code: -32602,
++                message: message.to_string(),
++                data: None,
++            })))
++            .unwrap();
++    }
++
++    #[tokio::test]
++    async fn submission_returns_before_delayed_start_response() {
++        for steer in [false, true] {
++            let mut fixture = Fixture::new().await;
++            if steer {
++                fixture
++                    .app
++                    .ensure_thread_channel(fixture.thread_id)
++                    .store
++                    .lock()
++                    .await
++                    .set_active_turn_id("active".to_string());
++            }
++            fixture.submit("responsive-start").await;
++            let command = fixture.command().await;
++            assert!(matches!(command.operation, CloudOperation::Request(_)));
++            reject(command, "delayed rejection");
++            assert!(fixture.completion().await.result.is_err());
++        }
++    }
++
++    #[tokio::test]
++    async fn repeated_interrupt_before_start_reply_cancels_the_accepted_turn() {
++        let mut fixture = Fixture::new().await;
++        fixture.submit("cancel-start").await;
++        let start = fixture.command().await;
++        for _ in 0..3 {
++            assert!(
++                fixture
++                    .app
++                    .try_submit_active_thread_op_via_app_server(
++                        &mut fixture.server,
++                        fixture.thread_id,
++                        &AppCommand::Interrupt
++                    )
++                    .await
++                    .unwrap()
++            );
++        }
++        assert!(fixture.commands.try_recv().is_err());
++        start
++            .response
++            .send(Ok(Ok(serde_json::json!({"turn": {
++                "id": "accepted", "items": [], "status": "inProgress", "error": null
++            }}))))
++            .unwrap();
++        let interrupt = fixture.command().await;
++        let CloudOperation::Request(request) = &interrupt.operation else {
++            panic!("request expected");
++        };
++        let ClientRequest::TurnInterrupt { params, .. } = request.as_ref() else {
++            panic!("interrupt expected");
++        };
++        assert_eq!(params.turn_id, "accepted");
++        interrupt
++            .response
++            .send(Ok(Ok(serde_json::json!({}))))
++            .unwrap();
++        assert!(matches!(
++            fixture.completion().await.result,
++            Ok(UserTurnSubmissionOutcome::Started(_))
++        ));
++    }
++
++    #[tokio::test]
++    async fn steer_mismatch_retries_then_missing_turn_starts_the_same_prompt() {
++        let mut fixture = Fixture::new().await;
++        fixture
++            .app
++            .ensure_thread_channel(fixture.thread_id)
++            .store
++            .lock()
++            .await
++            .set_active_turn_id("old".to_string());
++        fixture.submit("same-prompt").await;
++        let first = fixture.command().await;
++        reject(first, "expected active turn id `old` but found `new`");
++        let retry = fixture.command().await;
++        let CloudOperation::Request(request) = &retry.operation else {
++            panic!("request expected");
++        };
++        let ClientRequest::TurnSteer { params, .. } = request.as_ref() else {
++            panic!("steer expected");
++        };
++        assert_eq!(params.expected_turn_id, "new");
++        assert_eq!(
++            params.client_user_message_id.as_deref(),
++            Some("same-prompt")
++        );
++        reject(retry, "no active turn to steer");
++        let start = fixture.command().await;
++        let CloudOperation::Request(request) = &start.operation else {
++            panic!("request expected");
++        };
++        let ClientRequest::TurnStart { params, .. } = request.as_ref() else {
++            panic!("start expected");
++        };
++        assert_eq!(
++            params.client_user_message_id.as_deref(),
++            Some("same-prompt")
++        );
++        reject(start, "start denied");
++        assert!(fixture.completion().await.result.is_err());
++    }
++
++    #[tokio::test]
++    async fn slow_steers_preserve_submission_order() {
++        let mut fixture = Fixture::new().await;
++        fixture
++            .app
++            .ensure_thread_channel(fixture.thread_id)
++            .store
++            .lock()
++            .await
++            .set_active_turn_id("active".to_string());
++        fixture.submit("first").await;
++        fixture.submit("second").await;
++        for id in ["first", "second"] {
++            let command = fixture.command().await;
++            let CloudOperation::Request(request) = &command.operation else {
++                panic!("request expected");
++            };
++            let ClientRequest::TurnSteer { params, .. } = request.as_ref() else {
++                panic!("steer expected");
++            };
++            assert_eq!(params.client_user_message_id.as_deref(), Some(id));
++            tokio::task::yield_now().await;
++            assert!(fixture.commands.try_recv().is_err());
++            command
++                .response
++                .send(Ok(Ok(serde_json::json!({"turnId": "active"}))))
++                .unwrap();
++            assert!(matches!(
++                fixture.completion().await.result,
++                Ok(UserTurnSubmissionOutcome::Steered(_))
++            ));
++        }
++    }
++
++    #[tokio::test]
++    async fn inactive_submission_result_survives_thread_refresh() {
++        let mut fixture = Fixture::new().await;
++        fixture.submit("inactive").await;
++        let command = fixture.command().await;
++        reject(command, "denied while detached");
++        let completion = fixture.completion().await;
++        let mut tui = crate::tui::test_support::make_test_tui().unwrap();
++        fixture
++            .app
++            .handle_event(
++                &mut tui,
++                &mut fixture.server,
++                AppEvent::UserTurnSubmissionFinished {
++                    backend_id: crate::backend_id::BackendId::new(),
++                    thread_id: fixture.thread_id,
++                    completion: completion.clone(),
++                },
++            )
++            .await
++            .unwrap();
++        assert!(
++            fixture.app.thread_event_channels[&fixture.thread_id]
++                .store
++                .lock()
++                .await
++                .buffer
++                .is_empty()
++        );
++        let backend_id = fixture.server.backend_id();
++        fixture
++            .app
++            .handle_event(
++                &mut tui,
++                &mut fixture.server,
++                AppEvent::UserTurnSubmissionFinished {
++                    backend_id,
++                    thread_id: fixture.thread_id,
++                    completion,
++                },
++            )
++            .await
++            .unwrap();
++        let channel = fixture
++            .app
++            .thread_event_channels
++            .get(&fixture.thread_id)
++            .unwrap();
++        let mut snapshot = channel.store.lock().await.snapshot();
++        assert!(snapshot.events.iter_mut().any(|event| matches!(
++            event,
++            ThreadBufferedEvent::UserTurnSubmission(_)
+         )
+-        .await?;
+-    if app.active_thread_id == Some(thread_id) && app.chat_widget.thread_id() == Some(thread_id) {
+-        crate::startup_recovery::acknowledged(client_user_message_id);
+-        app.chat_widget
+-            .record_safety_buffering_turn(response.turn.id, op);
++            && ThreadEventStore::event_survives_session_refresh(event)));
+     }
+-    Ok(true)
+ }
 diff --git a/codex-rs/tui/src/app/warning_notice_tests.rs b/codex-rs/tui/src/app/warning_notice_tests.rs
 index e8f36e183f4375a64c621c71518792ef00445a42..6c3afba799d27174e905754ed3499ab78fa29489 100644
 --- a/codex-rs/tui/src/app/warning_notice_tests.rs
@@ -37790,10 +39059,42 @@ index 691136baafab616f69775ec6d2582a0c6a9e1f2a..705de2e2240b4a83c851b27aadd3fb0a
                              lines.activity
                          })
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 2adc3036ae932a2cf873062c13b2775da3c8333a..3a479b539a4c8e74ae537211c236fc2993e77144 100644
+index 2adc3036ae932a2cf873062c13b2775da3c8333a..7d706188c1e78adab579af4816c60cffa33bd5fa 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -417,6 +417,10 @@ pub(crate) enum AppEvent {
+@@ -76,6 +76,19 @@ pub(crate) struct RealtimeWebrtcStartupFailure {
+     pub cause: codex_realtime_webrtc::ConnectionError,
+ }
+
++#[derive(Debug)]
++pub(crate) enum UserTurnSubmissionOutcome {
++    Started(String),
++    Steered(String),
++    RejectedSteer(codex_app_server_protocol::TurnError),
++}
++
++#[derive(Debug)]
++pub(crate) struct UserTurnSubmissionResult {
++    pub(crate) op: AppCommand,
++    pub(crate) result: Result<UserTurnSubmissionOutcome, Arc<color_eyre::Report>>,
++}
++
+ /// Global voice controls always apply to the one call's owner.
+ #[derive(Clone, Copy, Debug)]
+ pub(crate) enum VoiceControl {
+@@ -295,6 +308,11 @@ pub(crate) struct AgentPickerThreadRefresh {
+ #[allow(clippy::large_enum_variant)]
+ #[derive(Debug, IntoStaticStr)]
+ pub(crate) enum AppEvent {
++    UserTurnSubmissionFinished {
++        backend_id: crate::backend_id::BackendId,
++        thread_id: ThreadId,
++        completion: Arc<UserTurnSubmissionResult>,
++    },
+     AccountEmailLoaded {
+         request_id: uuid::Uuid,
+         email: Option<String>,
+@@ -417,6 +435,10 @@ pub(crate) enum AppEvent {
      },
      /// Switch the active thread to the selected agent.
      SelectAgentThread(ThreadId),
@@ -37804,7 +39105,7 @@ index 2adc3036ae932a2cf873062c13b2775da3c8333a..3a479b539a4c8e74ae537211c236fc29
 
      /// Fork the current thread into a transient side conversation.
      StartSide {
-@@ -523,6 +527,65 @@ pub(crate) enum AppEvent {
+@@ -523,6 +545,65 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -37870,7 +39171,7 @@ index 2adc3036ae932a2cf873062c13b2775da3c8333a..3a479b539a4c8e74ae537211c236fc29
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -674,6 +737,10 @@ pub(crate) enum AppEvent {
+@@ -674,6 +755,10 @@ pub(crate) enum AppEvent {
          nth_user_message: usize,
      },
 
@@ -37881,7 +39182,7 @@ index 2adc3036ae932a2cf873062c13b2775da3c8333a..3a479b539a4c8e74ae537211c236fc29
      /// Request to exit the application.
      ///
      /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
-@@ -720,6 +787,14 @@ pub(crate) enum AppEvent {
+@@ -720,6 +805,14 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -37897,10 +39198,19 @@ index 2adc3036ae932a2cf873062c13b2775da3c8333a..3a479b539a4c8e74ae537211c236fc29
      /// Same-host task results for the active unified mention query.
      TaskSearchResult {
 diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
-index 683e7328e2a1992ad5605f0350d606c624e9dc55..a37cd77f9a0e9b8b7c770ca25c5e194917156ea2 100644
+index 683e7328e2a1992ad5605f0350d606c624e9dc55..748103f9a87486b0eddb31239ad62f4b5a0f015e 100644
 --- a/codex-rs/tui/src/app_server_session.rs
 +++ b/codex-rs/tui/src/app_server_session.rs
-@@ -935,6 +935,7 @@ impl AppServerSession {
+@@ -131,8 +131,6 @@ use codex_app_server_protocol::TurnInterruptParams;
+ use codex_app_server_protocol::TurnInterruptResponse;
+ use codex_app_server_protocol::TurnStartParams;
+ use codex_app_server_protocol::TurnStartResponse;
+-use codex_app_server_protocol::TurnSteerParams;
+-use codex_app_server_protocol::TurnSteerResponse;
+ use codex_app_server_protocol::UserInput;
+ use codex_config::ConfigLayerSource;
+ use codex_otel::TelemetryAuthMode;
+@@ -935,6 +933,7 @@ impl AppServerSession {
              /*session_start_source*/ None,
              /*remote_cwd_override*/ None,
              /*selected_profile*/ None,
@@ -37908,7 +39218,7 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..a37cd77f9a0e9b8b7c770ca25c5e1949
          )
          .await
      }
-@@ -946,6 +947,7 @@ impl AppServerSession {
+@@ -946,6 +945,7 @@ impl AppServerSession {
          session_start_source: Option<ThreadStartSource>,
          remote_cwd_override: Option<&std::path::Path>,
          selected_profile: Option<&PermissionProfileSelection>,
@@ -37916,7 +39226,7 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..a37cd77f9a0e9b8b7c770ca25c5e1949
      ) -> Result<AppServerStartedThread> {
          if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Server
              && selected_profile.is_some()
-@@ -963,12 +965,18 @@ impl AppServerSession {
+@@ -963,12 +963,18 @@ impl AppServerSession {
              session_start_source,
          );
          if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
@@ -37938,7 +39248,118 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..a37cd77f9a0e9b8b7c770ca25c5e1949
          }
          if let Some(selected_profile) = selected_profile {
              params.runtime_workspace_roots = None;
-@@ -2031,6 +2039,8 @@ pub(crate) fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
+@@ -1515,7 +1521,7 @@ impl AppServerSession {
+     }
+
+     #[allow(clippy::too_many_arguments)]
+-    pub(crate) async fn turn_start(
++    pub(crate) fn turn_start(
+         &mut self,
+         thread_id: ThreadId,
+         turn_trigger: &str,
+@@ -1533,36 +1539,42 @@ impl AppServerSession {
+         collaboration_mode: Option<codex_protocol::config_types::CollaborationMode>,
+         output_schema: Option<serde_json::Value>,
+         cyber_access_program: Option<codex_app_server_protocol::CyberAccessProgram>,
+-    ) -> Result<TurnStartResponse> {
++    ) -> impl std::future::Future<Output = Result<TurnStartResponse>> + Send + use<> {
+         let request_id = self.next_request_id();
+-        let mut params = TurnStartParams {
+-            thread_id: thread_id.to_string(),
+-            turn_trigger: Some(turn_trigger.to_string()),
+-            client_user_message_id: Some(client_user_message_id),
+-            input: items,
+-            output_schema,
+-            cyber_access_program,
+-            ..TurnStartParams::default()
+-        };
+-        if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
+-            let (sandbox_policy, permissions) =
+-                turn_permissions_overrides(permissions_override, cwd.as_path())?;
+-            params.cwd = Some(cwd);
+-            params.runtime_workspace_roots = Some(workspace_roots.to_vec());
+-            params.approval_policy = approval_policy;
+-            params.approvals_reviewer = approvals_reviewer;
+-            params.sandbox_policy = sandbox_policy;
+-            params.permissions = permissions;
+-            params.model = Some(model);
+-            params.service_tier = service_tier;
+-            params.effort = effort;
+-            params.summary = summary;
+-            params.collaboration_mode = collaboration_mode;
++        let handle = self.request_handle();
++        let request = (|| -> Result<ClientRequest> {
++            let mut params = TurnStartParams {
++                thread_id: thread_id.to_string(),
++                turn_trigger: Some(turn_trigger.to_string()),
++                client_user_message_id: Some(client_user_message_id),
++                input: items,
++                output_schema,
++                cyber_access_program,
++                ..TurnStartParams::default()
++            };
++            if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
++                let (sandbox_policy, permissions) =
++                    turn_permissions_overrides(permissions_override, cwd.as_path())?;
++                params.cwd = Some(cwd);
++                params.runtime_workspace_roots = Some(workspace_roots.to_vec());
++                params.approval_policy = approval_policy;
++                params.approvals_reviewer = approvals_reviewer;
++                params.sandbox_policy = sandbox_policy;
++                params.permissions = permissions;
++                params.model = Some(model);
++                params.service_tier = service_tier;
++                params.effort = effort;
++                params.summary = summary;
++                params.collaboration_mode = collaboration_mode;
++            }
++            Ok(ClientRequest::TurnStart { request_id, params })
++        })();
++        async move {
++            handle
++                .request_typed(request?)
++                .await
++                .wrap_err("turn/start failed in TUI")
+         }
+-        self.client
+-            .request_typed(ClientRequest::TurnStart { request_id, params })
+-            .await
+-            .wrap_err("turn/start failed in TUI")
+     }
+
+     pub(crate) async fn turn_interrupt(
+@@ -1591,30 +1603,6 @@ impl AppServerSession {
+         self.turn_interrupt(thread_id, String::new()).await
+     }
+
+-    pub(crate) async fn turn_steer(
+-        &mut self,
+-        thread_id: ThreadId,
+-        turn_id: String,
+-        client_user_message_id: String,
+-        items: Vec<UserInput>,
+-    ) -> std::result::Result<TurnSteerResponse, TypedRequestError> {
+-        let request_id = self.next_request_id();
+-        self.client
+-            .request_typed(ClientRequest::TurnSteer {
+-                request_id,
+-                params: TurnSteerParams {
+-                    thread_id: thread_id.to_string(),
+-                    client_user_message_id: Some(client_user_message_id),
+-                    input: items,
+-                    responsesapi_client_metadata: None,
+-                    responsesapi_client_metadata_patch: None,
+-                    additional_context: None,
+-                    expected_turn_id: turn_id,
+-                },
+-            })
+-            .await
+-    }
+-
+     pub(crate) async fn thread_set_name(
+         &mut self,
+         thread_id: ThreadId,
+@@ -2031,6 +2019,8 @@ pub(crate) fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
          // `model/list` already returns models filtered for the active client/auth context.
          supported_in_api: true,
          input_modalities: model.input_modalities,
@@ -37947,7 +39368,7 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..a37cd77f9a0e9b8b7c770ca25c5e1949
      }
  }
 
-@@ -3008,6 +3018,7 @@ mod tests {
+@@ -3008,6 +2998,7 @@ mod tests {
              spend_control_reached: None,
              plan_type: None,
              rate_limit_reached_type: None,
@@ -37955,7 +39376,7 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..a37cd77f9a0e9b8b7c770ca25c5e1949
          }
      }
 
-@@ -3027,6 +3038,8 @@ mod tests {
+@@ -3027,6 +3018,8 @@ mod tests {
              display_name: "Current model".to_string(),
              description: "A test model".to_string(),
              model_specialty: None,
@@ -40270,7 +41691,7 @@ index ec00cf99a3a770c3c83bcb8c36cec08225fe171d..a64a759ba055f661f5bcad5bcc44db60
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..9d49d2d3f86b29e7d25151c6da009e83a47468f9 100644
+index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..a5876014621bc49f703de092fae4717e0d5a596e 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -311,6 +311,7 @@ pub(crate) use interaction::KeyEventAction;
@@ -40369,6 +41790,69 @@ index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..9d49d2d3f86b29e7d25151c6da009e83
          let mut session_info_cell = Some(Box::new(cell) as Box<dyn HistoryCell>);
          let merged_header = if let Some(active) = self.transcript.take_active_cell() {
              if active
+@@ -1913,6 +1940,53 @@ impl ChatWidget {
+             .send(AppEvent::AppendMessageHistoryEntry { thread_id, text });
+     }
+
++    pub(crate) fn handle_user_turn_submission_result(
++        &mut self,
++        completion: &crate::app_event::UserTurnSubmissionResult,
++    ) {
++        use crate::app_event::UserTurnSubmissionOutcome;
++        let AppCommand::UserTurn {
++            client_user_message_id,
++            ..
++        } = &completion.op
++        else {
++            return;
++        };
++        let pending = self.input_queue.pending_user_message_client_id.as_ref()
++            == Some(client_user_message_id);
++        match &completion.result {
++            Ok(UserTurnSubmissionOutcome::Started(turn_id)) => {
++                if pending
++                    && (self.input_queue.user_turn_pending_start
++                        || (self.turn_lifecycle.agent_turn_running
++                            && self.last_turn_id() == Some(turn_id.as_str())))
++                {
++                    self.record_safety_buffering_turn(turn_id.clone(), &completion.op);
++                }
++            }
++            Ok(UserTurnSubmissionOutcome::Steered(_)) => {}
++            Ok(UserTurnSubmissionOutcome::RejectedSteer(error)) => {
++                if self.enqueue_rejected_steer_for_client(client_user_message_id) {
++                    self.maybe_send_next_queued_input();
++                } else if pending {
++                    self.input_queue.pending_user_message_client_id = None;
++                    self.handle_turn_start_rejection(error.message.clone());
++                }
++            }
++            Err(error) => {
++                if pending {
++                    self.input_queue.pending_user_message_client_id = None;
++                    if error.downcast_ref::<crate::app_server_session::UnsupportedLegacyPermissionProfile>().is_some() {
++                        self.set_queue_autosend_suppressed(true);
++                    }
++                    self.handle_turn_start_rejection(format!("Failed to start turn: {error:#}"));
++                } else if self.enqueue_rejected_steer_for_client(client_user_message_id) {
++                    self.add_error_message(format!("Failed to submit steer: {error:#}"));
++                }
++            }
++        }
++    }
++
+     pub(crate) fn prepare_local_op_submission(&mut self, op: &AppCommand) {
+         if matches!(
+             op,
+@@ -1922,6 +1996,8 @@ impl ChatWidget {
+         ) {
+             self.transcript.last_status_copy_targets = None;
+             self.input_queue.user_turn_pending_start = true;
++            self.update_task_running_state();
++            self.set_status_header(String::from("Working"));
+         }
+         if matches!(op, AppCommand::Interrupt) && self.turn_lifecycle.agent_turn_running {
+             if let Some(controller) = self.stream_controller.as_mut() {
 diff --git a/codex-rs/tui/src/chatwidget/activity_presentation.rs b/codex-rs/tui/src/chatwidget/activity_presentation.rs
 index 573a4770f6265fe88acca9e69d56394229a34fa7..d74cce51b6b58206577721caad446cd5573d0454 100644
 --- a/codex-rs/tui/src/chatwidget/activity_presentation.rs
@@ -40634,10 +42118,31 @@ index fd7fb8f86c37c4d995eb5ba905ec22ffa0e084b4..55eab1a439ef865f68f804fae8d93bdc
              return false;
          }
 diff --git a/codex-rs/tui/src/chatwidget/input_restore.rs b/codex-rs/tui/src/chatwidget/input_restore.rs
-index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..9bc8ec102121f4fbe7a53687f904d688376bfa96 100644
+index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..844aded2ef37cbcb06df9130d9b358a7aa30aaa6 100644
 --- a/codex-rs/tui/src/chatwidget/input_restore.rs
 +++ b/codex-rs/tui/src/chatwidget/input_restore.rs
-@@ -374,17 +374,21 @@ impl ChatWidget {
+@@ -351,6 +351,20 @@ impl ChatWidget {
+         true
+     }
+
++    pub(super) fn enqueue_rejected_steer_for_client(&mut self, client_id: &str) -> bool {
++        let Some(index) = self
++            .input_queue
++            .pending_steers
++            .iter()
++            .position(|steer| steer.client_id == client_id)
++        else {
++            return false;
++        };
++        let steer = self.input_queue.pending_steers.remove(index).unwrap();
++        self.input_queue.pending_steers.push_front(steer);
++        self.enqueue_rejected_steer()
++    }
++
+     /// Handle a turn aborted due to user interrupt (Esc), budget exhaustion,
+     /// or review completion.
+     /// When there are queued user messages, restore them into the composer
+@@ -374,17 +388,21 @@ impl ChatWidget {
                      /*hint*/ None,
                  ));
              } else {
@@ -40667,7 +42172,7 @@ index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..9bc8ec102121f4fbe7a53687f904d688
          }
 
 diff --git a/codex-rs/tui/src/chatwidget/input_submission.rs b/codex-rs/tui/src/chatwidget/input_submission.rs
-index 7d0c7403b50611b9b1a15fb4eb8a695bb3f3a3be..8fb1e3e48ddbf8e67440396f8b8f1bf5b9baec6b 100644
+index 7d0c7403b50611b9b1a15fb4eb8a695bb3f3a3be..dda6d8a128c742854ffd4a2b2c5a283d003e5f5f 100644
 --- a/codex-rs/tui/src/chatwidget/input_submission.rs
 +++ b/codex-rs/tui/src/chatwidget/input_submission.rs
 @@ -453,12 +453,20 @@ impl ChatWidget {
@@ -40692,6 +42197,15 @@ index 7d0c7403b50611b9b1a15fb4eb8a695bb3f3a3be..8fb1e3e48ddbf8e67440396f8b8f1bf5
          crate::startup_recovery::bind_submission(&text, &client_user_message_id);
          let pending_steer = (!render_in_history).then(|| PendingSteer {
              client_id: client_user_message_id.clone(),
+@@ -530,6 +538,8 @@ impl ChatWidget {
+         if render_in_history {
+             self.input_queue.user_turn_pending_start = true;
+             self.input_queue.pending_user_message_client_id = Some(client_user_message_id.clone());
++            self.update_task_running_state();
++            self.set_status_header(String::from("Working"));
+         }
+
+         // Persist the submitted text to cross-session message history. Mentions are encoded into
 diff --git a/codex-rs/tui/src/chatwidget/model_popups.rs b/codex-rs/tui/src/chatwidget/model_popups.rs
 index 62af5d124d8080ab84d391ab4b66d444eda0fc94..1a180fdc9974e71825314878a9383bec0f6a93dc 100644
 --- a/codex-rs/tui/src/chatwidget/model_popups.rs
@@ -40938,10 +42452,40 @@ index 62af5d124d8080ab84d391ab4b66d444eda0fc94..1a180fdc9974e71825314878a9383bec
          });
      }
 diff --git a/codex-rs/tui/src/chatwidget/protocol.rs b/codex-rs/tui/src/chatwidget/protocol.rs
-index be7da50c038199528746c0b2287fd225198cd1c0..69450e63f6beba46899923c91242da2107d11e3b 100644
+index be7da50c038199528746c0b2287fd225198cd1c0..4c4908b9f5684d625bc54dc8b7ebae7122b1480c 100644
 --- a/codex-rs/tui/src/chatwidget/protocol.rs
 +++ b/codex-rs/tui/src/chatwidget/protocol.rs
-@@ -380,6 +380,10 @@ impl ChatWidget {
+@@ -6,6 +6,29 @@ impl ChatWidget {
+         notification: ServerNotification,
+         replay_kind: Option<ReplayKind>,
+     ) {
++        if replay_kind.is_none() {
++            let pending_start =
++                self.input_queue.user_turn_pending_start && !self.turn_lifecycle.agent_turn_running;
++            let stale = match &notification {
++                ServerNotification::TurnCompleted(completed) => {
++                    pending_start
++                        || self
++                            .last_turn_id()
++                            .is_some_and(|id| id != completed.turn.id)
++                }
++                ServerNotification::Error(error) => self.last_turn_id().is_some_and(|id| {
++                    if pending_start {
++                        id == error.turn_id
++                    } else {
++                        self.turn_lifecycle.agent_turn_running && id != error.turn_id
++                    }
++                }),
++                _ => false,
++            };
++            if stale {
++                return;
++            }
++        }
+         // Reject misrouted child updates before shared notification handling mutates parent state.
+         if let ServerNotification::McpServerStatusUpdated(notification) = &notification
+             && let (Some(notification_thread_id), Some(thread_id)) =
+@@ -380,6 +403,10 @@ impl ChatWidget {
              | ServerNotification::ThreadStatusChanged(_)
              | ServerNotification::ThreadReadStateChanged(_)
              | ServerNotification::ThreadReverted(_)
@@ -40952,7 +42496,7 @@ index be7da50c038199528746c0b2287fd225198cd1c0..69450e63f6beba46899923c91242da21
              | ServerNotification::ThreadQueueChanged(_)
              | ServerNotification::ThreadPredictionUpdated(_)
              | ServerNotification::ThreadArchived(_)
-@@ -624,8 +628,8 @@ impl ChatWidget {
+@@ -624,8 +651,8 @@ impl ChatWidget {
              item @ ThreadItemPayload::CommandExecution { .. } => {
                  self.on_command_execution_started(item)
              }
@@ -40963,7 +42507,7 @@ index be7da50c038199528746c0b2287fd225198cd1c0..69450e63f6beba46899923c91242da21
              }
              item @ ThreadItemPayload::McpToolCall { .. } => self.on_mcp_tool_call_started(item),
              item @ ThreadItemPayload::DynamicToolCall { .. } => self.on_dynamic_tool_item(item),
-@@ -696,14 +700,16 @@ impl ChatWidget {
+@@ -696,14 +723,16 @@ impl ChatWidget {
          {
              return;
          }
@@ -41945,10 +43489,281 @@ index 42f292b52b0af893e7b1621b7e164b2db1b4fbbe..45fbbd15e9d828501d2de340b758878c
 
  #[path = "tests/questions_tests.rs"]
 diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..065f85928860c8984ea870ca2593d8035e210e4d 100644
+index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..ebc9d51dc8bc5f9ef52224f08dc572f4115a399d 100644
 --- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-@@ -70,6 +70,38 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
+@@ -8,6 +8,270 @@ use pretty_assertions::assert_eq;
+
+ const SAFETY_BUFFERING_HEADER_TEXT: &str = "Giving this request a little extra thought";
+
++fn lifecycle_turn(id: &str, status: AppServerTurnStatus) -> AppServerTurn {
++    AppServerTurn {
++        id: id.to_string(),
++        root_turn_id: None,
++        items_view: codex_app_server_protocol::TurnItemsView::Full,
++        items: Vec::new(),
++        status,
++        error: None,
++        started_at: Some(0),
++        completed_at: None,
++        duration_ms: None,
++    }
++}
++
++#[tokio::test]
++async fn late_submission_failure_cannot_reject_the_next_prompt() {
++    let (mut chat, _events, mut ops) = make_chatwidget_manual(None).await;
++    chat.thread_id = Some(ThreadId::new());
++    chat.submit_user_message(UserMessage::from("old"));
++    let old = next_submit_op(&mut ops);
++    chat.handle_turn_start_rejection("old denied".to_string());
++    chat.submit_user_message(UserMessage::from("new"));
++    let new = next_submit_op(&mut ops);
++    let failed = |op| crate::app_event::UserTurnSubmissionResult {
++        op,
++        result: Err(Arc::new(color_eyre::eyre::eyre!("denied"))),
++    };
++    chat.handle_user_turn_submission_result(&failed(old));
++    assert!(chat.input_queue.user_turn_pending_start);
++    assert!(chat.bottom_pane.is_task_running());
++    assert!(chat.queue_user_message(UserMessage::from("follow-up")));
++    chat.handle_user_turn_submission_result(&failed(new));
++    assert!(chat.input_queue.user_turn_pending_start);
++    let follow_up = next_submit_op(&mut ops);
++    let AppCommand::UserTurn {
++        client_user_message_id,
++        ..
++    } = &follow_up
++    else {
++        panic!("user turn expected");
++    };
++    assert_eq!(
++        chat.input_queue.pending_user_message_client_id.as_ref(),
++        Some(client_user_message_id)
++    );
++    chat.handle_user_turn_submission_result(&failed(follow_up));
++    assert!(!chat.input_queue.user_turn_pending_start);
++    assert!(!chat.bottom_pane.is_task_running());
++}
++
++#[tokio::test]
++async fn late_steer_rejection_retries_after_turn_completion() {
++    let (mut chat, _events, mut ops) = make_chatwidget_manual(None).await;
++    chat.thread_id = Some(ThreadId::new());
++    chat.on_task_started();
++    chat.submit_user_message(UserMessage::from("steer"));
++    let op = next_submit_op(&mut ops);
++    chat.on_task_complete(None, None, false);
++    chat.handle_user_turn_submission_result(&crate::app_event::UserTurnSubmissionResult {
++        op,
++        result: Ok(crate::app_event::UserTurnSubmissionOutcome::RejectedSteer(
++            AppServerTurnError {
++                message: "not steerable".to_string(),
++                codex_error_info: None,
++                misalignment: None,
++                additional_details: None,
++            },
++        )),
++    });
++    assert!(matches!(
++        next_submit_op(&mut ops),
++        AppCommand::UserTurn { .. }
++    ));
++    assert!(chat.input_queue.pending_steers.is_empty());
++    assert!(chat.input_queue.user_turn_pending_start);
++}
++
++#[tokio::test]
++async fn stale_turn_error_preserves_running_turn() {
++    let (mut chat, mut events, _ops) = make_chatwidget_manual(None).await;
++    chat.handle_server_notification(
++        ServerNotification::TurnStarted(TurnStartedNotification {
++            thread_id: "thread".to_string(),
++            turn: lifecycle_turn("new", AppServerTurnStatus::InProgress),
++        }),
++        None,
++    );
++    drain_insert_history(&mut events);
++    chat.handle_server_notification(
++        ServerNotification::Error(ErrorNotification {
++            thread_id: "thread".to_string(),
++            turn_id: "old".to_string(),
++            will_retry: false,
++            error: AppServerTurnError {
++                message: "old error".to_string(),
++                codex_error_info: None,
++                misalignment: None,
++                additional_details: None,
++            },
++        }),
++        None,
++    );
++    assert!(chat.bottom_pane.is_task_running());
++    assert!(drain_insert_history(&mut events).is_empty());
++}
++
++#[tokio::test]
++async fn pending_start_ignores_previous_error_but_accepts_its_own_error() {
++    for turn_id in ["old", "new"] {
++        let (mut chat, _events, _ops) = make_chatwidget_manual(None).await;
++        chat.thread_id = Some(ThreadId::new());
++        chat.turn_lifecycle.last_turn_id = Some("old".to_string());
++        chat.submit_user_message(UserMessage::from("next"));
++        chat.handle_server_notification(
++            ServerNotification::Error(ErrorNotification {
++                thread_id: "thread".to_string(),
++                turn_id: turn_id.to_string(),
++                will_retry: false,
++                error: AppServerTurnError {
++                    message: "error".to_string(),
++                    codex_error_info: None,
++                    misalignment: None,
++                    additional_details: None,
++                },
++            }),
++            None,
++        );
++        assert_eq!(chat.bottom_pane.is_task_running(), turn_id == "old");
++        assert_eq!(chat.input_queue.user_turn_pending_start, turn_id == "old");
++    }
++}
++
++#[tokio::test]
++async fn stale_completion_preserves_new_turn_and_stream() {
++    for status in [
++        AppServerTurnStatus::Completed,
++        AppServerTurnStatus::Interrupted,
++        AppServerTurnStatus::Failed,
++    ] {
++        let (mut chat, mut events, _ops) = make_chatwidget_manual(None).await;
++        let answer = AppServerThreadItemPayload::AgentMessage {
++            id: "answer".to_string(),
++            text: "Previous answer".to_string(),
++            phase: Some(MessagePhase::FinalAnswer),
++            memory_citation: None,
++            delivery: None,
++            questions: None,
++        };
++        for id in ["old", "new"] {
++            chat.handle_server_notification(
++                ServerNotification::TurnStarted(TurnStartedNotification {
++                    thread_id: "thread".to_string(),
++                    turn: lifecycle_turn(id, AppServerTurnStatus::InProgress),
++                }),
++                None,
++            );
++            if id == "old" {
++                chat.handle_server_notification(
++                    ServerNotification::ItemCompleted(ItemCompletedNotification::new(
++                        "thread".to_string(),
++                        id.to_string(),
++                        answer.clone(),
++                        None,
++                        0,
++                    )),
++                    None,
++                );
++            }
++        }
++        drain_insert_history(&mut events);
++        chat.on_agent_message_delta("Current stream".to_string());
++        let mut turn = lifecycle_turn("old", status);
++        turn.items = vec![ThreadItem::untimed(answer)];
++        chat.handle_server_notification(
++            ServerNotification::TurnCompleted(TurnCompletedNotification {
++                thread_id: "thread".to_string(),
++                turn,
++            }),
++            None,
++        );
++        assert!(drain_insert_history(&mut events).is_empty());
++        assert!(chat.stream_controller.is_some());
++        assert!(chat.bottom_pane.is_task_running());
++        assert_eq!(
++            chat.bottom_pane.status_widget().unwrap().header(),
++            "Working"
++        );
++        assert!(!chat.is_normal_backtrack_mode());
++        for _ in 0..3 {
++            chat.handle_key_event(KeyCode::Esc.into());
++            assert!(!chat.is_normal_backtrack_mode());
++            assert!(chat.bottom_pane.is_task_running());
++        }
++        assert!(
++            std::iter::from_fn(|| events.try_recv().ok())
++                .any(|event| matches!(event, AppEvent::CodexOp(AppCommand::Interrupt)))
++        );
++    }
++}
++
++#[tokio::test]
++async fn pending_submission_stays_working_through_old_completion_and_repeated_escape() {
++    let (mut chat, mut events, mut ops) = make_chatwidget_manual(None).await;
++    chat.thread_id = Some(ThreadId::new());
++    chat.turn_lifecycle.last_turn_id = Some("old".to_string());
++    chat.submit_user_message(UserMessage::from("Next prompt"));
++    assert!(chat.bottom_pane.is_task_running());
++    assert_eq!(
++        chat.bottom_pane.status_widget().unwrap().header(),
++        "Working"
++    );
++    chat.handle_server_notification(
++        ServerNotification::TurnCompleted(TurnCompletedNotification {
++            thread_id: "thread".to_string(),
++            turn: lifecycle_turn("old", AppServerTurnStatus::Completed),
++        }),
++        None,
++    );
++    assert!(chat.input_queue.user_turn_pending_start);
++    while ops.try_recv().is_ok() {}
++    for _ in 0..3 {
++        assert!(!chat.is_normal_backtrack_mode());
++        chat.handle_key_event(KeyCode::Esc.into());
++        assert!(chat.bottom_pane.is_task_running());
++    }
++    assert!(
++        std::iter::from_fn(|| events.try_recv().ok())
++            .any(|event| matches!(event, AppEvent::CodexOp(AppCommand::Interrupt)))
++    );
++    assert!(chat.handle_turn_start_rejection("rejected".to_string()));
++    assert!(!chat.bottom_pane.is_task_running());
++    assert!(chat.is_normal_backtrack_mode());
++    drain_insert_history(&mut events);
++}
++
++#[tokio::test]
++async fn replayed_completion_still_restores_fallback_answer() {
++    let (mut chat, mut events, _ops) = make_chatwidget_manual(None).await;
++    chat.turn_lifecycle.last_turn_id = Some("new".to_string());
++    let mut turn = lifecycle_turn("old", AppServerTurnStatus::Completed);
++    turn.items = vec![ThreadItem::untimed(
++        AppServerThreadItemPayload::AgentMessage {
++            id: "answer".to_string(),
++            text: "Restored answer".to_string(),
++            phase: Some(MessagePhase::FinalAnswer),
++            memory_citation: None,
++            delivery: None,
++            questions: None,
++        },
++    )];
++    chat.handle_server_notification(
++        ServerNotification::TurnCompleted(TurnCompletedNotification {
++            thread_id: "thread".to_string(),
++            turn,
++        }),
++        Some(ReplayKind::ResumeInitialMessages),
++    );
++    assert!(
++        drain_insert_history(&mut events)
++            .iter()
++            .any(|lines| lines_to_single_string(lines).contains("Restored answer"))
++    );
++}
++
+ fn thread_settings_for_test(
+     model: &str,
+     thread_id: ThreadId,
+@@ -70,6 +334,38 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
      }
  }
 
@@ -41987,7 +43802,28 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..065f85928860c8984ea870ca2593d803
  #[tokio::test]
  async fn session_header_uses_catalog_display_name_without_changing_model() {
      let slug = "us.openai.gpt-5.6-luna";
-@@ -1883,7 +1915,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
+@@ -188,7 +484,6 @@ fn start_safety_buffering_test_turn(
+     chat.submit_user_message(UserMessage::from("Explain the request"));
+     let turn = next_submit_op(op_rx);
+     assert_matches!(&turn, Op::UserTurn { .. });
+-    chat.record_safety_buffering_turn(turn_id.to_string(), &turn);
+     chat.handle_server_notification(
+         ServerNotification::TurnStarted(TurnStartedNotification {
+             thread_id: thread_id.to_string(),
+@@ -206,6 +501,12 @@ fn start_safety_buffering_test_turn(
+         }),
+         /*replay_kind*/ None,
+     );
++    chat.handle_user_turn_submission_result(&crate::app_event::UserTurnSubmissionResult {
++        op: turn.clone(),
++        result: Ok(crate::app_event::UserTurnSubmissionOutcome::Started(
++            turn_id.to_string(),
++        )),
++    });
+     (thread_id, turn_id, turn)
+ }
+
+@@ -1883,7 +2184,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
      assert_eq!(chat.status_state.current_status.header, "Working");
      assert_eq!(chat.status_state.current_status.details, None);
      assert!(chat.status_state.retry_status_header.is_none());
@@ -42883,10 +44719,24 @@ index ef2aba3bd04dae249dfcea5be67ea1afcd75531f..dc7334aeac6f6bbf4d982a19aef85b87
 
  /// Retains the active cell's semantic and actual wrapped heights independently.
 diff --git a/codex-rs/tui/src/chatwidget/turn_runtime.rs b/codex-rs/tui/src/chatwidget/turn_runtime.rs
-index ef5954a853e340b35fc1bf3470c495af1091cf06..cb08efc7f78181a50a114403b0f1a589a062dcc4 100644
+index ef5954a853e340b35fc1bf3470c495af1091cf06..5bf3d0e30248c851df31e0744e8c308967fa7602 100644
 --- a/codex-rs/tui/src/chatwidget/turn_runtime.rs
 +++ b/codex-rs/tui/src/chatwidget/turn_runtime.rs
-@@ -89,6 +89,7 @@ impl ChatWidget {
+@@ -45,11 +45,13 @@ impl ChatWidget {
+     pub(super) fn update_task_running_state(&mut self) {
+         self.bottom_pane.set_task_running(
+             self.turn_lifecycle.agent_turn_running
++                || self.input_queue.user_turn_pending_start
+                 || self.review.is_review_mode
+                 || self.mcp_startup_status.is_some(),
+         );
+         if self.mcp_startup_status.is_some()
+             && !self.turn_lifecycle.agent_turn_running
++            && !self.input_queue.user_turn_pending_start
+             && !self.review.is_review_mode
+         {
+             self.bottom_pane.hide_status_indicator();
+@@ -89,6 +91,7 @@ impl ChatWidget {
          self.status_state.program_status_after_turn =
              crate::terminal_program_status::ProgramStatus::Idle;
          self.bottom_pane.dismiss_composer_sparkle();
@@ -42894,7 +44744,7 @@ index ef5954a853e340b35fc1bf3470c495af1091cf06..cb08efc7f78181a50a114403b0f1a589
          self.clear_context_compaction();
          self.input_queue.user_turn_pending_start = false;
          self.reset_safety_buffering_for_turn_start();
-@@ -146,6 +147,20 @@ impl ChatWidget {
+@@ -146,6 +149,20 @@ impl ChatWidget {
          if self.status_state.reasoning_resume_turn_id.is_some() {
              self.on_agent_reasoning_final();
          }
