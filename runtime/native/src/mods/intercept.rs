@@ -124,15 +124,24 @@ pub(crate) fn settled_by(chain: &codex_omd::ModChain) -> String {
 pub(super) fn install_notifier(core: &Arc<Core>) {
     let notified = Arc::downgrade(core);
     core.host.accounts.install_mod_notifier(Arc::new(
-        move |event: &'static str, payload: Value| {
-            if let Some(core) = notified.upgrade() {
-                if event == "model_response" {
-                    core.inventory.usage(&payload);
-                    if let Some(thread) = payload["scope"]["thread_id"].as_str() {
-                        core.autonomy
-                            .charge(&core.inventory.root_thread(thread), &payload);
-                    }
+        move |terminal_owner: Option<&str>, event: &'static str, payload: Value| {
+            let Some(base) = notified.upgrade() else { return; };
+            if event == "model_response" { base.inventory.usage(&payload); }
+            let core = match terminal_owner {
+                Some(owner) => {
+                    let Ok(owner) = owner.parse() else { return; };
+                    let Some(mods) = clients::session_owner(&codex_protocol::turn_input::TerminalOwner(owner)) else { return; };
+                    mods.core.clone()
                 }
+                None => base,
+            };
+            let thread = payload["scope"]["thread_id"].as_str().and_then(|thread| ThreadId::from_string(thread).ok());
+            if event == "model_response" && let Some(thread) = thread {
+                core.autonomy.charge(&core.inventory.root_thread(&thread.to_string()), &payload);
+            }
+            if let Some(thread) = thread {
+                expansion::broadcast_thread(&core.expansion, thread, event, payload);
+            } else {
                 expansion::broadcast(&core.expansion, event, payload);
             }
         },
@@ -143,7 +152,8 @@ pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher
     let weak = Arc::downgrade(core);
     let session = tokio::runtime::Handle::try_current().ok();
     let dispatcher: codex_omd::host::SessionDispatcher = Arc::new(
-        move |thread: &str,
+        move |terminal_owner: Option<&str>,
+              thread: &str,
               caller: &str,
               expected_source: Option<&str>,
               policy: Option<&Value>,
@@ -152,9 +162,14 @@ pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher
             let unavailable = |reason: &str| {
                 std::io::Error::other(format!("host_operation_unavailable: {reason}"))
             };
-            let core = weak
-                .upgrade()
-                .ok_or_else(|| unavailable("native host stopped"))?;
+            let base = weak.upgrade().ok_or_else(|| unavailable("native host stopped"))?;
+            let core = match terminal_owner {
+                Some(owner) => {
+                    let owner = codex_protocol::turn_input::TerminalOwner(owner.parse().map_err(|_| unavailable("invalid terminal owner"))?);
+                    clients::session_owner(&owner).ok_or_else(|| unavailable("terminal owner stopped"))?.core.clone()
+                }
+                None => base,
+            };
             let (handle, worker) = match tokio::runtime::Handle::try_current() {
                 Ok(handle)
                     if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
@@ -186,10 +201,11 @@ pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher
                 .and_then(|thread| core.expansion.thread(thread))
                 .ok_or_else(|| unavailable("no session for this thread"))?;
             let ((source, grants), generation) = {
-                let runtime = core
+                let mut runtime = core
                     .runtime
                     .lock()
                     .map_err(|_| std::io::Error::other("mod_runtime_poisoned"))?;
+                runtime.refresh_guarded(active)?;
                 (
                     facts(&runtime).remove(caller).unwrap_or_default(),
                     runtime.generation(),

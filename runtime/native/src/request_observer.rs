@@ -6,6 +6,16 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+tokio::task_local! { static POLICY_CONTEXT: http::Extensions; }
+
+pub async fn with_policy_context<F: std::future::Future>(context: http::Extensions, future: F) -> F::Output {
+    POLICY_CONTEXT.scope(context, future).await
+}
+
+pub fn policy_context() -> http::Extensions {
+    POLICY_CONTEXT.try_with(Clone::clone).unwrap_or_default()
+}
+
 pub trait ResponseAttempt: Send + Sync {
     /// Observes one raw event; replacing it with `Value::Null` drops it.
     fn observe(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError>;
@@ -27,11 +37,11 @@ pub trait ResponseObserver: Send + Sync {
         body: Option<&EncodedJsonBody>,
     ) -> Result<Option<Box<dyn ResponseAttempt>>, TransportError>;
     /// Runs the final-request stage over a unary JSON request body.
-    fn police_unary(&self, thread: Option<&str>, body: &mut Value) -> Result<(), TransportError> {
+    fn police_unary(&self, thread: Option<&str>, body: &mut Value, _context: &http::Extensions) -> Result<(), TransportError> {
         let _ = (thread, body);
         Ok(())
     }
-    fn requires_observation(&self, thread: Option<&str>) -> bool {
+    fn requires_observation(&self, thread: Option<&str>, _context: &http::Extensions) -> bool {
         let _ = thread;
         true
     }
@@ -39,6 +49,7 @@ pub trait ResponseObserver: Send + Sync {
     fn policed(&self) -> Option<String> {
         None
     }
+    fn policed_for(&self, _context: &http::Extensions) -> Option<String> { self.policed() }
     fn answer(&self, request: &Request) -> Option<Vec<Value>> {
         let _ = request;
         None
@@ -97,7 +108,11 @@ pub(crate) fn admit(
 }
 
 pub(crate) fn reject_policed_transport(transport: &str) -> Result<(), crate::error::ApiError> {
-    if let Some(owners) = OBSERVER.get().and_then(|observer| observer.policed()) {
+    reject_policed_transport_for(transport, &policy_context())
+}
+
+fn reject_policed_transport_for(transport: &str, context: &http::Extensions) -> Result<(), crate::error::ApiError> {
+    if let Some(owners) = OBSERVER.get().and_then(|observer| observer.policed_for(context)) {
         return Err(crate::error::ApiError::InvalidRequest {
             message: format!(
                 "local OMD request policy: final_request_refused: request_policy_unsupported_transport: {transport} requests cannot pass the final-request policy of {owners}; turn {owners} off to use this feature"
@@ -120,6 +135,7 @@ pub(crate) fn admit_unary(
     path: &str,
     headers: &http::HeaderMap,
     body: Option<&mut Value>,
+    context: &http::Extensions,
 ) -> Result<(), crate::error::ApiError> {
     let thread = headers
         .get("thread-id")
@@ -127,14 +143,14 @@ pub(crate) fn admit_unary(
     if path != UNPOLICED_SEARCH_PATH {
         match (OBSERVER.get(), body) {
             (Some(observer), Some(body)) if POLICED_UNARY_PATHS.contains(&path) => {
-                observer.police_unary(thread, body)?
+                observer.police_unary(thread, body, context)?
             }
-            _ => reject_policed_transport(path)?,
+            _ => reject_policed_transport_for(path, context)?,
         }
     }
     if OBSERVER
         .get()
-        .is_some_and(|observer| observer.requires_observation(thread))
+        .is_some_and(|observer| observer.requires_observation(thread, context))
     {
         return Err(crate::error::ApiError::InvalidRequest {
             message: "local OMD request policy requires observed HTTP Responses transport".into(),
@@ -156,6 +172,7 @@ pub(crate) fn prepare(
     request: &mut Request,
     body: &mut Option<EncodedJsonBody>,
 ) -> Result<(), TransportError> {
+    if request.policy_context.is_empty() { request.policy_context = policy_context(); }
     if let Some(observer) = OBSERVER.get() {
         observer.prepare(request, body)?;
     }

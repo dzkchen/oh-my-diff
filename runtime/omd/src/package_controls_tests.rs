@@ -70,10 +70,10 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
     );
     let generation = listed["generation"].as_u64().unwrap();
     assert_eq!(
-        list_fields(&store, None, Value::Null, None).unwrap(),
+        list_fields(&store, None, Value::Null, None, None).unwrap(),
         listed
     );
-    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]}), None).unwrap();
+    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]}), None, None).unwrap();
     assert_eq!(
         (narrow["packages"].clone(), narrow["generation"].as_u64()),
         (
@@ -86,18 +86,18 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
         json!({"fields": "id"}),
         json!({"fields": [], "page": 1}),
     ] {
-        assert!(list_fields(&store, None, invalid, None).is_err());
+        assert!(list_fields(&store, None, invalid, None, None).is_err());
     }
 
     let enable = preview(
         &store,
-        json!({"action": "enable", "id": "sample_mod", "expected_generation": generation}),
+        json!({"action": "enable", "target": "shared", "id": "sample_mod", "expected_generation": generation}),
     )
     .unwrap();
     apply(&store, &enable.control).unwrap();
     assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], true);
 
-    let disable = preview(&store, json!({"action": "disable", "id": "sample_mod"})).unwrap();
+    let disable = preview(&store, json!({"action": "disable", "target": "shared", "id": "sample_mod"})).unwrap();
     apply(&store, &disable.control).unwrap();
     assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], false);
 
@@ -130,11 +130,11 @@ fn stale_previews_and_invalid_requests_are_refused() {
     assert!(
         preview(
             &store,
-            json!({"action": "enable", "id": "sample_mod", "expected_generation": 0})
+            json!({"action": "enable", "target": "shared", "id": "sample_mod", "expected_generation": 0})
         )
         .is_err()
     );
-    assert!(preview(&store, json!({"action": "enable", "id": "missing"})).is_err());
+    assert!(preview(&store, json!({"action": "enable", "target": "shared", "id": "missing"})).is_err());
     assert!(preview(&store, json!({"action": "explode", "id": "sample_mod"})).is_err());
     assert!(preview(&store, json!({"action": "install"})).is_err());
     assert!(
@@ -208,7 +208,7 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
             "user",
         )
         .unwrap();
-    let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
+    let enable = preview(&store, json!({"action": "enable", "target": "shared", "id": "author_mod"})).unwrap();
     assert_eq!(enable.public["grants_added"], json!(["commands"]));
     apply(&store, &enable.control).unwrap();
     let idle = json!({"mods": [], "rejected": [], "reload_error": null});
@@ -256,7 +256,7 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
     )
     .unwrap();
     apply(&store, &install.control).unwrap();
-    let disable = preview(&store, json!({"action": "disable", "id": "author_mod"})).unwrap();
+    let disable = preview(&store, json!({"action": "disable", "target": "shared", "id": "author_mod"})).unwrap();
     apply(&store, &disable.control).unwrap();
     let states = list(&store, None).unwrap()["packages"]
         .as_array()
@@ -271,12 +271,12 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
         })
         .collect::<Vec<_>>();
     assert!(states.contains(&(json!("user"), json!("selection"), json!(false))));
-    let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
+    let enable = preview(&store, json!({"action": "enable", "target": "shared", "id": "author_mod"})).unwrap();
     apply(&store, &enable.control).unwrap();
 
     let before = list(&store, None).unwrap()["generation"].as_u64().unwrap();
     assert!(reload(&store).unwrap()["generation"].as_u64().unwrap() > before);
-    let disable = preview(&store, json!({"action": "disable", "id": "author_mod"})).unwrap();
+    let disable = preview(&store, json!({"action": "disable", "target": "shared", "id": "author_mod"})).unwrap();
     apply(&store, &disable.control).unwrap();
     assert_eq!(
         list(&store, Some(&running)).unwrap()["packages"][0]["pending"],
@@ -317,7 +317,7 @@ fn listing_offers_host_routes_and_marks_required_selections() {
         .to_string(),
     )
     .unwrap();
-    let listed = list_fields(&store, None, Value::Null, Some(&repository)).unwrap();
+    let listed = list_fields(&store, None, Value::Null, Some(&repository), None).unwrap();
     let package = &listed["packages"][0];
     assert_eq!(package["required"], true);
     assert_eq!(
@@ -339,7 +339,7 @@ fn listing_offers_host_routes_and_marks_required_selections() {
 
 #[test]
 fn route_choices_add_connected_provider_lead_routes_that_workers_accept() {
-    set_connected_models(|provider, model| {
+    set_connected_models(|_terminal_owner, provider, model| {
         provider == "fixture-provider" && model == "fixture-live"
     });
     let (_temp, store, root) = setup();
@@ -382,7 +382,7 @@ fn route_choices_add_connected_provider_lead_routes_that_workers_accept() {
         .to_string(),
     )
     .unwrap();
-    let listed = list_fields(&store, None, Value::Null, Some(&repository)).unwrap();
+    let listed = list_fields(&store, None, Value::Null, Some(&repository), None).unwrap();
     assert_eq!(
         listed["packages"][0]["settings_schema"]["properties"]["route"]["enum"],
         json!(["worker", "connected", "connected-mine"])

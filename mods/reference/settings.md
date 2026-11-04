@@ -11,12 +11,18 @@ experimental.
 ## `settings.write`
 
 ```text
-settings.write {id?, values} → {settings}
+settings.write {id?, scope?, values, target?, reset?} → {settings}
 ```
 
-`settings.write` checks settings against the schema, saves them and redraws at once. A `null` value removes a setting.
+`settings.write` checks settings against the schema and redraws at once. Experimental `target` is `terminal`
+(the default in a terminal) or `shared` to save defaults. Terminal writes live in memory until that terminal host
+exits, survive conversation changes and reloads, and never write shared configuration. `reset: [key, ...]` clears
+terminal overrides for those keys; pass `values: {}` to reset without writing. A `null` value retains removal
+semantics; use explicit reset to inherit the latest defaults. Shared writes persist.
 It runs only from [user contexts](host-model.md#callback-contexts). Without `id` it writes the caller's own settings.
-With `id` it needs `packages`. `/omd` stays the native recovery path for settings.
+With `id` or `scope` it needs `packages`. Experimental `scope: "user" | "project"` selects that trusted copy explicitly,
+including a copy shadowed by project precedence. Omit `scope` to use the current effective copy. The selected
+copy supplies its own schema, file settings and authority checks for terminal and shared writes. `/omd` stays the native recovery path for settings.
 
 Callbacks read the effective settings as `api.settings` (`Readonly<Record<string, Json>>`); see
 [Settings defaults](#settings-defaults) and the [settings file](#settings-file-settings_file_v1).
@@ -25,7 +31,7 @@ Callbacks read the effective settings as `api.settings` (`Readonly<Record<string
 
 Callbacks receive a setting's explicit value when one is set, else the `settings_schema` property's `default`. Give
 every property a default. With `additionalProperties: false`, the host ignores a stored setting the package no longer
-declares and drops it at the next settings write or update, so a release can remove a setting. A write that names an
+declares and drops it at the next shared settings write or package update, so a release can remove a setting. A write that names an
 undeclared setting is still refused with `unknown_setting`.
 
 A property can also have a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
@@ -42,17 +48,17 @@ the directory that contains `mods.json`.
 - Only one of the three files may exist. More than one is invalid.
 - The file is at most 64 KiB, and its top level must be an object whose keys are the mod's setting names.
 - Its keys override the saved settings (and the schema `default` values) in every callback, render and chain
-  digest. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
+  digest, before terminal overrides. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
   a wrongly typed value and a missing `required` setting are invalid.
 - Administrator-managed selections ignore the file (status `ignored`).
-- The saved settings must be valid on their own. Save a `required` setting without a `default` through
-  `settings.write` or `/omd`. The file can then override it.
+- The saved settings must be valid on their own. Save a `required` setting without a `default` as a shared
+  default before enabling the mod; `omd-mod settings STORE PACKAGE JSON` writes shared values. The file can then override it.
 - An unreadable, oversize, unparsable or invalid file is skipped whole: the saved settings apply, the mod stays on and
   its view diagnostics include `settings_file_invalid: <reason>`.
 - Creating, editing or deleting the file applies at the refresh points of a `mods.json` change.
 - `api.settingsFile` is `{path, status: 'missing' | 'loaded' | 'invalid' | 'ignored', error: string | null}`. `path` is
   the absolute file to tell the user to edit (the `.json` one while none exists); `error` is the reason when `invalid`.
-- `settings.write` of a key the file sets fails with `setting_set_by_file: <key>`. `omd-mod selection-status` lists
+- Shared `settings.write` of a key the file sets fails with `setting_set_by_file: <key>`. `omd-mod selection-status` lists
   such keys with origin `file` and the file under `settings_file`.
 
 ## Manifest `environment`

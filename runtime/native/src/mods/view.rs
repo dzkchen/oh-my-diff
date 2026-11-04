@@ -14,6 +14,7 @@ struct State {
 }
 
 pub(super) struct Views {
+    persist: bool,
     state: Mutex<State>,
     published: Mutex<Option<Arc<ModViewSnapshot>>>,
 }
@@ -64,12 +65,13 @@ impl Views {
             .unwrap_or(Value::Null)
     }
 
-    pub(super) fn new() -> Self {
+    pub(super) fn new(persist: bool) -> Self {
         let epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX))
             .unwrap_or_default();
         Self {
+            persist,
             state: Mutex::new(State {
                 snapshot: ModViewSnapshot {
                     epoch,
@@ -100,7 +102,7 @@ impl Views {
             .map(|(_, diagnostic)| diagnostic.clone())
             .collect();
         state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
-        let _ = owner.persist_json("mod-view.json", &state.snapshot);
+        if self.persist { let _ = owner.persist_json("mod-view.json", &state.snapshot); }
         if let Ok(mut published) = self.published.lock() {
             *published = Some(Arc::new(state.snapshot.clone()));
         }
@@ -214,7 +216,7 @@ mod tests {
 
     #[test]
     fn welcome_phase_survives_ready_reload_and_rejected_input_until_accepted_start() {
-        let views = Views::new();
+        let views = Views::new(true);
         assert_eq!(
             views.presentation("thread-a", Some("fresh"))["phase"],
             "fresh"
@@ -230,7 +232,7 @@ mod tests {
 
     #[test]
     fn welcome_resume_and_fork_markers_are_latched_before_ready_publication() {
-        let views = Views::new();
+        let views = Views::new(true);
         let thread = codex_extension_api::ExtensionData::new("resumed");
         thread.insert(codex_extension_api::ResumedThread);
         views.start_thread(&thread);

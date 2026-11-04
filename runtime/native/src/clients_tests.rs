@@ -176,7 +176,7 @@ fn client_events_keep_only_their_kinds_fields() {
 #[test]
 fn clients_cannot_enable_disable_or_reset_mods() {
     for action in ["enable", "disable", "reset"] {
-        let refused = recovery_apply(action, "alpha").unwrap_err();
+        let refused = recovery_apply(None, action, "alpha").unwrap_err();
         assert!(
             refused.starts_with("client_surface_operation_unavailable:"),
             "{refused}"

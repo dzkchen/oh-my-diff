@@ -28,20 +28,22 @@ impl ToolContributor for Mods {
         &self,
         _: &ExtensionData,
         thread: &ExtensionData,
-        _: &ExtensionData,
+        turn_store: &ExtensionData,
     ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
+        let selected = clients::for_store(turn_store);
+        let this = selected.as_deref().unwrap_or(self);
         let Some(lead) = thread.get::<Lead>().filter(|lead| lead.owner == "lead") else {
             return Vec::new();
         };
-        let Ok(mut runtime) = self.runtime.lock() else {
+        let Ok(mut runtime) = this.runtime.lock() else {
             return Vec::new();
         };
         if !runtime.has_task_scoped_tools() {
-            return self.tool_executors(lead, runtime.tools());
+            return this.tool_executors(lead, runtime.tools());
         }
         let task = lead.session.task.clone();
         if task.check_active().is_err() {
-            return self.tool_executors(
+            return this.tool_executors(
                 lead,
                 runtime
                     .tools()
@@ -53,7 +55,7 @@ impl ToolContributor for Mods {
         let ledger = lead.ledger();
         let tools =
             runtime.tools_for_step(thread_id(thread), ledger, || task.check_active().is_ok());
-        self.tool_executors(lead, tools)
+        this.tool_executors(lead, tools)
     }
 }
 

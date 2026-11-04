@@ -8,12 +8,15 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PackageControl {
+    pub scope: String,
     pub action: String,
+    pub target: String,
     pub id: String,
     request: Option<ModInstallRequest>,
     confirmation: Option<String>,
     selection: Option<Selection>,
     generation: u64,
+    pub(crate) owner_revision: Option<(usize, u64, Value)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,6 +38,8 @@ pub struct PackagePreview {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Arguments {
+    #[serde(default = "terminal")]
+    target: String,
     action: String,
     #[serde(default)]
     id: Option<String>,
@@ -86,6 +91,8 @@ pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
     }
     store.package_index_entries(&path, &arguments.query, start, limit)
 }
+
+fn terminal() -> String { "terminal".into() }
 
 fn user() -> String {
     "user".into()
@@ -181,6 +188,7 @@ pub fn list_fields(
     runtime: Option<&Value>,
     arguments: Value,
     repository: Option<&Path>,
+    terminal_owner: Option<&str>,
 ) -> io::Result<Value> {
     let fields = match arguments {
         Value::Null => None,
@@ -195,9 +203,18 @@ pub fn list_fields(
         .as_ref()
         .is_none_or(|fields| fields.iter().any(|field| field == "settings_schema"))
     {
-        listed = with_route_choices(store.root(), listed, repository);
+        listed = with_route_choices(store.root(), listed, repository, terminal_owner);
     }
-    if let (Some(fields), Some(packages)) = (fields, listed["packages"].as_array_mut()) {
+    project_fields(listed, fields.map_or(Value::Null, |fields| json!({"fields":fields})))
+}
+
+pub fn project_fields(mut listed: Value, arguments: Value) -> io::Result<Value> {
+    let fields = match arguments {
+        Value::Null => return Ok(listed),
+        arguments => serde_json::from_value::<ListArguments>(arguments)
+            .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?.fields,
+    };
+    if let Some(packages) = listed["packages"].as_array_mut() {
         for package in packages.iter_mut().filter_map(Value::as_object_mut) {
             package.retain(|key, _| fields.iter().any(|field| field == key));
         }
@@ -224,14 +241,14 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     Ok(listed)
 }
 
-static CONNECTED: OnceLock<fn(&str, &str) -> bool> = OnceLock::new();
+static CONNECTED: OnceLock<fn(Option<&str>, &str, &str) -> bool> = OnceLock::new();
 
-pub fn set_connected_models(connected: fn(&str, &str) -> bool) {
+pub fn set_connected_models(connected: fn(Option<&str>, &str, &str) -> bool) {
     let _ = CONNECTED.set(connected);
 }
 
 /// Read per call since `host.json` and plan grants change outside the listing cache; without a repository plan routes are always offered.
-fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>) -> Value {
+fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>, terminal_owner: Option<&str>) -> Value {
     let here = repository.map(|repository| {
         Value::from(crate::resource_data::hash(
             repository.as_os_str().as_encoded_bytes(),
@@ -276,6 +293,7 @@ fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>)
                 && !role(route, "worker")
                 && CONNECTED.get().is_some_and(|connected| {
                     connected(
+                        terminal_owner,
                         route["provider"].as_str().unwrap_or_default(),
                         route["model"].as_str().unwrap_or_default(),
                     )
@@ -468,6 +486,7 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
 pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview> {
     let arguments: Arguments = serde_json::from_value(arguments)
         .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
+    if !["terminal", "shared"].contains(&arguments.target.as_str()) { return Err(failure("configuration_target_invalid")); }
     let generation = generation(store)?;
     if arguments
         .expected_generation
@@ -540,7 +559,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             let plan = store.package_rollback_plan(&package.id)?;
             (package.id, None, Some(plan), None, None)
         }
-        "enable" | "disable" => match selected(store, &arguments) {
+        "enable" | "disable" | "reset" | "save-defaults" => match selected(store, &arguments) {
             Ok((id, current)) => {
                 let added = if arguments.action == "enable" {
                     current.capabilities.clone()
@@ -597,6 +616,8 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                 "exec_environment": selection.exec_environment,
                 "secret_environment": selection.secret_environment, "codex_config": codex_config})
         }
+        _ if arguments.action == "reset" => json!({"reset":true}),
+        _ if arguments.action == "save-defaults" => json!({"save_defaults":true}),
         _ => json!({"enabled": arguments.action == "enable"}),
     };
     let collisions = store
@@ -628,12 +649,15 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
     Ok(PackagePreview {
         public,
         control: PackageControl {
+            scope: arguments.scope,
+            target: arguments.target,
             action: arguments.action,
             id,
             request,
             confirmation: plan.map(|plan| plan.confirmation),
             selection,
             generation,
+            owner_revision: None,
         },
     })
 }
@@ -733,7 +757,15 @@ fn requested(
     Ok((request, plan))
 }
 
+pub fn validate_generation(store: &ModStore, control: &PackageControl) -> io::Result<()> {
+    if generation(store)? != control.generation { return Err(failure("package_state_changed: preview again")); }
+    Ok(())
+}
+
 pub fn apply(store: &ModStore, control: &PackageControl) -> io::Result<Value> {
+    if control.target == "terminal" && ["enable", "disable", "reset", "save-defaults"].contains(&control.action.as_str()) {
+        return Err(failure("terminal_configuration_unavailable"));
+    }
     if generation(store)? != control.generation {
         return Err(failure("package_state_changed: preview again"));
     }

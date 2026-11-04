@@ -519,6 +519,7 @@ impl Notifier {
                 &mut runtime,
                 &notifier.host,
                 &notifier.views,
+                core.terminal_owner.is_some(),
                 "agent_end",
                 lead.ledger(),
                 || lead.session.task.check_active().is_ok(),
@@ -1724,7 +1725,7 @@ impl Agents {
             {
                 return Err("worker_route_authority_exceeded".into());
             }
-            let runtime = codex_models_manager::runtime_models::find(&route.model)
+            let runtime = codex_models_manager::runtime_models::find_for(core.terminal_owner.as_deref(), &route.model)
                 .is_some_and(|(provider, _)| provider == route.provider);
             unchanged_model(request, route)?;
             return Ok((route.clone(), !runtime));
@@ -1734,13 +1735,13 @@ impl Agents {
             .filter(|route| {
                 !route.roles.contains(&config::RouteRole::Worker)
                     && (route.mods.is_empty() || route.mods.iter().any(|id| id == caller.id))
-                    && codex_models_manager::runtime_models::find(&route.model)
+                    && codex_models_manager::runtime_models::find_for(core.terminal_owner.as_deref(), &route.model)
                         .is_some_and(|(provider, _)| provider == route.provider)
             });
         if let Some(route) = provider_lead {
             let mut route = route.clone();
             if let Some(model) = request.model.take() {
-                let info = codex_models_manager::runtime_models::find(&model)
+                let info = codex_models_manager::runtime_models::find_for(core.terminal_owner.as_deref(), &model)
                     .filter(|(provider, _)| *provider == route.provider)
                     .map(|(_, info)| info)
                     .ok_or("agent_model_not_in_route_provider_catalog")?;

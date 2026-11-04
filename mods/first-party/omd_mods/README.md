@@ -70,3 +70,19 @@ It has no settings.
 - [Packaging](../../reference/packaging.md) in the mod API reference
 
 Trust previews warn when an ID is already installed in another scope: same-ID copies share storage and owned credential authority.
+
+## Terminal choices and saved defaults
+
+Ordinary on/off switches and setting edits in `/mods` and native `/omd` affect this terminal only.
+They survive conversation changes and mod reloads, and disappear when the terminal host exits.
+Another terminal, including one on the same conversation, starts from shared defaults. Reconnecting the
+same attached terminal retains its choices while its host is alive; children start from defaults.
+
+Use **Reset to defaults** to clear local enablement and settings choices and inherit the latest shared values.
+Use **Save as defaults** explicitly to persist your choices for future launches and terminals inheriting defaults.
+Shared changes do not replace valid local overrides. Shell `omd mods` commands change shared configuration.
+Install, update, remove, rollback and trust are always shared. Policy and trust still apply: local choices cannot
+grant permissions, undo revocation or revive removed packages. Source, schema and authority changes invalidate
+or revalidate overrides. Mod data and credentials are separate from terminal configuration.
+
+When user and project copies have the same mod ID, settings edits apply to the selected copy and its schema.

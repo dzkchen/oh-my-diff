@@ -124,13 +124,17 @@ fn append(value: Value) -> Result<Option<String>, String> {
 }
 
 impl ToolOutputContributor for Mods {
-    fn replacing(&self, _thread_store: &ExtensionData) -> bool {
-        self.expansion.tool_output_active()
-            || self.pending.lock().is_ok_and(|pending| !pending.is_empty())
+    fn replacing(&self, _thread_store: &ExtensionData, turn_store: &ExtensionData) -> bool {
+        let selected = clients::for_store(turn_store);
+        let this = selected.as_deref().unwrap_or(self);
+        this.expansion.tool_output_active()
+            || this.pending.lock().is_ok_and(|pending| !pending.is_empty())
     }
 
-    fn wants_value(&self, call_id: &str) -> bool {
-        self.pending
+    fn wants_value(&self, call_id: &str, turn_store: &ExtensionData) -> bool {
+        let selected = clients::for_store(turn_store);
+        let this = selected.as_deref().unwrap_or(self);
+        this.pending
             .lock()
             .is_ok_and(|pending| pending.get(call_id).is_some_and(|pending| pending.values))
     }
@@ -140,9 +144,11 @@ impl ToolOutputContributor for Mods {
         input: ToolOutputInput<'a>,
     ) -> ExtensionFuture<'a, Option<ToolOutputReplacement>> {
         Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let diagnostic = |message: String| {
-                self.views
-                    .diagnostic(&self.host, "tool_output", Some(message));
+                this.views
+                    .diagnostic(&this.host, "tool_output", Some(message));
             };
             let head = bounded(input.text);
             let mut executed = json!({"output": head, "success": input.success,
@@ -157,13 +163,13 @@ impl ToolOutputContributor for Mods {
             }
             let mut text = None;
             let mut replaced_by = "feedback".to_owned();
-            let stash = self
+            let stash = this
                 .pending
                 .lock()
                 .is_ok_and(|pending| pending.contains_key(input.call_id))
                 .then(|| {
                     Stash::new(
-                        &self.expansion.originals,
+                        &this.expansion.originals,
                         (
                             thread_id(input.thread_store).unwrap_or_default(),
                             input.call_id.to_owned(),
@@ -171,7 +177,7 @@ impl ToolOutputContributor for Mods {
                         Arc::from(input.text),
                     )
                 });
-            let resumed = self.resume(input.call_id, Ok(executed.clone())).await;
+            let resumed = this.resume(input.call_id, Ok(executed.clone())).await;
             match resumed {
                 Some(Ok(chain))
                     if chain.result.get("deny").is_some()
@@ -212,7 +218,7 @@ impl ToolOutputContributor for Mods {
                 return replaced(text);
             };
             if text.is_some() && replaced_by != "intercept" {
-                let (runtime, id) = (self.runtime.clone(), replaced_by.clone());
+                let (runtime, id) = (this.runtime.clone(), replaced_by.clone());
                 let source = tokio::task::spawn_blocking(move || {
                     runtime
                         .lock()
@@ -231,10 +237,10 @@ impl ToolOutputContributor for Mods {
                     diagnostic(format!("{replaced_by}: original unavailable: {error}"));
                 }
             }
-            if !self.expansion.tool_output_active() {
+            if !this.expansion.tool_output_active() {
                 if let Some(text) = &text {
                     activity::output_replaced(
-                        &self.core,
+                        &this.core,
                         &lead,
                         input.call_id,
                         &replaced_by,
@@ -244,7 +250,7 @@ impl ToolOutputContributor for Mods {
                 }
                 return replaced(text);
             }
-            let runtime = self.runtime.clone();
+            let runtime = this.runtime.clone();
             let observers = tokio::task::spawn_blocking(move || {
                 let runtime = runtime.lock().ok()?;
                 Some(
@@ -277,7 +283,7 @@ impl ToolOutputContributor for Mods {
             for id in observers {
                 let current = text.as_deref().unwrap_or(input.text);
                 let Some(result) = invoke_one(
-                    &self.core,
+                    &this.core,
                     &lead,
                     id.clone(),
                     "tool_output",
@@ -309,7 +315,7 @@ impl ToolOutputContributor for Mods {
             }
             if let Some(text) = &text {
                 activity::output_replaced(
-                    &self.core,
+                    &this.core,
                     &lead,
                     input.call_id,
                     &replaced_by,

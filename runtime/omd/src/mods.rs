@@ -5,6 +5,7 @@ mod code_cache;
 mod operation_validation;
 mod configuration_overrides;
 pub use configuration_overrides::ConfigurationOverrides;
+pub use configuration_overrides::terminal_configuration_owner;
 mod persisted;
 mod render;
 pub use chain::ModChain;
@@ -2585,6 +2586,11 @@ fn validate_stored_settings(
 }
 
 pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
+    write_settings_in(store, id, values, None)
+}
+
+pub fn write_settings_in(store: &ModStore, id: &str, values: &Value, scope: Option<&str>) -> Result<Value> {
+    if scope.is_some_and(|scope| !matches!(scope, "user" | "project")) { return Err(failure("configuration_scope_invalid")); }
     let values = values
         .as_object()
         .ok_or_else(|| failure("settings_values_must_be_object"))?;
@@ -2593,7 +2599,7 @@ pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Valu
         .as_array()
         .into_iter()
         .flatten()
-        .find(|selection| selection["id"] == id && selection["effective"] == true)
+        .find(|selection| selection["id"] == id && match scope { Some(scope) => selection["scope"] == scope && selection["error"].is_null(), None => selection["effective"] == true })
         .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
     let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
     if let Some(name) = values
@@ -2659,6 +2665,8 @@ fn identifier_list(values: &[String]) -> bool {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModSelection {
+    #[serde(default, skip_serializing_if = "zero_configuration_epoch")]
+    pub configuration_epoch: u64,
     pub path: PathBuf,
     pub sha256: String,
     pub enabled: bool,
@@ -2677,6 +2685,8 @@ pub struct ModSelection {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
 }
+
+fn zero_configuration_epoch(epoch: &u64) -> bool { *epoch == 0 }
 
 impl ModSelection {
     pub fn authority_current(&self) -> bool {
@@ -4047,6 +4057,8 @@ impl ModHost {
     }
 
     pub fn reload(&mut self) -> Result<bool> {
+        self.configuration_stamp = None;
+        self.override_revision = None;
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
@@ -4094,20 +4106,15 @@ impl ModHost {
         Arc::clone(&self.configuration_overrides)
     }
 
-    pub fn set_configuration_overrides(&mut self, owner: Arc<Mutex<ConfigurationOverrides>>) {
-        self.callback_verdicts.clear();
-        self.configuration_overrides = owner;
-        self.override_revision = None;
-        self.configuration_stamp = None;
-    }
-
     fn current_overrides(&self) -> ConfigurationOverrides {
         self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
+        let overrides = self.current_overrides();
         !self.inspect_retry_due()
-            && self.override_revision == Some(self.current_overrides().revision())
+            && overrides.sources_current()
+            && self.override_revision == Some(overrides.revision())
             && stamp.is_some()
             && *stamp == self.configuration_stamp
             && self
@@ -4141,6 +4148,7 @@ impl ModHost {
         if !active() {
             return Err(failure("callback_cancelled"));
         }
+        self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner).retain_sources()?;
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamps(&self.store.root);
         if self.current(&stamp) {
@@ -4231,6 +4239,7 @@ impl ModHost {
         let overrides = {
             let mut owner = self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner);
             owner.retain(&selections)?;
+            owner.retain_unblocked(&self.store)?;
             owner.clone()
         };
         for selection in &mut selections {
@@ -5469,6 +5478,7 @@ impl ModHost {
             .get(&loaded.package.id)
             .unwrap_or(&loaded.selection);
         // An unchanged authority inventory cannot introduce a different precedence winner.
+        self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner).retain_unblocked(&self.store)?;
         let overrides = self.current_overrides();
         let unchanged = hash == self.configuration_sha256
             && self.override_revision == Some(overrides.revision());

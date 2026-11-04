@@ -355,9 +355,9 @@ export type TurnActivity = {
   files: { path: string; before: string | null; after: string | null; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external' }[];
   truncated: boolean;
 };
-export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'npm' | 'selection'; blocked: string | null; installed: boolean; enabled: boolean; required: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; settings: { [key: string]: Json } };
+export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'npm' | 'selection'; blocked: string | null; installed: boolean; enabled: boolean; required: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; inherited_enabled: boolean; inherited_settings: { [key: string]: Json }; overrides: { enabled?: boolean; settings: { [key: string]: Json } }; settings: { [key: string]: Json } };
 export type PackageSource = { kind: 'local'; path: string } | { kind: 'repository'; repository: string; revision: string; subdirectory?: string } | { kind: 'package'; index: string; id: string; version: string } | { kind: 'npm'; package: string; version?: string; registry?: string; integrity?: string };
-export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust'; id?: string; source?: PackageSource; reference?: string; version?: string; index?: string; scope?: 'user' | 'project' };
+export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust' | 'reset' | 'save-defaults'; id?: string; source?: PackageSource; reference?: string; version?: string; index?: string; target?: 'terminal' | 'shared'; scope?: 'user' | 'project' };
 export type PackageCatalogEntry = { id: string; latest: string; description: string; support: string | null; versions: { version: string; blocked: string | null }[]; installed: string | null };
 export type KeymapAction = `${string}.${string}`;
 export type Declined = { status: 'declined' };
@@ -497,7 +497,7 @@ export interface HostOperations {
   'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; identity_warning?: string | null } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };
-  'settings.write': { arguments: { id?: string; values: { [key: string]: Json } }; result: { settings: { [key: string]: Json } } };
+  'settings.write': { arguments: { id?: string; scope?: 'user' | 'project'; values: { [key: string]: Json }; target?: 'terminal' | 'shared'; reset?: string[] }; result: { settings: { [key: string]: Json } } };
   'terminal.open': { arguments: { url: string } | { path: string } | { path: string; line?: number; editor: true }; result: { opened: true } | Declined };
   'terminal.prompt': { arguments: { kind: 'confirm'; title: string; message: string } | { kind: 'text'; title: string; message: string; masked?: boolean }
     | { kind: 'choice'; title: string; message: string; options: { value: string; label: string }[]; multiple?: boolean; other?: boolean };

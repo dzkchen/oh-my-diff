@@ -189,6 +189,7 @@ pub use mods::ModScreenAnchor;
 pub use mods::ModSelectOption;
 pub use mods::ModSelection;
 pub use mods::ConfigurationOverrides;
+pub use mods::terminal_configuration_owner;
 pub use mods::ModSidebarSide;
 pub use mods::ModSiteMode;
 pub use mods::ModSpacing;
@@ -257,6 +258,7 @@ pub use mods::render_shared;
 pub use mods::take_turned_off;
 pub use mods::valid_glyphs;
 pub use mods::write_settings;
+pub use mods::write_settings_in;
 
 pub mod turn_evidence;
 

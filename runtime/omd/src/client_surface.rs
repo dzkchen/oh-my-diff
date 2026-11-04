@@ -303,8 +303,37 @@ impl Drop for DepthGuard {
     }
 }
 
+thread_local! {
+    static TERMINAL_OWNER: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static TERMINAL_USER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub struct TerminalUserGuard(bool);
+
+pub fn enter_terminal_user(admitted: bool) -> TerminalUserGuard {
+    TerminalUserGuard(TERMINAL_USER.replace(admitted))
+}
+
+impl Drop for TerminalUserGuard {
+    fn drop(&mut self) { TERMINAL_USER.set(self.0); }
+}
+
+pub struct TerminalOwnerGuard(Option<String>);
+
+pub fn terminal_owner_id() -> Option<String> { TERMINAL_OWNER.with(|owner| owner.borrow().clone()) }
+
+pub fn enter_terminal_owner(owner: Option<String>) -> TerminalOwnerGuard {
+    TerminalOwnerGuard(TERMINAL_OWNER.with(|current| current.replace(owner)))
+}
+
+impl Drop for TerminalOwnerGuard {
+    fn drop(&mut self) { TERMINAL_OWNER.with(|current| current.replace(self.0.take())); }
+}
+
 #[derive(Debug, Clone)]
 pub struct SurfaceCall {
+    pub terminal_user: bool,
+    pub terminal_owner: Option<String>,
     pub validity: Validity,
     pub caller: String,
     pub operation: String,
@@ -415,6 +444,7 @@ pub enum Observed {
     Redraw,
     Roster,
     Mirrored {
+        terminal_owner: Option<String>,
         caller: String,
         operation: String,
         arguments: Value,
@@ -645,7 +675,15 @@ fn submit_bound(
             "host_operation_user_only: {operation}"
         )));
     }
-    if remote && needs_terminal(operation, &arguments) {
+    let terminal_user = context == InvocationContext::User
+        && TERMINAL_USER.get()
+        && TERMINAL_OWNER.with(|owner| owner.borrow().is_some())
+        && (matches!(operation, "terminal.panel" | "prompts.consent")
+            || operation == "packages.apply"
+                && arguments["target"].as_str().unwrap_or("terminal") == "terminal"
+                && matches!(arguments["action"].as_str(), Some("enable" | "disable" | "reset" | "save-defaults")));
+
+    if remote && needs_terminal(operation, &arguments) && !terminal_user {
         return Err(BlitError::fatal(needs_terminal_error(operation)));
     }
     let surface = hub()
@@ -674,6 +712,8 @@ fn submit_bound(
     let queued = lifetime.clone();
     surface
         .submit(SurfaceCall {
+            terminal_user,
+            terminal_owner: TERMINAL_OWNER.with(|current| current.borrow().clone()),
             validity: Validity(Arc::new(move || queued.active() && active())),
             caller: caller.to_owned(),
             operation: operation.to_owned(),
@@ -859,6 +899,7 @@ pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
         if package["effective"] != true {
             continue;
         }
+        let managed = package["scope"] == "managed" || package["required"] == true;
         for (name, property) in package["settings_schema"]["properties"]
             .as_object()
             .into_iter()
@@ -867,7 +908,7 @@ pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
             rows.push(serde_json::json!({"key": format!("mods.{id}.{name}"), "label": format!("{id} {name}"),
                 "value": package["settings"][name], "source": "mod_settings", "version": Value::Null,
                 "scope": "mod", "type": property["type"], "enum": property["enum"],
-                "editable": true, "managed": false, "secret": false, "hidden": false}));
+                "editable": !managed, "managed": managed, "secret": false, "hidden": false}));
         }
     }
     let mut config = read["config"].clone();
@@ -1070,6 +1111,7 @@ pub fn call_classified(
     let answer = wait_classified(pending, active.as_ref(), deadline)?;
     if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
         notify(Observed::Mirrored {
+            terminal_owner: TERMINAL_OWNER.with(|owner| owner.borrow().clone()),
             caller: caller.to_owned(),
             operation: operation.to_owned(),
             arguments: if operation == "terminal.blit" {

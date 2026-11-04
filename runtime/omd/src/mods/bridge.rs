@@ -30,6 +30,7 @@ impl ModHostCall {
         if self
             .package_target()
             .is_some_and(|field| self.arguments[field].is_string())
+            || self.operation == "settings.write" && self.arguments["scope"].is_string()
         {
             return Ok("packages");
         }

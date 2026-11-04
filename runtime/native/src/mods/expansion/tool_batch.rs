@@ -83,8 +83,10 @@ pub(super) fn parse(
 }
 
 impl ToolBatchContributor for Mods {
-    fn batching(&self, thread_store: &ExtensionData) -> bool {
-        self.expansion.tool_batch.load(Ordering::Acquire) && lead_thread(thread_store)
+    fn batching(&self, thread_store: &ExtensionData, turn_store: &ExtensionData) -> bool {
+        let selected = clients::for_store(turn_store);
+        let this = selected.as_deref().unwrap_or(self);
+        this.expansion.tool_batch.load(Ordering::Acquire) && lead_thread(thread_store)
     }
 
     fn merge_tool_batch<'a>(
@@ -92,6 +94,8 @@ impl ToolBatchContributor for Mods {
         input: ToolBatchInput<'a>,
     ) -> ExtensionFuture<'a, Vec<ToolBatchMerge>> {
         Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return Vec::new();
             };
@@ -111,7 +115,7 @@ impl ToolBatchContributor for Mods {
                 })
                 .collect::<Vec<_>>();
             let payload = json!({"batch_id": input.batch_id, "thread_id": lead.thread.to_string(), "calls": calls});
-            let runtime = self.runtime.clone();
+            let runtime = this.runtime.clone();
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let result = tokio::task::spawn_blocking(move || {
@@ -140,12 +144,12 @@ impl ToolBatchContributor for Mods {
             .await
             .map_err(|error| error.to_string())
             .and_then(|result| result);
-            self.cleanup_failed(Some(&lead)).await;
+            this.cleanup_failed(Some(&lead)).await;
             match result {
                 Ok(merges) => merges,
                 Err(error) => {
-                    self.views.diagnostic(
-                        &self.host,
+                    this.views.diagnostic(
+                        &this.host,
                         "tool_batch",
                         Some(format!("{error}; calls dispatched individually")),
                     );

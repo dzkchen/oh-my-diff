@@ -30,6 +30,10 @@ pub(super) fn broadcast(state: &State, event: &'static str, payload: Value) {
     delivery::push(state, delivery::Pending::Broadcast { event, payload });
 }
 
+pub(super) fn broadcast_thread(state: &State, thread: ThreadId, event: &'static str, payload: Value) {
+    delivery::push(state, delivery::Pending::ThreadBroadcast { thread, event, payload });
+}
+
 pub(super) fn worktree(state: &State, phase: &str, path: &std::path::Path, owner: &str) {
     broadcast(
         state,
@@ -176,6 +180,15 @@ impl State {
             depth: *depth,
             ..handle.upgrade()?
         })
+    }
+
+    pub(super) fn select_thread(&self, core: &Arc<Core>, lead: &Lead) {
+        let _ = self.core.set(Arc::downgrade(core));
+        if let Ok(runtime) = core.runtime.try_lock() { self.refresh(&runtime); }
+        delivery::ensure_delivery(core);
+        self.thread_started(lead);
+        *self.current.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(LeadHandle::new(lead));
+        self.leads.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(lead.thread, LeadHandle::new(lead));
     }
 
     pub(super) fn thread_started(&self, lead: &Lead) {
@@ -366,6 +379,7 @@ async fn invoke_one_guarded(
     timer: Option<(String, String, u64)>,
 ) -> Option<Result<Value, String>> {
     let (views, owner, ledger) = (core.views.clone(), core.host.clone(), lead.ledger());
+    let terminal_owner = core.terminal_owner.is_some();
     let timer_core = core.this.upgrade()?;
     let timer_thread = lead.thread.to_string();
     run(
@@ -421,7 +435,7 @@ async fn invoke_one_guarded(
                 && let Ok(mut runtime) = runtime.lock()
                 && runtime.state(&id) != before.as_ref()
             {
-                publish(&mut runtime, &owner, &views, event, ledger, active);
+                publish(&mut runtime, &owner, &views, terminal_owner, event, ledger, active);
             }
             result
         },
@@ -561,35 +575,14 @@ pub(super) async fn dispatch(
             .await
         }
         "packages.list" => {
-            let runtime = core
-                .runtime
-                .lock()
-                .map_err(|_| "mod_runtime_poisoned")?
-                .status();
-            let arguments = request.arguments;
-            blocking(Box::new(move || {
-                codex_omd::ModStore::open(host.root.clone())
-                    .and_then(|store| {
-                        codex_omd::package_controls::list_fields(
-                            &store,
-                            Some(&runtime),
-                            arguments,
-                            Some(&host.repository),
-                        )
-                    })
-                    .map_err(|error| error.to_string())
-            }))
-            .await
+            let store = codex_omd::ModStore::open(core.host.root.clone()).map_err(|e| e.to_string())?;
+            let runtime = core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+            let listed = codex_omd::package_controls::list_fields(&store, Some(&runtime.status()), Value::Null, Some(&core.host.repository), core.terminal_owner.as_deref()).map_err(|e| e.to_string())?;
+            let listed = runtime.configuration_listing(listed).map_err(|e| e.to_string())?;
+            codex_omd::package_controls::project_fields(listed, request.arguments).map_err(|e| e.to_string())
         }
         "packages.preview" => {
-            let arguments = request.arguments;
-            blocking(Box::new(move || {
-                codex_omd::ModStore::open(host.root.clone())
-                    .and_then(|store| codex_omd::package_controls::preview(&store, arguments))
-                    .map(|preview| preview.public)
-                    .map_err(|error| error.to_string())
-            }))
-            .await
+            core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?.preview_configuration(request.arguments).map(|preview| preview.public).map_err(|e| e.to_string())
         }
         "packages.index" => {
             let arguments = request.arguments;
@@ -600,7 +593,19 @@ pub(super) async fn dispatch(
             }))
             .await
         }
+        "packages.reload" if matches!(caller.origin, Origin::UserCommand) => {
+            codex_omd::ModStore::open(core.host.root.clone()).and_then(|store| codex_omd::package_controls::reload(&store)).map_err(|e| e.to_string())
+        }
         "packages.reload" => Err("host_operation_user_only: packages.reload".into()),
+        "settings.write" if matches!(caller.origin, Origin::UserCommand) => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Write { id: Option<String>, scope: Option<String>, values: Value, target: Option<String>, #[serde(default)] reset: Vec<String> }
+            let arguments: Write = serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
+            core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?.write_configuration_in(
+                arguments.id.as_deref().unwrap_or(caller.id), &arguments.values, arguments.target.as_deref().unwrap_or("terminal"), &arguments.reset, arguments.scope.as_deref(),
+            ).map_err(|e| e.to_string())
+        }
         "settings.write" => Err("host_operation_user_only: settings.write".into()),
         _ => surface(core, lead, caller, request, cancelled).await,
     }
@@ -737,7 +742,9 @@ pub(in crate::mods) fn blit_sink(
             result.is_ok().then(std::time::Instant::now);
         result
     };
+    let terminal_owner = core.terminal_owner.clone();
     Some(Arc::new(move |arguments, active| {
+        let _terminal_owner = codex_omd::client_surface::enter_terminal_owner(terminal_owner.clone());
         current()?;
         let verified = verified.clone();
         let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
@@ -800,12 +807,16 @@ async fn surface(
         .grants
         .as_ref()
         .map(|grants| grants.surface_authority.clone());
-    let runtime = core.runtime.clone();
+    let runtime = core.input_runtime.clone();
     let generation = caller.generation;
     let source = caller.source.to_owned();
+    let terminal_user = matches!(caller.origin, Origin::UserCommand) && core.terminal_owner.is_some();
+    let terminal_owner = core.terminal_owner.clone();
     let admitted_source = source.clone();
     let admission_cancelled = cancelled.clone();
     tokio::task::spawn_blocking(move || {
+        let _terminal_owner = codex_omd::client_surface::enter_terminal_owner(terminal_owner);
+        let _terminal_user = codex_omd::client_surface::enter_terminal_user(terminal_user);
         let _authority = surface_authority.map(codex_omd::client_surface::Authority::enter);
         let owner = id.clone();
         let admitted_capabilities = capabilities.clone();
@@ -819,8 +830,7 @@ async fn surface(
             if runtime.refresh_authority().is_err() {
                 return false;
             }
-            runtime.generation() == generation
-                && runtime.grants(&owner).is_some_and(|grants| {
+            runtime.grants(&owner).is_some_and(|grants| {
                     grants.source_sha256 == source && grants.capabilities == admitted_capabilities
                 })
         });
