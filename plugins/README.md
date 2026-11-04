@@ -21,6 +21,7 @@ marketplace with `codex plugin marketplace add PATH/plugins/experimental/oh-my-d
 | [`omd-artifact-reading`](experimental/oh-my-diff-experimental/plugins/omd-artifact-reading/README.md) | Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites the source |
 | [`omd-code-execution`](experimental/oh-my-diff-experimental/plugins/omd-code-execution/README.md) | Guides the model to run JavaScript cells with session storage, and persistent Python and Bun cells, in Codex code mode |
 | [`omd-output-budget`](experimental/oh-my-diff-experimental/plugins/omd-output-budget/README.md) | Keeps large shell and tool results out of the context, with paged reads, search and doc fetch |
+| [`omd-monitor`](experimental/oh-my-diff-experimental/plugins/omd-monitor/README.md) | Guides the agent to subscribe to builds, files and CI, continue other work and handle the result |
 
 ## Add a plugin
 
