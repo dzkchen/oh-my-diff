@@ -1,0 +1,10 @@
+{
+  "name": "omd-monitor",
+  "version": "1.0.0",
+  "description": "Subscribe to builds, files and CI with the omd_monitor mod, continue other work, and handle the result.",
+  "author": {
+    "name": "Oh My Diff"
+  },
+  "skills": "./skills/",
+  "license": "MIT"
+}

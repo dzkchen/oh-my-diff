@@ -29,6 +29,30 @@ of the prompt.
 The model reads a hidden output with `mod_omd_observation_mask_recall {call_id}`, 32 KB at a time. If it passes
 `pin: true`, the output goes back in place from the next request and is never hidden again.
 
+### Hide outputs only when continuing
+
+Set `mode` to `continue` in `/mods` and enable `omd_continue`. Ordinary requests then keep new outputs in full.
+A successful `/continue [note]` hides an eligible batch only after the estimated cache lifetime has elapsed.
+`/continue --compact [note]` requests the same masking without a cache estimate. It still obeys `keep_recent`,
+`min_bytes` and `batch_bytes`; it does not call a summarizing model or native `/compact`.
+
+Only outputs whose saved originals pass a read check during the successful `/continue` command can be newly hidden
+in this mode. At most 16 unmasked originals from the latest history view are checked per continuation; the following model request
+still applies the history eligibility rules. An original that fails the read check stays visible and is skipped on later continuations.
+The model receives guidance to recall a specific missing fact in small pages and verify
+current files and processes before repeating actions. User messages, instructions and tool calls stay in context.
+The placeholders stay identical on later requests; another continuation is needed to hide another batch. Resume
+keeps installed placeholders but drops a continuation that had not reached its first model request.
+
+Cache lifetime is an estimate, not a cache probe. `auto` uses a provider-reported lifetime, retaining it on reads
+for the same provider, route, credential and model. For OpenAI API responses with cache activity it otherwise uses
+30 minutes. OpenAI subscription and unpriced responses, local providers, and unknown lifetimes are skipped.
+An explicit `cache_ttl_minutes` overrides the estimate except for local providers. Model/provider/route changes
+that differ from the observed response skip automatic masking. Compaction clears the estimate.
+
+Keep `omd_idle_compact` disabled if you want context reduction only through `/continue`: its separate timer can
+still compact the conversation. This mode does not prepare a summary in the background or guarantee lower cost.
+
 ### What it hides
 
 - Only tool outputs, and only outputs older than the newest `keep_recent`. The calls themselves stay, so the model
@@ -38,7 +62,7 @@ The model reads a hidden output with `mod_omd_observation_mask_recall {call_id}`
   subagent's requests.
 - It hides outputs in batches to protect the provider's prompt cache. Hiding an output changes the start of the
   prompt, so the cache misses once for everything after it. Outputs that could be hidden wait until together they
-  reach `batch_bytes`, and then all of them are hidden at once. A hidden output keeps the same note on every later
+  reach `batch_bytes`, and then a batch is hidden at once. A hidden output keeps the same note on every later
   request, so between batches the start of the prompt stays the same.
 - The note's first line skips the command header (chunk id, wall time, exit code, token count).
 
@@ -46,6 +70,8 @@ The model reads a hidden output with `mod_omd_observation_mask_recall {call_id}`
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
+| `mode` | `batch` | `batch` hides outputs automatically; `continue` hides a batch only on eligible `/continue` commands. |
+| `cache_ttl_minutes` | `auto` | Continue-mode estimate: `auto`, `5`, `10`, `30`, `60` or `120` minutes. Does not configure provider retention. |
 | `keep_recent` | `10` | The newest tool outputs that are always sent in full |
 | `min_bytes` | `1024` | Smaller outputs are never hidden |
 | `batch_bytes` | `32768` | Hide nothing until the outputs that could be hidden reach this size (about 8,000 tokens); `0` hides each one as soon as it's old enough |
@@ -59,11 +85,12 @@ that doesn't cache prompts.
 
 - It asks to edit the history sent to the model, see tool results and model requests, add a tool and `/mask`, and
   keep data in thread storage. The capabilities are `history`, `interception`, `middleware`, `tools`, `store` and
-  `commands` (see [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
+  `commands`, `model`, `lifecycle` and `inventory` (see
+  [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - The full text of each output of at least `min_bytes` is kept as the mod's evidence when the call finishes. The host
   keeps the newest 1,024 of these per repository (256 MB at most), so recalling a very old output can fail. The
-  model is then told to run the call again. It remembers the newest 400 kept outputs of a thread and those of every
-  hidden output.
+  model receives a recall error. Recover needed facts from current state; do not blindly repeat a command with side
+  effects. It remembers the newest 400 kept outputs of a thread and those of every hidden output.
 - At most 400 outputs of a thread are hidden; later ones are sent in full.
 - Code-mode calls inside a cell aren't kept on their own: the whole cell's output is hidden and recalled as one.
 - Only one mod can edit model-bound history, so it can't run alongside another mod that does, such as

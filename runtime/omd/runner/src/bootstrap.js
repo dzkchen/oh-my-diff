@@ -41,7 +41,7 @@ let state = structuredCloneFallback(request.state);
 let uiState = structuredCloneFallback(request.ui_state ?? null);
 let uiRead = false;
 let uiWritten = false;
-const initial = JSON.stringify(state ?? null);
+let initial = JSON.stringify(state ?? null);
 const reads = new Set();
 let tracking = null;
 const subscriptions = [];
@@ -54,28 +54,26 @@ const base = request.filename.endsWith('/' + request.entrypoint) ? request.filen
   : request.filename.slice(0, request.filename.lastIndexOf('/') + 1);
 let activating = true;
 let activatedState;
-let pending = null;
 const calls = [];
 let receipts = request.receipts ?? [];
 // A warm render runner answers the next render with the activated mod, from that render's own input.
 function serve(line) {
   const next = JSON.parse(line);
-  Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
+  Object.assign(request, { event: next.event ?? request.event, activation_id: next.activation_id, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
   if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
   clockRead = false;
-  if (request.event === 'component') {
+  if (request.session_activation || request.event === 'component') {
     state = structuredCloneFallback(next.state);
     uiState = structuredCloneFallback(next.ui_state ?? null);
     uiRead = false;
     uiWritten = false;
   } else state = structuredCloneFallback(activatedState);
+  initial = JSON.stringify(state ?? null);
   reads.clear();
   calls.length = 0;
   updates.length = 0;
-  pending = null;
 }
-const suspension = Object.freeze({});
 const exchange = globalThis.__exchange;
 const clock = globalThis.__clock;
 const utf8 = globalThis.__utf8;
@@ -231,7 +229,6 @@ function hostTryCall(operation, arguments_ = null) {
 }
 function hostReply(operation, arguments_) {
   if (activating) throw new Error('host_call_during_registration');
-  if (pending) throw new Error('concurrent_host_call');
   const call = structuredCloneFallback({ operation, arguments: arguments_ });
   const index = calls.length;
   calls.push(call);
@@ -241,12 +238,8 @@ function hostReply(operation, arguments_) {
     if (receipt.error) return { ok: false, error: receipt.error };
     return { ok: true, value: structuredCloneFallback(receipt.value) };
   }
-  if (request.interactive) {
-    const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
-    return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
-  }
-  pending = call;
-  throw suspension;
+  const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
+  return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
 }
 function hostCall(operation, arguments_ = null) {
   const result = hostTryCall(operation, arguments_);
@@ -325,7 +318,6 @@ function intercept(event) {
     try {
       reply = hostCall('continuation.next', { input: argument });
     } catch (error) {
-      if (error === suspension) throw error;
       if (String(error?.message).startsWith('callback_cancelled')) signal.aborted = true;
       return Promise.reject(error);
     }
@@ -512,9 +504,8 @@ async function dispatchTimer(event) {
   entry.cancelled = false;
   let failure = null;
   try {
-    if (await entry.handler({ key: entry.key }) === false) entry.cancelled = true;
+    if (await entry.handler({ ...event, key: entry.key }) === false) entry.cancelled = true;
   } catch (error) {
-    if (error === suspension) throw error;
     failure = error;
   }
   if (entry.repeat && !entry.cancelled) hostCall('events.schedule', { key: event.key, delay_ms: entry.ms });
@@ -536,7 +527,9 @@ function timer(key, ms, handler, repeat) {
   const entry = { key, ms, handler, repeat, cancelled: false };
   timers.set(scheduled, entry);
   return Object.freeze({
-    start() { return hostCall('events.schedule', { key: scheduled, delay_ms: ms }); },
+    start(...args) {
+      return hostCall('events.schedule', { key: scheduled, delay_ms: ms, ...(!repeat && args.length ? { data: args[0] } : {}) });
+    },
     cancel() { entry.cancelled = true; return hostCall('events.cancel', { key: scheduled }); },
   });
 }
@@ -736,6 +729,43 @@ const api = Object.freeze({
     unique(completers, trigger, handler);
     registrations.completions.push({ trigger });
   },
+  background(key, handler) {
+    requireCapability('store');
+    if (request.session_model !== true) throw new Error('background_requires_session_activation');
+    if (request.state_scope !== 'thread') throw new Error('background_requires_thread_state');
+    if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,53}$/.test(key)) throw new Error('invalid_background_key');
+    if (typeof handler !== 'function') throw new Error('handler_required: ' + key);
+    const status = api.atom('background_' + key, { status: 'idle' });
+    const current = () => {
+      const value = status.get();
+      return value.activation === request.activation_id ? value : { status: 'idle' };
+    };
+    const task = timer('job.' + key, 16, async ({ data }) => {
+      if (data.activation !== request.activation_id || current().token !== data.token || current().status !== 'pending') return;
+      status.set({ activation: request.activation_id, token: data.token, status: 'running' });
+      try {
+        const result = await handler(data.input);
+        if (current().token !== data.token || current().status !== 'running') return;
+        status.set({ activation: request.activation_id, token: data.token, status: 'completed', result: result ?? null });
+      } catch (error) {
+        if (current().token !== data.token || current().status !== 'running') return;
+        status.set({ activation: request.activation_id, token: data.token, status: 'failed', error: String(error?.message ?? error).slice(0, 1024) });
+      }
+    }, false);
+    return Object.freeze({
+      get: current,
+      start(input) {
+        if (typeof request.activation_id !== 'string') throw new Error('background_requires_thread');
+        const token = (current().token ?? 0) + 1;
+        task.start({ activation: request.activation_id, token, input: input ?? null });
+        status.set({ activation: request.activation_id, token, status: 'pending' });
+      },
+      cancel() {
+        task.cancel();
+        status.set({ activation: request.activation_id, token: current().token ?? 0, status: 'cancelled' });
+      },
+    });
+  },
   command(name, handler, options = {}) {
     if (!activating) throw new Error('command_registration_outside_activation');
     requireCapability('commands');
@@ -883,6 +913,6 @@ const api = Object.freeze({
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
   state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead, ui_written: uiWritten, clock_read: clockRead}), request, calls,
-  pending: () => pending, ready: () => {
+  ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;
-  }, suspension, serve, base, component: step };
+  }, serve, base, component: step };
