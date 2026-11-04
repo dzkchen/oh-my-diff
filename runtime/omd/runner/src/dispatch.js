@@ -3,6 +3,7 @@ if (typeof globalThis.__activate !== 'function') throw new Error('default_export
 const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
 await globalThis.__activate(activation);
 globalThis.__omd.ready();
+globalThis.__dispatch = async () => {
 let value = null;
 if (request.event !== 'inspect') {
   const handler = request.event === 'tool' ? tools.get(request.name) ?? globalThis.__omd.dynamicTool(request.name)
@@ -17,5 +18,8 @@ if (request.event !== 'inspect') {
   await globalThis.__omd.flushSubscriptions();
 }
 if (globalThis.__omd.calls.length < (request.receipts ?? []).length) throw new Error('host_call_replay_diverged');
-globalThis.__result = JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
+return JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
   calls: globalThis.__omd.calls, updates: globalThis.__omd.updates });
+
+};
+globalThis.__result = await globalThis.__dispatch();

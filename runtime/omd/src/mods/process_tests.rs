@@ -9,6 +9,35 @@ use std::time::Duration;
 const BUDGET: Duration = Duration::from_secs(2);
 
 #[test]
+fn mounted_component_refreshes_background_activation_identity() {
+    let mut request = json!({
+        "source": "export default api => { const job = api.background('refresh', value => value); api.component('status', {view: () => ({type: 'text', text: job.get().status})}); };",
+        "filename": "/fixture/jobs/index.ts", "api": crate::MOD_API_VERSION,
+        "capabilities": ["store", "events", "terminal"],
+        "surface": {"events": {"timer": "events"}, "replacements": [], "middleware": [], "state": "store", "contracts": "contracts"},
+        "settings": {}, "event": "component", "name": "status", "session_model": true,
+        "state_scope": "thread", "serve": true, "hook_budget_ms": 1000,
+        "payload": {"instance": "status", "columns": 80, "rows": 1, "now": 0}
+    });
+    for (activation, status) in [("first", "pending"), ("second", "completed")] {
+        request["activation_id"] = json!(activation);
+        request["state"] =
+            json!({"background_refresh": {"activation": activation, "status": status, "token": 1}});
+        let reply = evaluate_warm(
+            "component-job-activation",
+            &request,
+            None,
+            BUDGET,
+            &|| true,
+            &mut |_| unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(reply["value"]["tree"][0]["text"], status);
+    }
+    super::invalidate_warm("component-job-activation");
+}
+
+#[test]
 fn reused_process_resets_callback_globals_and_reloads_source() {
     let mut request = json!({"source":"let count = 0; export default api => api.command('count', () => { globalThis.marker = (globalThis.marker ?? 0) + 1; Array.prototype.marker = (Array.prototype.marker ?? 0) + 1; return { count: ++count, marker: globalThis.marker, intrinsic: [].marker, state: api.state.get() }; });",
         "filename":"/fixture/fresh/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands", "store"],
