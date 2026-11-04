@@ -397,14 +397,14 @@ fn reloading_during_streamed_work_rejects_changed_sources_and_swaps_the_next_gen
 
     let mut updates = Vec::new();
     let value = runtime
-        .invoke_streaming(
+        .invoke_scoped(
             "worker",
             generation,
             "tool",
             "work",
             json!({}),
             || true,
-            |_| {
+            |_, _| {
                 std::fs::write(stream.join("index.ts"), middleware("hello!"))?;
                 trust(&store, &stream, &["context"]);
                 Ok(json!({"task":"running"}))

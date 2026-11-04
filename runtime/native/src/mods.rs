@@ -422,13 +422,27 @@ fn initialize(
 ) -> Result<Arc<Mods>, String> {
     let registration =
         codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-    let runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-        .map_err(|e| e.to_string())?;
-    let input_runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-        .map_err(|e| e.to_string())?;
-    let persist_runtime =
-        ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-            .map_err(|e| e.to_string())?;
+    let runtime = ModHost::open_with(
+        host.root.clone(),
+        validate_tool_schema,
+        Some(&host.repository),
+        &|| true,
+    )
+    .map_err(|e| e.to_string())?;
+    let input_runtime = ModHost::open_with(
+        host.root.clone(),
+        validate_tool_schema,
+        Some(&host.repository),
+        &|| true,
+    )
+    .map_err(|e| e.to_string())?;
+    let persist_runtime = ModHost::open_with(
+        host.root.clone(),
+        validate_tool_schema,
+        Some(&host.repository),
+        &|| true,
+    )
+    .map_err(|e| e.to_string())?;
     let persist_required = persist_runtime.required_surfaces();
     services::define_providers(&host.config, |id| runtime.grants(id).is_some());
     let _ = host.persist_json("mod-status.json", &runtime.status());
@@ -605,7 +619,7 @@ fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) -> Opt
         .err()
         .map(|error| format!("OMD session refresh failed: {error}"));
     if let Ok(mut runtime) = runtime.lock() {
-        runtime.turn_boundary();
+        runtime.turn_boundary(&|| true);
         refresh_contract(&runtime, session);
         codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
     }
@@ -1538,7 +1552,7 @@ impl TurnLifecycleContributor for Mods {
                 let _thread = codex_omd::StateThread::enter(scoped);
                 let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
                 runtime
-                    .refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire))
+                    .refresh(&|| !boundary_cancelled.load(Ordering::Acquire))
                     .map_err(|error| error.to_string())?;
                 Ok::<_, String>(runtime.intercepts("input"))
             })

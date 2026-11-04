@@ -382,12 +382,14 @@ fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
     let reader = scoped("reader", "checkout");
     std::fs::write(reader.join("index.ts"), "export default api => { const seen = api.state.get() !== null; api.command(seen ? 'seen' : 'fresh', () => { api.state.set(true); return seen; }); }").unwrap();
     trust(&second, &reader, &["commands", "store"]);
-    let mut opened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
+    let mut opened =
+        ModHost::open_with(root.join("second"), |_| Ok(()), Some(&checkout), &|| true).unwrap();
     assert_eq!(
         invoke(&mut opened, "reader", "fresh", Value::Null).unwrap(),
         json!(false)
     );
-    let mut reopened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
+    let mut reopened =
+        ModHost::open_with(root.join("second"), |_| Ok(()), Some(&checkout), &|| true).unwrap();
     assert_eq!(
         invoke(&mut reopened, "reader", "seen", Value::Null).unwrap(),
         json!(true)
@@ -468,7 +470,8 @@ fn hosts_opened_in_one_process_share_inspections_of_unchanged_selections() {
         &["commands"],
     );
     let root = temp.path().canonicalize().unwrap();
-    let open = || ModHost::open_in(root.join("store"), |_| Ok(()), &root).unwrap();
+    let open =
+        || ModHost::open_with(root.join("store"), |_| Ok(()), Some(&root), &|| true).unwrap();
     let registrations = |host: &ModHost| host.status()["mods"][0]["registrations"].clone();
     let first = registrations(&open());
     assert_eq!(registrations(&open()), first);
@@ -532,13 +535,18 @@ fn mod_cancellation_discards_state_and_explicit_reload_recovers() {
     let (temp, store, _) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
     let calls = AtomicUsize::new(0);
-    let result = runtime.invoke_guarded(
+    let result = runtime.invoke_with(
         "fixture",
         runtime.generation(),
         "command",
         "count",
         Value::Null,
         || calls.fetch_add(1, Ordering::Relaxed) == 0,
+        |_| {
+            Err(std::io::Error::other(
+                "host_operation_unavailable: requires a native task",
+            ))
+        },
     );
     assert!(
         result
@@ -770,9 +778,9 @@ fn lifecycle_route_registration_resumes_across_two_host_calls() {
     let (temp, _, _) = fixture(source, &["lifecycle", "model"]);
     let mut runtime = host(&temp);
     let mut operations = Vec::new();
-    let results = runtime.event_guarded_with(
+    let results = runtime.event_scoped_with(
         "turn_start",
-        Value::Null,
+        |_| Value::Null.clone(),
         || true,
         |_, call| {
             operations.push(call.operation.clone());
@@ -786,9 +794,9 @@ fn lifecycle_route_registration_resumes_across_two_host_calls() {
     assert!(results.iter().all(|(_, result)| result.is_ok()));
     assert_eq!(operations, vec!["routes.list", "providers.register"]);
     operations.clear();
-    let results = runtime.event_guarded_with(
+    let results = runtime.event_scoped_with(
         "turn_start",
-        Value::Null,
+        |_| Value::Null.clone(),
         || true,
         |_, call| {
             operations.push(call.operation.clone());
@@ -1711,8 +1719,8 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     };
     assert!(invoke(&mut first, "read", Value::Null).is_null());
     invoke(&mut first, "write", json!(2));
-    assert!(!first.refresh_guarded(&|| true).unwrap());
-    assert!(!second.refresh_guarded(&|| true).unwrap());
+    assert!(!first.refresh(&|| true).unwrap());
+    assert!(!second.refresh(&|| true).unwrap());
     assert_eq!(invoke(&mut second, "read", Value::Null), 2);
     assert!(first.state("fixture").unwrap().is_null());
     let mut raced = false;
@@ -1735,7 +1743,7 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     assert_eq!(value, 11);
     assert_eq!(invoke(&mut second, "read", Value::Null), 11);
     store.enable(&path, false).unwrap();
-    first.turn_boundary();
+    first.turn_boundary(&|| true);
     assert!(
         second
             .invoke(
@@ -1753,7 +1761,7 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     store.reload().unwrap();
     assert!(invoke(&mut second, "read", Value::Null).is_null());
     invoke(&mut first, "write", json!(5));
-    first.turn_boundary();
+    first.turn_boundary(&|| true);
     {
         let _thread = codex_omd::StateThread::enter(Some("another".into()));
         assert!(invoke(&mut first, "read", Value::Null).is_null());
@@ -2113,7 +2121,7 @@ fn service_host_operations_keep_provider_identity_and_grants() {
     let mut runtime = host(&temp);
     let mut observed = Vec::new();
     let result = runtime
-        .invoke_scoped_with(
+        .invoke_scoped(
             "consumer",
             runtime.generation(),
             "command",
@@ -2126,6 +2134,7 @@ fn service_host_operations_keep_provider_identity_and_grants() {
                 assert_eq!(call.arguments, json!({"key":"owned"}));
                 Ok(json!({"value":"provider-owned"}))
             },
+            |_| {},
         )
         .unwrap();
     assert_eq!(result, json!({"value":"provider-owned"}));
@@ -2133,7 +2142,7 @@ fn service_host_operations_keep_provider_identity_and_grants() {
     assert_eq!(runtime.status()["service_calls"][0]["provider"], "provider");
     let active = std::cell::Cell::new(true);
     let cancelled = runtime
-        .invoke_scoped_with(
+        .invoke_scoped(
             "consumer",
             runtime.generation(),
             "command",
@@ -2145,6 +2154,7 @@ fn service_host_operations_keep_provider_identity_and_grants() {
                 active.set(false);
                 Ok(json!({"value":"cancelled"}))
             },
+            |_| {},
         )
         .unwrap_err();
     assert!(
@@ -2567,14 +2577,14 @@ fn tool_progress_is_forwarded_once_across_host_call_replay() {
     let generation = runtime.generation();
     let mut updates = Vec::new();
     let value = runtime
-        .invoke_streaming(
+        .invoke_scoped(
             "fixture",
             generation,
             "tool",
             "work",
             json!({}),
             || true,
-            |_| Ok(json!({"ok":true})),
+            |_, _| Ok(json!({"ok":true})),
             |update| updates.push(update),
         )
         .unwrap();
@@ -2662,7 +2672,7 @@ fn disabling_during_native_work_rejects_completion_and_next_generation() {
         )
         .unwrap_err();
     assert!(result.to_string().contains("callback_authority_changed"));
-    runtime.turn_boundary();
+    runtime.turn_boundary(&|| true);
     assert!(
         runtime
             .invoke("fixture", generation, "command", "run", Value::Null)
@@ -2677,7 +2687,7 @@ fn disabling_during_native_work_rejects_completion_and_next_generation() {
 fn native_schema_validation_applies_to_reload_before_activation() {
     let source = "export default api => api.tool({name:'probe',description:'probe',parameters:{type:'object',properties:{}}},()=>null)";
     let (temp, store, path) = fixture(source, &["tools"]);
-    let mut runtime = ModHost::open_validated(
+    let mut runtime = ModHost::open_with(
         temp.path().canonicalize().unwrap().join("store"),
         |schema| {
             if schema["properties"].get("invalid").is_some() {
@@ -2686,6 +2696,8 @@ fn native_schema_validation_applies_to_reload_before_activation() {
                 Ok(())
             }
         },
+        None,
+        &|| true,
     )
     .unwrap();
     let generation = runtime.generation();
@@ -2695,7 +2707,7 @@ fn native_schema_validation_applies_to_reload_before_activation() {
     )
     .unwrap();
     trust(&store, &path, &["tools"]);
-    runtime.turn_boundary();
+    runtime.turn_boundary(&|| true);
     assert_eq!(runtime.generation(), generation);
     assert!(
         runtime.status()["reload_error"]
@@ -4056,7 +4068,7 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
     let mut runtime = host(&temp);
     let mut observed = Vec::new();
     let mut run = |runtime: &mut ModHost, command: &str| {
-        runtime.invoke_scoped_with(
+        runtime.invoke_scoped(
             "consumer",
             runtime.generation(),
             "command",
@@ -4071,6 +4083,7 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
                     Value::Null
                 })
             },
+            |_| {},
         )
     };
     assert_eq!(run(&mut runtime, "read").unwrap(), json!("value"));
@@ -4117,7 +4130,7 @@ fn host_operation_events_mask_store_credential_and_exec_payloads() {
     trust(&store, &consumer, granted);
     let mut runtime = host(&temp);
     runtime
-        .invoke_scoped_with(
+        .invoke_scoped(
             "consumer",
             runtime.generation(),
             "command",
@@ -4130,6 +4143,7 @@ fn host_operation_events_mask_store_credential_and_exec_payloads() {
                 }
                 Ok(json!({"secret": "result"}))
             },
+            |_| {},
         )
         .unwrap();
     let seen = runtime
@@ -4380,7 +4394,7 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
     );
     assert!(runtime.grants("helper").is_some() && runtime.grants("guard").is_some());
     let invoke = |runtime: &mut ModHost, command: &str| {
-        runtime.invoke_scoped_with(
+        runtime.invoke_scoped(
             "limited",
             runtime.generation(),
             "command",
@@ -4388,6 +4402,7 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
             Value::Null,
             || true,
             |_, _| Ok(json!("ran")),
+            |_| {},
         )
     };
     assert!(
@@ -5311,7 +5326,7 @@ fn background_jobs_cross_host_instances_and_keep_session_variables() {
             let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
             let checks = AtomicUsize::new(0);
             native
-                .invoke_guarded(
+                .invoke_with(
                     "jobs",
                     native.generation(),
                     "timer",
@@ -5322,6 +5337,11 @@ fn background_jobs_cross_host_instances_and_keep_session_variables() {
                             waiting.send(()).unwrap();
                         }
                         true
+                    },
+                    |_| {
+                        Err(std::io::Error::other(
+                            "host_operation_unavailable: requires a native task",
+                        ))
                     },
                 )
                 .unwrap();

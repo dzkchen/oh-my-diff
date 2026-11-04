@@ -724,7 +724,7 @@ pub(super) fn reloaded(core: &Core) {
         }
         None => {
             if let Ok(mut runtime) = core.runtime.lock() {
-                runtime.turn_boundary();
+                runtime.turn_boundary(&|| true);
             }
         }
     }
