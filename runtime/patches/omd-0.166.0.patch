@@ -64926,10 +64926,10 @@ index 0000000000000000000000000000000000000000..b8719f47aa44cb402e4095528b3a4410
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0b7844d874e8a3ff983dc27ab397b8ac61683e5c
+index 0000000000000000000000000000000000000000..fa9dfe76ed7471db46d3d62cf55d748b317a4252
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,1094 @@
+@@ -0,0 +1,1112 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -65032,8 +65032,7 @@ index 0000000000000000000000000000000000000000..0b7844d874e8a3ff983dc27ab397b8ac
 +pub fn bind(client: &str, owner: codex_protocol::turn_input::TerminalOwner) -> Result<(), String> {
 +    let key = owner.0.to_string();
 +    let mut owners = OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?;
-+    if !owners.contains_key(&key) {
-+        let base = core()?;
++    if !owners.contains_key(&key) && let Ok(base) = core() {
 +        let runtime_owner = codex_omd::terminal_configuration_owner(&key);
 +        owners.insert(key.clone(), create_owner(base.host.clone(), runtime_owner, Some(key.clone()))?);
 +    }
@@ -65069,7 +65068,8 @@ index 0000000000000000000000000000000000000000..0b7844d874e8a3ff983dc27ab397b8ac
 +
 +fn client_core(client: &str) -> Result<Arc<Core>, String> {
 +    let key = CLIENT_OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?.get(client).cloned().ok_or("terminal_owner_missing")?;
-+    OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?.get(&key).map(|mods| mods.core.clone()).ok_or_else(|| "terminal_owner_missing".into())
++    let owner = codex_protocol::turn_input::TerminalOwner(key.parse().map_err(|_| "terminal_owner_invalid")?);
++    ensure_owner(&owner).map(|mods| mods.core.clone())
 +}
 +
 +pub async fn select_thread(owner: codex_protocol::turn_input::TerminalOwner, thread: &str) -> Result<(), String> {
@@ -65195,9 +65195,10 @@ index 0000000000000000000000000000000000000000..0b7844d874e8a3ff983dc27ab397b8ac
 +    let roster = codex_omd::client_surface::register_observer(Arc::new(|observed| {
 +        if matches!(observed, codex_omd::client_surface::Observed::Roster) {
 +            REPUBLISH.request(|| {
-+                if let Ok(core) = self::core() {
-+                    republish(&core);
-+                }
++                let mut cores = OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
++                    .values().map(|owner| owner.core.clone()).collect::<Vec<_>>();
++                if let Ok(core) = self::core() { cores.push(core); }
++                for core in cores { republish(&core); }
 +            });
 +        }
 +    }));
@@ -65759,8 +65760,25 @@ index 0000000000000000000000000000000000000000..0b7844d874e8a3ff983dc27ab397b8ac
 +}
 +
 +pub fn recovery_read(client: &str) -> Result<Value, String> {
-+    let core = client_core(client)?;
-+    let (_, store) = store()?;
++    let (root, store) = store()?;
++    recovery_read_from(client, &root, &store)
++}
++
++fn recovery_read_from(client: &str, root: &std::path::Path, store: &codex_omd::ModStore) -> Result<Value, String> {
++    let core = match client_core(client) {
++        Ok(core) => core,
++        Err(_) if core().is_err() => {
++            let status = std::fs::read(root.join("mod-status.json"))
++                .ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()).unwrap_or_default();
++            let (mods, store_error) = match store.selection_status() {
++                Ok(selections) => (recovery_entries(&selections, &status), Value::Null),
++                Err(error) => (Vec::new(), Value::from(error.to_string())),
++            };
++            return Ok(json!({"mods":mods,"resettable":RESETTABLE,"store_error":store_error,
++                "activation_error":status["activation_error"],"reload_error":status["reload_error"]}));
++        }
++        Err(error) => return Err(error),
++    };
 +    let mut runtime = core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
 +    let refresh_error = runtime.refresh_authority().err().map(|error| error.to_string());
 +    let status = runtime.status();
@@ -66026,11 +66044,30 @@ index 0000000000000000000000000000000000000000..0b7844d874e8a3ff983dc27ab397b8ac
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/clients_tests.rs b/codex-rs/ext/omd/src/clients_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..76a8f3376301115de80f7b698df7d7c6f45f8271
+index 0000000000000000000000000000000000000000..1c1dbbfc58a2b9db8a4fb4216298b1ae0551a3fc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients_tests.rs
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,225 @@
 +use super::*;
++
++#[tokio::test]
++async fn inactive_host_keeps_client_attachment_and_recovery_available() {
++    let _serial = crate::mods::DISPATCHER_TEST.lock().await;
++    assert!(core().is_err());
++    let directory = tempfile::tempdir().unwrap();
++    let store = codex_omd::ModStore::create(directory.path().join("store")).unwrap();
++    let root = directory.path().join("store");
++    std::fs::write(root.join("mod-status.json"), json!({"activation_error":"invalid_host_config"}).to_string()).unwrap();
++    let owner = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000397".parse().unwrap());
++    bind("inactive-recovery", owner.clone()).unwrap();
++    assert!(published_for("inactive-recovery").is_none());
++    let recovery = recovery_read_from("inactive-recovery", &root, &store).unwrap();
++    assert_eq!(recovery["activation_error"], "invalid_host_config");
++    assert_eq!(recovery["resettable"], json!(["host.json", "mods.json"]));
++    assert!(recovery["store_error"].is_null());
++    detached("inactive-recovery");
++    release_owner(owner);
++}
 +
 +fn snapshot() -> ModViewSnapshot {
 +    serde_json::from_value(json!({
@@ -79996,10 +80033,10 @@ index 0000000000000000000000000000000000000000..ef30cf59de5fc637ed390c6fbf63851c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..eed3bde4cbe8155c6e29cc89a663e68fbd30844e
+index 0000000000000000000000000000000000000000..6d033a9d78ed1fcb56d19718081aa4eb2991da79
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,874 @@
+@@ -0,0 +1,882 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -80604,9 +80641,17 @@ index 0000000000000000000000000000000000000000..eed3bde4cbe8155c6e29cc89a663e68f
 +            #[serde(deny_unknown_fields)]
 +            struct Write { id: Option<String>, scope: Option<String>, values: Value, target: Option<String>, #[serde(default)] reset: Vec<String> }
 +            let arguments: Write = serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
-+            core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?.write_configuration_in(
-+                arguments.id.as_deref().unwrap_or(caller.id), &arguments.values, arguments.target.as_deref().unwrap_or("terminal"), &arguments.reset, arguments.scope.as_deref(),
-+            ).map_err(|e| e.to_string())
++            let id = arguments.id.unwrap_or_else(|| caller.id.to_owned());
++            let caller = caller.id.to_owned();
++            let thread = lead.thread.to_string();
++            let cancelled = cancelled.clone();
++            Box::pin(run(core, lead, "intercept", Origin::Event, move |runtime, host, active| {
++                codex_omd::write_settings_shared(runtime, &id, &arguments.values,
++                    arguments.target.as_deref().unwrap_or("terminal"), &arguments.reset,
++                    arguments.scope.as_deref(), &caller, Some(&thread),
++                    &|| active() && !cancelled.load(Ordering::Acquire), host)
++                    .map_err(|error| error.to_string())
++            })).await.ok_or("mod_runtime_poisoned")?
 +        }
 +        "settings.write" => Err("host_operation_user_only: settings.write".into()),
 +        _ => surface(core, lead, caller, request, cancelled).await,
@@ -83055,10 +83100,10 @@ index 0000000000000000000000000000000000000000..fd5111f2e66ca34824ef6b3f00aca85f
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e120d75991de44e99e526aca871c87264e67cfa9
+index 0000000000000000000000000000000000000000..e36baf338bd26994e1efd537ae99556c91f9fae3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5940 @@
+@@ -0,0 +1,5981 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -88998,6 +89043,47 @@ index 0000000000000000000000000000000000000000..e120d75991de44e99e526aca871c8726
 +    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(),original);
 +    clients::detached("native_config-client");
 +    clients::release_owner(owner);
++}
++
++
++#[tokio::test(flavor = "multi_thread")]
++async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
++    let _guard = DISPATCHER_TEST.lock().await;
++    let mut registry = ExtensionRegistryBuilder::new();
++    let Some(fixture) = fixture_with_registry(&[Package {
++        id: "roster_view", capabilities: &["terminal"], manifest: Value::Null,
++        source: "export default api => api.on('terminal', ({clients}) => ({sites:{above_composer:{components:[{type:'text',id:'focus',label:'Focus',text:clients.some(client => client.id === 'roster-client' && client.focused) ? 'focused' : 'blurred'}]}}}));",
++    }], Some(&mut registry)) else { return; };
++    let a = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000071".parse().unwrap());
++    let b = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000072".parse().unwrap());
++    clients::bind("roster-a", a.clone()).unwrap();
++    clients::bind("roster-b", b.clone()).unwrap();
++    let entry = codex_omd::client_surface::attach(codex_omd::client_surface::ClientEntry {
++        id: "roster-client".into(), name: "Roster client".into(), renderer: json!({}),
++        viewport: Value::Null, operations: Vec::new(), attached_ms: 0, focused: false,
++    });
++    for owner in [&a, &b] {
++        let mods = clients::for_owner(owner).unwrap();
++        publish(&mut mods.runtime.lock().unwrap(), &mods.host, &mods.views, true, "start", Value::Null, || true);
++    }
++    let text = |client: &str| {
++        json!(clients::published_for(client).unwrap().view)["sites"]["above_composer"]["components"][0]["text"].clone()
++    };
++    assert_eq!(text("roster-a"), "blurred");
++    assert_eq!(text("roster-b"), "blurred");
++    codex_omd::client_surface::update("roster-client", None, None, Some(true));
++    let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
++        while text("roster-a") != "focused" || text("roster-b") != "focused" {
++            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
++        }
++    }).await;
++    drop(entry);
++    clients::detached("roster-a");
++    clients::detached("roster-b");
++    clients::release_owner(a);
++    clients::release_owner(b);
++    assert!(refreshed.is_ok(), "roster focus changes must rerender every terminal owner's view");
++    drop(fixture);
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
@@ -116665,10 +116751,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5d4e81b103d28ff6d85f7ed5f27044ea3b8ed5e7
+index 0000000000000000000000000000000000000000..671e68edd847449ae7db97bf4f31deb337b1268d
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,268 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -116930,6 +117016,7 @@ index 0000000000000000000000000000000000000000..5d4e81b103d28ff6d85f7ed5f27044ea
 +pub use mods::valid_glyphs;
 +pub use mods::write_settings;
 +pub use mods::write_settings_in;
++pub use mods::write_settings_shared;
 +
 +pub mod turn_evidence;
 +
@@ -118583,10 +118670,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a3feeea3557e85bd3d419efc30e485686cbbea89
+index 0000000000000000000000000000000000000000..f2d93e71599093b23b0a7ba07ac265a3c7300d1e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7087 @@
+@@ -0,0 +1,7088 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -118595,6 +118682,7 @@ index 0000000000000000000000000000000000000000..a3feeea3557e85bd3d419efc30e48568
 +mod configuration_overrides;
 +pub use configuration_overrides::ConfigurationOverrides;
 +pub use configuration_overrides::terminal_configuration_owner;
++pub use configuration_overrides::write_settings_shared;
 +mod persisted;
 +mod render;
 +pub use chain::ModChain;
@@ -129546,10 +129634,10 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/configuration_overrides.rs b/codex-rs/omd/src/mods/configuration_overrides.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab4f9daf98a8bcf7336f769c160776137aa374a3
+index 0000000000000000000000000000000000000000..a9c7993ac6c52499de8150f80b9f05ca3ec69a4d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/configuration_overrides.rs
-@@ -0,0 +1,440 @@
+@@ -0,0 +1,493 @@
 +use super::*;
 +
 +#[derive(Clone, Debug, Default)]
@@ -129989,6 +130077,59 @@ index 0000000000000000000000000000000000000000..ab4f9daf98a8bcf7336f769c16077613
 +    let owner = Arc::new(Mutex::new(ConfigurationOverrides::default()));
 +    owners.insert(token.into(), Arc::downgrade(&owner));
 +    owner
++}
++
++#[allow(clippy::too_many_arguments)]
++pub fn write_settings_shared(
++    runtime: &Mutex<ModHost>, id: &str, values: &Value, target: &str, reset: &[String],
++    scope: Option<&str>, caller: &str, thread: Option<&str>, active: &dyn Fn() -> bool,
++    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
++) -> Result<Value> {
++    let _thread = crate::StateThread::enter(thread.map(str::to_owned));
++    let mut values = values.as_object().ok_or_else(|| failure("settings_values_must_be_object"))?.clone();
++    let (before, inherited, selected_scope, binding) = {
++        let mut runtime = runtime.lock().map_err(|_| failure("mod_runtime_poisoned"))?;
++        runtime.refresh_authority()?;
++        let (selection, package) = runtime.configuration_selection_in(id, scope)?;
++        if target == "terminal" { ConfigurationOverrides::writable(&selection)?; }
++        let mut inherited = selection.settings.clone();
++        inherited.extend(runtime.store.settings_file(&package, &selection).1);
++        let before = runtime.current_overrides().settings(&selection, &package, &inherited)?;
++        (before, effective_settings(package.settings_schema.as_ref(), &inherited), selection.scope.clone(), ConfigurationOverrides::key(&selection))
++    };
++    let mut resets = reset.to_vec();
++    let names: BTreeSet<String> = values.keys().cloned().chain(reset.iter().cloned()).collect();
++    for name in &names {
++        let resetting = !values.contains_key(name) && resets.contains(name);
++        let proposed = values.get(name).cloned().unwrap_or_else(|| inherited.get(name).cloned().unwrap_or(Value::Null));
++        let result = continue_operation(runtime, "config_set",
++            json!({"key":format!("mods.{id}.{name}"),"value":proposed,"original":before.get(name),"source":"mod_settings","scope":"mod"}),
++            json!({"caller":caller,"thread_id":thread}), active, &mut host,
++            |effective| Ok(json!({"value":effective["value"]})))?;
++        if !resetting || result["value"] != proposed {
++            values.insert(name.clone(), result["value"].clone());
++            resets.retain(|key| key != name);
++        }
++    }
++    let result = {
++        let mut runtime = runtime.lock().map_err(|_| failure("mod_runtime_poisoned"))?;
++        if !active() { return Err(failure("callback_cancelled")); }
++        let (selection, _) = runtime.configuration_selection_in(id, Some(&selected_scope))?;
++        if ConfigurationOverrides::key(&selection) != binding { return Err(failure("callback_authority_changed")); }
++        runtime.write_configuration_in(id, &Value::Object(values), target, &resets, Some(&selected_scope))?
++    };
++    let (generation, listeners) = {
++        let runtime = runtime.lock().map_err(|_| failure("mod_runtime_poisoned"))?;
++        (runtime.generation(), runtime.owners().into_iter().map(|(id, _)| id)
++            .filter(|id| id != caller && runtime.registered(id, "config_change")).collect::<Vec<_>>())
++    };
++    for name in names {
++        let payload = json!({"key":format!("mods.{id}.{name}"),"original":before.get(&name),"effective":result["settings"][&name],"source":"mod_settings","scope":"mod","caller":caller});
++        for listener in &listeners {
++            let _ = invoke_shared(runtime, listener, generation, "config_change", "", payload.clone(), active, &mut host, |_| {});
++        }
++    }
++    Ok(result)
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
@@ -154133,10 +154274,10 @@ index 0000000000000000000000000000000000000000..b45c291be63d861571f633525f33bec4
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..48090403411ea3ba7b1e899c06d87ca0ee7296b0
+index 0000000000000000000000000000000000000000..6ce5371904760bb0de46a301ffe52807c0359ef5
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5685 @@
+@@ -0,0 +1,5727 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -159821,6 +159962,48 @@ index 0000000000000000000000000000000000000000..48090403411ea3ba7b1e899c06d87ca0
 +    assert!(selection.required && selection.enabled);
 +    runtime.reload().unwrap();
 +    assert_eq!(runtime.status()["mods"][0]["id"], "fixture");
++}
++
++#[test]
++fn settings_write_preserves_interceptors_notifications_and_atomic_terminal_changes() {
++    let (temp, store, path) = fixture("export default () => {}", &[]);
++    let manifest = path.join("mod.json");
++    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
++    value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"saved"},"other":{"type":"string","default":"base"}},"additionalProperties":false});
++    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
++    trust(&store, &path, &[]);
++    let guard = package(&temp.path().canonicalize().unwrap(), "guard", "export default api => { api.intercept('config_set', (e, next) => e.value === 'denied' ? {deny:'blocked'} : next({...e,value:typeof e.value === 'string' ? e.value.toLowerCase() : e.value})); api.on('config_change', e => api.state.set(e)); api.command('last', () => api.state.get()); }", &["config","config.write","store","commands"]);
++    trust(&store, &guard, &["config","config.write","store","commands"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let mut peer = host(&temp);
++    let saved = std::fs::read(store.root().join("mods.json")).unwrap();
++    let write = |values: Value, target: &str, reset: &[String], caller: &str| codex_omd::write_settings_shared(&runtime, "fixture", &values, target, reset, Some("user"), caller, None, &|| true, |_, _| Err(std::io::Error::other("unexpected host call")));
++    assert_eq!(write(json!({"mode":"LOCAL"}), "terminal", &[], "fixture").unwrap()["settings"]["mode"], "local");
++    let read_event = || { let mut runtime = runtime.lock().unwrap(); let generation = runtime.generation(); runtime.invoke("guard", generation, "command", "last", Value::Null).unwrap() };
++    assert_eq!(read_event()["effective"], "local");
++    assert_eq!(read_event()["caller"], "fixture");
++    assert!(write(json!({"mode":"changed","other":"denied"}), "terminal", &[], "fixture").unwrap_err().to_string().contains("config_set_denied"));
++    assert_eq!(write(json!({}), "terminal", &[], "fixture").unwrap()["settings"]["mode"], "local");
++    assert!(write(json!({"mode":"changed","other":42}), "terminal", &[], "fixture").is_err());
++    assert_eq!(write(json!({}), "terminal", &[], "fixture").unwrap()["settings"]["mode"], "local");
++    assert_eq!(write(json!({}), "terminal", &["mode".into()], "fixture").unwrap()["settings"]["mode"], "saved");
++    assert_eq!(read_event()["effective"], "saved");
++    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
++    peer.reload().unwrap();
++    let row = peer.configuration_listing(codex_omd::package_controls::list(&store, Some(&peer.status())).unwrap()).unwrap();
++    assert_eq!(row["packages"].as_array().unwrap().iter().find(|row| row["id"] == "fixture").unwrap()["settings"]["mode"], "saved");
++    write(json!({"mode":"SHARED"}), "shared", &[], "fixture").unwrap();
++    assert_ne!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
++    let previous = read_event();
++    assert_eq!(write(json!({"mode":"SELF"}), "terminal", &[], "guard").unwrap()["settings"]["mode"], "SELF");
++    assert_eq!(read_event(), previous);
++    let mut config: Value = serde_json::from_slice(&std::fs::read(store.root().join("mods.json")).unwrap()).unwrap();
++    for selected in config["mods"].as_array_mut().unwrap() {
++        if selected["path"] == json!(path) { selected["required"] = json!(true); }
++    }
++    std::fs::write(store.root().join("mods.json"), serde_json::to_vec(&config).unwrap()).unwrap();
++    assert!(write(json!({"mode":"local"}), "terminal", &[], "fixture").is_err());
++    assert_eq!(write(json!({"mode":"REQUIRED"}), "shared", &[], "fixture").unwrap()["settings"]["mode"], "required");
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
@@ -180907,10 +181090,10 @@ index 0000000000000000000000000000000000000000..50b1e7d6e6298843bdb01c1cac820575
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..796b642de048122d88473bd4df9c3c464e2fcd5e
+index 0000000000000000000000000000000000000000..ed36ac85ce587b335261bde9e19af2ce2e84b163
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,2049 @@
+@@ -0,0 +1,2059 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -182548,12 +182731,6 @@ index 0000000000000000000000000000000000000000..796b642de048122d88473bd4df9c3c46
 +    Ok(result["value"].clone())
 +}
 +
-+pub(crate) fn write_configuration_in(id: &str, values: &Value, target: &str, reset: &[String], scope: Option<&str>) -> std::io::Result<Value> {
-+    if let Some(result) = remote_configuration(serde_json::json!({"action":"write", "id":id, "values":values, "target":target, "reset":reset, "scope":scope})) { return result; }
-+    try_with_host(|host, _| Some(host.write_configuration_in(id, values, target, reset, scope)))
-+        .unwrap_or_else(|| Err(std::io::Error::other("terminal_configuration_unavailable")))
-+}
-+
 +pub(crate) fn preview_configuration(arguments: Value) -> std::io::Result<codex_omd::package_controls::PackagePreview> {
 +    if remote_frontend_active() { return Err(std::io::Error::other("remote_package_preview_requires_backend")); }
 +    try_with_host(|host, _| Some(host.preview_configuration(arguments)))
@@ -182960,6 +183137,22 @@ index 0000000000000000000000000000000000000000..796b642de048122d88473bd4df9c3c46
 +#[cfg(test)]
 +#[path = "mod_runtime_tests.rs"]
 +mod tests;
++
++#[allow(clippy::too_many_arguments)]
++pub(crate) fn write_settings(id: &str, values: &Value, target: &str, reset: &[String], scope: Option<&str>, caller: &str, invocation: &CallScope<'_>) -> std::io::Result<Value> {
++    if !(invocation.active)() { return Err(std::io::Error::other("callback_cancelled")); }
++    let context = configuration_context_for(configuration_binding(), invocation.terminal_owner.clone(), invocation.thread.map(str::to_owned)).map_err(std::io::Error::other)?;
++    let grants = { let runtime = context.runtime.locked(); owner_grants(&runtime) };
++    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
++    let call_scope = CallScope {
++        terminal_owner: context.owner.clone(), epoch: context.epoch,
++        context: codex_omd::app_routes::InvocationContext::Event, thread: context.thread.as_deref(),
++        active: Arc::new({ let binding=context.binding; let continued=invocation.active.clone(); move || continued() && configuration_binding_current(binding) }),
++    };
++    codex_omd::write_settings_shared(&context.runtime, id, values, target, reset, scope, caller,
++        context.thread.as_deref(), call_scope.active.as_ref(),
++        |caller, call| crate::mod_surface::host_call(&context.paths, &policy, grants.get(caller).cloned(), caller, call, &call_scope))
++}
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..e4ddc04fbf3c4d8232fb1bacd28df22dc36fd2c7
@@ -183892,7 +184085,7 @@ index 0000000000000000000000000000000000000000..e4ddc04fbf3c4d8232fb1bacd28df22d
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..920926c8feec3844e7a08b5fd29dfe0458f05cd4
+index 0000000000000000000000000000000000000000..04882c28aaea5dffbaf62089007a1bad151b53e8
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
 @@ -0,0 +1,1224 @@
@@ -185089,7 +185282,7 @@ index 0000000000000000000000000000000000000000..920926c8feec3844e7a08b5fd29dfe04
 +            let id = call.arguments["id"].as_str().unwrap_or(caller);
 +            {
 +                let reset: Vec<String> = serde_json::from_value(call.arguments.get("reset").cloned().unwrap_or_else(|| json!([]))).map_err(|error| std::io::Error::other(error.to_string()))?;
-+                crate::mod_runtime::write_configuration_in(id, &call.arguments["values"], call.arguments["target"].as_str().unwrap_or("terminal"), &reset, call.arguments["scope"].as_str())
++                crate::mod_runtime::write_settings(id, &call.arguments["values"], call.arguments["target"].as_str().unwrap_or("terminal"), &reset, call.arguments["scope"].as_str(), caller, scope)
 +            }
 +        }
 +        "settings.write" => Err(other("host_operation_user_only: settings.write")),

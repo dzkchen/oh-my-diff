@@ -602,9 +602,17 @@ pub(super) async fn dispatch(
             #[serde(deny_unknown_fields)]
             struct Write { id: Option<String>, scope: Option<String>, values: Value, target: Option<String>, #[serde(default)] reset: Vec<String> }
             let arguments: Write = serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
-            core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?.write_configuration_in(
-                arguments.id.as_deref().unwrap_or(caller.id), &arguments.values, arguments.target.as_deref().unwrap_or("terminal"), &arguments.reset, arguments.scope.as_deref(),
-            ).map_err(|e| e.to_string())
+            let id = arguments.id.unwrap_or_else(|| caller.id.to_owned());
+            let caller = caller.id.to_owned();
+            let thread = lead.thread.to_string();
+            let cancelled = cancelled.clone();
+            Box::pin(run(core, lead, "intercept", Origin::Event, move |runtime, host, active| {
+                codex_omd::write_settings_shared(runtime, &id, &arguments.values,
+                    arguments.target.as_deref().unwrap_or("terminal"), &arguments.reset,
+                    arguments.scope.as_deref(), &caller, Some(&thread),
+                    &|| active() && !cancelled.load(Ordering::Acquire), host)
+                    .map_err(|error| error.to_string())
+            })).await.ok_or("mod_runtime_poisoned")?
         }
         "settings.write" => Err("host_operation_user_only: settings.write".into()),
         _ => surface(core, lead, caller, request, cancelled).await,

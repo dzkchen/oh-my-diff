@@ -100,8 +100,7 @@ pub fn release_owner(owner: codex_protocol::turn_input::TerminalOwner) {
 pub fn bind(client: &str, owner: codex_protocol::turn_input::TerminalOwner) -> Result<(), String> {
     let key = owner.0.to_string();
     let mut owners = OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?;
-    if !owners.contains_key(&key) {
-        let base = core()?;
+    if !owners.contains_key(&key) && let Ok(base) = core() {
         let runtime_owner = codex_omd::terminal_configuration_owner(&key);
         owners.insert(key.clone(), create_owner(base.host.clone(), runtime_owner, Some(key.clone()))?);
     }
@@ -137,7 +136,8 @@ pub(super) fn for_store(store: &codex_extension_api::ExtensionData) -> Option<Ar
 
 fn client_core(client: &str) -> Result<Arc<Core>, String> {
     let key = CLIENT_OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?.get(client).cloned().ok_or("terminal_owner_missing")?;
-    OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?.get(&key).map(|mods| mods.core.clone()).ok_or_else(|| "terminal_owner_missing".into())
+    let owner = codex_protocol::turn_input::TerminalOwner(key.parse().map_err(|_| "terminal_owner_invalid")?);
+    ensure_owner(&owner).map(|mods| mods.core.clone())
 }
 
 pub async fn select_thread(owner: codex_protocol::turn_input::TerminalOwner, thread: &str) -> Result<(), String> {
@@ -263,9 +263,10 @@ pub(super) fn install(
     let roster = codex_omd::client_surface::register_observer(Arc::new(|observed| {
         if matches!(observed, codex_omd::client_surface::Observed::Roster) {
             REPUBLISH.request(|| {
-                if let Ok(core) = self::core() {
-                    republish(&core);
-                }
+                let mut cores = OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .values().map(|owner| owner.core.clone()).collect::<Vec<_>>();
+                if let Ok(core) = self::core() { cores.push(core); }
+                for core in cores { republish(&core); }
             });
         }
     }));
@@ -827,8 +828,25 @@ fn store() -> Result<(PathBuf, codex_omd::ModStore), String> {
 }
 
 pub fn recovery_read(client: &str) -> Result<Value, String> {
-    let core = client_core(client)?;
-    let (_, store) = store()?;
+    let (root, store) = store()?;
+    recovery_read_from(client, &root, &store)
+}
+
+fn recovery_read_from(client: &str, root: &std::path::Path, store: &codex_omd::ModStore) -> Result<Value, String> {
+    let core = match client_core(client) {
+        Ok(core) => core,
+        Err(_) if core().is_err() => {
+            let status = std::fs::read(root.join("mod-status.json"))
+                .ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()).unwrap_or_default();
+            let (mods, store_error) = match store.selection_status() {
+                Ok(selections) => (recovery_entries(&selections, &status), Value::Null),
+                Err(error) => (Vec::new(), Value::from(error.to_string())),
+            };
+            return Ok(json!({"mods":mods,"resettable":RESETTABLE,"store_error":store_error,
+                "activation_error":status["activation_error"],"reload_error":status["reload_error"]}));
+        }
+        Err(error) => return Err(error),
+    };
     let mut runtime = core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
     let refresh_error = runtime.refresh_authority().err().map(|error| error.to_string());
     let status = runtime.status();

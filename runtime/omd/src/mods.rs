@@ -6,6 +6,7 @@ mod operation_validation;
 mod configuration_overrides;
 pub use configuration_overrides::ConfigurationOverrides;
 pub use configuration_overrides::terminal_configuration_owner;
+pub use configuration_overrides::write_settings_shared;
 mod persisted;
 mod render;
 pub use chain::ModChain;

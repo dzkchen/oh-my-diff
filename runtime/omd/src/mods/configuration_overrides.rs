@@ -438,3 +438,56 @@ pub fn terminal_configuration_owner(token: &str) -> Arc<Mutex<ConfigurationOverr
     owners.insert(token.into(), Arc::downgrade(&owner));
     owner
 }
+
+#[allow(clippy::too_many_arguments)]
+pub fn write_settings_shared(
+    runtime: &Mutex<ModHost>, id: &str, values: &Value, target: &str, reset: &[String],
+    scope: Option<&str>, caller: &str, thread: Option<&str>, active: &dyn Fn() -> bool,
+    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
+) -> Result<Value> {
+    let _thread = crate::StateThread::enter(thread.map(str::to_owned));
+    let mut values = values.as_object().ok_or_else(|| failure("settings_values_must_be_object"))?.clone();
+    let (before, inherited, selected_scope, binding) = {
+        let mut runtime = runtime.lock().map_err(|_| failure("mod_runtime_poisoned"))?;
+        runtime.refresh_authority()?;
+        let (selection, package) = runtime.configuration_selection_in(id, scope)?;
+        if target == "terminal" { ConfigurationOverrides::writable(&selection)?; }
+        let mut inherited = selection.settings.clone();
+        inherited.extend(runtime.store.settings_file(&package, &selection).1);
+        let before = runtime.current_overrides().settings(&selection, &package, &inherited)?;
+        (before, effective_settings(package.settings_schema.as_ref(), &inherited), selection.scope.clone(), ConfigurationOverrides::key(&selection))
+    };
+    let mut resets = reset.to_vec();
+    let names: BTreeSet<String> = values.keys().cloned().chain(reset.iter().cloned()).collect();
+    for name in &names {
+        let resetting = !values.contains_key(name) && resets.contains(name);
+        let proposed = values.get(name).cloned().unwrap_or_else(|| inherited.get(name).cloned().unwrap_or(Value::Null));
+        let result = continue_operation(runtime, "config_set",
+            json!({"key":format!("mods.{id}.{name}"),"value":proposed,"original":before.get(name),"source":"mod_settings","scope":"mod"}),
+            json!({"caller":caller,"thread_id":thread}), active, &mut host,
+            |effective| Ok(json!({"value":effective["value"]})))?;
+        if !resetting || result["value"] != proposed {
+            values.insert(name.clone(), result["value"].clone());
+            resets.retain(|key| key != name);
+        }
+    }
+    let result = {
+        let mut runtime = runtime.lock().map_err(|_| failure("mod_runtime_poisoned"))?;
+        if !active() { return Err(failure("callback_cancelled")); }
+        let (selection, _) = runtime.configuration_selection_in(id, Some(&selected_scope))?;
+        if ConfigurationOverrides::key(&selection) != binding { return Err(failure("callback_authority_changed")); }
+        runtime.write_configuration_in(id, &Value::Object(values), target, &resets, Some(&selected_scope))?
+    };
+    let (generation, listeners) = {
+        let runtime = runtime.lock().map_err(|_| failure("mod_runtime_poisoned"))?;
+        (runtime.generation(), runtime.owners().into_iter().map(|(id, _)| id)
+            .filter(|id| id != caller && runtime.registered(id, "config_change")).collect::<Vec<_>>())
+    };
+    for name in names {
+        let payload = json!({"key":format!("mods.{id}.{name}"),"original":before.get(&name),"effective":result["settings"][&name],"source":"mod_settings","scope":"mod","caller":caller});
+        for listener in &listeners {
+            let _ = invoke_shared(runtime, listener, generation, "config_change", "", payload.clone(), active, &mut host, |_| {});
+        }
+    }
+    Ok(result)
+}

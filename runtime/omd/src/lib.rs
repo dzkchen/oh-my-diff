@@ -259,6 +259,7 @@ pub use mods::take_turned_off;
 pub use mods::valid_glyphs;
 pub use mods::write_settings;
 pub use mods::write_settings_in;
+pub use mods::write_settings_shared;
 
 pub mod turn_evidence;
 

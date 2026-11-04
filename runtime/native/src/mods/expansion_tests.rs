@@ -5938,3 +5938,44 @@ async fn terminal_owner_native_configuration_refreshes_before_turn_and_conversat
     clients::detached("native_config-client");
     clients::release_owner(owner);
 }
+
+
+#[tokio::test(flavor = "multi_thread")]
+async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(&[Package {
+        id: "roster_view", capabilities: &["terminal"], manifest: Value::Null,
+        source: "export default api => api.on('terminal', ({clients}) => ({sites:{above_composer:{components:[{type:'text',id:'focus',label:'Focus',text:clients.some(client => client.id === 'roster-client' && client.focused) ? 'focused' : 'blurred'}]}}}));",
+    }], Some(&mut registry)) else { return; };
+    let a = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000071".parse().unwrap());
+    let b = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000072".parse().unwrap());
+    clients::bind("roster-a", a.clone()).unwrap();
+    clients::bind("roster-b", b.clone()).unwrap();
+    let entry = codex_omd::client_surface::attach(codex_omd::client_surface::ClientEntry {
+        id: "roster-client".into(), name: "Roster client".into(), renderer: json!({}),
+        viewport: Value::Null, operations: Vec::new(), attached_ms: 0, focused: false,
+    });
+    for owner in [&a, &b] {
+        let mods = clients::for_owner(owner).unwrap();
+        publish(&mut mods.runtime.lock().unwrap(), &mods.host, &mods.views, true, "start", Value::Null, || true);
+    }
+    let text = |client: &str| {
+        json!(clients::published_for(client).unwrap().view)["sites"]["above_composer"]["components"][0]["text"].clone()
+    };
+    assert_eq!(text("roster-a"), "blurred");
+    assert_eq!(text("roster-b"), "blurred");
+    codex_omd::client_surface::update("roster-client", None, None, Some(true));
+    let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while text("roster-a") != "focused" || text("roster-b") != "focused" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await;
+    drop(entry);
+    clients::detached("roster-a");
+    clients::detached("roster-b");
+    clients::release_owner(a);
+    clients::release_owner(b);
+    assert!(refreshed.is_ok(), "roster focus changes must rerender every terminal owner's view");
+    drop(fixture);
+}

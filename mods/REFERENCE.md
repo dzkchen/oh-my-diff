@@ -1655,6 +1655,8 @@ settings.write {id?, scope?, values, target?, reset?} → {settings}
 exits, survive conversation changes and reloads, and never write shared configuration. `reset: [key, ...]` clears
 terminal overrides for those keys; pass `values: {}` to reset without writing. A `null` value retains removal
 semantics; use explicit reset to inherit the latest defaults. Shared writes persist.
+Each changed key passes through `config_set` before the validated batch is applied. A denied or invalid key
+leaves the batch unchanged; successful writes notify other `config_change` listeners.
 It runs only from [user contexts](reference/host-model.md#callback-contexts). Without `id` it writes the caller's own settings.
 With `id` or `scope` it needs `packages`. Experimental `scope: "user" | "project"` selects that trusted copy explicitly,
 including a copy shadowed by project precedence. Omit `scope` to use the current effective copy. The selected

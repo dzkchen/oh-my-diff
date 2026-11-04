@@ -5683,3 +5683,45 @@ fn required_disabled_mod_can_only_be_restored_through_explicit_shared_enablement
     runtime.reload().unwrap();
     assert_eq!(runtime.status()["mods"][0]["id"], "fixture");
 }
+
+#[test]
+fn settings_write_preserves_interceptors_notifications_and_atomic_terminal_changes() {
+    let (temp, store, path) = fixture("export default () => {}", &[]);
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"saved"},"other":{"type":"string","default":"base"}},"additionalProperties":false});
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &[]);
+    let guard = package(&temp.path().canonicalize().unwrap(), "guard", "export default api => { api.intercept('config_set', (e, next) => e.value === 'denied' ? {deny:'blocked'} : next({...e,value:typeof e.value === 'string' ? e.value.toLowerCase() : e.value})); api.on('config_change', e => api.state.set(e)); api.command('last', () => api.state.get()); }", &["config","config.write","store","commands"]);
+    trust(&store, &guard, &["config","config.write","store","commands"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let mut peer = host(&temp);
+    let saved = std::fs::read(store.root().join("mods.json")).unwrap();
+    let write = |values: Value, target: &str, reset: &[String], caller: &str| codex_omd::write_settings_shared(&runtime, "fixture", &values, target, reset, Some("user"), caller, None, &|| true, |_, _| Err(std::io::Error::other("unexpected host call")));
+    assert_eq!(write(json!({"mode":"LOCAL"}), "terminal", &[], "fixture").unwrap()["settings"]["mode"], "local");
+    let read_event = || { let mut runtime = runtime.lock().unwrap(); let generation = runtime.generation(); runtime.invoke("guard", generation, "command", "last", Value::Null).unwrap() };
+    assert_eq!(read_event()["effective"], "local");
+    assert_eq!(read_event()["caller"], "fixture");
+    assert!(write(json!({"mode":"changed","other":"denied"}), "terminal", &[], "fixture").unwrap_err().to_string().contains("config_set_denied"));
+    assert_eq!(write(json!({}), "terminal", &[], "fixture").unwrap()["settings"]["mode"], "local");
+    assert!(write(json!({"mode":"changed","other":42}), "terminal", &[], "fixture").is_err());
+    assert_eq!(write(json!({}), "terminal", &[], "fixture").unwrap()["settings"]["mode"], "local");
+    assert_eq!(write(json!({}), "terminal", &["mode".into()], "fixture").unwrap()["settings"]["mode"], "saved");
+    assert_eq!(read_event()["effective"], "saved");
+    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+    peer.reload().unwrap();
+    let row = peer.configuration_listing(codex_omd::package_controls::list(&store, Some(&peer.status())).unwrap()).unwrap();
+    assert_eq!(row["packages"].as_array().unwrap().iter().find(|row| row["id"] == "fixture").unwrap()["settings"]["mode"], "saved");
+    write(json!({"mode":"SHARED"}), "shared", &[], "fixture").unwrap();
+    assert_ne!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+    let previous = read_event();
+    assert_eq!(write(json!({"mode":"SELF"}), "terminal", &[], "guard").unwrap()["settings"]["mode"], "SELF");
+    assert_eq!(read_event(), previous);
+    let mut config: Value = serde_json::from_slice(&std::fs::read(store.root().join("mods.json")).unwrap()).unwrap();
+    for selected in config["mods"].as_array_mut().unwrap() {
+        if selected["path"] == json!(path) { selected["required"] = json!(true); }
+    }
+    std::fs::write(store.root().join("mods.json"), serde_json::to_vec(&config).unwrap()).unwrap();
+    assert!(write(json!({"mode":"local"}), "terminal", &[], "fixture").is_err());
+    assert_eq!(write(json!({"mode":"REQUIRED"}), "shared", &[], "fixture").unwrap()["settings"]["mode"], "required");
+}
