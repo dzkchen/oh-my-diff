@@ -5512,9 +5512,7 @@ impl ModHost {
             }
         })?;
         if let Some(error) = &loaded.error {
-            return Err(failure(format!(
-                "mod_failed: {error}; reload it with /omd (Reload mods)"
-            )));
+            return Err(failure(format!("mod_failed: {error}")));
         }
         self.check_callback_authority(&loaded)?;
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
