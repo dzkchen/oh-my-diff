@@ -58,7 +58,7 @@ a mod makes: tools, commands, interceptors, replacements, lifecycle events and s
 | `middleware` | `host_operation`, `model_request`, `response_stream` and `model_send` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
 | `context` | the `context` replacement and the `context` event |
-| `lifecycle` | the lifecycle events: `start`, `idle`, `stop`, `resume`, `tool_result`, `turn_start`, `turn_end`, `compaction_start`, `compaction_end`, `agent_end`, `tool_batch_end`, `instructions_loaded`, `thread_settings`, `worktree`, `mods_changed` |
+| `lifecycle` | the lifecycle events: `start`, `idle`, `stop`, `resume`, `tool_result`, `turn_start`, `turn_end`, `assistant_message`, `compaction_start`, `compaction_end`, `agent_end`, `tool_batch_end`, `instructions_loaded`, `thread_settings`, `worktree`, `mods_changed` |
 | `compaction` | the `compaction` replacement, the `compaction` event and the `compaction` interceptor |
 | `services` | `api.provide` and `api.services.call` |
 | `virtual_reads` | `api.virtualRead` |

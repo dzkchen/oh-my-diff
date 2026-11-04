@@ -243,6 +243,8 @@ fn metadata(loaded: &Loaded) -> Result<(Value, String, [u8; 32])> {
         "entrypoint": loaded.package.entrypoint,
         "entrypoint_sha256": digest(loaded.source.as_bytes()),
         "package": {"id": loaded.package.id, "version": loaded.package.version},
+        "session_model": loaded.package.compatibility.required_features.iter().any(|feature| feature == "session_activation_v1"),
+        "state_scope": loaded.package.state_scope,
         "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
         "settings_file": loaded.settings_file,
         "hook_budget_ms": loaded.package.hook_budget_ms,"max_host_calls": MAX_HOST_CALLS,"environment":loaded.package.environment});
@@ -310,26 +312,45 @@ pub(super) fn run(
     request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
     let render = event == "intercept" && request["payload"]["surface"] == "render";
     let component = event == "component";
-    let warm = (render || component || loaded.package.environment.is_empty()).then(|| {
-        request.invocation["serve"] = Value::Bool(render || component);
-        request.invocation["reuse"] = Value::Bool(!render && !component);
-        if component {
-            let instance = request["payload"]["instance"].as_str().unwrap_or(name);
-            return component_key(&loaded.package.id, instance, identity);
-        }
-        if !render {
-            return format!("runner:{identity}");
-        }
-        let mut key = Sha256::new();
-        key.update(identity);
-        for (field, value) in request.invocation.as_object().into_iter().flatten() {
-            if !["name", "payload", "receipts", "virtual_time_ms"].contains(&field.as_str()) {
-                key.update(field);
-                key.update(value.to_string());
-            }
-        }
-        format!("runner:{:x}", key.finalize())
+    let session = loaded.session_key.as_ref().filter(|_| {
+        !render
+            && !component
+            && !matches!(
+                event,
+                "terminal" | "inspect" | "workspace_pre_rename" | "command_list" | "config_list"
+            )
+            && !(event == "intercept"
+                && matches!(
+                    request["payload"]["surface"].as_str(),
+                    Some("input" | "mention" | "history_persist")
+                ))
     });
+    request.invocation["activation_id"] = json!(loaded.session_key);
+    request.invocation["session_activation"] = json!(session.is_some());
+    let warm = (session.is_some() || render || component || loaded.package.environment.is_empty())
+        .then(|| {
+            request.invocation["serve"] = Value::Bool(session.is_some() || render || component);
+            request.invocation["reuse"] = Value::Bool(session.is_none() && !render && !component);
+            if let Some(key) = session {
+                return key.clone();
+            }
+            if component {
+                let instance = request["payload"]["instance"].as_str().unwrap_or(name);
+                return component_key(&loaded.package.id, instance, identity);
+            }
+            if !render {
+                return format!("runner:{identity}");
+            }
+            let mut key = Sha256::new();
+            key.update(identity);
+            for (field, value) in request.invocation.as_object().into_iter().flatten() {
+                if !["name", "payload", "receipts", "virtual_time_ms"].contains(&field.as_str()) {
+                    key.update(field);
+                    key.update(value.to_string());
+                }
+            }
+            format!("runner:{:x}", key.finalize())
+        });
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
     request.invocation["receipts"] = Value::Array(receipts.clone());

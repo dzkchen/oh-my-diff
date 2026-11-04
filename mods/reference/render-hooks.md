@@ -40,7 +40,7 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |
 | `user_message` (experimental) | content digest | `text`, `images`, `spoken` | none |
-| `assistant_message` | content digest | `text`, `first`, `truncated` | none |
+| `assistant_message` | content digest | `text`, `first`, `truncated`, `message_id` | none |
 | `tool_call` | call id (row id for agent rows; `explore:<first call id>` for a command group) | every agent tool row (`RenderToolCall`); see [`tool_call` props](#tool_call-props) | none |
 | `tool_result` (experimental) | call id | `tool`, `success`, `text` (MCP results inside their call) | none |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |

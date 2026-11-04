@@ -19,6 +19,9 @@ Runs on Apple Silicon macOS.
 `replace('history')` receives a bounded view of each model request's items and may return `{drop?, replace?,
 insert?}`.
 
+This callback runs without a native task host: operations such as `evidence.read` and `session.info` are unavailable.
+Prepare host-backed data in an earlier command or tool callback and carry it into history through mod state.
+
 Each item in the view contains `index`, `type`, `role`, `call_id`, `editable`, a 2 KiB text preview, the byte size and
 the `images` count.
 
