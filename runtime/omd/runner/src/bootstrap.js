@@ -54,7 +54,6 @@ const base = request.filename.endsWith('/' + request.entrypoint) ? request.filen
   : request.filename.slice(0, request.filename.lastIndexOf('/') + 1);
 let activating = true;
 let activatedState;
-let pending = null;
 const calls = [];
 let receipts = request.receipts ?? [];
 // A warm render runner answers the next render with the activated mod, from that render's own input.
@@ -73,9 +72,7 @@ function serve(line) {
   reads.clear();
   calls.length = 0;
   updates.length = 0;
-  pending = null;
 }
-const suspension = Object.freeze({});
 const exchange = globalThis.__exchange;
 const clock = globalThis.__clock;
 const utf8 = globalThis.__utf8;
@@ -231,7 +228,6 @@ function hostTryCall(operation, arguments_ = null) {
 }
 function hostReply(operation, arguments_) {
   if (activating) throw new Error('host_call_during_registration');
-  if (pending) throw new Error('concurrent_host_call');
   const call = structuredCloneFallback({ operation, arguments: arguments_ });
   const index = calls.length;
   calls.push(call);
@@ -241,12 +237,8 @@ function hostReply(operation, arguments_) {
     if (receipt.error) return { ok: false, error: receipt.error };
     return { ok: true, value: structuredCloneFallback(receipt.value) };
   }
-  if (request.interactive) {
-    const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
-    return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
-  }
-  pending = call;
-  throw suspension;
+  const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
+  return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
 }
 function hostCall(operation, arguments_ = null) {
   const result = hostTryCall(operation, arguments_);
@@ -325,7 +317,6 @@ function intercept(event) {
     try {
       reply = hostCall('continuation.next', { input: argument });
     } catch (error) {
-      if (error === suspension) throw error;
       if (String(error?.message).startsWith('callback_cancelled')) signal.aborted = true;
       return Promise.reject(error);
     }
@@ -514,7 +505,6 @@ async function dispatchTimer(event) {
   try {
     if (await entry.handler({ key: entry.key }) === false) entry.cancelled = true;
   } catch (error) {
-    if (error === suspension) throw error;
     failure = error;
   }
   if (entry.repeat && !entry.cancelled) hostCall('events.schedule', { key: event.key, delay_ms: entry.ms });
@@ -883,6 +873,6 @@ const api = Object.freeze({
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
   state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead, ui_written: uiWritten, clock_read: clockRead}), request, calls,
-  pending: () => pending, ready: () => {
+  ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;
-  }, suspension, serve, base, component: step };
+  }, serve, base, component: step };

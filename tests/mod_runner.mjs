@@ -120,21 +120,11 @@ function close(worker) {
   worker.child.kill();
 }
 
-export function runnerSync(request) {
-  const worker = take(request);
-  try {
-    writeSync(worker.input, JSON.stringify({ surface, max_host_calls: MAX_HOST_CALLS, ...request }) + '\n');
-    return frame(worker);
-  } finally {
-    close(worker);
-  }
-}
-
 export function callback(request, host, receipts = [], { capture = error => !error.crash && !(error instanceof AssertionError) } = {}) {
   const worker = take(request);
   let spent = Buffer.byteLength(JSON.stringify(receipts));
   try {
-    writeSync(worker.input, JSON.stringify({ surface, max_host_calls: MAX_HOST_CALLS, ...request, receipts, interactive: true }) + '\n');
+    writeSync(worker.input, JSON.stringify({ surface, max_host_calls: MAX_HOST_CALLS, ...request, receipts }) + '\n');
     for (;;) {
       const output = frame(worker);
       if (!('call' in output)) return output;

@@ -13,7 +13,7 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
     let mut request = json!({"source":"let count = 0; export default api => api.command('count', () => { globalThis.marker = (globalThis.marker ?? 0) + 1; Array.prototype.marker = (Array.prototype.marker ?? 0) + 1; return { count: ++count, marker: globalThis.marker, intrinsic: [].marker, state: api.state.get() }; });",
         "filename":"/fixture/fresh/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands", "store"],
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
-        "state":null,"settings":{},"event":"command","name":"count","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
+        "state":null,"settings":{},"event":"command","name":"count","reuse":true,"hook_budget_ms":1000,"payload":null});
     for state in 0..1000 {
         request["state"] = json!({"current":state});
         let reply = super::evaluate_warm(
@@ -73,7 +73,7 @@ fn reused_process_resends_changed_package_fields_and_replaces_a_runner_that_died
     let mut request = json!({"source":"export default api => api.command('v', () => 1);",
         "filename":"/fixture/kept/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
-        "state":null,"settings":{},"event":"command","name":"v","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
+        "state":null,"settings":{},"event":"command","name":"v","reuse":true,"hook_budget_ms":1000,"payload":null});
     let run = |request: &serde_json::Value| {
         evaluate_warm(
             "kept-fields",
@@ -126,7 +126,7 @@ fn a_render_runner_killed_idle_by_the_watchdog_fails_the_next_render_once() {
     let request = json!({"source":"export default api => api.intercept('render', () => ({ ok: true }));",
         "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
         "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
-        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
+        "state":null,"settings":{},"event":"intercept","name":"0","serve":true,"hook_budget_ms":1000,
         "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
     let run = || {
         evaluate_warm(
@@ -151,7 +151,7 @@ fn reused_process_keeps_each_packages_authority_and_host_identity() {
     let mut request = json!({"source":"export default api => { if (globalThis.activated) throw new Error('activation_leaked'); globalThis.activated = true; api.command('identity', () => { let writable = true; try { api.state.set(1); } catch { writable = false; } return {settings:api.settings, package:api.package.id, writable, caller:api.host.call('identity')}; }); };",
         "filename":"/fixture/a/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands","store"],
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
-        "state":null,"settings":{},"event":"command","name":"identity","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
+        "state":null,"settings":{},"event":"command","name":"identity","reuse":true,"hook_budget_ms":1000,"payload":null});
     for (package, writable) in [("a", true), ("b", false), ("a", true)] {
         request["filename"] = json!(format!("/fixture/{package}/index.ts"));
         request["package"] = json!({"id":package,"version":"1.0.0"});
@@ -198,7 +198,7 @@ fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
     let mut request = json!({"source":"export default api => api.command('fill', () => { const buffers = []; for (let i = 0; i < 1024; i++) buffers.push(new Uint8Array(1 << 20).fill(1)); return buffers.length; });",
         "filename":"/fixture/memory/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
-        "state":null,"settings":{},"event":"command","name":"fill","interactive":true,"reuse":true,"hook_budget_ms":5000,"payload":null});
+        "state":null,"settings":{},"event":"command","name":"fill","reuse":true,"hook_budget_ms":5000,"payload":null});
     let run = |request: &serde_json::Value| {
         evaluate_warm(
             "memory-limit",
@@ -240,7 +240,7 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
         let request = json!({"source":format!("export default api => api.intercept('render', () => {{ {mutation}; return {{}}; }});"),
             "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal","tools","commands","middleware","approvals"],
             "surface":{"events":{"terminal":"terminal","completion":"terminal"},"replacements":["completion"],"middleware":["approval"],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
-            "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
+            "state":null,"settings":{},"event":"intercept","name":"0","serve":true,"hook_budget_ms":1000,
             "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
         let error = evaluate_warm(
             "registration-mutation",
@@ -269,7 +269,7 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
     let request = json!({"source":"export default api => { const spec = {name:'original'}; api.tool(spec, () => {}); api.intercept('render', () => { spec.name = 'changed'; return {}; }); };",
         "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal","tools"],
         "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
-        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
+        "state":null,"settings":{},"event":"intercept","name":"0","serve":true,"hook_budget_ms":1000,
         "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
     let reply = evaluate_warm(
         "registration-input",
