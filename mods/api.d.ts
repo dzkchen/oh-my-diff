@@ -494,7 +494,7 @@ export interface HostOperations {
   /** `fields` keeps only those keys of each package. */
   'packages.list': { arguments: { fields: (keyof PackageState)[] } | null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
   'packages.index': { arguments: { index?: string; query?: string; cursor?: string; limit?: number }; result: { index: string; packages: PackageCatalogEntry[]; total: number; cursor: string | null } };
-  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[] } };
+  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; identity_warning?: string | null } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };
   'settings.write': { arguments: { id?: string; values: { [key: string]: Json } }; result: { settings: { [key: string]: Json } } };
@@ -645,6 +645,7 @@ export interface ModAPI {
   readonly version: '1.0.0';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
+  /** Experimental: settings_file_v1. */
   readonly settingsFile: Readonly<{ path: string; status: 'missing' | 'loaded' | 'invalid' | 'ignored'; error: string | null }>;
   readonly host: {
     call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'];
@@ -674,6 +675,7 @@ export interface ModAPI {
   dynamicTools(handler: (call: { name: string; arguments: Json }) => Json | Promise<Json>): void;
   virtualRead(definition: { scheme: string; version: string }, handler: (request: VirtualReadRequest) => VirtualReadResponse | Promise<VirtualReadResponse>): void;
   command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string; cli?: string; args_hint?: string; immediate?: boolean }): void;
+  /** Experimental: completion_tokens_v1. */
   completion(options: { trigger: string }, handler: (input: { kind: 'token'; trigger: string; query: string; line: string }) => { items: { insert: string }[] } | null | Promise<{ items: { insert: string }[] } | null>): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };

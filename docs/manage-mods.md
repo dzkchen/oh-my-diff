@@ -10,7 +10,7 @@ How to find, install, turn on and off, update and remove mods. For what ships wi
 ## Find a mod
 
 In `codex`, type `/mods`. The All tab lists installed mods and, under Available, mods you can install from the curated
-directory, the list of mods OMD reviews. The Directory tab has Add from source, for npm, Git and folder sources.
+directory. Experimental entries have not been fully tested; check their support status before trusting them. The Directory tab has Add from source, for npm, Git and folder sources.
 
 From a shell:
 
