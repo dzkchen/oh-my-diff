@@ -942,13 +942,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "e3c678e886ddc85a5b368bc27e17026d7e5724cd988683828f7d0e43c12fdd8d",
-        "mod.json": "bd6589616844fab3957d22f13aa59a50c9f3d9c3d7068d9ea7cc5f60276e4489"
+        "index.ts": "def30512256a934297b5fb6d9a5b597e68b45b9d9c043b830e2fe919a0009562",
+        "mod.json": "1123632ec1c127445101657aa621fe8a07fba1f08e37ce2caf971b6396993cdb"
       },
       "id": "omd_workflow",
-      "package_sha256": "c56b34f6a4c449cd23ecb27f2578ace3c98ad869e0abc85b652049153f9cc84a",
+      "package_sha256": "f7ca668afbdf8ae617e72b8dc32b181014ef03bffb858a6e3f870bdc3f21171e",
       "source": "mods/first-party/omd_workflow",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     "omd_workspace": {
       "api": "1.0.0",

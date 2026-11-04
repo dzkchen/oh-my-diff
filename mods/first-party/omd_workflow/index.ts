@@ -67,6 +67,10 @@ required: [...required, 'operation_id', 'expected_revision'], additionalProperti
 const canonical = (value: Json): Json => Array.isArray(value) ? value.map(canonical)
   : object(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const digest = async (value: Json) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(canonical(value)))))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+const recent = (decisions: Json[]) => {
+  let bytes = 0;
+  return decisions.slice(-24).reverse().filter((item, index) => (bytes += JSON.stringify(item).length) <= 16384 || !index).reverse();
+};
 const retain = (operations: Operation[]) => {
   let bytes = 0;
   return operations.slice(-16).reverse().filter((item, index) => (bytes += JSON.stringify(item).length) <= 32768 || !index).reverse();
@@ -164,6 +168,7 @@ export default function activate(api: ModAPI) {
     const state = api.state.get();
     const leads = object(state) ? state : {};
     const existing = leads[event.scope.thread_id];
+    if (object(existing) && existing.model === route.model && existing.provider === route.provider) return result;
     api.state.set(Object.fromEntries([...Object.entries(leads).filter(([thread]) => thread !== event.scope.thread_id).slice(-127),
       [event.scope.thread_id, { ...(object(existing) ? existing : {}),
         model: route.model, provider: route.provider }]]));
@@ -191,7 +196,7 @@ export default function activate(api: ModAPI) {
     save(op, { ...value, revision, operations: op.id ? retain([...value.operations, { id: op.id, binding: op.binding, result: output, ...(unacknowledged ? { unacknowledged } : {}) }]) : value.operations });
     return output;
   };
-  const decide = (value: Checkpoint, decision: Json, status = value.status): Checkpoint => ({ ...value, status, decisions: [...value.decisions, decision].slice(-24) });
+  const decide = (value: Checkpoint, decision: Json, status = value.status): Checkpoint => ({ ...value, status, decisions: recent([...value.decisions, decision]) });
   const summary = (value: Checkpoint) => ({ status: value.status, remaining_work: value.remaining_work, failed_hypotheses: value.failed_hypotheses });
   const interrupt = (op: Op, kind: string, reason: string) =>
     commit(op, decide({ ...need(op).value, pending: null }, { operation: kind, error: reason }, 'interrupted'), { status: 'interrupted', reason });
@@ -407,11 +412,11 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       const calls = Object.fromEntries([...retained, [event.call_sha256, { result_sha256: event.result_sha256,
         progress_revision: task.progress_revision ?? 1, unchanged_calls: count }]]);
       const status = count > noProgressLimit ? 'paused' : task.status;
-      api.host.call('store.put', { ...TASK, expected_revision: entry.revision,
+      const saved = api.host.tryCall('store.put', { ...TASK, expected_revision: entry.revision,
         value: { ...task, calls, status, decisions: count >= noProgressLimit
-          ? [...task.decisions, { operation: 'no_progress', call_sha256: event.call_sha256,
-              unchanged_calls: count, decision: status === 'paused' ? 'paused' : 'reassess' }].slice(-24) : task.decisions } as unknown as Exclude<Json, null> });
-      if (status === 'paused') setPaused(event.thread_id, true);
+          ? recent([...task.decisions, { operation: 'no_progress', call_sha256: event.call_sha256,
+              unchanged_calls: count, decision: status === 'paused' ? 'paused' : 'reassess' }]) : task.decisions } as unknown as Exclude<Json, null> });
+      if (saved.ok && status === 'paused') setPaused(event.thread_id, true);
     });
     api.intercept('tool', { required: true }, (e, next) => {
       if (['mod_omd_workflow_checkpoint', 'mod_omd_workflow_cancel'].includes(e.tool)) return next(e);

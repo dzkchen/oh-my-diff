@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_workflow",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "api": "1.0.0",
   "state_version": 1,
   "description": "Require checks, an independent review and a final verification before the agent can call a task done; pick a contract with /omd_workflow:contract",

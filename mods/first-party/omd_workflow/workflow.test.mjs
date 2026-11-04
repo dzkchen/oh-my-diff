@@ -177,6 +177,35 @@ test('no-progress policy pauses repeated complete results and resumes only after
   assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'cancelled' }), executed);
 });
 
+test('no-progress decisions stay inside a byte budget and a lost store race neither throws nor pauses', () => {
+  const run = fixture();
+  const settings = { check: { program: 'check', argv: [] }, max_no_progress_calls: 1 };
+  let modState = invoke('begin', { objective: 'Make the requested change', acceptance_criteria: [criterion] },
+    run.host, { settings }).state;
+  const stored = run.state.get('task');
+  run.state.set('task', { ...stored, value: { ...stored.value,
+    decisions: Array.from({ length: 24 }, (_, index) => ({ operation: 'bulky', index, note: 'x'.repeat(3000) })) } });
+  const result = { thread_id: 'thread-1', agent_id: null, tool: 'exec_command', outcome: 'succeeded',
+    call_sha256: digest('same-call'), result_sha256: digest('same-output'), result_complete: true };
+  const event = (payload, host = run.host) => {
+    const reply = invoke('', payload, host, { event: 'tool_result', settings, state: modState });
+    modState = reply.state;
+    return reply;
+  };
+  event(result);
+  const decisions = run.state.get('task').value.decisions;
+  assert.equal(decisions.at(-1).operation, 'no_progress');
+  assert.ok(JSON.stringify(decisions).length <= 16384 + 4096, String(JSON.stringify(decisions).length));
+  const racing = call => {
+    if (call.operation === 'store.put') throw new Error('revision_conflict');
+    return run.host(call);
+  };
+  const raced = event(result, racing);
+  assert.equal(raced.error, undefined);
+  assert.equal(run.state.get('task').value.status, 'active');
+  assert.notEqual(modState?.['thread-1']?.no_progress_paused, true);
+});
+
 test('checks bind execution to unchanged input and refuse stale or failed results', () => {
   const run = fixture();
   begin(run.host);
