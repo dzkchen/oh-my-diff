@@ -35,6 +35,8 @@ use codex_extension_api::UserInputInterceptInput;
 use codex_omd::ModGrants;
 use codex_omd::ModHost;
 use codex_omd::ModHostCall;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModTool;
 use codex_protocol::models::PermissionProfile;
 use std::sync::Mutex;
@@ -422,13 +424,33 @@ fn initialize(
 ) -> Result<Arc<Mods>, String> {
     let registration =
         codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-    let runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-        .map_err(|e| e.to_string())?;
-    let input_runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-        .map_err(|e| e.to_string())?;
-    let persist_runtime =
-        ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-            .map_err(|e| e.to_string())?;
+    let runtime = ModHost::open(
+        host.root.clone(),
+        ModOpenOptions {
+            tool_validator: validate_tool_schema,
+            repository: Some(&host.repository),
+            ..ModOpenOptions::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    let input_runtime = ModHost::open(
+        host.root.clone(),
+        ModOpenOptions {
+            tool_validator: validate_tool_schema,
+            repository: Some(&host.repository),
+            ..ModOpenOptions::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    let persist_runtime = ModHost::open(
+        host.root.clone(),
+        ModOpenOptions {
+            tool_validator: validate_tool_schema,
+            repository: Some(&host.repository),
+            ..ModOpenOptions::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
     let persist_required = persist_runtime.required_surfaces();
     services::define_providers(&host.config, |id| runtime.grants(id).is_some());
     let _ = host.persist_json("mod-status.json", &runtime.status());
@@ -605,7 +627,7 @@ fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) -> Opt
         .err()
         .map(|error| format!("OMD session refresh failed: {error}"));
     if let Ok(mut runtime) = runtime.lock() {
-        runtime.turn_boundary();
+        runtime.turn_boundary(&|| true);
         refresh_contract(&runtime, session);
         codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
     }
@@ -895,6 +917,7 @@ impl Mods {
             json!({"token_limit":config.model_auto_compact_token_limit
                 .or_else(|| config.model_context_window.map(|window| window * 9 / 10)),
                 "context_window":config.model_context_window}),
+            ModInvokeOptions::default(),
         );
         let mut selected: Option<(String, Option<String>)> = None;
         for (id, result) in compaction {
@@ -995,6 +1018,7 @@ impl Mods {
             "routing",
             json!({"routes":routes,"model":config.model,"provider":config.model_provider_id,
                 "reasoning":config.model_reasoning_effort}),
+            ModInvokeOptions::default(),
         );
         let mut selected: Option<String> = None;
         let mut diagnostic = None;
@@ -1527,8 +1551,14 @@ impl TurnLifecycleContributor for Mods {
                 tokio::task::spawn_blocking(move || {
                     let _thread = codex_omd::StateThread::enter(scoped);
                     if let Ok(mut runtime) = runtime.lock() {
-                        let _ = runtime
-                            .event_guarded("prompt", prompt, || !flag.load(Ordering::Acquire));
+                        let _ = runtime.event(
+                            "prompt",
+                            prompt,
+                            ModInvokeOptions {
+                                active: &|| !flag.load(Ordering::Acquire),
+                                ..ModInvokeOptions::default()
+                            },
+                        );
                     }
                 })
             };
@@ -1538,7 +1568,7 @@ impl TurnLifecycleContributor for Mods {
                 let _thread = codex_omd::StateThread::enter(scoped);
                 let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
                 runtime
-                    .refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire))
+                    .refresh(&|| !boundary_cancelled.load(Ordering::Acquire))
                     .map_err(|error| error.to_string())?;
                 Ok::<_, String>(runtime.intercepts("input"))
             })
@@ -2284,7 +2314,7 @@ impl ToolLifecycleContributor for Mods {
             let intercepting = tokio::task::spawn_blocking(move || {
                 let _thread = codex_omd::StateThread::enter(Some(thread));
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-                let _ = runtime.event_guarded("tool_call", observed, || true);
+                let _ = runtime.event("tool_call", observed, ModInvokeOptions::default());
                 Ok::<_, String>((
                     runtime.intercepts(surface),
                     runtime.intercepts_with(surface, "code_mode_values_v1"),

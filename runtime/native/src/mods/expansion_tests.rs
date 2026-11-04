@@ -2,6 +2,9 @@ use super::*;
 use crate::mods::DISPATCHER_TEST;
 use codex_extension_api::ToolLifecycleContributor as _;
 use codex_extension_api::ToolOutputContributor;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModStore;
 use std::path::Path;
 
@@ -94,11 +97,15 @@ fn fixture_with_registry(
     let core = if let Some(registry) = registry {
         initialize(registry, host.clone()).unwrap().core.clone()
     } else {
-        let runtime = ModHost::open(root.clone()).unwrap();
+        let runtime = ModHost::open(root.clone(), ModOpenOptions::default()).unwrap();
         let environment = runtime.environment();
         let runtime = Arc::new(Mutex::new(runtime));
-        let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-        let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+        let input_runtime = Arc::new(Mutex::new(
+            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
+        ));
+        let persist_runtime = Arc::new(Mutex::new(
+            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
+        ));
         let persist_required = persist_runtime.lock().unwrap().required_surfaces();
         let views = Arc::new(view::Views::new());
         Arc::new_cyclic(|core| Core {
@@ -847,14 +854,18 @@ fn command(core: &Core, id: &str, name: &str) -> Value {
     let mut runtime = core.runtime.lock().unwrap();
     let generation = runtime.generation();
     runtime
-        .invoke_with(
+        .invoke(
             id,
             generation,
             "command",
             name,
             Value::Null,
-            || true,
-            |_| Err(std::io::Error::other("unexpected_host_call")),
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |_| {
+                    Err(std::io::Error::other("unexpected_host_call"))
+                }),
+                ..ModInvokeOptions::default()
+            },
         )
         .unwrap()
 }
@@ -2620,7 +2631,7 @@ async fn turn_evidence_survives_reload_and_clears_stale_diagnostics() {
             .runtime
             .lock()
             .unwrap()
-            .refresh_authority()
+            .refresh(&|| true)
             .unwrap()
     );
     assert!(fixture.core.runtime.lock().unwrap().generation() > generation);
@@ -2726,7 +2737,7 @@ async fn turn_evidence_excludes_replaced_and_disabled_subscribers() {
                 .runtime
                 .lock()
                 .unwrap()
-                .refresh_authority()
+                .refresh(&|| true)
                 .unwrap()
         );
         let private = super::super::evidence::finish(
@@ -2759,7 +2770,7 @@ async fn turn_evidence_excludes_replaced_and_disabled_subscribers() {
                 .runtime
                 .lock()
                 .unwrap()
-                .refresh_authority()
+                .refresh(&|| true)
                 .unwrap()
         );
         assert!(
@@ -2807,7 +2818,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         .persist_runtime
         .lock()
         .unwrap()
-        .refresh_guarded(&|| true)
+        .refresh(&|| true)
         .unwrap();
     assert!(!extension.rewrites_persisted_text());
     let held = fixture.core.persist_runtime.lock().unwrap();
@@ -2889,47 +2900,54 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
             let state = fixture.core.host.root.join("state-writer.json");
             let before = std::fs::read(&state).ok();
             let active = std::cell::Cell::new(true);
-            let result = runtime.invoke_with(
+            let result = runtime.invoke(
                 "writer",
                 generation,
                 "command",
                 "run",
                 Value::Null,
-                || active.get(),
-                |_| {
-                    match change {
-                        "disable" => store.enable(&path, false)?,
-                        "revoke" => {
-                            let config = fixture.core.host.root.join("mods.json");
-                            let mut value: Value =
-                                serde_json::from_slice(&std::fs::read(&config)?)?;
-                            value["mods"][0]["capabilities"] = json!(["commands", "store"]);
-                            std::fs::write(config, serde_json::to_vec(&value)?)?;
+                ModInvokeOptions {
+                    active: &|| active.get(),
+                    host: ModHostCallback::Own(&mut |_| {
+                        match change {
+                            "disable" => store.enable(&path, false)?,
+                            "revoke" => {
+                                let config = fixture.core.host.root.join("mods.json");
+                                let mut value: Value =
+                                    serde_json::from_slice(&std::fs::read(&config)?)?;
+                                value["mods"][0]["capabilities"] = json!(["commands", "store"]);
+                                std::fs::write(config, serde_json::to_vec(&value)?)?;
+                            }
+                            "replace" => {
+                                std::fs::write(path.join("index.ts"), "export default () => {}")?;
+                                std::thread::sleep(std::time::Duration::from_millis(2100));
+                            }
+                            "broken" => {
+                                std::fs::write(fixture.core.host.root.join("mods.json"), "{")?
+                            }
+                            "cancel" => active.set(false),
+                            _ => unreachable!(),
                         }
-                        "replace" => {
-                            std::fs::write(path.join("index.ts"), "export default () => {}")?;
-                            std::thread::sleep(std::time::Duration::from_millis(2100));
-                        }
-                        "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
-                        "cancel" => active.set(false),
-                        _ => unreachable!(),
-                    }
-                    Ok(Value::Null)
+                        Ok(Value::Null)
+                    }),
+                    ..ModInvokeOptions::default()
                 },
             );
             assert!(result.is_err(), "{lane} {change}");
             assert_eq!(std::fs::read(&state).ok(), before, "{lane} {change}");
             if change == "broken" {
-                assert!(runtime.refresh_guarded(&|| true).is_err());
+                assert!(runtime.refresh(&|| true).is_err());
             }
-            let next = runtime.invoke_with(
+            let next = runtime.invoke(
                 "writer",
                 generation,
                 "command",
                 "run",
                 Value::Null,
-                || true,
-                |_| Ok(Value::Null),
+                ModInvokeOptions {
+                    host: ModHostCallback::Own(&mut |_| Ok(Value::Null)),
+                    ..ModInvokeOptions::default()
+                },
             );
             assert_eq!(
                 next.is_ok(),

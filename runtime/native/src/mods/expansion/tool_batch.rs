@@ -2,6 +2,8 @@ use super::*;
 use codex_extension_api::ToolBatchContributor;
 use codex_extension_api::ToolBatchInput;
 use codex_extension_api::ToolBatchMerge;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
 
 const MERGES: usize = 32;
 
@@ -121,19 +123,11 @@ impl ToolBatchContributor for Mods {
                     .ok_or("tool_batch_owner_unavailable")?;
                 let generation = runtime.generation();
                 let value = runtime
-                    .invoke_with(
-                        &owner,
-                        generation,
-                        "tool_batch",
-                        "",
-                        payload,
-                        || !cancelled.load(Ordering::Acquire),
-                        |_| {
+                    .invoke(&owner, generation, "tool_batch", "", payload, ModInvokeOptions { active: &|| !cancelled.load(Ordering::Acquire), host: ModHostCallback::Own(&mut |_| {
                             Err(std::io::Error::other(
                                 "host_operation_unavailable: tool_batch runs without host operations",
                             ))
-                        },
-                    )
+                        }), ..ModInvokeOptions::default() })
                     .map_err(|error| error.to_string())?;
                 parse(&owner, value, &known).map_err(|error| format!("{owner}: {error}"))
             })

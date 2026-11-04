@@ -267,10 +267,6 @@ impl Task {
     }
 
     pub fn create(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
-        Self::create_inner(limits, evidence)
-    }
-
-    fn create_inner(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
         Self::validate_limits(&limits)?;
         fs::create_dir(&evidence)?;
         Self::create_in(limits, &evidence).inspect_err(|_| {
@@ -318,20 +314,12 @@ impl Task {
         evidence: PathBuf,
         explicit_resume: Option<&str>,
     ) -> io::Result<Self> {
-        Self::open_inner(limits, evidence, explicit_resume)
-    }
-
-    fn open_inner(
-        limits: Limits,
-        evidence: PathBuf,
-        explicit_resume: Option<&str>,
-    ) -> io::Result<Self> {
         Self::validate_limits(&limits)?;
         if !evidence.exists() {
             if explicit_resume.is_some() {
                 return Err(denied("explicit resume has no prior task evidence"));
             }
-            return Self::create_inner(limits, evidence);
+            return Self::create(limits, evidence);
         }
         let reference =
             explicit_resume.ok_or_else(|| denied("existing task requires explicit resume"))?;

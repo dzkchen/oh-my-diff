@@ -63407,14 +63407,15 @@ index 0000000000000000000000000000000000000000..87d2dd64e9dfbad869b703c3341eea1b
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..eba78f68f26af276b1ed4025b9a99be0a3f0506c
+index 0000000000000000000000000000000000000000..0caf7734bdf1dfbb0c01df37e9966bd0107c66ea
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1371 @@
+@@ -0,0 +1,1376 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModHost;
++use codex_omd::ModOpenOptions;
 +use codex_omd::ModStore;
 +use codex_omd::WorkerLimits;
 +use serde_json::json;
@@ -63543,7 +63544,11 @@ index 0000000000000000000000000000000000000000..eba78f68f26af276b1ed4025b9a99be0
 +        )
 +        .unwrap();
 +    store.enable(&package, true).unwrap();
-+    let runtime = ModHost::open(root.join("mod-store").canonicalize().unwrap()).unwrap();
++    let runtime = ModHost::open(
++        root.join("mod-store").canonicalize().unwrap(),
++        ModOpenOptions::default(),
++    )
++    .unwrap();
 +    let required = runtime.required_surfaces();
 +    let runtime = Arc::new(Mutex::new(runtime));
 +    accounts.install_mod_runtime(runtime.clone(), required);
@@ -64784,15 +64789,17 @@ index 0000000000000000000000000000000000000000..eba78f68f26af276b1ed4025b9a99be0
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b428611845bf061c3
+index 0000000000000000000000000000000000000000..d363197d17c556d29b00a79afb4df9b5072e0c99
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,605 @@
+@@ -0,0 +1,610 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +use codex_omd::ModStore;
 +use codex_omd::load_managed;
 +use codex_omd_extension::validate_tool_schema;
@@ -64805,6 +64812,23 @@ index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b42861184
 +use std::io;
 +use std::path::PathBuf;
 +use std::process::Command;
++
++fn open_host(root: &str, in_checkout: bool) -> io::Result<ModHost> {
++    let store = store(root)?;
++    let repository = if in_checkout {
++        Some(std::env::current_dir()?)
++    } else {
++        None
++    };
++    ModHost::open(
++        store,
++        ModOpenOptions {
++            tool_validator: validate_tool_schema,
++            repository: repository.as_deref(),
++            ..ModOpenOptions::default()
++        },
++    )
++}
 +
 +fn store(root: &str) -> io::Result<PathBuf> {
 +    PathBuf::from(root).canonicalize().map_err(|error| {
@@ -65107,7 +65131,7 @@ index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b42861184
 +            Ok(Value::String("updated".into()))
 +        }
 +        [command, root, id, program] if command == "trust-program" => {
-+            let access = ModHost::open_validated(store(root)?, validate_tool_schema)?
++            let access = open_host(root, false)?
 +                .grants(id)
 +                .and_then(|grants| grants.os_access)
 +                .ok_or_else(|| {
@@ -65272,11 +65296,7 @@ index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b42861184
 +            Ok(json!({"reset": name, "aside": aside}))
 +        }
 +        [command, root] if command == "status" => {
-+            let mut host = ModHost::open_in(
-+                store(root)?,
-+                validate_tool_schema,
-+                &std::env::current_dir()?,
-+            )?;
++            let mut host = open_host(root, true)?;
 +            let terminal = host.terminal_view(
 +                serde_json::json!({"event": "status", "ledger": null}),
 +                || true,
@@ -65300,7 +65320,7 @@ index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b42861184
 +            }
 +        }
 +        [command, root] if command == "report" => {
-+            let status = ModHost::open_validated(store(root)?, validate_tool_schema)?.status();
++            let status = open_host(root, false)?.status();
 +            Ok(
 +                serde_json::json!({"api":status["api"],"mods":status["mods"].as_array()
 +                .into_iter().flatten().map(|item| serde_json::json!({
@@ -65311,11 +65331,9 @@ index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b42861184
 +                })).collect::<Vec<_>>() }),
 +            )
 +        }
-+        [command, root] if command == "events" => {
-+            Ok(ModHost::open_validated(store(root)?, validate_tool_schema)?.author_inspection())
-+        }
++        [command, root] if command == "events" => Ok(open_host(root, false)?.author_inspection()),
 +        [command, root] if command == "declarations" => {
-+            let status = ModHost::open_validated(store(root)?, validate_tool_schema)?.status();
++            let status = open_host(root, false)?.status();
 +            Ok(
 +                serde_json::json!({"api":status["api"],"active_host":status["active_host_types"],
 +                "installed_contracts":status["installed_contract_types"],
@@ -65324,17 +65342,12 @@ index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b42861184
 +        }
 +        [command, root, scenario, thread @ ..] if command == "test" && thread.len() <= 1 => {
 +            let scenario: Value = serde_json::from_slice(&std::fs::read(scenario)?)?;
-+            let mut host = ModHost::open_in(
-+                store(root)?,
-+                validate_tool_schema,
-+                &std::env::current_dir()?,
-+            )?;
++            let mut host = open_host(root, true)?;
 +            let _thread = codex_omd::StateThread::enter(thread.first().cloned());
 +            host.offline_test(scenario)
 +        }
 +        [command, root, output] if command == "diagnostics" => {
-+            let bundle =
-+                ModHost::open_validated(store(root)?, validate_tool_schema)?.diagnostic_bundle();
++            let bundle = open_host(root, false)?.diagnostic_bundle();
 +            let output = PathBuf::from(output);
 +            std::fs::write(&output, serde_json::to_vec_pretty(&bundle)?)?;
 +            Ok(serde_json::json!({"bundle":output,"redacted":true}))
@@ -65363,11 +65376,7 @@ index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b42861184
 +        [command, root, id, name, payload, thread @ ..]
 +            if command == "command" && thread.len() <= 1 =>
 +        {
-+            let mut host = ModHost::open_in(
-+                store(root)?,
-+                validate_tool_schema,
-+                &std::env::current_dir()?,
-+            )?;
++            let mut host = open_host(root, true)?;
 +            let _thread = codex_omd::StateThread::enter(thread.first().cloned());
 +            host.invoke(
 +                id,
@@ -65375,6 +65384,7 @@ index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b42861184
 +                "command",
 +                name,
 +                serde_json::from_str(payload)?,
++                ModInvokeOptions::default(),
 +            )
 +        }
 +        _ => Err(bad()),
@@ -65395,7 +65405,7 @@ index 0000000000000000000000000000000000000000..0413792a1f5366114d42cd0b42861184
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c43a5dc35ff67feee797292c4623e4dd1453ebbd
+index 0000000000000000000000000000000000000000..9d61a3f1c0cba07e90357d1fbb79d09f3cba2005
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
 @@ -0,0 +1,905 @@
@@ -66125,7 +66135,7 @@ index 0000000000000000000000000000000000000000..c43a5dc35ff67feee797292c4623e4dd
 +        }
 +        None => {
 +            if let Ok(mut runtime) = core.runtime.lock() {
-+                runtime.turn_boundary();
++                runtime.turn_boundary(&|| true);
 +            }
 +        }
 +    }
@@ -72985,10 +72995,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f981c338e62
+index 0000000000000000000000000000000000000000..88b0f2c4709cf86395ef0d902dd101cdbbd0d1b5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2639 @@
+@@ -0,0 +1,2669 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -73026,6 +73036,8 @@ index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f98
 +use codex_omd::ModGrants;
 +use codex_omd::ModHost;
 +use codex_omd::ModHostCall;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +use codex_omd::ModTool;
 +use codex_protocol::models::PermissionProfile;
 +use std::sync::Mutex;
@@ -73413,13 +73425,33 @@ index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f98
 +) -> Result<Arc<Mods>, String> {
 +    let registration =
 +        codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-+    let runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-+        .map_err(|e| e.to_string())?;
-+    let input_runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-+        .map_err(|e| e.to_string())?;
-+    let persist_runtime =
-+        ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-+            .map_err(|e| e.to_string())?;
++    let runtime = ModHost::open(
++        host.root.clone(),
++        ModOpenOptions {
++            tool_validator: validate_tool_schema,
++            repository: Some(&host.repository),
++            ..ModOpenOptions::default()
++        },
++    )
++    .map_err(|e| e.to_string())?;
++    let input_runtime = ModHost::open(
++        host.root.clone(),
++        ModOpenOptions {
++            tool_validator: validate_tool_schema,
++            repository: Some(&host.repository),
++            ..ModOpenOptions::default()
++        },
++    )
++    .map_err(|e| e.to_string())?;
++    let persist_runtime = ModHost::open(
++        host.root.clone(),
++        ModOpenOptions {
++            tool_validator: validate_tool_schema,
++            repository: Some(&host.repository),
++            ..ModOpenOptions::default()
++        },
++    )
++    .map_err(|e| e.to_string())?;
 +    let persist_required = persist_runtime.required_surfaces();
 +    services::define_providers(&host.config, |id| runtime.grants(id).is_some());
 +    let _ = host.persist_json("mod-status.json", &runtime.status());
@@ -73596,7 +73628,7 @@ index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f98
 +        .err()
 +        .map(|error| format!("OMD session refresh failed: {error}"));
 +    if let Ok(mut runtime) = runtime.lock() {
-+        runtime.turn_boundary();
++        runtime.turn_boundary(&|| true);
 +        refresh_contract(&runtime, session);
 +        codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
 +    }
@@ -73886,6 +73918,7 @@ index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f98
 +            json!({"token_limit":config.model_auto_compact_token_limit
 +                .or_else(|| config.model_context_window.map(|window| window * 9 / 10)),
 +                "context_window":config.model_context_window}),
++            ModInvokeOptions::default(),
 +        );
 +        let mut selected: Option<(String, Option<String>)> = None;
 +        for (id, result) in compaction {
@@ -73986,6 +74019,7 @@ index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f98
 +            "routing",
 +            json!({"routes":routes,"model":config.model,"provider":config.model_provider_id,
 +                "reasoning":config.model_reasoning_effort}),
++            ModInvokeOptions::default(),
 +        );
 +        let mut selected: Option<String> = None;
 +        let mut diagnostic = None;
@@ -74518,8 +74552,14 @@ index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f98
 +                tokio::task::spawn_blocking(move || {
 +                    let _thread = codex_omd::StateThread::enter(scoped);
 +                    if let Ok(mut runtime) = runtime.lock() {
-+                        let _ = runtime
-+                            .event_guarded("prompt", prompt, || !flag.load(Ordering::Acquire));
++                        let _ = runtime.event(
++                            "prompt",
++                            prompt,
++                            ModInvokeOptions {
++                                active: &|| !flag.load(Ordering::Acquire),
++                                ..ModInvokeOptions::default()
++                            },
++                        );
 +                    }
 +                })
 +            };
@@ -74529,7 +74569,7 @@ index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f98
 +                let _thread = codex_omd::StateThread::enter(scoped);
 +                let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
 +                runtime
-+                    .refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire))
++                    .refresh(&|| !boundary_cancelled.load(Ordering::Acquire))
 +                    .map_err(|error| error.to_string())?;
 +                Ok::<_, String>(runtime.intercepts("input"))
 +            })
@@ -75275,7 +75315,7 @@ index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f98
 +            let intercepting = tokio::task::spawn_blocking(move || {
 +                let _thread = codex_omd::StateThread::enter(Some(thread));
 +                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-+                let _ = runtime.event_guarded("tool_call", observed, || true);
++                let _ = runtime.event("tool_call", observed, ModInvokeOptions::default());
 +                Ok::<_, String>((
 +                    runtime.intercepts(surface),
 +                    runtime.intercepts_with(surface, "code_mode_values_v1"),
@@ -80116,7 +80156,7 @@ index 0000000000000000000000000000000000000000..ef30cf59de5fc637ed390c6fbf63851c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..36e226fe10692f4488f0ada3965ea6732afa3fc5
+index 0000000000000000000000000000000000000000..f23c2898af16594c76bbd46d7ffd0929dda0eb83
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
 @@ -0,0 +1,864 @@
@@ -80837,7 +80877,7 @@ index 0000000000000000000000000000000000000000..36e226fe10692f4488f0ada3965ea673
 +            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
 +        };
 +        let result = runtime
-+            .refresh_authority()
++            .refresh(&|| true)
 +            .map_err(|_| codex_omd::client_surface::BlitError::retryable("callback_cancelled"))
 +            .and_then(|_| {
 +                (runtime.generation() == generation
@@ -80938,7 +80978,7 @@ index 0000000000000000000000000000000000000000..36e226fe10692f4488f0ada3965ea673
 +            let mut runtime = runtime
 +                .lock()
 +                .unwrap_or_else(std::sync::PoisonError::into_inner);
-+            if runtime.refresh_authority().is_err() {
++            if runtime.refresh(&|| true).is_err() {
 +                return false;
 +            }
 +            runtime.generation() == generation
@@ -81369,15 +81409,16 @@ index 0000000000000000000000000000000000000000..32076fb11fa90f75dbd1c43c75ad1e12
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/approvals.rs b/codex-rs/ext/omd/src/mods/expansion/approvals.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c1932d0c9
+index 0000000000000000000000000000000000000000..448bde4dac7b276f7d72e8c6a07ca0901bbfe3f8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/approvals.rs
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,320 @@
 +use super::*;
 +use codex_extension_api::ApprovalGate;
 +use codex_extension_api::ApprovalGateContributor;
 +use codex_extension_api::ApprovalGateInput;
 +use codex_extension_api::ApprovalResultInput;
++use codex_omd::ModInvokeOptions;
 +
 +fn reason(text: &str) -> String {
 +    text.chars().filter(|c| !c.is_control()).take(512).collect()
@@ -81626,8 +81667,14 @@ index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c
 +            );
 +            let results = tokio::task::spawn_blocking(move || {
 +                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-+                let results = runtime
-+                    .event_guarded("approval", payload, || !cancelled.load(Ordering::Acquire));
++                let results = runtime.event(
++                    "approval",
++                    payload,
++                    ModInvokeOptions {
++                        active: &|| !cancelled.load(Ordering::Acquire),
++                        ..ModInvokeOptions::default()
++                    },
++                );
 +                let grants = results
 +                    .iter()
 +                    .filter_map(|(id, _)| runtime.grants(id).map(|grants| (id.clone(), grants)))
@@ -82446,14 +82493,16 @@ index 0000000000000000000000000000000000000000..f0f739685494460c5ece56d6eb9d07bf
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs b/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20a8148617
+index 0000000000000000000000000000000000000000..9b53b29af648ace3de6c74c1a1d403f1313420b7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,151 @@
 +use super::*;
 +use codex_extension_api::ToolBatchContributor;
 +use codex_extension_api::ToolBatchInput;
 +use codex_extension_api::ToolBatchMerge;
++use codex_omd::ModHostCallback;
++use codex_omd::ModInvokeOptions;
 +
 +const MERGES: usize = 32;
 +
@@ -82573,19 +82622,11 @@ index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20
 +                    .ok_or("tool_batch_owner_unavailable")?;
 +                let generation = runtime.generation();
 +                let value = runtime
-+                    .invoke_with(
-+                        &owner,
-+                        generation,
-+                        "tool_batch",
-+                        "",
-+                        payload,
-+                        || !cancelled.load(Ordering::Acquire),
-+                        |_| {
++                    .invoke(&owner, generation, "tool_batch", "", payload, ModInvokeOptions { active: &|| !cancelled.load(Ordering::Acquire), host: ModHostCallback::Own(&mut |_| {
 +                            Err(std::io::Error::other(
 +                                "host_operation_unavailable: tool_batch runs without host operations",
 +                            ))
-+                        },
-+                    )
++                        }), ..ModInvokeOptions::default() })
 +                    .map_err(|error| error.to_string())?;
 +                parse(&owner, value, &known).map_err(|error| format!("{owner}: {error}"))
 +            })
@@ -83150,14 +83191,17 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada3a16697d
+index 0000000000000000000000000000000000000000..74e0cbb0e23cd8f4874c92b66e37c007eddb2696
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5518 @@
+@@ -0,0 +1,5536 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
++use codex_omd::ModHostCallback;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +use codex_omd::ModStore;
 +use std::path::Path;
 +
@@ -83250,11 +83294,15 @@ index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada
 +    let core = if let Some(registry) = registry {
 +        initialize(registry, host.clone()).unwrap().core.clone()
 +    } else {
-+        let runtime = ModHost::open(root.clone()).unwrap();
++        let runtime = ModHost::open(root.clone(), ModOpenOptions::default()).unwrap();
 +        let environment = runtime.environment();
 +        let runtime = Arc::new(Mutex::new(runtime));
-+        let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-+        let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
++        let input_runtime = Arc::new(Mutex::new(
++            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
++        ));
++        let persist_runtime = Arc::new(Mutex::new(
++            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
++        ));
 +        let persist_required = persist_runtime.lock().unwrap().required_surfaces();
 +        let views = Arc::new(view::Views::new());
 +        Arc::new_cyclic(|core| Core {
@@ -84003,14 +84051,18 @@ index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada
 +    let mut runtime = core.runtime.lock().unwrap();
 +    let generation = runtime.generation();
 +    runtime
-+        .invoke_with(
++        .invoke(
 +            id,
 +            generation,
 +            "command",
 +            name,
 +            Value::Null,
-+            || true,
-+            |_| Err(std::io::Error::other("unexpected_host_call")),
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |_| {
++                    Err(std::io::Error::other("unexpected_host_call"))
++                }),
++                ..ModInvokeOptions::default()
++            },
 +        )
 +        .unwrap()
 +}
@@ -85776,7 +85828,7 @@ index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada
 +            .runtime
 +            .lock()
 +            .unwrap()
-+            .refresh_authority()
++            .refresh(&|| true)
 +            .unwrap()
 +    );
 +    assert!(fixture.core.runtime.lock().unwrap().generation() > generation);
@@ -85882,7 +85934,7 @@ index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada
 +                .runtime
 +                .lock()
 +                .unwrap()
-+                .refresh_authority()
++                .refresh(&|| true)
 +                .unwrap()
 +        );
 +        let private = super::super::evidence::finish(
@@ -85915,7 +85967,7 @@ index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada
 +                .runtime
 +                .lock()
 +                .unwrap()
-+                .refresh_authority()
++                .refresh(&|| true)
 +                .unwrap()
 +        );
 +        assert!(
@@ -85963,7 +86015,7 @@ index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada
 +        .persist_runtime
 +        .lock()
 +        .unwrap()
-+        .refresh_guarded(&|| true)
++        .refresh(&|| true)
 +        .unwrap();
 +    assert!(!extension.rewrites_persisted_text());
 +    let held = fixture.core.persist_runtime.lock().unwrap();
@@ -86045,47 +86097,54 @@ index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada
 +            let state = fixture.core.host.root.join("state-writer.json");
 +            let before = std::fs::read(&state).ok();
 +            let active = std::cell::Cell::new(true);
-+            let result = runtime.invoke_with(
++            let result = runtime.invoke(
 +                "writer",
 +                generation,
 +                "command",
 +                "run",
 +                Value::Null,
-+                || active.get(),
-+                |_| {
-+                    match change {
-+                        "disable" => store.enable(&path, false)?,
-+                        "revoke" => {
-+                            let config = fixture.core.host.root.join("mods.json");
-+                            let mut value: Value =
-+                                serde_json::from_slice(&std::fs::read(&config)?)?;
-+                            value["mods"][0]["capabilities"] = json!(["commands", "store"]);
-+                            std::fs::write(config, serde_json::to_vec(&value)?)?;
++                ModInvokeOptions {
++                    active: &|| active.get(),
++                    host: ModHostCallback::Own(&mut |_| {
++                        match change {
++                            "disable" => store.enable(&path, false)?,
++                            "revoke" => {
++                                let config = fixture.core.host.root.join("mods.json");
++                                let mut value: Value =
++                                    serde_json::from_slice(&std::fs::read(&config)?)?;
++                                value["mods"][0]["capabilities"] = json!(["commands", "store"]);
++                                std::fs::write(config, serde_json::to_vec(&value)?)?;
++                            }
++                            "replace" => {
++                                std::fs::write(path.join("index.ts"), "export default () => {}")?;
++                                std::thread::sleep(std::time::Duration::from_millis(2100));
++                            }
++                            "broken" => {
++                                std::fs::write(fixture.core.host.root.join("mods.json"), "{")?
++                            }
++                            "cancel" => active.set(false),
++                            _ => unreachable!(),
 +                        }
-+                        "replace" => {
-+                            std::fs::write(path.join("index.ts"), "export default () => {}")?;
-+                            std::thread::sleep(std::time::Duration::from_millis(2100));
-+                        }
-+                        "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
-+                        "cancel" => active.set(false),
-+                        _ => unreachable!(),
-+                    }
-+                    Ok(Value::Null)
++                        Ok(Value::Null)
++                    }),
++                    ..ModInvokeOptions::default()
 +                },
 +            );
 +            assert!(result.is_err(), "{lane} {change}");
 +            assert_eq!(std::fs::read(&state).ok(), before, "{lane} {change}");
 +            if change == "broken" {
-+                assert!(runtime.refresh_guarded(&|| true).is_err());
++                assert!(runtime.refresh(&|| true).is_err());
 +            }
-+            let next = runtime.invoke_with(
++            let next = runtime.invoke(
 +                "writer",
 +                generation,
 +                "command",
 +                "run",
 +                Value::Null,
-+                || true,
-+                |_| Ok(Value::Null),
++                ModInvokeOptions {
++                    host: ModHostCallback::Own(&mut |_| Ok(Value::Null)),
++                    ..ModInvokeOptions::default()
++                },
 +            );
 +            assert_eq!(
 +                next.is_ok(),
@@ -88674,7 +88733,7 @@ index 0000000000000000000000000000000000000000..e66e1b0e7bba6cf438506bfd779b0ada
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3ade5b7fb
+index 0000000000000000000000000000000000000000..8886768d2b8815c61999264e73dab6cdca1d9523
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/intercept.rs
 @@ -0,0 +1,266 @@
@@ -88743,7 +88802,7 @@ index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3
 +                    .lock()
 +                    .map_err(|_| "mod_runtime_poisoned".to_owned())?;
 +                runtime
-+                    .refresh_guarded(&|| !flag.load(Ordering::Acquire))
++                    .refresh(&|| !flag.load(Ordering::Acquire))
 +                    .map_err(|error| error.to_string())?;
 +                let grants = runtime.grants(&caller).ok_or("host_caller_inactive")?;
 +                if grants.source_sha256 != source || Some(grants.capabilities) != capabilities {
@@ -88946,11 +89005,12 @@ index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7b1d3bf1228e9c98c1c8e981cd7cc8abfa1a8c29
+index 0000000000000000000000000000000000000000..b81d65abff83f742dc782215af14fa10d6b064b3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,383 @@
 +use super::*;
++use codex_omd::ModInvokeOptions;
 +use codex_omd::peers::now_ms;
 +use std::collections::BTreeSet;
 +
@@ -89317,7 +89377,7 @@ index 0000000000000000000000000000000000000000..7b1d3bf1228e9c98c1c8e981cd7cc8ab
 +            for (runtime, thread, payload) in receiver {
 +                let _thread = codex_omd::StateThread::enter(thread);
 +                if let Ok(mut runtime) = runtime.lock() {
-+                    let _ = runtime.event("agent", payload);
++                    let _ = runtime.event("agent", payload, ModInvokeOptions::default());
 +                }
 +            }
 +        });
@@ -89834,12 +89894,13 @@ index 0000000000000000000000000000000000000000..ac3eef4f0eaf7b0adc3629c4338e3952
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..420bf83d64406d8d1235dc32ffa19624a532ad4a
+index 0000000000000000000000000000000000000000..144cb8e488b87400397370a92260d79b72886c5d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,887 @@
+@@ -0,0 +1,888 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
++use codex_omd::ModInvokeOptions;
 +use codex_omd::data_store::Origin;
 +
 +#[derive(Clone, Default)]
@@ -89981,7 +90042,7 @@ index 0000000000000000000000000000000000000000..420bf83d64406d8d1235dc32ffa19624
 +    tokio::task::spawn_blocking(move || {
 +        let _thread = codex_omd::StateThread::enter(Some(thread));
 +        if let Ok(mut runtime) = runtime.lock() {
-+            let _ = runtime.event("contract", payload);
++            let _ = runtime.event("contract", payload, ModInvokeOptions::default());
 +        }
 +    });
 +}
@@ -93762,11 +93823,13 @@ index 0000000000000000000000000000000000000000..e05c9a15c203442100679ef143743adf
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d6805c78213dc7e4ba05f798593fb21af021cf3
+index 0000000000000000000000000000000000000000..adcbc5e49951cfdc46cbb7187197066346cb061e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,874 @@
+@@ -0,0 +1,882 @@
 +use codex_file_system::FileSystemSandboxContext;
++use codex_omd::ModHostCallback;
++use codex_omd::ModInvokeOptions;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
 +use codex_protocol::permissions::ReadDenyMatcher;
@@ -94161,32 +94224,38 @@ index 0000000000000000000000000000000000000000..4d6805c78213dc7e4ba05f798593fb21
 +            .filter_map(|id| runtime.grants(&id).map(|grants| (id, grants)))
 +            .collect();
 +        let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
-+        let proposals = runtime.event_guarded_with(
++        let proposals = runtime.event(
 +            "workspace_pre_rename",
 +            payload.clone(),
-+            &active,
-+            |id, call| {
-+                let audited =
-+                    codex_omd::access_receipt(id, &call, Ok(&Value::Null)).map(|_| call.clone());
-+                let result = self.pre_rename_call(
-+                    id,
-+                    call,
-+                    grants.get(id),
-+                    &|operation, arguments| lead.restricted(operation, arguments),
-+                    &lead.session.processes,
-+                    protected,
-+                    generation,
-+                    thread,
-+                    environment,
-+                    &active,
-+                );
-+                if let Some(call) = audited
-+                    && let Some(receipt) =
-+                        codex_omd::access_receipt(id, &call, result.as_ref().map_err(Clone::clone))
-+                {
-+                    lead.session.record_access(&receipt);
-+                }
-+                result.map_err(std::io::Error::other)
++            ModInvokeOptions {
++                active: &active,
++                host: ModHostCallback::Scoped(&mut |id, call| {
++                    let audited = codex_omd::access_receipt(id, &call, Ok(&Value::Null))
++                        .map(|_| call.clone());
++                    let result = self.pre_rename_call(
++                        id,
++                        call,
++                        grants.get(id),
++                        &|operation, arguments| lead.restricted(operation, arguments),
++                        &lead.session.processes,
++                        protected,
++                        generation,
++                        thread,
++                        environment,
++                        &active,
++                    );
++                    if let Some(call) = audited
++                        && let Some(receipt) = codex_omd::access_receipt(
++                            id,
++                            &call,
++                            result.as_ref().map_err(Clone::clone),
++                        )
++                    {
++                        lead.session.record_access(&receipt);
++                    }
++                    result.map_err(std::io::Error::other)
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        );
 +        let mut ready = Vec::new();
@@ -100041,10 +100110,10 @@ index 0000000000000000000000000000000000000000..9d9f3c0de58a89d87a0634767a54c79a
 +};
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f595364771f62e876282d9393aaaec58c6227498
+index 0000000000000000000000000000000000000000..54c0a515327d4623de8f2593727abd42f4b1a573
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1605 @@
+@@ -0,0 +1,1593 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -100314,10 +100383,6 @@ index 0000000000000000000000000000000000000000..f595364771f62e876282d9393aaaec58
 +    }
 +
 +    pub fn create(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
-+        Self::create_inner(limits, evidence)
-+    }
-+
-+    fn create_inner(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
 +        Self::validate_limits(&limits)?;
 +        fs::create_dir(&evidence)?;
 +        Self::create_in(limits, &evidence).inspect_err(|_| {
@@ -100365,20 +100430,12 @@ index 0000000000000000000000000000000000000000..f595364771f62e876282d9393aaaec58
 +        evidence: PathBuf,
 +        explicit_resume: Option<&str>,
 +    ) -> io::Result<Self> {
-+        Self::open_inner(limits, evidence, explicit_resume)
-+    }
-+
-+    fn open_inner(
-+        limits: Limits,
-+        evidence: PathBuf,
-+        explicit_resume: Option<&str>,
-+    ) -> io::Result<Self> {
 +        Self::validate_limits(&limits)?;
 +        if !evidence.exists() {
 +            if explicit_resume.is_some() {
 +                return Err(denied("explicit resume has no prior task evidence"));
 +            }
-+            return Self::create_inner(limits, evidence);
++            return Self::create(limits, evidence);
 +        }
 +        let reference =
 +            explicit_resume.ok_or_else(|| denied("existing task requires explicit resume"))?;
@@ -104937,10 +104994,13 @@ index 0000000000000000000000000000000000000000..b6b05710ff01abb9a557e0d8b2d40727
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ebf197d6b31fb21c2796aff715343d66b8e1a4e9
+index 0000000000000000000000000000000000000000..8caeaa99ff651671fa01856cdf5b8ec24f6f810c
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,750 @@
+@@ -0,0 +1,756 @@
++use codex_omd::ModHostCallback;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -105504,7 +105564,7 @@ index 0000000000000000000000000000000000000000..ebf197d6b31fb21c2796aff715343d66
 +        .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
 +        .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".codex")));
 +    let sessions = home.as_ref().map(|path| path.join("sessions"));
-+    let mut runtime = ModHost::open(root.clone())?;
++    let mut runtime = ModHost::open(root.clone(), ModOpenOptions::default())?;
 +    let exports: Vec<_> = runtime
 +        .commands()
 +        .into_iter()
@@ -105537,63 +105597,66 @@ index 0000000000000000000000000000000000000000..ebf197d6b31fb21c2796aff715343d66
 +            .ok_or_else(|| io::Error::other("command_owner_missing"))?,
 +    )?;
 +    let deadline = Instant::now() + Duration::from_secs(30);
-+    runtime.invoke_scoped_with(
++    runtime.invoke(
 +        owner,
 +        runtime.generation(),
 +        "command",
 +        &export.name,
 +        json!(payload),
-+        || Instant::now() < deadline,
-+        |caller, request| {
-+            if !codex_omd::scoped_data::operation(&request.operation) {
-+                return Err(io::Error::other("standalone_host_operation_unavailable"));
-+            }
-+            let needs_sessions = request.operation.starts_with("sessions.");
-+            let session_database = if needs_sessions {
-+                Some(database(
-+                    home.as_deref()
-+                        .ok_or_else(|| io::Error::other("session_home_required"))?,
-+                    &repository,
-+                    sqlite.clone(),
-+                    std::env::var_os("CODEX_SQLITE_HOME").map(PathBuf::from),
-+                )?)
-+            } else {
-+                None
-+            };
-+            if caller == owner {
-+                if needs_sessions {
-+                    data.session_database = session_database;
++        ModInvokeOptions {
++            active: &|| Instant::now() < deadline,
++            host: ModHostCallback::Scoped(&mut |caller, request| {
++                if !codex_omd::scoped_data::operation(&request.operation) {
++                    return Err(io::Error::other("standalone_host_operation_unavailable"));
 +                }
-+                return data.call(&request.operation, request.arguments, || {
-+                    Instant::now() < deadline
-+                });
-+            }
-+            let source = sources
-+                .get(caller)
-+                .ok_or_else(|| io::Error::other("service_provider_missing"))?;
-+            let provider = match providers.entry(caller.to_owned()) {
-+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-+                std::collections::btree_map::Entry::Vacant(entry) => {
-+                    entry.insert(ScopedDataHost::new(
-+                        root.clone(),
-+                        repository.clone(),
-+                        sessions.clone(),
-+                        session_database.clone(),
-+                        caller.to_owned(),
-+                        "user-command".into(),
-+                        source.clone(),
++                let needs_sessions = request.operation.starts_with("sessions.");
++                let session_database = if needs_sessions {
++                    Some(database(
++                        home.as_deref()
++                            .ok_or_else(|| io::Error::other("session_home_required"))?,
++                        &repository,
++                        sqlite.clone(),
++                        std::env::var_os("CODEX_SQLITE_HOME").map(PathBuf::from),
 +                    )?)
++                } else {
++                    None
++                };
++                if caller == owner {
++                    if needs_sessions {
++                        data.session_database = session_database;
++                    }
++                    return data.call(&request.operation, request.arguments, || {
++                        Instant::now() < deadline
++                    });
 +                }
-+            };
-+            if provider.binding.source_sha256 != *source {
-+                return Err(io::Error::other("data_selection_changed_or_revoked"));
-+            }
-+            if needs_sessions {
-+                provider.session_database = session_database;
-+            }
-+            provider.call(&request.operation, request.arguments, || {
-+                Instant::now() < deadline
-+            })
++                let source = sources
++                    .get(caller)
++                    .ok_or_else(|| io::Error::other("service_provider_missing"))?;
++                let provider = match providers.entry(caller.to_owned()) {
++                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
++                    std::collections::btree_map::Entry::Vacant(entry) => {
++                        entry.insert(ScopedDataHost::new(
++                            root.clone(),
++                            repository.clone(),
++                            sessions.clone(),
++                            session_database.clone(),
++                            caller.to_owned(),
++                            "user-command".into(),
++                            source.clone(),
++                        )?)
++                    }
++                };
++                if provider.binding.source_sha256 != *source {
++                    return Err(io::Error::other("data_selection_changed_or_revoked"));
++                }
++                if needs_sessions {
++                    provider.session_database = session_database;
++                }
++                provider.call(&request.operation, request.arguments, || {
++                    Instant::now() < deadline
++                })
++            }),
++            ..ModInvokeOptions::default()
 +        },
 +    )
 +}
@@ -110850,14 +110913,15 @@ index 0000000000000000000000000000000000000000..107b0d39f37843d673998496b524ce4a
 +}
 diff --git a/codex-rs/omd/src/contract_cli.rs b/codex-rs/omd/src/contract_cli.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..948462abeb7aec19933caac69dd71734c763da32
+index 0000000000000000000000000000000000000000..02847f801d9e0b059dc4f4d1788cf40641a1b1b0
 --- /dev/null
 +++ b/codex-rs/omd/src/contract_cli.rs
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,144 @@
 +use crate::ContractDocument;
 +use crate::ContractResolution;
 +use crate::ContractSelection;
 +use crate::ModHost;
++use crate::ModOpenOptions;
 +use crate::PolicyOwner;
 +use serde_json::Value;
 +use serde_json::json;
@@ -110867,7 +110931,7 @@ index 0000000000000000000000000000000000000000..948462abeb7aec19933caac69dd71734
 +
 +pub fn documents(store: &Path) -> io::Result<Vec<(ContractDocument, PolicyOwner)>> {
 +    let root = store.canonicalize()?;
-+    Ok(ModHost::open(root)?.contract_documents())
++    Ok(ModHost::open(root, ModOpenOptions::default())?.contract_documents())
 +}
 +
 +pub fn user_path(store: &Path) -> io::Result<PathBuf> {
@@ -116227,10 +116291,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fe9ba54b8bfa46658bd9c645eeeadae8929caaa7
+index 0000000000000000000000000000000000000000..ff2591ce925afc24430535c035c5b7e4d5c5f1f9
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,221 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -116367,13 +116431,16 @@ index 0000000000000000000000000000000000000000..fe9ba54b8bfa46658bd9c645eeeadae8
 +pub use mods::ModGrants;
 +pub use mods::ModHost;
 +pub use mods::ModHostCall;
++pub use mods::ModHostCallback;
 +pub use mods::ModHttpAccess;
 +pub use mods::ModIcons;
 +pub use mods::ModInstallRequest;
++pub use mods::ModInvokeOptions;
 +pub use mods::ModKeyAction;
 +pub use mods::ModKeyContext;
 +pub use mods::ModKeys;
 +pub use mods::ModLayout;
++pub use mods::ModOpenOptions;
 +pub use mods::ModOsAccess;
 +pub use mods::ModOverlay;
 +pub use mods::ModOverlayClip;
@@ -118096,10 +118163,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1fbb2db664
+index 0000000000000000000000000000000000000000..854ab093335afe1d48a34bcb01c7632aa1c8deb0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7154 @@
+@@ -0,0 +1,7081 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -121173,26 +121240,26 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        let temp = tempfile::tempdir().unwrap();
 +        let root = temp.path().canonicalize().unwrap().join("store");
 +        ModStore::create(root.clone()).unwrap();
-+        let mut host = ModHost::open(root.clone()).unwrap();
++        let mut host = ModHost::open(root.clone(), ModOpenOptions::default()).unwrap();
 +        let reads = store::READS.get();
 +        for _ in 0..100 {
-+            assert!(!host.refresh_authority().unwrap());
++            assert!(!host.refresh(&|| true).unwrap());
 +        }
 +        assert_eq!(store::READS.get(), reads);
 +        host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
-+        assert!(!host.refresh_authority().unwrap());
++        assert!(!host.refresh(&|| true).unwrap());
 +        assert!(store::READS.get() > reads);
 +        let path = root.join("mods.json");
 +        let original = std::fs::read(&path).unwrap();
 +        std::fs::write(&path, b"invalid").unwrap();
-+        assert!(host.refresh_authority().is_err());
-+        assert!(host.refresh_authority().is_err());
++        assert!(host.refresh(&|| true).is_err());
++        assert!(host.refresh(&|| true).is_err());
 +        std::fs::write(&path, original).unwrap();
-+        assert!(!host.refresh_authority().unwrap());
++        assert!(!host.refresh(&|| true).unwrap());
 +        let moved = root.join("moved.json");
 +        std::fs::rename(&path, &moved).unwrap();
 +        std::os::unix::fs::symlink(&moved, &path).unwrap();
-+        assert!(host.refresh_authority().is_err());
++        assert!(host.refresh(&|| true).is_err());
 +    }
 +
 +    #[test]
@@ -121220,7 +121287,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        store.enable(&package, true).unwrap();
 +        let policy = base.join("policy.json");
 +        std::fs::write(&policy, br#"{"schema": 1}"#).unwrap();
-+        let mut host = ModHost::open(base.join("store")).unwrap();
++        let mut host = ModHost::open(base.join("store"), ModOpenOptions::default()).unwrap();
 +        let owner = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&base).unwrap());
 +        assert!(host.loaded["hello"].code_cache.is_some());
 +        host.set_managed_policy(policy, owner, "alice").unwrap();
@@ -121251,7 +121318,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        let temp = tempfile::tempdir().unwrap();
 +        let root = temp.path().canonicalize().unwrap().join("store");
 +        ModStore::create(root.clone()).unwrap();
-+        let mut host = ModHost::open(root).unwrap();
++        let mut host = ModHost::open(root, ModOpenOptions::default()).unwrap();
 +        let view = json!({"sites": {"sidebar": {"components": [{"type": "text", "id": "tree", "label": "Tree", "text": "src"}]}}});
 +        let first = host.compose_terminal(vec![("a".into(), Ok(view))], "terminal", None);
 +        assert_eq!(first.diagnostics, Vec::<String>::new());
@@ -121272,7 +121339,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        let temp = tempfile::tempdir().unwrap();
 +        let root = temp.path().canonicalize().unwrap().join("store");
 +        ModStore::create(root.clone()).unwrap();
-+        let mut host = ModHost::open(root).unwrap();
++        let mut host = ModHost::open(root, ModOpenOptions::default()).unwrap();
 +        host.ui_mods = Some(vec!["b".into()]);
 +        let text =
 +            |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
@@ -121956,112 +122023,69 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        .collect()
 +}
 +
++fn always_active() -> bool {
++    true
++}
++
++pub struct ModOpenOptions<'a> {
++    pub tool_validator: fn(&Value) -> Result<()>,
++    pub repository: Option<&'a Path>,
++    pub active: &'a dyn Fn() -> bool,
++}
++
++impl Default for ModOpenOptions<'_> {
++    fn default() -> Self {
++        Self {
++            tool_validator: |_| Ok(()),
++            repository: None,
++            active: &always_active,
++        }
++    }
++}
++
++pub enum ModHostCallback<'a> {
++    Unavailable,
++    Own(&'a mut dyn FnMut(ModHostCall) -> Result<Value>),
++    Scoped(&'a mut dyn FnMut(&str, ModHostCall) -> Result<Value>),
++}
++
++pub struct ModInvokeOptions<'a> {
++    pub active: &'a dyn Fn() -> bool,
++    pub host: ModHostCallback<'a>,
++    pub progress: Option<&'a mut dyn FnMut(String)>,
++}
++
++impl Default for ModInvokeOptions<'_> {
++    fn default() -> Self {
++        Self {
++            active: &always_active,
++            host: ModHostCallback::Unavailable,
++            progress: None,
++        }
++    }
++}
++
++impl ModInvokeOptions<'_> {
++    fn reborrow(&mut self) -> ModInvokeOptions<'_> {
++        ModInvokeOptions {
++            active: self.active,
++            host: match &mut self.host {
++                ModHostCallback::Unavailable => ModHostCallback::Unavailable,
++                ModHostCallback::Own(host) => ModHostCallback::Own(&mut **host),
++                ModHostCallback::Scoped(host) => ModHostCallback::Scoped(&mut **host),
++            },
++            progress: self.progress.as_deref_mut().map(|progress| progress as _),
++        }
++    }
++}
++
 +impl ModHost {
-+    pub fn open(root: PathBuf) -> Result<Self> {
-+        Self::open_validated(root, |_| Ok(()))
-+    }
-+
-+    pub fn open_validated(root: PathBuf, tool_validator: fn(&Value) -> Result<()>) -> Result<Self> {
-+        Self::open_with(root, tool_validator, None, &|| true)
-+    }
-+
-+    pub fn open_in(
-+        root: PathBuf,
-+        tool_validator: fn(&Value) -> Result<()>,
-+        repository: &Path,
-+    ) -> Result<Self> {
-+        Self::open_in_guarded(root, tool_validator, repository, &|| true)
-+    }
-+
-+    /// One mod's launch-like cost for `omd-mod cost`; it stops every runner in the process.
-+    pub fn cost(
-+        root: PathBuf,
-+        tool_validator: fn(&Value) -> Result<()>,
-+        repository: &Path,
-+        id: &str,
-+        command: Option<(&str, Value)>,
-+        runs: usize,
-+    ) -> Result<Value> {
-+        let _thread = StateThread::enter(
-+            bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())),
-+        );
-+        let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
-+        let mut usage = (0, 0);
-+        let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
-+        for _ in 0..runs {
-+            process::stop_runners();
-+            ACTIVATED
-+                .lock()
-+                .unwrap_or_else(PoisonError::into_inner)
-+                .retain(|((store, _), _)| store != &root);
-+            let started = Instant::now();
-+            let mut host = Self::open_in(root.clone(), tool_validator, repository)?;
-+            samples
-+                .entry("activation_ms")
-+                .or_default()
-+                .push(elapsed(started));
-+            let loaded = host.loaded.get(id).ok_or_else(|| failure("mod_disabled"))?;
-+            if let Some(error) = &loaded.error {
-+                return Err(failure(format!("mod_failed: {error}")));
-+            }
-+            if host
-+                .event_ids("terminal")
-+                .iter()
-+                .any(|handler| handler == id)
-+            {
-+                let started = Instant::now();
-+                let view = host.terminal_view(json!({"event": "draw", "ledger": null}), || true);
-+                let render_ms = elapsed(started);
-+                let prefix = format!("{id}: ");
-+                if let Some(error) = view
-+                    .diagnostics
-+                    .iter()
-+                    .find_map(|d| d.strip_prefix(&prefix))
-+                {
-+                    return Err(failure(format!("mod_failed: {error}")));
-+                }
-+                samples
-+                    .entry("first_render_ms")
-+                    .or_default()
-+                    .push(render_ms);
-+            }
-+            if let Some((name, payload)) = &command {
-+                for sample in ["fresh_callback_ms", "reused_callback_ms"] {
-+                    let started = Instant::now();
-+                    host.invoke(id, host.generation, "command", name, payload.clone())?;
-+                    samples.entry(sample).or_default().push(elapsed(started));
-+                }
-+            }
-+            usage = process::runner_usage();
-+        }
-+        let mut report = json!({"mod": id, "runs": runs, "runners": usage.0,
-+            "runner_peak_footprint_bytes": usage.1});
-+        for (metric, values) in samples {
-+            let first = values[0];
-+            let mut sorted = values;
-+            sorted.sort_by(f64::total_cmp);
-+            let at =
-+                |quantile: f64| sorted[((sorted.len() - 1) as f64 * quantile).round() as usize];
-+            report[metric] = json!({"first": first, "p50": at(0.5), "p95": at(0.95)});
-+        }
-+        Ok(report)
-+    }
-+
-+    pub fn open_in_guarded(
-+        root: PathBuf,
-+        tool_validator: fn(&Value) -> Result<()>,
-+        repository: &Path,
-+        active: &dyn Fn() -> bool,
-+    ) -> Result<Self> {
-+        Self::open_with(root, tool_validator, Some(repository), active)
-+    }
-+
-+    fn open_with(
-+        root: PathBuf,
-+        tool_validator: fn(&Value) -> Result<()>,
-+        repository: Option<&Path>,
-+        active: &dyn Fn() -> bool,
-+    ) -> Result<Self> {
++    pub fn open(root: PathBuf, options: ModOpenOptions<'_>) -> Result<Self> {
++        let ModOpenOptions {
++            tool_validator,
++            repository,
++            active,
++        } = options;
 +        let store = ModStore::open(root)?;
 +        let mut host = Self {
 +            store,
@@ -122122,8 +122146,96 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                .map(|(id, loaded)| (id.clone(), loaded.inspected()))
 +                .collect();
 +        }
-+        host.reload_guarded(active)?;
++        host.refresh(active)?;
 +        Ok(host)
++    }
++
++    /// One mod's launch-like cost for `omd-mod cost`; it stops every runner in the process.
++    pub fn cost(
++        root: PathBuf,
++        tool_validator: fn(&Value) -> Result<()>,
++        repository: &Path,
++        id: &str,
++        command: Option<(&str, Value)>,
++        runs: usize,
++    ) -> Result<Value> {
++        let _thread = StateThread::enter(
++            bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())),
++        );
++        let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
++        let mut usage = (0, 0);
++        let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
++        for _ in 0..runs {
++            process::stop_runners();
++            ACTIVATED
++                .lock()
++                .unwrap_or_else(PoisonError::into_inner)
++                .retain(|((store, _), _)| store != &root);
++            let started = Instant::now();
++            let mut host = Self::open(
++                root.clone(),
++                ModOpenOptions {
++                    tool_validator,
++                    repository: Some(repository),
++                    ..ModOpenOptions::default()
++                },
++            )?;
++            samples
++                .entry("activation_ms")
++                .or_default()
++                .push(elapsed(started));
++            let loaded = host.loaded.get(id).ok_or_else(|| failure("mod_disabled"))?;
++            if let Some(error) = &loaded.error {
++                return Err(failure(format!("mod_failed: {error}")));
++            }
++            if host
++                .event_ids("terminal")
++                .iter()
++                .any(|handler| handler == id)
++            {
++                let started = Instant::now();
++                let view = host.terminal_view(json!({"event": "draw", "ledger": null}), || true);
++                let render_ms = elapsed(started);
++                let prefix = format!("{id}: ");
++                if let Some(error) = view
++                    .diagnostics
++                    .iter()
++                    .find_map(|d| d.strip_prefix(&prefix))
++                {
++                    return Err(failure(format!("mod_failed: {error}")));
++                }
++                samples
++                    .entry("first_render_ms")
++                    .or_default()
++                    .push(render_ms);
++            }
++            if let Some((name, payload)) = &command {
++                for sample in ["fresh_callback_ms", "reused_callback_ms"] {
++                    let started = Instant::now();
++                    host.invoke(
++                        id,
++                        host.generation,
++                        "command",
++                        name,
++                        payload.clone(),
++                        ModInvokeOptions::default(),
++                    )?;
++                    samples.entry(sample).or_default().push(elapsed(started));
++                }
++            }
++            usage = process::runner_usage();
++        }
++        let mut report = json!({"mod": id, "runs": runs, "runners": usage.0,
++            "runner_peak_footprint_bytes": usage.1});
++        for (metric, values) in samples {
++            let first = values[0];
++            let mut sorted = values;
++            sorted.sort_by(f64::total_cmp);
++            let at =
++                |quantile: f64| sorted[((sorted.len() - 1) as f64 * quantile).round() as usize];
++            report[metric] = json!({"first": first, "p50": at(0.5), "p95": at(0.95)});
++        }
++        Ok(report)
 +    }
 +
 +    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
@@ -122260,14 +122372,10 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        for loaded in self.loaded.values_mut() {
 +            loaded.clear_ui();
 +        }
-+        self.refresh_authority()
++        self.refresh(&always_active)
 +    }
 +
-+    pub fn refresh_authority(&mut self) -> Result<bool> {
-+        self.reload_guarded(&|| true)
-+    }
-+
-+    fn reload_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
++    pub fn refresh(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
 +        let result = self.reload_active(active);
 +        if result.is_err() && !active() {
 +            self.fail_closed("callback_cancelled".to_owned());
@@ -123463,122 +123571,21 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        event: &str,
 +        name: &str,
 +        payload: Value,
++        options: ModInvokeOptions<'_>,
 +    ) -> Result<Value> {
-+        self.invoke_guarded(id, generation, event, name, payload, || true)
-+    }
-+
-+    pub fn invoke_guarded(
-+        &mut self,
-+        id: &str,
-+        generation: u64,
-+        event: &str,
-+        name: &str,
-+        payload: Value,
-+        active: impl Fn() -> bool,
-+    ) -> Result<Value> {
-+        self.invoke_with(id, generation, event, name, payload, active, |_| {
-+            Err(failure(
-+                "host_operation_unavailable: requires a native task",
-+            ))
-+        })
-+    }
-+
-+    #[allow(clippy::too_many_arguments)]
-+    pub fn invoke_with(
-+        &mut self,
-+        id: &str,
-+        generation: u64,
-+        event: &str,
-+        name: &str,
-+        payload: Value,
-+        active: impl Fn() -> bool,
-+        host: impl FnMut(ModHostCall) -> Result<Value>,
-+    ) -> Result<Value> {
-+        self.invoke_streaming(id, generation, event, name, payload, active, host, |_| {})
-+    }
-+
-+    #[allow(clippy::too_many_arguments)]
-+    pub fn invoke_streaming(
-+        &mut self,
-+        id: &str,
-+        generation: u64,
-+        event: &str,
-+        name: &str,
-+        payload: Value,
-+        active: impl Fn() -> bool,
-+        mut host: impl FnMut(ModHostCall) -> Result<Value>,
-+        progress: impl FnMut(String),
-+    ) -> Result<Value> {
-+        self.invoke_scoped_streaming(
-+            id,
-+            generation,
-+            event,
-+            name,
-+            payload,
++        let ModInvokeOptions {
 +            active,
-+            |caller, call| {
-+                if caller != id {
-+                    return Err(failure("service_provider_host_dispatch_unavailable"));
-+                }
-+                host(call)
-+            },
++            mut host,
 +            progress,
-+        )
-+    }
-+
-+    #[allow(clippy::too_many_arguments)]
-+    pub fn invoke_scoped_with(
-+        &mut self,
-+        id: &str,
-+        generation: u64,
-+        event: &str,
-+        name: &str,
-+        payload: Value,
-+        active: impl Fn() -> bool,
-+        host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-+    ) -> Result<Value> {
-+        self.invoke_scoped_streaming(id, generation, event, name, payload, active, host, |_| {})
-+    }
-+
-+    #[allow(clippy::too_many_arguments)]
-+    pub fn invoke_scoped_streaming(
-+        &mut self,
-+        id: &str,
-+        generation: u64,
-+        event: &str,
-+        name: &str,
-+        payload: Value,
-+        active: impl Fn() -> bool,
-+        mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-+        mut progress: impl FnMut(String),
-+    ) -> Result<Value> {
-+        let scope = InvocationScope::default();
-+        self.invoke_scoped_inner(
-+            id,
-+            generation,
-+            event,
-+            name,
-+            payload,
-+            &active,
-+            &mut host,
-+            &mut progress,
-+            &scope,
-+        )
-+    }
-+
-+    #[allow(clippy::too_many_arguments)]
-+    fn invoke_scoped_inner(
-+        &mut self,
-+        id: &str,
-+        generation: u64,
-+        event: &str,
-+        name: &str,
-+        payload: Value,
-+        active: &dyn Fn() -> bool,
-+        host: &mut dyn FnMut(&str, ModHostCall) -> Result<Value>,
-+        progress: &mut dyn FnMut(String),
-+        scope: &InvocationScope,
-+    ) -> Result<Value> {
++        } = options;
++        let mut dispatch = |caller: &str, call: ModHostCall| match &mut host {
++            ModHostCallback::Scoped(host) => host(caller, call),
++            _ if caller != id => Err(failure("service_provider_host_dispatch_unavailable")),
++            ModHostCallback::Own(host) => host(call),
++            ModHostCallback::Unavailable => Err(failure(
++                "host_operation_unavailable: requires a native task",
++            )),
++        };
 +        invoke(
 +            &mut Access::Held(self),
 +            id,
@@ -123587,9 +123594,9 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            name,
 +            payload,
 +            active,
-+            host,
-+            progress,
-+            scope,
++            &mut dispatch,
++            progress.unwrap_or(&mut |_| {}),
++            &InvocationScope::default(),
 +            None,
 +        )
 +    }
@@ -124081,11 +124088,13 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            })
 +            .map(|(id, _)| id.clone())
 +            .collect();
++        let generation = self.generation;
 +        ids.into_iter()
 +            .map(|id| {
-+                let result = self.invoke_scoped_inner(
++                let result = invoke(
++                    &mut Access::Held(self),
 +                    &id,
-+                    self.generation,
++                    generation,
 +                    event,
 +                    "",
 +                    payload.clone(),
@@ -124093,6 +124102,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                    &mut |_, _| Err(failure("observer_host_operation_unavailable")),
 +                    &mut |_| {},
 +                    scope,
++                    None,
 +                );
 +                (id, result)
 +            })
@@ -124160,7 +124170,8 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            .ok_or_else(|| failure("unknown_service_method"))?;
 +        validate_service_value(&call.input, &method.input)?;
 +        let qualified = format!("{}.{}", call.name, call.method);
-+        let result = self.invoke_scoped_inner(
++        let result = invoke(
++            &mut Access::Held(self),
 +            &provider,
 +            generation,
 +            "service",
@@ -124170,6 +124181,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            host,
 +            &mut |_| {},
 +            scope,
++            None,
 +        )?;
 +        validate_service_value(&result, &method.output)?;
 +        if serde_json::to_vec(&result)?.len() > 32_768 {
@@ -124185,10 +124197,6 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        Ok(result)
 +    }
 +
-+    pub fn event(&mut self, event: &str, payload: Value) -> Vec<(String, Result<Value>)> {
-+        self.event_guarded(event, payload, || true)
-+    }
-+
 +    pub fn history(
 +        &mut self,
 +        payload: Value,
@@ -124197,7 +124205,17 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        let Some(owner) = self.replacement_owner("history") else {
 +            return Ok(None);
 +        };
-+        let value = self.invoke_guarded(&owner, self.generation, "history", "", payload, active)?;
++        let value = self.invoke(
++            &owner,
++            self.generation,
++            "history",
++            "",
++            payload,
++            ModInvokeOptions {
++                active: &active,
++                ..ModInvokeOptions::default()
++            },
++        )?;
 +        Ok((!value.is_null()).then_some((owner, value)))
 +    }
 +
@@ -124224,50 +124242,22 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        })
 +    }
 +
-+    pub fn event_guarded(
++    pub fn event(
 +        &mut self,
 +        event: &str,
 +        payload: Value,
-+        active: impl Fn() -> bool,
++        mut options: ModInvokeOptions<'_>,
 +    ) -> Vec<(String, Result<Value>)> {
 +        let ids = self.event_ids(event);
 +        ids.into_iter()
 +            .map(|id| {
-+                let result =
-+                    self.invoke_guarded(&id, self.generation, event, "", payload.clone(), &active);
-+                (id, result)
-+            })
-+            .collect()
-+    }
-+
-+    pub fn event_guarded_with(
-+        &mut self,
-+        event: &str,
-+        payload: Value,
-+        active: impl Fn() -> bool,
-+        host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-+    ) -> Vec<(String, Result<Value>)> {
-+        self.event_scoped_with(event, |_| payload.clone(), active, host)
-+    }
-+
-+    pub fn event_scoped_with(
-+        &mut self,
-+        event: &str,
-+        mut payload: impl FnMut(&str) -> Value,
-+        active: impl Fn() -> bool,
-+        mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-+    ) -> Vec<(String, Result<Value>)> {
-+        let ids = self.event_ids(event);
-+        ids.into_iter()
-+            .map(|id| {
-+                let result = self.invoke_scoped_with(
++                let result = self.invoke(
 +                    &id,
 +                    self.generation,
 +                    event,
 +                    "",
-+                    payload(&id),
-+                    &active,
-+                    &mut host,
++                    payload.clone(),
++                    options.reborrow(),
 +                );
 +                (id, result)
 +            })
@@ -124427,13 +124417,16 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                Ok((invocation, reply)) => {
 +                    match self.finish(&id, generation, "terminal", "", invocation, reply, &active) {
 +                        Err(error) if error.to_string().starts_with("state_conflict") => self
-+                            .invoke_guarded(
++                            .invoke(
 +                                &id,
 +                                generation,
 +                                "terminal",
 +                                "",
 +                                payload.payload(payload.own(&id)),
-+                                &active,
++                                ModInvokeOptions {
++                                    active: &active,
++                                    ..ModInvokeOptions::default()
++                                },
 +                            ),
 +                        result => result,
 +                    }
@@ -124659,16 +124652,8 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        }
 +    }
 +
-+    pub fn turn_boundary(&mut self) {
-+        self.turn_boundary_guarded(&|| true);
-+    }
-+
-+    pub fn refresh_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
-+        self.reload_guarded(active)
-+    }
-+
-+    pub fn turn_boundary_guarded(&mut self, active: &dyn Fn() -> bool) {
-+        if let Err(error) = self.reload_guarded(active) {
++    pub fn turn_boundary(&mut self, active: &dyn Fn() -> bool) {
++        if let Err(error) = self.refresh(active) {
 +            self.reload_error = Some(error.to_string());
 +        }
 +    }
@@ -124802,8 +124787,17 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                continue;
 +            }
 +            let payload = json!({"thread_id":thread_id,"ledger":ledger,"available":available});
-+            let result =
-+                self.invoke_guarded(&id, self.generation, "tool_exposure", "", payload, &active);
++            let result = self.invoke(
++                &id,
++                self.generation,
++                "tool_exposure",
++                "",
++                payload,
++                ModInvokeOptions {
++                    active: &active,
++                    ..ModInvokeOptions::default()
++                },
++            );
 +            let selection = result.ok().and_then(|value| {
 +                let object = value.as_object().filter(|object| object.len() == 1)?;
 +                let names = object.get("enable")?.as_array()?;
@@ -125256,10 +125250,10 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb50b62f51
+index 0000000000000000000000000000000000000000..3551ac78f0ad59804985296d3dd52fc57cfa4abd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1112 @@
+@@ -0,0 +1,1130 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -125789,14 +125783,19 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +                    if let Some(data) = data {
 +                        payload["data"] = data;
 +                    }
-+                    let value = self.invoke_scoped_with(
++                    let value = self.invoke(
 +                        &owner,
 +                        self.generation,
 +                        "timer",
 +                        "",
 +                        payload,
-+                        || active,
-+                        |caller, call| host.call(caller, call),
++                        ModInvokeOptions {
++                            active: &|| active,
++                            host: ModHostCallback::Scoped(&mut |caller, call| {
++                                host.call(caller, call)
++                            }),
++                            ..ModInvokeOptions::default()
++                        },
 +                    );
 +                    fired.push(match value {
 +                        Ok(_) => json!({"mod": owner, "key": key, "at_ms": due}),
@@ -125896,7 +125895,7 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +            }
 +            "reload" => {
 +                self.store.reload()?;
-+                self.turn_boundary();
++                self.turn_boundary(&|| true);
 +                if let Some(error) = &self.reload_error {
 +                    return Err(failure(error));
 +                }
@@ -125969,14 +125968,19 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +                let mut values = Vec::new();
 +                for id in ids {
 +                    let generation = self.generation;
-+                    let value = self.invoke_scoped_with(
++                    let value = self.invoke(
 +                        &id,
 +                        generation,
 +                        event,
 +                        "",
 +                        payload.clone(),
-+                        || active,
-+                        |caller, call| host.call(caller, call),
++                        ModInvokeOptions {
++                            active: &|| active,
++                            host: ModHostCallback::Scoped(&mut |caller, call| {
++                                host.call(caller, call)
++                            }),
++                            ..ModInvokeOptions::default()
++                        },
 +                    )?;
 +                    values.push(json!({"mod":id,"value":value}));
 +                }
@@ -125986,14 +125990,17 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +                let id = required_string(step, "mod")?;
 +                let event = required_string(step, "event")?;
 +                let name = required_string(step, "name")?;
-+                self.invoke_scoped_with(
++                self.invoke(
 +                    id,
 +                    self.generation,
 +                    event,
 +                    name,
 +                    payload,
-+                    || active,
-+                    |caller, call| host.call(caller, call),
++                    ModInvokeOptions {
++                        active: &|| active,
++                        host: ModHostCallback::Scoped(&mut |caller, call| host.call(caller, call)),
++                        ..ModInvokeOptions::default()
++                    },
 +                )
 +            }
 +            "component" => {
@@ -126010,20 +126017,12 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +                    "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
 +                    "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
 +                    "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
-+                let result = self.invoke_scoped_with(
-+                    id,
-+                    self.generation,
-+                    "component",
-+                    module,
-+                    frame,
-+                    || active,
-+                    |_, call| {
++                let result = self.invoke(id, self.generation, "component", module, frame, ModInvokeOptions { active: &|| active, host: ModHostCallback::Scoped(&mut |_, call| {
 +                        Err(failure(format!(
 +                            "host_operation_unavailable: {} is not available to component modules",
 +                            call.operation
 +                        )))
-+                    },
-+                )?;
++                    }), ..ModInvokeOptions::default() })?;
 +                render::checked_tree(&result)?;
 +                Ok(result)
 +            }
@@ -126035,14 +126034,17 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +                        .entry("clients")
 +                        .or_insert_with(|| json!(host.clients));
 +                }
-+                let view = self.invoke_scoped_with(
++                let view = self.invoke(
 +                    id,
 +                    self.generation,
 +                    "terminal",
 +                    "",
 +                    payload,
-+                    || active,
-+                    |caller, call| host.call(caller, call),
++                    ModInvokeOptions {
++                        active: &|| active,
++                        host: ModHostCallback::Scoped(&mut |caller, call| host.call(caller, call)),
++                        ..ModInvokeOptions::default()
++                    },
 +                )?;
 +                ModViewPatch::parse(view.clone())?;
 +                let parsed = ModView::parse(view.clone())?;
@@ -126091,14 +126093,19 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +                        Some(_) => return Err(failure("offline_client_not_attached")),
 +                        None => event["origin"] = json!("user"),
 +                    }
-+                    let result = self.invoke_scoped_with(
++                    let result = self.invoke(
 +                        id,
 +                        self.generation,
 +                        "component_event",
 +                        "",
 +                        event.clone(),
-+                        || active,
-+                        |caller, call| host.call(caller, call),
++                        ModInvokeOptions {
++                            active: &|| active,
++                            host: ModHostCallback::Scoped(&mut |caller, call| {
++                                host.call(caller, call)
++                            }),
++                            ..ModInvokeOptions::default()
++                        },
 +                    )?;
 +                    return Ok(json!({"event": event, "result": result}));
 +                }
@@ -126126,14 +126133,19 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +                if let Some(command) = action.get("command").and_then(Value::as_str) {
 +                    let (owner, name) = command.split_once(':').unwrap_or((id, command));
 +                    let args = action.get("args").cloned().unwrap_or_else(|| json!(""));
-+                    let result = self.invoke_scoped_with(
++                    let result = self.invoke(
 +                        owner,
 +                        self.generation,
 +                        "command",
 +                        name,
 +                        args,
-+                        || active,
-+                        |caller, call| host.call(caller, call),
++                        ModInvokeOptions {
++                            active: &|| active,
++                            host: ModHostCallback::Scoped(&mut |caller, call| {
++                                host.call(caller, call)
++                            }),
++                            ..ModInvokeOptions::default()
++                        },
 +                    )?;
 +                    Ok(json!({"action":action,"result":result}))
 +                } else {
@@ -133012,7 +133024,7 @@ index 0000000000000000000000000000000000000000..e75424edce6611b2bbcc60cd7aa1f00c
 +}
 diff --git a/codex-rs/omd/src/mods/persisted.rs b/codex-rs/omd/src/mods/persisted.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb228f8813ecf358864e76057fe3345344b41d27
+index 0000000000000000000000000000000000000000..4f571927509ae8cb978e1c889db34c1d59a83c8c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/persisted.rs
 @@ -0,0 +1,194 @@
@@ -133134,7 +133146,7 @@ index 0000000000000000000000000000000000000000..cb228f8813ecf358864e76057fe33453
 +    let _thread = StateThread::enter(Some(thread.to_owned()));
 +    let mut runtime = runtime.lock().map_err(|_| "persist_runtime_unavailable")?;
 +    runtime
-+        .refresh_guarded(&active)
++        .refresh(&active)
 +        .map_err(|_| "persist_runtime_unavailable")?;
 +    let required = match runtime.intercepts("history_persist") {
 +        Some(required) => required,
@@ -135424,10 +135436,10 @@ index 0000000000000000000000000000000000000000..f6d50f9bf363611fa0a53af2d52869d7
 +}
 diff --git a/codex-rs/omd/src/mods/resources.rs b/codex-rs/omd/src/mods/resources.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c6509148a
+index 0000000000000000000000000000000000000000..4c1fbecbfcc4bcd04a6a3f1dea5a358f165e7085
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/resources.rs
-@@ -0,0 +1,336 @@
+@@ -0,0 +1,348 @@
 +use super::*;
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -135585,21 +135597,24 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +            }));
 +        }
 +        let (owner, reader) = &providers[0];
-+        let value = self.invoke_scoped_with(
++        let value = self.invoke(
 +            owner,
 +            self.generation,
 +            "virtual_read",
 +            namespace,
 +            arguments,
-+            &active,
-+            |caller, call| {
-+                if !matches!(
-+                    call.operation.as_str(),
-+                    "workspace.read" | "sidecars.invoke"
-+                ) {
-+                    return Err(failure("virtual_read_authority_denied"));
-+                }
-+                host(caller, call)
++            ModInvokeOptions {
++                active: &active,
++                host: ModHostCallback::Scoped(&mut |caller, call| {
++                    if !matches!(
++                        call.operation.as_str(),
++                        "workspace.read" | "sidecars.invoke"
++                    ) {
++                        return Err(failure("virtual_read_authority_denied"));
++                    }
++                    host(caller, call)
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )?;
 +        if !active() {
@@ -135681,11 +135696,20 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +        payload: Value,
 +        active: impl Fn() -> bool,
 +        mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-+        progress: impl FnMut(String),
++        mut progress: impl FnMut(String),
 +    ) -> Result<Value> {
 +        if !owner.is_empty() {
-+            return self.invoke_scoped_streaming(
-+                owner, generation, "tool", name, payload, active, &mut host, progress,
++            return self.invoke(
++                owner,
++                generation,
++                "tool",
++                name,
++                payload,
++                ModInvokeOptions {
++                    active: &active,
++                    host: ModHostCallback::Scoped(&mut host),
++                    progress: Some(&mut progress),
++                },
 +            );
 +        }
 +        if name != "read"
@@ -149179,10 +149203,11 @@ index 0000000000000000000000000000000000000000..0929d4c0f873b9e4a519b1babd3b7074
 +}
 diff --git a/codex-rs/omd/tests/examples.rs b/codex-rs/omd/tests/examples.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7db0f0a394e4b466373bd13e2c5a9f0785d32402
+index 0000000000000000000000000000000000000000..529160b8bcee61706cf114bae89c630a8268534e
 --- /dev/null
 +++ b/codex-rs/omd/tests/examples.rs
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,119 @@
++use codex_omd::ModOpenOptions;
 +use codex_omd::{ModHost, ModStore};
 +use std::path::Path;
 +
@@ -149271,9 +149296,12 @@ index 0000000000000000000000000000000000000000..7db0f0a394e4b466373bd13e2c5a9f07
 +        store.enable(&copy, true).unwrap();
 +    }
 +    assert_eq!(covered.len(), HOST_FEATURES.len(), "{covered:?}");
-+    let status = ModHost::open(root.join("store").canonicalize().unwrap())
-+        .unwrap()
-+        .status();
++    let status = ModHost::open(
++        root.join("store").canonicalize().unwrap(),
++        ModOpenOptions::default(),
++    )
++    .unwrap()
++    .status();
 +    for item in status["mods"].as_array().unwrap() {
 +        assert!(item["error"].is_null(), "{item}");
 +        let registered = [
@@ -149535,10 +149563,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36e814fa89
+index 0000000000000000000000000000000000000000..6524c2006dd32443cb730478a8e2d9afc687a7f0
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2233 @@
+@@ -0,0 +1,2244 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -149546,6 +149574,9 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +use codex_omd::Gate;
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModHost;
++use codex_omd::ModHostCallback;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +use codex_omd::ModStore;
 +use codex_omd::PolicyOwner;
 +use codex_omd::Receipt;
@@ -149934,7 +149965,11 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +    let mut cursor = Some(0);
 +    while let Some(at) = cursor {
 +        let page = host
-+            .call(&owner, "exec.output_page", json!({"artifact":artifact,"cursor":at}))
++            .call(
++                &owner,
++                "exec.output_page",
++                json!({"artifact":artifact,"cursor":at}),
++            )
 +            .unwrap();
 +        let chunk = page["text"].as_str().unwrap();
 +        assert!(chunk.len() <= codex_omd::host::EXEC_ARTIFACT_PAGE_BYTES);
@@ -151224,7 +151259,7 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +        &[],
 +    );
 +    trust(&store, &adapted);
-+    let mut runtime = ModHost::open(root.join("store")).unwrap();
++    let mut runtime = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
 +    assert!(
 +        error_of(&runtime, "old_event").contains("unsupported_event"),
 +        "{}",
@@ -151244,7 +151279,8 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +                runtime.generation(),
 +                "command",
 +                "answer",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .unwrap(),
 +        json!(42)
@@ -151256,20 +151292,22 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +    assert_eq!(documents[0].0.key(), "fixture@1");
 +    let mut calls = Vec::new();
 +    let result = runtime
-+        .invoke_with(
++        .invoke(
 +            "accepted",
 +            runtime.generation(),
 +            "command",
 +            "run",
 +            Value::Null,
-+            || true,
-+            |call| {
-+                calls.push(call.operation.clone());
-+                Ok(if call.operation == "exec.run" {
-+                    json!({"exit_code":0})
-+                } else {
-+                    json!({"revision":1})
-+                })
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |call| {
++                    calls.push(call.operation.clone());
++                    Ok(if call.operation == "exec.run" {
++                        json!({"exit_code":0})
++                    } else {
++                        json!({"revision":1})
++                    })
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
@@ -151289,7 +151327,8 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +                runtime.generation(),
 +                "command",
 +                "answer",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .unwrap(),
 +        json!(43)
@@ -151301,7 +151340,7 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
 +    let store = ModStore::create(root.join("store")).unwrap();
-+    let empty = ModHost::open(root.join("store")).unwrap();
++    let empty = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
 +    assert!(empty.builtin_controls().is_empty());
 +    assert!(empty.contract_documents().is_empty());
 +    assert!(!empty.has_event("model_response"));
@@ -151324,7 +151363,7 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +        &[],
 +    );
 +    trust(&store, &declared);
-+    let runtime = ModHost::open(root.join("store")).unwrap();
++    let runtime = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
 +    assert!(
 +        error_of(&runtime, "undeclared").contains("capability_denied"),
 +        "{}",
@@ -151333,7 +151372,7 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +    assert_eq!(runtime.builtin_controls().len(), 1);
 +    assert_eq!(runtime.contract_documents().len(), 1);
 +    store.enable(&declared, false).unwrap();
-+    let reloaded = ModHost::open(root.join("store")).unwrap();
++    let reloaded = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
 +    assert!(reloaded.builtin_controls().is_empty());
 +    assert!(reloaded.contract_documents().is_empty());
 +}
@@ -151774,11 +151813,14 @@ index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36
 +}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3c9cff899
+index 0000000000000000000000000000000000000000..9683fcc45cff5c393f8a26c95cb21ea251569ee4
 --- /dev/null
 +++ b/codex-rs/omd/tests/integration.rs
-@@ -0,0 +1,516 @@
+@@ -0,0 +1,559 @@
 +use codex_omd::MOD_API_VERSION;
++use codex_omd::ModHostCallback;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::ModHost;
 +use codex_omd::ModStore;
@@ -151828,7 +151870,11 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +}
 +
 +fn host(temp: &TempDir) -> ModHost {
-+    ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap()
++    ModHost::open(
++        temp.path().canonicalize().unwrap().join("store"),
++        ModOpenOptions::default(),
++    )
++    .unwrap()
 +}
 +
 +fn workspace(temp: &TempDir) -> (PathBuf, ModStore) {
@@ -151926,7 +151972,8 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +                runtime.generation(),
 +                "command",
 +                "ping",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .unwrap(),
 +        json!("pong")
@@ -151963,7 +152010,11 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +    trust(&store, &observer, &["lifecycle"]);
 +
 +    let mut runtime = host(&temp);
-+    let drawn = runtime.event("terminal", json!({"event":"draw","checkpoint":null}));
++    let drawn = runtime.event(
++        "terminal",
++        json!({"event":"draw","checkpoint":null}),
++        ModInvokeOptions::default(),
++    );
 +    assert_eq!(drawn.len(), 1);
 +    let view = codex_omd::ModView::parse(drawn[0].1.as_ref().unwrap().clone()).unwrap();
 +    assert_eq!(
@@ -152002,7 +152053,8 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +                runtime.generation(),
 +                "command",
 +                "ping",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .unwrap(),
 +        json!("pong")
@@ -152059,7 +152111,14 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +    let call = |runtime: &mut ModHost, id: &str, command: &str| {
 +        let generation = runtime.generation();
 +        runtime
-+            .invoke(id, generation, "command", command, Value::Null)
++            .invoke(
++                id,
++                generation,
++                "command",
++                command,
++                Value::Null,
++                ModInvokeOptions::default(),
++            )
 +            .unwrap()
 +    };
 +    assert_eq!(
@@ -152101,7 +152160,7 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +            .contains("optional_service_unavailable")
 +    );
 +    assert_eq!(
-+        reopened.event("context", Value::Null)[0]
++        reopened.event("context", Value::Null, ModInvokeOptions::default())[0]
 +            .1
 +            .as_ref()
 +            .unwrap(),
@@ -152165,7 +152224,7 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +    let generation = runtime.generation();
 +    let text = |runtime: &mut codex_omd::ModHost| {
 +        runtime
-+            .event("context", json!({}))
++            .event("context", json!({}), ModInvokeOptions::default())
 +            .into_iter()
 +            .find(|(id, _)| id == "stream")
 +            .unwrap()
@@ -152177,26 +152236,28 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +
 +    let mut updates = Vec::new();
 +    let value = runtime
-+        .invoke_streaming(
++        .invoke(
 +            "worker",
 +            generation,
 +            "tool",
 +            "work",
 +            json!({}),
-+            || true,
-+            |_| {
-+                std::fs::write(stream.join("index.ts"), middleware("hello!"))?;
-+                trust(&store, &stream, &["context"]);
-+                Ok(json!({"task":"running"}))
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |_| {
++                    std::fs::write(stream.join("index.ts"), middleware("hello!"))?;
++                    trust(&store, &stream, &["context"]);
++                    Ok(json!({"task":"running"}))
++                }),
++                progress: Some(&mut |update| updates.push(update)),
++                ..ModInvokeOptions::default()
 +            },
-+            |update| updates.push(update),
 +        )
 +        .unwrap();
 +    assert_eq!(value, json!({"task":"running"}));
 +    assert_eq!(updates, ["started".to_string(), "finished".to_string()]);
 +    assert!(
 +        runtime
-+            .event("context", json!({}))
++            .event("context", json!({}), ModInvokeOptions::default())
 +            .into_iter()
 +            .find(|(id, _)| id == "stream")
 +            .unwrap()
@@ -152209,7 +152270,14 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +    assert_eq!(text(&mut runtime), json!("hello!"));
 +    assert!(
 +        runtime
-+            .invoke("worker", generation, "tool", "work", json!({}))
++            .invoke(
++                "worker",
++                generation,
++                "tool",
++                "work",
++                json!({}),
++                ModInvokeOptions::default()
++            )
 +            .unwrap_err()
 +            .to_string()
 +            .contains("stale_mod_generation")
@@ -152252,7 +152320,7 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +
 +    let mut runtime = host(&temp);
 +    assert_eq!(active(&runtime), ["alpha", "beta", "gamma"]);
-+    let results = runtime.event("context", Value::Null);
++    let results = runtime.event("context", Value::Null, ModInvokeOptions::default());
 +    let observed: Vec<(String, String)> = results
 +        .iter()
 +        .map(|(id, result)| {
@@ -152269,9 +152337,9 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +    assert!(observed[1].1.contains("beta failed"), "{:?}", observed[1]);
 +    assert!(observed[2].1.contains("context_limit"), "{:?}", observed[2]);
 +    for _ in 1..5 {
-+        runtime.event("context", Value::Null);
++        runtime.event("context", Value::Null, ModInvokeOptions::default());
 +    }
-+    let remaining = runtime.event("context", Value::Null);
++    let remaining = runtime.event("context", Value::Null, ModInvokeOptions::default());
 +    assert_eq!(remaining.len(), 1);
 +    assert_eq!(remaining[0].0, "alpha");
 +    assert_eq!(remaining[0].1.as_ref().unwrap(), &json!({"text":"alpha"}));
@@ -152279,13 +152347,27 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +    let generation = runtime.generation();
 +    assert_eq!(
 +        runtime
-+            .invoke("alpha", generation, "command", "count", Value::Null)
++            .invoke(
++                "alpha",
++                generation,
++                "command",
++                "count",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .unwrap(),
 +        json!(1)
 +    );
 +    assert!(
 +        runtime
-+            .invoke("beta", generation, "command", "count", Value::Null)
++            .invoke(
++                "beta",
++                generation,
++                "command",
++                "count",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .is_err()
 +    );
 +    let state = |id: &str| root.join(format!("store/state-{id}.json"));
@@ -152296,13 +152378,15 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +}
 diff --git a/codex-rs/omd/tests/managed.rs b/codex-rs/omd/tests/managed.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561dd31a087
+index 0000000000000000000000000000000000000000..a1077b774dd518c0c4eac28d43585fd59eba52b8
 --- /dev/null
 +++ b/codex-rs/omd/tests/managed.rs
-@@ -0,0 +1,1081 @@
+@@ -0,0 +1,1092 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +use codex_omd::ModPackageGrant;
 +use codex_omd::ModPackageSource;
 +use codex_omd::ModPackageTrust;
@@ -152415,6 +152499,7 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +                .join(format!("store-{user}"))
 +                .canonicalize()
 +                .unwrap(),
++            ModOpenOptions::default(),
 +        )
 +        .unwrap();
 +        host.set_managed_policy(self.policy.clone(), self.owner, user)
@@ -152674,8 +152759,15 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +    let mut host = admin.host("alice");
 +    let generation = host.generation();
 +    assert_eq!(
-+        host.invoke("hello", generation, "command", "hello", Value::Null)
-+            .unwrap(),
++        host.invoke(
++            "hello",
++            generation,
++            "command",
++            "hello",
++            Value::Null,
++            ModInvokeOptions::default()
++        )
++        .unwrap(),
 +        json!("hi")
 +    );
 +}
@@ -152705,7 +152797,7 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +    }
 +    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
 +    std::fs::write(edited.join("index.ts"), format!("{COMMAND};")).unwrap();
-+    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
++    let host = ModHost::open(admin.root.join("store-alice"), ModOpenOptions::default()).unwrap();
 +    let status = host.status();
 +    let code = |reason: &Value| {
 +        reason
@@ -152847,7 +152939,8 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +    admin.write_policy(policy);
 +    let cached = store.managed_deployment().unwrap().packages[0].path.clone();
 +    std::fs::write(cached.join("index.ts"), TRANSFORM).unwrap();
-+    let mut host = ModHost::open(admin.root.join("store-alice")).unwrap();
++    let mut host =
++        ModHost::open(admin.root.join("store-alice"), ModOpenOptions::default()).unwrap();
 +    host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
 +        .unwrap();
 +    let stale = host.status()["rejected"]
@@ -152879,7 +152972,7 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +        }
 +    }
 +    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
-+    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
++    let host = ModHost::open(admin.root.join("store-alice"), ModOpenOptions::default()).unwrap();
 +    assert!(active(&host).is_empty());
 +    let status = host.status();
 +    for path in [&spoof, &tiered] {
@@ -153383,11 +153476,14 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549320469b9
+index 0000000000000000000000000000000000000000..a176d6a360a481985a8cd07208c88b1d0aadc044
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5441 @@
+@@ -0,0 +1,5740 @@
 +use codex_omd::MOD_API_VERSION;
++use codex_omd::ModHostCallback;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
 +use codex_omd::MOD_PACKAGE_SCHEMA_VERSION;
@@ -153490,7 +153586,11 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +}
 +
 +fn activation_error(temp: &TempDir, id: &str) -> String {
-+    let runtime = ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap();
++    let runtime = ModHost::open(
++        temp.path().canonicalize().unwrap().join("store"),
++        ModOpenOptions::default(),
++    )
++    .unwrap();
 +    runtime.status()["mods"]
 +        .as_array()
 +        .unwrap()
@@ -153514,7 +153614,11 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +}
 +
 +fn host(temp: &TempDir) -> ModHost {
-+    ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap()
++    ModHost::open(
++        temp.path().canonicalize().unwrap().join("store"),
++        ModOpenOptions::default(),
++    )
++    .unwrap()
 +}
 +
 +const COUNTER: &str = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
@@ -153527,7 +153631,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut second = host(&temp);
 +    let invoke = |runtime: &mut ModHost, name: &str| {
 +        let generation = runtime.generation();
-+        runtime.invoke("fixture", generation, "command", name, Value::Null)
++        runtime.invoke(
++            "fixture",
++            generation,
++            "command",
++            name,
++            Value::Null,
++            ModInvokeOptions::default(),
++        )
 +    };
 +    assert_eq!(invoke(&mut first, "count").unwrap(), json!(1));
 +    assert_eq!(invoke(&mut second, "count").unwrap(), json!(2));
@@ -153554,7 +153665,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut invoke = |name: &str| {
 +        let generation = runtime.generation();
 +        runtime
-+            .invoke("fixture", generation, "command", name, Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                name,
++                Value::Null,
++                ModInvokeOptions::default(),
++            )
 +            .unwrap();
 +        runtime.state_fingerprint()
 +    };
@@ -153585,23 +153703,32 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut second = host(&temp);
 +    let count = |runtime: &mut ModHost| {
 +        let generation = runtime.generation();
-+        runtime.invoke("fixture", generation, "command", "count", Value::Null)
++        runtime.invoke(
++            "fixture",
++            generation,
++            "command",
++            "count",
++            Value::Null,
++            ModInvokeOptions::default(),
++        )
 +    };
 +    let race = |first: &mut ModHost, second: &mut ModHost, key: &str| {
 +        let calls = AtomicUsize::new(0);
 +        let result = std::thread::scope(|scope| {
 +            let slow = scope.spawn(|| {
 +                let generation = first.generation();
-+                first.invoke_with(
++                first.invoke(
 +                    "fixture",
 +                    generation,
 +                    "command",
 +                    "slow",
 +                    json!(key),
-+                    || true,
-+                    |_| {
-+                        calls.fetch_add(1, Ordering::SeqCst);
-+                        Ok(Value::Null)
++                    ModInvokeOptions {
++                        host: ModHostCallback::Own(&mut |_| {
++                            calls.fetch_add(1, Ordering::SeqCst);
++                            Ok(Value::Null)
++                        }),
++                        ..ModInvokeOptions::default()
 +                    },
 +                )
 +            });
@@ -153692,10 +153819,17 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    let invoke = |runtime: &mut ModHost, id: &str, name: &str, payload: Value| {
 +        let generation = runtime.generation();
-+        runtime.invoke(id, generation, "command", name, payload)
++        runtime.invoke(
++            id,
++            generation,
++            "command",
++            name,
++            payload,
++            ModInvokeOptions::default(),
++        )
 +    };
-+    let mut one = ModHost::open(root.join("first")).unwrap();
-+    let mut two = ModHost::open(root.join("second")).unwrap();
++    let mut one = ModHost::open(root.join("first"), ModOpenOptions::default()).unwrap();
++    let mut two = ModHost::open(root.join("second"), ModOpenOptions::default()).unwrap();
 +    one.set_checkout(&checkout.join("sub"));
 +    two.set_checkout(&checkout);
 +
@@ -153752,7 +153886,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        json!(3)
 +    );
 +    assert!(checkout.join(".git/omd/state/shared.json").is_file());
-+    let mut linked_host = ModHost::open(root.join("second")).unwrap();
++    let mut linked_host = ModHost::open(root.join("second"), ModOpenOptions::default()).unwrap();
 +    linked_host.set_checkout(&linked);
 +    assert_eq!(
 +        invoke(&mut linked_host, "shared", "count", Value::Null).unwrap(),
@@ -153760,7 +153894,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    let plain = root.join("plain");
 +    std::fs::create_dir(&plain).unwrap();
-+    let mut outside = ModHost::open(root.join("second")).unwrap();
++    let mut outside = ModHost::open(root.join("second"), ModOpenOptions::default()).unwrap();
 +    outside.set_checkout(&plain);
 +    let refused = invoke(&mut outside, "shared", "count", Value::Null).unwrap_err();
 +    assert!(
@@ -153771,17 +153905,31 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let reader = scoped("reader", "checkout");
 +    std::fs::write(reader.join("index.ts"), "export default api => { const seen = api.state.get() !== null; api.command(seen ? 'seen' : 'fresh', () => { api.state.set(true); return seen; }); }").unwrap();
 +    trust(&second, &reader, &["commands", "store"]);
-+    let mut opened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
++    let mut opened = ModHost::open(
++        root.join("second"),
++        ModOpenOptions {
++            repository: Some(&checkout),
++            ..ModOpenOptions::default()
++        },
++    )
++    .unwrap();
 +    assert_eq!(
 +        invoke(&mut opened, "reader", "fresh", Value::Null).unwrap(),
 +        json!(false)
 +    );
-+    let mut reopened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
++    let mut reopened = ModHost::open(
++        root.join("second"),
++        ModOpenOptions {
++            repository: Some(&checkout),
++            ..ModOpenOptions::default()
++        },
++    )
++    .unwrap();
 +    assert_eq!(
 +        invoke(&mut reopened, "reader", "seen", Value::Null).unwrap(),
 +        json!(true)
 +    );
-+    let mut unscoped = ModHost::open(root.join("first")).unwrap();
++    let mut unscoped = ModHost::open(root.join("first"), ModOpenOptions::default()).unwrap();
 +    assert!(
 +        invoke(&mut unscoped, "shared", "count", Value::Null)
 +            .unwrap_err()
@@ -153815,7 +153963,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut runtime = host(&temp);
 +    let generation = runtime.generation();
 +    runtime
-+        .invoke("fixture", generation, "command", "count", Value::Null)
++        .invoke(
++            "fixture",
++            generation,
++            "command",
++            "count",
++            Value::Null,
++            ModInvokeOptions::default(),
++        )
 +        .unwrap();
 +    std::fs::write(
 +        path.join("index.ts"),
@@ -153825,7 +153980,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    std::thread::sleep(std::time::Duration::from_millis(2100));
 +    assert!(
 +        runtime
-+            .invoke("fixture", generation, "command", "count", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "count",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .unwrap_err()
 +            .to_string()
 +            .contains("untrusted_source")
@@ -153835,7 +153997,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    assert_eq!(runtime.generation(), generation);
 +    assert!(
 +        runtime
-+            .invoke("fixture", generation, "command", "count", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "count",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .unwrap_err()
 +            .to_string()
 +            .contains("callback_authority_changed")
@@ -153844,7 +154013,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    runtime.reload().unwrap();
 +    assert!(
 +        runtime
-+            .invoke("fixture", generation, "command", "count", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "count",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .is_err()
 +    );
 +    assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
@@ -153857,7 +154033,16 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        &["commands"],
 +    );
 +    let root = temp.path().canonicalize().unwrap();
-+    let open = || ModHost::open_in(root.join("store"), |_| Ok(()), &root).unwrap();
++    let open = || {
++        ModHost::open(
++            root.join("store"),
++            ModOpenOptions {
++                repository: Some(&root),
++                ..ModOpenOptions::default()
++            },
++        )
++        .unwrap()
++    };
 +    let registrations = |host: &ModHost| host.status()["mods"][0]["registrations"].clone();
 +    let first = registrations(&open());
 +    assert_eq!(registrations(&open()), first);
@@ -153903,7 +154088,8 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                runtime.generation(),
 +                "command",
 +                "bad",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .unwrap_err()
 +            .to_string()
@@ -153921,13 +154107,16 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let (temp, store, _) = fixture(COUNTER, &["commands", "store"]);
 +    let mut runtime = host(&temp);
 +    let calls = AtomicUsize::new(0);
-+    let result = runtime.invoke_guarded(
++    let result = runtime.invoke(
 +        "fixture",
 +        runtime.generation(),
 +        "command",
 +        "count",
 +        Value::Null,
-+        || calls.fetch_add(1, Ordering::Relaxed) == 0,
++        ModInvokeOptions {
++            active: &|| calls.fetch_add(1, Ordering::Relaxed) == 0,
++            ..ModInvokeOptions::default()
++        },
 +    );
 +    assert!(
 +        result
@@ -153944,7 +154133,8 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                runtime.generation(),
 +                "command",
 +                "count",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .unwrap(),
 +        json!(1)
@@ -153970,15 +154160,29 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        &["commands"],
 +    );
 +    trust(&store, &other, &["commands"]);
-+    let mut host = ModHost::open(root.join("store")).unwrap();
++    let mut host = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
 +    let generation = host.generation();
 +    assert!(
-+        host.invoke("leaving", generation, "command", "leave", Value::Null)
-+            .is_err()
++        host.invoke(
++            "leaving",
++            generation,
++            "command",
++            "leave",
++            Value::Null,
++            ModInvokeOptions::default()
++        )
++        .is_err()
 +    );
 +    assert_eq!(
-+        host.invoke("other", generation, "command", "run", Value::Null)
-+            .unwrap(),
++        host.invoke(
++            "other",
++            generation,
++            "command",
++            "run",
++            Value::Null,
++            ModInvokeOptions::default()
++        )
++        .unwrap(),
 +        "ran"
 +    );
 +}
@@ -153998,7 +154202,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    trust(&store, &other, &["context"]);
 +    let mut runtime = host(&temp);
-+    let results = runtime.event("context", Value::Null);
++    let results = runtime.event("context", Value::Null, ModInvokeOptions::default());
 +    assert!(
 +        results[0]
 +            .1
@@ -154009,9 +154213,19 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    assert_eq!(*results[1].1.as_ref().unwrap(), json!({"text":"hello"}));
 +    for _ in 1..5 {
-+        assert_eq!(runtime.event("context", Value::Null).len(), 2);
++        assert_eq!(
++            runtime
++                .event("context", Value::Null, ModInvokeOptions::default())
++                .len(),
++            2
++        );
 +    }
-+    assert_eq!(runtime.event("context", Value::Null).len(), 1);
++    assert_eq!(
++        runtime
++            .event("context", Value::Null, ModInvokeOptions::default())
++            .len(),
++        1
++    );
 +}
 +
 +#[test]
@@ -154029,7 +154243,8 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                runtime.generation(),
 +                "command",
 +                "hang",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .is_err()
 +    );
@@ -154059,7 +154274,8 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                runtime.generation(),
 +                "command",
 +                "count",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .is_err()
 +    );
@@ -154106,7 +154322,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let generation = runtime.generation();
 +    assert!(
 +        runtime
-+            .invoke("fixture", generation, "command", "count", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "count",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .unwrap_err()
 +            .to_string()
 +            .contains("mod_conflict")
@@ -154116,7 +154339,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let generation = runtime.generation();
 +    assert_eq!(
 +        runtime
-+            .invoke("fixture", generation, "command", "count", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "count",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .unwrap(),
 +        json!(1)
 +    );
@@ -154129,16 +154359,18 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut runtime = host(&temp);
 +    let mut calls = Vec::new();
 +    let value = runtime
-+        .invoke_with(
++        .invoke(
 +            "fixture",
 +            runtime.generation(),
 +            "command",
 +            "run",
 +            Value::Null,
-+            || true,
-+            |call| {
-+                calls.push(call.operation);
-+                Ok(json!(calls.len()))
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |call| {
++                    calls.push(call.operation);
++                    Ok(json!(calls.len()))
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
@@ -154159,29 +154391,33 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let (temp, _, _) = fixture(source, &["lifecycle", "model"]);
 +    let mut runtime = host(&temp);
 +    let mut operations = Vec::new();
-+    let results = runtime.event_guarded_with(
++    let results = runtime.event(
 +        "turn_start",
 +        Value::Null,
-+        || true,
-+        |_, call| {
-+            operations.push(call.operation.clone());
-+            if call.operation == "routes.list" {
-+                Ok(json!([{"provider":"fixture","model":"model"}]))
-+            } else {
-+                Ok(Value::Null)
-+            }
++        ModInvokeOptions {
++            host: ModHostCallback::Scoped(&mut |_, call| {
++                operations.push(call.operation.clone());
++                if call.operation == "routes.list" {
++                    Ok(json!([{"provider":"fixture","model":"model"}]))
++                } else {
++                    Ok(Value::Null)
++                }
++            }),
++            ..ModInvokeOptions::default()
 +        },
 +    );
 +    assert!(results.iter().all(|(_, result)| result.is_ok()));
 +    assert_eq!(operations, vec!["routes.list", "providers.register"]);
 +    operations.clear();
-+    let results = runtime.event_guarded_with(
++    let results = runtime.event(
 +        "turn_start",
 +        Value::Null,
-+        || true,
-+        |_, call| {
-+            operations.push(call.operation.clone());
-+            Ok(json!([]))
++        ModInvokeOptions {
++            host: ModHostCallback::Scoped(&mut |_, call| {
++                operations.push(call.operation.clone());
++                Ok(json!([]))
++            }),
++            ..ModInvokeOptions::default()
 +        },
 +    );
 +    assert!(results.iter().all(|(_, result)| result.is_ok()));
@@ -154199,6 +154435,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "command",
 +            "count",
 +            Value::Null,
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    let manifest_path = path.join("mod.json");
@@ -154242,7 +154479,8 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                runtime.generation(),
 +                "command",
 +                "count",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .is_err()
 +    );
@@ -154340,6 +154578,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "command",
 +            "count",
 +            Value::Null,
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    let state_path = temp.path().join("store/state-fixture.json");
@@ -154440,7 +154679,8 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                rolled_back.generation(),
 +                "command",
 +                "count",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .unwrap(),
 +        json!(2)
@@ -154462,14 +154702,16 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut runtime = host(&temp);
 +    let generation = runtime.generation();
 +    let error = runtime
-+        .invoke_with(
++        .invoke(
 +            "fixture",
 +            generation,
 +            "command",
 +            "run",
 +            json!("large"),
-+            || true,
-+            |_| Ok(json!({"text": "x".repeat(1_100_000)})),
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |_| Ok(json!({"text": "x".repeat(1_100_000)}))),
++                ..ModInvokeOptions::default()
++            },
 +        )
 +        .unwrap_err();
 +    assert!(
@@ -154478,16 +154720,18 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    let mut calls = 0;
 +    let error = runtime
-+        .invoke_with(
++        .invoke(
 +            "fixture",
 +            generation,
 +            "command",
 +            "run",
 +            json!("cumulative"),
-+            || true,
-+            |_| {
-+                calls += 1;
-+                Ok(json!({"text": "x".repeat(600_000)}))
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |_| {
++                    calls += 1;
++                    Ok(json!({"text": "x".repeat(600_000)}))
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap_err();
@@ -154498,20 +154742,22 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    let mut calls = 0;
 +    let recovered = runtime
-+        .invoke_with(
++        .invoke(
 +            "fixture",
 +            generation,
 +            "command",
 +            "run",
 +            json!("recover"),
-+            || true,
-+            |_| {
-+                calls += 1;
-+                Ok(if calls == 1 {
-+                    json!({"text": "x".repeat(1_100_000)})
-+                } else {
-+                    json!("recovered")
-+                })
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |_| {
++                    calls += 1;
++                    Ok(if calls == 1 {
++                        json!({"text": "x".repeat(1_100_000)})
++                    } else {
++                        json!("recovered")
++                    })
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
@@ -154519,14 +154765,16 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    assert_eq!(recovered, json!("recovered"));
 +    assert_eq!(
 +        runtime
-+            .invoke_with(
++            .invoke(
 +                "fixture",
 +                generation,
 +                "command",
 +                "run",
 +                json!("small"),
-+                || true,
-+                |_| { Ok(Value::Null) }
++                ModInvokeOptions {
++                    host: ModHostCallback::Own(&mut |_| { Ok(Value::Null) }),
++                    ..ModInvokeOptions::default()
++                }
 +            )
 +            .unwrap(),
 +        json!("ok")
@@ -154889,14 +155137,16 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        let mut runtime = runtime.lock().unwrap();
 +        let generation = runtime.generation();
 +        runtime
-+            .invoke_with(
++            .invoke(
 +                "frame",
 +                generation,
 +                "command",
 +                "label",
 +                json!("changed"),
-+                || true,
-+                |_| Ok(Value::Null),
++                ModInvokeOptions {
++                    host: ModHostCallback::Own(&mut |_| Ok(Value::Null)),
++                    ..ModInvokeOptions::default()
++                },
 +            )
 +            .unwrap();
 +    }
@@ -154962,14 +155212,16 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        let mut runtime = runtime.lock().unwrap();
 +        let generation = runtime.generation();
 +        runtime
-+            .invoke_with(
++            .invoke(
 +                "frame",
 +                generation,
 +                "command",
 +                "relabel",
 +                name,
-+                || true,
-+                |_| Ok(Value::Null),
++                ModInvokeOptions {
++                    host: ModHostCallback::Own(&mut |_| Ok(Value::Null)),
++                    ..ModInvokeOptions::default()
++                },
 +            )
 +            .unwrap();
 +    };
@@ -155095,36 +155347,45 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut first = host(&temp);
 +    let mut second = host(&temp);
 +    let invoke = |host: &mut ModHost, name: &str, value| {
-+        host.invoke("fixture", host.generation(), "command", name, value)
-+            .unwrap()
++        host.invoke(
++            "fixture",
++            host.generation(),
++            "command",
++            name,
++            value,
++            ModInvokeOptions::default(),
++        )
++        .unwrap()
 +    };
 +    assert!(invoke(&mut first, "read", Value::Null).is_null());
 +    invoke(&mut first, "write", json!(2));
-+    assert!(!first.refresh_guarded(&|| true).unwrap());
-+    assert!(!second.refresh_guarded(&|| true).unwrap());
++    assert!(!first.refresh(&|| true).unwrap());
++    assert!(!second.refresh(&|| true).unwrap());
 +    assert_eq!(invoke(&mut second, "read", Value::Null), 2);
 +    assert!(first.state("fixture").unwrap().is_null());
 +    let mut raced = false;
 +    let value = first
-+        .invoke_with(
++        .invoke(
 +            "fixture",
 +            first.generation(),
 +            "command",
 +            "race",
 +            Value::Null,
-+            || true,
-+            |_| {
-+                assert!(!raced);
-+                raced = true;
-+                invoke(&mut second, "write", json!(10));
-+                Ok(json!("contents"))
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |_| {
++                    assert!(!raced);
++                    raced = true;
++                    invoke(&mut second, "write", json!(10));
++                    Ok(json!("contents"))
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
 +    assert_eq!(value, 11);
 +    assert_eq!(invoke(&mut second, "read", Value::Null), 11);
 +    store.enable(&path, false).unwrap();
-+    first.turn_boundary();
++    first.turn_boundary(&|| true);
 +    assert!(
 +        second
 +            .invoke(
@@ -155132,7 +155393,8 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                second.generation(),
 +                "command",
 +                "read",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .is_err()
 +    );
@@ -155142,7 +155404,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    store.reload().unwrap();
 +    assert!(invoke(&mut second, "read", Value::Null).is_null());
 +    invoke(&mut first, "write", json!(5));
-+    first.turn_boundary();
++    first.turn_boundary(&|| true);
 +    {
 +        let _thread = codex_omd::StateThread::enter(Some("another".into()));
 +        assert!(invoke(&mut first, "read", Value::Null).is_null());
@@ -155163,6 +155425,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "command",
 +            "write",
 +            json!("x".repeat(65_537)),
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap_err();
 +    assert!(error.to_string().contains("ui_state_limit"));
@@ -155177,6 +155440,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                "command",
 +                "lone",
 +                json!(place),
++                ModInvokeOptions::default(),
 +            )
 +            .unwrap_err();
 +        assert!(
@@ -155277,6 +155541,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "command",
 +            "view",
 +            Value::Null,
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    let view = runtime
@@ -155296,6 +155561,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "command",
 +            "change",
 +            Value::Null,
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    let refreshed = runtime.terminal_view(json!({}), || true);
@@ -155318,7 +155584,8 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                runtime.generation(),
 +                "command",
 +                "bad",
-+                Value::Null
++                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .is_err()
 +    );
@@ -155329,6 +155596,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "command",
 +            "close",
 +            Value::Null,
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    assert!(
@@ -155368,6 +155636,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                "command",
 +                "view",
 +                Value::Null,
++                ModInvokeOptions::default(),
 +            )
 +            .unwrap();
 +        runtime
@@ -155377,6 +155646,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                "command",
 +                change,
 +                Value::Null,
++                ModInvokeOptions::default(),
 +            )
 +            .unwrap();
 +        runtime
@@ -155405,6 +155675,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                "command",
 +                "view",
 +                Value::Null,
++                ModInvokeOptions::default(),
 +            )
 +            .unwrap()
 +    };
@@ -155460,6 +155731,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                "command",
 +                "call",
 +                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .unwrap(),
 +        json!("provider:hello")
@@ -155502,18 +155774,20 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut runtime = host(&temp);
 +    let mut observed = Vec::new();
 +    let result = runtime
-+        .invoke_scoped_with(
++        .invoke(
 +            "consumer",
 +            runtime.generation(),
 +            "command",
 +            "read",
 +            Value::Null,
-+            || true,
-+            |caller, call| {
-+                observed.push(caller.to_owned());
-+                assert_eq!(call.operation, "store.get");
-+                assert_eq!(call.arguments, json!({"key":"owned"}));
-+                Ok(json!({"value":"provider-owned"}))
++            ModInvokeOptions {
++                host: ModHostCallback::Scoped(&mut |caller, call| {
++                    observed.push(caller.to_owned());
++                    assert_eq!(call.operation, "store.get");
++                    assert_eq!(call.arguments, json!({"key":"owned"}));
++                    Ok(json!({"value":"provider-owned"}))
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
@@ -155522,17 +155796,20 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    assert_eq!(runtime.status()["service_calls"][0]["provider"], "provider");
 +    let active = std::cell::Cell::new(true);
 +    let cancelled = runtime
-+        .invoke_scoped_with(
++        .invoke(
 +            "consumer",
 +            runtime.generation(),
 +            "command",
 +            "read",
 +            Value::Null,
-+            || active.get(),
-+            |caller, _| {
-+                assert_eq!(caller, "provider");
-+                active.set(false);
-+                Ok(json!({"value":"cancelled"}))
++            ModInvokeOptions {
++                active: &|| active.get(),
++                host: ModHostCallback::Scoped(&mut |caller, _| {
++                    assert_eq!(caller, "provider");
++                    active.set(false);
++                    Ok(json!({"value":"cancelled"}))
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap_err();
@@ -155648,6 +155925,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                "command",
 +                "probe",
 +                Value::Null,
++                ModInvokeOptions::default()
 +            )
 +            .unwrap()
 +            .as_str()
@@ -155749,6 +156027,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let tool = runtime.lock().unwrap().event(
 +        "tool_result",
 +        json!({"call_id":"c","tool":"x","outcome":"ok"}),
++        ModInvokeOptions::default(),
 +    );
 +    assert!(
 +        tool[0]
@@ -155956,22 +156235,31 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let generation = runtime.generation();
 +    let mut updates = Vec::new();
 +    let value = runtime
-+        .invoke_streaming(
++        .invoke(
 +            "fixture",
 +            generation,
 +            "tool",
 +            "work",
 +            json!({}),
-+            || true,
-+            |_| Ok(json!({"ok":true})),
-+            |update| updates.push(update),
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |_| Ok(json!({"ok":true}))),
++                progress: Some(&mut |update| updates.push(update)),
++                ..ModInvokeOptions::default()
++            },
 +        )
 +        .unwrap();
 +    assert_eq!(value, json!({"ok":true}));
 +    assert_eq!(updates, vec!["started".to_string(), "finished".to_string()]);
 +    assert!(
 +        runtime
-+            .invoke("fixture", generation, "command", "bad", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "bad",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .unwrap_err()
 +            .to_string()
 +            .contains("progress_outside_tool")
@@ -155995,14 +156283,16 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let generation = runtime.generation();
 +    let started = std::time::Instant::now();
 +    let value = runtime
-+        .invoke_with(
++        .invoke(
 +            "fixture",
 +            generation,
 +            "tool",
 +            "work",
 +            json!({}),
-+            || true,
-+            |_| Ok(json!({"status": "active"})),
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |_| Ok(json!({"status": "active"}))),
++                ..ModInvokeOptions::default()
++            },
 +        )
 +        .unwrap();
 +    assert_eq!(value, json!(16));
@@ -156037,24 +156327,33 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut runtime = host(&temp);
 +    let generation = runtime.generation();
 +    let result = runtime
-+        .invoke_with(
++        .invoke(
 +            "fixture",
 +            generation,
 +            "command",
 +            "run",
 +            Value::Null,
-+            || true,
-+            |_| {
-+                store.enable(&path, false)?;
-+                Ok(json!({"completed":true}))
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |_| {
++                    store.enable(&path, false)?;
++                    Ok(json!({"completed":true}))
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap_err();
 +    assert!(result.to_string().contains("callback_authority_changed"));
-+    runtime.turn_boundary();
++    runtime.turn_boundary(&|| true);
 +    assert!(
 +        runtime
-+            .invoke("fixture", generation, "command", "run", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "run",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .unwrap_err()
 +            .to_string()
 +            .contains("stale_mod_generation")
@@ -156066,14 +156365,17 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +fn native_schema_validation_applies_to_reload_before_activation() {
 +    let source = "export default api => api.tool({name:'probe',description:'probe',parameters:{type:'object',properties:{}}},()=>null)";
 +    let (temp, store, path) = fixture(source, &["tools"]);
-+    let mut runtime = ModHost::open_validated(
++    let mut runtime = ModHost::open(
 +        temp.path().canonicalize().unwrap().join("store"),
-+        |schema| {
-+            if schema["properties"].get("invalid").is_some() {
-+                Err(std::io::Error::other("native_schema_rejected"))
-+            } else {
-+                Ok(())
-+            }
++        ModOpenOptions {
++            tool_validator: |schema| {
++                if schema["properties"].get("invalid").is_some() {
++                    Err(std::io::Error::other("native_schema_rejected"))
++                } else {
++                    Ok(())
++                }
++            },
++            ..ModOpenOptions::default()
 +        },
 +    )
 +    .unwrap();
@@ -156084,7 +156386,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    )
 +    .unwrap();
 +    trust(&store, &path, &["tools"]);
-+    runtime.turn_boundary();
++    runtime.turn_boundary(&|| true);
 +    assert_eq!(runtime.generation(), generation);
 +    assert!(
 +        runtime.status()["reload_error"]
@@ -156129,7 +156431,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    assert!(error.contains("ACTIVATION_SENTINEL"), "{error}");
 +    assert!(error.contains("fixture/index.ts:1:"), "{error}");
 +    assert!(!error.contains(root.to_str().unwrap()), "{error}");
-+    let results = runtime.event("context", Value::Null);
++    let results = runtime.event("context", Value::Null, ModInvokeOptions::default());
 +    assert_eq!(results.len(), 1);
 +    assert_eq!(*results[0].1.as_ref().unwrap(), json!({"text":"hello"}));
 +    let selections = store.selection_status().unwrap();
@@ -156207,7 +156509,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    }
 +    let plain = write("plain", json!({}));
 +    trust(&store, &plain, &[]);
-+    let mut runtime = ModHost::open(root.join("store")).unwrap();
++    let mut runtime = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
 +    let published = runtime.codex_config();
 +    assert_eq!(
 +        published.lock().unwrap().iter().collect::<Vec<_>>(),
@@ -156270,6 +156572,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        .event(
 +            "context",
 +            json!({"thread_id":"t","turn_id":"u","checkpoint":null}),
++            ModInvokeOptions::default(),
 +        )
 +        .into_iter()
 +        .map(|(id, result)| {
@@ -156355,7 +156658,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    let generation = runtime.generation();
 +    runtime
-+        .invoke("shared", generation, "command", "count", Value::Null)
++        .invoke(
++            "shared",
++            generation,
++            "command",
++            "count",
++            Value::Null,
++            ModInvokeOptions::default(),
++        )
 +        .unwrap();
 +    let store_root = root.join("store");
 +    assert!(store_root.join("state-shared.project.json").exists());
@@ -156472,7 +156782,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        &["model"],
 +    );
 +    let mut runtime = host(&temp);
-+    let error = runtime.event("routing", routes.clone())[0]
++    let error = runtime.event("routing", routes.clone(), ModInvokeOptions::default())[0]
 +        .1
 +        .as_ref()
 +        .unwrap_err()
@@ -156488,7 +156798,10 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    let mut runtime = host(&temp);
 +    assert_eq!(
-+        runtime.event("routing", routes)[0].1.as_ref().unwrap(),
++        runtime.event("routing", routes, ModInvokeOptions::default())[0]
++            .1
++            .as_ref()
++            .unwrap(),
 +        &json!({"route":"sol"})
 +    );
 +    assert_eq!(
@@ -156504,7 +156817,10 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    let mut runtime = host(&temp);
 +    assert_eq!(
-+        runtime.event("routing", routes)[0].1.as_ref().unwrap(),
++        runtime.event("routing", routes, ModInvokeOptions::default())[0]
++            .1
++            .as_ref()
++            .unwrap(),
 +        &json!({"route":"sol"})
 +    );
 +
@@ -156514,7 +156830,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    let mut runtime = host(&temp);
 +    assert!(
-+        runtime.event("routing", json!({}))[0]
++        runtime.event("routing", json!({}), ModInvokeOptions::default())[0]
 +            .1
 +            .as_ref()
 +            .unwrap_err()
@@ -156524,7 +156840,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    assert!(runtime.status()["mods"][0]["error"].is_null());
 +    assert_eq!(runtime.status()["mods"][0]["telemetry"]["faults"], 1);
 +    for _ in 1..5 {
-+        let _ = runtime.event("routing", json!({}));
++        let _ = runtime.event("routing", json!({}), ModInvokeOptions::default());
 +    }
 +    assert!(runtime.status()["mods"][0]["error"].is_string());
 +
@@ -156535,6 +156851,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        .event(
 +            "context",
 +            json!({"thread_id":"t","turn_id":"u","checkpoint":null}),
++            ModInvokeOptions::default(),
 +        )
 +        .into_iter()
 +        .map(|(_, result)| result.unwrap())
@@ -156583,6 +156900,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "command",
 +            "fail",
 +            Value::Null,
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap_err()
 +        .to_string();
@@ -156787,7 +157105,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let held = runtime
 +        .lock()
 +        .unwrap()
-+        .invoke("fixture", generation, "command", "nap", Value::Null)
++        .invoke(
++            "fixture",
++            generation,
++            "command",
++            "nap",
++            Value::Null,
++            ModInvokeOptions::default(),
++        )
 +        .unwrap_err();
 +    assert!(
 +        held.to_string().contains("time_sleep_unavailable"),
@@ -156880,6 +157205,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                "completion",
 +                "",
 +                json!({"kind": "token", "trigger": ":", "query": "ro", "line": ":ro"}),
++                ModInvokeOptions::default()
 +            )
 +            .unwrap(),
 +        json!({"items": [{"insert": "ro"}]})
@@ -157000,7 +157326,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let read = |runtime: &mut ModHost| {
 +        let generation = runtime.generation();
 +        runtime
-+            .invoke("fixture", generation, "command", "read", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "read",
++                Value::Null,
++                ModInvokeOptions::default(),
++            )
 +            .unwrap()
 +    };
 +    let mut runtime = host(&temp);
@@ -157060,7 +157393,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        runtime.reload().unwrap();
 +        let generation = runtime.generation();
 +        let reply = runtime
-+            .invoke("fixture", generation, "command", "read", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "read",
++                Value::Null,
++                ModInvokeOptions::default(),
++            )
 +            .unwrap();
 +        serde_json::from_str::<Value>(reply.as_str().unwrap()).unwrap()
 +    };
@@ -157143,7 +157483,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let generation = runtime.generation();
 +    assert_eq!(
 +        runtime
-+            .invoke("fixture", generation, "command", "read", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "read",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .unwrap(),
 +        json!(r#"{"mode":"b"}"#)
 +    );
@@ -157445,20 +157792,22 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let mut runtime = host(&temp);
 +    let mut observed = Vec::new();
 +    let mut run = |runtime: &mut ModHost, command: &str| {
-+        runtime.invoke_scoped_with(
++        runtime.invoke(
 +            "consumer",
 +            runtime.generation(),
 +            "command",
 +            command,
 +            Value::Null,
-+            || true,
-+            |caller, call| {
-+                observed.push((caller.to_owned(), call.arguments.clone()));
-+                Ok(if call.arguments["key"] == "k" {
-+                    json!("value")
-+                } else {
-+                    Value::Null
-+                })
++            ModInvokeOptions {
++                host: ModHostCallback::Scoped(&mut |caller, call| {
++                    observed.push((caller.to_owned(), call.arguments.clone()));
++                    Ok(if call.arguments["key"] == "k" {
++                        json!("value")
++                    } else {
++                        Value::Null
++                    })
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +    };
@@ -157506,18 +157855,20 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    trust(&store, &consumer, granted);
 +    let mut runtime = host(&temp);
 +    runtime
-+        .invoke_scoped_with(
++        .invoke(
 +            "consumer",
 +            runtime.generation(),
 +            "command",
 +            "go",
 +            Value::Null,
-+            || true,
-+            |_, call| {
-+                if call.operation == "exec.run" {
-+                    return Err(std::io::Error::other("failure-secret"));
-+                }
-+                Ok(json!({"secret": "result"}))
++            ModInvokeOptions {
++                host: ModHostCallback::Scoped(&mut |_, call| {
++                    if call.operation == "exec.run" {
++                        return Err(std::io::Error::other("failure-secret"));
++                    }
++                    Ok(json!({"secret": "result"}))
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
@@ -157528,6 +157879,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "command",
 +            "seen",
 +            Value::Null,
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    let events = seen.as_array().unwrap();
@@ -157769,14 +158121,16 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    );
 +    assert!(runtime.grants("helper").is_some() && runtime.grants("guard").is_some());
 +    let invoke = |runtime: &mut ModHost, command: &str| {
-+        runtime.invoke_scoped_with(
++        runtime.invoke(
 +            "limited",
 +            runtime.generation(),
 +            "command",
 +            command,
 +            Value::Null,
-+            || true,
-+            |_, _| Ok(json!("ran")),
++            ModInvokeOptions {
++                host: ModHostCallback::Scoped(&mut |_, _| Ok(json!("ran"))),
++                ..ModInvokeOptions::default()
++            },
 +        )
 +    };
 +    assert!(
@@ -158609,7 +158963,14 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let generation = runtime.generation();
 +    assert_eq!(
 +        runtime
-+            .invoke("fixture", generation, "command", "draw", Value::Null)
++            .invoke(
++                "fixture",
++                generation,
++                "command",
++                "draw",
++                Value::Null,
++                ModInvokeOptions::default()
++            )
 +            .unwrap(),
 +        json!("##")
 +    );
@@ -158639,17 +159000,19 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
 +    for count in 1..=2 {
 +        let mut timer = Value::Null;
-+        ui.invoke_with(
++        ui.invoke(
 +            "jobs",
 +            ui.generation(),
 +            "command",
 +            "start",
 +            json!(count),
-+            || true,
-+            |call| {
-+                assert_eq!(call.operation, "events.schedule");
-+                timer = call.arguments;
-+                Ok(json!({"key":timer["key"],"delay_ms":timer["delay_ms"]}))
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |call| {
++                    assert_eq!(call.operation, "events.schedule");
++                    timer = call.arguments;
++                    Ok(json!({"key":timer["key"],"delay_ms":timer["delay_ms"]}))
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
@@ -158660,10 +159023,18 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +                "timer",
 +                "",
 +                json!({"key":timer["key"],"data":timer["data"]}),
++                ModInvokeOptions::default(),
 +            )
 +            .unwrap();
 +        let status = ui
-+            .invoke("jobs", ui.generation(), "command", "status", Value::Null)
++            .invoke(
++                "jobs",
++                ui.generation(),
++                "command",
++                "status",
++                Value::Null,
++                ModInvokeOptions::default(),
++            )
 +            .unwrap();
 +        assert_eq!(status["status"], "completed");
 +        assert_eq!(status["result"], json!({"input":count,"calls":count}));
@@ -158674,21 +159045,13 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        let ui = &mut ui;
 +        let command = scope.spawn(move || {
 +            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
-+            ui.invoke_with(
-+                "jobs",
-+                ui.generation(),
-+                "command",
-+                "start",
-+                json!(3),
-+                || true,
-+                |call| {
++            ui.invoke("jobs", ui.generation(), "command", "start", json!(3), ModInvokeOptions { host: ModHostCallback::Own(&mut |call| {
 +                    scheduled.send(call.arguments.clone()).unwrap();
 +                    released
 +                        .recv_timeout(std::time::Duration::from_secs(5))
 +                        .unwrap();
 +                    Ok(json!({"key":call.arguments["key"], "delay_ms":call.arguments["delay_ms"]}))
-+                },
-+            )
++                }), ..ModInvokeOptions::default() })
 +            .unwrap();
 +        });
 +        let timer = delivered
@@ -158700,17 +159063,20 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
 +            let checks = AtomicUsize::new(0);
 +            native
-+                .invoke_guarded(
++                .invoke(
 +                    "jobs",
 +                    native.generation(),
 +                    "timer",
 +                    "",
 +                    json!({"key":timer["key"],"data":timer["data"]}),
-+                    || {
-+                        if checks.fetch_add(1, Ordering::Relaxed) == 1 {
-+                            waiting.send(()).unwrap();
-+                        }
-+                        true
++                    ModInvokeOptions {
++                        active: &|| {
++                            if checks.fetch_add(1, Ordering::Relaxed) == 1 {
++                                waiting.send(()).unwrap();
++                            }
++                            true
++                        },
++                        ..ModInvokeOptions::default()
 +                    },
 +                )
 +                .unwrap();
@@ -158723,8 +159089,15 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        delivery.join().unwrap();
 +    });
 +    assert_eq!(
-+        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
-+            .unwrap()["result"],
++        ui.invoke(
++            "jobs",
++            ui.generation(),
++            "command",
++            "status",
++            Value::Null,
++            ModInvokeOptions::default()
++        )
++        .unwrap()["result"],
 +        json!({"input":3,"calls":3})
 +    );
 +    std::thread::scope(|scope| {
@@ -158733,21 +159106,13 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +        let ui = &mut ui;
 +        let command = scope.spawn(move || {
 +            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
-+            ui.invoke_with(
-+                "jobs",
-+                ui.generation(),
-+                "command",
-+                "start",
-+                json!(4),
-+                || true,
-+                |call| {
++            ui.invoke("jobs", ui.generation(), "command", "start", json!(4), ModInvokeOptions { host: ModHostCallback::Own(&mut |call| {
 +                    scheduled.send(()).unwrap();
 +                    released
 +                        .recv_timeout(std::time::Duration::from_secs(5))
 +                        .unwrap();
 +                    Ok(json!({"key":call.arguments["key"],"delay_ms":call.arguments["delay_ms"]}))
-+                },
-+            )
++                }), ..ModInvokeOptions::default() })
 +        });
 +        delivered
 +            .recv_timeout(std::time::Duration::from_secs(5))
@@ -158765,36 +159130,47 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    });
 +    ui.reload().unwrap();
 +    assert_eq!(
-+        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
-+            .unwrap()["status"],
++        ui.invoke(
++            "jobs",
++            ui.generation(),
++            "command",
++            "status",
++            Value::Null,
++            ModInvokeOptions::default()
++        )
++        .unwrap()["status"],
 +        "idle"
 +    );
 +    let mut old_timer = Value::Null;
-+    ui.invoke_with(
++    ui.invoke(
 +        "jobs",
 +        ui.generation(),
 +        "command",
 +        "start",
 +        json!("stale"),
-+        || true,
-+        |call| {
-+            old_timer = call.arguments;
-+            Ok(json!({"key":old_timer["key"],"delay_ms":old_timer["delay_ms"]}))
++        ModInvokeOptions {
++            host: ModHostCallback::Own(&mut |call| {
++                old_timer = call.arguments;
++                Ok(json!({"key":old_timer["key"],"delay_ms":old_timer["delay_ms"]}))
++            }),
++            ..ModInvokeOptions::default()
 +        },
 +    )
 +    .unwrap();
 +    ui.reload().unwrap();
 +    let mut current_timer = Value::Null;
-+    ui.invoke_with(
++    ui.invoke(
 +        "jobs",
 +        ui.generation(),
 +        "command",
 +        "start",
 +        json!("current"),
-+        || true,
-+        |call| {
-+            current_timer = call.arguments;
-+            Ok(json!({"key":current_timer["key"],"delay_ms":current_timer["delay_ms"]}))
++        ModInvokeOptions {
++            host: ModHostCallback::Own(&mut |call| {
++                current_timer = call.arguments;
++                Ok(json!({"key":current_timer["key"],"delay_ms":current_timer["delay_ms"]}))
++            }),
++            ..ModInvokeOptions::default()
 +        },
 +    )
 +    .unwrap();
@@ -158805,11 +159181,19 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "timer",
 +            "",
 +            json!({"key":old_timer["key"],"data":old_timer["data"]}),
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    assert_eq!(
-+        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
-+            .unwrap()["status"],
++        ui.invoke(
++            "jobs",
++            ui.generation(),
++            "command",
++            "status",
++            Value::Null,
++            ModInvokeOptions::default()
++        )
++        .unwrap()["status"],
 +        "pending"
 +    );
 +    native
@@ -158819,11 +159203,19 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            "timer",
 +            "",
 +            json!({"key":current_timer["key"],"data":current_timer["data"]}),
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    assert_eq!(
-+        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
-+            .unwrap()["result"],
++        ui.invoke(
++            "jobs",
++            ui.generation(),
++            "command",
++            "status",
++            Value::Null,
++            ModInvokeOptions::default()
++        )
++        .unwrap()["result"],
 +        json!({"input":"current","calls":1})
 +    );
 +    ui.release_thread_activations("jobs-thread");
@@ -160512,10 +160904,13 @@ index 0000000000000000000000000000000000000000..9ad2f55e7f8c61fc308d85421aae628b
 +}
 diff --git a/codex-rs/omd/tests/review_bridge.rs b/codex-rs/omd/tests/review_bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9329f5d1a056771ef811011f175776aa3430b963
+index 0000000000000000000000000000000000000000..d2cc47b137df1e55593cc24e837921b8409e925a
 --- /dev/null
 +++ b/codex-rs/omd/tests/review_bridge.rs
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,136 @@
++use codex_omd::ModHostCallback;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +use codex_omd::resource_data::hash;
 +use codex_omd::{ModHost, ModStore};
 +use serde_json::{Value, json};
@@ -160543,7 +160938,7 @@ index 0000000000000000000000000000000000000000..9329f5d1a056771ef811011f175776aa
 +        )
 +        .unwrap();
 +    store.enable(&package, true).unwrap();
-+    let mut host = ModHost::open(root.join("store")).unwrap();
++    let mut host = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
 +    assert_eq!(
 +        host.subscribers_with_capability("turn_end", "lifecycle"),
 +        ["example_review_probe"]
@@ -160555,7 +160950,7 @@ index 0000000000000000000000000000000000000000..9329f5d1a056771ef811011f175776aa
 +        json!({"reference":"native-thread:fixture","sha256":hash(b"{\"findings\":[]}")});
 +    let event = json!({"turn_id":"turn-a","outcome":"completed","evidence":reference});
 +    let mut calls = Vec::new();
-+    host.invoke_with("example_review_probe", generation, "turn_end", "", event.clone(), || true, |call| {
++    host.invoke("example_review_probe", generation, "turn_end", "", event.clone(), ModInvokeOptions { host: ModHostCallback::Own(&mut |call| {
 +        calls.push(call.operation.clone());
 +        match call.operation.as_str() {
 +            "evidence.read" => Ok(json!({"reference":reference,"text":"Visible fixture evidence","cursor":null,"bytes":24})),
@@ -160575,7 +160970,7 @@ index 0000000000000000000000000000000000000000..9329f5d1a056771ef811011f175776aa
 +            "agents.cancel" => Ok(json!({"status":"cancelled"})),
 +            _ => panic!("unexpected operation {}", call.operation),
 +        }
-+    }).unwrap();
++    }), ..ModInvokeOptions::default() }).unwrap();
 +    assert_eq!(
 +        calls,
 +        [
@@ -160594,25 +160989,28 @@ index 0000000000000000000000000000000000000000..9329f5d1a056771ef811011f175776aa
 +            "command",
 +            "status",
 +            Value::Null,
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    assert_eq!(status["status"], "recorded");
-+    host.invoke_with(
++    host.invoke(
 +        "example_review_probe",
 +        generation,
 +        "turn_end",
 +        "",
 +        event,
-+        || true,
-+        |call| match call.operation.as_str() {
-+            "evidence.read" => {
-+                Ok(json!({"reference":reference,"text":"fixture","cursor":null,"bytes":7}))
-+            }
-+            "workspace.snapshot" => {
-+                Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]}))
-+            }
-+            "agents.spawn" => Err(std::io::Error::other("allowance_exhausted")),
-+            _ => panic!("must not start another operation after denial"),
++        ModInvokeOptions {
++            host: ModHostCallback::Own(&mut |call| match call.operation.as_str() {
++                "evidence.read" => {
++                    Ok(json!({"reference":reference,"text":"fixture","cursor":null,"bytes":7}))
++                }
++                "workspace.snapshot" => {
++                    Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]}))
++                }
++                "agents.spawn" => Err(std::io::Error::other("allowance_exhausted")),
++                _ => panic!("must not start another operation after denial"),
++            }),
++            ..ModInvokeOptions::default()
 +        },
 +    )
 +    .unwrap();
@@ -160623,27 +161021,38 @@ index 0000000000000000000000000000000000000000..9329f5d1a056771ef811011f175776aa
 +            "command",
 +            "status",
 +            Value::Null,
++            ModInvokeOptions::default(),
 +        )
 +        .unwrap();
 +    assert_eq!(status["status"], "denied");
 +    assert_eq!(status["reason"], "allowance_exhausted");
 +    store.enable(&package, false).unwrap();
-+    host.turn_boundary();
++    host.turn_boundary(&|| true);
 +    assert!(
 +        host.subscribers_with_capability("turn_end", "lifecycle")
 +            .is_empty()
 +    );
 +    assert!(
-+        host.event_guarded_with("turn_end", json!({}), || true, |_, _| panic!())
-+            .is_empty()
++        host.event(
++            "turn_end",
++            json!({}),
++            ModInvokeOptions {
++                host: ModHostCallback::Scoped(&mut |_, _| panic!()),
++                ..ModInvokeOptions::default()
++            }
++        )
++        .is_empty()
 +    );
 +}
 diff --git a/codex-rs/omd/tests/scoped_bridge.rs b/codex-rs/omd/tests/scoped_bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d5b4737faa66ac3346145c06c6b898ff4d842354
+index 0000000000000000000000000000000000000000..831da202715783250f9630b3cec5ef5a4cbf74bc
 --- /dev/null
 +++ b/codex-rs/omd/tests/scoped_bridge.rs
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,328 @@
++use codex_omd::ModHostCallback;
++use codex_omd::ModInvokeOptions;
++use codex_omd::ModOpenOptions;
 +use codex_omd::data_store::{DataStore, Origin, StoreProvenance};
 +use codex_omd::scoped_data::{ScopedDataHost, ScopedDataHosts};
 +use codex_omd::{ModHost, ModStore};
@@ -160717,7 +161126,7 @@ index 0000000000000000000000000000000000000000..d5b4737faa66ac3346145c06c6b898ff
 +        )
 +        .unwrap();
 +    store.enable(&component, true).unwrap();
-+    let mut host = ModHost::open(store_path.clone()).unwrap();
++    let mut host = ModHost::open(store_path.clone(), ModOpenOptions::default()).unwrap();
 +    assert_eq!(host.commands().len(), 4, "{}", host.status());
 +    let mut data = ScopedDataHost::new(
 +        store_path.clone(),
@@ -160744,72 +161153,76 @@ index 0000000000000000000000000000000000000000..d5b4737faa66ac3346145c06c6b898ff
 +    };
 +    let generation = host.generation();
 +    let retained = host
-+        .invoke_with(
++        .invoke(
 +            "example_scoped_data",
 +            generation,
 +            "command",
 +            "retain",
 +            Value::Null,
-+            || true,
-+            |call| {
-+                dispatch(
-+                    &mut data,
-+                    &stored,
-+                    &repo,
-+                    &call.operation,
-+                    call.arguments,
-+                    true,
-+                )
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |call| {
++                    dispatch(
++                        &mut data,
++                        &stored,
++                        &repo,
++                        &call.operation,
++                        call.arguments,
++                        true,
++                    )
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
 +    assert_eq!(retained["revision"], 1);
 +    let frozen = host
-+        .invoke_with(
++        .invoke(
 +            "example_scoped_data",
 +            generation,
 +            "command",
 +            "freeze",
 +            Value::Null,
-+            || true,
-+            |call| {
-+                dispatch(
-+                    &mut data,
-+                    &stored,
-+                    &repo,
-+                    &call.operation,
-+                    call.arguments,
-+                    true,
-+                )
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |call| {
++                    dispatch(
++                        &mut data,
++                        &stored,
++                        &repo,
++                        &call.operation,
++                        call.arguments,
++                        true,
++                    )
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
 +    assert_eq!(frozen["sha256"].as_str().unwrap().len(), 64);
 +    let context = host
-+        .invoke_with(
++        .invoke(
 +            "example_scoped_data",
 +            generation,
 +            "context",
 +            "",
 +            json!({}),
-+            || true,
-+            |call| {
-+                dispatch(
-+                    &mut data,
-+                    &stored,
-+                    &repo,
-+                    &call.operation,
-+                    call.arguments,
-+                    true,
-+                )
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |call| {
++                    dispatch(
++                        &mut data,
++                        &stored,
++                        &repo,
++                        &call.operation,
++                        call.arguments,
++                        true,
++                    )
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
 +    assert!(context["text"].as_str().unwrap().contains("A scoped fact."));
 +    let snapshot = json!({"reference":codex_omd::resource_data::hash(b"snapshot"),"sha256":codex_omd::resource_data::hash(b"snapshot")});
-+    let worker = host.invoke_with(
-+        "example_scoped_data", generation, "tool", "worker", json!({}), || true,
-+        |call| match call.operation.as_str() {
++    let worker = host.invoke("example_scoped_data", generation, "tool", "worker", json!({}), ModInvokeOptions { host: ModHostCallback::Own(&mut |call| match call.operation.as_str() {
 +            "workspace.snapshot" => Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]})),
 +            "routes.list" => Ok(json!([{"name":"reviewer","roles":["worker"],"available":true}])),
 +            "agents.spawn" => {
@@ -160823,33 +161236,34 @@ index 0000000000000000000000000000000000000000..d5b4737faa66ac3346145c06c6b898ff
 +                    "evidence":{"reference":"native-thread:fixture-worker","sha256":codex_omd::resource_data::hash(b"A scoped fact.")}}))
 +            }
 +            _ => dispatch(&mut data, &stored, &repo, &call.operation, call.arguments, true),
-+        },
-+    ).unwrap();
++        }), ..ModInvokeOptions::default() }).unwrap();
 +    assert_eq!(worker["worker"]["status"], "completed");
 +    let mut denied_calls = Vec::new();
-+    let denied = host.invoke_with(
++    let denied = host.invoke(
 +        "example_scoped_data",
 +        generation,
 +        "command",
 +        "retain",
 +        Value::Null,
-+        || true,
-+        |call| {
-+            denied_calls.push(call.operation.clone());
-+            dispatch(
-+                &mut data,
-+                &stored,
-+                &repo,
-+                &call.operation,
-+                call.arguments,
-+                false,
-+            )
++        ModInvokeOptions {
++            host: ModHostCallback::Own(&mut |call| {
++                denied_calls.push(call.operation.clone());
++                dispatch(
++                    &mut data,
++                    &stored,
++                    &repo,
++                    &call.operation,
++                    call.arguments,
++                    false,
++                )
++            }),
++            ..ModInvokeOptions::default()
 +        },
 +    );
 +    assert!(denied.is_err());
 +    assert_eq!(denied_calls, ["workspace.read"]);
 +    drop(host);
-+    let mut resumed = ModHost::open(store_path.clone()).unwrap();
++    let mut resumed = ModHost::open(store_path.clone(), ModOpenOptions::default()).unwrap();
 +    let mut data = ScopedDataHost::new(
 +        store_path.clone(),
 +        repo.clone(),
@@ -160861,22 +161275,24 @@ index 0000000000000000000000000000000000000000..d5b4737faa66ac3346145c06c6b898ff
 +    )
 +    .unwrap();
 +    let context = resumed
-+        .invoke_with(
++        .invoke(
 +            "example_scoped_data",
 +            resumed.generation(),
 +            "context",
 +            "",
 +            json!({}),
-+            || true,
-+            |call| {
-+                dispatch(
-+                    &mut data,
-+                    &stored,
-+                    &repo,
-+                    &call.operation,
-+                    call.arguments,
-+                    true,
-+                )
++            ModInvokeOptions {
++                host: ModHostCallback::Own(&mut |call| {
++                    dispatch(
++                        &mut data,
++                        &stored,
++                        &repo,
++                        &call.operation,
++                        call.arguments,
++                        true,
++                    )
++                }),
++                ..ModInvokeOptions::default()
 +            },
 +        )
 +        .unwrap();
@@ -161747,10 +162163,11 @@ index 0000000000000000000000000000000000000000..62b36b0e9946dc553f06bc5245bce671
 +}
 diff --git a/codex-rs/omd/tests/virtual_reads.rs b/codex-rs/omd/tests/virtual_reads.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ca4dfc09627c4dd7edc69e54b2ac307149bfff6
+index 0000000000000000000000000000000000000000..e31996e813b973a07fffd2ce10f7799cbea6bed9
 --- /dev/null
 +++ b/codex-rs/omd/tests/virtual_reads.rs
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,179 @@
++use codex_omd::ModOpenOptions;
 +use codex_omd::{ModHost, ModStore};
 +use serde_json::json;
 +use std::fs;
@@ -161788,7 +162205,7 @@ index 0000000000000000000000000000000000000000..5ca4dfc09627c4dd7edc69e54b2ac307
 +    let (temp, store, package) = fixture();
 +    enable(&store, &package);
 +    let root = temp.path().canonicalize().unwrap().join("store");
-+    let mut host = ModHost::open(root.clone()).unwrap();
++    let mut host = ModHost::open(root.clone(), ModOpenOptions::default()).unwrap();
 +    assert_eq!(host.virtual_readers().len(), 1, "{}", host.status());
 +    let result = host
 +        .read_virtual(
@@ -161827,7 +162244,7 @@ index 0000000000000000000000000000000000000000..5ca4dfc09627c4dd7edc69e54b2ac307
 +        .is_err()
 +    );
 +    store.enable(&package, false).unwrap();
-+    let mut host = ModHost::open(root).unwrap();
++    let mut host = ModHost::open(root, ModOpenOptions::default()).unwrap();
 +    assert!(host.virtual_readers().is_empty());
 +    assert!(
 +        host.read_virtual(
@@ -161845,7 +162262,11 @@ index 0000000000000000000000000000000000000000..5ca4dfc09627c4dd7edc69e54b2ac307
 +fn common_read_keeps_local_and_virtual_authority_separate() {
 +    let (_temp, store, package) = fixture();
 +    enable(&store, &package);
-+    let mut host = ModHost::open(package.parent().unwrap().join("store")).unwrap();
++    let mut host = ModHost::open(
++        package.parent().unwrap().join("store"),
++        ModOpenOptions::default(),
++    )
++    .unwrap();
 +    assert!(
 +        host.tools()
 +            .iter()
@@ -161910,7 +162331,7 @@ index 0000000000000000000000000000000000000000..5ca4dfc09627c4dd7edc69e54b2ac307
 +        .is_err()
 +    );
 +    store.enable(&package, false).unwrap();
-+    host.turn_boundary();
++    host.turn_boundary(&|| true);
 +    assert!(!host.tools().iter().any(|(owner, _, _)| owner.is_empty()));
 +    assert!(
 +        host.invoke_tool(
@@ -165322,10 +165743,10 @@ index 0000000000000000000000000000000000000000..36b2df54333740e710b8c5c20a25b51b
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..522f0a5963957c487ef06886db473b7c3e895283
+index 0000000000000000000000000000000000000000..306c7c261f67a5b017691241531aa7afdf721999
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,3034 @@
+@@ -0,0 +1,3036 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -167713,7 +168134,9 @@ index 0000000000000000000000000000000000000000..522f0a5963957c487ef06886db473b7c
 +            )
 +            .unwrap();
 +        store.enable(&package, true).unwrap();
-+        let runtime = codex_omd::ModHost::open(root.join("store")).unwrap();
++        let runtime =
++            codex_omd::ModHost::open(root.join("store"), codex_omd::ModOpenOptions::default())
++                .unwrap();
 +        std::fs::write(
 +            root.join("store/mod-status.json"),
 +            serde_json::to_vec(&runtime.status()).unwrap(),
@@ -174539,11 +174962,12 @@ index 0000000000000000000000000000000000000000..b11fdd4902835bd17bc89f42643b932c
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_layout_tests.rs b/codex-rs/tui/src/mod_layout_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..229e00450a0dce061e1964e3a48dd6af8c516d08
+index 0000000000000000000000000000000000000000..f47a1f7d22b0b32a0fc2d07ca235e22a438a4beb
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout_tests.rs
-@@ -0,0 +1,354 @@
+@@ -0,0 +1,360 @@
 +use super::*;
++use codex_omd::ModOpenOptions;
 +use pretty_assertions::assert_eq;
 +
 +fn layout(value: serde_json::Value) -> ModLayout {
@@ -174809,7 +175233,12 @@ index 0000000000000000000000000000000000000000..229e00450a0dce061e1964e3a48dd6af
 +    store.enable(&package, true).unwrap();
 +    std::fs::write(
 +        data.join("mod-status.json"),
-+        serde_json::to_vec(&codex_omd::ModHost::open(data.clone()).unwrap().status()).unwrap(),
++        serde_json::to_vec(
++            &codex_omd::ModHost::open(data.clone(), ModOpenOptions::default())
++                .unwrap()
++                .status(),
++        )
++        .unwrap(),
 +    )
 +    .unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&data);
@@ -179788,14 +180217,15 @@ index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd7274b642c6
+index 0000000000000000000000000000000000000000..c968959870e5fcd67a1b3454c9a904b6852e880f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1775 @@
+@@ -0,0 +1,1783 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
++use codex_omd::ModOpenOptions;
 +use codex_omd::ModViewSnapshot;
 +use codex_protocol::ThreadId;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
@@ -180628,8 +181058,15 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    if host.is_none() {
 +        let paths = crate::omd::mod_paths().ok_or("mods are off in this directory")?;
 +        let store = paths.store;
-+        let runtime = ModHost::open_in_guarded(store, |_| Ok(()), &paths.repository, active)
-+            .map_err(|e| e.to_string())?;
++        let runtime = ModHost::open(
++            store,
++            ModOpenOptions {
++                repository: Some(&paths.repository),
++                active,
++                ..ModOpenOptions::default()
++            },
++        )
++        .map_err(|e| e.to_string())?;
 +        if !active() {
 +            return Err("callback_cancelled".to_owned());
 +        }
@@ -180672,7 +181109,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +            *checkout = Some(paths.repository);
 +        }
 +    }
-+    runtime.turn_boundary_guarded(active);
++    runtime.turn_boundary(active);
 +    if !active() {
 +        return;
 +    }
@@ -181569,11 +182006,12 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb0f7e8fd0
+index 0000000000000000000000000000000000000000..e8abba56f51bb8f83f4b2fed90aeaef31cb2255d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,784 @@
+@@ -0,0 +1,792 @@
 +use super::*;
++use codex_omd::ModOpenOptions;
 +use pretty_assertions::assert_eq;
 +
 +fn mod_target(id: &str, command: &str) -> ModSlashTarget {
@@ -181609,7 +182047,14 @@ index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb
 +        )
 +        .unwrap();
 +    store.enable(&package, true).unwrap();
-+    let mut runtime = ModHost::open_in_guarded(data.clone(), |_| Ok(()), &root, &|| true).unwrap();
++    let mut runtime = ModHost::open(
++        data.clone(),
++        ModOpenOptions {
++            repository: Some(&root),
++            ..ModOpenOptions::default()
++        },
++    )
++    .unwrap();
 +    let paths = crate::omd::ModPaths {
 +        repository: root.clone(),
 +        store: data.clone(),
@@ -183572,12 +184017,13 @@ index 0000000000000000000000000000000000000000..e8291273642ea5ce694816cfeabdf9c8
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb3cc7c86d
+index 0000000000000000000000000000000000000000..b5f80c5d4cd2be06130dc56a09a7175243ca822f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,1219 @@
+@@ -0,0 +1,1230 @@
 +use super::*;
 +use crate::test_support::PathBufExt;
++use codex_omd::ModOpenOptions;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
 +
@@ -183597,7 +184043,7 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +        .trust(package.clone(), &source, vec!["packages".into()], "user")
 +        .unwrap();
 +    store.enable(&package, true).unwrap();
-+    let runtime = codex_omd::ModHost::open(root.join("store")).unwrap();
++    let runtime = codex_omd::ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
 +    std::fs::write(
 +        root.join("store/mod-status.json"),
 +        serde_json::to_vec(&runtime.status()).unwrap(),
@@ -183706,7 +184152,7 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +    attach(&sender, Some("surface-thread".into()));
 +    let binding = call_binding("surface_fixture");
 +    let generation = binding["generation"].as_u64().unwrap();
-+    let mut runtime = codex_omd::ModHost::open(store_path).unwrap();
++    let mut runtime = codex_omd::ModHost::open(store_path, ModOpenOptions::default()).unwrap();
 +    let native_generation = runtime.generation();
 +    let preview = codex_omd::package_controls::preview(
 +        &store,
@@ -184346,7 +184792,12 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +    store.enable(&package, true).unwrap();
 +    std::fs::write(
 +        data.join("mod-status.json"),
-+        serde_json::to_vec(&codex_omd::ModHost::open(data.clone()).unwrap().status()).unwrap(),
++        serde_json::to_vec(
++            &codex_omd::ModHost::open(data.clone(), ModOpenOptions::default())
++                .unwrap()
++                .status(),
++        )
++        .unwrap(),
 +    )
 +    .unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&data);
@@ -184641,7 +185092,12 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +    }
 +    std::fs::write(
 +        data.join("mod-status.json"),
-+        serde_json::to_vec(&codex_omd::ModHost::open(data.clone()).unwrap().status()).unwrap(),
++        serde_json::to_vec(
++            &codex_omd::ModHost::open(data.clone(), ModOpenOptions::default())
++                .unwrap()
++                .status(),
++        )
++        .unwrap(),
 +    )
 +    .unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&data);

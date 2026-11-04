@@ -2,6 +2,7 @@ use super::*;
 use codex_omd::Limits;
 use codex_omd::MOD_API_VERSION;
 use codex_omd::ModHost;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModStore;
 use codex_omd::WorkerLimits;
 use serde_json::json;
@@ -130,7 +131,11 @@ fn install_package(
         )
         .unwrap();
     store.enable(&package, true).unwrap();
-    let runtime = ModHost::open(root.join("mod-store").canonicalize().unwrap()).unwrap();
+    let runtime = ModHost::open(
+        root.join("mod-store").canonicalize().unwrap(),
+        ModOpenOptions::default(),
+    )
+    .unwrap();
     let required = runtime.required_surfaces();
     let runtime = Arc::new(Mutex::new(runtime));
     accounts.install_mod_runtime(runtime.clone(), required);

@@ -527,14 +527,19 @@ impl ModHost {
                     if let Some(data) = data {
                         payload["data"] = data;
                     }
-                    let value = self.invoke_scoped_with(
+                    let value = self.invoke(
                         &owner,
                         self.generation,
                         "timer",
                         "",
                         payload,
-                        || active,
-                        |caller, call| host.call(caller, call),
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     );
                     fired.push(match value {
                         Ok(_) => json!({"mod": owner, "key": key, "at_ms": due}),
@@ -634,7 +639,7 @@ impl ModHost {
             }
             "reload" => {
                 self.store.reload()?;
-                self.turn_boundary();
+                self.turn_boundary(&|| true);
                 if let Some(error) = &self.reload_error {
                     return Err(failure(error));
                 }
@@ -707,14 +712,19 @@ impl ModHost {
                 let mut values = Vec::new();
                 for id in ids {
                     let generation = self.generation;
-                    let value = self.invoke_scoped_with(
+                    let value = self.invoke(
                         &id,
                         generation,
                         event,
                         "",
                         payload.clone(),
-                        || active,
-                        |caller, call| host.call(caller, call),
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     )?;
                     values.push(json!({"mod":id,"value":value}));
                 }
@@ -724,14 +734,17 @@ impl ModHost {
                 let id = required_string(step, "mod")?;
                 let event = required_string(step, "event")?;
                 let name = required_string(step, "name")?;
-                self.invoke_scoped_with(
+                self.invoke(
                     id,
                     self.generation,
                     event,
                     name,
                     payload,
-                    || active,
-                    |caller, call| host.call(caller, call),
+                    ModInvokeOptions {
+                        active: &|| active,
+                        host: ModHostCallback::Scoped(&mut |caller, call| host.call(caller, call)),
+                        ..ModInvokeOptions::default()
+                    },
                 )
             }
             "component" => {
@@ -748,20 +761,12 @@ impl ModHost {
                     "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
                     "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
                     "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
-                let result = self.invoke_scoped_with(
-                    id,
-                    self.generation,
-                    "component",
-                    module,
-                    frame,
-                    || active,
-                    |_, call| {
+                let result = self.invoke(id, self.generation, "component", module, frame, ModInvokeOptions { active: &|| active, host: ModHostCallback::Scoped(&mut |_, call| {
                         Err(failure(format!(
                             "host_operation_unavailable: {} is not available to component modules",
                             call.operation
                         )))
-                    },
-                )?;
+                    }), ..ModInvokeOptions::default() })?;
                 render::checked_tree(&result)?;
                 Ok(result)
             }
@@ -773,14 +778,17 @@ impl ModHost {
                         .entry("clients")
                         .or_insert_with(|| json!(host.clients));
                 }
-                let view = self.invoke_scoped_with(
+                let view = self.invoke(
                     id,
                     self.generation,
                     "terminal",
                     "",
                     payload,
-                    || active,
-                    |caller, call| host.call(caller, call),
+                    ModInvokeOptions {
+                        active: &|| active,
+                        host: ModHostCallback::Scoped(&mut |caller, call| host.call(caller, call)),
+                        ..ModInvokeOptions::default()
+                    },
                 )?;
                 ModViewPatch::parse(view.clone())?;
                 let parsed = ModView::parse(view.clone())?;
@@ -829,14 +837,19 @@ impl ModHost {
                         Some(_) => return Err(failure("offline_client_not_attached")),
                         None => event["origin"] = json!("user"),
                     }
-                    let result = self.invoke_scoped_with(
+                    let result = self.invoke(
                         id,
                         self.generation,
                         "component_event",
                         "",
                         event.clone(),
-                        || active,
-                        |caller, call| host.call(caller, call),
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     )?;
                     return Ok(json!({"event": event, "result": result}));
                 }
@@ -864,14 +877,19 @@ impl ModHost {
                 if let Some(command) = action.get("command").and_then(Value::as_str) {
                     let (owner, name) = command.split_once(':').unwrap_or((id, command));
                     let args = action.get("args").cloned().unwrap_or_else(|| json!(""));
-                    let result = self.invoke_scoped_with(
+                    let result = self.invoke(
                         owner,
                         self.generation,
                         "command",
                         name,
                         args,
-                        || active,
-                        |caller, call| host.call(caller, call),
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     )?;
                     Ok(json!({"action":action,"result":result}))
                 } else {

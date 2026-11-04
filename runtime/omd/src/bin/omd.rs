@@ -1,3 +1,6 @@
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -561,7 +564,7 @@ fn run(args: Vec<String>) -> io::Result<Value> {
         .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".codex")));
     let sessions = home.as_ref().map(|path| path.join("sessions"));
-    let mut runtime = ModHost::open(root.clone())?;
+    let mut runtime = ModHost::open(root.clone(), ModOpenOptions::default())?;
     let exports: Vec<_> = runtime
         .commands()
         .into_iter()
@@ -594,63 +597,66 @@ fn run(args: Vec<String>) -> io::Result<Value> {
             .ok_or_else(|| io::Error::other("command_owner_missing"))?,
     )?;
     let deadline = Instant::now() + Duration::from_secs(30);
-    runtime.invoke_scoped_with(
+    runtime.invoke(
         owner,
         runtime.generation(),
         "command",
         &export.name,
         json!(payload),
-        || Instant::now() < deadline,
-        |caller, request| {
-            if !codex_omd::scoped_data::operation(&request.operation) {
-                return Err(io::Error::other("standalone_host_operation_unavailable"));
-            }
-            let needs_sessions = request.operation.starts_with("sessions.");
-            let session_database = if needs_sessions {
-                Some(database(
-                    home.as_deref()
-                        .ok_or_else(|| io::Error::other("session_home_required"))?,
-                    &repository,
-                    sqlite.clone(),
-                    std::env::var_os("CODEX_SQLITE_HOME").map(PathBuf::from),
-                )?)
-            } else {
-                None
-            };
-            if caller == owner {
-                if needs_sessions {
-                    data.session_database = session_database;
+        ModInvokeOptions {
+            active: &|| Instant::now() < deadline,
+            host: ModHostCallback::Scoped(&mut |caller, request| {
+                if !codex_omd::scoped_data::operation(&request.operation) {
+                    return Err(io::Error::other("standalone_host_operation_unavailable"));
                 }
-                return data.call(&request.operation, request.arguments, || {
-                    Instant::now() < deadline
-                });
-            }
-            let source = sources
-                .get(caller)
-                .ok_or_else(|| io::Error::other("service_provider_missing"))?;
-            let provider = match providers.entry(caller.to_owned()) {
-                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(ScopedDataHost::new(
-                        root.clone(),
-                        repository.clone(),
-                        sessions.clone(),
-                        session_database.clone(),
-                        caller.to_owned(),
-                        "user-command".into(),
-                        source.clone(),
+                let needs_sessions = request.operation.starts_with("sessions.");
+                let session_database = if needs_sessions {
+                    Some(database(
+                        home.as_deref()
+                            .ok_or_else(|| io::Error::other("session_home_required"))?,
+                        &repository,
+                        sqlite.clone(),
+                        std::env::var_os("CODEX_SQLITE_HOME").map(PathBuf::from),
                     )?)
+                } else {
+                    None
+                };
+                if caller == owner {
+                    if needs_sessions {
+                        data.session_database = session_database;
+                    }
+                    return data.call(&request.operation, request.arguments, || {
+                        Instant::now() < deadline
+                    });
                 }
-            };
-            if provider.binding.source_sha256 != *source {
-                return Err(io::Error::other("data_selection_changed_or_revoked"));
-            }
-            if needs_sessions {
-                provider.session_database = session_database;
-            }
-            provider.call(&request.operation, request.arguments, || {
-                Instant::now() < deadline
-            })
+                let source = sources
+                    .get(caller)
+                    .ok_or_else(|| io::Error::other("service_provider_missing"))?;
+                let provider = match providers.entry(caller.to_owned()) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(ScopedDataHost::new(
+                            root.clone(),
+                            repository.clone(),
+                            sessions.clone(),
+                            session_database.clone(),
+                            caller.to_owned(),
+                            "user-command".into(),
+                            source.clone(),
+                        )?)
+                    }
+                };
+                if provider.binding.source_sha256 != *source {
+                    return Err(io::Error::other("data_selection_changed_or_revoked"));
+                }
+                if needs_sessions {
+                    provider.session_database = session_database;
+                }
+                provider.call(&request.operation, request.arguments, || {
+                    Instant::now() < deadline
+                })
+            }),
+            ..ModInvokeOptions::default()
         },
     )
 }

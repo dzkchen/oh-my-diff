@@ -1,6 +1,8 @@
 use codex_omd::MOD_API_VERSION;
 use codex_omd::ModHost;
 use codex_omd::ModInstallRequest;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModPackageGrant;
 use codex_omd::ModPackageSource;
 use codex_omd::ModPackageTrust;
@@ -113,6 +115,7 @@ impl Admin {
                 .join(format!("store-{user}"))
                 .canonicalize()
                 .unwrap(),
+            ModOpenOptions::default(),
         )
         .unwrap();
         host.set_managed_policy(self.policy.clone(), self.owner, user)
@@ -372,8 +375,15 @@ fn an_unreadable_deployment_record_keeps_loaded_user_mods_running() {
     let mut host = admin.host("alice");
     let generation = host.generation();
     assert_eq!(
-        host.invoke("hello", generation, "command", "hello", Value::Null)
-            .unwrap(),
+        host.invoke(
+            "hello",
+            generation,
+            "command",
+            "hello",
+            Value::Null,
+            ModInvokeOptions::default()
+        )
+        .unwrap(),
         json!("hi")
     );
 }
@@ -403,7 +413,7 @@ fn selection_status_and_activation_agree_on_precedence_and_changed_sources() {
     }
     std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
     std::fs::write(edited.join("index.ts"), format!("{COMMAND};")).unwrap();
-    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
+    let host = ModHost::open(admin.root.join("store-alice"), ModOpenOptions::default()).unwrap();
     let status = host.status();
     let code = |reason: &Value| {
         reason
@@ -545,7 +555,8 @@ fn tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads
     admin.write_policy(policy);
     let cached = store.managed_deployment().unwrap().packages[0].path.clone();
     std::fs::write(cached.join("index.ts"), TRANSFORM).unwrap();
-    let mut host = ModHost::open(admin.root.join("store-alice")).unwrap();
+    let mut host =
+        ModHost::open(admin.root.join("store-alice"), ModOpenOptions::default()).unwrap();
     host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
         .unwrap();
     let stale = host.status()["rejected"]
@@ -577,7 +588,7 @@ fn user_selections_cannot_claim_the_managed_scope_or_a_tier() {
         }
     }
     std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
-    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
+    let host = ModHost::open(admin.root.join("store-alice"), ModOpenOptions::default()).unwrap();
     assert!(active(&host).is_empty());
     let status = host.status();
     for path in [&spoof, &tiered] {

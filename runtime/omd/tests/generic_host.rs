@@ -5,6 +5,9 @@ use codex_omd::ContractSelection;
 use codex_omd::Gate;
 use codex_omd::MOD_API_VERSION;
 use codex_omd::ModHost;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModStore;
 use codex_omd::PolicyOwner;
 use codex_omd::Receipt;
@@ -393,7 +396,11 @@ fn exec_output_pages_a_multibyte_artifact_without_splitting_characters() {
     let mut cursor = Some(0);
     while let Some(at) = cursor {
         let page = host
-            .call(&owner, "exec.output_page", json!({"artifact":artifact,"cursor":at}))
+            .call(
+                &owner,
+                "exec.output_page",
+                json!({"artifact":artifact,"cursor":at}),
+            )
             .unwrap();
         let chunk = page["text"].as_str().unwrap();
         assert!(chunk.len() <= codex_omd::host::EXEC_ARTIFACT_PAGE_BYTES);
@@ -1683,7 +1690,7 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         &[],
     );
     trust(&store, &adapted);
-    let mut runtime = ModHost::open(root.join("store")).unwrap();
+    let mut runtime = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
     assert!(
         error_of(&runtime, "old_event").contains("unsupported_event"),
         "{}",
@@ -1703,7 +1710,8 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
                 runtime.generation(),
                 "command",
                 "answer",
-                Value::Null
+                Value::Null,
+                ModInvokeOptions::default()
             )
             .unwrap(),
         json!(42)
@@ -1715,20 +1723,22 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
     assert_eq!(documents[0].0.key(), "fixture@1");
     let mut calls = Vec::new();
     let result = runtime
-        .invoke_with(
+        .invoke(
             "accepted",
             runtime.generation(),
             "command",
             "run",
             Value::Null,
-            || true,
-            |call| {
-                calls.push(call.operation.clone());
-                Ok(if call.operation == "exec.run" {
-                    json!({"exit_code":0})
-                } else {
-                    json!({"revision":1})
-                })
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |call| {
+                    calls.push(call.operation.clone());
+                    Ok(if call.operation == "exec.run" {
+                        json!({"exit_code":0})
+                    } else {
+                        json!({"revision":1})
+                    })
+                }),
+                ..ModInvokeOptions::default()
             },
         )
         .unwrap();
@@ -1748,7 +1758,8 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
                 runtime.generation(),
                 "command",
                 "answer",
-                Value::Null
+                Value::Null,
+                ModInvokeOptions::default()
             )
             .unwrap(),
         json!(43)
@@ -1760,7 +1771,7 @@ fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store")).unwrap();
-    let empty = ModHost::open(root.join("store")).unwrap();
+    let empty = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
     assert!(empty.builtin_controls().is_empty());
     assert!(empty.contract_documents().is_empty());
     assert!(!empty.has_event("model_response"));
@@ -1783,7 +1794,7 @@ fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with
         &[],
     );
     trust(&store, &declared);
-    let runtime = ModHost::open(root.join("store")).unwrap();
+    let runtime = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
     assert!(
         error_of(&runtime, "undeclared").contains("capability_denied"),
         "{}",
@@ -1792,7 +1803,7 @@ fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with
     assert_eq!(runtime.builtin_controls().len(), 1);
     assert_eq!(runtime.contract_documents().len(), 1);
     store.enable(&declared, false).unwrap();
-    let reloaded = ModHost::open(root.join("store")).unwrap();
+    let reloaded = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
     assert!(reloaded.builtin_controls().is_empty());
     assert!(reloaded.contract_documents().is_empty());
 }
