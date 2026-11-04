@@ -721,7 +721,7 @@
         "mod.json": "6eaab082118809ec9d06b8ef270e9dcd3c0d2e0307d54da412d3d9341859da39"
       },
       "id": "omd_rewind",
-      "package_sha256": "ab92c4fa770dc73c5cd3c05261118d89ff56be27ee180fd7b5d9d1c83111188d",
+      "package_sha256": "23f92f65a812c38467b3ebe0782fbded5253706c21985b228ea7ab3d84fd5e9e",
       "source": "mods/first-party/omd_rewind",
       "version": "1.0.0"
     },
