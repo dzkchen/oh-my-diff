@@ -151,9 +151,10 @@ test('refuses what it cannot redact: protected kinds, requested unscanned conten
   assert.match(send([segment('/input/0/arguments', truncated, { kind: 'tool_call.arguments', role: 'assistant' })]).result.deny, /would break tool-call JSON/);
 });
 
-test('sensitive path policy asks before shell reads, ignores case, covers parent directories and globs, and honours exemptions and modes', () => {
+test('sensitive path policy is off by default and, when opted in, asks only for commands naming a sensitive path', () => {
   const approval = (command, settings = {}, kind = 'exec', details = { command, cwd: '/repo' }) => run('approval', '', { id: 'a', kind, thread_id: 't',
-    turn_id: null, agent_id: null, host_decision: 'skip', policy: 'on-request', details, assessment: false }, { settings }).value;
+    turn_id: null, agent_id: null, host_decision: 'skip', policy: 'on-request', details, assessment: false }, { settings: { paths: 'ask', ...settings } }).value;
+  assert.equal(approval(['cat', '.env'], { paths: defaults.paths }), null);
   assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'cat ~/.ssh/id_rsa\n', cwd: '/repo' }).ask, /id_rsa\*/);
   assert.equal(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'y\n', cwd: '/repo' }), null);
   assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, cwd: '/repo', truncated: true }).ask, /too large/);
@@ -170,16 +171,22 @@ test('sensitive path policy asks before shell reads, ignores case, covers parent
     'grep -r token ~/.kube/', 'cat .env*', 'cat id_r*', 'cat *.pe?', 'cat ~/.config/gh/hosts.yml', 'cat .e*', 'cat ~/.docker/config.js?n', 'cat .env{,.local}', 'cat .[e]nv', 'cat ~/.ssh/id_{rsa,ed25519}', 'cat ~/.aws/[c]redentials', 'cat {.env,x}', 'cat ~/{.aws,.ssh}/credentials',
     'cat .e{n,x,a,b,c,d,e,f,g}{v,w,x,y,z,a,b,c}', `cat .e${'?'.repeat(9)}`, `cat .${'e'.repeat(260)}*`,
     'git show HEAD:.env', 'cat .?nv', 'cat .aws//credentials', 'cat ~/.aws/./credentials', 'cat ~/.aws/x/../credentials', "cat .e''nv", 'cat ".e"nv', 'cat .e\\nv', 'cat .env///',
-    `cat {.env,${'abcdefghijklmnopqr'.split('').join(',')}}`, 'cat .e{n..n}v']) {
+    `cat {.env,${'abcdefghijklmnopqr'.split('').join(',')}}`, 'cat .e{n..n}v', `python3 -c "print(open('.env').read())"`, "node -e 'require(\"fs\").readFileSync(\".env\")'",
+    "python3 - <<'EOF'\nprint(open('server.key').read())\nEOF", 'cat <<EOF > out.txt; cat .env\nhi\nEOF', "bash <<'EOF'\ncat .env\nEOF", 'cat <<EOF | sh\ncat .env\nEOF',
+    "ssh host <<'EOF'\ncat .env\nEOF", "python3 - <<'EOF' | sh\nprint(cfg.key)\nEOF", "python3 -c 'x = 1 <<a'; bash <<a\ncat .env\na"]) {
     assert.match(approval(['bash', '-lc', command])?.ask ?? '', /sensitive path/, command);
   }
   for (const command of ['ls ~/.config', 'cat *', 'ls *.md', 'cat ~/src/c*', 'grep -r key --include=*.json src', 'cat ~/.kube-notes.md',
     'mkdir -p ~/.docker/cli-plugins', 'ls ~/.kube/cache', 'cat ~/.aws/config', "sed 's/foo/.*/' f", 'grep -E ".*" f', 'find . -name ".*"', 'ls -la .*', 'echo {a,b}', 'ls [z-a]', 'ls [^]', `cat ${'*'.repeat(60)}z`,
-    'git show HEAD:src/index.ts', 'cat src//a.ts ./b.ts', "echo 'hi' \"there\"", 'find . -exec cat {} +', "awk '{print $1}' f", 'ls .?', 'cat *.ts', 'ls src/*']) {
+    'git show HEAD:src/index.ts', 'cat src//a.ts ./b.ts', "echo 'hi' \"there\"", 'find . -exec cat {} +', "awk '{print $1}' f", 'ls .?', 'cat *.ts', 'ls src/*',
+    'python3 -c "print(api.key)"', 'python3 -c "self.key = 1"', 'node -e "console.log(req.key)"', "python3 - <<'EOF'\nprint(cfg.key)\nEOF", 'cat > notes.md <<EOF\nPut config in .env\nEOF']) {
     assert.equal(approval(['bash', '-lc', command]), null, command);
   }
   const started = Date.now();
   assert.equal(approval(`cat ${'/'.repeat(80000)}x`), null);
+  assert.equal(approval(`${"python3 -c '".repeat(5000)}${'<<x '.repeat(5000)}`), null);
+  assert.equal(approval(`python3 - <<'EOF'\n"${'\\"'.repeat(40000)}\nEOF`), null);
+  assert.equal(approval(`python3 -c '"${'\\"'.repeat(40000)}'`), null);
   assert.ok(Date.now() - started < 1000);
 });
 

@@ -36837,7 +36837,7 @@ index 075a6256623bf8b6c86274f91eb4ba0e0e120db2..7f522f25483308ee218affc5940ab6a5
      let mut app = crate::app::test_support::make_test_app().await;
      let config = serde_json::from_value(serde_json::json!({
 diff --git a/codex-rs/tui/src/app/owned_transcript_tests.rs b/codex-rs/tui/src/app/owned_transcript_tests.rs
-index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3c5f6db27 100644
+index c3ec487f6d67f545c5504a109b525f7137fad7c3..468a942cd2d87067c0ff8747731c41279ec5e3db 100644
 --- a/codex-rs/tui/src/app/owned_transcript_tests.rs
 +++ b/codex-rs/tui/src/app/owned_transcript_tests.rs
 @@ -34,6 +34,10 @@ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
@@ -37036,7 +37036,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.copy_on_select = CopyOnSelect::Never;
-@@ -2004,3 +2030,182 @@ async fn footer_selection_defers_warning_clicks_and_preserves_the_draft() -> Res
+@@ -2004,3 +2030,266 @@ async fn footer_selection_defers_warning_clicks_and_preserves_the_draft() -> Res
      tui.set_owned_screen(/*owned*/ false)?;
      Ok(())
  }
@@ -37217,6 +37217,90 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
 +        tui.set_owned_screen(false)?;
 +        server.shutdown().await?;
 +    }
++    Ok(())
++}
++
++#[tokio::test]
++#[serial_test::serial]
++async fn composer_keeps_tab_and_shift_tab_beside_a_focusable_mod_card() -> Result<()> {
++    let (mut app, _events, _operations) = make_test_app_with_channels().await;
++    let thread_id = ThreadId::new();
++    attach_thread(&mut app, thread_id);
++    let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
++    let mut tui = crate::tui::test_support::make_test_tui()?;
++    tui.set_owned_screen(/*owned*/ true)?;
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot {
++        view: codex_omd::ModView::parse(serde_json::json!({"sites": {"above_composer": {"components": [
++            {"type": "button", "id": "thumb", "label": "Thumb", "text": "Open thumbnail", "action": {"command": "fixture:open"}}]}}}))?,
++        contributors: vec!["fixture".into()],
++        component_owners: [("thumb".to_string(), "fixture".to_string())].into(),
++        ..Default::default()
++    });
++    let outcome = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
++        tab_stays_with_the_composer(&mut app, &mut tui, &mut app_server, thread_id),
++    ))
++    .await;
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++    tui.set_owned_screen(/*owned*/ false)?;
++    app_server.shutdown().await?;
++    outcome.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
++}
++
++async fn tab_stays_with_the_composer(
++    app: &mut App,
++    tui: &mut crate::tui::Tui,
++    app_server: &mut crate::app_server_session::AppServerSession,
++    thread_id: ThreadId,
++) -> Result<()> {
++    let size = Size::new(80, 24);
++    tui.screen_size_for_event(&TuiEvent::Resize(size))?;
++    app.render_owned_transcript(tui, size)?;
++    let screen = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
++        .content
++        .iter()
++        .map(ratatui::buffer::Cell::symbol)
++        .collect::<String>();
++    assert!(screen.contains("Open thumbnail"), "{screen}");
++    assert!(crate::mod_ui::focus_order().contains(&"thumb".to_string()));
++    let mode = app.chat_widget.active_collaboration_mode_kind();
++    app.handle_tui_event(
++        tui,
++        app_server,
++        TuiEvent::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
++    )
++    .await?;
++    assert_ne!(app.chat_widget.active_collaboration_mode_kind(), mode);
++    app.chat_widget.handle_server_notification(
++        ServerNotification::TurnStarted(codex_app_server_protocol::TurnStartedNotification {
++            thread_id: thread_id.to_string(),
++            turn: codex_app_server_protocol::Turn {
++                id: "active-turn".to_string(),
++                root_turn_id: None,
++                items_view: codex_app_server_protocol::TurnItemsView::Full,
++                items: Vec::new(),
++                status: codex_app_server_protocol::TurnStatus::InProgress,
++                error: None,
++                started_at: None,
++                completed_at: None,
++                duration_ms: None,
++            },
++        }),
++        /*replay_kind*/ None,
++    );
++    app.chat_widget.apply_external_edit("queued draft".to_string());
++    app.handle_tui_event(
++        tui,
++        app_server,
++        TuiEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
++    )
++    .await?;
++    assert_eq!(
++        (
++            app.chat_widget.queued_user_message_texts(),
++            app.chat_widget.composer_text_with_pending(),
++        ),
++        (vec!["queued draft".to_string()], String::new()),
++    );
 +    Ok(())
 +}
 diff --git a/codex-rs/tui/src/app/pending_interactive_replay.rs b/codex-rs/tui/src/app/pending_interactive_replay.rs
@@ -43789,7 +43873,7 @@ index bc04a38fff3dbb45c1ccb2d61bae12ce4d988f0f..8c06f1e9c1ee67a78fa2a222776a29f7
                  path,
              });
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index 79a90185372e2941a374eb00703bcb0fae7e0ad5..8837b33acea9998eb97fd37e62104de214d49cc2 100644
+index 79a90185372e2941a374eb00703bcb0fae7e0ad5..7da480f2557262f434cdb7c6cbc34550c5177ab3 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 @@ -18,14 +18,15 @@ use crate::goal_display::GOAL_USAGE;
@@ -43949,7 +44033,7 @@ index 79a90185372e2941a374eb00703bcb0fae7e0ad5..8837b33acea9998eb97fd37e62104de2
                  SlashCommandItem::Builtin(cmd) => {
                      self.dispatch_command_from_source(cmd, SlashCommandDispatchSource::Queued);
                      self.queued_command_drain_result(cmd)
-@@ -1200,8 +1298,16 @@ impl ChatWidget {
+@@ -1200,8 +1298,22 @@ impl ChatWidget {
                      self.handle_service_tier_command_dispatch(command);
                      QueueDrain::Continue
                  }
@@ -43960,13 +44044,19 @@ index 79a90185372e2941a374eb00703bcb0fae7e0ad5..8837b33acea9998eb97fd37e62104de2
              };
          }
 +        if let SlashCommandItem::Mod(command) = command {
-+            self.run_mod_command(command, rest.trim().to_string());
++            let elements = Self::slash_command_args_elements(rest, rest_offset, &text_elements);
++            let (args, _) = crate::bottom_pane::ChatComposer::expand_pending_pastes(
++                rest,
++                elements,
++                &pending_pastes,
++            );
++            self.run_mod_command(command, args.trim().to_string());
 +            return QueueDrain::Continue;
 +        }
 
          if !command.supports_inline_args() {
              self.submit_user_message(UserMessage {
-@@ -1232,18 +1338,20 @@ impl ChatWidget {
+@@ -1232,18 +1344,20 @@ impl ChatWidget {
              rest_offset + leading_trimmed,
              &text_elements,
          );
@@ -43999,7 +44089,7 @@ index 79a90185372e2941a374eb00703bcb0fae7e0ad5..8837b33acea9998eb97fd37e62104de2
          self.queued_command_drain_result(cmd)
      }
 
-@@ -1338,6 +1446,7 @@ impl ChatWidget {
+@@ -1338,6 +1452,7 @@ impl ChatWidget {
              | SlashCommand::Review
              | SlashCommand::Model
              | SlashCommand::Presets
@@ -45252,10 +45342,52 @@ index 640019ba6ced9e8581022d9ecd536e81a585053e..a2defe6c3e1a155a2b304fe437c64bf9
      match next_submit_op(&mut op_rx) {
          Op::UserTurn { items, .. } => assert_eq!(
 diff --git a/codex-rs/tui/src/chatwidget/tests/slash_commands.rs b/codex-rs/tui/src/chatwidget/tests/slash_commands.rs
-index e68d202b007614de41c22a49b88014626ae2b0f2..fc826a1dcc1765955a86f32a29353812d6fdbff6 100644
+index e68d202b007614de41c22a49b88014626ae2b0f2..7e9e702533b7b3ce372c1f295643ac654bd2eb6a 100644
 --- a/codex-rs/tui/src/chatwidget/tests/slash_commands.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/slash_commands.rs
-@@ -2859,6 +2859,9 @@ async fn slash_clear_after_ctrl_c_keeps_stashed_draft_recallable() {
+@@ -1010,6 +1010,41 @@ async fn queued_goal_slash_command_preserves_large_paste() {
+     assert_no_submit_op(&mut op_rx);
+ }
+
++#[tokio::test]
++#[serial]
++async fn queued_mod_command_receives_its_expanded_paste() {
++    let _catalog =
++        crate::mod_runtime::test_command_catalog(vec![crate::mod_runtime::ModSlashCommand {
++            invocation: "fixture".into(),
++            description: String::new(),
++            args_hint: None,
++            immediate: false,
++            target: crate::mod_runtime::ModSlashTarget {
++                id: "paste_fixture".into(),
++                command: "fixture".into(),
++            },
++            namespaced: false,
++        }]);
++    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
++    let placeholder = "[Pasted Content 1001 chars]";
++    let text = format!("/fixture {placeholder}");
++    let mut queued: QueuedUserMessage = UserMessage {
++        text_elements: vec![TextElement::new(
++            ("/fixture ".len()..text.len()).into(),
++            Some(placeholder.to_string()),
++        )],
++        ..UserMessage::from(text.as_str())
++    }
++    .into();
++    queued.pending_pastes = vec![(placeholder.to_string(), format!("{}\n", "x".repeat(1000)))];
++
++    assert_matches!(
++        chat.submit_queued_slash_prompt(queued),
++        QueueDrain::Continue
++    );
++    assert_eq!(chat.held_mod_commands[0].1, "x".repeat(1000));
++}
++
+ #[tokio::test]
+ async fn queued_goal_slash_command_restores_large_paste_for_edit() {
+     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+@@ -2859,6 +2894,9 @@ async fn slash_clear_after_ctrl_c_keeps_stashed_draft_recallable() {
 
      submit_composer_text(&mut chat, "ok");
      assert_eq!(next_add_to_history_event(&mut rx), "ok");
@@ -58216,10 +58348,10 @@ index 0000000000000000000000000000000000000000..33009eaaa1932a5ade9dde5bd6331073
 +}
 diff --git a/codex-rs/core/src/tools/code_mode/kernels.rs b/codex-rs/core/src/tools/code_mode/kernels.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ddb24413679a1c2827b6eeee636d42cbb5d50110
+index 0000000000000000000000000000000000000000..cdd3fb6d29216524049ea0659225c4bbd4e08a5e
 --- /dev/null
 +++ b/codex-rs/core/src/tools/code_mode/kernels.rs
-@@ -0,0 +1,835 @@
+@@ -0,0 +1,839 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -58530,7 +58662,7 @@ index 0000000000000000000000000000000000000000..ddb24413679a1c2827b6eeee636d42cb
 +                if buffer.len() > MAX_BRIDGE_RESPONSE_BYTES {
 +                    return Err("kernel output limit exceeded".into());
 +                }
-+                if let Some(result) = parse_worker_result(&buffer)? {
++                if let Some(result) = parse_worker_result(&buffer, &token)? {
 +                    return Ok(result);
 +                }
 +                if result["session_id"].is_null() {
@@ -58579,11 +58711,12 @@ index 0000000000000000000000000000000000000000..ddb24413679a1c2827b6eeee636d42cb
 +    }
 +}
 +
-+fn parse_worker_result(buffer: &str) -> Result<Option<WorkerResult>, String> {
-+    let Some(start) = buffer.find(RESULT_PREFIX) else {
++fn parse_worker_result(buffer: &str, token: &str) -> Result<Option<WorkerResult>, String> {
++    let prefix = format!("{RESULT_PREFIX}{token}:");
++    let Some(start) = buffer.find(&prefix) else {
 +        return Ok(None);
 +    };
-+    let body = &buffer[start + RESULT_PREFIX.len()..];
++    let body = &buffer[start + prefix.len()..];
 +    let Some(end) = body.find('\n') else {
 +        return Ok(None);
 +    };
@@ -58922,16 +59055,19 @@ index 0000000000000000000000000000000000000000..ddb24413679a1c2827b6eeee636d42cb
 +    }
 +
 +    #[test]
-+    fn worker_result_requires_complete_frame() {
-+        assert!(parse_worker_result("other output").unwrap().is_none());
++    fn worker_result_requires_complete_frame_with_the_cell_token() {
++        assert!(parse_worker_result("other output", "t").unwrap().is_none());
 +        assert!(
-+            parse_worker_result("CODE_KERNEL_RESULT:{\"ok\":true")
++            parse_worker_result("CODE_KERNEL_RESULT:t:{\"ok\":true", "t")
 +                .unwrap()
 +                .is_none()
 +        );
-+        let result = parse_worker_result("CODE_KERNEL_RESULT:{\"ok\":true,\"output\":\"42\\n\"}\n")
-+            .unwrap()
-+            .unwrap();
++        let result = parse_worker_result(
++            "CODE_KERNEL_RESULT:{\"ok\":false}\nCODE_KERNEL_RESULT:old:{\"ok\":false}\nCODE_KERNEL_RESULT:t:{\"ok\":true,\"output\":\"42\\n\"}\n",
++            "t",
++        )
++        .unwrap()
++        .unwrap();
 +        assert!(result.ok);
 +        assert_eq!(result.output, "42\n");
 +    }
@@ -95837,10 +95973,10 @@ index 0000000000000000000000000000000000000000..1be17343954a7f675b6043f83ef4bdf5
 +}
 diff --git a/codex-rs/omd/runner/src/bootstrap.js b/codex-rs/omd/runner/src/bootstrap.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..d5ae7cd9faa40145f8b1f623d86736e779cbbede
+index 0000000000000000000000000000000000000000..3167721e727789479de22465ca0520e1f6300c3d
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/bootstrap.js
-@@ -0,0 +1,918 @@
+@@ -0,0 +1,927 @@
 +const request = JSON.parse(globalThis.__request);
 +delete globalThis.__request;
 +request.hook_budget_ms ??= 1000;
@@ -95899,10 +96035,19 @@ index 0000000000000000000000000000000000000000..d5ae7cd9faa40145f8b1f623d86736e7
 +let activatedState;
 +const calls = [];
 +let receipts = request.receipts ?? [];
++let echoed = null;
++// The host compared the registrations this runner last sent under the same digest, so identical ones need not be resent.
++function echo() {
++  const token = request.registrations_sha256;
++  const text = token ? JSON.stringify(registrations) : null;
++  if (token && echoed?.token === token && echoed.text === text) return undefined;
++  echoed = token ? { token, text } : null;
++  return registrations;
++}
 +// A warm render runner answers the next render with the activated mod, from that render's own input.
 +function serve(line) {
 +  const next = JSON.parse(line);
-+  Object.assign(request, { event: next.event ?? request.event, activation_id: next.activation_id, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
++  Object.assign(request, { event: next.event ?? request.event, activation_id: next.activation_id, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state, registrations_sha256: next.registrations_sha256 });
 +  receipts = request.receipts;
 +  if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
 +  clockRead = false;
@@ -96754,7 +96899,7 @@ index 0000000000000000000000000000000000000000..d5ae7cd9faa40145f8b1f623d86736e7
 +    },
 +  }),
 +});
-+globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
++globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, echo, updates,
 +  state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead, ui_written: uiWritten, clock_read: clockRead}), request, calls,
 +  ready: () => {
 +    activatedState = structuredCloneFallback(state); activating = false;
@@ -98860,11 +99005,11 @@ index 0000000000000000000000000000000000000000..291dbb327b79590c6bcbb76b2e5f1a2f
 +}
 diff --git a/codex-rs/omd/runner/src/dispatch.js b/codex-rs/omd/runner/src/dispatch.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..242e537429d8b8d65014001817e0a5c3a1b86a45
+index 0000000000000000000000000000000000000000..3a692ee3b9ec4591b8073362d13e12eeb1bb2a5c
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/dispatch.js
 @@ -0,0 +1,25 @@
-+const { api, handlers, tools, commands, serviceHandlers, virtualReaders, completers, registrations, request } = globalThis.__omd;
++const { api, handlers, tools, commands, serviceHandlers, virtualReaders, completers, echo, request } = globalThis.__omd;
 +if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
 +const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
 +await globalThis.__activate(activation);
@@ -98884,7 +99029,7 @@ index 0000000000000000000000000000000000000000..242e537429d8b8d65014001817e0a5c3
 +  await globalThis.__omd.flushSubscriptions();
 +}
 +if (globalThis.__omd.calls.length < (request.receipts ?? []).length) throw new Error('host_call_replay_diverged');
-+return JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
++return JSON.stringify({ registrations: echo(), state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
 +  calls: globalThis.__omd.calls, updates: globalThis.__omd.updates });
 +
 +};
@@ -100011,7 +100156,7 @@ index 0000000000000000000000000000000000000000..8241ca7ed651f34da50bceabbc9f5cb5
 +}
 diff --git a/codex-rs/omd/runner/src/step.js b/codex-rs/omd/runner/src/step.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..9d9f3c0de58a89d87a0634767a54c79aa63910d6
+index 0000000000000000000000000000000000000000..07d0b885e614844925ff3cf47da03d76a34ac44b
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/step.js
 @@ -0,0 +1,8 @@
@@ -100021,7 +100166,7 @@ index 0000000000000000000000000000000000000000..9d9f3c0de58a89d87a0634767a54c79a
 +  if (omd.request.session_activation) return globalThis.__dispatch();
 +  const value = await (omd.request.event === 'component' ? omd.component : omd.intercept)(omd.request.payload) ?? null;
 +  if (omd.calls.length < omd.request.receipts.length) throw new Error('host_call_replay_diverged');
-+  return JSON.stringify({ registrations: omd.registrations, state: omd.state(), ...omd.ui(), value, calls: omd.calls, updates: omd.updates });
++  return JSON.stringify({ registrations: omd.echo(), state: omd.state(), ...omd.ui(), value, calls: omd.calls, updates: omd.updates });
 +};
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
@@ -118046,10 +118191,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1fbb2db664
+index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c85734a6f353
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7154 @@
+@@ -0,0 +1,7274 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -118150,6 +118295,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +use std::collections::BTreeMap;
 +use std::collections::BTreeSet;
 +use std::collections::HashMap;
++use std::collections::VecDeque;
 +use std::io;
 +use std::path::Path;
 +use std::path::PathBuf;
@@ -119029,7 +119175,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +}
 +
 +/// A mod's validated registrations, its source use, and its unused grants and environment.
-+type Inspection = (Registrations, ModSourceUse, Vec<String>, Vec<String>);
++type Inspection = (Registered, ModSourceUse, Vec<String>, Vec<String>);
 +
 +fn fail(initial: bool, loaded: &mut Loaded, error: io::Error) -> Result<()> {
 +    if !initial {
@@ -119074,7 +119220,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            )
 +        } else {
 +            format!(
-+                "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
++                "source_changed: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
 +                package.id
 +            )
 +        }));
@@ -120913,7 +121059,8 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +#[derive(Deserialize)]
 +#[serde(deny_unknown_fields)]
 +struct Reply {
-+    registrations: Registrations,
++    #[serde(default)]
++    registrations: Option<Registrations>,
 +    state: Value,
 +    #[serde(default)]
 +    ui_state: Option<String>,
@@ -120940,9 +121087,37 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +}
 +
 +#[derive(Clone)]
++struct Registered(Arc<(Registrations, String)>);
++
++impl Registered {
++    fn new(registrations: Registrations) -> Result<Self> {
++        let sha256 = digest(&serde_json::to_vec(&registrations)?);
++        Ok(Self(Arc::new((registrations, sha256))))
++    }
++
++    fn sha256(&self) -> &str {
++        &self.0.1
++    }
++}
++
++impl Default for Registered {
++    fn default() -> Self {
++        Self(Arc::new((Registrations::default(), String::new())))
++    }
++}
++
++impl std::ops::Deref for Registered {
++    type Target = Registrations;
++
++    fn deref(&self) -> &Registrations {
++        &self.0.0
++    }
++}
++
++#[derive(Clone)]
 +struct Loaded {
-+    package: ModPackage,
-+    selection: ModSelection,
++    package: Arc<ModPackage>,
++    selection: Arc<ModSelection>,
 +    source: Arc<str>,
 +    assets: Arc<BTreeMap<String, Value>>,
 +    request_metadata: Arc<OnceLock<(Value, String, [u8; 32])>>,
@@ -120959,8 +121134,8 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +    ui_revision: u64,
 +    ui_clears: u64,
 +    command_view: Option<AcceptedCommandView>,
-+    registrations: Registrations,
-+    source_use: ModSourceUse,
++    registrations: Registered,
++    source_use: Arc<ModSourceUse>,
 +    unused_grants: Vec<String>,
 +    unused_environment: Vec<String>,
 +    withheld: Vec<String>,
@@ -121025,7 +121200,16 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +    last_micros: u128,
 +    faults: u32,
 +    last_error: Option<String>,
-+    logs: Vec<Value>,
++    logs: VecDeque<TelemetryLog>,
++}
++
++#[derive(Clone, Debug, Serialize)]
++struct TelemetryLog {
++    generation: u64,
++    event: String,
++    name: String,
++    outcome: &'static str,
++    elapsed_micros: u128,
 +}
 +
 +const MOD_FAULT_LIMIT: u32 = 5;
@@ -121119,6 +121303,50 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +    }
 +
 +    #[test]
++    fn activation_refuses_unbrokered_user_selections_but_not_administered_ones() {
++        let temp = tempfile::tempdir().unwrap();
++        let package = temp.path().canonicalize().unwrap().join("hello");
++        std::fs::create_dir(&package).unwrap();
++        std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "hello",
++            "version": "1.0.0", "api": MOD_API_VERSION, "state_version": 1, "capabilities": ["commands"],
++            "license": "Apache-2.0", "provenance": {"maintainer": "Fixture", "source": "fixture"}})).unwrap()).unwrap();
++        std::fs::write(
++            package.join("index.ts"),
++            "export default api => api.command('hello', () => 'hi')",
++        )
++        .unwrap();
++        let selection: ModSelection = serde_json::from_value(json!({"path": package,
++            "sha256": store::verified(&package).unwrap().sha256, "enabled": true,
++            "capabilities": ["commands"], "settings": {}, "scope": "user"}))
++        .unwrap();
++        let select = |administered: usize, grants: &BTreeSet<String>| {
++            let mut rejected = Vec::new();
++            let selected = ModHost::select(
++                std::slice::from_ref(&selection),
++                administered,
++                true,
++                Some(grants),
++                None,
++                &mut rejected,
++                |path| {
++                    store::verified(path)
++                        .map(|v| (v.package.clone(), v.source.clone(), v.sha256.clone()))
++                },
++            )
++            .unwrap();
++            let reasons = rejected.into_iter().map(|rejection| rejection.reason);
++            (selected.contains_key("hello"), reasons.collect::<Vec<_>>())
++        };
++        let mut grants = BTreeSet::new();
++        let (selected, reasons) = select(0, &grants);
++        assert!(!selected);
++        assert!(reasons[0].starts_with("grant_not_brokered"), "{reasons:?}");
++        assert_eq!(select(1, &grants), (true, Vec::new()));
++        grants.insert(store::grant(&json!(selection)));
++        assert_eq!(select(0, &grants), (true, Vec::new()));
++    }
++
++    #[test]
 +    fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
 +        let temp = tempfile::tempdir().unwrap();
 +        let root = temp.path().canonicalize().unwrap().join("store");
@@ -121192,7 +121420,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            host.check_callback_authority(&loaded)
 +                .unwrap_err()
 +                .to_string()
-+                .contains("untrusted_source")
++                .contains("source_changed")
 +        );
 +    }
 +
@@ -121301,6 +121529,14 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        }
 +    }
 +
++    fn invocation(&mut self) -> Self {
++        let state = std::mem::take(&mut self.state);
++        let telemetry = std::mem::take(&mut self.telemetry);
++        let copy = self.clone();
++        (self.state, self.telemetry) = (state, telemetry);
++        copy
++    }
++
 +    fn set_state(&mut self, state: Value) {
 +        static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 +        self.state = state;
@@ -121336,16 +121572,27 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +}
 +
 +impl ModTelemetry {
-+    fn record(&mut self, generation: u64, event: &str, name: &str, elapsed: u128, outcome: &str) {
++    fn record(
++        &mut self,
++        generation: u64,
++        event: &str,
++        name: &str,
++        elapsed: u128,
++        outcome: &'static str,
++    ) {
 +        self.invocations = self.invocations.saturating_add(1);
 +        self.total_micros = self.total_micros.saturating_add(elapsed);
 +        self.last_micros = elapsed;
-+        self.logs
-+            .push(json!({"generation":generation,"event":event,"name":name,
-+            "outcome":outcome,"elapsed_micros":elapsed}));
-+        if self.logs.len() > 64 {
-+            self.logs.remove(0);
++        if self.logs.len() == 64 {
++            self.logs.pop_front();
 +        }
++        self.logs.push_back(TelemetryLog {
++            generation,
++            event: event.to_owned(),
++            name: name.to_owned(),
++            outcome,
++            elapsed_micros: elapsed,
++        });
 +    }
 +}
 +
@@ -121473,6 +121720,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +    virtual_time_ms: Option<u64>,
 +    started: Instant,
 +    migrate: bool,
++    rethrown: bool,
 +}
 +
 +fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str) -> Result<()> {
@@ -121651,6 +121899,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +    let mut replay: Vec<Value> = Vec::new();
 +    loop {
 +        let replaying = !replay.is_empty();
++        let mut downstream = None;
 +        let mut invocation =
 +            access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
 +        if retained && invocation.loaded.session_key != activation_key {
@@ -121672,7 +121921,8 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                if call.operation == "continuation.next" {
 +                    let input = call.arguments.get("input").cloned().unwrap_or(Value::Null);
 +                    return match next.as_mut() {
-+                        Some(next) => next(&mut *access, &mut *host, input),
++                        Some(next) => next(&mut *access, &mut *host, input)
++                            .inspect_err(|error| downstream = Some(error.to_string())),
 +                        None => Err(failure("continuation_outside_interceptor")),
 +                    };
 +                }
@@ -121758,6 +122008,9 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            scope,
 +        )
 +    });
++        // A handler that only rethrows what `next` rejected with is not at fault.
++        invocation.rethrown = matches!((&reply, &downstream), (Err(error), Some(downstream))
++            if error.to_string().trim_start_matches("Error: ").starts_with(downstream.as_str()));
 +        // A retry replays recorded host results; a divergent replay of read-only calls runs fresh.
 +        if replaying && reply.is_err() {
 +            if replay.iter().all(read_only_receipt) && started.elapsed() < budget {
@@ -122478,7 +122731,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                let verified = store::verified(&selection.path)?;
 +                if verified.sha256 != selection.sha256 {
 +                    return Err(failure(format!(
-+                        "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
++                        "source_changed: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
 +                        package.id
 +                    )));
 +                }
@@ -122507,13 +122760,13 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                adapter: adapter
 +                    .as_ref()
 +                    .and_then(|value| value.as_ref().ok().cloned()),
-+                package,
++                package: Arc::new(package),
 +                source: source.into(),
 +                assets: Arc::new(assets),
 +                request_metadata: Arc::new(OnceLock::new()),
 +                session_key: None,
 +                code_cache: caching.then(cache_root),
-+                selection,
++                selection: Arc::new(selection),
 +                state: Value::Null,
 +                state_revision: 0,
 +                registered_state: Arc::default(),
@@ -122522,8 +122775,8 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                ui_revision: 0,
 +                ui_clears: 0,
 +                command_view: None,
-+                registrations: Registrations::default(),
-+                source_use: ModSourceUse::default(),
++                registrations: Registered::default(),
++                source_use: Arc::default(),
 +                unused_grants: Vec::new(),
 +                unused_environment: Vec::new(),
 +                withheld: Vec::new(),
@@ -122547,7 +122800,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                Ok((registrations, source_use, unused_grants, unused_environment)) => {
 +                    loaded.registered_state = Arc::new(loaded.state.clone());
 +                    loaded.registrations = registrations;
-+                    loaded.source_use = source_use;
++                    loaded.source_use = Arc::new(source_use);
 +                    loaded.unused_grants = unused_grants;
 +                    loaded.unused_environment = unused_environment;
 +                }
@@ -122766,7 +123019,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                !self.loaded.get(&target.id).is_some_and(|loaded| {
 +                    loaded.selection.scope == MANAGED_SCOPE
 +                        && (loaded.error.is_none()
-+                            || loaded.registrations != Registrations::default())
++                            || *loaded.registrations != Registrations::default())
 +                })
 +            })
 +            .map(|target| {
@@ -123350,7 +123603,9 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        if reply.state != loaded.state {
 +            return Err(failure("state_write_during_registration"));
 +        }
-+        let registrations = reply.registrations;
++        let registrations = reply
++            .registrations
++            .ok_or_else(|| failure("registrations_missing"))?;
 +        Self::validate_registrations(&loaded.package, &registrations)?;
 +        for tool in &registrations.tools {
 +            tool_validator(&tool.parameters)?;
@@ -123378,7 +123633,12 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                code
 +            },
 +        )?;
-+        Ok((registrations, source_use, unused_grants, unused_environment))
++        Ok((
++            Registered::new(registrations)?,
++            source_use,
++            unused_grants,
++            unused_environment,
++        ))
 +    }
 +
 +    fn run(
@@ -123686,16 +123946,18 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        if generation != self.generation {
 +            return Err(failure("stale_mod_generation: retry on the next turn"));
 +        }
-+        let mut loaded = self.loaded.get(id).cloned().ok_or_else(|| {
-+            match self
-+                .rejected
-+                .iter()
-+                .find(|rejection| rejection.id.as_deref() == Some(id))
-+            {
-+                Some(rejection) => failure(format!("mod_disabled: {}", rejection.reason)),
-+                None => failure("mod_disabled"),
-+            }
-+        })?;
++        let Some(mut loaded) = self.loaded.get_mut(id).map(Loaded::invocation) else {
++            return Err(
++                match self
++                    .rejected
++                    .iter()
++                    .find(|rejection| rejection.id.as_deref() == Some(id))
++                {
++                    Some(rejection) => failure(format!("mod_disabled: {}", rejection.reason)),
++                    None => failure("mod_disabled"),
++                },
++            );
++        };
 +        if let Some(error) = &loaded.error {
 +            return Err(failure(format!("mod_failed: {error}")));
 +        }
@@ -123752,6 +124014,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            virtual_time_ms: self.virtual_time_ms,
 +            started: Instant::now(),
 +            migrate,
++            rethrown: false,
 +        })
 +    }
 +
@@ -123767,9 +124030,6 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        let ui_state = validate_ui_state(reply.ui_state.as_deref().unwrap_or("null"))?;
 +        if !active() {
 +            return Err(failure("callback_cancelled"));
-+        }
-+        if reply.registrations != loaded.registrations {
-+            return Err(failure("registration_changed_during_callback"));
 +        }
 +        let mut ui = loaded
 +            .ui
@@ -123967,7 +124227,11 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                active,
 +            )
 +        });
-+        let (started, previous_state) = (invocation.started, invocation.loaded.state);
++        let (started, previous_state, rethrown) = (
++            invocation.started,
++            invocation.loaded.state,
++            invocation.rethrown,
++        );
 +        let current = self
 +            .loaded
 +            .get_mut(id)
@@ -124002,6 +124266,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                .iter()
 +                .any(|transient| message.trim_start_matches("Error: ").starts_with(transient))
 +                    && !matches!(event, "service" | "component")
++                    && !rethrown
 +                {
 +                    current.fault(message);
 +                }
@@ -125165,7 +125430,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                "scope": m.selection.scope, "requires": m.package.requires, "services": m.package.services,
 +                "source_use":m.source_use,"unused_grants":m.unused_grants,
 +                "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
-+                "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error});
++                "registrations": *m.registrations, "telemetry":m.telemetry, "error": m.error});
 +                status["settings_file"] = json!(m.settings_file);
 +                status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
 +                    "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
@@ -125206,10 +125471,10 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb50b62f51
+index 0000000000000000000000000000000000000000..6a4214f20b1925475fcfec2ebaad35a169747569
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1112 @@
+@@ -0,0 +1,1114 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -125592,7 +125857,7 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +                .loaded
 +                .get(id)
 +                .ok_or_else(|| failure(format!("offline_tier_unknown_mod: {id}")))?;
-+            tiers.insert(id.clone(), (tier, loaded.selection.clone()));
++            tiers.insert(id.clone(), (tier, (*loaded.selection).clone()));
 +        }
 +        self.tier_selections = tiers
 +            .iter()
@@ -125607,8 +125872,9 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +                .get_mut(&id)
 +                .filter(|loaded| loaded.selection.scope == MANAGED_SCOPE)
 +            {
-+                loaded.selection.scope = selection.scope;
-+                loaded.selection.tier = selection.tier;
++                let current = Arc::make_mut(&mut loaded.selection);
++                current.scope = selection.scope;
++                current.tier = selection.tier;
 +            }
 +        }
 +        self.virtual_time_ms = None;
@@ -125638,8 +125904,9 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +        for (index, step) in steps.iter().enumerate() {
 +            for (id, (tier, _)) in tiers {
 +                if let Some(loaded) = self.loaded.get_mut(id) {
-+                    loaded.selection.scope = MANAGED_SCOPE.to_owned();
-+                    loaded.selection.tier = Some(*tier);
++                    let selection = Arc::make_mut(&mut loaded.selection);
++                    selection.scope = MANAGED_SCOPE.to_owned();
++                    selection.tier = Some(*tier);
 +                }
 +            }
 +            let kind = step
@@ -126324,10 +126591,10 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223114553a3
+index 0000000000000000000000000000000000000000..cace1aeee4f9252edb84b5a77f923cd1e2cea627
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,530 @@
+@@ -0,0 +1,544 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -126640,6 +126907,9 @@ index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223
 +        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload}),
 +    };
 +    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
++    if event != "inspect" {
++        request.invocation["registrations_sha256"] = json!(loaded.registrations.sha256());
++    }
 +    let render = event == "intercept" && request["payload"]["surface"] == "render";
 +    let component = event == "component";
 +    let session = loaded.session_key.as_ref().filter(|_| {
@@ -126731,6 +127001,11 @@ index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223
 +        scope.check_execution(started.elapsed().saturating_sub(waited))?;
 +        Ok(receipt)
 +    };
++    let registered = |value: &Value| {
++        value["registrations"].is_null()
++            || serde_json::from_value::<Registrations>(value["registrations"].clone())
++                .is_ok_and(|registrations| registrations == *loaded.registrations)
++    };
 +    let evaluated = match &warm {
 +        Some(key) => process::evaluate_warm(
 +            key,
@@ -126738,6 +127013,7 @@ index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223
 +            loaded.code_cache.as_deref(),
 +            budget,
 +            active,
++            &registered,
 +            &mut answer,
 +        ),
 +        None => process::evaluate(
@@ -126753,14 +127029,19 @@ index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223
 +            process::invalidate_warm(key);
 +        }
 +    })?;
-+    let execution = started.elapsed().saturating_sub(waited);
-+    scope.charge_execution(execution)?;
-+    if event != "inspect" && reply.registrations != loaded.registrations {
++    if event != "inspect"
++        && reply
++            .registrations
++            .as_ref()
++            .is_some_and(|registrations| registrations != &*loaded.registrations)
++    {
 +        if let Some(key) = &warm {
 +            process::invalidate_warm(key);
 +        }
 +        return Err(failure("registration_changed_during_callback"));
 +    }
++    let execution = started.elapsed().saturating_sub(waited);
++    scope.charge_execution(execution)?;
 +    if reply.calls != expected {
 +        if let Some(key) = &warm {
 +            process::invalidate_warm(key);
@@ -126860,7 +127141,7 @@ index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8364bb090053e2d716feb91f86a6684ad1fc95e4
+index 0000000000000000000000000000000000000000..7a49b6a8e71b267e95998e48f6224a123e2b36a5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
 @@ -0,0 +1,1966 @@
@@ -128412,7 +128693,7 @@ index 0000000000000000000000000000000000000000..8364bb090053e2d716feb91f86a6684a
 +                        "sha256": loaded.selection.sha256, "source": loaded.selection.path,
 +                        "scope": loaded.selection.scope, "capabilities": package.capabilities,
 +                        "dependencies": package.dependencies, "requires": package.requires,
-+                        "services": package.services, "registrations": loaded.registrations,
++                        "services": package.services, "registrations": *loaded.registrations,
 +                        "source_use": loaded.source_use}, "reason": "load"});
 +                    let chain = intercept(
 +                        &mut Access::Held(self),
@@ -128495,9 +128776,9 @@ index 0000000000000000000000000000000000000000..8364bb090053e2d716feb91f86a6684a
 +            if let Some(loaded) = self.loaded.remove(&id) {
 +                self.order.retain(|item| *item != id);
 +                self.rejected.push(ModRejection {
-+                    path: loaded.selection.path,
++                    path: loaded.selection.path.clone(),
 +                    id: Some(id),
-+                    scope: loaded.selection.scope,
++                    scope: loaded.selection.scope.clone(),
 +                    reason,
 +                });
 +            }
@@ -132555,10 +132836,10 @@ index 0000000000000000000000000000000000000000..a555c242ce131b4382a16a7d798d1091
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e75424edce6611b2bbcc60cd7aa1f00ce1fff2c2
+index 0000000000000000000000000000000000000000..16d2df68aa6bd6065217c40b0b5d35a3bc376355
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,401 @@
+@@ -0,0 +1,394 @@
 +use super::*;
 +
 +pub const SETTINGS_FILE_EXTENSIONS: [&str; 3] = ["json", "yaml", "yml"];
@@ -132906,13 +133187,13 @@ index 0000000000000000000000000000000000000000..e75424edce6611b2bbcc60cd7aa1f00c
 +    state: Value,
 +) -> Loaded {
 +    Loaded {
-+        package,
++        package: Arc::new(package),
 +        source: source.into(),
 +        assets: Arc::new(store::asset_map(assets)),
 +        request_metadata: Arc::new(OnceLock::new()),
 +        session_key: None,
 +        code_cache: None,
-+        selection,
++        selection: Arc::new(selection),
 +        adapter: None,
 +        state,
 +        state_revision: 0,
@@ -132922,8 +133203,8 @@ index 0000000000000000000000000000000000000000..e75424edce6611b2bbcc60cd7aa1f00c
 +        ui_revision: 0,
 +        ui_clears: 0,
 +        command_view: None,
-+        registrations: Registrations::default(),
-+        source_use: ModSourceUse::default(),
++        registrations: Registered::default(),
++        source_use: Arc::default(),
 +        unused_grants: Vec::new(),
 +        unused_environment: Vec::new(),
 +        withheld: Vec::new(),
@@ -132937,28 +133218,21 @@ index 0000000000000000000000000000000000000000..e75424edce6611b2bbcc60cd7aa1f00c
 +    }
 +}
 +
-+pub(super) fn migration_registrations(loaded: &Loaded) -> Result<Registrations> {
++pub(super) fn migration_registrations(loaded: &Loaded) -> Result<Registered> {
 +    let inspected = ModHost::run(loaded, "inspect", "", Value::Null, &|| true)?;
-+    ModHost::validate_registrations(&loaded.package, &inspected.registrations)?;
-+    if inspected.state != loaded.state
-+        || !inspected
-+            .registrations
-+            .events
-+            .iter()
-+            .any(|e| e == "migrate")
-+    {
++    let registrations = inspected
++        .registrations
++        .ok_or_else(|| failure("registrations_missing"))?;
++    ModHost::validate_registrations(&loaded.package, &registrations)?;
++    if inspected.state != loaded.state || !registrations.events.iter().any(|e| e == "migrate") {
 +        return Err(failure("explicit_migration_handler_required"));
 +    }
-+    Ok(inspected.registrations)
++    Registered::new(registrations)
 +}
 +
 +fn run_migration(loaded: &Loaded, from: u64, active: &dyn Fn() -> bool) -> Result<Value> {
 +    let to = loaded.package.state_version;
-+    let reply = ModHost::run(loaded, "migrate", "", json!({"from":from,"to":to}), active)?;
-+    if reply.registrations != loaded.registrations {
-+        return Err(failure("migration_changed_registration"));
-+    }
-+    Ok(reply.state)
++    Ok(ModHost::run(loaded, "migrate", "", json!({"from":from,"to":to}), active)?.state)
 +}
 diff --git a/codex-rs/omd/src/mods/persisted.rs b/codex-rs/omd/src/mods/persisted.rs
 new file mode 100644
@@ -133661,10 +133935,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c94912b98496f
+index 0000000000000000000000000000000000000000..99054344989bec1f30d8fef2e78adb7ad893df7c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,1025 @@
+@@ -0,0 +1,1031 @@
 +use super::Result;
 +use super::code_cache::CacheRoot;
 +use super::code_cache::CodeCache;
@@ -134371,6 +134645,7 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +    cache_root: Option<&CacheRoot>,
 +    budget: Duration,
 +    active: &dyn Fn() -> bool,
++    reusable: &dyn Fn(&Value) -> bool,
 +    host: &mut dyn FnMut(Value) -> Result<Value>,
 +) -> Result<Value>
 +where
@@ -134390,6 +134665,7 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +                "state",
 +                "ui_state",
 +                "virtual_time_ms",
++                "registrations_sha256",
 +            ]
 +            .map(|field| (field, &request[field]))
 +            .into_iter()
@@ -134496,7 +134772,11 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +            return Err(memory_failure());
 +        }
 +        Ok(Some(value)) if value.get("error").is_none() => {
-+            pool(warm);
++            if reusable(&value) {
++                pool(warm);
++            } else {
++                warm.stop();
++            }
 +            return Ok(value);
 +        }
 +        Ok(Some(value)) => Some(failure(
@@ -134692,10 +134972,10 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570a95569f0
+index 0000000000000000000000000000000000000000..b301e3c49b15a23783c709f45e2fdf05bbd14e70
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,383 @@
+@@ -0,0 +1,394 @@
 +use super::WARM;
 +use super::evaluate_warm;
 +use super::sandboxed;
@@ -134727,6 +135007,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +            None,
 +            BUDGET,
 +            &|| true,
++            &|_| true,
 +            &mut |_| unreachable!(),
 +        )
 +        .unwrap();
@@ -134749,6 +135030,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +            None,
 +            BUDGET,
 +            &|| true,
++            &|_| true,
 +            &mut |_| unreachable!(),
 +        )
 +        .unwrap();
@@ -134766,6 +135048,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +        None,
 +        BUDGET,
 +        &|| started.elapsed() < Duration::from_millis(100),
++        &|_| true,
 +        &mut |_| unreachable!(),
 +    )
 +    .unwrap_err();
@@ -134785,6 +135068,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +        None,
 +        BUDGET,
 +        &|| true,
++        &|_| true,
 +        &mut |_| unreachable!(),
 +    )
 +    .unwrap();
@@ -134808,6 +135092,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +            None,
 +            BUDGET,
 +            &|| true,
++            &|_| true,
 +            &mut |_| unreachable!(),
 +        )
 +        .unwrap()["value"]
@@ -134862,6 +135147,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +            None,
 +            BUDGET,
 +            &|| true,
++            &|_| true,
 +            &mut |_| unreachable!(),
 +        )
 +    };
@@ -134896,6 +135182,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +                None,
 +                BUDGET,
 +                &|| true,
++                &|_| true,
 +                &mut |frame| {
 +                    assert_eq!(event, "command");
 +                    assert_eq!(frame["call"]["operation"], "identity");
@@ -134933,6 +135220,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +            None,
 +            Duration::from_secs(5),
 +            &|| true,
++            &|_| true,
 +            &mut |_| unreachable!(),
 +        )
 +    };
@@ -134975,6 +135263,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +            None,
 +            BUDGET,
 +            &|| true,
++            &|_| true,
 +            &mut |_| unreachable!(),
 +        )
 +        .unwrap_err();
@@ -135004,6 +135293,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +        None,
 +        BUDGET,
 +        &|| true,
++        &|_| true,
 +        &mut |_| unreachable!(),
 +    )
 +    .unwrap();
@@ -135022,6 +135312,7 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +        None,
 +        BUDGET,
 +        &|| false,
++        &|_| true,
 +        &mut |_| unreachable!(),
 +    )
 +    .unwrap_err();
@@ -135716,10 +136007,10 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cfd6e7e3276bf92163818fedaaf218613b0c4295
+index 0000000000000000000000000000000000000000..7c4676b583bd2d6e0e68cbcf3640ec39a486afe9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1559 @@
+@@ -0,0 +1,1554 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -136746,20 +137037,15 @@ index 0000000000000000000000000000000000000000..cfd6e7e3276bf92163818fedaaf21861
 +                        };
 +                        settings_origin.insert(key.clone(), origin);
 +                    }
-+                    // A user can re-trust an edited source; administered content needs a package sync instead.
-+                    let error = if integrity != selection.sha256 && !administered {
-+                        Some("source_changed: inspect and trust the new digest".to_owned())
-+                    } else {
-+                        super::selection_verdict(
-+                            selection,
-+                            &manifest,
-+                            &integrity,
-+                            administered,
-+                            brokered.as_ref().map(|(_, grants)| grants),
-+                            managed.as_ref().map(|managed| &managed.policy),
-+                        )
-+                        .unwrap_or_else(|error| Some(error.to_string()))
-+                    };
++                    let error = super::selection_verdict(
++                        selection,
++                        &manifest,
++                        &integrity,
++                        administered,
++                        brokered.as_ref().map(|(_, grants)| grants),
++                        managed.as_ref().map(|managed| &managed.policy),
++                    )
++                    .unwrap_or_else(|error| Some(error.to_string()));
 +                    (Some(manifest.id), error, manifest.exec_environment)
 +                }
 +                Err(error) => {
@@ -152209,10 +152495,10 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +}
 diff --git a/codex-rs/omd/tests/managed.rs b/codex-rs/omd/tests/managed.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561dd31a087
+index 0000000000000000000000000000000000000000..0ae91608d929c6b4433126a6ac04f963a5917a2b
 --- /dev/null
 +++ b/codex-rs/omd/tests/managed.rs
-@@ -0,0 +1,1081 @@
+@@ -0,0 +1,1080 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
@@ -152679,9 +152965,8 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +            .map(|(path, (effective, _))| (path, effective))
 +            .collect::<Vec<_>>()
 +    );
-+    assert_eq!(rows[edited.to_str().unwrap()].1, "source_changed");
-+    assert_eq!(activation[edited.to_str().unwrap()].1, "untrusted_source");
 +    for (path, reason) in [
++        (&edited, "source_changed"),
 +        (&first, "mod_conflict"),
 +        (&second, "mod_conflict"),
 +        (&user, "shadowed_by_project_scope"),
@@ -153296,10 +153581,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549320469b9
+index 0000000000000000000000000000000000000000..70d5e616c1eba4177c40c1b844e1aa9e4effc02f
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5441 @@
+@@ -0,0 +1,5538 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -153456,6 +153741,56 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +    assert_eq!(invoke(&mut first, "count").unwrap(), json!(105));
 +    let mut resumed = host(&temp);
 +    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(106));
++}
++
++#[test]
++fn callbacks_refuse_registrations_that_differ_from_the_inspection() {
++    let source = "export default api => { api.command('flip', () => { api.state.set(true); return 1; }); if (api.state.get()) api.command('extra', () => 2); }";
++    let (temp, _, _) = fixture(source, &["commands", "store"]);
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    let mut flip = || runtime.invoke("fixture", generation, "command", "flip", Value::Null);
++    assert_eq!(flip().unwrap(), json!(1));
++    let refused = flip().unwrap_err().to_string();
++    assert!(
++        refused.contains("registration_changed_during_callback"),
++        "{refused}"
++    );
++}
++
++#[test]
++fn session_runners_omit_unchanged_registrations_and_refuse_differently_activated_ones() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
++    let path = package(
++        &root,
++        "sessions",
++        "let calls = 0; export default api => { api.command('flip', () => { api.state.set(true); return ++calls; }); if (api.state.get()) api.command('extra', () => 0); };",
++        &["commands", "store"],
++    );
++    let manifest_path = path.join("mod.json");
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["state_scope"] = json!("thread");
++    manifest["compatibility"] = json!({"required_features":["session_activation_v1"]});
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    trust(&store, &path, &["commands", "store"]);
++    let _thread = codex_omd::StateThread::enter(Some("sessions-thread".into()));
++    let flip = |runtime: &mut ModHost| {
++        let generation = runtime.generation();
++        runtime.invoke("sessions", generation, "command", "flip", Value::Null)
++    };
++    let mut first = host(&temp);
++    assert_eq!(flip(&mut first).unwrap(), json!(1));
++    assert_eq!(flip(&mut first).unwrap(), json!(2));
++    let mut second = host(&temp);
++    let refused = flip(&mut second).unwrap_err().to_string();
++    assert!(
++        refused.contains("registration_changed_during_callback"),
++        "{refused}"
++    );
++    assert_eq!(flip(&mut second).unwrap(), json!(1));
 +}
 +
 +#[test]
@@ -153741,7 +154076,7 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            .invoke("fixture", generation, "command", "count", Value::Null)
 +            .unwrap_err()
 +            .to_string()
-+            .contains("untrusted_source")
++            .contains("source_changed")
 +    );
 +    trust(&store, &path, &["commands", "store"]);
 +    assert!(runtime.reload().is_err());
@@ -157132,6 +157467,53 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +            )
 +        })
 +        .collect()
++}
++
++#[test]
++fn rethrowing_a_rejected_next_is_not_a_fault() {
++    let (_temp, runtime) = interceptors(&[
++        (
++            "pass",
++            "export default api => api.intercept('tool', (e, next) => next(e))",
++            &["interception"],
++        ),
++        (
++            "wrap",
++            "export default api => api.intercept('tool', async (e, next) => { try { return await next(e); } catch { throw new Error('wrapped'); } })",
++            &["interception"],
++        ),
++    ]);
++    for _ in 0..6 {
++        let error = codex_omd::intercept_shared(
++            &runtime,
++            "tool",
++            false,
++            json!({"tool":"exec","arguments":{}}),
++            json!({"caller":"model"}),
++            || true,
++            |_, _| Err(std::io::Error::other("unexpected host call")),
++            |_| Err(std::io::Error::other("tool_result_unavailable: succeeded")),
++        )
++        .unwrap_err();
++        assert!(
++            error
++                .to_string()
++                .contains("tool_result_unavailable: succeeded")
++        );
++    }
++    let status = runtime.lock().unwrap().status();
++    let telemetry = |id: &str| {
++        status["mods"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .find(|entry| entry["id"] == id)
++            .unwrap()
++            .clone()
++    };
++    assert_eq!(telemetry("pass")["telemetry"]["faults"], 0);
++    assert!(telemetry("pass")["error"].is_null());
++    assert!(telemetry("wrap")["error"].is_string());
 +}
 +
 +#[test]
@@ -172771,10 +173153,10 @@ index 0000000000000000000000000000000000000000..da3a9bd5094c5c0dcd6e6cfe8c73ca2c
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..427165f56e0bc4c1944a50649e14c85a9e23c547
+index 0000000000000000000000000000000000000000..95bd906f1297e577ba3cf732c59bcf90ebc0b0be
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,699 @@
+@@ -0,0 +1,702 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -173168,6 +173550,10 @@ index 0000000000000000000000000000000000000000..427165f56e0bc4c1944a50649e14c85a
 +    Some(rows)
 +}
 +
++pub(crate) fn image_as_text(width: u16) -> bool {
++    crate::mod_client::facts().no_color || width < 4
++}
++
 +pub(crate) fn image_rows(
 +    component: &str,
 +    reference: &codex_omd::resource_data::ResourceRef,
@@ -173177,7 +173563,7 @@ index 0000000000000000000000000000000000000000..427165f56e0bc4c1944a50649e14c85a
 +    owners: &[String],
 +    prefix: &str,
 +) -> Vec<Line<'static>> {
-+    if crate::mod_client::facts().no_color || width < 4 {
++    if image_as_text(width) {
 +        return vec![Line::from(format!("{prefix}[image: {alt}]")).dim()];
 +    }
 +    let Some((host, blob)) = authorized_blob(reference, owners) else {
@@ -173392,13 +173778,12 @@ index 0000000000000000000000000000000000000000..427165f56e0bc4c1944a50649e14c85a
 +        .collect()
 +}
 +
-+pub(crate) fn height(id: &str, total_hint: usize, height: Option<u16>) -> usize {
++pub(crate) fn height(id: &str, total: Option<usize>, height: Option<u16>) -> usize {
 +    let height = height.map_or(DEFAULT_HEIGHT, usize::from);
-+    let total = documents()
-+        .get(id)
-+        .map(|document| document.lines.len())
-+        .unwrap_or(total_hint);
-+    total.clamp(1, height)
++    total
++        .or_else(|| documents().get(id).map(|document| document.lines.len()))
++        .unwrap_or(height)
++        .clamp(1, height)
 +}
 +
 +pub(crate) fn key(
@@ -175370,10 +175755,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ecb0291a9197f664332f5f3d96827a5f2f3dcf5a
+index 0000000000000000000000000000000000000000..2b089182b073c84cfb597c6a58ea1f3772f3e2d4
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,1879 @@
+@@ -0,0 +1,1896 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use crate::terminal_palette::StdoutColorLevel;
@@ -176293,6 +176678,16 @@ index 0000000000000000000000000000000000000000..ecb0291a9197f664332f5f3d96827a5f
 +    }
 +}
 +
++pub(crate) fn height(session: &str, height: u16) -> u16 {
++    sessions()
++        .panes
++        .iter()
++        .find(|((_, name), _)| name == session)
++        .map_or(1, |(_, pane)| {
++            height.max(2) + u16::from(pane.exit.locked().is_some())
++        })
++}
++
 +pub(crate) fn rows(
 +    binding: Option<&Binding>,
 +    session: &str,
@@ -177018,7 +177413,7 @@ index 0000000000000000000000000000000000000000..ecb0291a9197f664332f5f3d96827a5f
 +        let dir = tempfile::tempdir().unwrap();
 +        let mut command = std::process::Command::new("/bin/sh");
 +        command
-+            .args(["-c", "printf 'hello pane'; sleep 5"])
++            .args(["-c", "printf 'hello pane あい'; sleep 5"])
 +            .current_dir(dir.path());
 +        let arguments = json!({"session": "t1"});
 +        start(
@@ -177038,12 +177433,19 @@ index 0000000000000000000000000000000000000000..ecb0291a9197f664332f5f3d96827a5f
 +                .iter()
 +                .map(|(line, _)| line.to_string())
 +                .collect();
-+            if text.contains("hello pane") {
++            if text.contains("hello pane あい") {
 +                break;
 +            }
 +            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 +        }
-+        assert!(text.contains("hello pane"));
++        assert!(text.contains("hello pane あい"), "{text}");
++        let drawn = rows(Some(&a), "t1", "c", 40, 4, "", false);
++        assert!(
++            drawn
++                .iter()
++                .all(|(line, _)| line.to_string().width() == 40),
++            "{drawn:?}"
++        );
 +        assert!(call(&other, &json!({"session": "t1", "action": "read"})).is_err());
 +        assert!(
 +            rows(Some(&other), "t1", "c", 40, 4, "", false)
@@ -184710,10 +185112,10 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3a93eab32
+index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba64b1d70a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5939 @@
+@@ -0,0 +1,5962 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -186497,13 +186899,24 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +                }
 +            }
 +            ModComponent::Line { .. } => 1,
-+            ModComponent::Text { text, .. } | ModComponent::Markdown { text, .. } => {
-+                u16::try_from(text.lines().count().max(1)).unwrap_or(u16::MAX)
++            ModComponent::Text { text, .. } => {
++                u16::try_from(text.lines().count()).unwrap_or(u16::MAX)
 +            }
-+            ModComponent::Code { text, start, .. } => {
-+                u16::try_from(text.lines().count().saturating_sub(*start).max(1))
-+                    .unwrap_or(u16::MAX)
++            ModComponent::Markdown { text, .. } => {
++                u16::try_from(markdown_lines(text, width).len()).unwrap_or(u16::MAX)
 +            }
++            ModComponent::Code {
++                text,
++                language,
++                start,
++                ..
++            } => u16::try_from(
++                usize::from(language.is_some())
++                    + code_lines(text, language.as_deref().unwrap_or_default())
++                        .len()
++                        .saturating_sub(*start),
++            )
++            .unwrap_or(u16::MAX),
 +            ModComponent::Button { .. }
 +            | ModComponent::Input { .. }
 +            | ModComponent::Select { .. } => 1,
@@ -186515,10 +186928,14 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +                    .unwrap_or(u16::MAX)
 +            }
 +            ModComponent::Document {
-+                id, lines, height, ..
++                id,
++                lines,
++                source,
++                height,
++                ..
 +            } => u16::try_from(crate::mod_components::height(
 +                id,
-+                lines.len().max(12),
++                source.is_none().then_some(lines.len()),
 +                *height,
 +            ))
 +            .unwrap_or(u16::MAX),
@@ -186529,16 +186946,19 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +                ..
 +            } => u16::try_from(crate::mod_components::height(
 +                id,
-+                unified.lines().count(),
++                Some(unified.lines().count()),
 +                *height,
 +            ))
 +            .unwrap_or(u16::MAX),
++            ModComponent::Image { .. } if crate::mod_components::image_as_text(width) => 1,
 +            ModComponent::Image { height, .. } => height.unwrap_or(12),
 +            ModComponent::Raster { height, .. } => height.unwrap_or(RASTER_HEIGHT),
 +            ModComponent::Module { id, height, .. } => {
 +                height.unwrap_or_else(|| crate::mod_module::height(id))
 +            }
-+            ModComponent::Terminal { height, .. } => height.unwrap_or(16) + 1,
++            ModComponent::Terminal {
++                session, height, ..
++            } => crate::mod_pty::height(session, height.unwrap_or(16)),
 +            ModComponent::Slot | ModComponent::Native { .. } => 0,
 +        })
 +        .sum()
@@ -189329,6 +189749,11 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +    true
 +}
 +
++#[cfg(test)]
++pub(crate) fn focus_order() -> Vec<String> {
++    INTERACTION.locked().order.clone()
++}
++
 +pub(crate) fn captures_keys() -> bool {
 +    let interaction = INTERACTION
 +        .lock()
@@ -190906,10 +191331,10 @@ index 0000000000000000000000000000000000000000..9f178f292257e36d63b98bfe1e5d0c40
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bcb41e6409d090bc4a0792b228ff209a23805dc6
+index 0000000000000000000000000000000000000000..1471591552362d0308bc7bc01e29ee0dd95c52c0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2789 @@
+@@ -0,0 +1,2826 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -193155,6 +193580,43 @@ index 0000000000000000000000000000000000000000..bcb41e6409d090bc4a0792b228ff209a
 +    assert!(top.contains("╔ Settings ═"), "{top}");
 +    let buttons = row(dialog.y + 1);
 +    assert!(buttons.contains("║ [ OK ] [ Cancel ]   "), "{buttons}");
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn dialogs_size_wrapped_markdown_and_labelled_code_so_their_buttons_stay_inside() {
++    let snapshot = snapshot(serde_json::json!({"sites": {"dialog": {"components": [
++        {"type": "dialog", "id": "confirm", "label": "Confirm", "title": "Confirm", "children": [
++            {"type": "markdown", "id": "body", "label": "Body", "text": "word ".repeat(60)},
++            {"type": "code", "id": "sample", "label": "Sample", "text": "let a = 1;", "language": "rust"},
++            {"type": "text", "id": "empty", "label": "Empty", "text": ""},
++            {"type": "document", "id": "short_document", "label": "Notes", "lines": [[{"text": "a"}], [{"text": "b"}]]},
++            {"type": "terminal", "id": "idle_terminal", "label": "Shell", "session": "idle"},
++            {"type": "button", "id": "ok", "label": "OK", "text": "OK", "action": {"command": "m:ok"}}]}]}}}));
++    preview(snapshot.clone());
++    let [ModComponent::Dialog { children, .. }] = snapshot.view.sites["dialog"].components.as_slice()
++    else {
++        panic!("dialog");
++    };
++    let width = Frame::card(None, look(), false, false).inner(50);
++    for child in children {
++        let child = std::slice::from_ref(child);
++        assert_eq!(
++            usize::from(component_height(child, width, look())),
++            component_rows(child, width, &mut Interaction::default(), look()).len(),
++            "{child:?}"
++        );
++    }
++    let area = Rect::new(0, 0, 54, 30);
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &snapshot);
++    let interaction = INTERACTION.lock().unwrap();
++    let dialog = interaction.dialog_area.unwrap();
++    assert_eq!(dialog.width, 50);
++    let ok = interaction.hitboxes.iter().find(|hitbox| hitbox.id == "ok").unwrap().area;
++    assert_eq!(ok.bottom() + 1, dialog.bottom(), "{ok:?} {dialog:?}");
++    drop(interaction);
 +    preview(ModViewSnapshot::default());
 +}
 +

@@ -704,6 +704,7 @@ pub(super) fn evaluate_warm<R>(
     cache_root: Option<&CacheRoot>,
     budget: Duration,
     active: &dyn Fn() -> bool,
+    reusable: &dyn Fn(&Value) -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
 ) -> Result<Value>
 where
@@ -723,6 +724,7 @@ where
                 "state",
                 "ui_state",
                 "virtual_time_ms",
+                "registrations_sha256",
             ]
             .map(|field| (field, &request[field]))
             .into_iter()
@@ -829,7 +831,11 @@ where
             return Err(memory_failure());
         }
         Ok(Some(value)) if value.get("error").is_none() => {
-            pool(warm);
+            if reusable(&value) {
+                pool(warm);
+            } else {
+                warm.stop();
+            }
             return Ok(value);
         }
         Ok(Some(value)) => Some(failure(

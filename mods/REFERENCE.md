@@ -343,7 +343,8 @@ These failures don't count:
 
 - errors starting `state_conflict`, `state_thread_unavailable`, `state_checkout_unavailable`, `callback_cancelled`,
   `host_receipt_limit`, `host_result_limit`, `host_call_limit` or `callback_execution_budget`;
-- failures of `service` and `component` events.
+- failures of `service` and `component` events;
+- an interceptor that throws the error its `next` rejected with, such as a tool result the host could not hand back.
 
 The count is kept in process memory and is not persisted, so each `omd-mod command` starts at 0 and `omd-mod status`
 shows `faults: 0` afterwards.
@@ -8607,10 +8608,9 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
   `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with
   `client_surface_operation_unavailable`.
 - `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them.
-- When a mod's source changes after trust, its last trusted code keeps running. The mod reports
-  `source_changed: ...`, and `reload_error` is `untrusted_source: ...`. The new source loads after `omd-mod trust`
-  and a reload. Administered content that no longer matches its pin reports `managed_content_stale: ...` instead and
-  loads after `omd-mod package-sync`.
+- When a mod's source changes after trust, its last trusted code keeps running. The mod and `reload_error` both
+  report `source_changed: ...`. The new source loads after `omd-mod trust` and a reload. Administered content that
+  no longer matches its pin reports `managed_content_stale: ...` instead and loads after `omd-mod package-sync`.
 
 ### Host notifications and server requests
 

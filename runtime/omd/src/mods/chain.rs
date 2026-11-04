@@ -1546,7 +1546,7 @@ impl ModHost {
                         "sha256": loaded.selection.sha256, "source": loaded.selection.path,
                         "scope": loaded.selection.scope, "capabilities": package.capabilities,
                         "dependencies": package.dependencies, "requires": package.requires,
-                        "services": package.services, "registrations": loaded.registrations,
+                        "services": package.services, "registrations": *loaded.registrations,
                         "source_use": loaded.source_use}, "reason": "load"});
                     let chain = intercept(
                         &mut Access::Held(self),
@@ -1629,9 +1629,9 @@ impl ModHost {
             if let Some(loaded) = self.loaded.remove(&id) {
                 self.order.retain(|item| *item != id);
                 self.rejected.push(ModRejection {
-                    path: loaded.selection.path,
+                    path: loaded.selection.path.clone(),
                     id: Some(id),
-                    scope: loaded.selection.scope,
+                    scope: loaded.selection.scope.clone(),
                     reason,
                 });
             }
