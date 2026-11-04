@@ -272,6 +272,9 @@ user contexts. A user context can call only:
 - `turns.activity`
 - `events.publish`
 
+Slash command callbacks can also call `process.status` and `process.exchange` on their own existing managed
+processes. Starting, finding or stopping a process still requires a session callback.
+
 A service call from a user context works only when its provider needs no other host operation.
 
 Component input callbacks also run in the terminal, but not as user actions. They can't call `terminal.selection`,
@@ -280,7 +283,7 @@ Component input callbacks also run in the terminal, but not as user actions. The
 `settings.write`.
 
 To run any other operation (`task.*`, `contract.*`, other `routes.*`, `evidence.*`,
-`workspace.snapshot/fingerprint`, `process.*`, `agents.*`), publish an event with `events.publish` and do the work in
+`workspace.snapshot/fingerprint`, other `process.*`, `agents.*`), publish an event with `events.publish` and do the work in
 the mod's own `channel` handler, which runs with the session.
 
 ### Runtime waits and hook skips
@@ -727,6 +730,13 @@ These changes ship in OMD 1.3.0.
   `/dev/tty` (git credentials, ssh passphrases, `sudo`) fails instead of drawing over the TUI and waiting. Pass input
   through `stdin` or the program's non-interactive flags. Runs with `sandbox: "none"` also receive `SSH_AUTH_SOCK`, so
   programs under an `os` grant can sign in through the user's SSH agent.
+### Package trust digest framing
+
+Package digests now prefix each manifest, path and file-content record with its eight-byte big-endian length.
+Existing trust digests change: inspect and re-trust folder mods, and reinstall curated packages from the new release.
+Do not copy old grants to a new digest. Same-ID mods share storage and owned credential authority; project scope takes precedence.
+Package previews report `identity_warning` when the ID is installed in another scope.
+
 
 ## Authoring
 

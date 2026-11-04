@@ -1,10 +1,10 @@
 import type { FinalRequestEdit, FinalRequestPage, FinalRequestSegment, Json, ModAPI } from '../../api.d.ts';
 
-type Exemptions = { fingerprints: string[]; domains: string[]; paths: PathPattern[]; ignored: number };
+type Exemptions = { domains: string[]; paths: PathPattern[]; ignored: number };
 type Context = { exempt: Exemptions; before: number; leftOpen: boolean; rightOpen: boolean };
 type Rule = (text: string, context: Context) => [number, number][];
 type Check = (value: string, groups: Record<string, string | undefined>, exempt: Exemptions) => boolean;
-type Saved = { salt?: string; ids?: Record<string, string>; counts?: Record<string, number>; denied?: number; last?: string };
+type Saved = { counts?: Record<string, number>; denied?: number; last?: string };
 
 const PLACEHOLDER = /\[REDACTED:[a-z0-9_]+:[a-z2-7]{12,52}\]/g;
 const PLAIN = /example|placeholder|changeme|dummy|redacted|your[_-]|xxxx|\*\*\*/i;
@@ -16,7 +16,6 @@ const JWT = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za
 const JWT_OPEN_RIGHT = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*){0,2}$/;
 const JWT_OPEN_LEFT = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){1,2}(?![A-Za-z0-9_.-])/;
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
-const MAX_IDS = 1000;
 
 const varied = (value: string, distinct = 8) => new Set(value).size >= distinct && !PLAIN.test(value);
 const mixed = (value: string) => /\d/.test(value) && /[A-Za-z]/.test(value) && varied(value);
@@ -155,12 +154,11 @@ const strings = (value: Json | undefined) => Array.isArray(value) ? value.filter
 function configure(settings: Readonly<Record<string, Json>>) {
   const secrets = strings(settings.secrets);
   const pii = strings(settings.pii);
-  const exempt: Exemptions = { fingerprints: [], domains: [], paths: [], ignored: 0 };
+  const exempt: Exemptions = { domains: [], paths: [], ignored: 0 };
   for (const entry of strings(settings.exempt)) {
     const at = entry.indexOf(':');
     const [kind, value] = [entry.slice(0, at), entry.slice(at + 1).trim()];
-    if (kind === 'sha256' && /^[0-9a-f]{16,64}$/.test(value)) exempt.fingerprints.push(value);
-    else if (kind === 'domain' && value) exempt.domains.push(value.toLowerCase());
+    if (kind === 'domain' && value) exempt.domains.push(value.toLowerCase());
     else if (kind === 'path' && value) exempt.paths.push(pathPattern(value));
     else exempt.ignored++;
   }
@@ -175,12 +173,6 @@ function configure(settings: Readonly<Record<string, Json>>) {
 }
 
 const utf8 = new TextEncoder();
-const hex = (data: Uint8Array) => Array.from(data, item => item.toString(16).padStart(2, '0')).join('');
-
-async function sha256(value: string) {
-  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', utf8.encode(value))));
-}
-
 function base32(data: Uint8Array) {
   let out = '';
   let buffer = 0;
@@ -328,7 +320,9 @@ function pathHit(command: string, patterns: PathPattern[], exempt: PathPattern[]
 export default function activate(api: ModAPI) {
   const load = (): Saved => {
     const value = api.state.get();
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Saved : {};
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const { counts, denied, last } = value as Saved;
+    return { counts, denied, last };
   };
 
   api.intercept('model_send', { required: true }, async (page, next) => {
@@ -336,7 +330,7 @@ export default function activate(api: ModAPI) {
     const inner = await next(page);
     const config = configure(api.settings);
     const saved = load();
-    const before = JSON.stringify(saved);
+    const before = JSON.stringify(api.state.get() ?? {});
     const where = page.scope.kind;
     const refuse = (reason: string) => {
       saved.denied = (saved.denied ?? 0) + 1;
@@ -346,18 +340,11 @@ export default function activate(api: ModAPI) {
     };
     const unscanned = config.unscanned === 'deny' ? page.opaque.find(item => item.kind !== 'encrypted_content') : undefined;
     if (unscanned) return refuse(`unscanned ${unscanned.kind} content; set unscanned to allow to send it outside the guarantee`);
-    saved.salt ??= hex(crypto.getRandomValues(new Uint8Array(32)));
-    const key = await crypto.subtle.importKey('raw', Uint8Array.from(saved.salt.match(/../g)!, pair => parseInt(pair, 16)),
-      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    const thread = page.scope.thread_id ?? 'internal';
-    const ids = saved.ids ??= {};
-    const mint = async (rule: string, value: string, fingerprint: string) => {
-      const full = base32(new Uint8Array(await crypto.subtle.sign('HMAC', key, utf8.encode(`${thread}\0${rule}\0${value}`))));
-      let length = 12;
-      while (ids[full.slice(0, length)] && ids[full.slice(0, length)] !== fingerprint && length < full.length) length += 4;
-      const id = full.slice(0, length);
-      if (!ids[id]) ids[id] = fingerprint;
-      return id;
+    const ids = new Map<string, string>();
+    const mint = (rule: string, value: string) => {
+      const name = `${rule}\0${value}`;
+      if (!ids.has(name)) ids.set(name, base32(crypto.getRandomValues(new Uint8Array(8))).slice(0, 12));
+      return ids.get(name)!;
     };
     const pending: Pending[] = [];
     const counts: Record<string, number> = {};
@@ -393,10 +380,8 @@ export default function activate(api: ModAPI) {
         if (from < to) pieces.push([from, to]);
         if (!pieces.length) continue;
         const value = framed.slice(start, end);
-        const fingerprint = await sha256(value);
-        if (config.exempt.fingerprints.some(exempted => fingerprint.startsWith(exempted))) continue;
-        const id = await mint(rule, value, fingerprint.slice(0, 16));
-        if (!segment.editable) return refuse(`${rule} in ${segment.kind} text, which cannot be redacted (placeholder ${id}); review it and run /privacy allow ${id} if it is not sensitive`);
+        const id = mint(rule, value);
+        if (!segment.editable) return refuse(`${rule} in ${segment.kind} text, which cannot be redacted (placeholder ${id}); review the text before sending`);
         if (start >= head.length) counts[rule] = (counts[rule] ?? 0) + 1;
         pieces.forEach(([piece, until], index) => own.push({ segment: segment.id, start: piece, end: until,
           text: index === 0 && start >= head.length ? `[REDACTED:${rule}:${id}]` : '' }));
@@ -419,8 +404,6 @@ export default function activate(api: ModAPI) {
       for (const [rule, count] of Object.entries(counts)) saved.counts[rule] = (saved.counts[rule] ?? 0) + count;
       saved.last = `redacted ${redacted} (${where})`;
     }
-    const names = Object.keys(ids);
-    for (const name of names.slice(0, Math.max(0, names.length - MAX_IDS))) delete ids[name];
     if (JSON.stringify(saved) !== before) api.state.set(saved as Json);
     return { edits: [...inner.edits, ...edits], ...(inner.cache === false ? { cache: false as const } : {}) };
   });
@@ -438,23 +421,10 @@ export default function activate(api: ModAPI) {
     return config.paths === 'deny' ? { deny: reason } : { ask: reason };
   });
 
-  const allow = async (text: string) => {
-    const id = /^(?:\[REDACTED:[a-z0-9_]+:)?([a-z2-7]{12,52})\]?$/.exec(text)?.[1];
-    const known = id ? load().ids?.[id] : undefined;
-    if (id && !known && text !== id) return { display: `Unknown placeholder ${id}; pass the value itself to exempt it.` };
-    const entry = `sha256:${known ?? (await sha256(text)).slice(0, 16)}`;
-    const exempt = strings(api.settings.exempt);
-    if (exempt.includes(entry)) return { display: `Already exempt (${entry}).` };
-    const written = api.host.tryCall('settings.write', { values: { exempt: [...exempt, entry] } });
-    return { display: written.ok ? `Exempt (${entry}); later requests send that value unredacted.` : `Not saved (${written.error})` };
-  };
-
   api.command('privacy', value => {
     const text = String(value ?? '').trim();
     const verb = /^\S*/.exec(text)![0];
-    const rest = text.slice(verb.length).trim();
-    if (verb === 'allow' && rest) return allow(rest);
-    if (verb && verb !== 'status') return { display: 'Usage: /privacy [status] or /privacy allow PLACEHOLDER_ID|VALUE' };
+    if (verb && verb !== 'status') return { display: 'Usage: /privacy [status]' };
     const config = configure(api.settings);
     const saved = load();
     const counts = Object.entries(saved.counts ?? {}).map(([rule, count]) => `${rule} ${count}`).join(', ') || 'none';
@@ -467,10 +437,10 @@ export default function activate(api: ModAPI) {
       `Scopes: ${config.scopes.join(', ') || 'none'}`,
       `Sensitive paths: ${config.paths} (${config.sensitive.length} patterns)`,
       `Unscanned images, audio and files: ${config.unscanned}`,
-      `Exemptions: ${exempt.fingerprints.length} fingerprints, ${exempt.domains.length} domains, ${exempt.paths.length} paths${exempt.ignored ? `, ${exempt.ignored} invalid ignored` : ''}`,
+      `Exemptions: ${exempt.domains.length} domains, ${exempt.paths.length} paths${exempt.ignored ? `, ${exempt.ignored} invalid ignored` : ''}`,
       'Terminal display: unchanged; the screen, transcript, rollout and resume data keep the originals.',
       `Redacted: ${counts} · denied ${saved.denied ?? 0} · last: ${saved.last ?? 'none'}`,
-      `Placeholders: ${Object.keys(saved.ids ?? {}).length} known`,
+      'Placeholders: random IDs, never stored',
     ].join('\n') };
-  }, { description: 'Show privacy rules and counts, or exempt a reviewed placeholder or value', args_hint: '[status | allow PLACEHOLDER_ID|VALUE]' });
+  }, { description: 'Show privacy rules and counts', args_hint: '[status]' });
 }

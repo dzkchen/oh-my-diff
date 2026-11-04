@@ -11,6 +11,7 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 - Terminal panes: Allow and remember on a sandboxed start saves the approval for that workspace, mod, command and executable, so the same start doesn't ask again until its access or executable changes
 - /btw: `/btw` alone opens a side conversation panel that lists earlier exchanges and takes a follow-up question
 - Workspace: arrange panels with the keyboard alone (m, then Shift+arrows, T and = / -), F6 shows or hides the panels from the prompt, and number keys focus a panel whose tab is showing
+- Undo: the experimental omd_checkpoint snapshots your files around each turn, so `/undo` puts back what the agent changed in the last turn and `/redo` brings it back, with `/undo show` to preview it first; it never overwrites edits you made since without `/undo force`
 - Theme: an Aurora scene; the northern lights flare when a turn finishes, so you can tell from across the room that the agent is done
 
 ### Changed
@@ -20,12 +21,14 @@ A leaner OMD+ with untested mods and plugins moved to Experimental, remembered s
 
 ### Fixed
 
+- Mods, updates and preview: `/mods cancel` says whether it dropped a waiting change, the updates panel labels times as UTC and hides update settings on installs the OMD installer didn't make, and `/preview FILE --watch` frees the place of a watched file that was deleted
 - Usage: tool calls no longer rewrite the mod's whole saved state while the usage dialog is closed, and an agent event that changes nothing is skipped
 - Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list
 - Status line: usage limits refresh while idle, and an empty snapshot clears old limits
 - Theme: typing on a fresh thread no longer changes the scene's brightness, and the scene stays after the first prompt
 - Workspace: a panel that goes away no longer leaves its screen mode behind, a key set twice is reported instead of silently turning another off, and focusing Changes no longer reruns git status every time
 - Claude CLI: turning off extra usage in the mod's settings file now stops at extra usage too, instead of only the `/mods` setting counting
+- Frecency: outside a Git repository `@` completion runs `git status` at most every 30 seconds instead of on every keystroke, deleted changed files are no longer offered, slash or shell commands no longer count as file uses, and a mention counts only if its turn starts within 2 minutes
 - Advisor: automatic `failure` and `loop` consults cool down, once per call every 10 minutes and once every 2 minutes overall, so an agent retrying one failing command no longer pays for a second model on every other failure
 - Claude CLI: `/claude login` works when the mod was installed from the catalog, instead of failing with setup_must_run_from_installed_mod after sign-in
 
