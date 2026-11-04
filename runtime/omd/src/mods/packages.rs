@@ -349,6 +349,7 @@ pub(super) fn detached(
         source: source.into(),
         assets: Arc::new(store::asset_map(assets)),
         request_metadata: Arc::new(OnceLock::new()),
+        session_key: None,
         code_cache: None,
         selection,
         adapter: None,
