@@ -1,13 +1,16 @@
 [
   {
-    "version": "1.4.1",
-    "date": "2026-11-02",
-    "title": "Oh My Diff 1.4.1",
-    "summary": "A leaner OMD+ with untested mods and plugins moved to Experimental, remembered sandboxed terminal starts, and fixes for /btw, the files browser, the status line and themes.",
+    "version": "1.4.2",
+    "date": "2026-11-04",
+    "title": "Oh My Diff 1.4.2",
+    "summary": "Signed mod updates, account switching for new threads, keyboard panel arranging, turn undo and redo, and fixes for themes and overlapping turns.",
     "sections": [
       {
         "label": "New",
         "items": [
+          "Mod updates: fixes to first-party mods now arrive between releases as signed mod updates; `omd update`, `/update` and automatic updates apply them, and `omd update rollback` undoes them",
+          "Accounts: `/profile` chooses the account that `/new` uses without changing existing threads, and subscription setup discovers model defaults instead of asking for model names, context sizes or pricing",
+          "Uninstall: `omd uninstall --purge` also signs out OMD accounts and clears caches, keeping shared Codex data",
           "Terminal panes: Allow and remember on a sandboxed start saves the approval for that workspace, mod, command and executable, so the same start doesn't ask again until its access or executable changes",
           "/btw: `/btw` alone opens a side conversation panel that lists earlier exchanges and takes a follow-up question",
           "Workspace: arrange panels with the keyboard alone (m, then Shift+arrows, T and = / -), F6 shows or hides the panels from the prompt, and number keys focus a panel whose tab is showing",
@@ -18,13 +21,22 @@
       {
         "label": "Changed",
         "items": [
+          "Shell commands: adjacent agent shell commands collapse into one expandable summary with running and failure counts",
+          "Theme: switching themes no longer flashes, scene transitions are shorter, and prompts and menus stay opaque over the scene",
           "OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact and omd_preview move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default",
-          "Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace"
+          "Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace",
+          "Monitors: watch several sources together, check pull-request completion, and run the next action when a watch settles",
+          "Continue: cache-aware observation masking preserves recent context while reducing repeated tool output in a continued conversation",
+          "Mod authors: session activations, background jobs, timer payloads and assistant-message identities support work that continues across callbacks"
         ]
       },
       {
         "label": "Fixed",
         "items": [
+          "Accounts: threads keep their provider across account switches and resumes, and account setup works again; reconnecting and removing ChatGPT, Claude, Cursor and API accounts now work the same way",
+          "Theme: resizing the terminal keeps the theme background",
+          "Working indicator: stays visible until the active task finishes",
+          "Uninstall: a cleanup that fails partway can be retried",
           "Mods, updates and preview: `/mods cancel` says whether it dropped a waiting change, the updates panel labels times as UTC and hides update settings on installs the OMD installer didn't make, and `/preview FILE --watch` frees the place of a watched file that was deleted",
           "Usage: tool calls no longer rewrite the mod's whole saved state while the usage dialog is closed, and an agent event that changes nothing is skipped",
           "Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list",
@@ -34,7 +46,12 @@
           "Claude CLI: turning off extra usage in the mod's settings file now stops at extra usage too, instead of only the `/mods` setting counting",
           "Frecency: outside a Git repository `@` completion runs `git status` at most every 30 seconds instead of on every keystroke, deleted changed files are no longer offered, slash or shell commands no longer count as file uses, and a mention counts only if its turn starts within 2 minutes",
           "Advisor: automatic `failure` and `loop` consults cool down, once per call every 10 minutes and once every 2 minutes overall, so an agent retrying one failing command no longer pays for a second model on every other failure",
-          "Claude CLI: `/claude login` works when the mod was installed from the catalog, instead of failing with setup_must_run_from_installed_mod after sign-in"
+          "Claude CLI: `/claude login` works when the mod was installed from the catalog, instead of failing with setup_must_run_from_installed_mod after sign-in",
+          "Input: typing stays responsive when turns overlap, and delayed callbacks keep the session that owns them",
+          "Status line: child tools no longer trigger a diagnostic error in session timers",
+          "Continue: saved originals are checked before history processing, and masking progress stays isolated to its route",
+          "Installer: release verification and cleanup refuse unsafe inputs, and provider setup keeps credentials within its approved access",
+          "Mods: corrected caching, saved state and prompt sanitization in first-party mods"
         ]
       }
     ],
@@ -44,7 +61,37 @@
       "539d057",
       "c550c8d",
       "fbf8abc",
-      "b2bd672"
+      "b2bd672",
+      "b5d5a48",
+      "67406b4",
+      "4eee99e",
+      "52db97c",
+      "a0366af",
+      "318324f",
+      "1e3f11c",
+      "d038c11",
+      "a0d29b0",
+      "13b9f2c",
+      "8a3375d",
+      "8e98ba7",
+      "3847c64",
+      "2b5a130",
+      "06b09b2",
+      "e4e785d",
+      "6467657",
+      "c65bcec",
+      "7a107f1",
+      "66a18eb",
+      "4ab2417",
+      "f00fd1e",
+      "2c5a6a0",
+      "6bee785",
+      "7e4107b",
+      "b7cddfe",
+      "2296c44",
+      "65654f0",
+      "d377edf",
+      "29679fd"
     ]
   },
   {
