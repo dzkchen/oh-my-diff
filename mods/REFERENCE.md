@@ -4275,7 +4275,7 @@ experimental may change in any release
 | `component_event` | `{component, thread_id, kind, ...}` | nothing | `api.on` | frozen; experimental fields: `content`, `target`, `edge`, `columns`, `rows` | [Terminal input](reference/terminal-input.md#component_event) |
 | `component_post` | `{component, module, client?, data}` | nothing | `api.on` | frozen | [Terminal input](reference/terminal-input.md#component-module-handlers) |
 | `view` | `{phase, view, view_id, dropped?}` | nothing | `api.on` | experimental | [Terminal input](reference/terminal-input.md#component_event) |
-| `focus` | `{focused, dropped?}` | nothing | `api.on` | experimental | [Terminal input](reference/terminal-input.md#component_event) |
+| `focus` | `{focused, idle?, dropped?}` | nothing | `api.on` | experimental | [Terminal input](reference/terminal-input.md#component_event) |
 | `composer` | `{kind: 'change', ...}` or `{kind: 'suggestion', ...}` | nothing | `api.on` | frozen | [Commands and composer](reference/commands-and-composer.md#composer-event) |
 | `prompt_expanded` | `{turn_id, items}` | nothing | `api.on` | experimental | [Commands and composer](reference/commands-and-composer.md#submitted-drafts-and-prompt_expanded) |
 | `config_change` | `{key, original, effective, source, scope, caller}` | nothing | `api.on` | experimental | [Commands and composer](reference/commands-and-composer.md#configset) |
@@ -7221,7 +7221,14 @@ position, never a backlog. Views with no pointer components add no pointer work.
 
 `component_event` reports interaction with a mod's components and goes only to the component's owner. Two experimental
 events report native state: `view` (`{phase, view, view_id, dropped?}`) when a native bottom-pane view or overlay opens
-or closes, and `focus` (`{focused, dropped?}`) when the terminal window gains or loses focus.
+or closes, and `focus` (`{focused, idle?, dropped?}`) when the terminal window gains or loses focus or enters/leaves display idle.
+`idle: true` means five minutes without terminal input. Stop visual timers while `!focused || idle` and restart
+them on the next active event. `terminal` callbacks also carry `client.active` so a newly shown
+thread can recover without waiting for another window focus change. Active turns, tools and monitors continue; the TUI suppresses redraws, frees
+finished render caches and releases unused stateless runners and spare processes. Session runners and mounted
+component state remain resident. After a minute without runner use, all spare runners are released. Focus, keys, paste, mouse or resize resume drawing. Background detection needs
+a terminal that reports focus events. This reduces display work and disposable memory; it does not unload the
+conversation or freeze the session process.
 
 With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
 `view {phase: 'opened', view: 'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent.

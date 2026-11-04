@@ -34721,7 +34721,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d4aeacd88 100644
+index fbc109028f90d89d03a0467e11f6fafa9fc27c77..295b4267959d4bc3f5237f5763a265860c5ff7ea 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -34802,23 +34802,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
              if voice_toggle(self, *key)
                  && (!self.transcript_view.owns_interaction_key(*key)
                      || self.transcript_view.is_select_mode()))
-@@ -1112,6 +1146,7 @@ impl App {
-
-         match &event {
-             TuiEvent::FocusLost => {
-+                crate::mod_surface::focus(false);
-                 self.chat_widget
-                     .set_sparkle_terminal_focus(/*focused*/ false);
-                 let now = Instant::now();
-@@ -1124,6 +1159,7 @@ impl App {
-                 }
-             }
-             TuiEvent::FocusGained => {
-+                crate::mod_surface::focus(true);
-                 self.recap.note_focus_gained();
-             }
-             _ => {}
-@@ -1145,6 +1181,10 @@ impl App {
+@@ -1145,6 +1179,10 @@ impl App {
                      // [tui-textarea]: https://github.com/rhysd/tui-textarea/blob/4d18622eeac13b309e0ff6a55a46ac6706da68cf/src/textarea.rs#L782-L783
                      // [iTerm2]: https://github.com/gnachman/iTerm2/blob/5d0c0d9f68523cbd0494dad5422998964a2ecd8d/sources/iTermPasteHelper.m#L206-L216
                      let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
@@ -34829,7 +34813,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
                      if self.backtrack.primed && !pasted.is_empty() {
                          if self.backtrack.overlay_preview_active {
                              self.cancel_transcript_browsing(tui);
-@@ -1235,6 +1275,10 @@ impl App {
+@@ -1235,6 +1273,10 @@ impl App {
          }
          // Both transcript owners must consume completions before automatic work advances.
          if idle_draw {
@@ -34840,7 +34824,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
              tui.clipboard.advance(tui.frame_requester());
          }
          Ok(AppRunControl::Continue)
-@@ -1250,7 +1294,109 @@ impl App {
+@@ -1250,7 +1292,109 @@ impl App {
          Ok(())
      }
 
@@ -34950,7 +34934,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1269,33 +1415,56 @@ impl App {
+@@ -1269,33 +1413,56 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -35014,7 +34998,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
              Ok(rendered_area)
          })
      }
-@@ -1305,6 +1474,7 @@ impl App {
+@@ -1305,6 +1472,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -51096,7 +51080,7 @@ index 9be9775393e95eac214b666853f8d5bee1ab86d4..eec89200b62a81f27500f5fb992a839c
          },
      );
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 019f8204119e52b603f1f8ae405afb25f94305ca..e9f30c93e1457cfc2255eca27f5e25f315f1ab10 100644
+index 019f8204119e52b603f1f8ae405afb25f94305ca..587036ce3e0b216a45cfb084caf6184f0cd58213 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -129,6 +129,7 @@ fn should_emit_notification(condition: NotificationCondition, terminal_focused:
@@ -51155,6 +51139,15 @@ index 019f8204119e52b603f1f8ae405afb25f94305ca..e9f30c93e1457cfc2255eca27f5e25f3
      pub fn event_stream(&self) -> Pin<Box<dyn Stream<Item = TuiEvent> + Send + 'static>> {
          #[cfg(unix)]
          let stream = TuiEventStream::new(
+@@ -1091,7 +1114,7 @@ impl Tui {
+             self.draw_tx.subscribe(),
+             self.terminal_focused.clone(),
+         );
+-        Box::pin(stream)
++        Box::pin(stream.with_frames(self.frame_requester.clone()))
+     }
+
+     /// Enter alternate screen and expand the viewport to full terminal size, saving the current
 diff --git a/codex-rs/tui/src/tui/alternate_screen.rs b/codex-rs/tui/src/tui/alternate_screen.rs
 index 7c99c1c4513543afaf9fa387a8dd3e318ac7bf5c..36f9f57fe15a1a4208343addea79f3e72ad4b780 100644
 --- a/codex-rs/tui/src/tui/alternate_screen.rs
@@ -51180,10 +51173,56 @@ index 7c99c1c4513543afaf9fa387a8dd3e318ac7bf5c..36f9f57fe15a1a4208343addea79f3e7
              #[cfg(windows)]
              let result = {
 diff --git a/codex-rs/tui/src/tui/event_stream.rs b/codex-rs/tui/src/tui/event_stream.rs
-index 3ed439eec65824f9ff3f3fc5762c88848b295c9c..013a3de5bcd10ef1f83a2ba1708c77dfee67584a 100644
+index 3ed439eec65824f9ff3f3fc5762c88848b295c9c..531e7cd19e26857c3901e5c571edfe9d95359fc0 100644
 --- a/codex-rs/tui/src/tui/event_stream.rs
 +++ b/codex-rs/tui/src/tui/event_stream.rs
-@@ -312,7 +312,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+@@ -177,6 +177,7 @@ pub struct TuiEventStream<S: EventSource + Default + Unpin = CrosstermEventSourc
+     resume_stream: WatchStream<()>,
+     terminal_focused: Arc<AtomicBool>,
+     poll_draw_first: bool,
++    frames: Option<super::FrameRequester>,
+     #[cfg(unix)]
+     suspend_context: crate::tui::job_control::SuspendContext,
+     #[cfg(unix)]
+@@ -198,6 +199,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+             resume_stream,
+             terminal_focused,
+             poll_draw_first: false,
++            frames: None,
+             #[cfg(unix)]
+             suspend_context,
+             #[cfg(unix)]
+@@ -205,6 +207,11 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+         }
+     }
+
++    pub(super) fn with_frames(mut self, frames: super::FrameRequester) -> Self {
++        self.frames = Some(frames);
++        self
++    }
++
+     /// Poll the shared crossterm stream for the next mapped `TuiEvent`.
+     ///
+     /// This skips events we don't use and keeps polling until it yields
+@@ -276,6 +283,17 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+
+     /// Map a crossterm event to a [`TuiEvent`], preserving mouse coordinates and modifiers.
+     fn map_crossterm_event(&mut self, event: Event) -> Option<TuiEvent> {
++        if let Some(frames) = &self.frames
++            && (!matches!(event, Event::Resize(..))
++                || self.terminal_focused.load(Ordering::Relaxed))
++        {
++            frames.note_activity(!matches!(event, Event::FocusLost));
++        }
++        if matches!(event, Event::FocusLost | Event::FocusGained)
++            && let Some(monitor) = &self.broker.size_monitor
++        {
++            monitor.set_active(matches!(event, Event::FocusGained));
++        }
+         match event {
+             Event::Key(key_event) => {
+                 #[cfg(unix)]
+@@ -312,7 +330,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
                  self.terminal_focused.store(false, Ordering::Relaxed);
                  Some(TuiEvent::FocusLost)
              }
@@ -51192,19 +51231,196 @@ index 3ed439eec65824f9ff3f3fc5762c88848b295c9c..013a3de5bcd10ef1f83a2ba1708c77df
          }
      }
  }
+@@ -412,6 +430,30 @@ mod tests {
+         }
+     }
+
++    #[tokio::test(start_paused = true)]
++    async fn background_resize_does_not_wake_but_key_input_does() {
++        let (draw_tx, draw_rx) = broadcast::channel(16);
++        let frames = super::super::FrameRequester::new(draw_tx);
++        let mut stream = make_stream(
++            Arc::new(EventBroker::new()),
++            draw_rx,
++            Arc::new(AtomicBool::new(true)),
++        )
++        .with_frames(frames.clone());
++        stream.map_crossterm_event(Event::FocusLost);
++        tokio::task::yield_now().await;
++        assert!(!frames.is_awake());
++        stream.map_crossterm_event(Event::Resize(100, 40));
++        tokio::task::yield_now().await;
++        assert!(!frames.is_awake());
++        stream.map_crossterm_event(Event::Key(KeyEvent::new(
++            KeyCode::Char('a'),
++            KeyModifiers::NONE,
++        )));
++        tokio::task::yield_now().await;
++        assert!(frames.is_awake());
++    }
++
+     fn make_stream(
+         broker: Arc<EventBroker<FakeEventSource>>,
+         draw_rx: broadcast::Receiver<()>,
 diff --git a/codex-rs/tui/src/tui/frame_requester.rs b/codex-rs/tui/src/tui/frame_requester.rs
-index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..4575803b87e635bf2ce2987baab4ee92b2a133ef 100644
+index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..4e31d8026341ccfba3e77fc329b7a2e063306d06 100644
 --- a/codex-rs/tui/src/tui/frame_requester.rs
 +++ b/codex-rs/tui/src/tui/frame_requester.rs
-@@ -103,6 +103,7 @@ impl FrameScheduler {
+@@ -15,8 +15,13 @@
+ use std::time::Duration;
+ use std::time::Instant;
+
++use std::sync::Arc;
++use std::sync::atomic::{AtomicBool, Ordering};
+ use tokio::sync::broadcast;
+ use tokio::sync::mpsc;
++use tokio::sync::watch;
++
++const IDLE_AFTER: Duration = Duration::from_secs(300);
+
+ use super::frame_rate_limiter::FrameRateLimiter;
+
+@@ -30,6 +35,8 @@ use super::frame_rate_limiter::FrameRateLimiter;
+ #[derive(Clone, Debug)]
+ pub struct FrameRequester {
+     frame_schedule_tx: mpsc::UnboundedSender<Instant>,
++    activity: watch::Sender<bool>,
++    awake: Arc<AtomicBool>,
+ }
+
+ impl FrameRequester {
+@@ -38,21 +45,38 @@ impl FrameRequester {
+     /// The provided `draw_tx` is used to notify the TUI event loop of scheduled draws.
+     pub fn new(draw_tx: broadcast::Sender<()>) -> Self {
+         let (tx, rx) = mpsc::unbounded_channel();
+-        let scheduler = FrameScheduler::new(rx, draw_tx);
++        let (activity, activity_rx) = watch::channel(true);
++        let awake = Arc::new(AtomicBool::new(true));
++        let scheduler = FrameScheduler::new(rx, draw_tx, activity_rx, awake.clone());
+         tokio::spawn(scheduler.run());
+         Self {
+             frame_schedule_tx: tx,
++            activity,
++            awake,
+         }
+     }
+
++    pub(crate) fn note_activity(&self, focused: bool) {
++        self.awake.store(focused, Ordering::Release);
++        self.activity.send_replace(focused);
++    }
++
++    pub(crate) fn is_awake(&self) -> bool {
++        self.awake.load(Ordering::Acquire)
++    }
++
+     /// Schedule a frame draw as soon as possible.
+     pub fn schedule_frame(&self) {
+-        let _ = self.frame_schedule_tx.send(Instant::now());
++        if self.is_awake() {
++            let _ = self.frame_schedule_tx.send(Instant::now());
++        }
+     }
+
+     /// Schedule a frame draw to occur after the specified duration.
+     pub fn schedule_frame_in(&self, dur: Duration) {
+-        let _ = self.frame_schedule_tx.send(Instant::now() + dur);
++        if self.is_awake() {
++            let _ = self.frame_schedule_tx.send(Instant::now() + dur);
++        }
+     }
+ }
+
+@@ -63,6 +87,8 @@ impl FrameRequester {
+         let (tx, _rx) = mpsc::unbounded_channel();
+         FrameRequester {
+             frame_schedule_tx: tx,
++            activity: watch::channel(true).0,
++            awake: Arc::new(AtomicBool::new(true)),
+         }
+     }
+ }
+@@ -77,18 +103,37 @@ struct FrameScheduler {
+     receiver: mpsc::UnboundedReceiver<Instant>,
+     draw_tx: broadcast::Sender<()>,
+     rate_limiter: FrameRateLimiter,
++    activity: watch::Receiver<bool>,
++    awake: Arc<AtomicBool>,
+ }
+
+ impl FrameScheduler {
+     /// Create a new FrameScheduler with the provided receiver and draw notification sender.
+-    fn new(receiver: mpsc::UnboundedReceiver<Instant>, draw_tx: broadcast::Sender<()>) -> Self {
++    fn new(
++        receiver: mpsc::UnboundedReceiver<Instant>,
++        draw_tx: broadcast::Sender<()>,
++        activity: watch::Receiver<bool>,
++        awake: Arc<AtomicBool>,
++    ) -> Self {
+         Self {
+             receiver,
+             draw_tx,
+             rate_limiter: FrameRateLimiter::default(),
++            activity,
++            awake,
+         }
+     }
+
++    fn sleep(&self, sleeping: &mut bool, deadline: &mut Option<Instant>) {
++        self.awake.store(false, Ordering::Release);
++        *deadline = None;
++        if !*sleeping && crate::omd::is_active() {
++            crate::mod_render::forget();
++            tokio::task::spawn_blocking(codex_omd::release_disposable_runners);
++        }
++        *sleeping = true;
++    }
++
+     /// Run the scheduling loop, coalescing frame requests and notifying the TUI event loop.
+     ///
+     /// This method runs indefinitely until all senders are dropped. A single draw notification
+@@ -96,17 +141,40 @@ impl FrameScheduler {
+     async fn run(mut self) {
+         const ONE_YEAR: Duration = Duration::from_secs(60 * 60 * 24 * 365);
+         let mut next_deadline: Option<Instant> = None;
++        let mut idle_at = tokio::time::Instant::now() + IDLE_AFTER;
++        let mut sleeping = false;
+         loop {
+             let target = next_deadline.unwrap_or_else(|| Instant::now() + ONE_YEAR);
+             let deadline = tokio::time::sleep_until(target.into());
+             tokio::pin!(deadline);
 
              tokio::select! {
++                biased;
++                changed = self.activity.changed() => {
++                    if changed.is_err() { break; }
++                    let focused = *self.activity.borrow_and_update();
++                    if focused {
++                        if sleeping { crate::mod_surface::focus(true, false); }
++                        sleeping = false;
++                        self.awake.store(true, Ordering::Release);
++                        idle_at = tokio::time::Instant::now() + IDLE_AFTER;
++                        next_deadline = Some(Instant::now());
++                    } else {
++                        crate::mod_surface::focus(false, false);
++                        self.sleep(&mut sleeping, &mut next_deadline);
++                    }
++                }
++                _ = tokio::time::sleep_until(idle_at), if !sleeping => {
++                    crate::mod_surface::focus(true, true);
++                    self.sleep(&mut sleeping, &mut next_deadline);
++                }
                  draw_at = self.receiver.recv() => {
 +                    let _stage = codex_omd::frame_metrics::stage("schedule_request");
                      let Some(draw_at) = draw_at else {
                          // All senders dropped; exit the scheduler.
                          break
-@@ -116,7 +117,9 @@ impl FrameScheduler {
+                     };
++                    if sleeping { continue; }
+                     let draw_at = self.rate_limiter.clamp_deadline(draw_at);
+                     next_deadline = Some(next_deadline.map_or(draw_at, |cur| cur.min(draw_at)));
+
+@@ -116,7 +184,9 @@ impl FrameScheduler {
                      continue;
                  }
                  _ = &mut deadline => {
@@ -51214,6 +51430,67 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..4575803b87e635bf2ce2987baab4ee92
                          next_deadline = None;
                          self.rate_limiter.mark_emitted(Instant::now());
                          let _ = self.draw_tx.send(());
+@@ -140,6 +210,8 @@ mod tests {
+             (
+                 FrameRequester {
+                     frame_schedule_tx: tx,
++                    activity: watch::channel(true).0,
++                    awake: Arc::new(AtomicBool::new(true)),
+                 },
+                 rx,
+             )
+@@ -398,3 +470,51 @@ mod tests {
+         assert!(second.is_err(), "unexpected extra draw received");
+     }
+ }
++
++#[cfg(test)]
++mod inactivity_tests {
++    use super::*;
++
++    #[tokio::test(start_paused = true)]
++    async fn hidden_frames_are_suppressed_and_input_resumes() {
++        let (draw_tx, mut draws) = broadcast::channel(16);
++        let frames = FrameRequester::new(draw_tx);
++        frames.note_activity(false);
++        tokio::task::yield_now().await;
++        frames.schedule_frame();
++        frames.schedule_frame_in(Duration::from_millis(16));
++        tokio::time::advance(Duration::from_secs(1)).await;
++        assert!(!frames.is_awake());
++        assert!(draws.try_recv().is_err());
++        frames.note_activity(true);
++        tokio::task::yield_now().await;
++        tokio::time::advance(Duration::from_millis(20)).await;
++        assert!(frames.is_awake());
++        assert!(draws.try_recv().is_ok());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn animation_requests_do_not_prevent_idle_and_activity_rearms_it() {
++        let (draw_tx, mut draws) = broadcast::channel(16);
++        let frames = FrameRequester::new(draw_tx);
++        tokio::task::yield_now().await;
++        tokio::time::advance(IDLE_AFTER - Duration::from_secs(1)).await;
++        frames.note_activity(true);
++        tokio::task::yield_now().await;
++        tokio::time::advance(Duration::from_secs(2)).await;
++        assert!(frames.is_awake());
++        frames.schedule_frame_in(Duration::from_millis(16));
++        tokio::task::yield_now().await;
++        tokio::time::advance(IDLE_AFTER).await;
++        tokio::task::yield_now().await;
++        assert!(!frames.is_awake());
++        while draws.try_recv().is_ok() {}
++        frames.schedule_frame();
++        tokio::time::advance(Duration::from_secs(10)).await;
++        assert!(draws.try_recv().is_err());
++        frames.note_activity(true);
++        tokio::task::yield_now().await;
++        tokio::time::advance(Duration::from_millis(20)).await;
++        assert!(draws.try_recv().is_ok());
++    }
++}
 diff --git a/codex-rs/tui/src/tui/job_control.rs b/codex-rs/tui/src/tui/job_control.rs
 index 4c5a8e8331baa5109cbacfedf18d9deb7bc5ddfa..f5b0ce90eb3aeff1f30fb0acf09aeb8a3df786f9 100644
 --- a/codex-rs/tui/src/tui/job_control.rs
@@ -115667,10 +115944,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b3652968d83edbb
+index 0000000000000000000000000000000000000000..de9b0963c326d8bc426330cdda0164fc99812187
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,266 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -115935,6 +116212,8 @@ index 0000000000000000000000000000000000000000..b972fb54fa2cddb80aff9dc40b365296
 +pub mod plugin_component;
 +
 +mod session_policy;
++
++pub use mods::release_disposable_runners;
 diff --git a/codex-rs/omd/src/mod_limits.rs b/codex-rs/omd/src/mod_limits.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..203f1b2d4bf2c1f9a9f4601737ad6335d4e32c05
@@ -117582,10 +117861,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b7b6dd2a2df056913111292bad522650ecc0f505
+index 0000000000000000000000000000000000000000..3762672b295edc7974ab525655075e22d5e90b06
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7153 @@
+@@ -0,0 +1,7157 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -124738,6 +125017,10 @@ index 0000000000000000000000000000000000000000..b7b6dd2a2df056913111292bad522650
 +        "object" => "Record<string, Json>",
 +        _ => "Json",
 +    }
++}
++
++pub fn release_disposable_runners() {
++    process::release_disposable_runners();
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
@@ -133218,10 +133501,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c94912b98496f
+index 0000000000000000000000000000000000000000..76f77b39d1b39a8d2bc792cc8a915c319a16aee7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,1025 @@
+@@ -0,0 +1,1037 @@
 +use super::Result;
 +use super::code_cache::CacheRoot;
 +use super::code_cache::CodeCache;
@@ -133403,7 +133686,7 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +    });
 +}
 +
-+/// Trims the warm pool to one runner after five idle seconds and stops render runners unused for a minute.
++/// Trims spares after five idle seconds and releases all spares and unpinned stateless runners after a minute.
 +fn reap() {
 +    static REAPER: std::sync::Once = std::sync::Once::new();
 +    REAPER.call_once(|| {
@@ -133422,7 +133705,9 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +                    if spares.1.is_some_and(|last| last.elapsed() >= IDLE_AFTER)
 +                        && !spares.0.is_empty()
 +                    {
-+                        spares.0.split_off(1)
++                        let kept =
++                            usize::from(spares.1.is_some_and(|last| last.elapsed() < WARM_IDLE));
++                        spares.0.split_off(kept)
 +                    } else {
 +                        Vec::new()
 +                    }
@@ -133648,6 +133933,16 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +            (_, true) => memory_failure(),
 +            (errors, false) => error.unwrap_or_else(|| process_failure(&errors)),
 +        }
++    }
++}
++
++pub(crate) fn release_disposable_runners() {
++    for runner in retire_warm(|runner| !runner.session && runner.pinned.is_none()) {
++        runner.stop();
++    }
++    let spares = std::mem::take(&mut SPARES.lock().unwrap_or_else(PoisonError::into_inner).0);
++    for child in spares {
++        stop(child);
 +    }
 +}
 +
@@ -171236,10 +171531,10 @@ index 0000000000000000000000000000000000000000..e9b477a576c28bfaf1f484aa9fea5773
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f6865e6d7577a9ce4a4302bbbeeb0ca4445be4f5
+index 0000000000000000000000000000000000000000..60b260a56329819e042ca5dd0002b36082282ef6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,797 @@
+@@ -0,0 +1,798 @@
 +use crate::omd::LockExt;
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
@@ -171389,6 +171684,7 @@ index 0000000000000000000000000000000000000000..f6865e6d7577a9ce4a4302bbbeeb0ca4
 +    pub(crate) fn value(&self) -> Value {
 +        json!({
 +            "kind": "terminal",
++            "active": crate::mod_surface::display_active(),
 +            "graphics": self.graphics(),
 +            "pointer": if !self.pointer {
 +                "none"
@@ -181810,10 +182106,10 @@ index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..90b1bb7ba695a7ebf97b397d7e59c4bf46f8acb9
+index 0000000000000000000000000000000000000000..6ddd95ecbc981de021de99b6310dbf45fe6f8e1e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1216 @@
+@@ -0,0 +1,1223 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -182713,8 +183009,15 @@ index 0000000000000000000000000000000000000000..90b1bb7ba695a7ebf97b397d7e59c4bf
 +    batches
 +}
 +
-+pub(crate) fn focus(focused: bool) {
-+    terminal_event("focus", json!({"focused": focused}));
++static DISPLAY_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
++
++pub(crate) fn display_active() -> bool {
++    DISPLAY_ACTIVE.load(Ordering::Acquire)
++}
++
++pub(crate) fn focus(focused: bool, idle: bool) {
++    DISPLAY_ACTIVE.store(focused && !idle, Ordering::Release);
++    terminal_event("focus", json!({"focused": focused, "idle": idle}));
 +}
 +
 +pub(crate) fn view_state(depth: usize, view_id: Option<&'static str>, overlay: bool) {
