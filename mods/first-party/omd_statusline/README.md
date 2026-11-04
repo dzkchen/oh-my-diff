@@ -120,7 +120,8 @@ omd-mod settings "$STORE" "$STORE/sources/omd_statusline" '{"preset": "detailed"
   capabilities are `terminal`, `commands`, `builtins`, `store`, `events`, `lifecycle`, `model`, `middleware`, `threads`,
   `config`, `account`, `inventory`, `exec`, `credentials` and `http`, with `http` limited to `https://api.github.com`
   (see [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
-- Git, scripts and GitHub run on timers, so values can lag by a refresh interval.
+- Git, scripts and GitHub run on timers, so values can lag by a refresh interval. Main-thread tool results trigger
+  a Git refresh; child-agent tools are represented by the agent segment and do not schedule session timers.
 - Pull request and CI segments need a GitHub token and an `origin` remote on github.com.
 
 ## More

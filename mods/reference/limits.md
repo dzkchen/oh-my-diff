@@ -141,6 +141,7 @@ Each table covers one area, and the Owner column links the page with the exact r
 | Reactive subscriptions | 64 per mod; cascades stop after 8 rounds | [State and storage](state-and-storage.md#reactive-state-reactive_state_v1) |
 | Channel events | 256 events / 1 MiB per subscriber; 256 counters per publisher, 4,096 per process | [Events and lifecycle](events-and-lifecycle.md#eventspublish) |
 | Timer delay | 16 ms to 24 h (`timers_16ms_v1` below 1,000 ms) | [Events and lifecycle](events-and-lifecycle.md#timers-timers_v1) |
+| Timer `data` | 65,536 UTF-8 bytes of compact JSON (`timer_data_v1`) | [Events and lifecycle](events-and-lifecycle.md#timers-timers_v1) |
 
 ### Sessions, agents and contracts
 

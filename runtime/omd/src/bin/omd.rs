@@ -72,6 +72,18 @@ fn store_root(flag: Option<PathBuf>) -> io::Result<PathBuf> {
         .canonicalize()
 }
 
+fn shell_quote(text: &str) -> String {
+    if !text.is_empty()
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/._-+=:@".contains(&byte))
+    {
+        text.to_owned()
+    } else {
+        format!("'{}'", text.replace('\'', "'\\''"))
+    }
+}
+
 fn store(args: &[String]) -> io::Result<Value> {
     let usage = || {
         io::Error::other(
@@ -173,15 +185,21 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             _ => positional.push(argument.clone()),
         }
     }
-    let flags = root
-        .as_ref()
-        .map_or(String::new(), |root| format!(" --store {}", root.display()))
-        + &if scope == "user" {
+    let explicit_store = root.is_some();
+    let root = store_root(root)?;
+    let flags = |scope: &str| {
+        let store = if explicit_store {
+            format!(" --store {}", shell_quote(&root.display().to_string()))
+        } else {
+            String::new()
+        };
+        let scope = if scope == "user" {
             String::new()
         } else {
             format!(" --scope {scope}")
         };
-    let root = store_root(root)?;
+        store + &scope
+    };
     let store = codex_omd::ModStore::open(root.clone())?;
     let first = || positional.first().cloned().ok_or_else(usage);
     let done = |display: String| Ok(json!({"display": display}));
@@ -296,6 +314,7 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
         "unblock" => {
             let id = first()?;
             store.package_unblock(&id)?;
+            let flags = flags(&scope);
             done(format!(
                 "Unblocked {id}. It stays off until `omd mods enable {id}{flags}`."
             ))
@@ -333,23 +352,31 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             }
             package_controls::apply(&store, &preview.control)?;
             let id = &preview.control.id;
-            let enabled = package_controls::list(&store, None)?["packages"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|package| {
-                    package["id"] == id.as_str()
-                        && package["scope"] == scope.as_str()
-                        && package["enabled"] == true
-                });
+            let scope = preview.control.scope().unwrap_or(&scope);
+            let flags = flags(scope);
             done(match action {
                 "install" => format!(
                     "Installed {id} ({scope}). It is off: run `omd mods enable {id}{flags}` to turn it on."
                 ),
-                "update" if enabled => format!("Updated {id}."),
-                "update" => format!(
-                    "Updated {id}. It is off: run `omd mods enable {id}{flags}` to turn it on."
-                ),
+                "update" => {
+                    match package_controls::list(&store, None) {
+                        Ok(listed)
+                            if listed["packages"].as_array().into_iter().flatten().any(
+                                |package| {
+                                    package["id"] == id.as_str()
+                                        && package["scope"] == scope
+                                        && package["enabled"] == true
+                                },
+                            ) =>
+                        {
+                            format!("Updated {id}.")
+                        }
+                        Ok(_) => format!(
+                            "Updated {id}. It is off: run `omd mods enable {id}{flags}` to turn it on."
+                        ),
+                        Err(_) => format!("Updated {id}."),
+                    }
+                }
                 "remove" => format!("Removed {id}. Its cache, state and local sources are kept."),
                 "rollback" => format!("Rolled {id} back to its previous version."),
                 _ => format!("{id} is {}d.", action),
@@ -662,6 +689,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_quote_leaves_plain_paths_and_quotes_the_rest() {
+        assert_eq!(shell_quote("/Users/me/.omd/store"), "/Users/me/.omd/store");
+        assert_eq!(shell_quote("/Users/me/My Store"), "'/Users/me/My Store'");
+        assert_eq!(shell_quote("/tmp/it's"), "'/tmp/it'\\''s'");
+        assert_eq!(shell_quote(""), "''");
+    }
 
     #[test]
     fn store_recovery_exports_and_resets_one_mod_without_running_it() {

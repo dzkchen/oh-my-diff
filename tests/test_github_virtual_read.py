@@ -83,7 +83,8 @@ class GithubVirtualReadTests(unittest.TestCase):
             self.assertTrue(result["truncated"])
         with self.assertRaisesRegex(github.Unavailable, "parent_changed"):
             github.read({"uri": URI + "/comments"}, Fixture(rows=[], changed=True))
-        self.assertIn("revision", github.read({"uri": URI + "/comments"}, Fixture(rows=[], volatile=True)))
+        self.assertEqual(github.read({"uri": URI + "/comments"}, Fixture(rows=[], volatile=True))["revision"],
+                         github.read({"uri": URI + "/comments"}, Fixture(rows=[]))["revision"])
 
     def test_bounds_and_remote_identity_changes_fail_closed(self):
         for changes in [{"max_bytes": True}, {"max_bytes": 20000}, {"cursor": "../secret"}, {"expected_revision": "old"}, {"extra": "field"}]:

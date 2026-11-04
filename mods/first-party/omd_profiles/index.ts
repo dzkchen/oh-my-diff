@@ -495,6 +495,7 @@ export default function activate(api: ModAPI) {
 
   api.command('profile', value => {
     const [op = '', label = '', extra = '', url = ''] = String(value ?? '').trim().split(/\s+/);
+    if (['', 'panel', 'list', 'use', 'next'].includes(op)) refresh();
     const { accounts, current, pending, notice } = saved();
     const named = (name: string) => accounts.find(item => item.name === name);
     if (!op) return panel();

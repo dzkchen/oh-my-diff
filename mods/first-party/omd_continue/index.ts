@@ -16,7 +16,6 @@ function list(values: string[]): string {
 }
 
 function summary(turn: TurnActivity): string {
-  // Strip control characters, not just whitespace: tool names and file paths land in the submitted prompt, so a newline in either would inject lines into it.
   const clip = (text: string) => [...text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim()].slice(0, 120).join('');
   const detail = turn.error ? `${turn.error.category}: ${turn.error.message}` : turn.reason;
   const lines = [`- Last turn: ${turn.outcome}${detail ? ` (${clip(detail)})` : ''}`];
@@ -34,6 +33,7 @@ function summary(turn: TurnActivity): string {
 export default function activate(api: ModAPI) {
   api.command('continue', value => {
     const note = typeof value === 'string' ? value.trim() : '';
+    if (/^--compact(?:\s|$)/.test(note)) return { display: 'Enable omd_observation_mask with mode: continue to use /continue --compact.' };
     const activity = api.host.tryCall('turns.activity', { last: 1 });
     if (!activity.ok) return { display: `/continue is unavailable: ${activity.error}` };
     const turn = activity.value.turns[0];
