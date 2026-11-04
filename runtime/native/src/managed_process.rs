@@ -1044,34 +1044,28 @@ impl ManagedProcesses {
                             kill_group_if_alive(group, &reaped)
                         })
                     });
-                    let raster_input = raster
-                        .as_ref()
-                        .map(|_| input_sink(writer_sender.clone(), group, reaped.clone()));
-                    let mut binding =
-                        raster
-                            .as_ref()
-                            .zip(raster_input.as_ref())
-                            .map(|((key, keys, _), sink)| {
-                                let mut components =
-                                    vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
-                                components.extend(keys.iter().map(|keys| {
-                                    (keys.clone(), codex_omd::process_raster::Role::Keys)
-                                }));
-                                codex_omd::process_raster::Binding::prepare(
-                                    thread,
-                                    id,
-                                    components,
-                                    sink.clone(),
-                                )
-                            });
-                    if let Some(binding) = &mut binding {
+                    let mut binding = raster.as_ref().map(|(key, keys, _)| {
+                        let sink = input_sink(writer_sender.clone(), group, reaped.clone());
+                        let mut components =
+                            vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
+                        components.extend(
+                            keys.iter()
+                                .map(|keys| (keys.clone(), codex_omd::process_raster::Role::Keys)),
+                        );
+                        let binding = codex_omd::process_raster::Binding::prepare(
+                            thread,
+                            id,
+                            components,
+                            sink.clone(),
+                        );
+                        (binding, sink)
+                    });
+                    if let Some((binding, sink)) = &mut binding {
                         if input.pixels {
                             let initialized = binding
                                 .pixels(&scratch.join("pixels.raw"), Some(generation))
                                 .and_then(|message| {
-                                    raster_input
-                                        .as_ref()
-                                        .is_some_and(|input| input(message))
+                                    sink(message)
                                         .then_some(())
                                         .ok_or("process_pixels_init_failed".to_owned())
                                 });
@@ -1209,7 +1203,7 @@ impl ManagedProcesses {
                         scratch: scratch.clone(),
                         last_used: Instant::now(),
                         reaped,
-                        _raster: binding,
+                        _raster: binding.map(|(binding, _)| binding),
                     })
                 })();
                 match launched {

@@ -445,6 +445,68 @@ fn exec_output_pages_a_multibyte_artifact_without_splitting_characters() {
 }
 
 #[test]
+fn exec_output_page_rejects_bytes_changed_without_a_new_file_stamp() {
+    use std::os::fd::AsRawFd;
+    let _exec = exec_slot();
+    let (_temp, repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["exec"]);
+    let owner = caller(&capabilities, &[], Origin::Tool);
+    let output = host
+        .call(
+            &owner,
+            "exec.run",
+            json!({"program":"sh", "argv":["-c", "printf '%0100000d' 0"], "output_artifact":true}),
+        )
+        .unwrap();
+    let artifact = output["output_artifact"].clone();
+    let page = |cursor: usize| {
+        host.call(
+            &owner,
+            "exec.output_page",
+            json!({"artifact":artifact,"cursor":cursor,"max_bytes":4}),
+        )
+    };
+    assert_eq!(page(2).unwrap()["text"], "0000");
+    let path = data
+        .join("exec-output")
+        .join(codex_omd::host::repository_key(&repository))
+        .join("fixture")
+        .join("thread-1")
+        .join(owner.source_sha256)
+        .join(format!("{}.txt", artifact["sha256"].as_str().unwrap()));
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    let map = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            100_000,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            file.as_raw_fd(),
+            0,
+        )
+    };
+    assert_ne!(map, libc::MAP_FAILED);
+    unsafe { *map.cast::<u8>().add(2) = 0x80 };
+    let tampered = (page(2), page(0), page(70_000));
+    unsafe { libc::munmap(map, 100_000) };
+    assert_eq!(tampered.0.unwrap_err(), "exec_output_integrity_failed");
+    assert_eq!(tampered.1.unwrap_err(), "exec_output_integrity_failed");
+    assert_eq!(tampered.2.unwrap()["text"], "0000");
+}
+
+#[test]
 fn exec_output_quota_spans_every_thread_and_source_of_a_mod() {
     let _exec = exec_slot();
     let (_temp, _repository, data, authority) = setup();

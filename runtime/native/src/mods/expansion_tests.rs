@@ -3475,9 +3475,12 @@ async fn dynamic_tools_are_defined_invoked_and_removed_by_their_mod() {
         "tool",
         "search",
         json!({"q": "x"}),
-        || true,
-        |_, _| Err(std::io::Error::other("unexpected_host_call")),
-        |_| {},
+        codex_omd::ModInvokeOptions {
+            host: codex_omd::ModHostCallback::Scoped(&mut |_, _| {
+                Err(std::io::Error::other("unexpected_host_call"))
+            }),
+            ..codex_omd::ModInvokeOptions::default()
+        },
     )
     .unwrap();
     assert_eq!(value, json!({"called": "search", "arguments": {"q": "x"}}));

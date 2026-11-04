@@ -836,42 +836,95 @@ fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
     .then_some(path)
 }
 
-/// An exec output artifact's length, rehashed and revalidated only when its file stamp changes.
+const EXEC_ARTIFACT_BLOCK_BYTES: usize = 64 * 1024;
+
+struct VerifiedOutput {
+    stamp: crate::FileStamp,
+    len: usize,
+    blocks: Vec<[u8; 32]>,
+}
+
+static VERIFIED_OUTPUTS: LazyLock<Mutex<BTreeMap<PathBuf, Arc<VerifiedOutput>>>> =
+    LazyLock::new(Default::default);
+
+fn remember_output(path: &Path, stamp: crate::FileStamp, bytes: &[u8]) -> Arc<VerifiedOutput> {
+    let verified = Arc::new(VerifiedOutput {
+        stamp,
+        len: bytes.len(),
+        blocks: bytes
+            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
+            .map(|block| Sha256::digest(block).into())
+            .collect(),
+    });
+    let mut outputs = VERIFIED_OUTPUTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if outputs.len() >= 1024 {
+        outputs.clear();
+    }
+    outputs.insert(path.to_path_buf(), verified.clone());
+    verified
+}
+
+/// An exec output artifact's block hashes, rehashed in full only when its file stamp changes.
 fn verified_output(
     path: &Path,
     file: &mut fs::File,
     digest: &str,
-) -> Result<(usize, crate::FileStamp), String> {
-    static VERIFIED: LazyLock<Mutex<BTreeMap<PathBuf, crate::FileStamp>>> =
-        LazyLock::new(Default::default);
+) -> Result<Arc<VerifiedOutput>, String> {
     let metadata = file.metadata().map_err(|error| error.to_string())?;
-    let len = usize::try_from(metadata.len())
-        .ok()
-        .filter(|len| *len <= EXEC_ARTIFACT_BYTES)
-        .ok_or("exec_output_integrity_failed")?;
     let stamp = crate::file_stamp(&metadata);
-    if VERIFIED
+    if let Some(verified) = VERIFIED_OUTPUTS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .get(path)
-        == Some(&stamp)
+        .filter(|verified| verified.stamp == stamp)
     {
-        return Ok((len, stamp));
+        return Ok(verified.clone());
     }
-    let mut bytes = Vec::with_capacity(len);
+    let mut bytes = Vec::new();
     Read::by_ref(file)
         .take((EXEC_ARTIFACT_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
-    if bytes.len() != len || sha256(&bytes) != digest || std::str::from_utf8(&bytes).is_err() {
+    if bytes.len() > EXEC_ARTIFACT_BYTES
+        || sha256(&bytes) != digest
+        || std::str::from_utf8(&bytes).is_err()
+    {
         return Err("exec_output_integrity_failed".into());
     }
-    let mut verified = VERIFIED.lock().unwrap_or_else(PoisonError::into_inner);
-    if verified.len() >= 1024 {
-        verified.clear();
+    Ok(remember_output(path, stamp, &bytes))
+}
+
+fn verified_page(
+    file: &mut fs::File,
+    verified: &VerifiedOutput,
+    cursor: usize,
+    max: usize,
+) -> Result<Vec<u8>, String> {
+    let end = (cursor + max + 3).min(verified.len);
+    let first = cursor / EXEC_ARTIFACT_BLOCK_BYTES;
+    let start = first * EXEC_ARTIFACT_BLOCK_BYTES;
+    let span = (end.div_ceil(EXEC_ARTIFACT_BLOCK_BYTES) * EXEC_ARTIFACT_BLOCK_BYTES)
+        .min(verified.len)
+        .saturating_sub(start);
+    file.seek(SeekFrom::Start(start as u64))
+        .map_err(|error| error.to_string())?;
+    let mut window = Vec::with_capacity(span);
+    Read::by_ref(file)
+        .take(span as u64)
+        .read_to_end(&mut window)
+        .map_err(|error| error.to_string())?;
+    if window.len() != span
+        || window
+            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
+            .zip(&verified.blocks[first..])
+            .any(|(block, hash)| Sha256::digest(block)[..] != hash[..])
+    {
+        return Err("exec_output_integrity_failed".into());
     }
-    verified.insert(path.to_path_buf(), stamp);
-    Ok((len, stamp))
+    window.truncate(end - start);
+    Ok(window.split_off(cursor - start))
 }
 
 /// A program's SHA-256, rehashed only when its file stamp changes.
@@ -1029,6 +1082,8 @@ impl Host<'_> {
             crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Ordered)
                 .map_err(|error| error.to_string())?;
         }
+        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+        remember_output(&path, crate::file_stamp(&metadata), bytes);
         Ok(json!({"reference": digest, "sha256": digest}))
     }
 
@@ -1057,10 +1112,11 @@ impl Host<'_> {
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
             .open(&path)
             .map_err(|_| "exec_output_unavailable")?;
-        let (len, stamp) = verified_output(&path, &mut file, digest)?;
+        let verified = verified_output(&path, &mut file, digest)?;
         if !(self.active)() {
             return Err("host_operation_cancelled".into());
         }
+        let len = verified.len;
         if input.cursor > len {
             return Err("exec_output_cursor_invalid".into());
         }
@@ -1068,13 +1124,7 @@ impl Host<'_> {
             .max_bytes
             .unwrap_or(EXEC_ARTIFACT_PAGE_BYTES)
             .clamp(1, EXEC_ARTIFACT_PAGE_BYTES);
-        file.seek(SeekFrom::Start(input.cursor as u64))
-            .map_err(|error| error.to_string())?;
-        let mut bytes = Vec::with_capacity(max + 3);
-        Read::by_ref(&mut file)
-            .take((max + 3) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
+        let bytes = verified_page(&mut file, &verified, input.cursor, max)?;
         let continuation = |byte: &u8| byte & 0xC0 == 0x80;
         if bytes.first().is_some_and(continuation) {
             return Err("exec_output_cursor_invalid".into());
@@ -1088,9 +1138,6 @@ impl Host<'_> {
                 .iter()
                 .take_while(|byte| continuation(byte))
                 .count();
-        }
-        if crate::file_stamp(&file.metadata().map_err(|error| error.to_string())?) != stamp {
-            return Err("exec_output_integrity_failed".into());
         }
         let text =
             std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;

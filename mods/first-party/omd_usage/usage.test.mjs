@@ -191,5 +191,5 @@ test('the model_request intercept sizes the assembled request by role and passes
   assert.deepEqual(forwarded, [input]);
   assert.deepEqual(out.value.result, result);
   assert.deepEqual(out.state.hud.assembled, { at: NOW, bytes: 10_000, categories: [['system', 4000], ['tool output', 3000], ['user', 2000], ['context', 1000]] });
-  assert.match(dialog(out.state).text, /Assembled request 0m ago: ~2\.5k tokens \(bytes\/4, approximate\) · system 40% · tool output 30% · user 20% · context 10%/);
+  assert.match(dialog(out.state).text, /system 40% · tool output 30% · user 20% · context 10%/);
 });

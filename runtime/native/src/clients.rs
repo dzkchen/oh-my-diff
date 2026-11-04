@@ -490,7 +490,7 @@ pub fn action(
         Origin::UserCommand,
         move |runtime, host, active| {
             let host = std::cell::RefCell::new(host);
-            let call = |caller: &str, request: ModHostCall| {
+            let mut call = |caller: &str, request: ModHostCall| {
                 let mut host = host.borrow_mut();
                 (*host)(caller, request)
             };
@@ -514,9 +514,11 @@ pub fn action(
                         "command",
                         &registration.name,
                         Value::String(args),
-                        active,
-                        call,
-                        |_| {},
+                        codex_omd::ModInvokeOptions {
+                            active,
+                            host: codex_omd::ModHostCallback::Scoped(&mut call),
+                            ..codex_omd::ModInvokeOptions::default()
+                        },
                     )
                     .map(|value| json!({"result": value}))
                 },

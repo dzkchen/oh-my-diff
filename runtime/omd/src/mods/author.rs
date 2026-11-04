@@ -156,75 +156,76 @@ impl OfflineHost {
         let intrinsic = !self.replies.contains_key(&call.operation)
             && (matches!(call.operation.as_str(), "events.schedule" | "events.cancel")
                 || call.operation == "environment.read" && self.environment.is_some());
-        let response = if intrinsic {
-            None
-        } else {
-            let replies = self.replies.entry(call.operation.clone()).or_default();
-            while replies.front().is_some_and(|reply| {
-                reply["optional"] == true
-                    && reply
-                        .get("arguments")
-                        .is_some_and(|expected| expected != &call.arguments)
-            }) {
-                replies.pop_front();
-            }
-            let Some(response) = replies.front() else {
-                let reason = format!(
-                    "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
-                    call.operation
-                );
-                self.violations.push(reason.clone());
-                return Err(failure(reason));
-            };
-            if response
-                .get("arguments")
-                .is_some_and(|expected| expected != &call.arguments)
-            {
-                let reason = format!(
-                    "offline_mock_arguments_mismatch: {}: expected {}, got {}",
-                    call.operation, response["arguments"], call.arguments
-                );
-                self.violations.push(reason.clone());
-                return Err(failure(reason));
-            }
-            replies.pop_front()
+        if intrinsic {
+            operation_validation::validate(&call.operation, "arguments", &call.arguments)
+                .map_err(failure)?;
+            return self.intrinsic(caller, &call);
+        }
+        let replies = self.replies.entry(call.operation.clone()).or_default();
+        while replies.front().is_some_and(|reply| {
+            reply["optional"] == true
+                && reply
+                    .get("arguments")
+                    .is_some_and(|expected| expected != &call.arguments)
+        }) {
+            replies.pop_front();
+        }
+        let Some(response) = replies.pop_front() else {
+            let reason = format!(
+                "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
+                call.operation
+            );
+            self.violations.push(reason.clone());
+            return Err(failure(reason));
         };
-        if !response
-            .as_ref()
-            .is_some_and(|reply| reply["unsafe"]["arguments"] == true)
+        if let Some(expected) = response.get("arguments")
+            && expected != &call.arguments
         {
+            let reason = format!(
+                "offline_mock_arguments_mismatch: {}: expected {expected}, got {}",
+                call.operation, call.arguments
+            );
+            replies.push_front(response);
+            self.violations.push(reason.clone());
+            return Err(failure(reason));
+        }
+        if response["unsafe"]["arguments"] != true {
             operation_validation::validate(&call.operation, "arguments", &call.arguments)
                 .map_err(failure)?;
         }
+        if let Some(error) = response.get("error").and_then(Value::as_str) {
+            return Err(failure(error));
+        }
+        Ok(response["result"].clone())
+    }
+
+    fn intrinsic(&mut self, caller: &str, call: &ModHostCall) -> Result<Value> {
         let key = call.arguments["key"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        if intrinsic
-            && call.operation == "environment.read"
-            && let Some(environment) = &self.environment
-        {
-            let names = call.arguments["names"]
-                .as_array()
-                .filter(|names| (1..=16).contains(&names.len()))
-                .ok_or_else(|| failure("environment_names_invalid"))?;
-            let values = names
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|name| {
-                    let value = environment.get(name);
-                    let entry = if crate::host::secret_like(name) {
-                        json!({"set": value.is_some()})
-                    } else {
-                        json!({"set": value.is_some(), "value": value})
-                    };
-                    (name.to_owned(), entry)
-                })
-                .collect::<serde_json::Map<_, _>>();
-            return Ok(json!({"values": values}));
-        }
-        match (intrinsic, call.operation.as_str()) {
-            (true, "events.schedule") => {
+        match (call.operation.as_str(), &self.environment) {
+            ("environment.read", Some(environment)) => {
+                let names = call.arguments["names"]
+                    .as_array()
+                    .filter(|names| (1..=16).contains(&names.len()))
+                    .ok_or_else(|| failure("environment_names_invalid"))?;
+                let values = names
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|name| {
+                        let value = environment.get(name);
+                        let entry = if crate::host::secret_like(name) {
+                            json!({"set": value.is_some()})
+                        } else {
+                            json!({"set": value.is_some(), "value": value})
+                        };
+                        (name.to_owned(), entry)
+                    })
+                    .collect::<serde_json::Map<_, _>>();
+                Ok(json!({"values": values}))
+            }
+            ("events.schedule", _) => {
                 let delay = call.arguments["delay_ms"]
                     .as_u64()
                     .filter(|delay| (16..=86_400_000).contains(delay))
@@ -237,27 +238,16 @@ impl OfflineHost {
                     (self.timer_thread(caller), caller.to_owned(), key.clone()),
                     (deadline, call.arguments.get("data").cloned()),
                 );
-                return Ok(json!({"key": key, "delay_ms": delay}));
+                Ok(json!({"key": key, "delay_ms": delay}))
             }
-            (true, "events.cancel") => {
+            _ => {
                 let cancelled = self
                     .timers
                     .remove(&(self.timer_thread(caller), caller.to_owned(), key))
                     .is_some();
-                return Ok(json!({"cancelled": cancelled}));
+                Ok(json!({"cancelled": cancelled}))
             }
-            _ => {}
         }
-        let response = response.ok_or_else(|| {
-            failure(format!(
-                "offline_unmocked_host_operation: {}",
-                call.operation
-            ))
-        })?;
-        if let Some(error) = response.get("error").and_then(Value::as_str) {
-            return Err(failure(error));
-        }
-        Ok(response["result"].clone())
     }
 }
 

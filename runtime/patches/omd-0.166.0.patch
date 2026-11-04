@@ -65408,10 +65408,10 @@ index 0000000000000000000000000000000000000000..d363197d17c556d29b00a79afb4df9b5
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d00215ef2460c447a0182c5d48fd1ca27009b62f
+index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e1553be618a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,905 @@
+@@ -0,0 +1,907 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -65904,7 +65904,7 @@ index 0000000000000000000000000000000000000000..d00215ef2460c447a0182c5d48fd1ca2
 +        Origin::UserCommand,
 +        move |runtime, host, active| {
 +            let host = std::cell::RefCell::new(host);
-+            let call = |caller: &str, request: ModHostCall| {
++            let mut call = |caller: &str, request: ModHostCall| {
 +                let mut host = host.borrow_mut();
 +                (*host)(caller, request)
 +            };
@@ -65928,9 +65928,11 @@ index 0000000000000000000000000000000000000000..d00215ef2460c447a0182c5d48fd1ca2
 +                        "command",
 +                        &registration.name,
 +                        Value::String(args),
-+                        active,
-+                        call,
-+                        |_| {},
++                        codex_omd::ModInvokeOptions {
++                            active,
++                            host: codex_omd::ModHostCallback::Scoped(&mut call),
++                            ..codex_omd::ModInvokeOptions::default()
++                        },
 +                    )
 +                    .map(|value| json!({"result": value}))
 +                },
@@ -70298,10 +70300,10 @@ index 0000000000000000000000000000000000000000..d1313228a08ad3760bc8697c9f676d29
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2ce49b9d64cc13662f90904e848df8f59ca13612
+index 0000000000000000000000000000000000000000..ee0c53188cbc0aaceb2e387cc123de369358a702
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2544 @@
+@@ -0,0 +1,2538 @@
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +#[cfg(target_os = "macos")]
@@ -71348,34 +71350,28 @@ index 0000000000000000000000000000000000000000..2ce49b9d64cc13662f90904e848df8f5
 +                            kill_group_if_alive(group, &reaped)
 +                        })
 +                    });
-+                    let raster_input = raster
-+                        .as_ref()
-+                        .map(|_| input_sink(writer_sender.clone(), group, reaped.clone()));
-+                    let mut binding =
-+                        raster
-+                            .as_ref()
-+                            .zip(raster_input.as_ref())
-+                            .map(|((key, keys, _), sink)| {
-+                                let mut components =
-+                                    vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
-+                                components.extend(keys.iter().map(|keys| {
-+                                    (keys.clone(), codex_omd::process_raster::Role::Keys)
-+                                }));
-+                                codex_omd::process_raster::Binding::prepare(
-+                                    thread,
-+                                    id,
-+                                    components,
-+                                    sink.clone(),
-+                                )
-+                            });
-+                    if let Some(binding) = &mut binding {
++                    let mut binding = raster.as_ref().map(|(key, keys, _)| {
++                        let sink = input_sink(writer_sender.clone(), group, reaped.clone());
++                        let mut components =
++                            vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
++                        components.extend(
++                            keys.iter()
++                                .map(|keys| (keys.clone(), codex_omd::process_raster::Role::Keys)),
++                        );
++                        let binding = codex_omd::process_raster::Binding::prepare(
++                            thread,
++                            id,
++                            components,
++                            sink.clone(),
++                        );
++                        (binding, sink)
++                    });
++                    if let Some((binding, sink)) = &mut binding {
 +                        if input.pixels {
 +                            let initialized = binding
 +                                .pixels(&scratch.join("pixels.raw"), Some(generation))
 +                                .and_then(|message| {
-+                                    raster_input
-+                                        .as_ref()
-+                                        .is_some_and(|input| input(message))
++                                    sink(message)
 +                                        .then_some(())
 +                                        .ok_or("process_pixels_init_failed".to_owned())
 +                                });
@@ -71513,7 +71509,7 @@ index 0000000000000000000000000000000000000000..2ce49b9d64cc13662f90904e848df8f5
 +                        scratch: scratch.clone(),
 +                        last_used: Instant::now(),
 +                        reaped,
-+                        _raster: binding,
++                        _raster: binding.map(|(binding, _)| binding),
 +                    })
 +                })();
 +                match launched {
@@ -73000,10 +72996,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..88b0f2c4709cf86395ef0d902dd101cdbbd0d1b5
+index 0000000000000000000000000000000000000000..0773f359cb4111383d0772ace6251e4054a4b8b8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2669 @@
+@@ -0,0 +1,2659 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -73340,7 +73336,7 @@ index 0000000000000000000000000000000000000000..88b0f2c4709cf86395ef0d902dd101cd
 +    private: BTreeMap<String, Value>,
 +    active: impl Fn() -> bool,
 +    authority: &str,
-+    host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
++    mut host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
 +) -> Vec<PromptFragment> {
 +    let mut fragments = Vec::new();
 +    let mut remaining_bytes = 6144;
@@ -73360,8 +73356,11 @@ index 0000000000000000000000000000000000000000..88b0f2c4709cf86395ef0d902dd101cd
 +            }
 +            value
 +        },
-+        active,
-+        host,
++        codex_omd::ModInvokeOptions {
++            active: &active,
++            host: codex_omd::ModHostCallback::Scoped(&mut host),
++            ..codex_omd::ModInvokeOptions::default()
++        },
 +    ) {
 +        match result {
 +            Ok(value) if event == "context" => {
@@ -73430,33 +73429,20 @@ index 0000000000000000000000000000000000000000..88b0f2c4709cf86395ef0d902dd101cd
 +) -> Result<Arc<Mods>, String> {
 +    let registration =
 +        codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-+    let runtime = ModHost::open(
-+        host.root.clone(),
-+        ModOpenOptions {
-+            tool_validator: validate_tool_schema,
-+            repository: Some(&host.repository),
-+            ..ModOpenOptions::default()
-+        },
-+    )
-+    .map_err(|e| e.to_string())?;
-+    let input_runtime = ModHost::open(
-+        host.root.clone(),
-+        ModOpenOptions {
-+            tool_validator: validate_tool_schema,
-+            repository: Some(&host.repository),
-+            ..ModOpenOptions::default()
-+        },
-+    )
-+    .map_err(|e| e.to_string())?;
-+    let persist_runtime = ModHost::open(
-+        host.root.clone(),
-+        ModOpenOptions {
-+            tool_validator: validate_tool_schema,
-+            repository: Some(&host.repository),
-+            ..ModOpenOptions::default()
-+        },
-+    )
-+    .map_err(|e| e.to_string())?;
++    let open = || {
++        ModHost::open(
++            host.root.clone(),
++            ModOpenOptions {
++                tool_validator: validate_tool_schema,
++                repository: Some(&host.repository),
++                ..ModOpenOptions::default()
++            },
++        )
++        .map_err(|e| e.to_string())
++    };
++    let runtime = open()?;
++    let input_runtime = open()?;
++    let persist_runtime = open()?;
 +    let persist_required = persist_runtime.required_surfaces();
 +    services::define_providers(&host.config, |id| runtime.grants(id).is_some());
 +    let _ = host.persist_json("mod-status.json", &runtime.status());
@@ -76493,10 +76479,10 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d81228114f16e02b288e26ab16f53d9b3d31ee79
+index 0000000000000000000000000000000000000000..1a6d628a8b74231310c917155ba286e148f473dc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2655 @@
+@@ -0,0 +1,2657 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -76982,28 +76968,30 @@ index 0000000000000000000000000000000000000000..d81228114f16e02b288e26ab16f53d9b
 +                "agent_end",
 +                "",
 +                payload,
-+                || lead.session.task.check_active().is_ok(),
-+                |caller, call| {
-+                    let (source, grants) = ownership.get(caller).cloned().unwrap_or_default();
-+                    handle
-+                        .block_on(operations::dispatch(
-+                            &core,
-+                            &lead,
-+                            operations::Caller {
-+                                id: caller,
-+                                source: &source,
-+                                grants,
-+                                generation,
-+                                origin: codex_omd::data_store::Origin::Event,
-+                                record_changes: true,
-+                            },
-+                            None,
-+                            call,
-+                            &cancelled,
-+                        ))
-+                        .map_err(std::io::Error::other)
++                codex_omd::ModInvokeOptions {
++                    active: &|| lead.session.task.check_active().is_ok(),
++                    host: codex_omd::ModHostCallback::Scoped(&mut |caller, call| {
++                        let (source, grants) = ownership.get(caller).cloned().unwrap_or_default();
++                        handle
++                            .block_on(operations::dispatch(
++                                &core,
++                                &lead,
++                                operations::Caller {
++                                    id: caller,
++                                    source: &source,
++                                    grants,
++                                    generation,
++                                    origin: codex_omd::data_store::Origin::Event,
++                                    record_changes: true,
++                                },
++                                None,
++                                call,
++                                &cancelled,
++                            ))
++                            .map_err(std::io::Error::other)
++                    }),
++                    ..codex_omd::ModInvokeOptions::default()
 +                },
-+                |_| {},
 +            ) {
 +                notifier.views.diagnostic(
 +                    &notifier.host,
@@ -80161,10 +80149,10 @@ index 0000000000000000000000000000000000000000..ef30cf59de5fc637ed390c6fbf63851c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f23c2898af16594c76bbd46d7ffd0929dda0eb83
+index 0000000000000000000000000000000000000000..c623b9dafa8c7e1a7e32176a9d4314b59808895d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,864 @@
+@@ -0,0 +1,866 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -80578,9 +80566,11 @@ index 0000000000000000000000000000000000000000..f23c2898af16594c76bbd46d7ffd0929
 +                event,
 +                "",
 +                payload,
-+                active,
-+                host,
-+                |_| {},
++                codex_omd::ModInvokeOptions {
++                    active,
++                    host: codex_omd::ModHostCallback::Scoped(host),
++                    ..codex_omd::ModInvokeOptions::default()
++                },
 +            )
 +            .map_err(|error| error.to_string());
 +            // The tool_result event that follows every tool_output republishes the view.
@@ -83204,10 +83194,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0b60615bc67b22f5736a61d570f5064b88c5e6d2
+index 0000000000000000000000000000000000000000..5b38c4f5b139ab202c9fd6eea50635615f2bd6fc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5536 @@
+@@ -0,0 +1,5539 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -86685,9 +86675,12 @@ index 0000000000000000000000000000000000000000..0b60615bc67b22f5736a61d570f5064b
 +        "tool",
 +        "search",
 +        json!({"q": "x"}),
-+        || true,
-+        |_, _| Err(std::io::Error::other("unexpected_host_call")),
-+        |_| {},
++        codex_omd::ModInvokeOptions {
++            host: codex_omd::ModHostCallback::Scoped(&mut |_, _| {
++                Err(std::io::Error::other("unexpected_host_call"))
++            }),
++            ..codex_omd::ModInvokeOptions::default()
++        },
 +    )
 +    .unwrap();
 +    assert_eq!(value, json!({"called": "search", "arguments": {"q": "x"}}));
@@ -93350,10 +93343,10 @@ index 0000000000000000000000000000000000000000..e1d55a318a5785d928c19be8e874d571
 +}
 diff --git a/codex-rs/ext/omd/src/mods/tools.rs b/codex-rs/ext/omd/src/mods/tools.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..88b18991e7021d169a8084ef7362a904f771d505
+index 0000000000000000000000000000000000000000..1cb904cf53bb35c303869e161a76c99355e66a0e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/tools.rs
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,235 @@
 +use super::*;
 +
 +struct Tool {
@@ -93511,18 +93504,33 @@ index 0000000000000000000000000000000000000000..88b18991e7021d169a8084ef7362a904
 +                let poisoned = || std::io::Error::other("mod runtime poisoned");
 +                let facts = facts(&*runtime.lock().map_err(|_| poisoned())?);
 +                let active = || !flag.load(Ordering::Acquire);
-+                let host =
++                let mut host =
 +                    |caller: &str, request| forward(&requests, &facts, caller, request, &active);
-+                let progress =
++                let mut progress =
 +                    |update: String| views.progress(&host_info, &progress_label, &update);
 +                if id.is_empty() {
-+                    return runtime
-+                        .lock()
-+                        .map_err(|_| poisoned())?
-+                        .invoke_tool(&id, generation, &name, payload, active, host, progress);
++                    return runtime.lock().map_err(|_| poisoned())?.invoke_tool(
++                        &id,
++                        generation,
++                        &name,
++                        payload,
++                        active,
++                        &mut host,
++                        &mut progress,
++                    );
 +                }
 +                codex_omd::invoke_shared(
-+                    &runtime, &id, generation, "tool", &name, payload, active, host, progress,
++                    &runtime,
++                    &id,
++                    generation,
++                    "tool",
++                    &name,
++                    payload,
++                    codex_omd::ModInvokeOptions {
++                        active: &active,
++                        host: codex_omd::ModHostCallback::Scoped(&mut host),
++                        progress: Some(&mut progress),
++                    },
 +                )
 +            });
 +            let mut ordinal = 0u32;
@@ -95859,10 +95867,10 @@ index 0000000000000000000000000000000000000000..16a4c21d4ec3d3210f875eb0d70b2322
 +workspace = true
 diff --git a/codex-rs/omd/README.md b/codex-rs/omd/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..b4c7967861495a8bd5623d303e85c784e32c8401
+index 0000000000000000000000000000000000000000..c7d1523246e0bb0cc45f3776896d471f50235233
 --- /dev/null
 +++ b/codex-rs/omd/README.md
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,25 @@
 +# codex-omd
 +
 +Feature-agnostic host primitives linked by the pinned Codex patch. The native extension in
@@ -95872,6 +95880,10 @@ index 0000000000000000000000000000000000000000..b4c7967861495a8bd5623d303e85c784
 +The crate covers the mod host and package manager, the host operations mods call (`exec.*`, `workspace.*`, data
 +stores, sessions, credentials, drafts and events), the task ledger and workflow contracts, and the terminal view model.
 +`src/lib.rs` lists the modules.
++
++`ModHost` has one entry point per operation: `open`, `invoke`, `event`, `refresh` and `turn_boundary`; `open` takes
++`ModOpenOptions` and `invoke` and `event` take `ModInvokeOptions`. The crate uses the workspace lints, so production
++code returns errors instead of unwrapping.
 +
 +Binaries in this crate:
 +
@@ -114047,10 +114059,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a7ec8bddc16fc2eed2459ad011b5678b846d1369
+index 0000000000000000000000000000000000000000..d3c57dfce549db6b791e1c61d19e21ef7d6e701c
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,2137 @@
+@@ -0,0 +1,2184 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -114889,42 +114901,95 @@ index 0000000000000000000000000000000000000000..a7ec8bddc16fc2eed2459ad011b5678b
 +    .then_some(path)
 +}
 +
-+/// An exec output artifact's length, rehashed and revalidated only when its file stamp changes.
++const EXEC_ARTIFACT_BLOCK_BYTES: usize = 64 * 1024;
++
++struct VerifiedOutput {
++    stamp: crate::FileStamp,
++    len: usize,
++    blocks: Vec<[u8; 32]>,
++}
++
++static VERIFIED_OUTPUTS: LazyLock<Mutex<BTreeMap<PathBuf, Arc<VerifiedOutput>>>> =
++    LazyLock::new(Default::default);
++
++fn remember_output(path: &Path, stamp: crate::FileStamp, bytes: &[u8]) -> Arc<VerifiedOutput> {
++    let verified = Arc::new(VerifiedOutput {
++        stamp,
++        len: bytes.len(),
++        blocks: bytes
++            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
++            .map(|block| Sha256::digest(block).into())
++            .collect(),
++    });
++    let mut outputs = VERIFIED_OUTPUTS
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner);
++    if outputs.len() >= 1024 {
++        outputs.clear();
++    }
++    outputs.insert(path.to_path_buf(), verified.clone());
++    verified
++}
++
++/// An exec output artifact's block hashes, rehashed in full only when its file stamp changes.
 +fn verified_output(
 +    path: &Path,
 +    file: &mut fs::File,
 +    digest: &str,
-+) -> Result<(usize, crate::FileStamp), String> {
-+    static VERIFIED: LazyLock<Mutex<BTreeMap<PathBuf, crate::FileStamp>>> =
-+        LazyLock::new(Default::default);
++) -> Result<Arc<VerifiedOutput>, String> {
 +    let metadata = file.metadata().map_err(|error| error.to_string())?;
-+    let len = usize::try_from(metadata.len())
-+        .ok()
-+        .filter(|len| *len <= EXEC_ARTIFACT_BYTES)
-+        .ok_or("exec_output_integrity_failed")?;
 +    let stamp = crate::file_stamp(&metadata);
-+    if VERIFIED
++    if let Some(verified) = VERIFIED_OUTPUTS
 +        .lock()
 +        .unwrap_or_else(PoisonError::into_inner)
 +        .get(path)
-+        == Some(&stamp)
++        .filter(|verified| verified.stamp == stamp)
 +    {
-+        return Ok((len, stamp));
++        return Ok(verified.clone());
 +    }
-+    let mut bytes = Vec::with_capacity(len);
++    let mut bytes = Vec::new();
 +    Read::by_ref(file)
 +        .take((EXEC_ARTIFACT_BYTES + 1) as u64)
 +        .read_to_end(&mut bytes)
 +        .map_err(|error| error.to_string())?;
-+    if bytes.len() != len || sha256(&bytes) != digest || std::str::from_utf8(&bytes).is_err() {
++    if bytes.len() > EXEC_ARTIFACT_BYTES
++        || sha256(&bytes) != digest
++        || std::str::from_utf8(&bytes).is_err()
++    {
 +        return Err("exec_output_integrity_failed".into());
 +    }
-+    let mut verified = VERIFIED.lock().unwrap_or_else(PoisonError::into_inner);
-+    if verified.len() >= 1024 {
-+        verified.clear();
++    Ok(remember_output(path, stamp, &bytes))
++}
++
++fn verified_page(
++    file: &mut fs::File,
++    verified: &VerifiedOutput,
++    cursor: usize,
++    max: usize,
++) -> Result<Vec<u8>, String> {
++    let end = (cursor + max + 3).min(verified.len);
++    let first = cursor / EXEC_ARTIFACT_BLOCK_BYTES;
++    let start = first * EXEC_ARTIFACT_BLOCK_BYTES;
++    let span = (end.div_ceil(EXEC_ARTIFACT_BLOCK_BYTES) * EXEC_ARTIFACT_BLOCK_BYTES)
++        .min(verified.len)
++        .saturating_sub(start);
++    file.seek(SeekFrom::Start(start as u64))
++        .map_err(|error| error.to_string())?;
++    let mut window = Vec::with_capacity(span);
++    Read::by_ref(file)
++        .take(span as u64)
++        .read_to_end(&mut window)
++        .map_err(|error| error.to_string())?;
++    if window.len() != span
++        || window
++            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
++            .zip(&verified.blocks[first..])
++            .any(|(block, hash)| Sha256::digest(block)[..] != hash[..])
++    {
++        return Err("exec_output_integrity_failed".into());
 +    }
-+    verified.insert(path.to_path_buf(), stamp);
-+    Ok((len, stamp))
++    window.truncate(end - start);
++    Ok(window.split_off(cursor - start))
 +}
 +
 +/// A program's SHA-256, rehashed only when its file stamp changes.
@@ -115082,6 +115147,8 @@ index 0000000000000000000000000000000000000000..a7ec8bddc16fc2eed2459ad011b5678b
 +            crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Ordered)
 +                .map_err(|error| error.to_string())?;
 +        }
++        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
++        remember_output(&path, crate::file_stamp(&metadata), bytes);
 +        Ok(json!({"reference": digest, "sha256": digest}))
 +    }
 +
@@ -115110,10 +115177,11 @@ index 0000000000000000000000000000000000000000..a7ec8bddc16fc2eed2459ad011b5678b
 +            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
 +            .open(&path)
 +            .map_err(|_| "exec_output_unavailable")?;
-+        let (len, stamp) = verified_output(&path, &mut file, digest)?;
++        let verified = verified_output(&path, &mut file, digest)?;
 +        if !(self.active)() {
 +            return Err("host_operation_cancelled".into());
 +        }
++        let len = verified.len;
 +        if input.cursor > len {
 +            return Err("exec_output_cursor_invalid".into());
 +        }
@@ -115121,13 +115189,7 @@ index 0000000000000000000000000000000000000000..a7ec8bddc16fc2eed2459ad011b5678b
 +            .max_bytes
 +            .unwrap_or(EXEC_ARTIFACT_PAGE_BYTES)
 +            .clamp(1, EXEC_ARTIFACT_PAGE_BYTES);
-+        file.seek(SeekFrom::Start(input.cursor as u64))
-+            .map_err(|error| error.to_string())?;
-+        let mut bytes = Vec::with_capacity(max + 3);
-+        Read::by_ref(&mut file)
-+            .take((max + 3) as u64)
-+            .read_to_end(&mut bytes)
-+            .map_err(|error| error.to_string())?;
++        let bytes = verified_page(&mut file, &verified, input.cursor, max)?;
 +        let continuation = |byte: &u8| byte & 0xC0 == 0x80;
 +        if bytes.first().is_some_and(continuation) {
 +            return Err("exec_output_cursor_invalid".into());
@@ -115141,9 +115203,6 @@ index 0000000000000000000000000000000000000000..a7ec8bddc16fc2eed2459ad011b5678b
 +                .iter()
 +                .take_while(|byte| continuation(byte))
 +                .count();
-+        }
-+        if crate::file_stamp(&file.metadata().map_err(|error| error.to_string())?) != stamp {
-+            return Err("exec_output_integrity_failed".into());
 +        }
 +        let text =
 +            std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
@@ -118195,10 +118254,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f8804f57160390382832501abc9424e63c781a57
+index 0000000000000000000000000000000000000000..6f969f56c4c88d1a05c97a94b30f7fc17fc84a98
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7075 @@
+@@ -0,0 +1,7085 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -121997,7 +122056,43 @@ index 0000000000000000000000000000000000000000..f8804f57160390382832501abc9424e6
 +    }
 +}
 +
-+#[allow(clippy::too_many_arguments)]
++fn invoke_with_options(
++    access: &mut Access<'_>,
++    id: &str,
++    generation: u64,
++    event: &str,
++    name: &str,
++    payload: Value,
++    options: ModInvokeOptions<'_>,
++) -> Result<Value> {
++    let ModInvokeOptions {
++        active,
++        mut host,
++        progress,
++    } = options;
++    let mut dispatch = |caller: &str, call: ModHostCall| match &mut host {
++        ModHostCallback::Scoped(host) => host(caller, call),
++        _ if caller != id => Err(failure("service_provider_host_dispatch_unavailable")),
++        ModHostCallback::Own(host) => host(call),
++        ModHostCallback::Unavailable => Err(failure(
++            "host_operation_unavailable: requires a native task",
++        )),
++    };
++    invoke(
++        access,
++        id,
++        generation,
++        event,
++        name,
++        payload,
++        active,
++        &mut dispatch,
++        progress.unwrap_or(&mut |_| {}),
++        &InvocationScope::default(),
++        None,
++    )
++}
++
 +pub fn invoke_shared(
 +    runtime: &Mutex<ModHost>,
 +    id: &str,
@@ -122005,22 +122100,16 @@ index 0000000000000000000000000000000000000000..f8804f57160390382832501abc9424e6
 +    event: &str,
 +    name: &str,
 +    payload: Value,
-+    active: impl Fn() -> bool,
-+    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-+    mut progress: impl FnMut(String),
++    options: ModInvokeOptions<'_>,
 +) -> Result<Value> {
-+    invoke(
++    invoke_with_options(
 +        &mut Access::Shared(runtime),
 +        id,
 +        generation,
 +        event,
 +        name,
 +        payload,
-+        &active,
-+        &mut host,
-+        &mut progress,
-+        &InvocationScope::default(),
-+        None,
++        options,
 +    )
 +}
 +
@@ -122028,8 +122117,7 @@ index 0000000000000000000000000000000000000000..f8804f57160390382832501abc9424e6
 +    runtime: &Mutex<ModHost>,
 +    event: &str,
 +    mut payload: impl FnMut(&str) -> Value,
-+    active: impl Fn() -> bool,
-+    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
++    mut options: ModInvokeOptions<'_>,
 +) -> Vec<(String, Result<Value>)> {
 +    let Ok((ids, generation)) = runtime
 +        .lock()
@@ -122046,9 +122134,7 @@ index 0000000000000000000000000000000000000000..f8804f57160390382832501abc9424e6
 +                event,
 +                "",
 +                payload(&id),
-+                &active,
-+                &mut host,
-+                |_| {},
++                options.reborrow(),
 +            );
 +            (id, result)
 +        })
@@ -123605,31 +123691,14 @@ index 0000000000000000000000000000000000000000..f8804f57160390382832501abc9424e6
 +        payload: Value,
 +        options: ModInvokeOptions<'_>,
 +    ) -> Result<Value> {
-+        let ModInvokeOptions {
-+            active,
-+            mut host,
-+            progress,
-+        } = options;
-+        let mut dispatch = |caller: &str, call: ModHostCall| match &mut host {
-+            ModHostCallback::Scoped(host) => host(caller, call),
-+            _ if caller != id => Err(failure("service_provider_host_dispatch_unavailable")),
-+            ModHostCallback::Own(host) => host(call),
-+            ModHostCallback::Unavailable => Err(failure(
-+                "host_operation_unavailable: requires a native task",
-+            )),
-+        };
-+        invoke(
++        invoke_with_options(
 +            &mut Access::Held(self),
 +            id,
 +            generation,
 +            event,
 +            name,
 +            payload,
-+            active,
-+            &mut dispatch,
-+            progress.unwrap_or(&mut |_| {}),
-+            &InvocationScope::default(),
-+            None,
++            options,
 +        )
 +    }
 +
@@ -125276,10 +125345,10 @@ index 0000000000000000000000000000000000000000..f8804f57160390382832501abc9424e6
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3617b5307798f69af71268ee2046453c148fffba
+index 0000000000000000000000000000000000000000..658a7b5f6fa1ea78cd60e9f6822b9310870ce523
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1142 @@
+@@ -0,0 +1,1132 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -125438,75 +125507,76 @@ index 0000000000000000000000000000000000000000..3617b5307798f69af71268ee2046453c
 +        let intrinsic = !self.replies.contains_key(&call.operation)
 +            && (matches!(call.operation.as_str(), "events.schedule" | "events.cancel")
 +                || call.operation == "environment.read" && self.environment.is_some());
-+        let response = if intrinsic {
-+            None
-+        } else {
-+            let replies = self.replies.entry(call.operation.clone()).or_default();
-+            while replies.front().is_some_and(|reply| {
-+                reply["optional"] == true
-+                    && reply
-+                        .get("arguments")
-+                        .is_some_and(|expected| expected != &call.arguments)
-+            }) {
-+                replies.pop_front();
-+            }
-+            let Some(response) = replies.front() else {
-+                let reason = format!(
-+                    "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
-+                    call.operation
-+                );
-+                self.violations.push(reason.clone());
-+                return Err(failure(reason));
-+            };
-+            if response
-+                .get("arguments")
-+                .is_some_and(|expected| expected != &call.arguments)
-+            {
-+                let reason = format!(
-+                    "offline_mock_arguments_mismatch: {}: expected {}, got {}",
-+                    call.operation, response["arguments"], call.arguments
-+                );
-+                self.violations.push(reason.clone());
-+                return Err(failure(reason));
-+            }
-+            replies.pop_front()
++        if intrinsic {
++            operation_validation::validate(&call.operation, "arguments", &call.arguments)
++                .map_err(failure)?;
++            return self.intrinsic(caller, &call);
++        }
++        let replies = self.replies.entry(call.operation.clone()).or_default();
++        while replies.front().is_some_and(|reply| {
++            reply["optional"] == true
++                && reply
++                    .get("arguments")
++                    .is_some_and(|expected| expected != &call.arguments)
++        }) {
++            replies.pop_front();
++        }
++        let Some(response) = replies.pop_front() else {
++            let reason = format!(
++                "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
++                call.operation
++            );
++            self.violations.push(reason.clone());
++            return Err(failure(reason));
 +        };
-+        if !response
-+            .as_ref()
-+            .is_some_and(|reply| reply["unsafe"]["arguments"] == true)
++        if let Some(expected) = response.get("arguments")
++            && expected != &call.arguments
 +        {
++            let reason = format!(
++                "offline_mock_arguments_mismatch: {}: expected {expected}, got {}",
++                call.operation, call.arguments
++            );
++            replies.push_front(response);
++            self.violations.push(reason.clone());
++            return Err(failure(reason));
++        }
++        if response["unsafe"]["arguments"] != true {
 +            operation_validation::validate(&call.operation, "arguments", &call.arguments)
 +                .map_err(failure)?;
 +        }
++        if let Some(error) = response.get("error").and_then(Value::as_str) {
++            return Err(failure(error));
++        }
++        Ok(response["result"].clone())
++    }
++
++    fn intrinsic(&mut self, caller: &str, call: &ModHostCall) -> Result<Value> {
 +        let key = call.arguments["key"]
 +            .as_str()
 +            .unwrap_or_default()
 +            .to_owned();
-+        if intrinsic
-+            && call.operation == "environment.read"
-+            && let Some(environment) = &self.environment
-+        {
-+            let names = call.arguments["names"]
-+                .as_array()
-+                .filter(|names| (1..=16).contains(&names.len()))
-+                .ok_or_else(|| failure("environment_names_invalid"))?;
-+            let values = names
-+                .iter()
-+                .filter_map(Value::as_str)
-+                .map(|name| {
-+                    let value = environment.get(name);
-+                    let entry = if crate::host::secret_like(name) {
-+                        json!({"set": value.is_some()})
-+                    } else {
-+                        json!({"set": value.is_some(), "value": value})
-+                    };
-+                    (name.to_owned(), entry)
-+                })
-+                .collect::<serde_json::Map<_, _>>();
-+            return Ok(json!({"values": values}));
-+        }
-+        match (intrinsic, call.operation.as_str()) {
-+            (true, "events.schedule") => {
++        match (call.operation.as_str(), &self.environment) {
++            ("environment.read", Some(environment)) => {
++                let names = call.arguments["names"]
++                    .as_array()
++                    .filter(|names| (1..=16).contains(&names.len()))
++                    .ok_or_else(|| failure("environment_names_invalid"))?;
++                let values = names
++                    .iter()
++                    .filter_map(Value::as_str)
++                    .map(|name| {
++                        let value = environment.get(name);
++                        let entry = if crate::host::secret_like(name) {
++                            json!({"set": value.is_some()})
++                        } else {
++                            json!({"set": value.is_some(), "value": value})
++                        };
++                        (name.to_owned(), entry)
++                    })
++                    .collect::<serde_json::Map<_, _>>();
++                Ok(json!({"values": values}))
++            }
++            ("events.schedule", _) => {
 +                let delay = call.arguments["delay_ms"]
 +                    .as_u64()
 +                    .filter(|delay| (16..=86_400_000).contains(delay))
@@ -125519,27 +125589,16 @@ index 0000000000000000000000000000000000000000..3617b5307798f69af71268ee2046453c
 +                    (self.timer_thread(caller), caller.to_owned(), key.clone()),
 +                    (deadline, call.arguments.get("data").cloned()),
 +                );
-+                return Ok(json!({"key": key, "delay_ms": delay}));
++                Ok(json!({"key": key, "delay_ms": delay}))
 +            }
-+            (true, "events.cancel") => {
++            _ => {
 +                let cancelled = self
 +                    .timers
 +                    .remove(&(self.timer_thread(caller), caller.to_owned(), key))
 +                    .is_some();
-+                return Ok(json!({"cancelled": cancelled}));
++                Ok(json!({"cancelled": cancelled}))
 +            }
-+            _ => {}
 +        }
-+        let response = response.ok_or_else(|| {
-+            failure(format!(
-+                "offline_unmocked_host_operation: {}",
-+                call.operation
-+            ))
-+        })?;
-+        if let Some(error) = response.get("error").and_then(Value::as_str) {
-+            return Err(failure(error));
-+        }
-+        Ok(response["result"].clone())
 +    }
 +}
 +
@@ -135187,10 +135246,10 @@ index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f6d50f9bf363611fa0a53af2d52869d7ef4ad9d3
+index 0000000000000000000000000000000000000000..ae54aaf3a0226c1e8557a5b871d2259e03c72809
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/render.rs
-@@ -0,0 +1,287 @@
+@@ -0,0 +1,289 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -135311,14 +135370,16 @@ index 0000000000000000000000000000000000000000..f6d50f9bf363611fa0a53af2d52869d7
 +        "component",
 +        component,
 +        frame,
-+        &active,
-+        |_, call| {
-+            Err(failure(format!(
-+                "host_operation_unavailable: {} is not available to component modules",
-+                call.operation
-+            )))
++        ModInvokeOptions {
++            active: &active,
++            host: ModHostCallback::Scoped(&mut |_, call| {
++                Err(failure(format!(
++                    "host_operation_unavailable: {} is not available to component modules",
++                    call.operation
++                )))
++            }),
++            ..ModInvokeOptions::default()
 +        },
-+        |_| {},
 +    )?;
 +    if let Err(error) = checked_tree(&value) {
 +        if active() {
@@ -149594,10 +149655,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..da60b27d7d36499722b698dec41bc81ae84c9d0a
+index 0000000000000000000000000000000000000000..1fb24b3d8c65d2c26e43442af46c7d4e02b94e86
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2278 @@
+@@ -0,0 +1,2340 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::BuiltinControls;
@@ -150042,6 +150103,68 @@ index 0000000000000000000000000000000000000000..da60b27d7d36499722b698dec41bc81a
 +        page(json!({"artifact":artifact,"cursor":6})).unwrap_err(),
 +        "exec_output_integrity_failed"
 +    );
++}
++
++#[test]
++fn exec_output_page_rejects_bytes_changed_without_a_new_file_stamp() {
++    use std::os::fd::AsRawFd;
++    let _exec = exec_slot();
++    let (_temp, repository, data, authority) = setup();
++    let active = || true;
++    let host = Host {
++        authority: &authority,
++        data_root: &data,
++        environment: None,
++        active: &active,
++        record_changes: false,
++    };
++    let capabilities = strings(&["exec"]);
++    let owner = caller(&capabilities, &[], Origin::Tool);
++    let output = host
++        .call(
++            &owner,
++            "exec.run",
++            json!({"program":"sh", "argv":["-c", "printf '%0100000d' 0"], "output_artifact":true}),
++        )
++        .unwrap();
++    let artifact = output["output_artifact"].clone();
++    let page = |cursor: usize| {
++        host.call(
++            &owner,
++            "exec.output_page",
++            json!({"artifact":artifact,"cursor":cursor,"max_bytes":4}),
++        )
++    };
++    assert_eq!(page(2).unwrap()["text"], "0000");
++    let path = data
++        .join("exec-output")
++        .join(codex_omd::host::repository_key(&repository))
++        .join("fixture")
++        .join("thread-1")
++        .join(owner.source_sha256)
++        .join(format!("{}.txt", artifact["sha256"].as_str().unwrap()));
++    let file = std::fs::OpenOptions::new()
++        .read(true)
++        .write(true)
++        .open(&path)
++        .unwrap();
++    let map = unsafe {
++        libc::mmap(
++            std::ptr::null_mut(),
++            100_000,
++            libc::PROT_READ | libc::PROT_WRITE,
++            libc::MAP_SHARED,
++            file.as_raw_fd(),
++            0,
++        )
++    };
++    assert_ne!(map, libc::MAP_FAILED);
++    unsafe { *map.cast::<u8>().add(2) = 0x80 };
++    let tampered = (page(2), page(0), page(70_000));
++    unsafe { libc::munmap(map, 100_000) };
++    assert_eq!(tampered.0.unwrap_err(), "exec_output_integrity_failed");
++    assert_eq!(tampered.1.unwrap_err(), "exec_output_integrity_failed");
++    assert_eq!(tampered.2.unwrap()["text"], "0000");
 +}
 +
 +#[test]
@@ -153546,10 +153669,10 @@ index 0000000000000000000000000000000000000000..c24f342ec82e96224e19efebd201ea90
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4cebf574e2e7d8ef07549a45bcfa00a83b78d28
+index 0000000000000000000000000000000000000000..3644acbc7e6b7fa7f73db9f32f848cd2b42fa24c
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5751 @@
+@@ -0,0 +1,5755 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -157152,9 +157275,13 @@ index 0000000000000000000000000000000000000000..a4cebf574e2e7d8ef07549a45bcfa00a
 +            "command",
 +            name,
 +            Value::Null,
-+            active,
-+            |_, _| Err(std::io::Error::other("unexpected host call")),
-+            |_| {},
++            ModInvokeOptions {
++                active,
++                host: ModHostCallback::Scoped(&mut |_, _| {
++                    Err(std::io::Error::other("unexpected host call"))
++                }),
++                ..ModInvokeOptions::default()
++            },
 +        )
 +    };
 +    std::thread::scope(|scope| {
@@ -180312,10 +180439,10 @@ index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c968959870e5fcd67a1b3454c9a904b6852e880f
+index 0000000000000000000000000000000000000000..dd8f1db4a7c6d557f1646c3eebeb90ba5d1316b1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1783 @@
+@@ -0,0 +1,1787 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -181361,18 +181488,20 @@ index 0000000000000000000000000000000000000000..c968959870e5fcd67a1b3454c9a904b6
 +        event,
 +        "",
 +        payload,
-+        scope.active.as_ref(),
-+        |caller, call| {
-+            crate::mod_surface::host_call(
-+                &paths,
-+                &policy,
-+                grants.get(caller).cloned(),
-+                caller,
-+                call,
-+                &scope,
-+            )
++        codex_omd::ModInvokeOptions {
++            active: scope.active.as_ref(),
++            host: codex_omd::ModHostCallback::Scoped(&mut |caller, call| {
++                crate::mod_surface::host_call(
++                    &paths,
++                    &policy,
++                    grants.get(caller).cloned(),
++                    caller,
++                    call,
++                    &scope,
++                )
++            }),
++            ..codex_omd::ModInvokeOptions::default()
 +        },
-+        |_| {},
 +    );
 +    let snapshot = {
 +        let mut runtime = runtime.locked();
@@ -181830,19 +181959,21 @@ index 0000000000000000000000000000000000000000..c968959870e5fcd67a1b3454c9a904b6
 +            "command",
 +            command,
 +            Value::String(args.to_owned()),
-+            active,
-+            |caller, call| {
-+                wrote |= !codex_omd::read_only_call(&call);
-+                crate::mod_surface::host_call(
-+                    &paths,
-+                    &invocation.context.policy,
-+                    grants.get(caller).cloned(),
-+                    caller,
-+                    call,
-+                    &scope,
-+                )
++            codex_omd::ModInvokeOptions {
++                active: &active,
++                host: codex_omd::ModHostCallback::Scoped(&mut |caller, call| {
++                    wrote |= !codex_omd::read_only_call(&call);
++                    crate::mod_surface::host_call(
++                        &paths,
++                        &invocation.context.policy,
++                        grants.get(caller).cloned(),
++                        caller,
++                        call,
++                        &scope,
++                    )
++                }),
++                ..codex_omd::ModInvokeOptions::default()
 +            },
-+            |_| {},
 +        );
 +        // A reload during the callback discards its result; when it only read, running it again repeats nothing.
 +        match result {

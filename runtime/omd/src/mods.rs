@@ -3796,7 +3796,43 @@ fn read_only(operation: &str, arguments: &Value) -> bool {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+fn invoke_with_options(
+    access: &mut Access<'_>,
+    id: &str,
+    generation: u64,
+    event: &str,
+    name: &str,
+    payload: Value,
+    options: ModInvokeOptions<'_>,
+) -> Result<Value> {
+    let ModInvokeOptions {
+        active,
+        mut host,
+        progress,
+    } = options;
+    let mut dispatch = |caller: &str, call: ModHostCall| match &mut host {
+        ModHostCallback::Scoped(host) => host(caller, call),
+        _ if caller != id => Err(failure("service_provider_host_dispatch_unavailable")),
+        ModHostCallback::Own(host) => host(call),
+        ModHostCallback::Unavailable => Err(failure(
+            "host_operation_unavailable: requires a native task",
+        )),
+    };
+    invoke(
+        access,
+        id,
+        generation,
+        event,
+        name,
+        payload,
+        active,
+        &mut dispatch,
+        progress.unwrap_or(&mut |_| {}),
+        &InvocationScope::default(),
+        None,
+    )
+}
+
 pub fn invoke_shared(
     runtime: &Mutex<ModHost>,
     id: &str,
@@ -3804,22 +3840,16 @@ pub fn invoke_shared(
     event: &str,
     name: &str,
     payload: Value,
-    active: impl Fn() -> bool,
-    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-    mut progress: impl FnMut(String),
+    options: ModInvokeOptions<'_>,
 ) -> Result<Value> {
-    invoke(
+    invoke_with_options(
         &mut Access::Shared(runtime),
         id,
         generation,
         event,
         name,
         payload,
-        &active,
-        &mut host,
-        &mut progress,
-        &InvocationScope::default(),
-        None,
+        options,
     )
 }
 
@@ -3827,8 +3857,7 @@ pub fn event_shared(
     runtime: &Mutex<ModHost>,
     event: &str,
     mut payload: impl FnMut(&str) -> Value,
-    active: impl Fn() -> bool,
-    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
+    mut options: ModInvokeOptions<'_>,
 ) -> Vec<(String, Result<Value>)> {
     let Ok((ids, generation)) = runtime
         .lock()
@@ -3845,9 +3874,7 @@ pub fn event_shared(
                 event,
                 "",
                 payload(&id),
-                &active,
-                &mut host,
-                |_| {},
+                options.reborrow(),
             );
             (id, result)
         })
@@ -5404,31 +5431,14 @@ impl ModHost {
         payload: Value,
         options: ModInvokeOptions<'_>,
     ) -> Result<Value> {
-        let ModInvokeOptions {
-            active,
-            mut host,
-            progress,
-        } = options;
-        let mut dispatch = |caller: &str, call: ModHostCall| match &mut host {
-            ModHostCallback::Scoped(host) => host(caller, call),
-            _ if caller != id => Err(failure("service_provider_host_dispatch_unavailable")),
-            ModHostCallback::Own(host) => host(call),
-            ModHostCallback::Unavailable => Err(failure(
-                "host_operation_unavailable: requires a native task",
-            )),
-        };
-        invoke(
+        invoke_with_options(
             &mut Access::Held(self),
             id,
             generation,
             event,
             name,
             payload,
-            active,
-            &mut dispatch,
-            progress.unwrap_or(&mut |_| {}),
-            &InvocationScope::default(),
-            None,
+            options,
         )
     }
 

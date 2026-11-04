@@ -3600,9 +3600,13 @@ fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
             "command",
             name,
             Value::Null,
-            active,
-            |_, _| Err(std::io::Error::other("unexpected host call")),
-            |_| {},
+            ModInvokeOptions {
+                active,
+                host: ModHostCallback::Scoped(&mut |_, _| {
+                    Err(std::io::Error::other("unexpected host call"))
+                }),
+                ..ModInvokeOptions::default()
+            },
         )
     };
     std::thread::scope(|scope| {

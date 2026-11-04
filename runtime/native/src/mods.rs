@@ -334,7 +334,7 @@ fn event_fragments_scoped(
     private: BTreeMap<String, Value>,
     active: impl Fn() -> bool,
     authority: &str,
-    host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
+    mut host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
 ) -> Vec<PromptFragment> {
     let mut fragments = Vec::new();
     let mut remaining_bytes = 6144;
@@ -354,8 +354,11 @@ fn event_fragments_scoped(
             }
             value
         },
-        active,
-        host,
+        codex_omd::ModInvokeOptions {
+            active: &active,
+            host: codex_omd::ModHostCallback::Scoped(&mut host),
+            ..codex_omd::ModInvokeOptions::default()
+        },
     ) {
         match result {
             Ok(value) if event == "context" => {
@@ -424,33 +427,20 @@ fn initialize(
 ) -> Result<Arc<Mods>, String> {
     let registration =
         codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-    let runtime = ModHost::open(
-        host.root.clone(),
-        ModOpenOptions {
-            tool_validator: validate_tool_schema,
-            repository: Some(&host.repository),
-            ..ModOpenOptions::default()
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    let input_runtime = ModHost::open(
-        host.root.clone(),
-        ModOpenOptions {
-            tool_validator: validate_tool_schema,
-            repository: Some(&host.repository),
-            ..ModOpenOptions::default()
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    let persist_runtime = ModHost::open(
-        host.root.clone(),
-        ModOpenOptions {
-            tool_validator: validate_tool_schema,
-            repository: Some(&host.repository),
-            ..ModOpenOptions::default()
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    let open = || {
+        ModHost::open(
+            host.root.clone(),
+            ModOpenOptions {
+                tool_validator: validate_tool_schema,
+                repository: Some(&host.repository),
+                ..ModOpenOptions::default()
+            },
+        )
+        .map_err(|e| e.to_string())
+    };
+    let runtime = open()?;
+    let input_runtime = open()?;
+    let persist_runtime = open()?;
     let persist_required = persist_runtime.required_surfaces();
     services::define_providers(&host.config, |id| runtime.grants(id).is_some());
     let _ = host.persist_json("mod-status.json", &runtime.status());
