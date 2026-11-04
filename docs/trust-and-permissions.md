@@ -57,8 +57,8 @@ engine:
   files and has no network.
 - V8 runs with a 64 MiB heap, and string evaluation (`eval`) and WebAssembly code generation are off. The host kills a
   runner that uses more than 512 MiB.
-- A callback is one call from the host into a mod's code. Every callback except a render hook runs in a fresh
-  context, so one call can't leave state behind for the next
+- A callback is one call from the host into a mod's code. Callbacks use a fresh context except render hooks and
+  experimental session activations, which retain ordinary variables
   ([callback lifetime](../mods/reference/host-model.md#callback-lifetime)).
 
 Everything a mod does outside its runner, such as reading a workspace file, running a program or drawing a panel, goes

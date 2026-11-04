@@ -527,43 +527,7 @@ fn publish(
     let mut terminal = runtime.terminal_view(input.clone(), active);
     input["pty_scope"] = pty_scope;
     let status = runtime.status();
-    let mut errors = status["mods"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            item["error"].as_str().map(|error| {
-                (
-                    item["id"].as_str().unwrap_or("mod").to_owned(),
-                    error.to_owned(),
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    errors.extend(
-        status["rejected"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|item| {
-                item["reason"]
-                    .as_str()
-                    .filter(|reason| !reason.starts_with("shadowed_"))
-                    .map(|reason| {
-                        (
-                            item["id"]
-                                .as_str()
-                                .or(item["path"].as_str())
-                                .unwrap_or("selection")
-                                .to_owned(),
-                            reason.to_owned(),
-                        )
-                    })
-            }),
-    );
-    if let Some(error) = status["reload_error"].as_str() {
-        errors.push(("Reload".to_owned(), error.to_owned()));
-    }
+    let errors = codex_omd::ModViewSnapshot::errors_from_status(&status);
     if !errors.is_empty() {
         terminal
             .view

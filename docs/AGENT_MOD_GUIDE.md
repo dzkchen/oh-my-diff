@@ -113,9 +113,9 @@ file.
 - Import only types from `@oh-my-diff/mod-api`, and files declared in `mod.json` `assets` by relative path
   (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 512 KiB per file, 1 MiB of entrypoint plus assets. Any other
   import fails with `unsupported_import`.
-- Don't write `process.` outside a string, or `window.` or `document.` anywhere. Node and browser globals aren't
-  there. The host scans the source when it loads the mod (`pnpm test`, `pnpm run run`, activation in `codex`) and
-  refuses it with `undeclared_environment_use: process`. `omd mods update` and install don't scan.
+- Don't access `process.`, `window.` or `document.`. Node and browser globals aren't there. The host scans code
+  outside literals when it loads the mod (`pnpm test`, `pnpm run run`, activation in `codex`) and refuses it with
+  `undeclared_environment_use: process` or `undeclared_environment_use: dom`. `omd mods update` and install don't scan.
 - Name host operations literally: `api.host.call('store.get', …)`, not a variable.
 - Don't build host call arguments from `Date.now()`. It returns the callback's start time. An offline runner
   without an interactive host replays the callback once per host call

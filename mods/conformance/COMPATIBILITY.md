@@ -8,17 +8,17 @@ host. The support policy, platforms and terminals are in [Support](../../docs/su
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.166.0 | 1.3.0 to 1.4.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.166.0 | 1.3.0 to 1.4.2 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.164.0 | 1.2.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.163.0 | 1.0.0 to 1.1.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 
 The `host` object in [compatibility.json](compatibility.json) describes `main`: Codex 0.166.0 with the host crate
-version `1.4.2` from `runtime/omd/Cargo.toml`, a development version, not a published support claim.
-The supported-version table stops at the latest stable release, `1.4.0`.
+version `1.4.2` from `runtime/omd/Cargo.toml`. The latest stable release is `1.4.2`; changes on `main` after its tag
+remain development candidates until released.
 
-On the matrix's `as_of` date, OMD didn't lag upstream. Codex 0.166.0 was the newest stable Codex release then.
+As of 2026-11-04, upstream stable lag is zero releases: the pin matches [Codex 0.166.0](https://github.com/openai/codex/releases/tag/rust-v0.166.0). Newer alpha tags are outside the support promise.
 
 ## What the host checks
 

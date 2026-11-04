@@ -3925,7 +3925,8 @@ is one per mod store, per thread or per checkout.
 #### `api.state` compare-and-swap
 
 `api.state` is re-read before every callback and written back with a compare-and-swap. If another process wrote it
-meanwhile, the host runs the callback again against the fresh state, within the callback's 5 s budget.
+meanwhile, the host runs the callback again against the fresh state, within the callback's 5 s budget. Experimental
+session activations never replay a callback: a conflicting write fails with `state_conflict`.
 
 - The rerun's host calls get the results already recorded, so no operation runs twice.
 - The clock stays at the first attempt's start, so `Date.now()` in arguments replays.
@@ -3999,8 +4000,8 @@ requires `terminal`. Saved `api.state` is unchanged by it.
 - The host checks the original serialized bytes before parsing; number reformatting does not change the limit.
 - Values are shared by host instances in the same process, store, repository, thread and package identity.
 - Commands and component events may write; other callbacks may read.
-- Writes commit only after successful validation and cancellation checks. A revision conflict reruns the callback
-  under the same replay rules as [`api.state` compare-and-swap](#apistate-compare-and-swap).
+- Writes commit only after successful validation and cancellation checks. A revision conflict follows the
+  [`api.state` compare-and-swap](#apistate-compare-and-swap) rules, including the session-activation exception.
 - Authority polling with unchanged configuration preserves UI state and
   [command views](reference/commands-and-composer.md#command-views).
 - State is cleared on explicit reload, revocation, package changes and session teardown, and is never written to
@@ -4023,10 +4024,10 @@ Reactive state gives a mod typed handles on `api.state` keys and a way to react 
 | `api.derive(() => value)` | A memoized selector that recomputes when a key it read changes. |
 | `api.subscribe(target, (value, previous) => …)` | Registers during activation and runs once per changed target after the handler that changed it, still inside that callback. |
 
-- Writes go through the same compare-and-swap as `api.state.set`, so a concurrent writer reruns the callback rather
-  than losing an update.
-- A subscription's host calls and writes commit or rerun with the callback. A cascade stops after 8 rounds, and at
-  most 64 subscriptions exist per mod.
+- Writes go through the same compare-and-swap as `api.state.set`; concurrent writes follow its replay or
+  retained-session conflict rules.
+- A subscription's host calls and writes commit with the callback and follow its replay rules. A cascade stops after
+  8 rounds, and at most 64 subscriptions exist per mod.
 - Subscriptions belong to the activation generation, so a reload or disable drops them.
 - Render hooks report the keys they read; the host redraws a hooked component only when one of those keys, the
   mod's settings or its source changes, so several wrappers can watch the same state without redrawing the whole

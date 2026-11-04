@@ -144,6 +144,21 @@ fn sha(value: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
+fn check_quota(directory: &std::path::Path, bytes: usize) -> io::Result<()> {
+    let (mut total, mut entries) = (0u64, 0usize);
+    for entry in fs::read_dir(&directory)? {
+        let entry = entry?;
+        if entry.path().extension().is_some_and(|e| e == "bin") {
+            entries += 1;
+            total = total.saturating_add(entry.metadata()?.len());
+        }
+    }
+    if entries >= BLOB_ENTRIES || total.saturating_add(bytes as u64) > BLOB_TOTAL_BYTES {
+        return Err(io::Error::other("blob_store_quota"));
+    }
+    Ok(())
+}
+
 impl ResourceStore<'_> {
     fn blob_directory(&self) -> io::Result<PathBuf> {
         crate::workspace::private_path(&self.directory()?, &["blobs"], "blob_directory_invalid")
@@ -260,19 +275,7 @@ impl ResourceStore<'_> {
             .open(directory.join(".blobs.lock"))?;
         lock.lock()?;
         if !path.try_exists()? {
-            let (mut total, mut entries) = (0u64, 0usize);
-            for entry in fs::read_dir(&directory)? {
-                let entry = entry?;
-                if entry.path().extension().is_some_and(|e| e == "bin") {
-                    entries += 1;
-                    total = total.saturating_add(entry.metadata()?.len());
-                }
-            }
-            if entries >= BLOB_ENTRIES
-                || total.saturating_add(bytes.len() as u64) > BLOB_TOTAL_BYTES
-            {
-                return Err(io::Error::other("blob_store_quota"));
-            }
+            check_quota(&directory, bytes.len())?;
         }
         crate::fsio::write_if_changed(&path, bytes)?;
         Ok(digest)

@@ -1,7 +1,7 @@
 # Contributing
 
 How to send a change to OMD: where it belongs, how to set up and check it, and how to open the pull request. One
-person maintains OMD and, after release, expects to focus mainly on critical fixes, so small, focused changes fit
+person maintains OMD and focuses mainly on critical fixes, so small, focused changes fit
 best. For anything large, open an issue first.
 
 ## Where your change belongs
