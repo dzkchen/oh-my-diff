@@ -258,6 +258,10 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_copy_v1",
     "environment_overrides_v1",
     "timers_16ms_v1",
+    "timer_data_v1",
+    "session_activation_v1",
+    "background_jobs_v1",
+    "assistant_message_identity_v1",
     "author_diagnostics_v1",
     "author_offline_runner_v1",
     "author_tooling_v1",
@@ -747,6 +751,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("workspace_pre_rename", "fs.write"),
     ("turn_start", "lifecycle"),
     ("turn_end", "lifecycle"),
+    ("assistant_message", "lifecycle"),
     ("compaction_start", "lifecycle"),
     ("compaction_end", "lifecycle"),
     ("agent_end", "lifecycle"),
@@ -2891,6 +2896,7 @@ struct Loaded {
     source: Arc<str>,
     assets: Arc<BTreeMap<String, Value>>,
     request_metadata: Arc<OnceLock<(Value, String, [u8; 32])>>,
+    session_key: Option<String>,
     /// The store's code cache; `None` runs without one.
     code_cache: Option<Arc<code_cache::CacheRoot>>,
     adapter: Option<Value>,
@@ -3545,6 +3551,50 @@ fn invoke(
         }
         payload => payload,
     };
+    let retained = !matches!(
+        event,
+        "terminal"
+            | "inspect"
+            | "workspace_pre_rename"
+            | "command_list"
+            | "config_list"
+            | "component"
+    ) && !(event == "intercept"
+        && matches!(
+            payload["surface"].as_str(),
+            Some("render" | "input" | "mention" | "history_persist")
+        ));
+    let activation_key = if retained {
+        access.with(|runtime| {
+            if !active() {
+                return Err(failure("callback_cancelled"));
+            }
+            if generation != runtime.generation {
+                return Err(failure("stale_mod_generation"));
+            }
+            let loaded = runtime
+                .loaded
+                .get(id)
+                .cloned()
+                .ok_or_else(|| failure("mod_disabled"))?;
+            runtime.check_callback_authority(&loaded)?;
+            runtime.session_key(id, thread.as_deref())
+        })?
+    } else {
+        None
+    };
+    let _activation = activation_key
+        .as_ref()
+        .map(|key| process::Stepping::enter_guarded(key, active))
+        .transpose()?;
+    let authority_active = active;
+    let admitted = || {
+        authority_active()
+            && activation_key
+                .as_ref()
+                .is_none_or(|key| process::session_current(key))
+    };
+    let active: &dyn Fn() -> bool = &admitted;
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
     let now_ms = crate::peers::now_ms();
@@ -3553,6 +3603,9 @@ fn invoke(
         let replaying = !replay.is_empty();
         let mut invocation =
             access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
+        if retained && invocation.loaded.session_key != activation_key {
+            return Err(failure("callback_cancelled"));
+        }
         if invocation.migrate {
             invocation.loaded.state =
                 packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
@@ -3663,12 +3716,14 @@ fn invoke(
             }
             reply = Err(failure("state_conflict: reload before retry"));
         }
+        let session_key = activation_key.clone();
         let receipts = reply.as_ref().ok().map(|reply| reply.receipts.clone());
         match access
             .with(|runtime| runtime.finish(id, generation, event, name, invocation, reply, active))
         {
             Err(error)
                 if started.elapsed() < budget
+                    && session_key.is_none()
                     && error.to_string().starts_with("state_conflict") =>
             {
                 let Some(receipts) = receipts else {
@@ -3676,7 +3731,14 @@ fn invoke(
                 };
                 replay = receipts;
             }
-            result => return result,
+            result => {
+                if result.is_err()
+                    && let Some(key) = session_key
+                {
+                    process::invalidate_activation(&key);
+                }
+                return result;
+            }
         }
     }
 }
@@ -3820,6 +3882,9 @@ impl ModHost {
         command: Option<(&str, Value)>,
         runs: usize,
     ) -> Result<Value> {
+        let _thread = StateThread::enter(
+            bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())),
+        );
         let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
         let mut usage = (0, 0);
         let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
@@ -4035,7 +4100,63 @@ impl ModHost {
         }
     }
 
+    fn session_owner(&self, loaded: &Loaded) -> String {
+        digest(
+            json!([
+                self.store.root,
+                self.project,
+                loaded.package.id,
+                loaded.selection.scope
+            ])
+            .to_string()
+            .as_bytes(),
+        )
+    }
+
+    fn session_key(&self, id: &str, thread: Option<&str>) -> Result<Option<String>> {
+        let Some(loaded) = self.loaded.get(id) else {
+            return Ok(None);
+        };
+        if !loaded
+            .package
+            .compatibility
+            .required_features
+            .iter()
+            .any(|feature| feature == "session_activation_v1")
+        {
+            return Ok(None);
+        }
+        let Some(thread) = thread else {
+            return Ok(None);
+        };
+        let reset = UI_RESETS
+            .lock()
+            .ok()
+            .and_then(|resets| resets.get(&self.store.root).copied());
+        let binding = digest(
+            json!([
+                loaded.selection,
+                loaded.adapter,
+                loaded.settings_file,
+                loaded.withheld,
+                reset
+            ])
+            .to_string()
+            .as_bytes(),
+        );
+        process::session_key(&self.session_owner(loaded), thread, &binding).map(Some)
+    }
+
+    pub fn release_thread_activations(&self, thread: &str) {
+        for loaded in self.loaded.values() {
+            process::invalidate_session_owner(&self.session_owner(loaded), Some(thread));
+        }
+    }
+
     pub fn reload(&mut self) -> Result<bool> {
+        for loaded in self.loaded.values() {
+            process::invalidate_session_owner(&self.session_owner(loaded), None);
+        }
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
@@ -4340,6 +4461,7 @@ impl ModHost {
                 source: source.into(),
                 assets: Arc::new(assets),
                 request_metadata: Arc::new(OnceLock::new()),
+                session_key: None,
                 code_cache: caching.then(cache_root),
                 selection,
                 state: Value::Null,
@@ -4430,6 +4552,19 @@ impl ModHost {
             if next.get(id).is_none_or(|loaded| {
                 !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
             }) {
+                process::invalidate_session_owner(
+                    &digest(
+                        json!([
+                            self.store.root,
+                            self.project,
+                            previous.package.id,
+                            previous.selection.scope
+                        ])
+                        .to_string()
+                        .as_bytes(),
+                    ),
+                    None,
+                );
                 previous.clear_ui();
             }
         }
@@ -5515,6 +5650,7 @@ impl ModHost {
             return Err(failure(format!("mod_failed: {error}")));
         }
         self.check_callback_authority(&loaded)?;
+        loaded.session_key = self.session_key(id, thread)?;
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         let mut migrate = false;
         loaded.state = match self
