@@ -37,7 +37,8 @@ A successful `/continue [note]` hides an eligible batch only after the estimated
 `min_bytes` and `batch_bytes`; it does not call a summarizing model or native `/compact`.
 
 Only outputs whose saved originals are readable at that point can be newly hidden in this mode. At most 16 originals
-are checked per continuation. The model receives guidance to recall a specific missing fact in small pages and verify
+are checked per continuation. An original that fails the read check stays visible and is skipped on later continuations.
+The model receives guidance to recall a specific missing fact in small pages and verify
 current files and processes before repeating actions. User messages, instructions and tool calls stay in context.
 The placeholders stay identical on later requests; another continuation is needed to hide another batch. Resume
 keeps installed placeholders but drops a continuation that had not reached its first model request.
@@ -87,8 +88,8 @@ that doesn't cache prompts.
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - The full text of each output of at least `min_bytes` is kept as the mod's evidence when the call finishes. The host
   keeps the newest 1,024 of these per repository (256 MB at most), so recalling a very old output can fail. The
-  model receives a recall error. Recover needed facts from current state; do not blindly repeat a command with side effects. It remembers the newest 400 kept
-  outputs of a thread and those of every hidden output.
+  model receives a recall error. Recover needed facts from current state; do not blindly repeat a command with side
+  effects. It remembers the newest 400 kept outputs of a thread and those of every hidden output.
 - At most 400 outputs of a thread are hidden; later ones are sent in full.
 - Code-mode calls inside a cell aren't kept on their own: the whole cell's output is hidden and recalled as one.
 - Only one mod can edit model-bound history, so it can't run alongside another mod that does, such as

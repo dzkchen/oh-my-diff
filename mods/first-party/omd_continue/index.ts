@@ -16,7 +16,6 @@ function list(values: string[]): string {
 }
 
 function summary(turn: TurnActivity): string {
-  // Strip control characters, not just whitespace: tool names and file paths land in the submitted prompt, so a newline in either would inject lines into it.
   const clip = (text: string) => [...text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim()].slice(0, 120).join('');
   const detail = turn.error ? `${turn.error.category}: ${turn.error.message}` : turn.reason;
   const lines = [`- Last turn: ${turn.outcome}${detail ? ` (${clip(detail)})` : ''}`];

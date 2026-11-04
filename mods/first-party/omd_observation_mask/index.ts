@@ -81,7 +81,7 @@ export default function activate(api: ModAPI) {
     const session = api.session();
     return cache !== null && cache.ttl > 0 && cache.expires <= Date.now()
       && cache.provider === session.provider && cache.model === session.model
-      && (!session.route || session.route === cache.route);
+      && (session.route ?? 'session') === cache.route;
   };
 
   if (continuationOnly) {
@@ -147,13 +147,18 @@ export default function activate(api: ModAPI) {
           kept.push(item.call_id);
           processed++;
         } else {
-          if (continuationOnly && (!record?.reference || !api.host.tryCall('evidence.read', { reference: record.reference, max_bytes: 1 }).ok)) continue;
+          if (continuationOnly && (!record?.reference || !api.host.tryCall('evidence.read', { reference: record.reference, max_bytes: 4 }).ok)) {
+            if (record) next = { ...next, pending_bytes: next.pending_bytes - item.bytes,
+              calls: { ...next.calls, [item.call_id]: { ...record, reference: null } } };
+            continue;
+          }
           masked[item.call_id] = stub(item, record);
           hidden += item.bytes;
           processed++;
         }
       }
-      if (processed) next = { ...next, masked, kept, advances: state.advances + 1, hidden_bytes: state.hidden_bytes + hidden, pending_bytes: sum(pending.filter(item => !Object.hasOwn(masked, item.call_id) && !kept.includes(item.call_id))) };
+      if (processed) next = { ...next, masked, kept, advances: state.advances + 1, hidden_bytes: state.hidden_bytes + hidden, pending_bytes: sum(pending.filter(item => !Object.hasOwn(masked, item.call_id) && !kept.includes(item.call_id)
+        && (!continuationOnly || Boolean(next.calls[item.call_id]?.reference)))) };
     }
     const replace = outputs.filter(item => item.editable && Object.hasOwn(next.masked, item.call_id))
       .map(item => ({ index: item.index, text: next.masked[item.call_id], saved: item.bytes - next.masked[item.call_id].length }));

@@ -253,3 +253,44 @@ test('the real continue command keeps interruption checks and notes through the 
   }
   assert.match(invoke('--compact').display, /Enable omd_observation_mask/);
 });
+
+test('expired originals cannot block later readable outputs across continuations', () => {
+  const calls = Object.fromEntries(Array.from({ length: 20 }, (_, n) => [`c${n}`, {
+    tool: 'exec_command', reference: { reference: `r${n}`, sha256: 's' }, bytes: 6000, failed_edit: false,
+  }]));
+  let state = { calls };
+  const reads = [];
+  const host = { 'evidence.read': ({ reference }) => {
+    reads.push(reference.reference);
+    if (Number(reference.reference.slice(1)) < 16) throw new Error('resource_not_found');
+    return { text: 'ok', cursor: null, bytes: 6000 };
+  } };
+  let hidden;
+  for (let n = 0; n < 2; n++) {
+    const command = requestContinue(state, { args: '--compact' });
+    hidden = continuation('history', '', continueView(command.value.result.submit, Array(20).fill(6000)), { state: command.state, host });
+    state = hidden.state;
+    assert.equal(state.pending_bytes, n === 0 ? 12_000 : 0);
+    assert.equal(state.calls.c0.reference, null);
+  }
+  assert.deepEqual(Object.keys(replaced(hidden.value)).map(Number), [33, 35]);
+  assert.deepEqual(reads, Array.from({ length: 18 }, (_, n) => `r${n}`));
+});
+
+test('readability probes allow an original beginning with a multi-byte character', () => {
+  const command = requestContinue({ calls: records() }, { args: '--compact' });
+  const hidden = continuation('history', '', continueView(command.value.result.submit), { state: command.state,
+    host: { 'evidence.read': ({ max_bytes }) => {
+      if (max_bytes < Buffer.byteLength('😀')) throw new Error('resource_page_too_small');
+      return { text: '😀', cursor: 4, bytes: 6000 };
+    } } });
+  assert.equal(Object.keys(replaced(hidden.value)).length, 4);
+});
+
+test('the default session route cannot reuse a named route cache estimate', () => {
+  const host = { 'session.info': () => ({ ...session, route: null }) };
+  const named = continuation('model_response', '', cached()).state;
+  assert.equal(requestContinue(named, { host }).state?.continuation ?? null, null);
+  const implicit = continuation('model_response', '', cached({ route: 'session' })).state;
+  assert.match(requestContinue(implicit, { host }).value.result.submit, /smallest relevant page/);
+});
