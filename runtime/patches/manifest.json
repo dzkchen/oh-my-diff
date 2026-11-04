@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "dfc73ec8653bf950bebe691ee08b990f11457443b41f12e07b136c022e006c4f"
+    "sha256": "72ba5e4a50d17418e9af0aa6aa40dea40a509bf2c726a2d26aa1d5d680f054f5"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1219,7 +1219,7 @@
     },
     "codex-rs/ext/omd/src/mods/operations.rs": {
       "before": null,
-      "after": "bd08c95aa20df063ea8ecb0ef8800ee6fbe02cd98255dce0b0069344101f8a91"
+      "after": "6cd625c521cc8b408607278d42ccf103db770318434ce7a477909ada11894250"
     },
     "codex-rs/ext/omd/src/mods/peering.rs": {
       "before": null,
@@ -1403,7 +1403,7 @@
     },
     "codex-rs/omd/src/bin/omd.rs": {
       "before": null,
-      "after": "b4575295147e79aebb8ca6e424e065f0c97b7463b27b7ea4ab362491b8818e70"
+      "after": "7450192a9313f434843fbeff828379e7ee7f285a39634e3a66afbc996411b1a2"
     },
     "codex-rs/omd/src/blob_store.rs": {
       "before": null,
@@ -1543,7 +1543,7 @@
     },
     "codex-rs/omd/src/mods/operation_schema.json": {
       "before": null,
-      "after": "c6c59c67cb800e1b3323977ed3cbe8bfa2ea132f21288a645a5bf9c8f1de2cb9"
+      "after": "972048fb64c95bc89498b36ac1ad6210a4c94c0484efbb8f27582bed1d89cee7"
     },
     "codex-rs/omd/src/mods/operation_validation.rs": {
       "before": null,
@@ -1587,7 +1587,7 @@
     },
     "codex-rs/omd/src/mods/store.rs": {
       "before": null,
-      "after": "e42b09cffe14f1141d2a9ff8665e4bc42b20210c8e7c1a91ba68b25aa8df59b9"
+      "after": "8542717fd578e43685671b0321bc2a0fd13e9c0530e7c4baa8527c7a92e93353"
     },
     "codex-rs/omd/src/mods/view.rs": {
       "before": null,
@@ -1603,11 +1603,11 @@
     },
     "codex-rs/omd/src/package_controls.rs": {
       "before": null,
-      "after": "480882e8237082d18e2b04f6531080fb627c5312357e47fac76bb4e75d83663d"
+      "after": "cd9098a6ce15d13bc048fab68b249f373bdb29da055ed28f53cda9fc82eee746"
     },
     "codex-rs/omd/src/package_controls_tests.rs": {
       "before": null,
-      "after": "49977c5ec9f1d725474f270c03b830100845a953e8226a914cd1ed3376d58076"
+      "after": "10fd34bab9dd9a328395902d1c9680748c823cf00b0f782f83ae851fb04eb5f1"
     },
     "codex-rs/omd/src/peers.rs": {
       "before": null,

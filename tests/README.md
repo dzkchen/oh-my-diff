@@ -23,7 +23,9 @@ The suite:
 - Discovery fails if a test file is in another location or has another extension. A test that shouldn't run by default
   needs its exact path and a reason under `optional` in `tests/suites.json`. It's reported as not executed.
 - Runs mods through `tests/mod_runner.mjs`, which starts the `omd-runner` in `OMD_TEST_RUNNER`, else the one beside
-  `omd-mod` (`OMD_MOD_BIN`, or the installed `omd-mod` on `PATH`).
+  `omd-mod` (`OMD_MOD_BIN`, or the installed `omd-mod` on `PATH`), else the newest one in a scratch tree's
+  `artifacts/`, `target/release/` or `target/debug/` under `OMD_WORK_ROOT` (default `/private/tmp`). `mods:test`
+  passes the runner it found to every test file, with the `omd-mod` beside it as `OMD_MOD_BIN` when that isn't set.
 
 The suite assigns these files to other runners without running them:
 

@@ -4,6 +4,8 @@
   "host": {
     "codex": "0.166.0",
     "omd": "1.4.2",
+    "release_status": "development",
+    "latest_stable": "1.4.0",
     "stability": "stable",
     "current_api": "1.0.0",
     "package_schemas": [

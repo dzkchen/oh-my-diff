@@ -87182,10 +87182,10 @@ index 0000000000000000000000000000000000000000..ac3eef4f0eaf7b0adc3629c4338e3952
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab8644e3f7cb10d0990b9e53f9c1330c3dbc88dc
+index 0000000000000000000000000000000000000000..420bf83d64406d8d1235dc32ffa19624a532ad4a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,874 @@
+@@ -0,0 +1,887 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -87240,6 +87240,7 @@ index 0000000000000000000000000000000000000000..ab8644e3f7cb10d0990b9e53f9c1330c
 +pub(super) fn event_allows(event: &str, operation: &str) -> bool {
 +    crate::generic_host::event_allows(event, operation)
 +        || super::expansion::event_allows(event)
++        || event == "command" && matches!(operation, "process.status" | "process.exchange")
 +        || event == "context"
 +            && (codex_omd::scoped_data::operation(operation)
 +                || matches!(
@@ -87986,6 +87987,18 @@ index 0000000000000000000000000000000000000000..ab8644e3f7cb10d0990b9e53f9c1330c
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    fn commands_can_only_exchange_with_or_check_existing_processes() {
++        for operation in ["process.status", "process.exchange"] {
++            assert!(event_allows("command", operation), "{operation}");
++            assert!(!event_allows("component_event", operation), "{operation}");
++            assert!(!event_allows("component_post", operation), "{operation}");
++        }
++        for operation in ["process.start", "process.which", "process.stop"] {
++            assert!(!event_allows("command", operation), "{operation}");
++        }
++    }
 +
 +    #[test]
 +    fn unsandboxed_process_start_checks_the_program_before_asking() {
@@ -102299,10 +102312,10 @@ index 0000000000000000000000000000000000000000..b6b05710ff01abb9a557e0d8b2d40727
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6c0dcaee446fcb94f5f0a1450832f2b5e2cddbce
+index 0000000000000000000000000000000000000000..96e3d58303f5ebf303f592165d8ff2f1ee29b599
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,712 @@
+@@ -0,0 +1,715 @@
 +use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -102767,6 +102780,9 @@ index 0000000000000000000000000000000000000000..6c0dcaee446fcb94f5f0a1450832f2b5
 +            text(&changes["version"]["from"]),
 +            text(&changes["version"]["to"])
 +        ));
++    }
++    if let Some(warning) = preview["identity_warning"].as_str() {
++        lines.push(format!("  WARNING: {warning}"));
 +    }
 +    if preview["grants_added"]
 +        .as_array()
@@ -126487,7 +126503,7 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..df6817a99ee41d9287c20f28c7b193d901a6ad1f
+index 0000000000000000000000000000000000000000..bee12bb1255bcba4252af892f93e1e05c544bc3a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,227 @@
@@ -126603,7 +126619,7 @@ index 0000000000000000000000000000000000000000..df6817a99ee41d9287c20f28c7b193d9
 +    "builtins.invoke": {"arguments":{"type":"object","properties":{"action":{"type":"string","format":"dotted-string"}},"required":["action"]},"result":{"type":"object","properties":{"invoked":{"type":"boolean"}},"required":["invoked"]}},
 +    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"required"},{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"required":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","required","effective","pending","failed","api","compatible","grants","conflicts","settings_schema","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
 +    "packages.index": {"arguments":{"type":"object","properties":{"index":{"type":"string"},"query":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"}},"required":[]},"result":{"type":"object","properties":{"index":{"type":"string"},"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"latest":{"type":"string"},"description":{"type":"string"},"support":{"anyOf":[{"type":"null"},{"type":"string"}]},"versions":{"type":"array","items":{"type":"object","properties":{"version":{"type":"string"},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["version","blocked"]}},"installed":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["id","latest","description","support","versions","installed"]}},"total":{"type":"number"},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["index","packages","total","cursor"]}},
-+    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/76"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}}},"required":["action","id","changes","grants_added"]}},
++    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/76"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}},"identity_warning":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["action","id","changes","grants_added"]}},
 +    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/76"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
 +    "packages.reload": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"generation":{"type":"number"},"failed":{"type":"array","items":{"type":"string"}},"applies":{"const":"next_boundary"}},"required":["generation","failed","applies"]}},
 +    "settings.write": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"values":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["values"]},"result":{"type":"object","properties":{"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["settings"]}},
@@ -133122,10 +133138,10 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..72a08ef77e0805667d5da27b8d101e4248ec2ca7
+index 0000000000000000000000000000000000000000..cfd6e7e3276bf92163818fedaaf218613b0c4295
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1543 @@
+@@ -0,0 +1,1559 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -133565,20 +133581,19 @@ index 0000000000000000000000000000000000000000..72a08ef77e0805667d5da27b8d101e42
 +    package.validate()?;
 +    let source = read_file(&package.entrypoint)?;
 +    let mut hash = Sha256::new();
-+    hash.update(&manifest);
-+    hash.update([0]);
-+    hash.update(package.entrypoint.as_bytes());
-+    hash.update([0]);
-+    hash.update(&source);
++    let mut record = |bytes: &[u8]| {
++        hash.update((bytes.len() as u64).to_be_bytes());
++        hash.update(bytes);
++    };
++    record(&manifest);
++    record(package.entrypoint.as_bytes());
++    record(&source);
 +    let mut captured = None;
 +    for (event, script) in &package.lifecycle {
-+        hash.update([0]);
-+        hash.update(event.as_bytes());
-+        hash.update([0]);
-+        hash.update(script.as_bytes());
-+        hash.update([0]);
++        record(event.as_bytes());
++        record(script.as_bytes());
 +        let content = read_file(script)?;
-+        hash.update(&content);
++        record(&content);
 +        if lifecycle == Some(event.as_str()) {
 +            captured = Some(content);
 +        }
@@ -133591,10 +133606,8 @@ index 0000000000000000000000000000000000000000..72a08ef77e0805667d5da27b8d101e42
 +        if text > 1024 * 1024 {
 +            return Err(failure(format!("package_text_input_limit: {}", package.id)));
 +        }
-+        hash.update([0]);
-+        hash.update(asset.as_bytes());
-+        hash.update([0]);
-+        hash.update(&content);
++        record(asset.as_bytes());
++        record(&content);
 +        if collect_assets && let Ok(text) = String::from_utf8(content) {
 +            assets.insert(asset.clone(), text);
 +        }
@@ -134667,6 +134680,25 @@ index 0000000000000000000000000000000000000000..72a08ef77e0805667d5da27b8d101e42
 +            &Self::state_name(id, scope),
 +            &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
 +        )
++    }
++}
++
++#[cfg(test)]
++mod digest_framing_tests {
++    use super::*;
++
++    #[test]
++    fn binary_asset_boundaries_have_distinct_digests() {
++        let temp = tempfile::tempdir().unwrap();
++        let path = temp.path().canonicalize().unwrap();
++        std::fs::write(path.join("mod.json"), serde_json::to_vec(&json!({"schema":1,"id":"framing","version":"1.0.0","api":crate::MOD_API_VERSION,"state_version":1,"capabilities":[],"assets":["a.json","b.json"]})).unwrap()).unwrap();
++        std::fs::write(path.join("index.ts"), "export default () => {}").unwrap();
++        std::fs::write(path.join("a.json"), b"x\0b.json\0y").unwrap();
++        std::fs::write(path.join("b.json"), b"z").unwrap();
++        let first = inspect_package(&path, false, None).unwrap().2;
++        std::fs::write(path.join("a.json"), b"x").unwrap();
++        std::fs::write(path.join("b.json"), b"y\0b.json\0z").unwrap();
++        assert_ne!(first, inspect_package(&path, false, None).unwrap().2);
 +    }
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
@@ -137634,10 +137666,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3ab51fdd43cd03953463dd782e1e5b54697da6fb
+index 0000000000000000000000000000000000000000..6e7d9df60ea1345fb991f81b0110a96105f0d940
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,783 @@
+@@ -0,0 +1,803 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -138239,7 +138271,27 @@ index 0000000000000000000000000000000000000000..3ab51fdd43cd03953463dd782e1e5b54
 +        }
 +        _ => json!({"enabled": arguments.action == "enable"}),
 +    };
++    let collisions = store
++        .configuration()?
++        .mods
++        .iter()
++        .filter_map(|entry| {
++            let inspected = ModStore::inspect_package(&entry.path).ok()?;
++            (inspected["manifest"]["id"].as_str() == Some(id.as_str())
++                && entry.scope != arguments.scope)
++                .then(|| entry.path.display().to_string())
++        })
++        .collect::<Vec<_>>();
++    let identity_warning = if collisions.is_empty() {
++        Value::Null
++    } else {
++        json!(format!(
++            "Mod ID {id} is already installed at {}. Mods with this ID share storage and owned credential authority; a project-scoped copy takes precedence over a user-scoped copy.",
++            collisions.join(", ")
++        ))
++    };
 +    let public = json!({
++        "identity_warning": identity_warning,
 +        "action": arguments.action,
 +        "id": id,
 +        "changes": changes,
@@ -138423,10 +138475,10 @@ index 0000000000000000000000000000000000000000..3ab51fdd43cd03953463dd782e1e5b54
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e723f3dbfad41cb844b26cb3c3a32cce22ba0041
+index 0000000000000000000000000000000000000000..248d8d89eea01b6b48adb18a547c9ddf8ff822d6
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,463 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -138467,6 +138519,7 @@ index 0000000000000000000000000000000000000000..e723f3dbfad41cb844b26cb3c3a32cce
 +        json!({"action": "install", "source": {"kind": "local", "path": path}}),
 +    )
 +    .unwrap();
++    assert!(install.public["identity_warning"].is_null());
 +    assert_eq!(
 +        (
 +            install.public["id"].as_str(),
@@ -138861,6 +138914,32 @@ index 0000000000000000000000000000000000000000..e723f3dbfad41cb844b26cb3c3a32cce
 +    assert!(
 +        error.to_string().contains("package_arguments_invalid"),
 +        "{error}"
++    );
++}
++
++#[test]
++fn same_id_project_selection_warns_about_shared_authority() {
++    let (_temp, store, root) = setup();
++    for (base, scope) in [(&root, "user"), (&root.join("project"), "project")] {
++        let path = fixture_package(base, "same_id", &["commands"], json!([]));
++        let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
++            .as_str()
++            .unwrap()
++            .to_owned();
++        store
++            .trust(path, &digest, vec!["commands".into()], scope)
++            .unwrap();
++    }
++    let preview = preview(
++        &store,
++        json!({"action":"enable","id":"same_id","scope":"project"}),
++    )
++    .unwrap();
++    assert!(
++        preview.public["identity_warning"]
++            .as_str()
++            .unwrap()
++            .contains("share storage and owned credential authority")
 +    );
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
