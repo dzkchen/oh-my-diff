@@ -36130,10 +36130,10 @@ index 240700e2e9824903aef5152121001126970ee8cf..24d9e1aef8db9811bcd68539c018702d
                  let effort_label = effort
                      .as_ref()
 diff --git a/codex-rs/tui/src/app/new_session.rs b/codex-rs/tui/src/app/new_session.rs
-index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1c387cb10ec8d794f737a6a420c8095ec9cda7d8 100644
+index e6a1ade871116e55446c09491debc2d5bbf9dbbc..83d4a2b870e1ac9bd8ed51b4f4d5e39cf6d6f5bd 100644
 --- a/codex-rs/tui/src/app/new_session.rs
 +++ b/codex-rs/tui/src/app/new_session.rs
-@@ -6,6 +6,141 @@ use super::*;
+@@ -6,6 +6,58 @@ use super::*;
  use codex_config::ConfigLayerSource;
  use codex_protocol::config_types::ServiceTier;
 
@@ -36189,93 +36189,10 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1c387cb10ec8d794f737a6a420c8095e
 +    }
 +}
 +
-+#[cfg(test)]
-+mod route_tests {
-+    use super::*;
-+    use serde_json::json;
-+
-+    #[tokio::test]
-+    #[serial_test::serial]
-+    async fn new_thread_route_changes_defaults_without_mutating_existing_threads() -> Result<()> {
-+        let root = tempfile::tempdir()?;
-+        let store = root.path().canonicalize()?;
-+        std::fs::write(
-+            store.join("mod-status.json"),
-+            serde_json::to_vec(&json!({"mods": [{"id": "route_fixture", "sha256": "source"}]}))?,
-+        )?;
-+        let _environment = crate::omd::tests::omd_environment(&store);
-+        let mut app = super::super::test_support::make_test_app().await;
-+        let active_model = app.config.model.clone();
-+        let active_provider = app.config.model_provider_id.clone();
-+        app.config
-+            .model_providers
-+            .insert("next-provider".into(), app.config.model_provider.clone());
-+        let route = json!({"name": "next", "model": "other-model", "provider": "next-provider",
-+            "reasoning_effort": "high", "roles": ["lead"], "mods": ["route_fixture"]});
-+        std::fs::write(
-+            store.join("host.json"),
-+            serde_json::to_vec(&json!({"routes": [route]}))?,
-+        )?;
-+        let arguments = json!({"route": "next", "scope": "new_threads"});
-+        let result = app
-+            .select_new_thread_route(
-+                "route_fixture",
-+                &arguments,
-+                codex_omd::app_routes::InvocationContext::User,
-+            )
-+            .map_err(color_eyre::eyre::Report::msg)?;
-+        assert_eq!(result["effective_at"], "new_thread");
-+        assert!(
-+            app.select_new_thread_route(
-+                "route_fixture",
-+                &arguments,
-+                codex_omd::app_routes::InvocationContext::Event
-+            )
-+            .is_err()
-+        );
-+        let mut next = app.config.clone();
-+        app.apply_new_thread_route(&mut next)?;
-+        assert_eq!(next.model.as_deref(), Some("other-model"));
-+        assert_eq!(next.model_provider_id, "next-provider");
-+        assert_eq!(
-+            next.web_search_mode.value(),
-+            codex_protocol::config_types::WebSearchMode::Disabled
-+        );
-+        assert_eq!(
-+            next.model_reasoning_effort,
-+            Some(codex_protocol::openai_models::ReasoningEffort::High)
-+        );
-+        assert_eq!(app.config.model, active_model);
-+        assert_eq!(app.config.model_provider_id, active_provider);
-+        assert_eq!(next.permissions, app.config.permissions);
-+        std::fs::write(
-+            store.join("host.json"),
-+            serde_json::to_vec(
-+                &json!({"routes": [route, {"name": "ambiguous", "model": "other-model", "provider": "next-provider", "roles": ["lead"]}]}),
-+            )?,
-+        )?;
-+        assert!(
-+            app.apply_new_thread_route(&mut next)
-+                .unwrap_err()
-+                .to_string()
-+                .contains("route_ambiguous")
-+        );
-+        std::fs::write(store.join("host.json"), br#"{"routes": []}"#)?;
-+        assert!(
-+            app.apply_new_thread_route(&mut next)
-+                .unwrap_err()
-+                .to_string()
-+                .contains("route_not_configured")
-+        );
-+        assert_eq!(app.config.model, active_model);
-+        Ok(())
-+    }
-+}
-+
  pub(crate) fn has_launch_setting(
      config: &Config,
      cli_kv_overrides: &[(String, TomlValue)],
-@@ -60,6 +195,90 @@ pub(super) fn overlay_new_session_defaults(
+@@ -60,6 +112,90 @@ pub(super) fn overlay_new_session_defaults(
  }
 
  impl App {
@@ -36366,7 +36283,7 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1c387cb10ec8d794f737a6a420c8095e
      pub(super) async fn load_new_session_config(
          &mut self,
          app_server: &AppServerSession,
-@@ -106,6 +325,13 @@ impl App {
+@@ -106,6 +242,96 @@ impl App {
                  &self.harness_overrides,
              );
          }
@@ -36380,6 +36297,89 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..1c387cb10ec8d794f737a6a420c8095e
          Ok((config, local_settings))
      }
  }
++
++#[cfg(test)]
++mod route_tests {
++    use super::*;
++    use serde_json::json;
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn new_thread_route_changes_defaults_without_mutating_existing_threads() -> Result<()> {
++        let root = tempfile::tempdir()?;
++        let store = root.path().canonicalize()?;
++        std::fs::write(
++            store.join("mod-status.json"),
++            serde_json::to_vec(&json!({"mods": [{"id": "route_fixture", "sha256": "source"}]}))?,
++        )?;
++        let _environment = crate::omd::tests::omd_environment(&store);
++        let mut app = super::super::test_support::make_test_app().await;
++        let active_model = app.config.model.clone();
++        let active_provider = app.config.model_provider_id.clone();
++        app.config
++            .model_providers
++            .insert("next-provider".into(), app.config.model_provider.clone());
++        let route = json!({"name": "next", "model": "other-model", "provider": "next-provider",
++            "reasoning_effort": "high", "roles": ["lead"], "mods": ["route_fixture"]});
++        std::fs::write(
++            store.join("host.json"),
++            serde_json::to_vec(&json!({"routes": [route]}))?,
++        )?;
++        let arguments = json!({"route": "next", "scope": "new_threads"});
++        let result = app
++            .select_new_thread_route(
++                "route_fixture",
++                &arguments,
++                codex_omd::app_routes::InvocationContext::User,
++            )
++            .map_err(color_eyre::eyre::Report::msg)?;
++        assert_eq!(result["effective_at"], "new_thread");
++        assert!(
++            app.select_new_thread_route(
++                "route_fixture",
++                &arguments,
++                codex_omd::app_routes::InvocationContext::Event
++            )
++            .is_err()
++        );
++        let mut next = app.config.clone();
++        app.apply_new_thread_route(&mut next)?;
++        assert_eq!(next.model.as_deref(), Some("other-model"));
++        assert_eq!(next.model_provider_id, "next-provider");
++        assert_eq!(
++            next.web_search_mode.value(),
++            codex_protocol::config_types::WebSearchMode::Disabled
++        );
++        assert_eq!(
++            next.model_reasoning_effort,
++            Some(codex_protocol::openai_models::ReasoningEffort::High)
++        );
++        assert_eq!(app.config.model, active_model);
++        assert_eq!(app.config.model_provider_id, active_provider);
++        assert_eq!(next.permissions, app.config.permissions);
++        std::fs::write(
++            store.join("host.json"),
++            serde_json::to_vec(
++                &json!({"routes": [route, {"name": "ambiguous", "model": "other-model", "provider": "next-provider", "roles": ["lead"]}]}),
++            )?,
++        )?;
++        assert!(
++            app.apply_new_thread_route(&mut next)
++                .unwrap_err()
++                .to_string()
++                .contains("route_ambiguous")
++        );
++        std::fs::write(store.join("host.json"), br#"{"routes": []}"#)?;
++        assert!(
++            app.apply_new_thread_route(&mut next)
++                .unwrap_err()
++                .to_string()
++                .contains("route_not_configured")
++        );
++        assert_eq!(app.config.model, active_model);
++        Ok(())
++    }
++}
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
 index 312185ebdd04eae1a7d5b58e5e38bdf0f64e067d..80d87a452bd31b2fd0d6a6b4aa8e0eb7082b6dad 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
@@ -37501,7 +37501,7 @@ index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..ea297c01e178e08fd4bfa773388e5402
          let clear_result = tui.terminal.clear();
          if let Some(task) = app.daemon_restart.take()
 diff --git a/codex-rs/tui/src/app/test_support.rs b/codex-rs/tui/src/app/test_support.rs
-index a0efb33101b4f3b5a31d15e10815cbf8064cb890..d461106e958c8f808c707150c0c8de387ecad1bd 100644
+index a0efb33101b4f3b5a31d15e10815cbf8064cb890..fa77f063bd1e4106d6b9fb4af28af4294cb0b0cb 100644
 --- a/codex-rs/tui/src/app/test_support.rs
 +++ b/codex-rs/tui/src/app/test_support.rs
 @@ -14,6 +14,7 @@ use codex_models_manager::test_support::get_model_offline_for_tests;
@@ -37521,6 +37521,33 @@ index a0efb33101b4f3b5a31d15e10815cbf8064cb890..d461106e958c8f808c707150c0c8de38
          startup_protected_input_boundary: false,
          startup_pending_protected_request: false,
          account_email_request_id: None,
+@@ -162,3 +165,26 @@ pub(super) fn app_enabled_in_effective_config(config: &Config, app_id: &str) ->
+         .and_then(|app| app.get("enabled"))
+         .and_then(TomlValue::as_bool)
+ }
++
++pub(super) async fn wait_for_user_turn_submission(
++    app: &mut App,
++    tui: &mut tui::Tui,
++    session: &mut AppServerSession,
++    events: &mut mpsc::UnboundedReceiver<AppEvent>,
++) -> Result<()> {
++    tokio::time::timeout(Duration::from_secs(5), async {
++        loop {
++            let event = events
++                .recv()
++                .await
++                .ok_or_else(|| color_eyre::eyre::eyre!("app event channel closed"))?;
++            let finished = matches!(event, AppEvent::UserTurnSubmissionFinished { .. });
++            app.handle_event(tui, session, event).await?;
++            app.drain_active_thread_events(tui).await?;
++            if finished {
++                return Ok(());
++            }
++        }
++    })
++    .await?
++}
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
 index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0f59c9dcc 100644
 --- a/codex-rs/tui/src/app/tests.rs
@@ -37847,6 +37874,51 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
  #[tokio::test]
  async fn selecting_cyber_model_falls_back_to_user_when_auto_review_is_unavailable() {
      let mut app = make_test_app().await;
+diff --git a/codex-rs/tui/src/app/tests/active_reconnect_tests.rs b/codex-rs/tui/src/app/tests/active_reconnect_tests.rs
+index d77c233ba7bc5f60e5922ec17ef2dff2ea461389..b4aa3c7be24cc058933b506029e759f32c413e1e 100644
+--- a/codex-rs/tui/src/app/tests/active_reconnect_tests.rs
++++ b/codex-rs/tui/src/app/tests/active_reconnect_tests.rs
+@@ -3,6 +3,7 @@
+ use super::*;
+ use crate::app::reconnect::ReconnectPresentation;
+ use crate::app::reconnect::reconnect;
++use crate::app::test_support::wait_for_user_turn_submission;
+ use codex_config::types::KeybindingSpec;
+ use codex_config::types::KeybindingsSpec;
+ use pretty_assertions::assert_eq;
+@@ -458,7 +459,12 @@ async fn reconnect_restores_history_permissions_and_resumes_unsent_input() -> Re
+             app.chat_widget
+                 .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+             while let Ok(event) = events.try_recv() {
++                let submitted = matches!(event, AppEvent::CodexOp(AppCommand::UserTurn { .. }));
+                 app.handle_event(&mut tui, &mut session, event).await?;
++                if submitted {
++                    wait_for_user_turn_submission(&mut app, &mut tui, &mut session, &mut events)
++                        .await?;
++                }
+             }
+         }
+         while let Ok(event) = events.try_recv() {
+@@ -618,6 +624,7 @@ async fn reconnect_reconciles_offscreen_pending_profile_before_restoring_permiss
+     while let Ok(event) = events.try_recv() {
+         if matches!(event, AppEvent::CodexOp(AppCommand::UserTurn { .. })) {
+             app.handle_event(&mut tui, &mut session, event).await?;
++            wait_for_user_turn_submission(&mut app, &mut tui, &mut session, &mut events).await?;
+         }
+     }
+     session.shutdown().await?;
+@@ -797,7 +804,11 @@ pub(super) async fn drain_history(
+                 | AppEvent::BeginThreadSwitchHistoryReplayBuffer
+                 | AppEvent::EndInitialHistoryReplayBuffer
+         ) {
++            let submitted = matches!(event, AppEvent::CodexOp(AppCommand::UserTurn { .. }));
+             app.handle_event(tui, session, event).await?;
++            if submitted {
++                wait_for_user_turn_submission(app, tui, session, events).await?;
++            }
+         }
+     }
+     Ok(lines_to_single_string(
 diff --git a/codex-rs/tui/src/app/tests/advanced_reasoning_tests.rs b/codex-rs/tui/src/app/tests/advanced_reasoning_tests.rs
 index 6b1551c61aaf7696a363968d8698c9d912a39bb7..651e2de90133e6874878f19112cec0d0509b9979 100644
 --- a/codex-rs/tui/src/app/tests/advanced_reasoning_tests.rs
@@ -37900,10 +37972,18 @@ index 587a63f7d69f997fb7ce2adb40a31f7afd624d73..fc7ecf3a11b27c17def1cd54a750b897
          .await;
          if matches!(selection, SessionSelection::StartFresh) {
 diff --git a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
-index 9123904c5117dbf0c7c653826bea32110deaf0c1..bddbbf8dd60312435c3f390834626652e53833e3 100644
+index 9123904c5117dbf0c7c653826bea32110deaf0c1..5896b0af02f52384962f99dbdf57ba21ff38ac61 100644
 --- a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
 +++ b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
-@@ -119,11 +119,16 @@ async fn command_center_new_keeps_startup_draft_visible_through_handoff() -> Res
+@@ -2,6 +2,7 @@
+
+ use super::*;
+ use crate::app::agents_overview::AGENTS_OVERVIEW_VIEW_ID;
++use crate::app::test_support::wait_for_user_turn_submission;
+ use crate::app::tests::session_lifecycle_requests::HistoryCapabilities;
+ use crate::app::tests::session_lifecycle_requests::recorded_params;
+ use crate::app::tests::session_lifecycle_requests::start_recording_app_server_with_history;
+@@ -119,11 +120,16 @@ async fn command_center_new_keeps_startup_draft_visible_through_handoff() -> Res
                  .collect::<Vec<_>>()
                  .join("\n")
          };
@@ -37925,7 +38005,7 @@ index 9123904c5117dbf0c7c653826bea32110deaf0c1..bddbbf8dd60312435c3f390834626652
          tui.set_owned_screen(/*owned*/ false)?;
          server.shutdown().await?;
      }
-@@ -733,6 +738,7 @@ async fn command_center_new_preserves_only_selected_server_profiles() -> Result<
+@@ -733,6 +739,7 @@ async fn command_center_new_preserves_only_selected_server_profiles() -> Result<
              /*session_start_source*/ None,
              /*remote_cwd_override*/ None,
              Some(&selection),
@@ -37933,7 +38013,15 @@ index 9123904c5117dbf0c7c653826bea32110deaf0c1..bddbbf8dd60312435c3f390834626652
          )
          .await?;
      app.enqueue_primary_thread_session(started.session, started.turns)
-@@ -1309,3 +1315,61 @@ async fn command_center_new_checkout_and_worktree_preserve_source_and_default_br
+@@ -1043,6 +1050,7 @@ async fn command_center_new_restores_blank_drafts_and_builtin_permissions() -> R
+         .submit_user_message_as_plain_user_turn(crate::chatwidget::UserMessage::from("Hello"))
+         .expect("submit the first turn");
+     app.submit_thread_op(&mut server, startup, op).await?;
++    wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+     let turns = recorded_params(&requests, "turn/start");
+     let params = turns.last().expect("turn/start was sent");
+     assert_eq!(
+@@ -1309,3 +1317,61 @@ async fn command_center_new_checkout_and_worktree_preserve_source_and_default_br
      }
      Ok(())
  }
@@ -37995,6 +38083,26 @@ index 9123904c5117dbf0c7c653826bea32110deaf0c1..bddbbf8dd60312435c3f390834626652
 +    proxy.await??;
 +    Ok(())
 +}
+diff --git a/codex-rs/tui/src/app/tests/disconnect_tests.rs b/codex-rs/tui/src/app/tests/disconnect_tests.rs
+index 15156ba47e25d0fc5c0fd77ee0904e3f4ad2a9ae..fb61290f809d4fcd13c34a5a6d10d1d090b68ff4 100644
+--- a/codex-rs/tui/src/app/tests/disconnect_tests.rs
++++ b/codex-rs/tui/src/app/tests/disconnect_tests.rs
+@@ -3,6 +3,7 @@
+ use super::*;
+ use crate::app::reconnect::ReconnectPresentation;
+ use crate::app::reconnect::reconnect;
++use crate::app::test_support::wait_for_user_turn_submission;
+ use crate::app_server_session::ThreadParamsMode;
+ use crate::bottom_pane::TerminalTitleItem;
+ use crate::chatwidget::tests::helpers::normalize_agent_center_snapshot;
+@@ -72,6 +73,7 @@ async fn lost_mutation_reply_preserves_work_without_resubmitting() -> Result<()>
+             .await?,
+         AppRunControl::Continue
+     ));
++    wait_for_user_turn_submission(&mut app, &mut tui, &mut session, &mut events).await?;
+     assert!(app.reconnect.offline);
+     assert!(!app.chat_widget.has_active_view());
+     for key in [
 diff --git a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs b/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
 index 8b612c8e916b3dd03005a01b1ced4fdd7c12db65..4794ffe49e38ee9645ce85c2656be611c69b4dd6 100644
 --- a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
@@ -38145,6 +38253,21 @@ index 8fe1861c74591ed99a4121a73f7f6ebf677d9b12..13f68e50a0a217b1da57b3d863d53f76
          app.handle_app_server_event(
              &app_server,
              AppServerEvent::ServerNotification(Box::new(
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap
+index df0ee6c0a1871611ab44b4e4c5cb26ac2027570e..0f901ba44e363c0a48a476877cab9755aba032fe 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap
+@@ -2,6 +2,9 @@
+ source: tui/src/app/tests/active_reconnect_tests.rs
+ expression: "render_bottom_popup(&app.chat_widget, 80)"
+ ---
++• Working (0s • esc to interrupt)
++
++
+ › kept draft
+
+-  gpt-test default                                   Plan mode (⇧tab to cycle)
++  tab to queue message · Plan mode                           100% context left
 diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
 index 335071a07742e41b50ce0eb62805f740d019b586..b37853d5ce444e707eb518538fc06f796c46409e 100644
 --- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
@@ -38158,6 +38281,33 @@ index 335071a07742e41b50ce0eb62805f740d019b586..b37853d5ce444e707eb518538fc06f79
  › unavailable draft
 
    gpt-test default · /tmp/project
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__offline_draft.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__offline_draft.snap
+index 139c4dd4382f06c24feac72aebfdf1980b76af17..ff5d3dc4eb265c189972a2577b08e93092ab124d 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__offline_draft.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__offline_draft.snap
+@@ -13,4 +13,4 @@ expression: "format!(\"{}\\n{}\",\nlines_to_single_string(&app.transcript_cells.
+
+ › keep this draft!
+
+-  ⌃c quit
++  ⌃c quit                                                    100% context left
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__rejected_startup_reconnected.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__rejected_startup_reconnected.snap
+index a084e790b02053699ad34866eb150dde8cf2528c..251d00f107e8b6fddd6105a5bb838eba6d31d9e3 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__rejected_startup_reconnected.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__rejected_startup_reconnected.snap
+@@ -1,7 +1,10 @@
+ ---
+ source: tui/src/app/tests/disconnect_tests.rs
+-expression: "render_bottom_popup(&app.chat_widget, 80)"
++expression: "normalize_snapshot_paths(render_bottom_popup(&app.chat_widget, 80))"
+ ---
++• Working (0s • esc to interrupt)
++
++
+ › startup draft
+
+-  gpt-retry high · /tmp/project
++  tab to queue message                                       100% context left
 diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap
 index a8997b370eeb543ee849f29f437c6144a1439f82..17da348535ba0708de6257e43b1ffaec91eca8f1 100644
 --- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap
@@ -42390,10 +42540,10 @@ index fd7fb8f86c37c4d995eb5ba905ec22ffa0e084b4..55eab1a439ef865f68f804fae8d93bdc
              return false;
          }
 diff --git a/codex-rs/tui/src/chatwidget/input_restore.rs b/codex-rs/tui/src/chatwidget/input_restore.rs
-index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..844aded2ef37cbcb06df9130d9b358a7aa30aaa6 100644
+index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..cb882e2d60a006265b072a68fb0b37db08ab20b8 100644
 --- a/codex-rs/tui/src/chatwidget/input_restore.rs
 +++ b/codex-rs/tui/src/chatwidget/input_restore.rs
-@@ -351,6 +351,20 @@ impl ChatWidget {
+@@ -351,6 +351,22 @@ impl ChatWidget {
          true
      }
 
@@ -42406,7 +42556,9 @@ index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..844aded2ef37cbcb06df9130d9b358a7
 +        else {
 +            return false;
 +        };
-+        let steer = self.input_queue.pending_steers.remove(index).unwrap();
++        let Some(steer) = self.input_queue.pending_steers.remove(index) else {
++            return false;
++        };
 +        self.input_queue.pending_steers.push_front(steer);
 +        self.enqueue_rejected_steer()
 +    }
@@ -42414,7 +42566,7 @@ index bc4a9c1be3bf4eaf13c673ddd02e3f6642032a38..844aded2ef37cbcb06df9130d9b358a7
      /// Handle a turn aborted due to user interrupt (Esc), budget exhaustion,
      /// or review completion.
      /// When there are queued user messages, restore them into the composer
-@@ -374,17 +388,21 @@ impl ChatWidget {
+@@ -374,17 +390,21 @@ impl ChatWidget {
                      /*hint*/ None,
                  ));
              } else {
@@ -44807,6 +44959,20 @@ index 54e1f1fc67cc518cbbb7350725d1d234670f989c..d82c0f7c447f463e19ffd659204c0edf
 +            .any(|event| matches!(event, AppEvent::FetchModels { .. }))
 +    );
 +}
+diff --git a/codex-rs/tui/src/chatwidget/tests/review_mode.rs b/codex-rs/tui/src/chatwidget/tests/review_mode.rs
+index 640019ba6ced9e8581022d9ecd536e81a585053e..a2defe6c3e1a155a2b304fe437c64bf992971f1b 100644
+--- a/codex-rs/tui/src/chatwidget/tests/review_mode.rs
++++ b/codex-rs/tui/src/chatwidget/tests/review_mode.rs
+@@ -275,7 +275,8 @@ async fn steer_rejection_queues_review_follow_up_before_existing_queued_messages
+         other => panic!("expected merged rejected-steer follow-up submit, got {other:?}"),
+     }
+
+-    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
++    handle_turn_started(&mut chat, "turn-2");
++    handle_turn_completed(&mut chat, "turn-2", /*duration_ms*/ None);
+
+     match next_submit_op(&mut op_rx) {
+         Op::UserTurn { items, .. } => assert_eq!(
 diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap
 index 0644d12b6f533ab6c69bebcfd695fe12279221a5..f6fb7e0854208d776708b3b8c653920a7e6bd678 100644
 --- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap
@@ -50875,10 +51041,10 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
              let visible = self.entries[index].layout.row_count() > 0;
              if index + 1 != self.entries.len() {
 diff --git a/codex-rs/tui/src/transcript_view/layout_tests.rs b/codex-rs/tui/src/transcript_view/layout_tests.rs
-index 2cb45fbc8d9d1914da5c627e032f7a86faea3ad5..032620a3c392a3302c173dbe3369867c7285f97a 100644
+index 2cb45fbc8d9d1914da5c627e032f7a86faea3ad5..54f2e4a4515fc2e9746249a44c8c923de57b3d38 100644
 --- a/codex-rs/tui/src/transcript_view/layout_tests.rs
 +++ b/codex-rs/tui/src/transcript_view/layout_tests.rs
-@@ -13,6 +13,49 @@ struct Cell {
+@@ -13,6 +13,51 @@ struct Cell {
      mutable: bool,
  }
 
@@ -50910,9 +51076,11 @@ index 2cb45fbc8d9d1914da5c627e032f7a86faea3ad5..032620a3c392a3302c173dbe3369867c
 +fn cached_text_activity_does_not_recompute_disclosure_for_image_visibility() {
 +    let cell = Arc::new(ActivityCell::default());
 +    let cells: Vec<Arc<dyn HistoryCell>> = vec![cell.clone()];
-+    let mut view = TranscriptView::default();
-+    view.area = Rect::new(0, 0, 80, 24);
-+    view.image_protocol = Some(crate::pets::ImageProtocol::Kitty);
++    let mut view = TranscriptView {
++        area: Rect::new(0, 0, 80, 24),
++        image_protocol: Some(crate::pets::ImageProtocol::Kitty),
++        ..Default::default()
++    };
 +    view.cache.begin_frame();
 +    let first = view.entry_layout(&cells, 0, false).unwrap();
 +    let disclosures = cell.disclosures.load(Ordering::Relaxed);
@@ -51271,6 +51439,40 @@ index 4a622a11c9928ad3b8202e84f60063f7909ac3e4..26a5cef2431000c27655d262e8b62950
                  ("Client provider history", "Server provider history")
              } else {
                  ("Server provider history", "Client provider history")
+diff --git a/codex-rs/tui/tests/suite/reconnect.rs b/codex-rs/tui/tests/suite/reconnect.rs
+index 1677ba7b811d38ef1b8ebf8dc1847ee361ba6284..832078b18942e03722f4b34a886998601d1805f1 100644
+--- a/codex-rs/tui/tests/suite/reconnect.rs
++++ b/codex-rs/tui/tests/suite/reconnect.rs
+@@ -38,7 +38,7 @@ async fn automatic_reconnect_restores_draft_and_routes_new_notifications() -> Re
+     let (disconnect_tx, mut disconnect_rx) = tokio::sync::oneshot::channel();
+     let (restore_tx, restore_rx) = tokio::sync::oneshot::channel();
+     let (complete_tx, mut complete_rx) = tokio::sync::oneshot::channel();
+-    let (submitted_tx, submitted_rx) = tokio::sync::oneshot::channel();
++    let (submitted_tx, mut submitted_rx) = tokio::sync::oneshot::channel();
+     let server_cwd = workspace_path.clone();
+     let id = "00000000-0000-0000-0000-000000000001";
+     let server = tokio::spawn(async move {
+@@ -263,7 +263,19 @@ async fn automatic_reconnect_restores_draft_and_routes_new_notifications() -> Re
+     complete_tx.send(()).unwrap();
+     terminal.wait_for_screen("Recovered turn completed.")?;
+     terminal.write_input(b"\r")?;
+-    tokio::time::timeout(Duration::from_secs(/*secs*/ 10), submitted_rx).await??;
++    let deadline = Instant::now() + Duration::from_secs(/*secs*/ 10);
++    loop {
++        match submitted_rx.try_recv() {
++            Ok(()) => break,
++            Err(tokio::sync::oneshot::error::TryRecvError::Empty) if Instant::now() < deadline => {
++                terminal.read_output(Duration::from_millis(/*millis*/ 20))?;
++            }
++            result => anyhow::bail!(
++                "fresh turn was not submitted: {result:?}; screen:\n{}",
++                terminal.screen_contents()
++            ),
++        }
++    }
+     drop(terminal);
+     let methods = tokio::time::timeout(Duration::from_secs(/*secs*/ 5), server).await???;
+     assert_eq!(
 diff --git a/codex-rs/utils/pty/src/pipe.rs b/codex-rs/utils/pty/src/pipe.rs
 index 1088c01fd14ed02a2582b91872127268bb74badd..376bd0268574d135c791c72fe6ee28430542837d 100644
 --- a/codex-rs/utils/pty/src/pipe.rs
@@ -177493,10 +177695,10 @@ index 0000000000000000000000000000000000000000..1f4bd7e660e5d609571f2f7a2eb22e2d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3bea68827cd061c3c0eb9138ae156fb55222f684
+index 0000000000000000000000000000000000000000..c774f3c1004e1d4b2bb580a75ecf37c59eebbbbc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,739 @@
+@@ -0,0 +1,743 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -177982,8 +178184,10 @@ index 0000000000000000000000000000000000000000..3bea68827cd061c3c0eb9138ae156fb5
 +fn underlay_resize_keeps_the_frame_and_fills_new_edges() {
 +    let now = Instant::now();
 +    let key = "underlay-resize";
-+    let mut snapshot = codex_omd::ModViewSnapshot::default();
-+    snapshot.input = json!({"ledger": {"cwd": "/repo", "thread_id": "resize"}});
++    let mut snapshot = codex_omd::ModViewSnapshot {
++        input: json!({"ledger": {"cwd": "/repo", "thread_id": "resize"}}),
++        ..Default::default()
++    };
 +    snapshot.view.underlay = serde_json::from_value(json!({"raster": key})).unwrap();
 +    snapshot.component_owners.insert(key.into(), "owner".into());
 +    let level = Some(StdoutColorLevel::TrueColor);
@@ -178089,8 +178293,10 @@ index 0000000000000000000000000000000000000000..3bea68827cd061c3c0eb9138ae156fb5
 +fn underlay_tints_default_cells_and_preserves_raised_prompt_surfaces() {
 +    let now = Instant::now();
 +    let key = "underlay_scene";
-+    let mut snapshot = codex_omd::ModViewSnapshot::default();
-+    snapshot.input = json!({"ledger": {"cwd": "/underlay-repo", "thread_id": "underlay-thread"}});
++    let mut snapshot = codex_omd::ModViewSnapshot {
++        input: json!({"ledger": {"cwd": "/underlay-repo", "thread_id": "underlay-thread"}}),
++        ..Default::default()
++    };
 +    snapshot.view.underlay = serde_json::from_value(json!({"raster": key})).expect("underlay");
 +    snapshot.component_owners.insert(key.into(), "owner".into());
 +    let level = Some(StdoutColorLevel::TrueColor);
@@ -180974,7 +181180,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c3d093227734b2d981ac8fd57d3690f49123c5a4
+index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb0f7e8fd0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
 @@ -0,0 +1,784 @@
@@ -181024,7 +181230,7 @@ index 0000000000000000000000000000000000000000..c3d093227734b2d981ac8fd57d3690f4
 +        input: serde_json::json!({"event":"idle","ledger":{"thread_id":"previous"}}),
 +        ..Default::default()
 +    };
-+    let terminal = runtime.terminal_view(snapshot.input.clone(), &|| true);
++    let terminal = runtime.terminal_view(snapshot.input.clone(), || true);
 +    assert_eq!(terminal.diagnostics.len(), 1);
 +    snapshot.native_diagnostics = vec!["native evidence diagnostic".into()];
 +    snapshot.diagnostics = terminal
