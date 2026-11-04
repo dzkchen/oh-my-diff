@@ -21,7 +21,8 @@ fn mounted_component_refreshes_background_activation_identity() {
     });
     for (activation, status) in [("first", "pending"), ("second", "completed")] {
         request["activation_id"] = json!(activation);
-        request["state"] = json!({"background_refresh": {"activation": activation, "status": status, "token": 1}});
+        request["state"] =
+            json!({"background_refresh": {"activation": activation, "status": status, "token": 1}});
         let reply = evaluate_warm(
             "component-job-activation",
             &request,

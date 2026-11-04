@@ -132115,10 +132115,10 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..720458fff400e3965c624ca2c582c462578d62eb
+index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79713187d4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,383 @@
 +use super::WARM;
 +use super::evaluate_warm;
 +use super::sandboxed;
@@ -132142,7 +132142,8 @@ index 0000000000000000000000000000000000000000..720458fff400e3965c624ca2c582c462
 +    });
 +    for (activation, status) in [("first", "pending"), ("second", "completed")] {
 +        request["activation_id"] = json!(activation);
-+        request["state"] = json!({"background_refresh": {"activation": activation, "status": status, "token": 1}});
++        request["state"] =
++            json!({"background_refresh": {"activation": activation, "status": status, "token": 1}});
 +        let reply = evaluate_warm(
 +            "component-job-activation",
 +            &request,
