@@ -26,9 +26,6 @@ Signed mod updates, account switching for new threads, keyboard panel arranging,
 - Monitors: watch several sources together, check pull-request completion, and run the next action when a watch settles
 - Continue: cache-aware observation masking preserves recent context while reducing repeated tool output in a continued conversation
 - Mod authors: session activations, background jobs, timer payloads and assistant-message identities support work that continues across callbacks
-- Simplify activation retention predicates without changing callback behavior. (#404)
-- Align the TUI operation conformance list with timer scheduling and cancellation. (#402)
-- Align nightly TUI fixtures with asynchronous submissions and matching turn lifecycle events. (#405)
 
 ### Fixed
 
