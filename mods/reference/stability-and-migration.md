@@ -46,6 +46,8 @@ These experimental features have no registry entry of their own:
 
 | Feature | Covers |
 | --- | --- |
+| `session_activation_v1`, `background_jobs_v1` | Retained session variables and typed background jobs |
+| `assistant_message_identity_v1` | Assistant completion events and message IDs on render props |
 | `api.uiState` and command views | [Session UI state](state-and-storage.md#session-ui-state-apiuistate) and [command views](commands-and-composer.md#command-views) |
 | `process_streams_v1` | `framing: "raw"` on `process.start` |
 | `process_raster_v1`, `raster_pixels_v1` | Processes that feed a raster frames or raw pixel buffers |
@@ -64,10 +66,13 @@ These frozen entries have experimental fields:
 | `events:agent` | `provider`, `model`, `billing` | none |
 | `events:component_event` | `content`, `target`, `edge`, `columns`, `rows` | `terminal_layout_dock_v1` |
 | `events:terminal` | `omd_version`, `welcome`, `chat`, `colors`, `sites` | `terminal_welcome_area_v1`, `terminal_chat_area_v1`, `terminal_colors_v1`, `terminal_site_area_v1` |
+| `events:timer` | `data` | `timer_data_v1` |
+| `render_sites:assistant_message` | `message_id` | `assistant_message_identity_v1` |
 | `replacements:tool_batch` | `success_per_call` | `tool_batch_success_v1` |
 | `intercepts:tool` | `value`, `bytes` | `code_mode_values_v1`, `tool_original_v1` |
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
 | `operations:agents.spawn` | `model` | none |
+| `operations:events.schedule` | `data` | `timer_data_v1` |
 | `operations:routes.add` | `model`, `effort` | `routes_add_model_v1` |
 | `operations:routes.list` | `data` | `route_write_v1` |
 | `operations:session.info` | `process_id`, `omd_version` | none |
@@ -118,3 +123,10 @@ These changes ship in OMD 1.3.0.
   `/dev/tty` (git credentials, ssh passphrases, `sudo`) fails instead of drawing over the TUI and waiting. Pass input
   through `stdin` or the program's non-interactive flags. Runs with `sandbox: "none"` also receive `SSH_AUTH_SOCK`, so
   programs under an `os` grant can sign in through the user's SSH agent.
+
+### Package trust digest framing
+
+Package digests now prefix each manifest, path and file-content record with its eight-byte big-endian length.
+Existing trust digests change: inspect and re-trust folder mods, and reinstall curated packages from the new release.
+Do not copy old grants to a new digest. Same-ID mods share storage and owned credential authority; project scope takes precedence.
+Package previews report `identity_warning` when the ID is installed in another scope.

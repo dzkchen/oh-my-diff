@@ -9,6 +9,15 @@ function run(source, extra = {}) {
   return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
 }
 
+test('payload timers rebuild handlers without globals and preserve omitted and null data', () => {
+  const source = "export default api => api.time.after('work', 16, event => api.state.set(event))";
+  for (const fields of [{}, { data: null }, { data: { turn_id: 'new' } }]) {
+    const reply = run(source, { capabilities: ['events', 'store'], event: 'timer', payload: { key: 'time:work', ...fields } });
+    assert.equal(reply.error, undefined);
+    assert.deepEqual(reply.state, { key: 'work', ...fields });
+  }
+});
+
 test('UI state serialized boundaries agree with the native validator', () => {
   const cases = JSON.parse(readFileSync(new URL('../runtime/omd/tests/fixtures/ui_state.json', import.meta.url)));
   for (const entry of cases) {

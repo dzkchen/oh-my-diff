@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "id": "omd_claude_cli",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "api": "1.0.0",
   "state_version": 1,
   "description": "Claude models through your official Claude CLI login as a Codex provider, with /claude login in the session",
   "license": "MIT",
-  "subscriptions": { "channels": ["omd_claude_cli/login", "omd_claude_cli/code", "omd_claude_cli/remove"] },
+  "subscriptions": { "channels": ["omd_claude_cli/login", "omd_claude_cli/remove"] },
   "provenance": {
     "maintainer": "Oh My Diff",
-    "source": "mods/first-party"
+    "source": "mods/first-party/omd_claude_cli"
   },
   "capabilities": [
     "commands",

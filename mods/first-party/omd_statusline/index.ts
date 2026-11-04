@@ -39,6 +39,8 @@ export default function activate(api: ModAPI) {
     update(data => {
       data.git = !run.ok ? { ...parseGit(key, ''), error: visible(run.error, 80) }
         : run.value.exit_code !== 0 || run.value.timed_out ? { ...parseGit(key, ''), error: run.value.timed_out ? 'timed out' : 'not a repository' }
+        // A capped status would silently undercount, so say it was truncated instead of showing wrong numbers.
+        : run.value.stdout_truncated ? { ...parseGit(key, ''), error: 'status truncated' }
         : parseGit(key, run.value.stdout);
     });
   };
@@ -249,11 +251,15 @@ export default function activate(api: ModAPI) {
     data.agents[agent.agent_id ?? agent.thread_id] = agent.status;
     for (const id of Object.keys(data.agents).slice(0, -16)) delete data.agents[id];
   }));
-  api.on('tool_call', ({ call_id }) => update(data => {
-    data.tools[call_id] = Date.now();
-    for (const id of Object.keys(data.tools).slice(0, -16)) delete data.tools[id];
-  }));
-  api.on('tool_result', ({ call_id, tool }) => {
+  api.on('tool_call', ({ call_id, agent_id }) => {
+    if (agent_id) return;
+    update(data => {
+      data.tools[call_id] = Date.now();
+      for (const id of Object.keys(data.tools).slice(0, -16)) delete data.tools[id];
+    });
+  });
+  api.on('tool_result', ({ call_id, tool, agent_id, thread_id }) => {
+    if (agent_id || thread_id && saved().thread && thread_id !== saved().thread) return;
     update(data => { delete data.tools[call_id]; });
     if (/patch|edit|write|exec|shell/.test(tool)) gitSoon.start();
   });

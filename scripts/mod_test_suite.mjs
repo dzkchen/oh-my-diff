@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export function discover(root) {
@@ -46,8 +46,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         process.stderr.write(`Not executed (optional/manual): ${path}: ${reason}\n`);
       }
       // Import-time lookup of omd-runner: a missing runner fails here once, not in every test file.
-      await import('../tests/mod_runner.mjs');
-      const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2), ...inventory.tests], { cwd: root, stdio: 'inherit' });
+      const { runner } = await import('../tests/mod_runner.mjs');
+      const engine = join(dirname(runner), 'omd-mod');
+      const env = { ...process.env, OMD_TEST_RUNNER: runner, ...(!process.env.OMD_MOD_BIN && existsSync(engine) ? { OMD_MOD_BIN: engine } : {}) };
+      const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2), ...inventory.tests], { cwd: root, stdio: 'inherit', env });
       if (result.error) throw result.error;
       process.exitCode = result.status ?? 1;
     }

@@ -5,7 +5,7 @@ import { calls, emit, hostOperations, invoke, runScenario, settings } from '@oh-
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
-test('a tick sends the whole raster as packed half-block cells', () => {
+test('a tick sends the whole raster as packed half-block cells', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
   const trace = runScenario(here, settings('raster_wave', { width: 5, height: 3 }), hostOperations({
     'events.publish': [{ result: { delivered: 1, dropped: 0 } }],
     'events.schedule': [{ result: { key: 'tick', delay_ms: 100 } }, { result: { key: 'tick', delay_ms: 16 } }],

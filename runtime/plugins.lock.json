@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "b367617abc95ec80082eba21fc7197704eb6cfe9e066266440671192813aaacb"
+    "sha256": "16786b770378d7ac777ab730e0a029fbbc5931c25fba8b3ba181344f35b26fc3"
   },
   "plugins": {
     "omd-anchored-edit": {
@@ -19,7 +19,7 @@
   },
   "files": {
     ".agents/plugins/marketplace.json": "4bdd92f2f41cf2f44a791252a98c77a13ad0df1e914fa13533fad462dc02dbc6",
-    "plugins/omd-anchored-edit/.codex-plugin/omd.json": "238b2873c3cd936118d71db84dee7dc6c248c59c45e7c22848abc148823ba2e9",
+    "plugins/omd-anchored-edit/.codex-plugin/omd.json": "7496c566fd8dc30de77bd299acb53c5e3cf4b65bef7633d5037ea4a8c4743c24",
     "plugins/omd-anchored-edit/.codex-plugin/plugin.json": "9db0f6a6a44bd389e9cd45d54c6581a0c01f7c52d67d722910a4b91a48c1ed13",
     "plugins/omd-anchored-edit/README.md": "9dc60c03f8f011eff8eab7994f032faacfe79f0b269ef5460498341c28ad70cb",
     "plugins/omd-anchored-edit/mod/index.ts": "935e4b97633e618732308796f2c8cfc1c680098ecdc50ef314be1103a9a939b7",

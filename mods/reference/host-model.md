@@ -115,14 +115,14 @@ Host call arguments and results share a 1 MiB transport budget per callback.
 
 What a callback keeps from earlier runs, and when its work ends.
 
-- Every callback except a render hook gets a fresh VM context and activation. Render hooks keep their activation
+- Unless the package opts into experimental `session_activation_v1`, every callback except a render hook gets a fresh VM context and activation. Render hooks keep their activation
   while the package revision, settings and persisted state stay unchanged
   ([Render callback runtime](render-hooks.md#render-callback-runtime)).
 - A package's later callbacks may reuse its sandboxed runner process and a bounded bytecode cache. Runners are never
   shared between packages.
 - Before the host returns a callback's result, it waits for work the callback left running to settle. If that work
   makes a host call after the callback returned, the callback fails.
-- Persist state through `api.state`. Module globals don't survive from one callback to the next.
+- Persist state through `api.state`. Module globals survive session callbacks only with `session_activation_v1`.
 
 ## Callback contexts
 
@@ -139,7 +139,10 @@ user contexts. A user context can call only:
   `packages.*`, `routes.add`, `routes.models`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
 - `turns.activity`
-- `events.publish`
+- `events.publish`, `events.schedule` and `events.cancel`
+
+Slash command callbacks can also call `process.status` and `process.exchange` on their own existing managed
+processes. Starting, finding or stopping a process still requires a session callback.
 
 A service call from a user context works only when its provider needs no other host operation.
 
@@ -149,7 +152,7 @@ Component input callbacks also run in the terminal, but not as user actions. The
 `settings.write`.
 
 To run any other operation (`task.*`, `contract.*`, other `routes.*`, `evidence.*`,
-`workspace.snapshot/fingerprint`, `process.*`, `agents.*`), publish an event with `events.publish` and do the work in
+`workspace.snapshot/fingerprint`, other `process.*`, `agents.*`), publish an event with `events.publish` and do the work in
 the mod's own `channel` handler, which runs with the session.
 
 ## Runtime waits and hook skips
