@@ -125685,10 +125685,10 @@ index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce89769
 +}
 diff --git a/codex-rs/omd/src/mods/configuration_overrides.rs b/codex-rs/omd/src/mods/configuration_overrides.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a0a0266bb290ee0f7123170b81393b561b0e8e24
+index 0000000000000000000000000000000000000000..6a7e080ce8183736495338b020b067d8b6569c18
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/configuration_overrides.rs
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,242 @@
 +use super::*;
 +
 +#[derive(Clone, Debug, Default)]
@@ -125710,9 +125710,6 @@ index 0000000000000000000000000000000000000000..a0a0266bb290ee0f7123170b81393b56
 +
 +    pub fn set_enabled(&mut self, selection: &ModSelection, enabled: bool) -> Result<()> {
 +        Self::writable(selection)?;
-+        if selection.required {
-+            return Err(failure("configuration_override_forbidden"));
-+        }
 +        self.bump()?;
 +        self.entries.entry(Self::key(selection)).or_default().enabled = Some(enabled);
 +        Ok(())
@@ -125774,7 +125771,10 @@ index 0000000000000000000000000000000000000000..a0a0266bb290ee0f7123170b81393b56
 +    }
 +
 +    pub fn retain(&mut self, selections: &[ModSelection]) -> Result<()> {
-+        let current: BTreeSet<_> = selections.iter().map(Self::key).collect();
++        let current: BTreeSet<_> = selections.iter()
++            .filter(|selection| !selection.required && Self::writable(selection).is_ok())
++            .map(Self::key)
++            .collect();
 +        if self.entries.keys().any(|key| !current.contains(key)) {
 +            self.bump()?;
 +            self.entries.retain(|key, _| current.contains(key));
@@ -125804,7 +125804,7 @@ index 0000000000000000000000000000000000000000..a0a0266bb290ee0f7123170b81393b56
 +    }
 +
 +    fn writable(selection: &ModSelection) -> Result<()> {
-+        if selection.scope == MANAGED_SCOPE || !selection.authority_current() {
++        if selection.required || selection.scope == MANAGED_SCOPE || !selection.authority_current() {
 +            return Err(failure("configuration_override_forbidden"));
 +        }
 +        Ok(())
@@ -125879,6 +125879,23 @@ index 0000000000000000000000000000000000000000..a0a0266bb290ee0f7123170b81393b56
 +    }
 +
 +    #[test]
++    fn authoritative_restrictions_discard_previous_overrides() {
++        for change in ["required", "managed", "expired"] {
++            let saved = selection();
++            let mut overrides = ConfigurationOverrides::default();
++            overrides.set_enabled(&saved, false).unwrap();
++            let mut restricted = saved.clone();
++            match change {
++                "required" => restricted.required = true,
++                "managed" => restricted.scope = MANAGED_SCOPE.into(),
++                _ => restricted.expires_at = Some(0),
++            }
++            overrides.retain(&[restricted]).unwrap();
++            assert!(overrides.enabled(&saved), "{change}");
++        }
++    }
++
++    #[test]
 +    fn settings_validate_atomically_and_null_differs_from_reset() {
 +        let saved = selection();
 +        let package: ModPackage = serde_json::from_value(json!({
@@ -125887,6 +125904,11 @@ index 0000000000000000000000000000000000000000..a0a0266bb290ee0f7123170b81393b56
 +            "settings_schema": {"type": "object", "additionalProperties": false,
 +                "properties": {"color": {"type": "string", "default": "blue"}}}
 +        })).unwrap();
++        let mut required = saved.clone();
++        required.required = true;
++        let mut forbidden = ConfigurationOverrides::default();
++        assert!(forbidden.write_settings(&required, &package, &BTreeMap::new(), json!({"color":"green"}).as_object().unwrap()).is_err());
++        assert_eq!(forbidden.revision(), 0);
 +        let inherited = BTreeMap::from([
 +            ("color".into(), json!("red")),
 +            ("removed".into(), json!(1)),
@@ -132392,7 +132414,7 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cfd6e7e3276bf92163818fedaaf218613b0c4295
+index 0000000000000000000000000000000000000000..65b0c74584f0b0b4fca8553190bc728f1d78d4de
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
 @@ -0,0 +1,1559 @@
@@ -133696,7 +133718,7 @@ index 0000000000000000000000000000000000000000..cfd6e7e3276bf92163818fedaaf21861
 +                selection.enabled = false;
 +                selection.capabilities.clear();
 +                selection.secret_environment.clear();
-+                selection.expires_at = None;
++                selection.expires_at = Some(0);
 +                revoked.push(json!({"path": selection.path, "scope": selection.scope}));
 +            }
 +        }
@@ -149915,10 +149937,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a78b3bb5ca84fa9213526af6d64e20ade8e3fc67
+index 0000000000000000000000000000000000000000..6a8d97426c65160a114d6e7403bc99987e320c11
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5247 @@
+@@ -0,0 +1,5286 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -155165,6 +155187,45 @@ index 0000000000000000000000000000000000000000..a78b3bb5ca84fa9213526af6d64e20ad
 +        assert!(std::sync::Arc::ptr_eq(&runtime.configuration_overrides(), &owner));
 +    }
 +    assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
++}
++
++#[test]
++fn configuration_owner_revocation_discards_overrides_before_retrust() {
++    let (temp, store, path) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
++    let selection = store.configuration().unwrap().mods[0].clone();
++    let mut runtime = host(&temp);
++    let owner = runtime.configuration_overrides();
++    let saved = std::fs::read(store.root().join("mods.json")).unwrap();
++    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
++    runtime.reload().unwrap();
++    assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
++    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
++    store.revoke(path.to_str().unwrap()).unwrap();
++    runtime.reload().unwrap();
++    assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
++    trust(&store, &path, &["commands"]);
++    runtime.reload().unwrap();
++    assert_eq!(runtime.status()["mods"][0]["id"], "fixture");
++    assert!(owner.lock().unwrap().enabled(&selection));
++}
++
++#[test]
++fn configuration_owner_cannot_reactivate_revoked_empty_grant() {
++    let (temp, store, path) = fixture("export default api => {}", &[]);
++    let selection = store.configuration().unwrap().mods[0].clone();
++    let mut runtime = host(&temp);
++    let owner = runtime.configuration_overrides();
++    owner.lock().unwrap().set_enabled(&selection, true).unwrap();
++    store.revoke(path.to_str().unwrap()).unwrap();
++    let revoked = store.configuration().unwrap().mods[0].clone();
++    assert!(!revoked.authority_current());
++    runtime.reload().unwrap();
++    assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
++    assert!(owner.lock().unwrap().set_enabled(&revoked, true).is_err());
++    trust(&store, &path, &[]);
++    runtime.reload().unwrap();
++    assert_eq!(runtime.status()["mods"][0]["id"], "fixture");
++    assert_eq!(owner.lock().unwrap().revision(), 2);
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644

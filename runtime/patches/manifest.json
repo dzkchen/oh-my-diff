@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "db329ba678d27542bdebe1a886e528206e58daaffc4b4504ad8505ffa22901ef"
+    "sha256": "77601a2157a6df2c2ad491771ff33ea211ccd68b31bd5506ea62cac4f80e0379"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1543,7 +1543,7 @@
     },
     "codex-rs/omd/src/mods/configuration_overrides.rs": {
       "before": null,
-      "after": "8fd40a4a9f7eaee64ea56f720f4bfbb3e024c626bf933e91606281e3bc0396fa"
+      "after": "badf644d0c8f884621a7f57775fa3abad1a90d5255e749a96181dd657fbccd82"
     },
     "codex-rs/omd/src/mods/operation_schema.json": {
       "before": null,
@@ -1591,7 +1591,7 @@
     },
     "codex-rs/omd/src/mods/store.rs": {
       "before": null,
-      "after": "8542717fd578e43685671b0321bc2a0fd13e9c0530e7c4baa8527c7a92e93353"
+      "after": "fb42dbe4ef1cd4e130025df7200459c1db5b44dac4bac867265460327f6c94ad"
     },
     "codex-rs/omd/src/mods/view.rs": {
       "before": null,
@@ -1727,7 +1727,7 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "957922026110a5a16ebd25bc50b4b4d76f742ac5f2dd98a3844ba10166915ca0"
+      "after": "c0ba41b3668b34455f9247fb8e4896057d0d31050dbba496f982f40fd804bf99"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,

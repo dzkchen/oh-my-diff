@@ -5245,3 +5245,42 @@ fn configuration_owner_applies_before_initial_activation() {
     }
     assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
 }
+
+#[test]
+fn configuration_owner_revocation_discards_overrides_before_retrust() {
+    let (temp, store, path) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
+    let selection = store.configuration().unwrap().mods[0].clone();
+    let mut runtime = host(&temp);
+    let owner = runtime.configuration_overrides();
+    let saved = std::fs::read(store.root().join("mods.json")).unwrap();
+    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
+    runtime.reload().unwrap();
+    assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
+    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+    store.revoke(path.to_str().unwrap()).unwrap();
+    runtime.reload().unwrap();
+    assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
+    trust(&store, &path, &["commands"]);
+    runtime.reload().unwrap();
+    assert_eq!(runtime.status()["mods"][0]["id"], "fixture");
+    assert!(owner.lock().unwrap().enabled(&selection));
+}
+
+#[test]
+fn configuration_owner_cannot_reactivate_revoked_empty_grant() {
+    let (temp, store, path) = fixture("export default api => {}", &[]);
+    let selection = store.configuration().unwrap().mods[0].clone();
+    let mut runtime = host(&temp);
+    let owner = runtime.configuration_overrides();
+    owner.lock().unwrap().set_enabled(&selection, true).unwrap();
+    store.revoke(path.to_str().unwrap()).unwrap();
+    let revoked = store.configuration().unwrap().mods[0].clone();
+    assert!(!revoked.authority_current());
+    runtime.reload().unwrap();
+    assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
+    assert!(owner.lock().unwrap().set_enabled(&revoked, true).is_err());
+    trust(&store, &path, &[]);
+    runtime.reload().unwrap();
+    assert_eq!(runtime.status()["mods"][0]["id"], "fixture");
+    assert_eq!(owner.lock().unwrap().revision(), 2);
+}

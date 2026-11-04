@@ -1298,7 +1298,7 @@ impl ModStore {
                 selection.enabled = false;
                 selection.capabilities.clear();
                 selection.secret_environment.clear();
-                selection.expires_at = None;
+                selection.expires_at = Some(0);
                 revoked.push(json!({"path": selection.path, "scope": selection.scope}));
             }
         }

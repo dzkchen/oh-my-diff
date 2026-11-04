@@ -19,9 +19,6 @@ impl ConfigurationOverrides {
 
     pub fn set_enabled(&mut self, selection: &ModSelection, enabled: bool) -> Result<()> {
         Self::writable(selection)?;
-        if selection.required {
-            return Err(failure("configuration_override_forbidden"));
-        }
         self.bump()?;
         self.entries.entry(Self::key(selection)).or_default().enabled = Some(enabled);
         Ok(())
@@ -83,7 +80,10 @@ impl ConfigurationOverrides {
     }
 
     pub fn retain(&mut self, selections: &[ModSelection]) -> Result<()> {
-        let current: BTreeSet<_> = selections.iter().map(Self::key).collect();
+        let current: BTreeSet<_> = selections.iter()
+            .filter(|selection| !selection.required && Self::writable(selection).is_ok())
+            .map(Self::key)
+            .collect();
         if self.entries.keys().any(|key| !current.contains(key)) {
             self.bump()?;
             self.entries.retain(|key, _| current.contains(key));
@@ -113,7 +113,7 @@ impl ConfigurationOverrides {
     }
 
     fn writable(selection: &ModSelection) -> Result<()> {
-        if selection.scope == MANAGED_SCOPE || !selection.authority_current() {
+        if selection.required || selection.scope == MANAGED_SCOPE || !selection.authority_current() {
             return Err(failure("configuration_override_forbidden"));
         }
         Ok(())
@@ -188,6 +188,23 @@ mod tests {
     }
 
     #[test]
+    fn authoritative_restrictions_discard_previous_overrides() {
+        for change in ["required", "managed", "expired"] {
+            let saved = selection();
+            let mut overrides = ConfigurationOverrides::default();
+            overrides.set_enabled(&saved, false).unwrap();
+            let mut restricted = saved.clone();
+            match change {
+                "required" => restricted.required = true,
+                "managed" => restricted.scope = MANAGED_SCOPE.into(),
+                _ => restricted.expires_at = Some(0),
+            }
+            overrides.retain(&[restricted]).unwrap();
+            assert!(overrides.enabled(&saved), "{change}");
+        }
+    }
+
+    #[test]
     fn settings_validate_atomically_and_null_differs_from_reset() {
         let saved = selection();
         let package: ModPackage = serde_json::from_value(json!({
@@ -196,6 +213,11 @@ mod tests {
             "settings_schema": {"type": "object", "additionalProperties": false,
                 "properties": {"color": {"type": "string", "default": "blue"}}}
         })).unwrap();
+        let mut required = saved.clone();
+        required.required = true;
+        let mut forbidden = ConfigurationOverrides::default();
+        assert!(forbidden.write_settings(&required, &package, &BTreeMap::new(), json!({"color":"green"}).as_object().unwrap()).is_err());
+        assert_eq!(forbidden.revision(), 0);
         let inherited = BTreeMap::from([
             ("color".into(), json!("red")),
             ("removed".into(), json!(1)),
