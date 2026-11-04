@@ -744,13 +744,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "56bacf9086ab27086937649e51da30e91e652f5bf93deb7e95ef87b158552b78",
+        "index.ts": "b417f7f11e787d81a1963f7fe7f030b57ab40ac52546eae4b8762602dfc5ebe4",
         "mod.json": "65f02d2d39406ec864f43546140171fc3a907e73c3a12449d2066ace99823644",
         "segments.ts": "2438253ef87247e2b21b5df0a2caa288ba3b35b2140ed1df841426cab4650aed",
         "sources.ts": "266de1ec754427fac93ea4135236d6e1766c20947fddc8e5c96e74869e3d05b2"
       },
       "id": "omd_statusline",
-      "package_sha256": "fc59ab8caff4da16b154b4dbbd17d39933f36ec8fc77079383f35aaef2039f0d",
+      "package_sha256": "cf3a1dbe92d1bcbfe66b08355dba7c0caedef5817852ab2cc407cef6b3c58f09",
       "source": "mods/first-party/omd_statusline",
       "version": "1.0.1"
     },
