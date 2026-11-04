@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { runner, runnerSync, surface } from './mod_runner.mjs';
+import { callback, runner, surface } from './mod_runner.mjs';
+
+const unexpected = call => assert.fail(`unexpected ${call.operation}`);
 
 test('session activation keeps variables while refreshing event, state and clock', () => {
   const request = {
@@ -14,7 +16,7 @@ test('session activation keeps variables while refreshing event, state and clock
     api: '1.0.0', capabilities: ['commands', 'store', 'events'],
     surface: {events: {timer: 'events'}, replacements: [], middleware: [], state: 'store', contracts: 'contracts'},
     state: null, settings: {}, event: 'command', name: 'count',
-    interactive: true, serve: true, session_activation: true, hook_budget_ms: 1000,
+    serve: true, session_activation: true, hook_budget_ms: 1000,
     virtual_time_ms: 10, payload: null,
   };
   const input = [request,
@@ -39,11 +41,11 @@ test('background jobs require session lifetime and thread-scoped state', () => {
     capabilities: ['store', 'events'], surface, event: 'inspect', state: null, settings: {},
     session_model: true, state_scope: 'thread',
   };
-  const valid = runnerSync(request);
+  const valid = callback(request, unexpected);
   assert.equal(valid.error, undefined);
   assert.ok(valid.registrations.events.includes('timer'));
-  assert.match(runnerSync({...request, session_model: false}).error, /background_requires_session_activation/);
-  assert.match(runnerSync({...request, state_scope: 'store'}).error, /background_requires_thread_state/);
+  assert.match(callback({...request, session_model: false}, unexpected).error, /background_requires_session_activation/);
+  assert.match(callback({...request, state_scope: 'store'}, unexpected).error, /background_requires_thread_state/);
 });
 
 test('mounted components read job status after the session activation changes', () => {
@@ -56,7 +58,7 @@ test('mounted components read job status after the session activation changes', 
     capabilities: ['store', 'events', 'terminal'], surface, event: 'component', name: 'status',
     state: {background_refresh: {activation: 'first', status: 'pending', token: 1}}, settings: {},
     session_model: true, state_scope: 'thread', activation_id: 'first',
-    interactive: true, serve: true, hook_budget_ms: 1000,
+    serve: true, hook_budget_ms: 1000,
     payload: {instance: 'status', columns: 80, rows: 1, now: 0},
   };
   const input = [request, {...request, activation_id: 'second',

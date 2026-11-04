@@ -307,7 +307,7 @@ pub(super) fn run(
     let mut request = Request {
         metadata,
         kept: *kept,
-        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
+        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload}),
     };
     request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
     let render = event == "intercept" && request["payload"]["surface"] == "render";
@@ -431,7 +431,7 @@ pub(super) fn run(
         }
         return Err(failure("registration_changed_during_callback"));
     }
-    if reply.host_call.is_some() || reply.calls != expected {
+    if reply.calls != expected {
         if let Some(key) = &warm {
             process::invalidate_warm(key);
         }

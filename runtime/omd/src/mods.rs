@@ -2875,8 +2875,6 @@ struct Reply {
     #[serde(default)]
     calls: Vec<ModHostCall>,
     #[serde(default)]
-    host_call: Option<ModHostCall>,
-    #[serde(default)]
     updates: Vec<String>,
     #[serde(skip)]
     receipts: Vec<Value>,

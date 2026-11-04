@@ -95837,10 +95837,10 @@ index 0000000000000000000000000000000000000000..1be17343954a7f675b6043f83ef4bdf5
 +}
 diff --git a/codex-rs/omd/runner/src/bootstrap.js b/codex-rs/omd/runner/src/bootstrap.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d587366021e1670f
+index 0000000000000000000000000000000000000000..d5ae7cd9faa40145f8b1f623d86736e779cbbede
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/bootstrap.js
-@@ -0,0 +1,929 @@
+@@ -0,0 +1,918 @@
 +const request = JSON.parse(globalThis.__request);
 +delete globalThis.__request;
 +request.hook_budget_ms ??= 1000;
@@ -95897,7 +95897,6 @@ index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d5873660
 +  : request.filename.slice(0, request.filename.lastIndexOf('/') + 1);
 +let activating = true;
 +let activatedState;
-+let pending = null;
 +const calls = [];
 +let receipts = request.receipts ?? [];
 +// A warm render runner answers the next render with the activated mod, from that render's own input.
@@ -95917,9 +95916,7 @@ index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d5873660
 +  reads.clear();
 +  calls.length = 0;
 +  updates.length = 0;
-+  pending = null;
 +}
-+const suspension = Object.freeze({});
 +const exchange = globalThis.__exchange;
 +const clock = globalThis.__clock;
 +const utf8 = globalThis.__utf8;
@@ -96075,7 +96072,6 @@ index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d5873660
 +}
 +function hostReply(operation, arguments_) {
 +  if (activating) throw new Error('host_call_during_registration');
-+  if (pending) throw new Error('concurrent_host_call');
 +  const call = structuredCloneFallback({ operation, arguments: arguments_ });
 +  const index = calls.length;
 +  calls.push(call);
@@ -96085,12 +96081,8 @@ index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d5873660
 +    if (receipt.error) return { ok: false, error: receipt.error };
 +    return { ok: true, value: structuredCloneFallback(receipt.value) };
 +  }
-+  if (request.interactive) {
-+    const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
-+    return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
-+  }
-+  pending = call;
-+  throw suspension;
++  const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
++  return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
 +}
 +function hostCall(operation, arguments_ = null) {
 +  const result = hostTryCall(operation, arguments_);
@@ -96169,7 +96161,6 @@ index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d5873660
 +    try {
 +      reply = hostCall('continuation.next', { input: argument });
 +    } catch (error) {
-+      if (error === suspension) throw error;
 +      if (String(error?.message).startsWith('callback_cancelled')) signal.aborted = true;
 +      return Promise.reject(error);
 +    }
@@ -96358,7 +96349,6 @@ index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d5873660
 +  try {
 +    if (await entry.handler({ ...event, key: entry.key }) === false) entry.cancelled = true;
 +  } catch (error) {
-+    if (error === suspension) throw error;
 +    failure = error;
 +  }
 +  if (entry.repeat && !entry.cancelled) hostCall('events.schedule', { key: event.key, delay_ms: entry.ms });
@@ -96601,7 +96591,6 @@ index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d5873660
 +        if (current().token !== data.token || current().status !== 'running') return;
 +        status.set({ activation: request.activation_id, token: data.token, status: 'completed', result: result ?? null });
 +      } catch (error) {
-+        if (error === suspension) throw error;
 +        if (current().token !== data.token || current().status !== 'running') return;
 +        status.set({ activation: request.activation_id, token: data.token, status: 'failed', error: String(error?.message ?? error).slice(0, 1024) });
 +      }
@@ -96767,9 +96756,9 @@ index 0000000000000000000000000000000000000000..4391e1ec665588439a6dffd4d5873660
 +});
 +globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
 +  state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead, ui_written: uiWritten, clock_read: clockRead}), request, calls,
-+  pending: () => pending, ready: () => {
++  ready: () => {
 +    activatedState = structuredCloneFallback(state); activating = false;
-+  }, suspension, serve, base, component: step };
++  }, serve, base, component: step };
 diff --git a/codex-rs/omd/runner/src/crypto.rs b/codex-rs/omd/runner/src/crypto.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..291dbb327b79590c6bcbb76b2e5f1a2fe754e7e8
@@ -98871,10 +98860,10 @@ index 0000000000000000000000000000000000000000..291dbb327b79590c6bcbb76b2e5f1a2f
 +}
 diff --git a/codex-rs/omd/runner/src/dispatch.js b/codex-rs/omd/runner/src/dispatch.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..f1f6d7672f7218cb8cc83f730238f2f1fd86433e
+index 0000000000000000000000000000000000000000..242e537429d8b8d65014001817e0a5c3a1b86a45
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/dispatch.js
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,25 @@
 +const { api, handlers, tools, commands, serviceHandlers, virtualReaders, completers, registrations, request } = globalThis.__omd;
 +if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
 +const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
@@ -98882,7 +98871,6 @@ index 0000000000000000000000000000000000000000..f1f6d7672f7218cb8cc83f730238f2f1
 +globalThis.__omd.ready();
 +globalThis.__dispatch = async () => {
 +let value = null;
-+try {
 +if (request.event !== 'inspect') {
 +  const handler = request.event === 'tool' ? tools.get(request.name) ?? globalThis.__omd.dynamicTool(request.name)
 +    : request.event === 'command' ? commands.get(request.name)
@@ -98895,22 +98883,18 @@ index 0000000000000000000000000000000000000000..f1f6d7672f7218cb8cc83f730238f2f1
 +  if (handler) value = await handler(request.payload) ?? null;
 +  await globalThis.__omd.flushSubscriptions();
 +}
-+if (globalThis.__omd.pending()) throw new Error('swallowed_host_suspension');
-+} catch (error) {
-+  if (error !== globalThis.__omd.suspension) throw error;
-+}
 +if (globalThis.__omd.calls.length < (request.receipts ?? []).length) throw new Error('host_call_replay_diverged');
 +return JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
-+  calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
++  calls: globalThis.__omd.calls, updates: globalThis.__omd.updates });
 +
 +};
 +globalThis.__result = await globalThis.__dispatch();
 diff --git a/codex-rs/omd/runner/src/main.rs b/codex-rs/omd/runner/src/main.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4fa68b64f4b61fb86f294e316a654576547d29e8
+index 0000000000000000000000000000000000000000..8241ca7ed651f34da50bceabbc9f5cb5e3102d4e
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/main.rs
-@@ -0,0 +1,1119 @@
+@@ -0,0 +1,1114 @@
 +mod crypto;
 +
 +use serde_json::Map;
@@ -99785,12 +99769,7 @@ index 0000000000000000000000000000000000000000..4fa68b64f4b61fb86f294e316a654576
 +    set(scope, global, "__activate", activate);
 +    let dispatch = compile(scope, DISPATCH, "dispatch", false).ok_or(None)?;
 +    link(scope, dispatch, refuse_import)?;
-+    evaluate(
-+        scope,
-+        dispatch,
-+        watchdog,
-+        (request["interactive"] != true).then_some(budget),
-+    )?;
++    evaluate(scope, dispatch, watchdog, None)?;
 +    let result = get(scope, global, "__result").ok_or(None)?;
 +    let result = v8::Local::<v8::String>::try_from(result).map_err(|_| None)?;
 +    if result.length() > OUTPUT_LIMIT {
@@ -100032,23 +100011,17 @@ index 0000000000000000000000000000000000000000..4fa68b64f4b61fb86f294e316a654576
 +}
 diff --git a/codex-rs/omd/runner/src/step.js b/codex-rs/omd/runner/src/step.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..9bd80c00babfd5b4979bc9f0eeb840c347ebff2f
+index 0000000000000000000000000000000000000000..9d9f3c0de58a89d87a0634767a54c79aa63910d6
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/step.js
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,8 @@
 +const omd = globalThis.__omd;
 +globalThis.__step = async line => {
 +  omd.serve(line);
 +  if (omd.request.session_activation) return globalThis.__dispatch();
-+  let value = null;
-+  try {
-+    value = await (omd.request.event === 'component' ? omd.component : omd.intercept)(omd.request.payload) ?? null;
-+    if (omd.pending()) throw new Error('swallowed_host_suspension');
-+  } catch (error) {
-+    if (error !== omd.suspension) throw error;
-+  }
++  const value = await (omd.request.event === 'component' ? omd.component : omd.intercept)(omd.request.payload) ?? null;
 +  if (omd.calls.length < omd.request.receipts.length) throw new Error('host_call_replay_diverged');
-+  return JSON.stringify({ registrations: omd.registrations, state: omd.state(), ...omd.ui(), value, calls: omd.calls, host_call: omd.pending(), updates: omd.updates });
++  return JSON.stringify({ registrations: omd.registrations, state: omd.state(), ...omd.ui(), value, calls: omd.calls, updates: omd.updates });
 +};
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
@@ -118073,10 +118046,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1fa19afff6d523f318e4cb2b45666b337e828925
+index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1fbb2db664
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7156 @@
+@@ -0,0 +1,7154 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -120953,8 +120926,6 @@ index 0000000000000000000000000000000000000000..1fa19afff6d523f318e4cb2b45666b33
 +    value: Value,
 +    #[serde(default)]
 +    calls: Vec<ModHostCall>,
-+    #[serde(default)]
-+    host_call: Option<ModHostCall>,
 +    #[serde(default)]
 +    updates: Vec<String>,
 +    #[serde(skip)]
@@ -126353,7 +126324,7 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d342063d57c12361a448f310b0dd7e89e00f7cce
+index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223114553a3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,530 @@
@@ -126666,7 +126637,7 @@ index 0000000000000000000000000000000000000000..d342063d57c12361a448f310b0dd7e89
 +    let mut request = Request {
 +        metadata,
 +        kept: *kept,
-+        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
++        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload}),
 +    };
 +    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
 +    let render = event == "intercept" && request["payload"]["surface"] == "render";
@@ -126790,7 +126761,7 @@ index 0000000000000000000000000000000000000000..d342063d57c12361a448f310b0dd7e89
 +        }
 +        return Err(failure("registration_changed_during_callback"));
 +    }
-+    if reply.host_call.is_some() || reply.calls != expected {
++    if reply.calls != expected {
 +        if let Some(key) = &warm {
 +            process::invalidate_warm(key);
 +        }
@@ -134721,7 +134692,7 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79713187d4
+index 0000000000000000000000000000000000000000..cbdc6cf42de774d8b481d9a22c4ff570a95569f0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
 @@ -0,0 +1,383 @@
@@ -134743,7 +134714,7 @@ index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79
 +        "capabilities": ["store", "events", "terminal"],
 +        "surface": {"events": {"timer": "events"}, "replacements": [], "middleware": [], "state": "store", "contracts": "contracts"},
 +        "settings": {}, "event": "component", "name": "status", "session_model": true,
-+        "state_scope": "thread", "interactive": true, "serve": true, "hook_budget_ms": 1000,
++        "state_scope": "thread", "serve": true, "hook_budget_ms": 1000,
 +        "payload": {"instance": "status", "columns": 80, "rows": 1, "now": 0}
 +    });
 +    for (activation, status) in [("first", "pending"), ("second", "completed")] {
@@ -134769,7 +134740,7 @@ index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79
 +    let mut request = json!({"source":"let count = 0; export default api => api.command('count', () => { globalThis.marker = (globalThis.marker ?? 0) + 1; Array.prototype.marker = (Array.prototype.marker ?? 0) + 1; return { count: ++count, marker: globalThis.marker, intrinsic: [].marker, state: api.state.get() }; });",
 +        "filename":"/fixture/fresh/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands", "store"],
 +        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
-+        "state":null,"settings":{},"event":"command","name":"count","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
++        "state":null,"settings":{},"event":"command","name":"count","reuse":true,"hook_budget_ms":1000,"payload":null});
 +    for state in 0..1000 {
 +        request["state"] = json!({"current":state});
 +        let reply = super::evaluate_warm(
@@ -134829,7 +134800,7 @@ index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79
 +    let mut request = json!({"source":"export default api => api.command('v', () => 1);",
 +        "filename":"/fixture/kept/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
 +        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
-+        "state":null,"settings":{},"event":"command","name":"v","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
++        "state":null,"settings":{},"event":"command","name":"v","reuse":true,"hook_budget_ms":1000,"payload":null});
 +    let run = |request: &serde_json::Value| {
 +        evaluate_warm(
 +            "kept-fields",
@@ -134882,7 +134853,7 @@ index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79
 +    let request = json!({"source":"export default api => api.intercept('render', () => ({ ok: true }));",
 +        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
 +        "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
-+        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
++        "state":null,"settings":{},"event":"intercept","name":"0","serve":true,"hook_budget_ms":1000,
 +        "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
 +    let run = || {
 +        evaluate_warm(
@@ -134907,7 +134878,7 @@ index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79
 +    let mut request = json!({"source":"export default api => { if (globalThis.activated) throw new Error('activation_leaked'); globalThis.activated = true; api.command('identity', () => { let writable = true; try { api.state.set(1); } catch { writable = false; } return {settings:api.settings, package:api.package.id, writable, caller:api.host.call('identity')}; }); };",
 +        "filename":"/fixture/a/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands","store"],
 +        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
-+        "state":null,"settings":{},"event":"command","name":"identity","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
++        "state":null,"settings":{},"event":"command","name":"identity","reuse":true,"hook_budget_ms":1000,"payload":null});
 +    for (package, writable) in [("a", true), ("b", false), ("a", true)] {
 +        request["filename"] = json!(format!("/fixture/{package}/index.ts"));
 +        request["package"] = json!({"id":package,"version":"1.0.0"});
@@ -134954,7 +134925,7 @@ index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79
 +    let mut request = json!({"source":"export default api => api.command('fill', () => { const buffers = []; for (let i = 0; i < 1024; i++) buffers.push(new Uint8Array(1 << 20).fill(1)); return buffers.length; });",
 +        "filename":"/fixture/memory/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
 +        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
-+        "state":null,"settings":{},"event":"command","name":"fill","interactive":true,"reuse":true,"hook_budget_ms":5000,"payload":null});
++        "state":null,"settings":{},"event":"command","name":"fill","reuse":true,"hook_budget_ms":5000,"payload":null});
 +    let run = |request: &serde_json::Value| {
 +        evaluate_warm(
 +            "memory-limit",
@@ -134996,7 +134967,7 @@ index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79
 +        let request = json!({"source":format!("export default api => api.intercept('render', () => {{ {mutation}; return {{}}; }});"),
 +            "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal","tools","commands","middleware","approvals"],
 +            "surface":{"events":{"terminal":"terminal","completion":"terminal"},"replacements":["completion"],"middleware":["approval"],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
-+            "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
++            "state":null,"settings":{},"event":"intercept","name":"0","serve":true,"hook_budget_ms":1000,
 +            "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
 +        let error = evaluate_warm(
 +            "registration-mutation",
@@ -135025,7 +134996,7 @@ index 0000000000000000000000000000000000000000..fc70d05f470ca5eb89f686f5769f2e79
 +    let request = json!({"source":"export default api => { const spec = {name:'original'}; api.tool(spec, () => {}); api.intercept('render', () => { spec.name = 'changed'; return {}; }); };",
 +        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal","tools"],
 +        "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
-+        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
++        "state":null,"settings":{},"event":"intercept","name":"0","serve":true,"hook_budget_ms":1000,
 +        "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
 +    let reply = evaluate_warm(
 +        "registration-input",
