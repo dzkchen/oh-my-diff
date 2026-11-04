@@ -11,7 +11,7 @@ const VIEW = /^\s*(?:cat|nl|head|tail|bat|less|sed\s+-n)(?:\s|$)/;
 const DELETION = /^\*\*\* Delete File: .*$/gm;
 // Must equal the host's error text (runtime/omd/src/workspace.rs), which is matched verbatim below.
 const INDEX_BOUNDS = 'workspace index exceeds bounds';
-const MENTION = /[\w@+.\/-]{1,240}\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
+const MENTION = /[\p{L}\p{N}_@+.\/-]{1,240}\.(?:pyi?|[cm]?[jt]sx?|rs|java)(?![\p{L}\p{N}_])/gu;
 const READ_ONLY_TOOLS = new Set(['update_plan', 'view_image', 'tool_search', 'request_user_input', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource', 'list_agents', 'get_context_remaining']);
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
 const errorText = (entry: string) => entry.slice(entry.indexOf(' ') + 1);
@@ -176,6 +176,7 @@ export default function activate(api: ModAPI) {
       const settled = pending.ok ? settle(s, handle(s, pending.value)) : pending;
       if (!settled.ok) { incomplete(s, settled.error); continue; }
       const before = Object.fromEntries(Object.entries(s.diagnostics).map(([path, entry]) => [path, entry.errors]));
+      const tracked = new Set(Object.keys(s.documents));
       const synced = synchronize(s, changed, files);
       if (!synced.ok) { incomplete(s, synced.error); continue; }
       let reason = '';
@@ -186,7 +187,11 @@ export default function activate(api: ModAPI) {
       }
       for (const path of new Set([...edited, ...Object.keys(s.diagnostics)])) {
         const after = s.diagnostics[path]?.errors;
-        const prior = before[path] ?? (edited.includes(path) ? [] : undefined);
+        const prior = before[path] ?? (edited.includes(path) && !tracked.has(path) ? [] : undefined);
+        if (after?.length && !prior && edited.includes(path)) {
+          report.push(`${path}: ${after.length} existing (v${s.documents[path].version})`, ...after.slice(0, 8).map(entry => `  ${entry}`));
+          continue;
+        }
         if (!after || !prior || after === prior) continue;
         const introduced = difference(after, prior);
         const resolved = difference(prior, after);

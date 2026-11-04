@@ -480,6 +480,31 @@ test('LSP definition keeps its source document open while many targets open near
   assert.ok(documents.includes('src.py') && documents.length <= 96);
 });
 
+test('LSP a non-ASCII file name starts the server and reports its errors', () => {
+  const host = createHost({ files: { 'café/größe.py': 'ERR boom\n' }, server: diagnosticServer });
+  host.observe();
+  const first = drive(host, 'tool_output', output({ input: '*** Update File: café/größe.py' }));
+  assert.match(first.value.append, /café\/größe\.py: 1 new, 0 resolved/);
+});
+
+test('LSP errors trimmed to fit the state limit are reported as existing, not new, on the next edit', () => {
+  const body = name => Array.from({ length: 50 }, (_, line) => `ERR ${name} ${line} ${'x'.repeat(170)}`).join('\n') + '\n';
+  const names = Array.from({ length: 8 }, (_, index) => `m${index}.py`);
+  const host = createHost({ files: Object.fromEntries(names.map(name => [name, body(name)])), server: diagnosticServer });
+  host.observe();
+  const patch = paths => output({ input: `*** Begin Patch\n${paths.map(path => `*** Update File: ${path}`).join('\n')}\n*** End Patch` });
+  let first = null;
+  for (const name of names) first = drive(host, 'tool_output', patch([name]), first?.state);
+  assert.equal(first.state.servers.python.status, 'synced');
+  const trimmed = names.filter(name => !first.state.servers.python.diagnostics[name]);
+  assert.ok(trimmed.length > 0, 'state stayed under the limit');
+  const again = trimmed[0];
+  host.files[again] = `${host.files[again]}ok = 1\n`;
+  const next = drive(host, 'tool_output', patch([again]), first.state);
+  assert.match(next.value.append, new RegExp(`${again.replace('.', '\\.')}: 50 existing`));
+  assert.doesNotMatch(next.value.append, /50 new/);
+});
+
 test('LSP an apply_patch that only deletes files starts no server', () => {
   const host = createHost({ files: { 'a.py': 'ok = 1\n' }, server: diagnosticServer });
   host.observe();
