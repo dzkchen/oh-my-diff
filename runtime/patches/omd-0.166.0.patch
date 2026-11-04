@@ -56028,10 +56028,10 @@ index 0000000000000000000000000000000000000000..366a90058552b1b93be475fd99368e62
 +}
 diff --git a/codex-rs/codex-api/tests/policed_transport.rs b/codex-rs/codex-api/tests/policed_transport.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fd7c7ab39acbe7013e67c4086361625bc845e4f0
+index 0000000000000000000000000000000000000000..d4ca7f8ca18693fb1a3a288dd3134f64b3efcae0
 --- /dev/null
 +++ b/codex-rs/codex-api/tests/policed_transport.rs
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,243 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::atomic::AtomicUsize;
@@ -56108,19 +56108,22 @@ index 0000000000000000000000000000000000000000..fd7c7ab39acbe7013e67c4086361625b
 +}
 +
 +#[derive(Clone, Default)]
-+struct Counting(Arc<AtomicUsize>, Arc<std::sync::Mutex<Vec<String>>>);
++struct Counting {
++    requests: Arc<AtomicUsize>,
++    bodies: Arc<std::sync::Mutex<Vec<String>>>,
++}
 +
 +impl HttpTransport for Counting {
 +    async fn execute(&self, req: Request) -> Result<Response, TransportError> {
-+        self.0.fetch_add(1, Ordering::SeqCst);
++        self.requests.fetch_add(1, Ordering::SeqCst);
 +        if let Some(codex_client::RequestBody::Json(body)) = &req.body {
-+            self.1.lock().unwrap().push(body.to_string());
++            self.bodies.lock().unwrap().push(body.to_string());
 +        }
 +        Err(TransportError::Build("sent".into()))
 +    }
 +
 +    async fn stream(&self, _req: Request) -> Result<StreamResponse, TransportError> {
-+        self.0.fetch_add(1, Ordering::SeqCst);
++        self.requests.fetch_add(1, Ordering::SeqCst);
 +        Err(TransportError::Build("sent".into()))
 +    }
 +}
@@ -56188,7 +56191,7 @@ index 0000000000000000000000000000000000000000..fd7c7ab39acbe7013e67c4086361625b
 +        .await
 +        .expect_err("the fixture transport fails after sending");
 +    assert!(error.to_string().contains("sent"), "{error}");
-+    assert_eq!(transport.0.load(Ordering::SeqCst), 1);
++    assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
 +
 +    let images = ImagesClient::new(
 +        transport.clone(),
@@ -56213,14 +56216,19 @@ index 0000000000000000000000000000000000000000..fd7c7ab39acbe7013e67c4086361625b
 +        denied.to_string().contains("policy denied SECRET-3"),
 +        "{denied}"
 +    );
-+    assert_eq!(transport.0.load(Ordering::SeqCst), 1);
++    assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
 +    let _ = images.generate(&image("SECRET-4"), HeaderMap::new()).await;
-+    let sent = transport.1.lock().unwrap().clone();
++    let sent = transport.bodies.lock().unwrap().clone();
 +    assert!(
 +        sent[1].contains("[redacted]") && !sent[1].contains("SECRET-4"),
 +        "{sent:?}"
 +    );
 +
++    check_call_refusal(&transport).await;
++    check_websocket_refusal().await;
++}
++
++async fn check_call_refusal(transport: &Counting) {
 +    let call = RealtimeCallClient::new(
 +        transport.clone(),
 +        provider("https://example.com/backend-api".into()),
@@ -56236,8 +56244,10 @@ index 0000000000000000000000000000000000000000..fd7c7ab39acbe7013e67c4086361625b
 +            .contains("realtime/calls requests cannot pass the final-request policy"),
 +        "{refused}"
 +    );
-+    assert_eq!(transport.0.load(Ordering::SeqCst), 2);
++    assert_eq!(transport.requests.load(Ordering::SeqCst), 2);
++}
 +
++async fn check_websocket_refusal() {
 +    let listener = TcpListener::bind("127.0.0.1:0")
 +        .await
 +        .expect("bind listener");
@@ -68398,6 +68408,29 @@ index 0000000000000000000000000000000000000000..4f7fc6d92b9d7e33558b38d37fc51b4e
 +        closed(&mut upstream);
 +    }
 +}
+diff --git a/codex-rs/ext/omd/src/evidence.rs b/codex-rs/ext/omd/src/evidence.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..f7a90a1469855e072e3e860fe3e5082e4d1625de
+--- /dev/null
++++ b/codex-rs/ext/omd/src/evidence.rs
+@@ -0,0 +1,17 @@
++use super::*;
++use std::path::Path;
++
++pub(super) fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
++    match codex_omd::fsio::create_new(path, bytes) {
++        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
++            let existing = std::fs::read(path).map_err(|e| e.to_string())?;
++            if serde_json::from_slice::<Value>(&existing).is_err() {
++                write_bytes(path, bytes, Durability::Durable).map_err(|e| e.to_string())?;
++            } else if existing != bytes {
++                return Err(error.to_string());
++            }
++        }
++        result => result.map_err(|e| e.to_string())?,
++    }
++    Ok(())
++}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..0da48a149b9a0f9273b9d3bcb84f5e18fb15ed30
@@ -69475,14 +69508,15 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d1313228a08ad3760bc8697c9f676d2947a504ff
+index 0000000000000000000000000000000000000000..f76561d55fb962c12b1deac91589bf797816959f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,788 @@
+@@ -0,0 +1,779 @@
 +mod accounting;
 +mod config;
 +mod contract;
 +mod credential_gateway;
++mod evidence;
 +mod execution;
 +mod generic_host;
 +mod ledger;
@@ -70126,17 +70160,7 @@ index 0000000000000000000000000000000000000000..d1313228a08ad3760bc8697c9f676d29
 +    fn evidence(&self, name: &str, value: &Value) -> Result<Value, String> {
 +        let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
 +        let path = self.evidence.join(name);
-+        match codex_omd::fsio::create_new(&path, &bytes) {
-+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-+                let existing = std::fs::read(&path).map_err(|e| e.to_string())?;
-+                if serde_json::from_slice::<Value>(&existing).is_err() {
-+                    write_bytes(&path, &bytes, Durability::Durable).map_err(|e| e.to_string())?;
-+                } else if existing != bytes {
-+                    return Err(error.to_string());
-+                }
-+            }
-+            result => result.map_err(|e| e.to_string())?,
-+        }
++        evidence::write(&path, &bytes)?;
 +        Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
 +    }
 +
@@ -72969,10 +72993,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f981c338e62
+index 0000000000000000000000000000000000000000..2f4d10148a9a29308b5c1b944fe7a4948bf65cd8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2639 @@
+@@ -0,0 +1,2603 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -73502,43 +73526,7 @@ index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f98
 +    let mut terminal = runtime.terminal_view(input.clone(), active);
 +    input["pty_scope"] = pty_scope;
 +    let status = runtime.status();
-+    let mut errors = status["mods"]
-+        .as_array()
-+        .into_iter()
-+        .flatten()
-+        .filter_map(|item| {
-+            item["error"].as_str().map(|error| {
-+                (
-+                    item["id"].as_str().unwrap_or("mod").to_owned(),
-+                    error.to_owned(),
-+                )
-+            })
-+        })
-+        .collect::<Vec<_>>();
-+    errors.extend(
-+        status["rejected"]
-+            .as_array()
-+            .into_iter()
-+            .flatten()
-+            .filter_map(|item| {
-+                item["reason"]
-+                    .as_str()
-+                    .filter(|reason| !reason.starts_with("shadowed_"))
-+                    .map(|reason| {
-+                        (
-+                            item["id"]
-+                                .as_str()
-+                                .or(item["path"].as_str())
-+                                .unwrap_or("selection")
-+                                .to_owned(),
-+                            reason.to_owned(),
-+                        )
-+                    })
-+            }),
-+    );
-+    if let Some(error) = status["reload_error"].as_str() {
-+        errors.push(("Reload".to_owned(), error.to_owned()));
-+    }
++    let errors = codex_omd::ModViewSnapshot::errors_from_status(&status);
 +    if !errors.is_empty() {
 +        terminal
 +            .view
@@ -93490,10 +93478,10 @@ index 0000000000000000000000000000000000000000..88b18991e7021d169a8084ef7362a904
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e05c9a15c203442100679ef143743adf50ebc823
+index 0000000000000000000000000000000000000000..4f7eed1b7cc8cee9e077fac45b8c1b3f5a3be510
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,262 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -93592,10 +93580,15 @@ index 0000000000000000000000000000000000000000..e05c9a15c203442100679ef143743adf
 +            .diagnostics
 +            .iter()
 +            .filter(|(key, _)| !key.starts_with("terminal:"))
-+            .take(16)
++            .take(ModViewSnapshot::DIAGNOSTIC_LIMIT)
 +            .map(|(_, diagnostic)| diagnostic.clone())
 +            .collect();
-+        state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
++        state.snapshot.diagnostics = state
++            .diagnostics
++            .values()
++            .take(ModViewSnapshot::DIAGNOSTIC_LIMIT)
++            .cloned()
++            .collect();
 +        let _ = owner.persist_json("mod-view.json", &state.snapshot);
 +        if let Ok(mut published) = self.published.lock() {
 +            *published = Some(Arc::new(state.snapshot.clone()));
@@ -93615,8 +93608,13 @@ index 0000000000000000000000000000000000000000..e05c9a15c203442100679ef143743adf
 +    ) {
 +        let errors = errors
 +            .into_iter()
-+            .take(16)
-+            .map(|(source, error)| (visible(&source, 512), visible(&error, 512)))
++            .take(ModViewSnapshot::DIAGNOSTIC_LIMIT)
++            .map(|(source, error)| {
++                (
++                    visible(&source, ModViewSnapshot::DIAGNOSTIC_BYTES),
++                    visible(&error, ModViewSnapshot::DIAGNOSTIC_BYTES),
++                )
++            })
 +            .collect::<Vec<_>>();
 +        self.update(owner, |state| {
 +            let snapshot = &state.snapshot;
@@ -93644,9 +93642,10 @@ index 0000000000000000000000000000000000000000..e05c9a15c203442100679ef143743adf
 +                .diagnostics
 +                .retain(|key, _| !key.starts_with("terminal:"));
 +            for (index, diagnostic) in terminal.diagnostics.into_iter().enumerate() {
-+                state
-+                    .diagnostics
-+                    .insert(format!("terminal:{index}"), visible(&diagnostic, 512));
++                state.diagnostics.insert(
++                    format!("terminal:{index}"),
++                    visible(&diagnostic, ModViewSnapshot::DIAGNOSTIC_BYTES),
++                );
 +            }
 +            true
 +        });
@@ -93654,7 +93653,8 @@ index 0000000000000000000000000000000000000000..e05c9a15c203442100679ef143743adf
 +
 +    pub(super) fn diagnostic(&self, owner: &Host, key: &str, message: Option<String>) {
 +        self.update(owner, |state| {
-+            let message = message.map(|message| visible(&message, 512));
++            let message =
++                message.map(|message| visible(&message, ModViewSnapshot::DIAGNOSTIC_BYTES));
 +            if state.diagnostics.get(key) == message.as_ref() {
 +                return false;
 +            }
@@ -105677,10 +105677,10 @@ index 0000000000000000000000000000000000000000..ebf197d6b31fb21c2796aff715343d66
 +}
 diff --git a/codex-rs/omd/src/blob_store.rs b/codex-rs/omd/src/blob_store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e0065379f85e81195d411f7aff23d166c4a70027
+index 0000000000000000000000000000000000000000..631d68da657523ca6a7d50871a2932d5435e870d
 --- /dev/null
 +++ b/codex-rs/omd/src/blob_store.rs
-@@ -0,0 +1,406 @@
+@@ -0,0 +1,409 @@
 +use crate::resource_data::{ResourceStore, hash};
 +use base64::Engine;
 +use base64::engine::general_purpose::STANDARD;
@@ -105827,6 +105827,21 @@ index 0000000000000000000000000000000000000000..e0065379f85e81195d411f7aff23d166
 +            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 +}
 +
++fn check_quota(directory: &std::path::Path, bytes: usize) -> io::Result<()> {
++    let (mut total, mut entries) = (0u64, 0usize);
++    for entry in fs::read_dir(&directory)? {
++        let entry = entry?;
++        if entry.path().extension().is_some_and(|e| e == "bin") {
++            entries += 1;
++            total = total.saturating_add(entry.metadata()?.len());
++        }
++    }
++    if entries >= BLOB_ENTRIES || total.saturating_add(bytes as u64) > BLOB_TOTAL_BYTES {
++        return Err(io::Error::other("blob_store_quota"));
++    }
++    Ok(())
++}
++
 +impl ResourceStore<'_> {
 +    fn blob_directory(&self) -> io::Result<PathBuf> {
 +        crate::workspace::private_path(&self.directory()?, &["blobs"], "blob_directory_invalid")
@@ -105943,19 +105958,7 @@ index 0000000000000000000000000000000000000000..e0065379f85e81195d411f7aff23d166
 +            .open(directory.join(".blobs.lock"))?;
 +        lock.lock()?;
 +        if !path.try_exists()? {
-+            let (mut total, mut entries) = (0u64, 0usize);
-+            for entry in fs::read_dir(&directory)? {
-+                let entry = entry?;
-+                if entry.path().extension().is_some_and(|e| e == "bin") {
-+                    entries += 1;
-+                    total = total.saturating_add(entry.metadata()?.len());
-+                }
-+            }
-+            if entries >= BLOB_ENTRIES
-+                || total.saturating_add(bytes.len() as u64) > BLOB_TOTAL_BYTES
-+            {
-+                return Err(io::Error::other("blob_store_quota"));
-+            }
++            check_quota(&directory, bytes.len())?;
 +        }
 +        crate::fsio::write_if_changed(&path, bytes)?;
 +        Ok(digest)
@@ -118046,10 +118049,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1fbb2db664
+index 0000000000000000000000000000000000000000..cfb1138ede98a21af5a58e17cb0114c5fd75eaeb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7154 @@
+@@ -0,0 +1,7207 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -119101,8 +119104,37 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +    }))
 +}
 +
-+/// Scope precedence over valid enabled `(id, selection)` candidates: `None` wins its mod ID, otherwise why it loses.
-+fn precedence(candidates: &[(&str, &ModSelection)]) -> Vec<Option<String>> {
++enum PrecedenceLoss {
++    Shadowed { scope: String, path: PathBuf },
++    Conflict { id: String, scope: String },
++}
++
++impl PrecedenceLoss {
++    fn code(&self) -> &str {
++        match self {
++            Self::Shadowed { scope, .. } => match scope.as_str() {
++                MANAGED_SCOPE => "shadowed_by_managed_scope",
++                "project" => "shadowed_by_project_scope",
++                _ => "shadowed_by_user_scope",
++            },
++            Self::Conflict { .. } => "mod_conflict",
++        }
++    }
++}
++
++impl std::fmt::Display for PrecedenceLoss {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            Self::Shadowed { path, .. } => write!(f, "{}: {}", self.code(), path.display()),
++            Self::Conflict { id, scope } => write!(
++                f,
++                "mod_conflict: {id} is enabled twice in the {scope} scope"
++            ),
++        }
++    }
++}
++
++fn precedence(candidates: &[(&str, &ModSelection)]) -> Vec<Option<PrecedenceLoss>> {
 +    let rank = |scope: &str| match scope {
 +        MANAGED_SCOPE => 2,
 +        "project" => 1,
@@ -119122,16 +119154,15 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                .map(|(_, rival)| rival)
 +                .collect::<Vec<_>>();
 +            if rank(&selection.scope) < top {
-+                Some(format!(
-+                    "shadowed_by_{}_scope: {}",
-+                    winners[0].scope,
-+                    winners[0].path.display()
-+                ))
++                Some(PrecedenceLoss::Shadowed {
++                    scope: winners[0].scope.clone(),
++                    path: winners[0].path.clone(),
++                })
 +            } else if winners.len() > 1 {
-+                Some(format!(
-+                    "mod_conflict: {id} is enabled twice in the {} scope",
-+                    selection.scope
-+                ))
++                Some(PrecedenceLoss::Conflict {
++                    id: (*id).to_owned(),
++                    scope: selection.scope.clone(),
++                })
 +            } else {
 +                None
 +            }
@@ -121906,6 +121937,47 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        .collect()
 +}
 +
++fn run_terminal_handler(
++    begun: Result<Invocation>,
++    payload: Value,
++    active: &dyn Fn() -> bool,
++) -> Result<(Invocation, Result<Reply>)> {
++    begun.and_then(|mut invocation| {
++                if invocation.migrate {
++                    invocation.loaded.state =
++                        packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
++                }
++                let reply = registered_call(&invocation.loaded, &invocation.dynamic, "terminal", "")
++                    .and_then(|()| {
++                        bridge::run(
++                            &invocation.loaded,
++                            "terminal",
++                            "",
++                            payload,
++                            &[],
++                            active,
++                            &mut |call| {
++                                Err(failure(match call.operation.as_str() {
++                                    "time.sleep" => "host_operation_unavailable: time.sleep is not available during terminal",
++                                    _ => "host_operation_unavailable: requires a native task",
++                                }))
++                            },
++                            &mut |_| {},
++                            Some(invocation.virtual_time_ms.unwrap_or_else(crate::peers::now_ms)),
++                            &InvocationScope::default(),
++                        )
++                    });
++                Ok((invocation, reply))
++            })
++}
++
++fn cost_quantiles(mut values: Vec<f64>) -> Value {
++    let first = values[0];
++    values.sort_by(f64::total_cmp);
++    let at = |quantile: f64| values[((values.len() - 1) as f64 * quantile).round() as usize];
++    json!({"first": first, "p50": at(0.5), "p95": at(0.95)})
++}
++
 +impl ModHost {
 +    pub fn open(root: PathBuf) -> Result<Self> {
 +        Self::open_validated(root, |_| Ok(()))
@@ -121987,12 +122059,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        let mut report = json!({"mod": id, "runs": runs, "runners": usage.0,
 +            "runner_peak_footprint_bytes": usage.1});
 +        for (metric, values) in samples {
-+            let first = values[0];
-+            let mut sorted = values;
-+            sorted.sort_by(f64::total_cmp);
-+            let at =
-+                |quantile: f64| sorted[((sorted.len() - 1) as f64 * quantile).round() as usize];
-+            report[metric] = json!({"first": first, "p50": at(0.5), "p95": at(0.95)});
++            report[metric] = cost_quantiles(values);
 +        }
 +        Ok(report)
 +    }
@@ -122919,14 +122986,18 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +                None => {
 +                    selected.insert(package.id.clone(), (selection.clone(), package, source));
 +                }
-+                Some(reason) if reason.starts_with("mod_conflict") => {
-+                    reject(initial, rejected, selection, Some(&package.id), reason)?
-+                }
++                Some(reason @ PrecedenceLoss::Conflict { .. }) => reject(
++                    initial,
++                    rejected,
++                    selection,
++                    Some(&package.id),
++                    reason.to_string(),
++                )?,
 +                Some(reason) => rejected.push(ModRejection {
 +                    path: selection.path.clone(),
 +                    id: Some(package.id),
 +                    scope: selection.scope.clone(),
-+                    reason,
++                    reason: reason.to_string(),
 +                }),
 +            }
 +        }
@@ -124342,54 +124413,12 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        // Terminal handlers make no host calls, so their runners work in parallel.
 +        let payload = &payload;
 +        let replies = concurrently(stale, &active, |(index, key, begun, own), active| {
-+            let reply = begun.and_then(|mut invocation| {
-+                if invocation.migrate {
-+                    invocation.loaded.state =
-+                        packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
-+                }
-+                let reply = registered_call(&invocation.loaded, &invocation.dynamic, "terminal", "")
-+                    .and_then(|()| {
-+                        bridge::run(
-+                            &invocation.loaded,
-+                            "terminal",
-+                            "",
-+                            payload.payload(own),
-+                            &[],
-+                            active,
-+                            &mut |call| {
-+                                Err(failure(match call.operation.as_str() {
-+                                    "time.sleep" => "host_operation_unavailable: time.sleep is not available during terminal",
-+                                    _ => "host_operation_unavailable: requires a native task",
-+                                }))
-+                            },
-+                            &mut |_| {},
-+                            Some(invocation.virtual_time_ms.unwrap_or_else(crate::peers::now_ms)),
-+                            &InvocationScope::default(),
-+                        )
-+                    });
-+                Ok((invocation, reply))
-+            });
++            let reply = run_terminal_handler(begun, payload.payload(own), active);
 +            (index, key, reply)
 +        });
 +        for (index, key, reply) in replies {
 +            let id = results[index].0.clone();
-+            let result = match reply {
-+                Ok((invocation, reply)) => {
-+                    match self.finish(&id, generation, "terminal", "", invocation, reply, &active) {
-+                        Err(error) if error.to_string().starts_with("state_conflict") => self
-+                            .invoke_guarded(
-+                                &id,
-+                                generation,
-+                                "terminal",
-+                                "",
-+                                payload.payload(payload.own(&id)),
-+                                &active,
-+                            ),
-+                        result => result,
-+                    }
-+                }
-+                Err(error) => Err(error),
-+            };
++            let result = self.finish_terminal_handler(&id, generation, reply, &payload, &active);
 +            match (&result, key) {
 +                (Ok(value), Some(key)) => {
 +                    let clock = self.clock_reads.contains(&id).then(Instant::now);
@@ -124415,6 +124444,33 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            .unwrap_or_default()
 +            .to_owned();
 +        self.compose_terminal(results, &origin, None)
++    }
++
++    fn finish_terminal_handler(
++        &mut self,
++        id: &str,
++        generation: u64,
++        reply: Result<(Invocation, Result<Reply>)>,
++        payload: &TerminalPayload,
++        active: &dyn Fn() -> bool,
++    ) -> Result<Value> {
++        match reply {
++            Ok((invocation, reply)) => {
++                match self.finish(id, generation, "terminal", "", invocation, reply, active) {
++                    Err(error) if error.to_string().starts_with("state_conflict") => self
++                        .invoke_guarded(
++                            id,
++                            generation,
++                            "terminal",
++                            "",
++                            payload.payload(payload.own(id)),
++                            active,
++                        ),
++                    result => result,
++                }
++            }
++            Err(error) => Err(error),
++        }
 +    }
 +
 +    pub fn command_view(
@@ -133661,10 +133717,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c94912b98496f
+index 0000000000000000000000000000000000000000..bcc36a03522bfc89dee89cfccab9afeaf7563bd3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,1025 @@
+@@ -0,0 +1,1039 @@
 +use super::Result;
 +use super::code_cache::CacheRoot;
 +use super::code_cache::CodeCache;
@@ -133986,17 +134042,27 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +/// How long a fresh runner may take to report ready; its callback budget starts then.
 +const RUNNER_START: Duration = Duration::from_secs(10);
 +
-+#[allow(clippy::too_many_arguments)]
++struct Conversation<'a> {
++    bytes: &'a [u8],
++    cache: Option<&'a CodeCache>,
++    fresh: bool,
++    budget: Duration,
++    active: &'a dyn Fn() -> bool,
++}
++
 +fn converse(
 +    stdin: &mut ChildStdin,
 +    lines: &mpsc::Receiver<Vec<u8>>,
-+    bytes: &[u8],
-+    cache: Option<&CodeCache>,
-+    fresh: bool,
-+    budget: Duration,
-+    active: &dyn Fn() -> bool,
++    request: Conversation<'_>,
 +    host: &mut dyn FnMut(Value) -> Result<Value>,
 +) -> (Result<Option<Value>>, Instant) {
++    let Conversation {
++        bytes,
++        cache,
++        fresh,
++        budget,
++        active,
++    } = request;
 +    let _in_flight = InFlight::enter();
 +    let budgeted = || Instant::now() + budget + Duration::from_millis(250);
 +    let mut deadline = if fresh {
@@ -134483,11 +134549,13 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +    let (output, _) = converse(
 +        &mut warm.stdin,
 +        &warm.lines,
-+        &bytes,
-+        cache.as_ref(),
-+        fresh,
-+        budget,
-+        active,
++        Conversation {
++            bytes: &bytes,
++            cache: cache.as_ref(),
++            fresh,
++            budget,
++            active,
++        },
 +        host,
 +    );
 +    let error = match output {
@@ -134654,11 +134722,13 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +    let (output, deadline) = converse(
 +        &mut stdin,
 +        &lines,
-+        &bytes,
-+        cache.as_ref(),
-+        true,
-+        budget,
-+        active,
++        Conversation {
++            bytes: &bytes,
++            cache: cache.as_ref(),
++            fresh: true,
++            budget,
++            active,
++        },
 +        host,
 +    );
 +    let overran = overran(&child);
@@ -135716,7 +135786,7 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cfd6e7e3276bf92163818fedaaf218613b0c4295
+index 0000000000000000000000000000000000000000..e39176d7c333b869e55252fc0a89e05f387dc89e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
 @@ -0,0 +1,1559 @@
@@ -136829,7 +136899,7 @@ index 0000000000000000000000000000000000000000..cfd6e7e3276bf92163818fedaaf21861
 +        for ((index, _), loss) in valid.iter().zip(ranked) {
 +            selections[*index]["effective"] = json!(loss.is_none());
 +            selections[*index]["reason"] = json!(match &loss {
-+                Some(reason) => reason.split(':').next().unwrap_or_default(),
++                Some(reason) => reason.code(),
 +                None => "selected",
 +            });
 +        }
@@ -137281,10 +137351,10 @@ index 0000000000000000000000000000000000000000..cfd6e7e3276bf92163818fedaaf21861
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa6c664764
+index 0000000000000000000000000000000000000000..ab7f1e1206477ead58b3a930e29f4bb96ee42e90
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2537 @@
+@@ -0,0 +1,2581 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 24;
@@ -139774,6 +139844,51 @@ index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa
 +}
 +
 +impl ModViewSnapshot {
++    pub const DIAGNOSTIC_LIMIT: usize = 16;
++    pub const ERROR_DISPLAY_CHARS: usize = 180;
++    pub const DIAGNOSTIC_BYTES: usize = 512;
++
++    pub fn errors_from_status(status: &Value) -> Vec<(String, String)> {
++        let mut errors = status["mods"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .filter_map(|item| {
++                item["error"].as_str().map(|error| {
++                    (
++                        item["id"].as_str().unwrap_or("mod").to_owned(),
++                        error.to_owned(),
++                    )
++                })
++            })
++            .collect::<Vec<_>>();
++        errors.extend(
++            status["rejected"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .filter_map(|item| {
++                    item["reason"]
++                        .as_str()
++                        .filter(|reason| !reason.starts_with("shadowed_"))
++                        .map(|reason| {
++                            (
++                                item["id"]
++                                    .as_str()
++                                    .or(item["path"].as_str())
++                                    .unwrap_or("selection")
++                                    .to_owned(),
++                                reason.to_owned(),
++                            )
++                        })
++                }),
++        );
++        if let Some(error) = status["reload_error"].as_str() {
++            errors.push(("Reload".to_owned(), error.to_owned()));
++        }
++        errors
++    }
++
 +    pub fn read(path: &Path) -> Result<Self> {
 +        let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
 +        let mut snapshot: Self = serde_json::from_value(value)?;
@@ -139791,21 +139906,20 @@ index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa
 +                .iter()
 +                .any(|contributor| !identifier(contributor))
 +            || serde_json::to_vec(&snapshot.input)?.len() > 65_536
-+            || snapshot.diagnostics.len() > 16
-+            || snapshot.native_diagnostics.len() > 16
++            || snapshot.diagnostics.len() > Self::DIAGNOSTIC_LIMIT
++            || snapshot.native_diagnostics.len() > Self::DIAGNOSTIC_LIMIT
 +            || snapshot
 +                .diagnostics
 +                .iter()
-+                .any(|diagnostic| !visible(diagnostic, 512))
++                .any(|diagnostic| !visible(diagnostic, Self::DIAGNOSTIC_BYTES))
 +            || snapshot
 +                .native_diagnostics
 +                .iter()
-+                .any(|diagnostic| !visible(diagnostic, 512))
-+            || snapshot.errors.len() > 16
-+            || snapshot
-+                .errors
-+                .iter()
-+                .any(|(source, error)| !visible(source, 512) || !visible(error, 512))
++                .any(|diagnostic| !visible(diagnostic, Self::DIAGNOSTIC_BYTES))
++            || snapshot.errors.len() > Self::DIAGNOSTIC_LIMIT
++            || snapshot.errors.iter().any(|(source, error)| {
++                !visible(source, Self::DIAGNOSTIC_BYTES) || !visible(error, Self::DIAGNOSTIC_BYTES)
++            })
 +            || snapshot.activity.iter().any(|activity| {
 +                !visible(&activity.label, 128)
 +                    || !visible(&activity.tool, 128)
@@ -179701,10 +179815,10 @@ index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd7274b642c6
+index 0000000000000000000000000000000000000000..3d74f4a0894c76fe6cfd42c3be48ce31cbe18067
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1775 @@
+@@ -0,0 +1,1806 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -179961,10 +180075,10 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +}
 +
 +pub(crate) fn warm_listing(store: PathBuf) {
-+    static WARM: Mutex<(bool, Option<PathBuf>)> = Mutex::new((false, None));
++    static WARM: Mutex<Coalescer<PathBuf>> = Mutex::new(Coalescer::new());
 +    let mut warm = WARM.locked();
-+    warm.1 = Some(store);
-+    if std::mem::replace(&mut warm.0, true) {
++    warm.latest = Some(store);
++    if std::mem::replace(&mut warm.running, true) {
 +        return;
 +    }
 +    drop(warm);
@@ -179972,8 +180086,8 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +        loop {
 +            let next = {
 +                let mut warm = WARM.locked();
-+                let next = warm.1.take();
-+                warm.0 = next.is_some();
++                let next = warm.latest.take();
++                warm.running = next.is_some();
 +                next
 +            };
 +            let Some(store) = next else {
@@ -180126,7 +180240,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +
 +/// The terminal host reloads a changed mods.json at once, so enabled mods' commands appear before the next turn.
 +fn refresh_catalog() {
-+    static PENDING: Mutex<(bool, Option<()>)> = Mutex::new((false, None));
++    static PENDING: Mutex<Coalescer<()>> = Mutex::new(Coalescer::new());
 +    in_background(&PENDING, (), |()| {
 +        let status = shared_host()
 +            .ok()
@@ -180144,15 +180258,29 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    });
 +}
 +
++struct Coalescer<T> {
++    running: bool,
++    latest: Option<T>,
++}
++
++impl<T> Coalescer<T> {
++    const fn new() -> Self {
++        Self {
++            running: false,
++            latest: None,
++        }
++    }
++}
++
 +/// Runs `work` on one background thread at a time; requests made meanwhile collapse into the latest one.
 +fn in_background<T: Send + 'static>(
-+    pending: &'static Mutex<(bool, Option<T>)>,
++    pending: &'static Mutex<Coalescer<T>>,
 +    request: T,
 +    work: fn(T),
 +) {
 +    let mut slot = pending.locked();
-+    slot.1 = Some(request);
-+    if std::mem::replace(&mut slot.0, true) {
++    slot.latest = Some(request);
++    if std::mem::replace(&mut slot.running, true) {
 +        return;
 +    }
 +    drop(slot);
@@ -180160,8 +180288,8 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +        loop {
 +            let next = {
 +                let mut slot = pending.locked();
-+                let next = slot.1.take();
-+                slot.0 = next.is_some();
++                let next = slot.latest.take();
++                slot.running = next.is_some();
 +                next
 +            };
 +            let Some(request) = next else {
@@ -180510,7 +180638,10 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +            // Keys typed while startup refreshes the terminal view then pass at once unless a mod intercepts them.
 +            if let Ok(runtime) = shared_host() {
 +                let runtime = runtime.locked();
-+                remembered_intercept("composer_key", Some(runtime.intercepts("composer_key")));
++                remembered_intercept(
++                    "composer_key",
++                    Interception::Known(runtime.intercepts("composer_key")),
++                );
 +            }
 +        });
 +    }
@@ -180892,7 +181023,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    ) {
 +        Err(error)
 +            if source != "mod"
-+                && remembered_intercept("composer_edit", None) == Some(false)
++                && remembered_intercept("composer_edit", Interception::Busy) == Some(false)
 +                && ["mod_runtime_busy", "callback_cancelled"]
 +                    .iter()
 +                    .any(|skipped| error.starts_with(skipped)) =>
@@ -180951,11 +181082,11 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    };
 +    let mut host = match lock_within(&runtime, std::time::Duration::ZERO) {
 +        Some(host) => host,
-+        None if remembered_intercept(surface, None).is_none() => return Ok(None),
++        None if remembered_intercept(surface, Interception::Busy).is_none() => return Ok(None),
 +        None => lock_within(&runtime, deadline.saturating_duration_since(std::time::Instant::now()))
 +            .ok_or("mod_runtime_busy: another mod callback held the runtime for the whole keystroke budget")?,
 +    };
-+    if remembered_intercept(surface, Some(host.intercepts(surface))).is_none() {
++    if remembered_intercept(surface, Interception::Known(host.intercepts(surface))).is_none() {
 +        return Ok(None);
 +    }
 +    host.intercept_held(
@@ -181257,7 +181388,11 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    })
 +}
 +
-+type Composed = (String, Vec<Value>, Vec<Value>);
++struct Composed {
++    key: String,
++    rows: Vec<Value>,
++    composed: Vec<Value>,
++}
 +
 +static COMPOSED: Mutex<Option<Composed>> = Mutex::new(None);
 +
@@ -181275,17 +181410,14 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +        return rows;
 +    };
 +    let key = lock_within(&runtime, Duration::ZERO).map(|runtime| composition_key(&runtime));
-+    let cached = COMPOSED
-+        .locked()
-+        .as_ref()
-+        .and_then(|(cached, same, composed)| {
-+            (*same == rows).then(|| {
-+                (
-+                    key.as_ref().is_none_or(|key| key == cached),
-+                    composed.clone(),
-+                )
-+            })
-+        });
++    let cached = COMPOSED.locked().as_ref().and_then(|cached| {
++        (cached.rows == rows).then(|| {
++            (
++                key.as_ref().is_none_or(|key| key == &cached.key),
++                cached.composed.clone(),
++            )
++        })
++    });
 +    match cached {
 +        Some((true, composed)) => composed,
 +        Some((false, composed)) => {
@@ -181300,7 +181432,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +}
 +
 +fn compose_later(rows: Vec<Value>) {
-+    static PENDING: Mutex<(bool, Option<Vec<Value>>)> = Mutex::new((false, None));
++    static PENDING: Mutex<Coalescer<Vec<Value>>> = Mutex::new(Coalescer::new());
 +    in_background(&PENDING, rows, |rows| {
 +        let Ok(runtime) = shared_host() else {
 +            return;
@@ -181313,7 +181445,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +        if COMPOSED
 +            .locked()
 +            .as_ref()
-+            .is_some_and(|(cached, same, _)| *cached == key && *same == rows)
++            .is_some_and(|cached| cached.key == key && cached.rows == rows)
 +        {
 +            return;
 +        }
@@ -181325,7 +181457,11 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +            rows.clone(),
 +        )
 +        .unwrap_or_else(|_| rows.clone());
-+        *COMPOSED.locked() = Some((key, rows, composed));
++        *COMPOSED.locked() = Some(Composed {
++            key,
++            rows,
++            composed,
++        });
 +        codex_omd::client_surface::redraw();
 +    });
 +}
@@ -181334,7 +181470,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    let cache = COMPOSED.locked();
 +    let Some(row) = cache
 +        .as_ref()
-+        .and_then(|(_, _, rows)| rows.iter().find(|row| row["command"] == command))
++        .and_then(|cached| cached.composed.iter().find(|row| row["command"] == command))
 +    else {
 +        return fallback.to_owned();
 +    };
@@ -181360,18 +181496,27 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    let fresh = lock_within(&HOST, Duration::ZERO)
 +        .and_then(|host| host.clone())
 +        .and_then(|runtime| lock_within(&runtime, wait).map(|runtime| runtime.intercepts(surface)));
-+    remembered_intercept(surface, fresh).is_some()
++    remembered_intercept(
++        surface,
++        fresh.map_or(Interception::Busy, Interception::Known),
++    )
++    .is_some()
 +}
 +
 +/// A busy runtime answers from the last lookup; a surface never looked up fails closed as if a required interceptor selected it.
-+fn remembered_intercept(surface: &str, fresh: Option<Option<bool>>) -> Option<bool> {
++enum Interception {
++    Busy,
++    Known(Option<bool>),
++}
++
++fn remembered_intercept(surface: &str, fresh: Interception) -> Option<bool> {
 +    let mut known = KNOWN_INTERCEPTS.locked();
 +    match fresh {
-+        Some(intercepts) => {
++        Interception::Known(intercepts) => {
 +            known.insert(surface.to_owned(), intercepts);
 +            intercepts
 +        }
-+        None => known.get(surface).copied().unwrap_or(Some(true)),
++        Interception::Busy => known.get(surface).copied().unwrap_or(Some(true)),
 +    }
 +}
 +
@@ -181482,7 +181627,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb0f7e8fd0
+index 0000000000000000000000000000000000000000..c9954c2ab37a5617cefcbbe0929b526e0ed6b763
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
 @@ -0,0 +1,784 @@
@@ -182168,7 +182313,7 @@ index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb
 +#[test]
 +fn background_work_keeps_serving_requests_after_a_panic() {
 +    use std::sync::atomic::{AtomicBool, Ordering};
-+    static PENDING: Mutex<(bool, Option<bool>)> = Mutex::new((false, None));
++    static PENDING: Mutex<Coalescer<bool>> = Mutex::new(Coalescer::new());
 +    static RAN: AtomicBool = AtomicBool::new(false);
 +    let work = |panics: bool| {
 +        assert!(!panics, "background work panicked");
@@ -182176,7 +182321,7 @@ index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb
 +    };
 +    in_background(&PENDING, true, work);
 +    wait_until("the panicking request never ran", || {
-+        PENDING.locked().1.is_none()
++        PENDING.locked().latest.is_none()
 +    });
 +    in_background(&PENDING, false, work);
 +    wait_until("a request after the panic never ran", || {
@@ -193823,10 +193968,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..09907e116cc5b5e1e797b0c0da7ec15034ef22a0
+index 0000000000000000000000000000000000000000..d7d6f4085e7e52125e3e62eec974f7b4d1d25aae
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,827 @@
+@@ -0,0 +1,822 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -193926,26 +194071,21 @@ index 0000000000000000000000000000000000000000..09907e116cc5b5e1e797b0c0da7ec150
 +    if snapshot.errors.is_empty()
 +        && let Some(status) = mod_status()
 +    {
-+        snapshot.errors = status["mods"]
-+            .as_array()
-+            .into_iter()
-+            .flatten()
-+            .filter_map(|item| {
-+                let visible = |text: &str| {
-+                    text.chars()
-+                        .filter(|character| !character.is_control())
-+                        .take(180)
-+                        .collect::<String>()
-+                };
-+                item["error"].as_str().map(|error| {
-+                    (
-+                        visible(item["id"].as_str().unwrap_or("mod")),
-+                        visible(error),
-+                    )
-+                })
-+            })
-+            .take(16)
-+            .collect();
++        snapshot.errors = codex_omd::ModViewSnapshot::errors_from_status(
++            &serde_json::json!({"mods": status["mods"]}),
++        )
++        .into_iter()
++        .take(codex_omd::ModViewSnapshot::DIAGNOSTIC_LIMIT)
++        .map(|(source, error)| {
++            let visible = |text: String| {
++                text.chars()
++                    .filter(|character| !character.is_control())
++                    .take(codex_omd::ModViewSnapshot::ERROR_DISPLAY_CHARS)
++                    .collect()
++            };
++            (visible(source), visible(error))
++        })
++        .collect();
 +    }
 +    snapshot
 +}

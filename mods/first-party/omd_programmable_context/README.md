@@ -70,10 +70,10 @@ stored harness, asks for confirmation, then merges them for future sessions in t
 keeping other stored entries. To remove a promoted harness, run:
 
 ```sh
-omd store reset --mod omd_programmable_context --scope repository
+omd store reset --store STORE --mod omd_programmable_context --scope repository --repo "$PWD"
 ```
 
-Use `--scope user` for the personal harness.
+Replace `STORE` with your mod-store path. Use `--scope user` for the personal harness.
 
 ## Settings
 

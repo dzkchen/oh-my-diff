@@ -1049,8 +1049,37 @@ fn selection_verdict(
     }))
 }
 
-/// Scope precedence over valid enabled `(id, selection)` candidates: `None` wins its mod ID, otherwise why it loses.
-fn precedence(candidates: &[(&str, &ModSelection)]) -> Vec<Option<String>> {
+enum PrecedenceLoss {
+    Shadowed { scope: String, path: PathBuf },
+    Conflict { id: String, scope: String },
+}
+
+impl PrecedenceLoss {
+    fn code(&self) -> &str {
+        match self {
+            Self::Shadowed { scope, .. } => match scope.as_str() {
+                MANAGED_SCOPE => "shadowed_by_managed_scope",
+                "project" => "shadowed_by_project_scope",
+                _ => "shadowed_by_user_scope",
+            },
+            Self::Conflict { .. } => "mod_conflict",
+        }
+    }
+}
+
+impl std::fmt::Display for PrecedenceLoss {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Shadowed { path, .. } => write!(f, "{}: {}", self.code(), path.display()),
+            Self::Conflict { id, scope } => write!(
+                f,
+                "mod_conflict: {id} is enabled twice in the {scope} scope"
+            ),
+        }
+    }
+}
+
+fn precedence(candidates: &[(&str, &ModSelection)]) -> Vec<Option<PrecedenceLoss>> {
     let rank = |scope: &str| match scope {
         MANAGED_SCOPE => 2,
         "project" => 1,
@@ -1070,16 +1099,15 @@ fn precedence(candidates: &[(&str, &ModSelection)]) -> Vec<Option<String>> {
                 .map(|(_, rival)| rival)
                 .collect::<Vec<_>>();
             if rank(&selection.scope) < top {
-                Some(format!(
-                    "shadowed_by_{}_scope: {}",
-                    winners[0].scope,
-                    winners[0].path.display()
-                ))
+                Some(PrecedenceLoss::Shadowed {
+                    scope: winners[0].scope.clone(),
+                    path: winners[0].path.clone(),
+                })
             } else if winners.len() > 1 {
-                Some(format!(
-                    "mod_conflict: {id} is enabled twice in the {} scope",
-                    selection.scope
-                ))
+                Some(PrecedenceLoss::Conflict {
+                    id: (*id).to_owned(),
+                    scope: selection.scope.clone(),
+                })
             } else {
                 None
             }
@@ -3854,6 +3882,47 @@ pub fn event_shared(
         .collect()
 }
 
+fn run_terminal_handler(
+    begun: Result<Invocation>,
+    payload: Value,
+    active: &dyn Fn() -> bool,
+) -> Result<(Invocation, Result<Reply>)> {
+    begun.and_then(|mut invocation| {
+                if invocation.migrate {
+                    invocation.loaded.state =
+                        packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
+                }
+                let reply = registered_call(&invocation.loaded, &invocation.dynamic, "terminal", "")
+                    .and_then(|()| {
+                        bridge::run(
+                            &invocation.loaded,
+                            "terminal",
+                            "",
+                            payload,
+                            &[],
+                            active,
+                            &mut |call| {
+                                Err(failure(match call.operation.as_str() {
+                                    "time.sleep" => "host_operation_unavailable: time.sleep is not available during terminal",
+                                    _ => "host_operation_unavailable: requires a native task",
+                                }))
+                            },
+                            &mut |_| {},
+                            Some(invocation.virtual_time_ms.unwrap_or_else(crate::peers::now_ms)),
+                            &InvocationScope::default(),
+                        )
+                    });
+                Ok((invocation, reply))
+            })
+}
+
+fn cost_quantiles(mut values: Vec<f64>) -> Value {
+    let first = values[0];
+    values.sort_by(f64::total_cmp);
+    let at = |quantile: f64| values[((values.len() - 1) as f64 * quantile).round() as usize];
+    json!({"first": first, "p50": at(0.5), "p95": at(0.95)})
+}
+
 impl ModHost {
     pub fn open(root: PathBuf) -> Result<Self> {
         Self::open_validated(root, |_| Ok(()))
@@ -3935,12 +4004,7 @@ impl ModHost {
         let mut report = json!({"mod": id, "runs": runs, "runners": usage.0,
             "runner_peak_footprint_bytes": usage.1});
         for (metric, values) in samples {
-            let first = values[0];
-            let mut sorted = values;
-            sorted.sort_by(f64::total_cmp);
-            let at =
-                |quantile: f64| sorted[((sorted.len() - 1) as f64 * quantile).round() as usize];
-            report[metric] = json!({"first": first, "p50": at(0.5), "p95": at(0.95)});
+            report[metric] = cost_quantiles(values);
         }
         Ok(report)
     }
@@ -4867,14 +4931,18 @@ impl ModHost {
                 None => {
                     selected.insert(package.id.clone(), (selection.clone(), package, source));
                 }
-                Some(reason) if reason.starts_with("mod_conflict") => {
-                    reject(initial, rejected, selection, Some(&package.id), reason)?
-                }
+                Some(reason @ PrecedenceLoss::Conflict { .. }) => reject(
+                    initial,
+                    rejected,
+                    selection,
+                    Some(&package.id),
+                    reason.to_string(),
+                )?,
                 Some(reason) => rejected.push(ModRejection {
                     path: selection.path.clone(),
                     id: Some(package.id),
                     scope: selection.scope.clone(),
-                    reason,
+                    reason: reason.to_string(),
                 }),
             }
         }
@@ -6290,54 +6358,12 @@ impl ModHost {
         // Terminal handlers make no host calls, so their runners work in parallel.
         let payload = &payload;
         let replies = concurrently(stale, &active, |(index, key, begun, own), active| {
-            let reply = begun.and_then(|mut invocation| {
-                if invocation.migrate {
-                    invocation.loaded.state =
-                        packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
-                }
-                let reply = registered_call(&invocation.loaded, &invocation.dynamic, "terminal", "")
-                    .and_then(|()| {
-                        bridge::run(
-                            &invocation.loaded,
-                            "terminal",
-                            "",
-                            payload.payload(own),
-                            &[],
-                            active,
-                            &mut |call| {
-                                Err(failure(match call.operation.as_str() {
-                                    "time.sleep" => "host_operation_unavailable: time.sleep is not available during terminal",
-                                    _ => "host_operation_unavailable: requires a native task",
-                                }))
-                            },
-                            &mut |_| {},
-                            Some(invocation.virtual_time_ms.unwrap_or_else(crate::peers::now_ms)),
-                            &InvocationScope::default(),
-                        )
-                    });
-                Ok((invocation, reply))
-            });
+            let reply = run_terminal_handler(begun, payload.payload(own), active);
             (index, key, reply)
         });
         for (index, key, reply) in replies {
             let id = results[index].0.clone();
-            let result = match reply {
-                Ok((invocation, reply)) => {
-                    match self.finish(&id, generation, "terminal", "", invocation, reply, &active) {
-                        Err(error) if error.to_string().starts_with("state_conflict") => self
-                            .invoke_guarded(
-                                &id,
-                                generation,
-                                "terminal",
-                                "",
-                                payload.payload(payload.own(&id)),
-                                &active,
-                            ),
-                        result => result,
-                    }
-                }
-                Err(error) => Err(error),
-            };
+            let result = self.finish_terminal_handler(&id, generation, reply, &payload, &active);
             match (&result, key) {
                 (Ok(value), Some(key)) => {
                     let clock = self.clock_reads.contains(&id).then(Instant::now);
@@ -6363,6 +6389,33 @@ impl ModHost {
             .unwrap_or_default()
             .to_owned();
         self.compose_terminal(results, &origin, None)
+    }
+
+    fn finish_terminal_handler(
+        &mut self,
+        id: &str,
+        generation: u64,
+        reply: Result<(Invocation, Result<Reply>)>,
+        payload: &TerminalPayload,
+        active: &dyn Fn() -> bool,
+    ) -> Result<Value> {
+        match reply {
+            Ok((invocation, reply)) => {
+                match self.finish(id, generation, "terminal", "", invocation, reply, active) {
+                    Err(error) if error.to_string().starts_with("state_conflict") => self
+                        .invoke_guarded(
+                            id,
+                            generation,
+                            "terminal",
+                            "",
+                            payload.payload(payload.own(id)),
+                            active,
+                        ),
+                    result => result,
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn command_view(

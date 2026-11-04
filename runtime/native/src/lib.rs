@@ -2,6 +2,7 @@ mod accounting;
 mod config;
 mod contract;
 mod credential_gateway;
+mod evidence;
 mod execution;
 mod generic_host;
 mod ledger;
@@ -645,17 +646,7 @@ impl Session {
     fn evidence(&self, name: &str, value: &Value) -> Result<Value, String> {
         let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
         let path = self.evidence.join(name);
-        match codex_omd::fsio::create_new(&path, &bytes) {
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let existing = std::fs::read(&path).map_err(|e| e.to_string())?;
-                if serde_json::from_slice::<Value>(&existing).is_err() {
-                    write_bytes(&path, &bytes, Durability::Durable).map_err(|e| e.to_string())?;
-                } else if existing != bytes {
-                    return Err(error.to_string());
-                }
-            }
-            result => result.map_err(|e| e.to_string())?,
-        }
+        evidence::write(&path, &bytes)?;
         Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
     }
 

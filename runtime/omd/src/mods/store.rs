@@ -1107,7 +1107,7 @@ impl ModStore {
         for ((index, _), loss) in valid.iter().zip(ranked) {
             selections[*index]["effective"] = json!(loss.is_none());
             selections[*index]["reason"] = json!(match &loss {
-                Some(reason) => reason.split(':').next().unwrap_or_default(),
+                Some(reason) => reason.code(),
                 None => "selected",
             });
         }

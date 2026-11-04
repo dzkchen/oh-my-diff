@@ -33,7 +33,7 @@ All of these come with OMD+ only.
 | [`omd_tool_absorb`](../mods/first-party/omd_tool_absorb/README.md) | When the model repeats a read in one response, runs it once. In [code mode](../mods/reference/glossary.md#sessions-and-models), also reuses unchanged file reads; `/absorb` | |
 | [`omd_tool_fix`](../mods/first-party/omd_tool_fix/README.md) | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 | [`omd_theme`](../mods/first-party/omd_theme/README.md) | Living scenes drawn in character tiles behind the conversation, with opaque prompts and menus; `/theme` picks a scene and prints terminal background steps | |
-| [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in, and `/monitor allow owner/repo` |
+| [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in |
 | [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs in automatic batches or on `/continue` after estimated cache expiry; `/continue --compact` forces a batch; paged recall and `/mask` | Can't be on with `omd_programmable_context` |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.

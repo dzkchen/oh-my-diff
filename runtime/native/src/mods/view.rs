@@ -96,10 +96,15 @@ impl Views {
             .diagnostics
             .iter()
             .filter(|(key, _)| !key.starts_with("terminal:"))
-            .take(16)
+            .take(ModViewSnapshot::DIAGNOSTIC_LIMIT)
             .map(|(_, diagnostic)| diagnostic.clone())
             .collect();
-        state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
+        state.snapshot.diagnostics = state
+            .diagnostics
+            .values()
+            .take(ModViewSnapshot::DIAGNOSTIC_LIMIT)
+            .cloned()
+            .collect();
         let _ = owner.persist_json("mod-view.json", &state.snapshot);
         if let Ok(mut published) = self.published.lock() {
             *published = Some(Arc::new(state.snapshot.clone()));
@@ -119,8 +124,13 @@ impl Views {
     ) {
         let errors = errors
             .into_iter()
-            .take(16)
-            .map(|(source, error)| (visible(&source, 512), visible(&error, 512)))
+            .take(ModViewSnapshot::DIAGNOSTIC_LIMIT)
+            .map(|(source, error)| {
+                (
+                    visible(&source, ModViewSnapshot::DIAGNOSTIC_BYTES),
+                    visible(&error, ModViewSnapshot::DIAGNOSTIC_BYTES),
+                )
+            })
             .collect::<Vec<_>>();
         self.update(owner, |state| {
             let snapshot = &state.snapshot;
@@ -148,9 +158,10 @@ impl Views {
                 .diagnostics
                 .retain(|key, _| !key.starts_with("terminal:"));
             for (index, diagnostic) in terminal.diagnostics.into_iter().enumerate() {
-                state
-                    .diagnostics
-                    .insert(format!("terminal:{index}"), visible(&diagnostic, 512));
+                state.diagnostics.insert(
+                    format!("terminal:{index}"),
+                    visible(&diagnostic, ModViewSnapshot::DIAGNOSTIC_BYTES),
+                );
             }
             true
         });
@@ -158,7 +169,8 @@ impl Views {
 
     pub(super) fn diagnostic(&self, owner: &Host, key: &str, message: Option<String>) {
         self.update(owner, |state| {
-            let message = message.map(|message| visible(&message, 512));
+            let message =
+                message.map(|message| visible(&message, ModViewSnapshot::DIAGNOSTIC_BYTES));
             if state.diagnostics.get(key) == message.as_ref() {
                 return false;
             }

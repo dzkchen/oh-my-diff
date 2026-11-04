@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,6 +26,30 @@ class SourceRules(unittest.TestCase):
                     f'import type {{ ModAPI }} from "{check.ROOT / "mods/api.d.ts"}";\n'
                     f'export default function activate(api: ModAPI) {{ {source} }}')
                 self.assertIn("/model conflicts with a built-in command", check.static_problems(path))
+
+    @unittest.skipUnless(os.environ.get("OMD_TEST_MOD_BIN"), "needs a real mod host")
+    def test_optional_native_route_refusal_does_not_mask_required_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            package = work / "fixture"
+            package.mkdir()
+            (package / "mod.json").write_text(json.dumps({
+                "schema": 1, "id": "fixture", "version": "1.0.0", "api": "1.0.0",
+                "state_version": 1, "capabilities": ["commands", "model"],
+            }))
+            (package / "index.ts").write_text(
+                "export default api => {"
+                "api.command('optional', () => api.host.tryCall('routes.list', null));"
+                "api.command('required', () => api.host.call('routes.list', null));"
+                "}")
+            host = check.Host(os.environ["OMD_TEST_MOD_BIN"], work)
+            store, refused = host.store("store", [package], {})
+            self.assertFalse(refused)
+            self.assertEqual(host.offline_command(store, "fixture", "optional"), (set(), []))
+            operations, errors = host.offline_command(store, "fixture", "required")
+            self.assertFalse(operations)
+            self.assertTrue(errors)
+            self.assertIn("host_operation_unavailable", errors[0])
 
     def test_feature_lists(self):
         features = sorted(check.FEATURES)

@@ -2487,6 +2487,51 @@ impl ModView {
 }
 
 impl ModViewSnapshot {
+    pub const DIAGNOSTIC_LIMIT: usize = 16;
+    pub const ERROR_DISPLAY_CHARS: usize = 180;
+    pub const DIAGNOSTIC_BYTES: usize = 512;
+
+    pub fn errors_from_status(status: &Value) -> Vec<(String, String)> {
+        let mut errors = status["mods"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item["error"].as_str().map(|error| {
+                    (
+                        item["id"].as_str().unwrap_or("mod").to_owned(),
+                        error.to_owned(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        errors.extend(
+            status["rejected"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| {
+                    item["reason"]
+                        .as_str()
+                        .filter(|reason| !reason.starts_with("shadowed_"))
+                        .map(|reason| {
+                            (
+                                item["id"]
+                                    .as_str()
+                                    .or(item["path"].as_str())
+                                    .unwrap_or("selection")
+                                    .to_owned(),
+                                reason.to_owned(),
+                            )
+                        })
+                }),
+        );
+        if let Some(error) = status["reload_error"].as_str() {
+            errors.push(("Reload".to_owned(), error.to_owned()));
+        }
+        errors
+    }
+
     pub fn read(path: &Path) -> Result<Self> {
         let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
         let mut snapshot: Self = serde_json::from_value(value)?;
@@ -2504,21 +2549,20 @@ impl ModViewSnapshot {
                 .iter()
                 .any(|contributor| !identifier(contributor))
             || serde_json::to_vec(&snapshot.input)?.len() > 65_536
-            || snapshot.diagnostics.len() > 16
-            || snapshot.native_diagnostics.len() > 16
+            || snapshot.diagnostics.len() > Self::DIAGNOSTIC_LIMIT
+            || snapshot.native_diagnostics.len() > Self::DIAGNOSTIC_LIMIT
             || snapshot
                 .diagnostics
                 .iter()
-                .any(|diagnostic| !visible(diagnostic, 512))
+                .any(|diagnostic| !visible(diagnostic, Self::DIAGNOSTIC_BYTES))
             || snapshot
                 .native_diagnostics
                 .iter()
-                .any(|diagnostic| !visible(diagnostic, 512))
-            || snapshot.errors.len() > 16
-            || snapshot
-                .errors
-                .iter()
-                .any(|(source, error)| !visible(source, 512) || !visible(error, 512))
+                .any(|diagnostic| !visible(diagnostic, Self::DIAGNOSTIC_BYTES))
+            || snapshot.errors.len() > Self::DIAGNOSTIC_LIMIT
+            || snapshot.errors.iter().any(|(source, error)| {
+                !visible(source, Self::DIAGNOSTIC_BYTES) || !visible(error, Self::DIAGNOSTIC_BYTES)
+            })
             || snapshot.activity.iter().any(|activity| {
                 !visible(&activity.label, 128)
                     || !visible(&activity.tool, 128)

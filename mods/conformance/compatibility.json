@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "as_of": "2026-11-03",
+  "as_of": "2026-11-04",
   "host": {
     "codex": "0.166.0",
     "omd": "1.4.2",
     "release_status": "development",
-    "latest_stable": "1.4.0",
+    "latest_stable": "1.4.2",
     "stability": "stable",
     "current_api": "1.0.0",
     "package_schemas": [
@@ -200,7 +200,7 @@
   "transitions": {
     "real_supported_release": {
       "available": false,
-      "reason": "No earlier public stable OMD mod release exists. Run this gate when the first supported successor ships."
+      "reason": "Earlier public stable OMD releases exist; no retained execution evidence qualifies a real release-to-release transition. Only the listed synthetic fixtures are qualified."
     },
     "synthetic_fixtures": [
       "old API mod on compatible new host",

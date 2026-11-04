@@ -319,17 +319,27 @@ fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHand
 /// How long a fresh runner may take to report ready; its callback budget starts then.
 const RUNNER_START: Duration = Duration::from_secs(10);
 
-#[allow(clippy::too_many_arguments)]
+struct Conversation<'a> {
+    bytes: &'a [u8],
+    cache: Option<&'a CodeCache>,
+    fresh: bool,
+    budget: Duration,
+    active: &'a dyn Fn() -> bool,
+}
+
 fn converse(
     stdin: &mut ChildStdin,
     lines: &mpsc::Receiver<Vec<u8>>,
-    bytes: &[u8],
-    cache: Option<&CodeCache>,
-    fresh: bool,
-    budget: Duration,
-    active: &dyn Fn() -> bool,
+    request: Conversation<'_>,
     host: &mut dyn FnMut(Value) -> Result<Value>,
 ) -> (Result<Option<Value>>, Instant) {
+    let Conversation {
+        bytes,
+        cache,
+        fresh,
+        budget,
+        active,
+    } = request;
     let _in_flight = InFlight::enter();
     let budgeted = || Instant::now() + budget + Duration::from_millis(250);
     let mut deadline = if fresh {
@@ -816,11 +826,13 @@ where
     let (output, _) = converse(
         &mut warm.stdin,
         &warm.lines,
-        &bytes,
-        cache.as_ref(),
-        fresh,
-        budget,
-        active,
+        Conversation {
+            bytes: &bytes,
+            cache: cache.as_ref(),
+            fresh,
+            budget,
+            active,
+        },
         host,
     );
     let error = match output {
@@ -987,11 +999,13 @@ where
     let (output, deadline) = converse(
         &mut stdin,
         &lines,
-        &bytes,
-        cache.as_ref(),
-        true,
-        budget,
-        active,
+        Conversation {
+            bytes: &bytes,
+            cache: cache.as_ref(),
+            fresh: true,
+            budget,
+            active,
+        },
         host,
     );
     let overran = overran(&child);
