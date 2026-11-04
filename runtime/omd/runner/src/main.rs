@@ -105,13 +105,13 @@ impl Watchdog {
             let mut deadline = thread
                 .deadline
                 .lock()
-                .unwrap_or_else(|error| error.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             loop {
                 deadline = match *deadline {
                     None => thread
                         .wake
                         .wait(deadline)
-                        .unwrap_or_else(|error| error.into_inner()),
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
                     Some(at) if Instant::now() >= at => {
                         handle.terminate_execution();
                         *deadline = None;
@@ -122,7 +122,7 @@ impl Watchdog {
                         thread
                             .wake
                             .wait_timeout(deadline, wait)
-                            .unwrap_or_else(|error| error.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .0
                     }
                 };
@@ -135,7 +135,7 @@ impl Watchdog {
         *self
             .deadline
             .lock()
-            .unwrap_or_else(|error| error.into_inner()) =
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
             budget.map(|ms| Instant::now() + Duration::from_millis(ms));
         self.wake.notify_all();
     }
@@ -478,7 +478,7 @@ fn compile<'s>(
             v8::script_compiler::NoCacheReason::NoReason,
         )?;
         // V8 compiled the source itself when it rejected the data (another V8 build or flags): replace the entry.
-        let rejected = source.get_cached_data().is_some_and(|data| data.rejected());
+        let rejected = source.get_cached_data().is_some_and(v8::CachedData::rejected);
         if rejected && let Some(cache) = module.get_unbound_module_script(scope).create_code_cache()
         {
             record(offered, key, code, &cache);

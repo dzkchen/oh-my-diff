@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::MOD_API_VERSION;
 use codex_omd::ModHost;
 use codex_omd::ModInstallRequest;
@@ -125,7 +127,7 @@ impl Admin {
 }
 
 fn trust(store: &ModStore, path: &Path, sha256: &str, capabilities: &[&str], scope: &str) {
-    let capabilities = capabilities.iter().map(|c| c.to_string()).collect();
+    let capabilities = capabilities.iter().map(std::string::ToString::to_string).collect();
     store
         .trust(path.to_path_buf(), sha256, capabilities, scope)
         .unwrap();
@@ -339,7 +341,7 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
     assert!(rejection(&host, "plain").starts_with("managed_sideload_denied"));
     let refused = store
         .trust(
-            plain.clone(),
+            plain,
             &plain_sha,
             vec!["interception".into()],
             "user",
@@ -928,7 +930,7 @@ fn managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cle
     let host = admin.host("alice");
     assert!(active(&host).contains(&"guard@1.0.0".to_owned()));
     assert!(rejection(&host, "guard").starts_with("managed_pending_sync"));
-    admin.write_policy(policy.clone());
+    admin.write_policy(policy);
     let fresh = admin.store("carol");
     let offline = fresh.package_sync(true).unwrap();
     assert_eq!(

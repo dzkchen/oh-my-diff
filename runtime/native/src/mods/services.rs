@@ -146,18 +146,12 @@ impl Services {
     )]
     pub(super) async fn cleanup_stale(&self, generation: u64, owners: &BTreeMap<String, String>) {
         let mut records = self.records.lock().await;
-        let stale = {
-            let keys = records
-                .iter()
-                .filter(|(_, service)| {
-                    service.generation != generation || !owners.contains_key(&service.mod_id)
-                })
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>();
-            keys.into_iter()
-                .filter_map(|id| records.remove(&id))
-                .collect::<Vec<_>>()
-        };
+        let stale = records
+            .extract_if(.., |_, service| {
+                service.generation != generation || !owners.contains_key(&service.mod_id)
+            })
+            .map(|(_, service)| service)
+            .collect::<Vec<_>>();
         for service in stale {
             service.stop().await;
         }
@@ -167,13 +161,11 @@ impl Services {
     pub(super) async fn cleanup_owned(&self, mod_id: &str, generation: u64) {
         let owned = {
             let mut records = self.records.lock().await;
-            let keys = records
-                .iter()
-                .filter(|(_, agent)| agent.mod_id == mod_id && agent.generation == generation)
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>();
-            keys.into_iter()
-                .filter_map(|key| records.remove(&key))
+            records
+                .extract_if(.., |_, agent| {
+                    agent.mod_id == mod_id && agent.generation == generation
+                })
+                .map(|(_, agent)| agent)
                 .collect::<Vec<_>>()
         };
         for agent in owned {
@@ -434,7 +426,7 @@ impl Services {
                 return Err("service_code_roots_overlap".into());
             }
             let files = launch_snapshot::capture(root)?;
-            if launch_snapshot::digest(&files) != *expected {
+            if launch_snapshot::digest(&files)? != *expected {
                 return Err("service_source_changed".into());
             }
             source_bytes += files.files.values().map(Vec::len).sum::<usize>();
@@ -1010,8 +1002,8 @@ mod tests {
         assert_eq!(
             provider
                 .experimental_bearer_token
-                .map(|token| token.into_inner())
-                .as_deref(),
+                .as_deref()
+                .map(String::as_str),
             Some("local-secret")
         );
         assert!(!provider.requires_openai_auth && !provider.supports_websockets);

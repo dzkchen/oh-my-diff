@@ -248,7 +248,12 @@ impl OfflineHost {
             }
             _ => {}
         }
-        let response = response.expect("mocked operation reply");
+        let response = response.ok_or_else(|| {
+            failure(format!(
+                "offline_unmocked_host_operation: {}",
+                call.operation
+            ))
+        })?;
         if let Some(error) = response.get("error").and_then(Value::as_str) {
             return Err(failure(error));
         }

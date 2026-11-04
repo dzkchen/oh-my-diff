@@ -382,7 +382,7 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                 }
                 "remove" => format!("Removed {id}. Its cache, state and local sources are kept."),
                 "rollback" => format!("Rolled {id} back to its previous version."),
-                _ => format!("{id} is {}d.", action),
+                _ => format!("{id} is {action}d."),
             })
         }
         _ => Err(usage()),

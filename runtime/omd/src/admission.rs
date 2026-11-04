@@ -79,14 +79,10 @@ pub struct Attempt {
     pub failure_reason: Option<String>,
     pub raw_usage: Option<Value>,
     pub settled_microusd: Option<u64>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub external_subscription: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub provider_billed: bool,
-}
-
-fn is_false(value: &bool) -> bool {
-    !value
 }
 
 impl Attempt {
@@ -1154,7 +1150,7 @@ impl Task {
             &mut state,
             &serde_json::json!({"event": "request_dispatched", "attempt": attempt}),
         )?;
-        state.attempts.insert(admission.request, attempt.clone());
+        state.attempts.insert(admission.request, attempt);
         drop(state);
         match send() {
             Ok(value) => Ok(value),

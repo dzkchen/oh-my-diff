@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::ModHostCallback;
 use codex_omd::ModInvokeOptions;
 use codex_omd::ModOpenOptions;
@@ -303,7 +305,7 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         .unwrap_err();
     assert_eq!(error.to_string(), "data_source_not_selected");
     hosts
-        .call(owner, hash, "sessions.list", listing.clone(), || true)
+        .call(owner, hash, "sessions.list", listing, || true)
         .unwrap();
     let mut changed_selection = ScopedDataHost::new(
         store_path.clone(),

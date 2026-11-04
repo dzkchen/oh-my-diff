@@ -258,19 +258,14 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
     apply(&store, &install.control).unwrap();
     let disable = preview(&store, json!({"action": "disable", "id": "author_mod"})).unwrap();
     apply(&store, &disable.control).unwrap();
-    let states = list(&store, None).unwrap()["packages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|package| {
-            (
-                package["scope"].clone(),
-                package["source"].clone(),
-                package["enabled"].clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert!(states.contains(&(json!("user"), json!("selection"), json!(false))));
+    let packages = list(&store, None).unwrap()["packages"].clone();
+    assert!(packages.as_array().unwrap().iter().any(|package| {
+        (
+            &package["scope"],
+            &package["source"],
+            &package["enabled"],
+        ) == (&json!("user"), &json!("selection"), &json!(false))
+    }));
     let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
     apply(&store, &enable.control).unwrap();
 

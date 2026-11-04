@@ -63,7 +63,7 @@ pub(super) async fn stored(
     }
     let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
     let text = expansion::CHAIN_CALL
-        .try_with(|chain| chain.clone())
+        .try_with(std::clone::Clone::clone)
         .ok()
         .filter(|chain| *chain == input.call_id)
         .and_then(|call_id| {

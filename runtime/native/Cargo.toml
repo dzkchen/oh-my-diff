@@ -45,3 +45,6 @@ codex-sandboxing = { workspace = true }
 [dev-dependencies]
 codex-login = { workspace = true }
 tiny_http = { workspace = true }
+
+[lints]
+workspace = true

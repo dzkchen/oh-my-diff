@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::MOD_API_VERSION;
 use codex_omd::ModHostCallback;
 use codex_omd::ModInvokeOptions;
@@ -44,7 +46,7 @@ fn written(root: &Path, id: &str, source: &str, capabilities: &[&str], extra: Va
 
 fn trust(store: &ModStore, path: &Path, capabilities: &[&str]) {
     let inspected = ModStore::inspect_package(path).unwrap();
-    let granted: Vec<String> = capabilities.iter().map(|value| value.to_string()).collect();
+    let granted: Vec<String> = capabilities.iter().map(std::string::ToString::to_string).collect();
     let sha256 = inspected["sha256"].as_str().unwrap().to_owned();
     contended(|| store.trust(path.to_path_buf(), &sha256, granted.clone(), "user"));
     contended(|| store.enable(path, true));

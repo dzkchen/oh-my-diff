@@ -2153,7 +2153,7 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
     let mods = mods(&fixture.core);
     let thread_store = ExtensionData::new("thread".to_owned());
     assert_eq!(mods.adjust_tool_specs(&thread_store, &[]), None);
-    thread_store.insert(fixture.lead.clone());
+    thread_store.insert(fixture.lead);
     let view = |name: &str| ToolSpecView {
         name: name.to_owned(),
         description: String::new(),

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::BuiltinControls;
 use codex_omd::ContractDocument;
 use codex_omd::ContractResolution;
@@ -288,7 +290,7 @@ fn owner() -> PolicyOwner {
 }
 
 fn strings(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
+    values.iter().map(std::string::ToString::to_string).collect()
 }
 
 #[test]
@@ -1910,7 +1912,7 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
         std::fs::set_permissions(program, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let path = std::env::var_os("PATH").unwrap();
-    let directories = [repository.join("bin"), outside.clone()];
+    let directories = [repository.join("bin"), outside];
     // SAFETY: the fixture name is unique to this test, so other tests resolve the same programs.
     unsafe {
         std::env::set_var(

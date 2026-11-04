@@ -2997,7 +2997,7 @@ pub fn file_stamp(metadata: &std::fs::Metadata) -> FileStamp {
 fn configuration_stamp(path: &Path) -> Option<FileStamp> {
     std::fs::symlink_metadata(path)
         .ok()
-        .filter(|metadata| metadata.is_file())
+        .filter(std::fs::Metadata::is_file)
         .map(|metadata| file_stamp(&metadata))
 }
 
@@ -4311,7 +4311,7 @@ impl ModHost {
             Err(error) if managed.is_some() => {
                 // Administrator policy still loads when the user's configuration is broken.
                 rejected.push(ModRejection {
-                    path: path.clone(),
+                    path,
                     id: None,
                     scope: user_scope(),
                     reason: format!("invalid_mod_configuration: {error}"),
@@ -5617,7 +5617,10 @@ impl ModHost {
                 .unwrap_or_default();
             states.insert(key.clone(), Arc::downgrade(&state));
             loaded.ui = Some((key, state));
-            self.loaded.get_mut(id).unwrap().ui = loaded.ui.clone();
+            self.loaded
+                .get_mut(id)
+                .ok_or_else(|| failure("mod_disabled"))?
+                .ui = loaded.ui.clone();
         }
         if let Some((_, state)) = &loaded.ui {
             let state = state.lock().map_err(|_| failure("ui_state_unavailable"))?;
@@ -6376,18 +6379,12 @@ impl ModHost {
                     self.valid_views.remove(&id);
                     continue;
                 }
-                Ok(value) => {
-                    if accepted_patch
-                        .as_ref()
-                        .is_some_and(|(owner, _)| *owner == id)
-                    {
-                        Ok(accepted_patch.take().expect("matched command owner").1)
-                    } else {
-                        ModViewPatch::parse(value.clone()).inspect(|_| {
-                            self.valid_views.insert(id.clone(), value);
-                        })
-                    }
-                }
+                Ok(value) => match accepted_patch.take_if(|(owner, _)| *owner == id) {
+                    Some((_, patch)) => Ok(patch),
+                    None => ModViewPatch::parse(value.clone()).inspect(|_| {
+                        self.valid_views.insert(id.clone(), value);
+                    }),
+                },
                 Err(error) => Err(error),
             };
             let parsed = parsed.or_else(|error| {
@@ -6428,16 +6425,13 @@ impl ModHost {
                     if let Some(composing) = hides {
                         hiding_welcome.insert(id.clone(), composing);
                     }
-                    component_owners.extend(
-                        view::site_component_ids(&view.sites)
-                            .into_iter()
-                            .filter(|component| {
-                                !before.contains(component)
-                                    && !component_owners.contains_key(component)
-                            })
-                            .map(|component| (component, id.clone()))
-                            .collect::<Vec<_>>(),
-                    );
+                    for component in view::site_component_ids(&view.sites) {
+                        if !before.contains(&component) {
+                            component_owners
+                                .entry(component)
+                                .or_insert_with(|| id.clone());
+                        }
+                    }
                     contributors.push(id);
                 }
                 Err(error) => diagnostics.push(format!("{id}: {error}")),

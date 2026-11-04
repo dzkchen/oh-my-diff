@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::ModOpenOptions;
 use codex_omd::{ModHost, ModStore};
 use serde_json::json;

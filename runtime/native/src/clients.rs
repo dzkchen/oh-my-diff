@@ -569,7 +569,7 @@ pub fn render(client: &str, slot: &str, props: Value) -> Result<Value, String> {
     let _thread =
         codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
     let input = json!({"component": slot, "id": format!("client:{slot}"), "surface": "inline",
-        "viewport": {"columns": 80, "rows": 24}, "lifecycle": "final", "owner": null, "props": props.clone()});
+        "viewport": {"columns": 80, "rows": 24}, "lifecycle": "final", "owner": null, "props": props});
     let chain = codex_omd::render_shared(&core.runtime, input, || true)
         .map_err(|error| error.to_string())?;
     Ok(

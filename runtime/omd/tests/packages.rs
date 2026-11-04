@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 use codex_omd::ModInstallRequest;
 use codex_omd::ModPackageGrant;
@@ -64,7 +66,7 @@ fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
             packages: BTreeMap::from([(
                 path.file_name().unwrap().to_str().unwrap().to_owned(),
                 ModPackageGrant {
-                    capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
+                    capabilities: capabilities.iter().map(std::string::ToString::to_string).collect(),
                     dependencies: false,
                     lifecycle: Vec::new(),
                     secret_environment: Vec::new(),
@@ -1057,7 +1059,7 @@ fn npm_request(origin: &str, version: &str, capabilities: &[&str]) -> ModInstall
             packages: BTreeMap::from([(
                 "npm_mod".into(),
                 ModPackageGrant {
-                    capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
+                    capabilities: capabilities.iter().map(std::string::ToString::to_string).collect(),
                     ..ModPackageGrant::default()
                 },
             )]),
@@ -1164,7 +1166,7 @@ fn hostile_npm_archives_and_registry_substitution_are_refused() {
     let store = store(&temp);
     let (origin, routes) = registry();
     let honest = npm_archive("1.0.0", &["commands"]);
-    publish(&origin, &routes, &[("1.0.0", honest.clone())]);
+    publish(&origin, &routes, &[("1.0.0", honest)]);
     let mut pinned = npm_request(&origin, "1.0.0", &["commands"]);
     let plan = store.package_plan(pinned.clone()).unwrap();
     pinned.source = plan.packages[0].source.clone();

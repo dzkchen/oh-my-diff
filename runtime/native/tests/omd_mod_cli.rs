@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::MOD_API_VERSION;
 use codex_omd::ModStore;
 use serde_json::Value;
@@ -46,7 +48,7 @@ fn package(
 
 fn trust(store: &ModStore, path: &Path, capabilities: &[&str]) {
     let inspected = ModStore::inspect_package(path).unwrap();
-    let granted: Vec<String> = capabilities.iter().map(|value| value.to_string()).collect();
+    let granted: Vec<String> = capabilities.iter().map(std::string::ToString::to_string).collect();
     let sha256 = inspected["sha256"].as_str().unwrap();
     store
         .trust(path.to_path_buf(), sha256, granted, "user")

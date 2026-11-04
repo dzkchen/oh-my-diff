@@ -1069,7 +1069,9 @@ impl ManagedProcesses {
                             let initialized = binding
                                 .pixels(&scratch.join("pixels.raw"), Some(generation))
                                 .and_then(|message| {
-                                    raster_input.as_ref().unwrap()(message)
+                                    raster_input
+                                        .as_ref()
+                                        .is_some_and(|input| input(message))
                                         .then_some(())
                                         .ok_or("process_pixels_init_failed".to_owned())
                                 });
@@ -1714,7 +1716,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         {
             std::thread::yield_now();
         }
-        let remover = fixture.clone();
+        let remover = fixture;
         let removing = session.clone();
         let (sent, received) = mpsc::channel();
         let remover = std::thread::spawn(move || {

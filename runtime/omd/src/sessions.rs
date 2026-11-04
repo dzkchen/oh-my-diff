@@ -161,7 +161,7 @@ impl SessionIndex<'_> {
             let mut entries = fs::read_dir(directory)?
                 .take(SCAN_FILES + 1 - seen)
                 .collect::<Result<Vec<_>, _>>()?;
-            entries.sort_by_key(|entry| entry.file_name());
+            entries.sort_by_key(std::fs::DirEntry::file_name);
             for entry in entries {
                 seen += 1;
                 if seen > SCAN_FILES {

@@ -476,7 +476,7 @@ fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
     task.authorize_route("fixture", "fixture-model").unwrap();
     task.authorize_route("fixture", "fixture-fast").unwrap();
     request.headers.insert("thread-id", "main".parse().unwrap());
-    let mut prepared = Some(body.clone());
+    let mut prepared = Some(body);
     accounts.prepare(&mut request, &mut prepared).unwrap();
     let routed: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
     assert_eq!(routed["model"], "fixture-fast");
@@ -905,7 +905,7 @@ fn route_url_and_model_identity_cannot_drift() {
 #[test]
 fn paid_preparation_caps_output_and_rejects_unbounded_or_underreserved_requests() {
     let (_root, accounts, task, mut request, body) = setup();
-    let mut prepared = Some(body.clone());
+    let mut prepared = Some(body);
     accounts.prepare(&mut request, &mut prepared).unwrap();
     let value: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
     assert_eq!(value["max_output_tokens"], 128);
@@ -1071,7 +1071,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
         let rates = account.rates.as_mut().unwrap();
         rates.included_subscription = true;
         rates.reservation_microusd = 0;
-        account.worker_authorization = Some((path.clone(), sha.clone()));
+        account.worker_authorization = Some((path.clone(), sha));
     }
     let body = EncodedJsonBody::encode(
         &json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true}),

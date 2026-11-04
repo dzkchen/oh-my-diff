@@ -1429,7 +1429,7 @@ impl Host<'_> {
             return Err("exec_program_declined".into());
         }
         let cwd = match (input.cwd.as_deref(), unrestricted) {
-            (None | Some("") | Some("."), _) => repository.clone(),
+            (None | Some("") | Some("."), _) => repository,
             (Some(name), Some(_)) if Path::new(name).is_absolute() || relative(name) => repository
                 .join(name)
                 .canonicalize()
