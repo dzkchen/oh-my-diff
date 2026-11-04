@@ -117569,17 +117569,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-<<<<<<< HEAD
-index 0000000000000000000000000000000000000000..334aa83a6d36fe8eb032dde9c805f093043e2663
+index 0000000000000000000000000000000000000000..bd1c3bc5c863bd6cc1cdf130ff00ab36d6231709
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7020 @@
-=======
-index 0000000000000000000000000000000000000000..1db2ebf161e30e42617e0438c437f6c178b78728
---- /dev/null
-+++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7158 @@
->>>>>>> w/repo-cleanup-dc585a
+@@ -0,0 +1,7156 @@
 +mod author;
 +mod bridge;
 +mod chain;
