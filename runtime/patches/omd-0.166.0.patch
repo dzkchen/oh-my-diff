@@ -179222,10 +179222,10 @@ index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1c43f2062a876d7051ef156b6624a716dfa697d0
+index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd7274b642c6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1776 @@
+@@ -0,0 +1,1775 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -180467,8 +180467,7 @@ index 0000000000000000000000000000000000000000..1c43f2062a876d7051ef156b6624a716
 +    core: &mut dyn FnMut(Value) -> std::io::Result<Value>,
 +) -> Result<Option<Value>, String> {
 +    let deadline = std::time::Instant::now() + budget;
-+    let Some(runtime) = lock_within(&HOST, std::time::Duration::ZERO).and_then(|host| host.clone())
-+    else {
++    let Some(runtime) = lock_within(&HOST, budget).and_then(|host| host.clone()) else {
 +        return Ok(None);
 +    };
 +    let mut host = match lock_within(&runtime, std::time::Duration::ZERO) {
