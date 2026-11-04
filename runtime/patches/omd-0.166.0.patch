@@ -33915,7 +33915,7 @@ index ca22476e1ac2ae249d2c2457984563f05c94ae27..ce709046b2b5d6e2917f8a46b79980b1
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub cyber_access_program: Option<CyberAccessProgram>,
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index a716384f226025306d2e18cd06d222cb07730c20..c1053aa6638a03678c11e1be27639bec7ab62891 100644
+index a716384f226025306d2e18cd06d222cb07730c20..9883dc7f295786bd1c11ad34972536f1027bbf85 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
 @@ -137,6 +137,25 @@ pub struct CodexHarnessMetadata {
@@ -33925,7 +33925,7 @@ index a716384f226025306d2e18cd06d222cb07730c20..c1053aa6638a03678c11e1be27639bec
 +
 +    /// Set on rows a durable transcript rewrite inserted, replaced or moved; never execution proof.
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub rewritten: Option<HistoryRewriteProvenance>,
++    pub rewritten: Option<Box<HistoryRewriteProvenance>>,
 +
 +    /// Provider whose response produced this opaque reasoning or compaction item.
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -33944,14 +33944,30 @@ index a716384f226025306d2e18cd06d222cb07730c20..c1053aa6638a03678c11e1be27639bec
  }
 
  fn deserialize_mcp_attribution_checkpoint<'de, D>(
-@@ -212,6 +231,7 @@ impl Borrow<ResponseItem> for ResponseItemEnvelope {
- }
-
- /// Persisted rollout item used by core history and rollout storage.
-+#[allow(clippy::large_enum_variant)]
- #[derive(Debug, Clone)]
- pub enum RolloutItem {
-     SessionMeta(Box<SessionMetaLine>),
+diff --git a/codex-rs/history/src/rollout_payload.rs b/codex-rs/history/src/rollout_payload.rs
+index 301c7d3c06ff96e871538889bcdd215105277819..75295ee77409cd77538a08d91b0a27c5e0a81ad9 100644
+--- a/codex-rs/history/src/rollout_payload.rs
++++ b/codex-rs/history/src/rollout_payload.rs
+@@ -49,7 +49,7 @@ pub(super) enum RolloutItemWire<'a> {
+         payload: InterAgentCommunicationMetadataPayload,
+     },
+     Compacted {
+-        payload: Cow<'a, CompactedItem>,
++        payload: Cow<'a, Box<CompactedItem>>,
+     },
+     TurnContext {
+         payload: Cow<'a, TurnContextItem>,
+@@ -239,9 +239,7 @@ impl From<RolloutItemWire<'_>> for RolloutItem {
+                     trigger_turn: payload.trigger_turn,
+                 }
+             }
+-            RolloutItemWire::Compacted { payload } => {
+-                Self::Compacted(Box::new(payload.into_owned()))
+-            }
++            RolloutItemWire::Compacted { payload } => Self::Compacted(payload.into_owned()),
+             RolloutItemWire::TurnContext { payload } => Self::TurnContext(payload.into_owned()),
+             RolloutItemWire::TokenUsageRecord { payload } => {
+                 Self::TokenUsageRecord(payload.into_owned())
 diff --git a/codex-rs/linux-sandbox/tests/suite/sandbox.rs b/codex-rs/linux-sandbox/tests/suite/sandbox.rs
 index e0167df88c49d6dd480f714d6a28b58265e6b42e..49c054b6756046c2dd3c54ab75b77310dea011b0 100644
 --- a/codex-rs/linux-sandbox/tests/suite/sandbox.rs
@@ -56734,7 +56750,7 @@ index 0000000000000000000000000000000000000000..6f5862b167dc93a5474bdfff4787e7d8
 +}
 diff --git a/codex-rs/core/src/session/persisted_text.rs b/codex-rs/core/src/session/persisted_text.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..addc1168cf8bc476894a27faaa3e8b9b6075abd9
+index 0000000000000000000000000000000000000000..c0016a028b900542022f9ce259e337a67ad540bd
 --- /dev/null
 +++ b/codex-rs/core/src/session/persisted_text.rs
 @@ -0,0 +1,627 @@
@@ -57123,7 +57139,7 @@ index 0000000000000000000000000000000000000000..addc1168cf8bc476894a27faaa3e8b9b
 +        }
 +    }
 +    if changed {
-+        envelope.metadata.get_or_insert_default().rewritten = Some(provenance.clone());
++        envelope.metadata.get_or_insert_default().rewritten = Some(Box::new(provenance.clone()));
 +    }
 +}
 +
@@ -113948,10 +113964,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3d0d3553a1f4ef60b6e0ef9e2a371c35d01a6f3f
+index 0000000000000000000000000000000000000000..fcde3cfc055adeec1efd9994708bf8e1897fb678
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,2090 @@
+@@ -0,0 +1,2124 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -113966,6 +113982,8 @@ index 0000000000000000000000000000000000000000..3d0d3553a1f4ef60b6e0ef9e2a371c35
 +use std::collections::BTreeSet;
 +use std::fs;
 +use std::io::Read;
++use std::io::Seek;
++use std::io::SeekFrom;
 +use std::io::Write;
 +use std::os::unix::fs::DirBuilderExt;
 +use std::os::unix::fs::OpenOptionsExt;
@@ -114788,6 +114806,40 @@ index 0000000000000000000000000000000000000000..3d0d3553a1f4ef60b6e0ef9e2a371c35
 +    .then_some(path)
 +}
 +
++/// An exec output artifact's length, rehashed and revalidated only when its file stamp changes.
++fn verified_output(path: &Path, file: &mut fs::File, digest: &str) -> Result<usize, String> {
++    static VERIFIED: LazyLock<Mutex<BTreeMap<PathBuf, crate::FileStamp>>> =
++        LazyLock::new(Default::default);
++    let metadata = file.metadata().map_err(|error| error.to_string())?;
++    let len = usize::try_from(metadata.len())
++        .ok()
++        .filter(|len| *len <= EXEC_ARTIFACT_BYTES)
++        .ok_or("exec_output_integrity_failed")?;
++    let stamp = crate::file_stamp(&metadata);
++    if VERIFIED
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .get(path)
++        == Some(&stamp)
++    {
++        return Ok(len);
++    }
++    let mut bytes = Vec::with_capacity(len);
++    Read::by_ref(file)
++        .take((EXEC_ARTIFACT_BYTES + 1) as u64)
++        .read_to_end(&mut bytes)
++        .map_err(|error| error.to_string())?;
++    if bytes.len() != len || sha256(&bytes) != digest || std::str::from_utf8(&bytes).is_err() {
++        return Err("exec_output_integrity_failed".into());
++    }
++    let mut verified = VERIFIED.lock().unwrap_or_else(PoisonError::into_inner);
++    if verified.len() >= 1024 {
++        verified.clear();
++    }
++    verified.insert(path.to_path_buf(), stamp);
++    Ok(len)
++}
++
 +/// A program's SHA-256, rehashed only when its file stamp changes.
 +pub fn program_hash(path: &Path) -> Result<String, String> {
 +    static HASHES: LazyLock<Mutex<BTreeMap<PathBuf, (crate::FileStamp, String)>>> =
@@ -114969,42 +115021,40 @@ index 0000000000000000000000000000000000000000..3d0d3553a1f4ef60b6e0ef9e2a371c35
 +        let mut file = fs::OpenOptions::new()
 +            .read(true)
 +            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-+            .open(path)
++            .open(&path)
 +            .map_err(|_| "exec_output_unavailable")?;
-+        let mut bytes = Vec::new();
-+        Read::by_ref(&mut file)
-+            .take((EXEC_ARTIFACT_BYTES + 1) as u64)
-+            .read_to_end(&mut bytes)
-+            .map_err(|error| error.to_string())?;
-+        if bytes.len() > EXEC_ARTIFACT_BYTES || sha256(&bytes) != *digest {
-+            return Err("exec_output_integrity_failed".into());
-+        }
++        let len = verified_output(&path, &mut file, digest)?;
 +        if !(self.active)() {
 +            return Err("host_operation_cancelled".into());
 +        }
-+        let text = std::str::from_utf8(&bytes).map_err(|_| "exec_output_integrity_failed")?;
-+        if input.cursor > bytes.len() || !text.is_char_boundary(input.cursor) {
++        if input.cursor > len {
 +            return Err("exec_output_cursor_invalid".into());
 +        }
 +        let max = input
 +            .max_bytes
 +            .unwrap_or(EXEC_ARTIFACT_PAGE_BYTES)
 +            .clamp(1, EXEC_ARTIFACT_PAGE_BYTES);
-+        let mut end = input.cursor.saturating_add(max).min(bytes.len());
-+        while end > input.cursor && !text.is_char_boundary(end) {
++        file.seek(SeekFrom::Start(input.cursor as u64))
++            .map_err(|error| error.to_string())?;
++        let mut bytes = Vec::with_capacity(max + 3);
++        Read::by_ref(&mut file)
++            .take((max + 3) as u64)
++            .read_to_end(&mut bytes)
++            .map_err(|error| error.to_string())?;
++        let continuation = |byte: &u8| byte & 0xC0 == 0x80;
++        if bytes.first().is_some_and(continuation) {
++            return Err("exec_output_cursor_invalid".into());
++        }
++        let mut end = max.min(bytes.len());
++        while end > 0 && bytes.get(end).is_some_and(continuation) {
 +            end -= 1;
 +        }
-+        if end == input.cursor && end < bytes.len() {
-+            end += text[end..]
-+                .chars()
-+                .next()
-+                .ok_or("exec_output_cursor_invalid")?
-+                .len_utf8();
++        if end == 0 && !bytes.is_empty() {
++            end = 1 + bytes[1..].iter().take_while(|byte| continuation(byte)).count();
 +        }
-+        Ok(
-+            json!({"text": &text[input.cursor..end], "cursor": if end < bytes.len() { Some(end) } else { None },
-+            "bytes": bytes.len(), "sha256": digest}),
-+        )
++        let text = std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
++        let next = input.cursor + end;
++        Ok(json!({"text": text, "cursor": (next < len).then_some(next), "bytes": len, "sha256": digest}))
 +    }
 +
 +    fn external(
@@ -149485,10 +149535,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..17e7c8e746fdf9bdaa1df3cff8b31b4bc04fff3c
+index 0000000000000000000000000000000000000000..41bdd6d029343897d0de3bc8928d5d36e814fa89
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2196 @@
+@@ -0,0 +1,2233 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -149855,6 +149905,43 @@ index 0000000000000000000000000000000000000000..17e7c8e746fdf9bdaa1df3cff8b31b4b
 +        host.call(&owner, "exec.output_page", json!({"artifact":artifact}))
 +            .is_err()
 +    );
++}
++
++#[test]
++fn exec_output_pages_a_multibyte_artifact_without_splitting_characters() {
++    let _exec = exec_slot();
++    let (_temp, _repository, data, authority) = setup();
++    let active = || true;
++    let host = Host {
++        authority: &authority,
++        data_root: &data,
++        environment: None,
++        active: &active,
++        record_changes: false,
++    };
++    let capabilities = strings(&["exec"]);
++    let owner = caller(&capabilities, &[], Origin::Tool);
++    let output = host
++        .call(
++            &owner,
++            "exec.run",
++            json!({"program":"sh", "argv":["-c", "yes 'é€' | head -n 700000"], "output_artifact":true}),
++        )
++        .unwrap();
++    assert_eq!(output["stdout_bytes"], 4_200_000);
++    let artifact = output["output_artifact"].clone();
++    let mut text = String::new();
++    let mut cursor = Some(0);
++    while let Some(at) = cursor {
++        let page = host
++            .call(&owner, "exec.output_page", json!({"artifact":artifact,"cursor":at}))
++            .unwrap();
++        let chunk = page["text"].as_str().unwrap();
++        assert!(chunk.len() <= codex_omd::host::EXEC_ARTIFACT_PAGE_BYTES);
++        text.push_str(chunk);
++        cursor = page["cursor"].as_u64();
++    }
++    assert_eq!(text, "é€\n".repeat(700_000));
 +}
 +
 +#[test]
@@ -162050,7 +162137,7 @@ index 0000000000000000000000000000000000000000..8147c4107bc1100e20f0b58c2a793e04
 +}
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread.rs b/codex-rs/thread-store/src/local/rewrite_thread.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5c04eca850674f6aaa46f209d7979bbd3436a346
+index 0000000000000000000000000000000000000000..5e9bd6c505608374bb5728986b03ee41a4d1db86
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread.rs
 @@ -0,0 +1,1553 @@
@@ -163393,13 +163480,13 @@ index 0000000000000000000000000000000000000000..5c04eca850674f6aaa46f209d7979bbd
 +    Ok((shape, items))
 +}
 +
-+fn provenance(op: &str, source: Option<&str>, edit: &Edit<'_>) -> HistoryRewriteProvenance {
-+    HistoryRewriteProvenance {
++fn provenance(op: &str, source: Option<&str>, edit: &Edit<'_>) -> Box<HistoryRewriteProvenance> {
++    Box::new(HistoryRewriteProvenance {
 +        revision: edit.revision.clone(),
 +        op: op.to_string(),
 +        source: source.map(str::to_string),
 +        by: edit.author.to_string(),
-+    }
++    })
 +}
 +
 +fn model_entries(

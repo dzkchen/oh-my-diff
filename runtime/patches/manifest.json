@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "27704b2eb577d9d76bf1b6a816fb13acb580ce4bd6eb2bac18cd748c7cc1d8e9"
+    "sha256": "9523ae87da6cdc060f3b331d38bd56189d71313c4d9ca79a9dffd7ac54b32247"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -615,7 +615,7 @@
     },
     "codex-rs/core/src/session/persisted_text.rs": {
       "before": null,
-      "after": "c537af4c0162936f6060e9784b678415050fe3a03ab7ae850a79b18ec9d14c66"
+      "after": "f16d7c6b4a22a3db1a7053f5f6326a4022a77c6a26dbe56087059d26b9f58e2c"
     },
     "codex-rs/core/src/session/persisted_text_tests.rs": {
       "before": null,
@@ -1303,7 +1303,11 @@
     },
     "codex-rs/history/src/lib.rs": {
       "before": "db39c23de36188b9ad91aade05a72481b3d3e9fbcb54c0e3e282074424602298",
-      "after": "7a1956d10851b6e4b9bf1de1c38cdeadac00095f881f1ed8baabe7ff962e835d"
+      "after": "e0c66c1af1af680fe501be7ef5d03bdeb5447dbc22cde2a30cf8abfbe8f56cc4"
+    },
+    "codex-rs/history/src/rollout_payload.rs": {
+      "before": "9187defc80b4bbcf42456116594737c2fe41c9925f6f6c0fca7017d5d00c1b00",
+      "after": "24c29dd4f484fa183e8c0a22fbf4e95a70ebc74c896c409c13b5cbc6a1e107cf"
     },
     "codex-rs/linux-sandbox/tests/suite/sandbox.rs": {
       "before": "4063593316b0b9b04d6841295f43d00e5cced3e814acc53bfcb2ec83954cf148",
@@ -1495,7 +1499,7 @@
     },
     "codex-rs/omd/src/host.rs": {
       "before": null,
-      "after": "45a069acda524ab538c46c5b0b8b31a7c38bd4f9f0e298ac7845a41ab3082efb"
+      "after": "a9a21ce297adcdba771817df370e200db549be0e13a196e299ef5951dca94a22"
     },
     "codex-rs/omd/src/host/environment.rs": {
       "before": null,
@@ -1711,7 +1715,7 @@
     },
     "codex-rs/omd/tests/generic_host.rs": {
       "before": null,
-      "after": "f90093344e55d5ae42fc0a08a13d80a11e6646567078d0095ef125ac0a956e9c"
+      "after": "92e54481501cc3b4a73764e057031000043665486369dcacfec3e5ea86655e87"
     },
     "codex-rs/omd/tests/integration.rs": {
       "before": null,
@@ -1819,7 +1823,7 @@
     },
     "codex-rs/thread-store/src/local/rewrite_thread.rs": {
       "before": null,
-      "after": "3602becc4a0c268a07cb499f5336506141bc7116f77d2a9d38e530bc259644f1"
+      "after": "688751f2f2e6b13dac943ba84c3f90c08d26f8d21384104013da7eebd584c4b9"
     },
     "codex-rs/thread-store/src/local/rewrite_thread_tests.rs": {
       "before": null,

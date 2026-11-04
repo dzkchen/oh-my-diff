@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
@@ -834,6 +836,40 @@ fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
     .then_some(path)
 }
 
+/// An exec output artifact's length, rehashed and revalidated only when its file stamp changes.
+fn verified_output(path: &Path, file: &mut fs::File, digest: &str) -> Result<usize, String> {
+    static VERIFIED: LazyLock<Mutex<BTreeMap<PathBuf, crate::FileStamp>>> =
+        LazyLock::new(Default::default);
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let len = usize::try_from(metadata.len())
+        .ok()
+        .filter(|len| *len <= EXEC_ARTIFACT_BYTES)
+        .ok_or("exec_output_integrity_failed")?;
+    let stamp = crate::file_stamp(&metadata);
+    if VERIFIED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(path)
+        == Some(&stamp)
+    {
+        return Ok(len);
+    }
+    let mut bytes = Vec::with_capacity(len);
+    Read::by_ref(file)
+        .take((EXEC_ARTIFACT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() != len || sha256(&bytes) != digest || std::str::from_utf8(&bytes).is_err() {
+        return Err("exec_output_integrity_failed".into());
+    }
+    let mut verified = VERIFIED.lock().unwrap_or_else(PoisonError::into_inner);
+    if verified.len() >= 1024 {
+        verified.clear();
+    }
+    verified.insert(path.to_path_buf(), stamp);
+    Ok(len)
+}
+
 /// A program's SHA-256, rehashed only when its file stamp changes.
 pub fn program_hash(path: &Path) -> Result<String, String> {
     static HASHES: LazyLock<Mutex<BTreeMap<PathBuf, (crate::FileStamp, String)>>> =
@@ -1015,42 +1051,40 @@ impl Host<'_> {
         let mut file = fs::OpenOptions::new()
             .read(true)
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(path)
+            .open(&path)
             .map_err(|_| "exec_output_unavailable")?;
-        let mut bytes = Vec::new();
-        Read::by_ref(&mut file)
-            .take((EXEC_ARTIFACT_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        if bytes.len() > EXEC_ARTIFACT_BYTES || sha256(&bytes) != *digest {
-            return Err("exec_output_integrity_failed".into());
-        }
+        let len = verified_output(&path, &mut file, digest)?;
         if !(self.active)() {
             return Err("host_operation_cancelled".into());
         }
-        let text = std::str::from_utf8(&bytes).map_err(|_| "exec_output_integrity_failed")?;
-        if input.cursor > bytes.len() || !text.is_char_boundary(input.cursor) {
+        if input.cursor > len {
             return Err("exec_output_cursor_invalid".into());
         }
         let max = input
             .max_bytes
             .unwrap_or(EXEC_ARTIFACT_PAGE_BYTES)
             .clamp(1, EXEC_ARTIFACT_PAGE_BYTES);
-        let mut end = input.cursor.saturating_add(max).min(bytes.len());
-        while end > input.cursor && !text.is_char_boundary(end) {
+        file.seek(SeekFrom::Start(input.cursor as u64))
+            .map_err(|error| error.to_string())?;
+        let mut bytes = Vec::with_capacity(max + 3);
+        Read::by_ref(&mut file)
+            .take((max + 3) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        let continuation = |byte: &u8| byte & 0xC0 == 0x80;
+        if bytes.first().is_some_and(continuation) {
+            return Err("exec_output_cursor_invalid".into());
+        }
+        let mut end = max.min(bytes.len());
+        while end > 0 && bytes.get(end).is_some_and(continuation) {
             end -= 1;
         }
-        if end == input.cursor && end < bytes.len() {
-            end += text[end..]
-                .chars()
-                .next()
-                .ok_or("exec_output_cursor_invalid")?
-                .len_utf8();
+        if end == 0 && !bytes.is_empty() {
+            end = 1 + bytes[1..].iter().take_while(|byte| continuation(byte)).count();
         }
-        Ok(
-            json!({"text": &text[input.cursor..end], "cursor": if end < bytes.len() { Some(end) } else { None },
-            "bytes": bytes.len(), "sha256": digest}),
-        )
+        let text = std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
+        let next = input.cursor + end;
+        Ok(json!({"text": text, "cursor": (next < len).then_some(next), "bytes": len, "sha256": digest}))
     }
 
     fn external(

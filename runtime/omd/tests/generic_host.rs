@@ -367,6 +367,43 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
 }
 
 #[test]
+fn exec_output_pages_a_multibyte_artifact_without_splitting_characters() {
+    let _exec = exec_slot();
+    let (_temp, _repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["exec"]);
+    let owner = caller(&capabilities, &[], Origin::Tool);
+    let output = host
+        .call(
+            &owner,
+            "exec.run",
+            json!({"program":"sh", "argv":["-c", "yes 'é€' | head -n 700000"], "output_artifact":true}),
+        )
+        .unwrap();
+    assert_eq!(output["stdout_bytes"], 4_200_000);
+    let artifact = output["output_artifact"].clone();
+    let mut text = String::new();
+    let mut cursor = Some(0);
+    while let Some(at) = cursor {
+        let page = host
+            .call(&owner, "exec.output_page", json!({"artifact":artifact,"cursor":at}))
+            .unwrap();
+        let chunk = page["text"].as_str().unwrap();
+        assert!(chunk.len() <= codex_omd::host::EXEC_ARTIFACT_PAGE_BYTES);
+        text.push_str(chunk);
+        cursor = page["cursor"].as_u64();
+    }
+    assert_eq!(text, "é€\n".repeat(700_000));
+}
+
+#[test]
 fn exec_output_quota_spans_every_thread_and_source_of_a_mod() {
     let _exec = exec_slot();
     let (_temp, _repository, data, authority) = setup();
