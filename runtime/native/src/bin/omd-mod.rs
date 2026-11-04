@@ -25,7 +25,7 @@ fn store(root: &str) -> io::Result<PathBuf> {
         };
         io::Error::new(
             error.kind(),
-            format!("store_unavailable: {root}: {error}{hint}"),
+            format!("mod_store_unavailable: {root}: {error}{hint}"),
         )
     })
 }

@@ -5647,9 +5647,7 @@ impl ModHost {
             }
         })?;
         if let Some(error) = &loaded.error {
-            return Err(failure(format!(
-                "mod_failed: {error}; reload it with /omd (Reload mods)"
-            )));
+            return Err(failure(format!("mod_failed: {error}")));
         }
         self.check_callback_authority(&loaded)?;
         loaded.session_key = self.session_key(id, thread)?;
