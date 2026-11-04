@@ -130,13 +130,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "0b0e5a9e8702c87cc12c4ea1213fd0e719a4c886774249261fe8534483dbfc95",
-        "mod.json": "02d3e7c7579aef117fb64237ed2e1e32ec452247f7aebb167646a489016d5e98"
+        "index.ts": "da3dee86addf11d94350fdf50a89874df163fe095c176529a526cbf80cbcae87",
+        "mod.json": "be1d0617cbc7fb532bd64eddfc004b4ed3f022aa4f861dcf6c1fa8b192d27306"
       },
       "id": "omd_continue",
-      "package_sha256": "0e82e8ae011db6ab00254c991478a18583d630ae9afb3fceb007aa4609c7ffff",
+      "package_sha256": "100b4188e7ec6d6641e1677b1d6a7af435ce4e18c583f36e07c721b9051847d7",
       "source": "mods/first-party/omd_continue",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     "omd_cursor": {
       "api": "1.0.0",
@@ -517,17 +517,20 @@
         "middleware",
         "tools",
         "store",
-        "commands"
+        "commands",
+        "model",
+        "lifecycle",
+        "inventory"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "f3b05dd9807a4381af1b8829ab2522f29407a98d4d7104e0255194c9375d64a4",
-        "mod.json": "150ace474938ff72ac7d7e3712b590dae644b57de6011a74ed92899eb37a0da4"
+        "index.ts": "8a4f8883f3f0ee9da5561dedd729681dba9ba9bdc712e452b5e7d7c0ecf10d6e",
+        "mod.json": "772a63fc93b7d33c0eb38bd6ab0d65626374ddff47e2b1ca138ab79258f56d81"
       },
       "id": "omd_observation_mask",
-      "package_sha256": "d826a2b9a29a588198e027c16f630a13a255514588dd1ce6c546184a99215fc8",
+      "package_sha256": "ef9b496bbf663502ff92b6c1ce597812af60353b879bacadce32702a6377909e",
       "source": "mods/first-party/omd_observation_mask",
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     "omd_plan_anchor": {
       "api": "1.0.0",

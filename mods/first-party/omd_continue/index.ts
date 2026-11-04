@@ -34,6 +34,7 @@ function summary(turn: TurnActivity): string {
 export default function activate(api: ModAPI) {
   api.command('continue', value => {
     const note = typeof value === 'string' ? value.trim() : '';
+    if (/^--compact(?:\s|$)/.test(note)) return { display: 'Enable omd_observation_mask with mode: continue to use /continue --compact.' };
     const activity = api.host.tryCall('turns.activity', { last: 1 });
     if (!activity.ok) return { display: `/continue is unavailable: ${activity.error}` };
     const turn = activity.value.turns[0];
