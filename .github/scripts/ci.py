@@ -271,10 +271,14 @@ def package(version=None):
 
 
 def upstream_codex(tag, directory):
+    pins = json.loads((build.ROOT / "upstream-binaries.lock.json").read_text())
+    expected = pins[tag]["codex-aarch64-apple-darwin.tar.gz"]
     directory.mkdir(parents=True)
     support.output(["curl", "--fail", "--silent", "--show-error", "--location", "--retry", "3",
                     f"https://github.com/openai/codex/releases/download/{tag}/codex-aarch64-apple-darwin.tar.gz",
                     "--output", directory / "codex.tar.gz"])
+    if support.digest(directory / "codex.tar.gz") != expected:
+        raise ValueError("upstream Codex archive checksum mismatch")
     support.output(["tar", "-xzf", directory / "codex.tar.gz", "-C", directory])
     return (directory / "codex-aarch64-apple-darwin").rename(directory / "codex")
 
@@ -412,7 +416,7 @@ def publish(directory, notes=None, dry_run=False):
             raise ValueError(f"release asset checksum mismatch: {name}")
     if support.digest(directory / manifest["archive"]) != manifest["sha256"]:
         raise ValueError("release archive disagrees with the installer manifest")
-    signature = (sign(directory / "omd-release.json") if not dry_run or os.environ.get("OMD_RELEASE_SIGNING_KEY")
+    signature = (sign(directory / "omd-release.json") if not dry_run
                  else directory / "omd-release.json.sig")
     assets = [directory / name for _, name in sums] + [directory / "SHA256SUMS", signature]
     if not notes:
