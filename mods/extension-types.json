@@ -159,6 +159,12 @@
       "why_mod": "A user-typed /continue command that submits a resume instruction with the host-recorded turn activity."
     },
     {
+      "path": "mods/first-party/omd_checkpoint",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Turn-start and turn-end snapshots with a user-typed /undo and /redo; it needs lifecycle events and unsandboxed git."
+    },
+    {
       "path": "mods/first-party/omd_btw",
       "extension_type": "mod",
       "role": "bundled",

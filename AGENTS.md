@@ -16,7 +16,7 @@ this one.
 - Edit the patch in a scratch tree (`python3 .github/scripts/build.py setup NAME`), never by hand.
   `python3 .github/scripts/build.py sync NAME` writes it back. The steps are in
   [docs/contributing/runtime.md](docs/contributing/runtime.md).
-- Use `pnpm`, never `npm` or `npx`. Tool versions come from `mise.toml`.
+- Use `pnpm`, never `npm` or `npx`. Runtime versions come from `mise.toml`; pnpm is specified in `mods/package.json`, and Python needs 3.12 or later.
 - Mod API `1.0.0` is stable: frozen entries change only additively (a breaking change needs a major version and a
   migration note in `mods/reference/stability-and-migration.md`). Elsewhere add no compatibility shims: change or
   delete code and update every caller.

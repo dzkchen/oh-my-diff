@@ -87,3 +87,5 @@ Change settings in `/mods`.
   reference
 - Credit: based on [pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge) by Eli Dickinson (MIT);
   reimplemented over the OMD mod API. See [THIRD_PARTY_NOTICES.md](../../../THIRD_PARTY_NOTICES.md).
+
+OAuth codes entered with `/claude code CODE` go directly to the managed login process; they are not published on mod channels.

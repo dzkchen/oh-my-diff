@@ -77,7 +77,7 @@ function makeApi(overrides = {}) {
   await input({ text: 'look at ./src/y.ts please' }, async e => e);
   const afterPrompt = getState();
   check('frecency: slash command not counted as a use', afterCommand === null, JSON.stringify(afterCommand));
-  check('frecency: prompt path still counted', Array.isArray(afterPrompt) && afterPrompt.includes('src/y.ts'), JSON.stringify(afterPrompt));
+  check('frecency: prompt path still counted', Array.isArray(afterPrompt?.tokens) && afterPrompt.tokens.includes('src/y.ts'), JSON.stringify(afterPrompt));
 }
 
 // ---------- omd_continue: completed turn gets follow-up wording; newline path sanitized ----------

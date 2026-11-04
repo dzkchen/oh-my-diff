@@ -1,8 +1,8 @@
 # Use other providers
 
 How to use Claude, Cursor, an API key or another compatible provider in `codex`, and how to switch between
-accounts. Each provider needs a mod, and these mods are off by default in OMD+. Turn one on as
-[Manage mods](manage-mods.md) describes.
+accounts. These provider mods are experimental and are installed separately. Run `omd install ID` in your shell,
+then turn the mod on as [Manage mods](manage-mods.md) describes.
 
 | You want | Turn on | Needs |
 | --- | --- | --- |
@@ -17,7 +17,7 @@ When you turn one of these mods on, it asks to run `node` outside the sandbox, a
 
 ## Use Claude
 
-1. In `codex`, turn on `omd_claude_cli` in `/mods` and approve its trust dialog.
+1. In your shell, run `omd install omd_claude_cli`. In `codex`, turn it on in `/mods` and approve its trust dialog.
 2. Sign in. For your Claude plan (Pro, Max, Team or Enterprise):
 
    ```text
@@ -41,7 +41,7 @@ covers billing, several accounts and limits.
 
 ## Use an API key or another provider
 
-1. Install and turn on the experimental `omd_profiles` mod (OMD+ only): run `omd-package profiles --setup`.
+1. Run `omd install omd_profiles` in your shell, then turn on the experimental mod in `/mods`.
 2. Add an account:
 
    ```text
@@ -64,7 +64,7 @@ limit.
 
 `omd_cursor` isn't yet verified on a live Cursor account.
 
-1. Turn on `omd_cursor` in `/mods` and approve its trust dialog.
+1. Run `omd install omd_cursor` in your shell, then turn on `omd_cursor` in `/mods` and approve its trust dialog.
 2. Run setup:
 
    ```text

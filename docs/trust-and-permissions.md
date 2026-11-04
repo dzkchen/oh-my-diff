@@ -10,8 +10,9 @@ mod's source, license and the permissions it asks for, and ask you before going 
 trust dialog. `omd install` and `omd mods enable` show the same summary in the shell. Trusting a mod means you accept
 this exact content with those permissions.
 
-OMD reviews the mods in its curated directory: its first-party mods and its ports, mods adapted from Claude Code
-mods. It doesn't review mods from other sources. It shows their permissions and asks before you turn them on.
+The curated directory includes supported first-party mods, experimental mods and ports adapted from Claude Code.
+Experimental entries are not fully tested; listing does not guarantee a security review. Check each entry's support
+status and source before trusting it. OMD shows permissions and asks before you turn any mod on.
 
 Trust is bound to a digest (a hash) of the mod's files and the permissions it declares. If either changes, the mod
 stops until you trust it again:
@@ -140,3 +141,6 @@ Organizations can also install an administrator policy that controls which mods 
 - [Plugins](../plugins/README.md#turn-on-a-component), to trust the mod component a Codex plugin contains
 - [Troubleshooting](troubleshooting.md), to turn off a misbehaving mod
 - [Security policy](../SECURITY.md)
+
+Mods identify themselves by their declared ID. Copies with the same ID share storage and owned credential authority;
+a project-scoped copy takes precedence over a user-scoped copy. Check source paths when a trust preview warns of an existing ID.

@@ -118,3 +118,10 @@ These changes ship in OMD 1.3.0.
   `/dev/tty` (git credentials, ssh passphrases, `sudo`) fails instead of drawing over the TUI and waiting. Pass input
   through `stdin` or the program's non-interactive flags. Runs with `sandbox: "none"` also receive `SSH_AUTH_SOCK`, so
   programs under an `os` grant can sign in through the user's SSH agent.
+
+### Package trust digest framing
+
+Package digests now prefix each manifest, path and file-content record with its eight-byte big-endian length.
+Existing trust digests change: inspect and re-trust folder mods, and reinstall curated packages from the new release.
+Do not copy old grants to a new digest. Same-ID mods share storage and owned credential authority; project scope takes precedence.
+Package previews report `identity_warning` when the ID is installed in another scope.

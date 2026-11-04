@@ -45,6 +45,13 @@ test('Apply sends the generation the change was reviewed at', () => {
   assert.equal(sent.expected_generation, 1);
 });
 
+test('a typed cancel says whether it dropped a waiting review', () => {
+  const reviewed = invoke('update omd_logo', { 'packages.preview': () => ({ action: 'update', id: 'omd_logo', changes: {}, grants_added: [] }) });
+  const cancelled = invoke('cancel', { ui_state: reviewed.ui });
+  assert.equal(cancelled.value.display, 'Cancelled');
+  assert.equal(invoke('cancel', { ui_state: cancelled.ui }).value.display, 'Nothing to cancel');
+});
+
 test('a typed action while a change waits for review reports its own result and keeps the review', () => {
   const reviewed = invoke('update omd_logo', { 'packages.preview': () => ({ action: 'update', id: 'omd_logo', changes: {}, grants_added: [] }) });
   const typed = invoke('enable omd_gone', { ui_state: reviewed.ui });
@@ -195,4 +202,12 @@ test('the list groups mods by state, searches their commands and reopens where i
   assert.deepEqual(closed.stored, { onboarded: true, selected: 'user:omd_usage', query: 'use' });
   const reopened = invoke('', { packages, state: closed.stored });
   assert.deepEqual([reopened.panels[0].selected, reopened.panels[0].query], ['user:omd_usage', 'use']);
+});
+
+test('an identity collision warning is shown before accepting trust', () => {
+  const warning = 'Same-ID copies share storage and owned credential authority';
+  const result = invoke('update omd_logo', { 'packages.preview': () => ({ action: 'update', id: 'omd_logo', changes: {}, grants_added: [], identity_warning: warning }) });
+  assert.ok(result.value.display.includes(warning));
+  const panel = invoke('panel user', { ui_state: result.ui });
+  assert.ok(JSON.stringify(panel.panels).includes(warning));
 });

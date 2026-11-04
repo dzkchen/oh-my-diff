@@ -61,7 +61,8 @@ Oh My Diff VERSION (OMD+), stable channel, daily checks: not checked yet
 ```
 
 The line names the installed version, the install profile, the release channel and the check cadence. It ends with
-`up to date`, `not checked yet`, `the last check failed: ERROR`, or the version you can update to. If the installed
+`up to date`, `not checked yet`, `the last check failed: ERROR`, `first-party mod updates are available`,
+`update checks off`, or the version you can update to. A pinned install adds `, pinned to VERSION`. If the installed
 release was withdrawn, it adds `VERSION was withdrawn` and, when one helps, the command to run: `omd update` or `omd update rollback`.
 
 Then run `codex` and type `/mods`. The `/mods` screen lists your installed mods and which ones are on.

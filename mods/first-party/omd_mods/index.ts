@@ -1,6 +1,6 @@
 import type { Json, ModAPI, PackageCatalogEntry, PackageRequest, PackageState, TerminalComponent, TerminalIdentity, TerminalPanel, TerminalPanelItem, TerminalPatch } from '../../api.d.ts';
 
-type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; from: string; generation: number };
+type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; warning?: string; from: string; generation: number };
 type Scope = 'user' | 'project';
 const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'required', 'effective', 'pending', 'failed', 'blocked', 'compatible', 'conflicts'] as const;
 type Listed = Pick<PackageState, typeof FIELDS[number]>;
@@ -17,7 +17,6 @@ const UNSET = '-';
 const kept = (item: Pick<PackageState, 'id' | 'required'>) => item.id === SELF || item.required;
 const labelOf = (name: string, property?: Property) => property?.title ?? name.replace(/_/g, ' ');
 const word = (value: string) => /^\S{1,128}$/.test(value);
-// No Intl.Collator: it loads ICU data in every runner.
 const compare = (a: string, b: string) => {
   const [x, y] = [a.toLowerCase(), b.toLowerCase()];
   return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
@@ -41,7 +40,6 @@ const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const SHOWN = 98;
 const CATALOG = 120;
 const MODELS = 24;
-// The catalog is kept in UI state, which the host caps at 64 KiB (validate_ui_state); stop paging once the raw index pages reach it.
 const INDEX_BYTES = 65_536;
 const TABS = [{ id: 'installed', title: 'All' }, { id: 'settings', title: 'Settings' }, { id: 'directory', title: 'Directory' }];
 const GROUPS = ['Needs attention', 'On', 'Off'];
@@ -83,7 +81,6 @@ export default function activate(api: ModAPI) {
     } while (cursor && catalog.length < CATALOG && received < INDEX_BYTES);
     return { ...state, catalog, catalogError: null };
   };
-  // A successful change reloads mods, which refuses this callback's later panel calls; the host then reruns every open panel's action.
   const apply = (state: Saved, request: PackageRequest, label: string, generation = state.generation): Saved | null => {
     const result = api.host.tryCall('packages.apply', { ...request, expected_generation: generation });
     if (!result.ok || result.value.status === 'declined') return refresh({ ...state, review: null }, result.ok ? `${label} was declined` : `${label} failed: ${result.error}`);
@@ -97,7 +94,7 @@ export default function activate(api: ModAPI) {
     const result = api.host.tryCall('packages.preview', { ...request, expected_generation: state.generation });
     if (result.ok && request.action === 'install' && result.value.id === SELF) return { ...state, review: null, notice: 'Mods is already running; update it from its own panel' };
     return result.ok
-      ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, grants: result.value.grants_added, from, generation: state.generation }, notice: null }
+      ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, grants: result.value.grants_added, warning: result.value.identity_warning ?? undefined, from, generation: state.generation }, notice: null }
       : { ...state, review: null, notice: `${label} is unavailable (${result.error})` };
   };
   const newest = (entry: PackageCatalogEntry | undefined) => entry?.versions.find(item => !item.blocked)?.version ?? '';
@@ -120,7 +117,6 @@ export default function activate(api: ModAPI) {
     const added = api.host.tryCall('routes.add', { mod: item.id, ...choice });
     const back = { ...state, choosing: null };
     if (!added.ok || 'status' in added.value) return { ...back, notice: added.ok ? 'No helper model was added' : `No helper model was added (${brief(added.error)})` };
-    // An unchanged setting isn't written, so no reload reruns the panel to show write's notice.
     if (item.settings?.[name] === added.value.route)
       return { ...back, notice: `${labelOf(name, properties(item).find(([entry]) => entry === name)?.[1])} already uses ${added.value.route}` };
     return write(back, item, `${name} ${added.value.route}`);
@@ -188,7 +184,7 @@ export default function activate(api: ModAPI) {
   };
   const reviewText = (review: Review) => {
     const config = configured(review.changes);
-    return `${review.label}: ${changed(review.changes)} · new permissions: ${review.grants.join(', ') || 'none'}${config.length ? ` · Codex config: ${config.join(', ')}` : ''}`;
+    return `${review.warning ? `WARNING: ${review.warning} · ` : ''}${review.label}: ${changed(review.changes)} · new permissions: ${review.grants.join(', ') || 'none'}${config.length ? ` · Codex config: ${config.join(', ')}` : ''}`;
   };
   const attention = (item: Listed) => Boolean(item.failed || item.blocked || !item.compatible || item.conflicts.length);
   const group = (item: Listed) => attention(item) ? GROUPS[0] : item.enabled ? GROUPS[1] : GROUPS[2];
@@ -366,7 +362,8 @@ export default function activate(api: ModAPI) {
     if (target) return presenting(target, { ...state, review: null, choosing: null, notice: null });
     const next = act(state, verb, rest.join(' ')) ?? saved();
     store(next);
-    return { display: [next.notice, next.review && `${reviewText(next.review)}\nRun /mods apply or /mods cancel`].filter(Boolean).join('\n') || 'No change' };
+    const fallback = verb === 'cancel' ? state.review || state.choosing ? 'Cancelled' : 'Nothing to cancel' : 'No change';
+    return { display: [next.notice, next.review && `${reviewText(next.review)}\nRun /mods apply or /mods cancel`].filter(Boolean).join('\n') || fallback };
   }, { description: 'Browse and install mods, turn them on or off and change their settings' });
 
   const wrap = (text: string) => text.split(' ').reduce<string[]>((rows, word) => {
