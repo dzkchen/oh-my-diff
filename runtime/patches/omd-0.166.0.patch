@@ -36130,10 +36130,10 @@ index 240700e2e9824903aef5152121001126970ee8cf..24d9e1aef8db9811bcd68539c018702d
                  let effort_label = effort
                      .as_ref()
 diff --git a/codex-rs/tui/src/app/new_session.rs b/codex-rs/tui/src/app/new_session.rs
-index e6a1ade871116e55446c09491debc2d5bbf9dbbc..03ccc0e78e55dda9549be32be80453e09d7e4a66 100644
+index e6a1ade871116e55446c09491debc2d5bbf9dbbc..734defd884a36804679df62eced425be60abcf16 100644
 --- a/codex-rs/tui/src/app/new_session.rs
 +++ b/codex-rs/tui/src/app/new_session.rs
-@@ -6,6 +6,143 @@ use super::*;
+@@ -6,6 +6,60 @@ use super::*;
  use codex_config::ConfigLayerSource;
  use codex_protocol::config_types::ServiceTier;
 
@@ -36191,93 +36191,10 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..03ccc0e78e55dda9549be32be80453e0
 +    }
 +}
 +
-+#[cfg(test)]
-+mod route_tests {
-+    use super::*;
-+    use serde_json::json;
-+
-+    #[tokio::test]
-+    #[serial_test::serial]
-+    async fn new_thread_route_changes_defaults_without_mutating_existing_threads() -> Result<()> {
-+        let root = tempfile::tempdir()?;
-+        let store = root.path().canonicalize()?;
-+        std::fs::write(
-+            store.join("mod-status.json"),
-+            serde_json::to_vec(&json!({"mods": [{"id": "route_fixture", "sha256": "source"}]}))?,
-+        )?;
-+        let _environment = crate::omd::tests::omd_environment(&store);
-+        let mut app = super::super::test_support::make_test_app().await;
-+        let active_model = app.config.model.clone();
-+        let active_provider = app.config.model_provider_id.clone();
-+        app.config
-+            .model_providers
-+            .insert("next-provider".into(), app.config.model_provider.clone());
-+        let route = json!({"name": "next", "model": "other-model", "provider": "next-provider",
-+            "reasoning_effort": "high", "roles": ["lead"], "mods": ["route_fixture"]});
-+        std::fs::write(
-+            store.join("host.json"),
-+            serde_json::to_vec(&json!({"routes": [route]}))?,
-+        )?;
-+        let arguments = json!({"route": "next", "scope": "new_threads"});
-+        let result = app
-+            .select_new_thread_route(
-+                "route_fixture",
-+                &arguments,
-+                codex_omd::app_routes::InvocationContext::User,
-+            )
-+            .map_err(color_eyre::eyre::Report::msg)?;
-+        assert_eq!(result["effective_at"], "new_thread");
-+        assert!(
-+            app.select_new_thread_route(
-+                "route_fixture",
-+                &arguments,
-+                codex_omd::app_routes::InvocationContext::Event
-+            )
-+            .is_err()
-+        );
-+        let mut next = app.config.clone();
-+        app.apply_new_thread_route(&mut next)?;
-+        assert_eq!(next.model.as_deref(), Some("other-model"));
-+        assert_eq!(next.model_provider_id, "next-provider");
-+        assert_eq!(
-+            next.web_search_mode.value(),
-+            codex_protocol::config_types::WebSearchMode::Disabled
-+        );
-+        assert_eq!(
-+            next.model_reasoning_effort,
-+            Some(codex_protocol::openai_models::ReasoningEffort::High)
-+        );
-+        assert_eq!(app.config.model, active_model);
-+        assert_eq!(app.config.model_provider_id, active_provider);
-+        assert_eq!(next.permissions, app.config.permissions);
-+        std::fs::write(
-+            store.join("host.json"),
-+            serde_json::to_vec(
-+                &json!({"routes": [route, {"name": "ambiguous", "model": "other-model", "provider": "next-provider", "roles": ["lead"]}]}),
-+            )?,
-+        )?;
-+        assert!(
-+            app.apply_new_thread_route(&mut next)
-+                .unwrap_err()
-+                .to_string()
-+                .contains("route_ambiguous")
-+        );
-+        std::fs::write(store.join("host.json"), br#"{"routes": []}"#)?;
-+        assert!(
-+            app.apply_new_thread_route(&mut next)
-+                .unwrap_err()
-+                .to_string()
-+                .contains("route_not_configured")
-+        );
-+        assert_eq!(app.config.model, active_model);
-+        Ok(())
-+    }
-+}
-+
  pub(crate) fn has_launch_setting(
      config: &Config,
      cli_kv_overrides: &[(String, TomlValue)],
-@@ -60,6 +197,90 @@ pub(super) fn overlay_new_session_defaults(
+@@ -60,6 +114,90 @@ pub(super) fn overlay_new_session_defaults(
  }
 
  impl App {
@@ -36368,7 +36285,7 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..03ccc0e78e55dda9549be32be80453e0
      pub(super) async fn load_new_session_config(
          &mut self,
          app_server: &AppServerSession,
-@@ -106,6 +327,13 @@ impl App {
+@@ -106,6 +244,96 @@ impl App {
                  &self.harness_overrides,
              );
          }
@@ -36382,6 +36299,89 @@ index e6a1ade871116e55446c09491debc2d5bbf9dbbc..03ccc0e78e55dda9549be32be80453e0
          Ok((config, local_settings))
      }
  }
++
++#[cfg(test)]
++mod route_tests {
++    use super::*;
++    use serde_json::json;
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn new_thread_route_changes_defaults_without_mutating_existing_threads() -> Result<()> {
++        let root = tempfile::tempdir()?;
++        let store = root.path().canonicalize()?;
++        std::fs::write(
++            store.join("mod-status.json"),
++            serde_json::to_vec(&json!({"mods": [{"id": "route_fixture", "sha256": "source"}]}))?,
++        )?;
++        let _environment = crate::omd::tests::omd_environment(&store);
++        let mut app = super::super::test_support::make_test_app().await;
++        let active_model = app.config.model.clone();
++        let active_provider = app.config.model_provider_id.clone();
++        app.config
++            .model_providers
++            .insert("next-provider".into(), app.config.model_provider.clone());
++        let route = json!({"name": "next", "model": "other-model", "provider": "next-provider",
++            "reasoning_effort": "high", "roles": ["lead"], "mods": ["route_fixture"]});
++        std::fs::write(
++            store.join("host.json"),
++            serde_json::to_vec(&json!({"routes": [route]}))?,
++        )?;
++        let arguments = json!({"route": "next", "scope": "new_threads"});
++        let result = app
++            .select_new_thread_route(
++                "route_fixture",
++                &arguments,
++                codex_omd::app_routes::InvocationContext::User,
++            )
++            .map_err(color_eyre::eyre::Report::msg)?;
++        assert_eq!(result["effective_at"], "new_thread");
++        assert!(
++            app.select_new_thread_route(
++                "route_fixture",
++                &arguments,
++                codex_omd::app_routes::InvocationContext::Event
++            )
++            .is_err()
++        );
++        let mut next = app.config.clone();
++        app.apply_new_thread_route(&mut next)?;
++        assert_eq!(next.model.as_deref(), Some("other-model"));
++        assert_eq!(next.model_provider_id, "next-provider");
++        assert_eq!(
++            next.web_search_mode.value(),
++            codex_protocol::config_types::WebSearchMode::Disabled
++        );
++        assert_eq!(
++            next.model_reasoning_effort,
++            Some(codex_protocol::openai_models::ReasoningEffort::High)
++        );
++        assert_eq!(app.config.model, active_model);
++        assert_eq!(app.config.model_provider_id, active_provider);
++        assert_eq!(next.permissions, app.config.permissions);
++        std::fs::write(
++            store.join("host.json"),
++            serde_json::to_vec(
++                &json!({"routes": [route, {"name": "ambiguous", "model": "other-model", "provider": "next-provider", "roles": ["lead"]}]}),
++            )?,
++        )?;
++        assert!(
++            app.apply_new_thread_route(&mut next)
++                .unwrap_err()
++                .to_string()
++                .contains("route_ambiguous")
++        );
++        std::fs::write(store.join("host.json"), br#"{"routes": []}"#)?;
++        assert!(
++            app.apply_new_thread_route(&mut next)
++                .unwrap_err()
++                .to_string()
++                .contains("route_not_configured")
++        );
++        assert_eq!(app.config.model, active_model);
++        Ok(())
++    }
++}
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
 index 312185ebdd04eae1a7d5b58e5e38bdf0f64e067d..80d87a452bd31b2fd0d6a6b4aa8e0eb7082b6dad 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
