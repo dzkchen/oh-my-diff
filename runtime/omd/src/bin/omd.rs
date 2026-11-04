@@ -173,15 +173,22 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             _ => positional.push(argument.clone()),
         }
     }
-    let flags = root
-        .as_ref()
-        .map_or(String::new(), |root| format!(" --store {}", root.display()))
-        + &if scope == "user" {
-            String::new()
-        } else {
-            format!(" --scope {scope}")
-        };
+    let explicit = root.is_some();
     let root = store_root(root)?;
+    let flags_for = |scope: &str| {
+        let store = if explicit {
+            format!(" --store {}", shell_quoted(&root.display().to_string()))
+        } else {
+            String::new()
+        };
+        store
+            + &if scope == "user" {
+                String::new()
+            } else {
+                format!(" --scope {scope}")
+            }
+    };
+    let flags = flags_for(&scope);
     let store = codex_omd::ModStore::open(root.clone())?;
     let first = || positional.first().cloned().ok_or_else(usage);
     let done = |display: String| Ok(json!({"display": display}));
@@ -331,31 +338,53 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                     return Err(io::Error::other(format!("{APPROVAL_REQUIRED}: declined")));
                 }
             }
+            let installed_scope = (action == "update")
+                .then(|| store.package_lock().ok())
+                .flatten()
+                .and_then(|lock| {
+                    lock.packages
+                        .get(&preview.control.id)
+                        .map(|package| package.scope.clone())
+                });
             package_controls::apply(&store, &preview.control)?;
             let id = &preview.control.id;
-            let enabled = package_controls::list(&store, None)?["packages"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|package| {
+            let off = installed_scope.and_then(|installed| {
+                let listed = package_controls::list(&store, None).ok()?;
+                let enabled = listed["packages"].as_array()?.iter().any(|package| {
                     package["id"] == id.as_str()
-                        && package["scope"] == scope.as_str()
+                        && package["scope"] == installed.as_str()
                         && package["enabled"] == true
                 });
+                (!enabled).then(|| flags_for(&installed))
+            });
             done(match action {
                 "install" => format!(
                     "Installed {id} ({scope}). It is off: run `omd mods enable {id}{flags}` to turn it on."
                 ),
-                "update" if enabled => format!("Updated {id}."),
-                "update" => format!(
-                    "Updated {id}. It is off: run `omd mods enable {id}{flags}` to turn it on."
-                ),
+                "update" => match off {
+                    Some(flags) => format!(
+                        "Updated {id}. It is off: run `omd mods enable {id}{flags}` to turn it on."
+                    ),
+                    None => format!("Updated {id}."),
+                },
                 "remove" => format!("Removed {id}. Its cache, state and local sources are kept."),
                 "rollback" => format!("Rolled {id} back to its previous version."),
                 _ => format!("{id} is {}d.", action),
             })
         }
         _ => Err(usage()),
+    }
+}
+
+fn shell_quoted(text: &str) -> String {
+    if !text.is_empty()
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/._-+=:,@%".contains(&byte))
+    {
+        text.to_owned()
+    } else {
+        format!("'{}'", text.replace('\'', "'\\''"))
     }
 }
 
@@ -662,6 +691,61 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mods_update_reports_the_installed_scope_and_quotes_the_store() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = root.join("mod store");
+        codex_omd::ModStore::create(store.clone()).unwrap();
+        let package = root.join("fixture");
+        std::fs::create_dir(&package).unwrap();
+        let manifest = |version: &str| {
+            std::fs::write(
+                package.join("mod.json"),
+                serde_json::to_vec(&json!({"schema":1,"id":"fixture","version":version,"api":codex_omd::MOD_API_VERSION,
+                    "entrypoint":"main.ts","state_version":1,"license":"Apache-2.0",
+                    "provenance":{"maintainer":"Fixture Author","source":"fixture"},"capabilities":[],"dependencies":[]}))
+                .unwrap(),
+            )
+            .unwrap();
+        };
+        manifest("1.0.0");
+        std::fs::write(package.join("main.ts"), "export default () => {}\n").unwrap();
+        let call = |action: &str, scope: Option<&str>| {
+            let mut args = vec![
+                "fixture".to_owned(),
+                "--yes".into(),
+                "--store".into(),
+                store.display().to_string(),
+            ];
+            if action == "install" {
+                args[0] = package.display().to_string();
+            }
+            if let Some(scope) = scope {
+                args.extend(["--scope".into(), scope.into()]);
+            }
+            mods(action, &args).unwrap()["display"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        call("install", Some("project"));
+        call("enable", Some("project"));
+        manifest("1.0.1");
+        assert_eq!(call("update", None), "Updated fixture.");
+        call("disable", Some("project"));
+        manifest("1.0.2");
+        assert_eq!(
+            call("update", None),
+            format!(
+                "Updated fixture. It is off: run `omd mods enable fixture --store '{}' --scope project` to turn it on.",
+                store.display()
+            )
+        );
+        assert_eq!(shell_quoted("/plain/path"), "/plain/path");
+        assert_eq!(shell_quoted("it's here"), "'it'\\''s here'");
+    }
 
     #[test]
     fn store_recovery_exports_and_resets_one_mod_without_running_it() {

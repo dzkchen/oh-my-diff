@@ -25,6 +25,7 @@
       {
         "label": "Fixed",
         "items": [
+          "omd CLI: `omd mods update` checks whether a mod is on in the scope it was installed in, so a project mod that stays on is no longer reported as off; the suggested command quotes the store path, a failed mod tells non-TUI clients to reload mods instead of naming /omd, and `omd-mod` reports a missing store as mod_store_unavailable",
           "Mods, updates and preview: `/mods cancel` says whether it dropped a waiting change, the updates panel labels times as UTC and hides update settings on installs the OMD installer didn't make, and `/preview FILE --watch` frees the place of a watched file that was deleted",
           "Usage: tool calls no longer rewrite the mod's whole saved state while the usage dialog is closed, and an agent event that changes nothing is skipped",
           "Files: arrow keys move through entries and directories, and a narrow dock stacks the preview below the list",

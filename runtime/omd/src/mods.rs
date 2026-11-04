@@ -5643,7 +5643,7 @@ impl ModHost {
         })?;
         if let Some(error) = &loaded.error {
             return Err(failure(format!(
-                "mod_failed: {error}; reload it with /omd (Reload mods)"
+                "mod_failed: {error}; reload mods to try again"
             )));
         }
         self.check_callback_authority(&loaded)?;
