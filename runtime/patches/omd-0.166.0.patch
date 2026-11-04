@@ -82498,10 +82498,10 @@ index 0000000000000000000000000000000000000000..f0f739685494460c5ece56d6eb9d07bf
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs b/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9b53b29af648ace3de6c74c1a1d403f1313420b7
+index 0000000000000000000000000000000000000000..e2243fb9a5ed959a704a0275bc2144b6fb8008df
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,159 @@
 +use super::*;
 +use codex_extension_api::ToolBatchContributor;
 +use codex_extension_api::ToolBatchInput;
@@ -82621,17 +82621,25 @@ index 0000000000000000000000000000000000000000..9b53b29af648ace3de6c74c1a1d403f1
 +            let cancelled = Arc::new(AtomicBool::new(false));
 +            let _cancellation = Cancellation(cancelled.clone());
 +            let result = tokio::task::spawn_blocking(move || {
-+                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned".to_owned())?;
++                let mut runtime = runtime
++                    .lock()
++                    .map_err(|_| "mod_runtime_poisoned".to_owned())?;
 +                let owner = runtime
 +                    .replacement_owner("tool_batch")
 +                    .ok_or("tool_batch_owner_unavailable")?;
 +                let generation = runtime.generation();
++                let mut host = |_| {
++                    Err(std::io::Error::other(
++                        "host_operation_unavailable: tool_batch runs without host operations",
++                    ))
++                };
++                let options = ModInvokeOptions {
++                    active: &|| !cancelled.load(Ordering::Acquire),
++                    host: ModHostCallback::Own(&mut host),
++                    ..ModInvokeOptions::default()
++                };
 +                let value = runtime
-+                    .invoke(&owner, generation, "tool_batch", "", payload, ModInvokeOptions { active: &|| !cancelled.load(Ordering::Acquire), host: ModHostCallback::Own(&mut |_| {
-+                            Err(std::io::Error::other(
-+                                "host_operation_unavailable: tool_batch runs without host operations",
-+                            ))
-+                        }), ..ModInvokeOptions::default() })
++                    .invoke(&owner, generation, "tool_batch", "", payload, options)
 +                    .map_err(|error| error.to_string())?;
 +                parse(&owner, value, &known).map_err(|error| format!("{owner}: {error}"))
 +            })
@@ -95512,10 +95520,10 @@ index 0000000000000000000000000000000000000000..07d05e61847dace1e2b9f28ef39ff4ff
 +}
 diff --git a/codex-rs/ext/omd/tests/omd_mod_cli.rs b/codex-rs/ext/omd/tests/omd_mod_cli.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef850712b1fc891f6ba60001ea6a395320ba2e82
+index 0000000000000000000000000000000000000000..2584580d6bb5f222dc21e98d96650525e6bbd079
 --- /dev/null
 +++ b/codex-rs/ext/omd/tests/omd_mod_cli.rs
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,209 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -95566,7 +95574,10 @@ index 0000000000000000000000000000000000000000..ef850712b1fc891f6ba60001ea6a3953
 +
 +fn trust(store: &ModStore, path: &Path, capabilities: &[&str]) {
 +    let inspected = ModStore::inspect_package(path).unwrap();
-+    let granted: Vec<String> = capabilities.iter().map(std::string::ToString::to_string).collect();
++    let granted: Vec<String> = capabilities
++        .iter()
++        .map(std::string::ToString::to_string)
++        .collect();
 +    let sha256 = inspected["sha256"].as_str().unwrap();
 +    store
 +        .trust(path.to_path_buf(), sha256, granted, "user")
@@ -98985,10 +98996,10 @@ index 0000000000000000000000000000000000000000..242e537429d8b8d65014001817e0a5c3
 +globalThis.__result = await globalThis.__dispatch();
 diff --git a/codex-rs/omd/runner/src/main.rs b/codex-rs/omd/runner/src/main.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d5d4beefaed1b8be32f4e00c7b55132151dd37f8
+index 0000000000000000000000000000000000000000..b8f631e3d9b746fb9b83eba158ad8c20c9bc7398
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/main.rs
-@@ -0,0 +1,1114 @@
+@@ -0,0 +1,1116 @@
 +mod crypto;
 +
 +use serde_json::Map;
@@ -99469,7 +99480,9 @@ index 0000000000000000000000000000000000000000..d5d4beefaed1b8be32f4e00c7b551321
 +            v8::script_compiler::NoCacheReason::NoReason,
 +        )?;
 +        // V8 compiled the source itself when it rejected the data (another V8 build or flags): replace the entry.
-+        let rejected = source.get_cached_data().is_some_and(v8::CachedData::rejected);
++        let rejected = source
++            .get_cached_data()
++            .is_some_and(v8::CachedData::rejected);
 +        if rejected && let Some(cache) = module.get_unbound_module_script(scope).create_code_cache()
 +        {
 +            record(offered, key, code, &cache);
@@ -114034,10 +114047,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..76eaa403e7ab8c7898d591244458f002cba984a1
+index 0000000000000000000000000000000000000000..a7ec8bddc16fc2eed2459ad011b5678b846d1369
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,2124 @@
+@@ -0,0 +1,2137 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -114877,7 +114890,11 @@ index 0000000000000000000000000000000000000000..76eaa403e7ab8c7898d591244458f002
 +}
 +
 +/// An exec output artifact's length, rehashed and revalidated only when its file stamp changes.
-+fn verified_output(path: &Path, file: &mut fs::File, digest: &str) -> Result<usize, String> {
++fn verified_output(
++    path: &Path,
++    file: &mut fs::File,
++    digest: &str,
++) -> Result<(usize, crate::FileStamp), String> {
 +    static VERIFIED: LazyLock<Mutex<BTreeMap<PathBuf, crate::FileStamp>>> =
 +        LazyLock::new(Default::default);
 +    let metadata = file.metadata().map_err(|error| error.to_string())?;
@@ -114892,7 +114909,7 @@ index 0000000000000000000000000000000000000000..76eaa403e7ab8c7898d591244458f002
 +        .get(path)
 +        == Some(&stamp)
 +    {
-+        return Ok(len);
++        return Ok((len, stamp));
 +    }
 +    let mut bytes = Vec::with_capacity(len);
 +    Read::by_ref(file)
@@ -114907,7 +114924,7 @@ index 0000000000000000000000000000000000000000..76eaa403e7ab8c7898d591244458f002
 +        verified.clear();
 +    }
 +    verified.insert(path.to_path_buf(), stamp);
-+    Ok(len)
++    Ok((len, stamp))
 +}
 +
 +/// A program's SHA-256, rehashed only when its file stamp changes.
@@ -115093,7 +115110,7 @@ index 0000000000000000000000000000000000000000..76eaa403e7ab8c7898d591244458f002
 +            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
 +            .open(&path)
 +            .map_err(|_| "exec_output_unavailable")?;
-+        let len = verified_output(&path, &mut file, digest)?;
++        let (len, stamp) = verified_output(&path, &mut file, digest)?;
 +        if !(self.active)() {
 +            return Err("host_operation_cancelled".into());
 +        }
@@ -115120,11 +115137,20 @@ index 0000000000000000000000000000000000000000..76eaa403e7ab8c7898d591244458f002
 +            end -= 1;
 +        }
 +        if end == 0 && !bytes.is_empty() {
-+            end = 1 + bytes[1..].iter().take_while(|byte| continuation(byte)).count();
++            end = 1 + bytes[1..]
++                .iter()
++                .take_while(|byte| continuation(byte))
++                .count();
 +        }
-+        let text = std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
++        if crate::file_stamp(&file.metadata().map_err(|error| error.to_string())?) != stamp {
++            return Err("exec_output_integrity_failed".into());
++        }
++        let text =
++            std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
 +        let next = input.cursor + end;
-+        Ok(json!({"text": text, "cursor": (next < len).then_some(next), "bytes": len, "sha256": digest}))
++        Ok(
++            json!({"text": text, "cursor": (next < len).then_some(next), "bytes": len, "sha256": digest}),
++        )
 +    }
 +
 +    fn external(
@@ -125250,10 +125276,10 @@ index 0000000000000000000000000000000000000000..f8804f57160390382832501abc9424e6
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5d17e68a099801a3d9801313dbeefb667c716393
+index 0000000000000000000000000000000000000000..3617b5307798f69af71268ee2046453c148fffba
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1135 @@
+@@ -0,0 +1,1142 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -126022,12 +126048,19 @@ index 0000000000000000000000000000000000000000..5d17e68a099801a3d9801313dbeefb66
 +                    "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
 +                    "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
 +                    "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
-+                let result = self.invoke(id, self.generation, "component", module, frame, ModInvokeOptions { active: &|| active, host: ModHostCallback::Scoped(&mut |_, call| {
-+                        Err(failure(format!(
-+                            "host_operation_unavailable: {} is not available to component modules",
-+                            call.operation
-+                        )))
-+                    }), ..ModInvokeOptions::default() })?;
++                let mut host = |_: &str, call: ModHostCall| {
++                    Err(failure(format!(
++                        "host_operation_unavailable: {} is not available to component modules",
++                        call.operation
++                    )))
++                };
++                let options = ModInvokeOptions {
++                    active: &|| active,
++                    host: ModHostCallback::Scoped(&mut host),
++                    ..ModInvokeOptions::default()
++                };
++                let result =
++                    self.invoke(id, self.generation, "component", module, frame, options)?;
 +                render::checked_tree(&result)?;
 +                Ok(result)
 +            }
@@ -141151,10 +141184,10 @@ index 0000000000000000000000000000000000000000..0eb3741f17affec53cde0b4e18f68090
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..20b97d8b7e6cc14dcaf990c834d876186d4f70c2
+index 0000000000000000000000000000000000000000..1e6416ae71b16eb3362057209184e0cff88f73cf
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,455 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -141417,11 +141450,8 @@ index 0000000000000000000000000000000000000000..20b97d8b7e6cc14dcaf990c834d87618
 +    apply(&store, &disable.control).unwrap();
 +    let packages = list(&store, None).unwrap()["packages"].clone();
 +    assert!(packages.as_array().unwrap().iter().any(|package| {
-+        (
-+            &package["scope"],
-+            &package["source"],
-+            &package["enabled"],
-+        ) == (&json!("user"), &json!("selection"), &json!(false))
++        (&package["scope"], &package["source"], &package["enabled"])
++            == (&json!("user"), &json!("selection"), &json!(false))
 +    }));
 +    let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
 +    apply(&store, &enable.control).unwrap();
@@ -149564,10 +149594,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6533e3519b2899cf15661ca9aaa191bf35f842da
+index 0000000000000000000000000000000000000000..da60b27d7d36499722b698dec41bc81ae84c9d0a
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2246 @@
+@@ -0,0 +1,2278 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::BuiltinControls;
@@ -149860,7 +149890,10 @@ index 0000000000000000000000000000000000000000..6533e3519b2899cf15661ca9aaa191bf
 +}
 +
 +fn strings(values: &[&str]) -> Vec<String> {
-+    values.iter().map(std::string::ToString::to_string).collect()
++    values
++        .iter()
++        .map(std::string::ToString::to_string)
++        .collect()
 +}
 +
 +#[test]
@@ -149944,7 +149977,7 @@ index 0000000000000000000000000000000000000000..6533e3519b2899cf15661ca9aaa191bf
 +#[test]
 +fn exec_output_pages_a_multibyte_artifact_without_splitting_characters() {
 +    let _exec = exec_slot();
-+    let (_temp, _repository, data, authority) = setup();
++    let (_temp, repository, data, authority) = setup();
 +    let active = || true;
 +    let host = Host {
 +        authority: &authority,
@@ -149980,6 +150013,35 @@ index 0000000000000000000000000000000000000000..6533e3519b2899cf15661ca9aaa191bf
 +        cursor = page["cursor"].as_u64();
 +    }
 +    assert_eq!(text, "é€\n".repeat(700_000));
++    let page = |arguments: Value| host.call(&owner, "exec.output_page", arguments);
++    let euro = page(json!({"artifact":artifact,"cursor":2,"max_bytes":1})).unwrap();
++    assert_eq!(
++        (euro["text"].as_str(), euro["cursor"].as_u64()),
++        (Some("€"), Some(5))
++    );
++    let end = page(json!({"artifact":artifact,"cursor":4_200_000})).unwrap();
++    assert_eq!(
++        (end["text"].as_str(), end["cursor"].is_null()),
++        (Some(""), true)
++    );
++    for cursor in [1, 3, 4_200_001] {
++        assert_eq!(
++            page(json!({"artifact":artifact,"cursor":cursor})).unwrap_err(),
++            "exec_output_cursor_invalid"
++        );
++    }
++    let path = data
++        .join("exec-output")
++        .join(codex_omd::host::repository_key(&repository))
++        .join("fixture")
++        .join("thread-1")
++        .join(owner.source_sha256)
++        .join(format!("{}.txt", artifact["sha256"].as_str().unwrap()));
++    std::fs::write(path, "ë€\n".repeat(700_000)).unwrap();
++    assert_eq!(
++        page(json!({"artifact":artifact,"cursor":6})).unwrap_err(),
++        "exec_output_integrity_failed"
++    );
 +}
 +
 +#[test]
@@ -151816,10 +151878,10 @@ index 0000000000000000000000000000000000000000..6533e3519b2899cf15661ca9aaa191bf
 +}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a755141bb9fc55b4d2443807b1da2904f65ac60e
+index 0000000000000000000000000000000000000000..aa5e6a469caa85b2db4215ff5721169a8178c83d
 --- /dev/null
 +++ b/codex-rs/omd/tests/integration.rs
-@@ -0,0 +1,561 @@
+@@ -0,0 +1,564 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -151868,7 +151930,10 @@ index 0000000000000000000000000000000000000000..a755141bb9fc55b4d2443807b1da2904
 +
 +fn trust(store: &ModStore, path: &Path, capabilities: &[&str]) {
 +    let inspected = ModStore::inspect_package(path).unwrap();
-+    let granted: Vec<String> = capabilities.iter().map(std::string::ToString::to_string).collect();
++    let granted: Vec<String> = capabilities
++        .iter()
++        .map(std::string::ToString::to_string)
++        .collect();
 +    let sha256 = inspected["sha256"].as_str().unwrap().to_owned();
 +    contended(|| store.trust(path.to_path_buf(), &sha256, granted.clone(), "user"));
 +    contended(|| store.enable(path, true));
@@ -152383,10 +152448,10 @@ index 0000000000000000000000000000000000000000..a755141bb9fc55b4d2443807b1da2904
 +}
 diff --git a/codex-rs/omd/tests/managed.rs b/codex-rs/omd/tests/managed.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..dbe81c1e1fbc6db5555c0f4dbc770aeb3198dff7
+index 0000000000000000000000000000000000000000..c24f342ec82e96224e19efebd201ea90dfdd5f31
 --- /dev/null
 +++ b/codex-rs/omd/tests/managed.rs
-@@ -0,0 +1,1094 @@
+@@ -0,0 +1,1092 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -152516,7 +152581,10 @@ index 0000000000000000000000000000000000000000..dbe81c1e1fbc6db5555c0f4dbc770aeb
 +}
 +
 +fn trust(store: &ModStore, path: &Path, sha256: &str, capabilities: &[&str], scope: &str) {
-+    let capabilities = capabilities.iter().map(std::string::ToString::to_string).collect();
++    let capabilities = capabilities
++        .iter()
++        .map(std::string::ToString::to_string)
++        .collect();
 +    store
 +        .trust(path.to_path_buf(), sha256, capabilities, scope)
 +        .unwrap();
@@ -152729,12 +152797,7 @@ index 0000000000000000000000000000000000000000..dbe81c1e1fbc6db5555c0f4dbc770aeb
 +    assert_eq!(active(&host), ["guard@1.0.0"]);
 +    assert!(rejection(&host, "plain").starts_with("managed_sideload_denied"));
 +    let refused = store
-+        .trust(
-+            plain,
-+            &plain_sha,
-+            vec!["interception".into()],
-+            "user",
-+        )
++        .trust(plain, &plain_sha, vec!["interception".into()], "user")
 +        .unwrap_err()
 +        .to_string();
 +    assert!(refused.starts_with("managed_sideload_denied"), "{refused}");
@@ -153483,10 +153546,10 @@ index 0000000000000000000000000000000000000000..dbe81c1e1fbc6db5555c0f4dbc770aeb
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d56421c31b08869ab0f5b2c8663cbacd3728988
+index 0000000000000000000000000000000000000000..a4cebf574e2e7d8ef07549a45bcfa00a83b78d28
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5742 @@
+@@ -0,0 +1,5751 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -153572,7 +153635,10 @@ index 0000000000000000000000000000000000000000..4d56421c31b08869ab0f5b2c8663cbac
 +
 +fn trust_scoped(store: &ModStore, path: &std::path::Path, capabilities: &[&str], scope: &str) {
 +    let inspected = ModStore::inspect_package(path).unwrap();
-+    let granted: Vec<String> = capabilities.iter().map(std::string::ToString::to_string).collect();
++    let granted: Vec<String> = capabilities
++        .iter()
++        .map(std::string::ToString::to_string)
++        .collect();
 +    let sha256 = inspected["sha256"].as_str().unwrap();
 +    contended(|| store.trust(path.to_path_buf(), sha256, granted.clone(), scope));
 +    contended(|| store.enable(path, true));
@@ -153581,7 +153647,10 @@ index 0000000000000000000000000000000000000000..4d56421c31b08869ab0f5b2c8663cbac
 +// A second enabled copy of one mod, as stores from before the enable check could hold.
 +fn trust_duplicate(store: &ModStore, path: &std::path::Path, capabilities: &[&str]) {
 +    let inspected = ModStore::inspect_package(path).unwrap();
-+    let granted: Vec<String> = capabilities.iter().map(std::string::ToString::to_string).collect();
++    let granted: Vec<String> = capabilities
++        .iter()
++        .map(std::string::ToString::to_string)
++        .collect();
 +    let sha256 = inspected["sha256"].as_str().unwrap();
 +    contended(|| store.trust(path.to_path_buf(), sha256, granted.clone(), "user"));
 +    let file = store.root().join("mods.json");
@@ -158541,7 +158610,10 @@ index 0000000000000000000000000000000000000000..4d56421c31b08869ab0f5b2c8663cbac
 +        store.trust_all(vec![codex_omd::Trust {
 +            path: path.clone(),
 +            sha256: sha256.clone(),
-+            capabilities: capabilities.iter().map(std::string::ToString::to_string).collect(),
++            capabilities: capabilities
++                .iter()
++                .map(std::string::ToString::to_string)
++                .collect(),
 +            scope: "user".into(),
 +            secret_environment: Vec::new(),
 +            expires_at: Some(u64::MAX),
@@ -159231,10 +159303,10 @@ index 0000000000000000000000000000000000000000..4d56421c31b08869ab0f5b2c8663cbac
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6c8884cd5f4e288443fb1df8bfe88f8439fb044a
+index 0000000000000000000000000000000000000000..389e32bc744121ad7628f7abb63522748a8da0bf
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,1678 @@
+@@ -0,0 +1,1684 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
@@ -159303,7 +159375,10 @@ index 0000000000000000000000000000000000000000..6c8884cd5f4e288443fb1df8bfe88f84
 +            packages: BTreeMap::from([(
 +                path.file_name().unwrap().to_str().unwrap().to_owned(),
 +                ModPackageGrant {
-+                    capabilities: capabilities.iter().map(std::string::ToString::to_string).collect(),
++                    capabilities: capabilities
++                        .iter()
++                        .map(std::string::ToString::to_string)
++                        .collect(),
 +                    dependencies: false,
 +                    lifecycle: Vec::new(),
 +                    secret_environment: Vec::new(),
@@ -160296,7 +160371,10 @@ index 0000000000000000000000000000000000000000..6c8884cd5f4e288443fb1df8bfe88f84
 +            packages: BTreeMap::from([(
 +                "npm_mod".into(),
 +                ModPackageGrant {
-+                    capabilities: capabilities.iter().map(std::string::ToString::to_string).collect(),
++                    capabilities: capabilities
++                        .iter()
++                        .map(std::string::ToString::to_string)
++                        .collect(),
 +                    ..ModPackageGrant::default()
 +                },
 +            )]),

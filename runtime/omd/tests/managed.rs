@@ -127,7 +127,10 @@ impl Admin {
 }
 
 fn trust(store: &ModStore, path: &Path, sha256: &str, capabilities: &[&str], scope: &str) {
-    let capabilities = capabilities.iter().map(std::string::ToString::to_string).collect();
+    let capabilities = capabilities
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     store
         .trust(path.to_path_buf(), sha256, capabilities, scope)
         .unwrap();
@@ -340,12 +343,7 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
     assert_eq!(active(&host), ["guard@1.0.0"]);
     assert!(rejection(&host, "plain").starts_with("managed_sideload_denied"));
     let refused = store
-        .trust(
-            plain,
-            &plain_sha,
-            vec!["interception".into()],
-            "user",
-        )
+        .trust(plain, &plain_sha, vec!["interception".into()], "user")
         .unwrap_err()
         .to_string();
     assert!(refused.starts_with("managed_sideload_denied"), "{refused}");

@@ -83,7 +83,10 @@ fn trust(store: &ModStore, path: &std::path::Path, capabilities: &[&str]) {
 
 fn trust_scoped(store: &ModStore, path: &std::path::Path, capabilities: &[&str], scope: &str) {
     let inspected = ModStore::inspect_package(path).unwrap();
-    let granted: Vec<String> = capabilities.iter().map(std::string::ToString::to_string).collect();
+    let granted: Vec<String> = capabilities
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     let sha256 = inspected["sha256"].as_str().unwrap();
     contended(|| store.trust(path.to_path_buf(), sha256, granted.clone(), scope));
     contended(|| store.enable(path, true));
@@ -92,7 +95,10 @@ fn trust_scoped(store: &ModStore, path: &std::path::Path, capabilities: &[&str],
 // A second enabled copy of one mod, as stores from before the enable check could hold.
 fn trust_duplicate(store: &ModStore, path: &std::path::Path, capabilities: &[&str]) {
     let inspected = ModStore::inspect_package(path).unwrap();
-    let granted: Vec<String> = capabilities.iter().map(std::string::ToString::to_string).collect();
+    let granted: Vec<String> = capabilities
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     let sha256 = inspected["sha256"].as_str().unwrap();
     contended(|| store.trust(path.to_path_buf(), sha256, granted.clone(), "user"));
     let file = store.root().join("mods.json");
@@ -5052,7 +5058,10 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
         store.trust_all(vec![codex_omd::Trust {
             path: path.clone(),
             sha256: sha256.clone(),
-            capabilities: capabilities.iter().map(std::string::ToString::to_string).collect(),
+            capabilities: capabilities
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             scope: "user".into(),
             secret_environment: Vec::new(),
             expires_at: Some(u64::MAX),

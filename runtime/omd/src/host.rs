@@ -837,7 +837,11 @@ fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
 }
 
 /// An exec output artifact's length, rehashed and revalidated only when its file stamp changes.
-fn verified_output(path: &Path, file: &mut fs::File, digest: &str) -> Result<usize, String> {
+fn verified_output(
+    path: &Path,
+    file: &mut fs::File,
+    digest: &str,
+) -> Result<(usize, crate::FileStamp), String> {
     static VERIFIED: LazyLock<Mutex<BTreeMap<PathBuf, crate::FileStamp>>> =
         LazyLock::new(Default::default);
     let metadata = file.metadata().map_err(|error| error.to_string())?;
@@ -852,7 +856,7 @@ fn verified_output(path: &Path, file: &mut fs::File, digest: &str) -> Result<usi
         .get(path)
         == Some(&stamp)
     {
-        return Ok(len);
+        return Ok((len, stamp));
     }
     let mut bytes = Vec::with_capacity(len);
     Read::by_ref(file)
@@ -867,7 +871,7 @@ fn verified_output(path: &Path, file: &mut fs::File, digest: &str) -> Result<usi
         verified.clear();
     }
     verified.insert(path.to_path_buf(), stamp);
-    Ok(len)
+    Ok((len, stamp))
 }
 
 /// A program's SHA-256, rehashed only when its file stamp changes.
@@ -1053,7 +1057,7 @@ impl Host<'_> {
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
             .open(&path)
             .map_err(|_| "exec_output_unavailable")?;
-        let len = verified_output(&path, &mut file, digest)?;
+        let (len, stamp) = verified_output(&path, &mut file, digest)?;
         if !(self.active)() {
             return Err("host_operation_cancelled".into());
         }
@@ -1080,11 +1084,20 @@ impl Host<'_> {
             end -= 1;
         }
         if end == 0 && !bytes.is_empty() {
-            end = 1 + bytes[1..].iter().take_while(|byte| continuation(byte)).count();
+            end = 1 + bytes[1..]
+                .iter()
+                .take_while(|byte| continuation(byte))
+                .count();
         }
-        let text = std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
+        if crate::file_stamp(&file.metadata().map_err(|error| error.to_string())?) != stamp {
+            return Err("exec_output_integrity_failed".into());
+        }
+        let text =
+            std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
         let next = input.cursor + end;
-        Ok(json!({"text": text, "cursor": (next < len).then_some(next), "bytes": len, "sha256": digest}))
+        Ok(
+            json!({"text": text, "cursor": (next < len).then_some(next), "bytes": len, "sha256": digest}),
+        )
     }
 
     fn external(

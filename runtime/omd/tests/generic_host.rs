@@ -290,7 +290,10 @@ fn owner() -> PolicyOwner {
 }
 
 fn strings(values: &[&str]) -> Vec<String> {
-    values.iter().map(std::string::ToString::to_string).collect()
+    values
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 #[test]
@@ -374,7 +377,7 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
 #[test]
 fn exec_output_pages_a_multibyte_artifact_without_splitting_characters() {
     let _exec = exec_slot();
-    let (_temp, _repository, data, authority) = setup();
+    let (_temp, repository, data, authority) = setup();
     let active = || true;
     let host = Host {
         authority: &authority,
@@ -410,6 +413,35 @@ fn exec_output_pages_a_multibyte_artifact_without_splitting_characters() {
         cursor = page["cursor"].as_u64();
     }
     assert_eq!(text, "é€\n".repeat(700_000));
+    let page = |arguments: Value| host.call(&owner, "exec.output_page", arguments);
+    let euro = page(json!({"artifact":artifact,"cursor":2,"max_bytes":1})).unwrap();
+    assert_eq!(
+        (euro["text"].as_str(), euro["cursor"].as_u64()),
+        (Some("€"), Some(5))
+    );
+    let end = page(json!({"artifact":artifact,"cursor":4_200_000})).unwrap();
+    assert_eq!(
+        (end["text"].as_str(), end["cursor"].is_null()),
+        (Some(""), true)
+    );
+    for cursor in [1, 3, 4_200_001] {
+        assert_eq!(
+            page(json!({"artifact":artifact,"cursor":cursor})).unwrap_err(),
+            "exec_output_cursor_invalid"
+        );
+    }
+    let path = data
+        .join("exec-output")
+        .join(codex_omd::host::repository_key(&repository))
+        .join("fixture")
+        .join("thread-1")
+        .join(owner.source_sha256)
+        .join(format!("{}.txt", artifact["sha256"].as_str().unwrap()));
+    std::fs::write(path, "ë€\n".repeat(700_000)).unwrap();
+    assert_eq!(
+        page(json!({"artifact":artifact,"cursor":6})).unwrap_err(),
+        "exec_output_integrity_failed"
+    );
 }
 
 #[test]

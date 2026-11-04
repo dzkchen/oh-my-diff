@@ -766,12 +766,19 @@ impl ModHost {
                     "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
                     "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
                     "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
-                let result = self.invoke(id, self.generation, "component", module, frame, ModInvokeOptions { active: &|| active, host: ModHostCallback::Scoped(&mut |_, call| {
-                        Err(failure(format!(
-                            "host_operation_unavailable: {} is not available to component modules",
-                            call.operation
-                        )))
-                    }), ..ModInvokeOptions::default() })?;
+                let mut host = |_: &str, call: ModHostCall| {
+                    Err(failure(format!(
+                        "host_operation_unavailable: {} is not available to component modules",
+                        call.operation
+                    )))
+                };
+                let options = ModInvokeOptions {
+                    active: &|| active,
+                    host: ModHostCallback::Scoped(&mut host),
+                    ..ModInvokeOptions::default()
+                };
+                let result =
+                    self.invoke(id, self.generation, "component", module, frame, options)?;
                 render::checked_tree(&result)?;
                 Ok(result)
             }

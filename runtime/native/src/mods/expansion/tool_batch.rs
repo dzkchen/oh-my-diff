@@ -117,17 +117,25 @@ impl ToolBatchContributor for Mods {
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let result = tokio::task::spawn_blocking(move || {
-                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned".to_owned())?;
+                let mut runtime = runtime
+                    .lock()
+                    .map_err(|_| "mod_runtime_poisoned".to_owned())?;
                 let owner = runtime
                     .replacement_owner("tool_batch")
                     .ok_or("tool_batch_owner_unavailable")?;
                 let generation = runtime.generation();
+                let mut host = |_| {
+                    Err(std::io::Error::other(
+                        "host_operation_unavailable: tool_batch runs without host operations",
+                    ))
+                };
+                let options = ModInvokeOptions {
+                    active: &|| !cancelled.load(Ordering::Acquire),
+                    host: ModHostCallback::Own(&mut host),
+                    ..ModInvokeOptions::default()
+                };
                 let value = runtime
-                    .invoke(&owner, generation, "tool_batch", "", payload, ModInvokeOptions { active: &|| !cancelled.load(Ordering::Acquire), host: ModHostCallback::Own(&mut |_| {
-                            Err(std::io::Error::other(
-                                "host_operation_unavailable: tool_batch runs without host operations",
-                            ))
-                        }), ..ModInvokeOptions::default() })
+                    .invoke(&owner, generation, "tool_batch", "", payload, options)
                     .map_err(|error| error.to_string())?;
                 parse(&owner, value, &known).map_err(|error| format!("{owner}: {error}"))
             })

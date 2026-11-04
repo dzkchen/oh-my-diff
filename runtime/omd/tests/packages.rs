@@ -66,7 +66,10 @@ fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
             packages: BTreeMap::from([(
                 path.file_name().unwrap().to_str().unwrap().to_owned(),
                 ModPackageGrant {
-                    capabilities: capabilities.iter().map(std::string::ToString::to_string).collect(),
+                    capabilities: capabilities
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect(),
                     dependencies: false,
                     lifecycle: Vec::new(),
                     secret_environment: Vec::new(),
@@ -1059,7 +1062,10 @@ fn npm_request(origin: &str, version: &str, capabilities: &[&str]) -> ModInstall
             packages: BTreeMap::from([(
                 "npm_mod".into(),
                 ModPackageGrant {
-                    capabilities: capabilities.iter().map(std::string::ToString::to_string).collect(),
+                    capabilities: capabilities
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect(),
                     ..ModPackageGrant::default()
                 },
             )]),

@@ -478,7 +478,9 @@ fn compile<'s>(
             v8::script_compiler::NoCacheReason::NoReason,
         )?;
         // V8 compiled the source itself when it rejected the data (another V8 build or flags): replace the entry.
-        let rejected = source.get_cached_data().is_some_and(v8::CachedData::rejected);
+        let rejected = source
+            .get_cached_data()
+            .is_some_and(v8::CachedData::rejected);
         if rejected && let Some(cache) = module.get_unbound_module_script(scope).create_code_cache()
         {
             record(offered, key, code, &cache);

@@ -260,11 +260,8 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
     apply(&store, &disable.control).unwrap();
     let packages = list(&store, None).unwrap()["packages"].clone();
     assert!(packages.as_array().unwrap().iter().any(|package| {
-        (
-            &package["scope"],
-            &package["source"],
-            &package["enabled"],
-        ) == (&json!("user"), &json!("selection"), &json!(false))
+        (&package["scope"], &package["source"], &package["enabled"])
+            == (&json!("user"), &json!("selection"), &json!(false))
     }));
     let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
     apply(&store, &enable.control).unwrap();

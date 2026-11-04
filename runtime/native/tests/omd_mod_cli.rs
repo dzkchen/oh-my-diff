@@ -48,7 +48,10 @@ fn package(
 
 fn trust(store: &ModStore, path: &Path, capabilities: &[&str]) {
     let inspected = ModStore::inspect_package(path).unwrap();
-    let granted: Vec<String> = capabilities.iter().map(std::string::ToString::to_string).collect();
+    let granted: Vec<String> = capabilities
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     let sha256 = inspected["sha256"].as_str().unwrap();
     store
         .trust(path.to_path_buf(), sha256, granted, "user")
