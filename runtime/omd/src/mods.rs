@@ -3546,17 +3546,49 @@ fn invoke(
         }
         payload => payload,
     };
-    let retained = !matches!(event, "terminal" | "inspect" | "workspace_pre_rename" | "command_list" | "config_list" | "component") && !(event == "intercept" && matches!(payload["surface"].as_str(), Some("render" | "input" | "mention" | "history_persist")));
-    let activation_key = if retained { access.with(|runtime| {
-        if !active() { return Err(failure("callback_cancelled")); }
-        if generation != runtime.generation { return Err(failure("stale_mod_generation")); }
-        let loaded = runtime.loaded.get(id).cloned().ok_or_else(|| failure("mod_disabled"))?;
-        runtime.check_callback_authority(&loaded)?;
-        runtime.session_key(id, thread.as_deref())
-    })? } else { None };
-    let _activation = activation_key.as_ref().map(|key| process::Stepping::enter_guarded(key, active)).transpose()?;
+    let retained = !matches!(
+        event,
+        "terminal"
+            | "inspect"
+            | "workspace_pre_rename"
+            | "command_list"
+            | "config_list"
+            | "component"
+    ) && !(event == "intercept"
+        && matches!(
+            payload["surface"].as_str(),
+            Some("render" | "input" | "mention" | "history_persist")
+        ));
+    let activation_key = if retained {
+        access.with(|runtime| {
+            if !active() {
+                return Err(failure("callback_cancelled"));
+            }
+            if generation != runtime.generation {
+                return Err(failure("stale_mod_generation"));
+            }
+            let loaded = runtime
+                .loaded
+                .get(id)
+                .cloned()
+                .ok_or_else(|| failure("mod_disabled"))?;
+            runtime.check_callback_authority(&loaded)?;
+            runtime.session_key(id, thread.as_deref())
+        })?
+    } else {
+        None
+    };
+    let _activation = activation_key
+        .as_ref()
+        .map(|key| process::Stepping::enter_guarded(key, active))
+        .transpose()?;
     let authority_active = active;
-    let admitted = || authority_active() && activation_key.as_ref().is_none_or(|key| process::session_current(key));
+    let admitted = || {
+        authority_active()
+            && activation_key
+                .as_ref()
+                .is_none_or(|key| process::session_current(key))
+    };
     let active: &dyn Fn() -> bool = &admitted;
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
@@ -3566,7 +3598,9 @@ fn invoke(
         let replaying = !replay.is_empty();
         let mut invocation =
             access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
-        if retained && invocation.loaded.session_key != activation_key { return Err(failure("callback_cancelled")); }
+        if retained && invocation.loaded.session_key != activation_key {
+            return Err(failure("callback_cancelled"));
+        }
         if invocation.migrate {
             invocation.loaded.state =
                 packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
@@ -3693,11 +3727,13 @@ fn invoke(
                 replay = receipts;
             }
             result => {
-                if result.is_err() && let Some(key) = session_key {
+                if result.is_err()
+                    && let Some(key) = session_key
+                {
                     process::invalidate_activation(&key);
                 }
                 return result;
-            },
+            }
         }
     }
 }
@@ -3841,7 +3877,9 @@ impl ModHost {
         command: Option<(&str, Value)>,
         runs: usize,
     ) -> Result<Value> {
-        let _thread = StateThread::enter(bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())));
+        let _thread = StateThread::enter(
+            bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())),
+        );
         let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
         let mut usage = (0, 0);
         let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
@@ -4058,15 +4096,49 @@ impl ModHost {
     }
 
     fn session_owner(&self, loaded: &Loaded) -> String {
-        digest(json!([self.store.root, self.project, loaded.package.id, loaded.selection.scope]).to_string().as_bytes())
+        digest(
+            json!([
+                self.store.root,
+                self.project,
+                loaded.package.id,
+                loaded.selection.scope
+            ])
+            .to_string()
+            .as_bytes(),
+        )
     }
 
     fn session_key(&self, id: &str, thread: Option<&str>) -> Result<Option<String>> {
-        let Some(loaded) = self.loaded.get(id) else { return Ok(None); };
-        if !loaded.package.compatibility.required_features.iter().any(|feature| feature == "session_activation_v1") { return Ok(None); }
-        let Some(thread) = thread else { return Ok(None); };
-        let reset = UI_RESETS.lock().ok().and_then(|resets| resets.get(&self.store.root).copied());
-        let binding = digest(json!([loaded.selection, loaded.adapter, loaded.settings_file, loaded.withheld, reset]).to_string().as_bytes());
+        let Some(loaded) = self.loaded.get(id) else {
+            return Ok(None);
+        };
+        if !loaded
+            .package
+            .compatibility
+            .required_features
+            .iter()
+            .any(|feature| feature == "session_activation_v1")
+        {
+            return Ok(None);
+        }
+        let Some(thread) = thread else {
+            return Ok(None);
+        };
+        let reset = UI_RESETS
+            .lock()
+            .ok()
+            .and_then(|resets| resets.get(&self.store.root).copied());
+        let binding = digest(
+            json!([
+                loaded.selection,
+                loaded.adapter,
+                loaded.settings_file,
+                loaded.withheld,
+                reset
+            ])
+            .to_string()
+            .as_bytes(),
+        );
         process::session_key(&self.session_owner(loaded), thread, &binding).map(Some)
     }
 
@@ -4077,7 +4149,9 @@ impl ModHost {
     }
 
     pub fn reload(&mut self) -> Result<bool> {
-        for loaded in self.loaded.values() { process::invalidate_session_owner(&self.session_owner(loaded), None); }
+        for loaded in self.loaded.values() {
+            process::invalidate_session_owner(&self.session_owner(loaded), None);
+        }
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
@@ -4473,7 +4547,19 @@ impl ModHost {
             if next.get(id).is_none_or(|loaded| {
                 !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
             }) {
-                process::invalidate_session_owner(&digest(json!([self.store.root, self.project, previous.package.id, previous.selection.scope]).to_string().as_bytes()), None);
+                process::invalidate_session_owner(
+                    &digest(
+                        json!([
+                            self.store.root,
+                            self.project,
+                            previous.package.id,
+                            previous.selection.scope
+                        ])
+                        .to_string()
+                        .as_bytes(),
+                    ),
+                    None,
+                );
                 previous.clear_ui();
             }
         }

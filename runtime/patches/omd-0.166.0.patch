@@ -35247,7 +35247,7 @@ index a25ffb80fb9e46b01702fb593fda60bf96ce6e80..743fec32cc717eb7cbe007d3cd2af7f4
  use pretty_assertions::assert_eq;
 
 diff --git a/codex-rs/tui/src/app/history_pagination.rs b/codex-rs/tui/src/app/history_pagination.rs
-index f7210795b22a63e4a40e54385ba76eda5685c44b..9a742404164b1b102f9482a1d1e6aeb5f826c6c2 100644
+index f7210795b22a63e4a40e54385ba76eda5685c44b..0ebcc39736f3180c86bbb61cfc634ac323fd2dbf 100644
 --- a/codex-rs/tui/src/app/history_pagination.rs
 +++ b/codex-rs/tui/src/app/history_pagination.rs
 @@ -10,6 +10,7 @@ use crate::history_cell::UserHistoryCell;
@@ -35281,7 +35281,7 @@ index f7210795b22a63e4a40e54385ba76eda5685c44b..9a742404164b1b102f9482a1d1e6aeb5
          turns: &[Turn],
          hidden_item_ids: &HashSet<&str>,
          thread_id: ThreadId,
-@@ -228,13 +229,19 @@ impl App {
+@@ -228,13 +229,21 @@ impl App {
          for (items, completed_turn) in completion::group_completed_turn_items(items, turns) {
              // Internal prompts stay invisible, but still separate adjacent tool groups.
              for visible in items.split(|item| hidden_item_ids.contains(item.id())) {
@@ -35296,7 +35296,9 @@ index f7210795b22a63e4a40e54385ba76eda5685c44b..9a742404164b1b102f9482a1d1e6aeb5
 +                );
 +                if let Some(turn) = completed_turn {
 +                    for cell in &mut projected {
-+                        if let Some(cell) = Arc::get_mut(cell) { cell.set_message_turn(&turn.id); }
++                        if let Some(cell) = Arc::get_mut(cell) {
++                            cell.set_message_turn(&turn.id);
++                        }
 +                    }
 +                }
 +                cells.extend(projected);
@@ -37589,7 +37591,7 @@ index 9fe4a7663bdbd4555fd1d4679dd56bd55f517514..44317197a6d77d2b2963e883b519648c
      // The source remains available to terminal scrollback in both presentation modes.
      for mode in [HistoryRenderMode::Rich, HistoryRenderMode::Raw] {
 diff --git a/codex-rs/tui/src/app/tests/user_verification_routes_tests.rs b/codex-rs/tui/src/app/tests/user_verification_routes_tests.rs
-index ca06b5196d0be62fe7bf41a4ff86f141d1818d7d..ca745780ef8f17b9bba498eb5d537117fe816f8c 100644
+index ca06b5196d0be62fe7bf41a4ff86f141d1818d7d..715415358416ba729608c836ec597aa1a9977dfc 100644
 --- a/codex-rs/tui/src/app/tests/user_verification_routes_tests.rs
 +++ b/codex-rs/tui/src/app/tests/user_verification_routes_tests.rs
 @@ -270,6 +270,8 @@ async fn inactive_thread_user_verification_preserves_foreground_stream() -> Resu
@@ -37601,11 +37603,12 @@ index ca06b5196d0be62fe7bf41a4ff86f141d1818d7d..ca745780ef8f17b9bba498eb5d537117
                  source,
                  copy_source,
                  cwd,
-@@ -285,6 +287,7 @@ async fn inactive_thread_user_verification_preserves_foreground_stream() -> Resu
+@@ -285,6 +287,8 @@ async fn inactive_thread_user_verification_preserves_foreground_stream() -> Resu
                          &cwd,
                          inline_visualization_context,
                      )
-+                    .with_message_id(message_id).with_message_turn(message_turn)
++                    .with_message_id(message_id)
++                    .with_message_turn(message_turn)
                      .with_copy_source(copy_source),
                      scrollback_reflow,
                      deferred_history_cell,
@@ -37790,18 +37793,21 @@ index d09677b93cadd0dc5ef1af7e4954b00e1b014ae1..cc26ed22d85d4ab7f38af55993805221
                  if matches!(scenario, TitleScenario::ManualRename) {
                      insta::assert_snapshot!(
 diff --git a/codex-rs/tui/src/app/transcript_export.rs b/codex-rs/tui/src/app/transcript_export.rs
-index 00775bba50a642025f173fd679f7116b21c81bd9..f41d150ef534479dd2c2a3b7e783b989fd917746 100644
+index 00775bba50a642025f173fd679f7116b21c81bd9..a445a5e6f9e97b12668f15c347335d71a1fb4130 100644
 --- a/codex-rs/tui/src/app/transcript_export.rs
 +++ b/codex-rs/tui/src/app/transcript_export.rs
-@@ -119,6 +119,7 @@ pub(super) async fn load_export_transcript(
+@@ -119,6 +119,10 @@ pub(super) async fn load_export_transcript(
              return Err(format!("could not load conversation history: {error}"));
          }
      }
-+    crate::mod_render::remember_message_history(&thread.id, thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated);
++    crate::mod_render::remember_message_history(
++        &thread.id,
++        thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated,
++    );
      let mut cells: Vec<Arc<dyn HistoryCell>> = Vec::new();
      for item in visible_export_items(thread.turns) {
          if let Some(cell) = export_activity_cell(&item) {
-@@ -127,7 +128,7 @@ pub(super) async fn load_export_transcript(
+@@ -127,7 +131,7 @@ pub(super) async fn load_export_transcript(
              cells.extend(thread_items_to_transcript_cells(
                  Some(thread_id),
                  &thread.cwd,
@@ -37975,7 +37981,7 @@ index 2adc3036ae932a2cf873062c13b2775da3c8333a..1b9c3988b30c512c5ad9b991b70b7e7d
          copy_source: Option<String>,
          cwd: PathBuf,
 diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
-index 683e7328e2a1992ad5605f0350d606c624e9dc55..f9e56dd528478da603fb83e193276cd92752490c 100644
+index 683e7328e2a1992ad5605f0350d606c624e9dc55..aace361dd51b2c59cd111f2922a1fa6f9c756212 100644
 --- a/codex-rs/tui/src/app_server_session.rs
 +++ b/codex-rs/tui/src/app_server_session.rs
 @@ -935,6 +935,7 @@ impl AppServerSession {
@@ -38025,31 +38031,40 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..f9e56dd528478da603fb83e193276cd9
      }
  }
 
-@@ -2458,6 +2468,7 @@ async fn started_thread_from_start_response(
+@@ -2458,6 +2468,10 @@ async fn started_thread_from_start_response(
      config: &Config,
      thread_params_mode: ThreadParamsMode,
  ) -> Result<AppServerStartedThread> {
-+    crate::mod_render::remember_message_history(&response.thread.id, response.thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated);
++    crate::mod_render::remember_message_history(
++        &response.thread.id,
++        response.thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated,
++    );
      let blocks_direct_input = thread_blocks_direct_input(&response.thread);
      let session = thread_session_state_from_thread_start_response(
          &response,
-@@ -2480,6 +2491,7 @@ async fn started_thread_from_resume_response(
+@@ -2480,6 +2494,10 @@ async fn started_thread_from_resume_response(
      local_settings: &LocalSettings,
      thread_params_mode: ThreadParamsMode,
  ) -> Result<AppServerStartedThread> {
-+    crate::mod_render::remember_message_history(&response.thread.id, response.thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated);
++    crate::mod_render::remember_message_history(
++        &response.thread.id,
++        response.thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated,
++    );
      let blocks_direct_input = thread_blocks_direct_input(&response.thread);
      let session = thread_session_state_from_thread_resume_response(
          &response,
-@@ -2502,6 +2514,7 @@ async fn started_thread_from_fork_response(
+@@ -2502,6 +2520,10 @@ async fn started_thread_from_fork_response(
      config: &Config,
      thread_params_mode: ThreadParamsMode,
  ) -> Result<AppServerStartedThread> {
-+    crate::mod_render::remember_message_history(&response.thread.id, response.thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated);
++    crate::mod_render::remember_message_history(
++        &response.thread.id,
++        response.thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated,
++    );
      let blocks_direct_input = thread_blocks_direct_input(&response.thread);
      let session = thread_session_state_from_thread_fork_response(
          &response,
-@@ -3008,6 +3021,7 @@ mod tests {
+@@ -3008,6 +3030,7 @@ mod tests {
              spend_control_reached: None,
              plan_type: None,
              rate_limit_reached_type: None,
@@ -38057,7 +38072,7 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..f9e56dd528478da603fb83e193276cd9
          }
      }
 
-@@ -3027,6 +3041,8 @@ mod tests {
+@@ -3027,6 +3050,8 @@ mod tests {
              display_name: "Current model".to_string(),
              description: "A test model".to_string(),
              model_specialty: None,
@@ -38067,7 +38082,7 @@ index 683e7328e2a1992ad5605f0350d606c624e9dc55..f9e56dd528478da603fb83e193276cd9
              supported_reasoning_efforts: Vec::new(),
              default_reasoning_effort: ReasoningEffort::Medium,
 diff --git a/codex-rs/tui/src/app_server_session/history.rs b/codex-rs/tui/src/app_server_session/history.rs
-index 956bb96372ba14d684e60ba31ad84e51eb406fc8..4bf764760c06f667fe9bf6407a165bf1f43529ad 100644
+index 956bb96372ba14d684e60ba31ad84e51eb406fc8..b7f23935e0672abee1b895a47bee90d51789417b 100644
 --- a/codex-rs/tui/src/app_server_session/history.rs
 +++ b/codex-rs/tui/src/app_server_session/history.rs
 @@ -14,7 +14,6 @@ use codex_app_server_protocol::ClientRequest;
@@ -38108,7 +38123,7 @@ index 956bb96372ba14d684e60ba31ad84e51eb406fc8..4bf764760c06f667fe9bf6407a165bf1
                  turn.items_view = TurnItemsView::Summary;
              }
          }
-@@ -409,12 +409,13 @@ impl AppServerSession {
+@@ -409,12 +409,16 @@ impl AppServerSession {
  fn rendered_history_rows(
      thread_id: ThreadId,
      thread: &Thread,
@@ -38119,7 +38134,10 @@ index 956bb96372ba14d684e60ba31ad84e51eb406fc8..4bf764760c06f667fe9bf6407a165bf1
      width: u16,
      rendered_rows: usize,
  ) -> usize {
-+    crate::mod_render::remember_message_history(&thread.id, thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated);
++    crate::mod_render::remember_message_history(
++        &thread.id,
++        thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated,
++    );
      let visibility = if config.show_raw_agent_reasoning {
          RawReasoningVisibility::Visible
      } else {
@@ -38167,14 +38185,17 @@ index 5cd0235f83efefbeb7f5ac82c76b2cbccfe102e8..41aa381e243f9009d1b73cde12123384
      let path = home.path().join("config.toml");
      let updated = std::fs::read_to_string(&path)?.replacen(
 diff --git a/codex-rs/tui/src/app_server_session/rollout_history.rs b/codex-rs/tui/src/app_server_session/rollout_history.rs
-index 98d979a5ff42093ded45a48a5629076bf299df41..1dfd68a41c172bb0d126b89f11af9c1c00ae701d 100644
+index 98d979a5ff42093ded45a48a5629076bf299df41..6146212a4b06c04d337aa1578651b3335bddd2b9 100644
 --- a/codex-rs/tui/src/app_server_session/rollout_history.rs
 +++ b/codex-rs/tui/src/app_server_session/rollout_history.rs
-@@ -76,6 +76,7 @@ impl AppServerSession {
+@@ -76,6 +76,10 @@ impl AppServerSession {
                  "Showing up to 100 recent prompts and final replies. Intermediate messages and tool activity are unavailable.",
              );
          }
-+        crate::mod_render::remember_message_history(&thread.id, thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated);
++        crate::mod_render::remember_message_history(
++            &thread.id,
++            thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated,
++        );
          let session = thread_session_state_from_thread_response(
              &thread.id,
              crate::windows_sandbox::host_from_environments(thread.environments.as_deref()),
@@ -41979,7 +42000,7 @@ index 997c3a2be6f3597815e5a876c5f9c3fd59fe87e1..34427628248fe8a0b370c6c2c0bc1b16
      }
 
 diff --git a/codex-rs/tui/src/chatwidget/streaming.rs b/codex-rs/tui/src/chatwidget/streaming.rs
-index 6229fd735a415ec0a0dfd1763740d0bee7075392..54b9e7a5ff4d73486f5033a9f79fed187ce96c9a 100644
+index 6229fd735a415ec0a0dfd1763740d0bee7075392..6aacd72df6c503bd7e112da9aeb30596f934d4d8 100644
 --- a/codex-rs/tui/src/chatwidget/streaming.rs
 +++ b/codex-rs/tui/src/chatwidget/streaming.rs
 @@ -108,10 +108,8 @@ impl ChatWidget {
@@ -41994,19 +42015,53 @@ index 6229fd735a415ec0a0dfd1763740d0bee7075392..54b9e7a5ff4d73486f5033a9f79fed18
              }
              let deferred_history_cell =
                  if scrollback_reflow == crate::app_event::ConsolidationScrollbackReflow::Required {
-@@ -143,7 +141,11 @@ impl ChatWidget {
+@@ -143,7 +141,45 @@ impl ChatWidget {
                      )
                  });
                  self.note_stream_consolidation_queued();
-+                let message_id = self.transcript.active_streamed_agent_message.as_ref().map(|(_, id)| id.clone()).or_else(|| if completed_message.is_some() { self.transcript.last_completed_agent_message.as_ref().map(|(_, id)| id.clone()) } else { self.transcript.last_flushed_agent_message.as_ref().map(|((_, id), _)| id.clone()) });
-+                let message_turn = self.transcript.active_streamed_agent_message.as_ref().map(|(turn, _)| turn.clone()).or_else(|| if completed_message.is_some() { self.transcript.last_completed_agent_message.as_ref().map(|(turn, _)| turn.clone()) } else { self.transcript.last_flushed_agent_message.as_ref().map(|((turn, _), _)| turn.clone()) });
++                let message_id = self
++                    .transcript
++                    .active_streamed_agent_message
++                    .as_ref()
++                    .map(|(_, id)| id.clone())
++                    .or_else(|| {
++                        if completed_message.is_some() {
++                            self.transcript
++                                .last_completed_agent_message
++                                .as_ref()
++                                .map(|(_, id)| id.clone())
++                        } else {
++                            self.transcript
++                                .last_flushed_agent_message
++                                .as_ref()
++                                .map(|((_, id), _)| id.clone())
++                        }
++                    });
++                let message_turn = self
++                    .transcript
++                    .active_streamed_agent_message
++                    .as_ref()
++                    .map(|(turn, _)| turn.clone())
++                    .or_else(|| {
++                        if completed_message.is_some() {
++                            self.transcript
++                                .last_completed_agent_message
++                                .as_ref()
++                                .map(|(turn, _)| turn.clone())
++                        } else {
++                            self.transcript
++                                .last_flushed_agent_message
++                                .as_ref()
++                                .map(|((turn, _), _)| turn.clone())
++                        }
++                    });
                  self.app_event_tx.send(AppEvent::ConsolidateAgentMessage {
 +                    message_id,
 +                    message_turn,
                      source,
                      copy_source,
                      cwd: self.config.cwd.to_path_buf(),
-@@ -463,7 +465,7 @@ impl ChatWidget {
+@@ -463,7 +499,7 @@ impl ChatWidget {
          {
              self.prepare_assistant_message();
              self.mark_safety_buffering_agent_message_started();
@@ -42015,15 +42070,20 @@ index 6229fd735a415ec0a0dfd1763740d0bee7075392..54b9e7a5ff4d73486f5033a9f79fed18
              let context = self.thread_id.and_then(|thread_id| {
                  crate::inline_visualization::InlineVisualizationContext::from_config(
                      &self.config,
-@@ -476,6 +478,7 @@ impl ChatWidget {
+@@ -476,6 +512,12 @@ impl ChatWidget {
                      self.config.cwd.as_path(),
                      context,
                  )
-+                .with_message_id(if from_replay { crate::mod_render::replay_message_id(self.thread_id, item.id.clone()) } else { Some(item.id.clone()) }).with_message_turn(Some(turn_id.to_owned()))
++                .with_message_id(if from_replay {
++                    crate::mod_render::replay_message_id(self.thread_id, item.id.clone())
++                } else {
++                    Some(item.id.clone())
++                })
++                .with_message_turn(Some(turn_id.to_owned()))
                  .with_questions(questions)
                  .with_copy_source(Some(message.clone())),
              );
-@@ -536,11 +539,6 @@ impl ChatWidget {
+@@ -536,11 +578,6 @@ impl ChatWidget {
      }
 
      /// Runs a commit tick for the current stream queue snapshot.
@@ -42035,7 +42095,7 @@ index 6229fd735a415ec0a0dfd1763740d0bee7075392..54b9e7a5ff4d73486f5033a9f79fed18
      pub(super) fn run_commit_tick_with_scope(&mut self, scope: CommitTickScope) {
          let now = Instant::now();
          let outcome = run_commit_tick(
-@@ -551,7 +549,7 @@ impl ChatWidget {
+@@ -551,7 +588,7 @@ impl ChatWidget {
              now,
          );
          for cell in outcome.cells {
@@ -42044,7 +42104,7 @@ index 6229fd735a415ec0a0dfd1763740d0bee7075392..54b9e7a5ff4d73486f5033a9f79fed18
              self.add_boxed_history(cell);
          }
          if scope == CommitTickScope::AnyMode || outcome.has_controller {
-@@ -600,7 +598,7 @@ impl ChatWidget {
+@@ -600,7 +637,7 @@ impl ChatWidget {
 
      pub(super) fn handle_stream_finished(&mut self) {
          if self.task_complete_pending {
@@ -42053,7 +42113,7 @@ index 6229fd735a415ec0a0dfd1763740d0bee7075392..54b9e7a5ff4d73486f5033a9f79fed18
              self.task_complete_pending = false;
          }
          // A completed stream indicates non-exec content was just inserted.
-@@ -627,6 +625,7 @@ impl ChatWidget {
+@@ -627,6 +664,7 @@ impl ChatWidget {
                      self.history_render_mode(),
                      inline_visualization_context,
                  )
@@ -42061,7 +42121,7 @@ index 6229fd735a415ec0a0dfd1763740d0bee7075392..54b9e7a5ff4d73486f5033a9f79fed18
                  .with_list_spacing(
                      if self.local_settings.transcript_mode.is_owned() {
                          ListSpacing::Compact
-@@ -668,11 +667,11 @@ impl ChatWidget {
+@@ -668,10 +706,22 @@ impl ChatWidget {
                  return self.clear_active_stream_tail();
              }
 
@@ -42070,12 +42130,22 @@ index 6229fd735a415ec0a0dfd1763740d0bee7075392..54b9e7a5ff4d73486f5033a9f79fed18
              let cell = history_cell::StreamingAgentTailCell::new(
                  tail_lines,
                  controller.tail_starts_stream(),
--            );
-+            ).with_message_id(self.transcript.active_streamed_agent_message.as_ref().map(|(_, id)| id.clone())).with_message_turn(self.transcript.active_streamed_agent_message.as_ref().map(|(turn, _)| turn.clone()));
++            )
++            .with_message_id(
++                self.transcript
++                    .active_streamed_agent_message
++                    .as_ref()
++                    .map(|(_, id)| id.clone()),
++            )
++            .with_message_turn(
++                self.transcript
++                    .active_streamed_agent_message
++                    .as_ref()
++                    .map(|(turn, _)| turn.clone()),
+             );
              if self
                  .transcript
-                 .active_cell
-@@ -697,7 +696,7 @@ impl ChatWidget {
+@@ -697,7 +747,7 @@ impl ChatWidget {
                  return self.clear_active_stream_tail();
              }
 
@@ -44189,7 +44259,7 @@ index 9f80e5e5d7893a4fdba82f4b317fd8af29806a8c..23295d1c59fd7dbd282770b54b6b30ac
          vec![format!("mcp:{}", self.call_id)]
      }
 diff --git a/codex-rs/tui/src/history_cell/messages.rs b/codex-rs/tui/src/history_cell/messages.rs
-index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..f18dc0d679537286d48c4d0a40c571dbd2f5592a 100644
+index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..aafe82e71ece1890f6749b42939a00d05a240d02 100644
 --- a/codex-rs/tui/src/history_cell/messages.rs
 +++ b/codex-rs/tui/src/history_cell/messages.rs
 @@ -223,6 +223,19 @@ impl UserHistoryCell {
@@ -44249,13 +44319,18 @@ index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..f18dc0d679537286d48c4d0a40c571db
              lines,
              is_first_line,
          }
-@@ -514,6 +543,23 @@ impl AgentMessageCell {
+@@ -514,6 +543,28 @@ impl AgentMessageCell {
  }
 
  impl HistoryCell for AgentMessageCell {
-+    fn set_message_turn(&mut self, turn: &str) { self.message_turn = Some(turn.to_owned()); }
++    fn set_message_turn(&mut self, turn: &str) {
++        self.message_turn = Some(turn.to_owned());
++    }
 +    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
-+        let message_id = crate::mod_render::message_identity(self.message_turn.as_deref(), self.message_id.as_deref());
++        let message_id = crate::mod_render::message_identity(
++            self.message_turn.as_deref(),
++            self.message_id.as_deref(),
++        );
 +        let text = self
 +            .lines
 +            .iter()
@@ -44273,7 +44348,7 @@ index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..f18dc0d679537286d48c4d0a40c571db
      fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
          visible_lines(self.display_hyperlink_lines(width))
      }
-@@ -569,6 +615,8 @@ impl HistoryCell for AgentMessageCell {
+@@ -569,6 +620,8 @@ impl HistoryCell for AgentMessageCell {
  /// because resolving their local file links depends on filesystem state that can change later.
  #[derive(Debug)]
  pub(crate) struct AgentMarkdownCell {
@@ -44282,7 +44357,7 @@ index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..f18dc0d679537286d48c4d0a40c571db
      markdown_source: String,
      copy_source: Option<String>,
      cwd: PathBuf,
-@@ -579,6 +627,16 @@ pub(crate) struct AgentMarkdownCell {
+@@ -579,6 +632,16 @@ pub(crate) struct AgentMarkdownCell {
  }
 
  impl AgentMarkdownCell {
@@ -44299,7 +44374,7 @@ index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..f18dc0d679537286d48c4d0a40c571db
      pub(crate) fn with_copy_source(mut self, source: Option<String>) -> Self {
          self.copy_source = source;
          self
-@@ -609,6 +667,8 @@ impl AgentMarkdownCell {
+@@ -609,6 +672,8 @@ impl AgentMarkdownCell {
              (!crate::inline_visualization::contains_inline_visualization(&markdown_source))
                  .then(MarkdownRenderCache::default);
          Self {
@@ -44308,17 +44383,22 @@ index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..f18dc0d679537286d48c4d0a40c571db
              markdown_source,
              copy_source: None,
              cwd: cwd.to_path_buf(),
-@@ -711,10 +771,22 @@ impl AgentMarkdownCell {
+@@ -711,10 +776,27 @@ impl AgentMarkdownCell {
  }
 
  impl HistoryCell for AgentMarkdownCell {
-+    fn set_message_turn(&mut self, turn: &str) { self.message_turn = Some(turn.to_owned()); }
++    fn set_message_turn(&mut self, turn: &str) {
++        self.message_turn = Some(turn.to_owned());
++    }
      fn copy_source(&self) -> Option<&str> {
          Some(self.copy_source.as_deref().unwrap_or(&self.markdown_source))
      }
 
 +    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
-+        let message_id = crate::mod_render::message_identity(self.message_turn.as_deref(), self.message_id.as_deref());
++        let message_id = crate::mod_render::message_identity(
++            self.message_turn.as_deref(),
++            self.message_id.as_deref(),
++        );
 +        let text = self.markdown_source.clone();
 +        Some(crate::mod_render::RenderTarget::new(
 +            "assistant_message",
@@ -44331,7 +44411,7 @@ index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..f18dc0d679537286d48c4d0a40c571db
      fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
          visible_lines(self.display_hyperlink_lines(width))
      }
-@@ -752,19 +824,33 @@ mod tests;
+@@ -752,19 +834,35 @@ mod tests;
  #[derive(Debug, Eq)]
  pub(crate) struct StreamingAgentTailCell {
      lines: Vec<HyperlinkLine>,
@@ -44343,7 +44423,9 @@ index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..f18dc0d679537286d48c4d0a40c571db
  impl PartialEq for StreamingAgentTailCell {
      fn eq(&self, other: &Self) -> bool {
 -        self.is_first_line == other.is_first_line
-+        self.message_turn == other.message_turn && self.message_id == other.message_id && self.is_first_line == other.is_first_line
++        self.message_turn == other.message_turn
++            && self.message_id == other.message_id
++            && self.is_first_line == other.is_first_line
              && lines_with_sources_eq(&self.lines, &other.lines)
      }
  }
@@ -44366,13 +44448,18 @@ index 66f407a5106afeeace09f0a3a9cbadf3e3fe4187..f18dc0d679537286d48c4d0a40c571db
              lines,
              is_first_line,
          }
-@@ -772,6 +858,23 @@ impl StreamingAgentTailCell {
+@@ -772,6 +870,28 @@ impl StreamingAgentTailCell {
  }
 
  impl HistoryCell for StreamingAgentTailCell {
-+    fn set_message_turn(&mut self, turn: &str) { self.message_turn = Some(turn.to_owned()); }
++    fn set_message_turn(&mut self, turn: &str) {
++        self.message_turn = Some(turn.to_owned());
++    }
 +    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
-+        let message_id = crate::mod_render::message_identity(self.message_turn.as_deref(), self.message_id.as_deref());
++        let message_id = crate::mod_render::message_identity(
++            self.message_turn.as_deref(),
++            self.message_id.as_deref(),
++        );
 +        let text = self
 +            .lines
 +            .iter()
@@ -45261,7 +45348,7 @@ index fb15a05775d4063e2780ba29d0ae15e9ad5297c8..30429e0559d67cddbb8a71b1a90a2e21
  │ https://chatgpt.com/codex/install.ps1 | iex' to update.                                                    │
  │                                                                                                            │
 diff --git a/codex-rs/tui/src/history_cell/tests.rs b/codex-rs/tui/src/history_cell/tests.rs
-index cc7f2f668c054576111254d561e5d64104a86ddc..95c1d0c09b36a38635617c81fa32d33a7ea97344 100644
+index cc7f2f668c054576111254d561e5d64104a86ddc..6eb6b832af1e676dc20ae27778ce14c1a7ea2022 100644
 --- a/codex-rs/tui/src/history_cell/tests.rs
 +++ b/codex-rs/tui/src/history_cell/tests.rs
 @@ -1843,6 +1843,54 @@ fn completed_mcp_tool_call_multiple_outputs_inline_snapshot() {
@@ -45319,25 +45406,45 @@ index cc7f2f668c054576111254d561e5d64104a86ddc..95c1d0c09b36a38635617c81fa32d33a
  #[test]
  fn session_header_clamps_to_narrow_width() {
      const WIDTH: u16 = 44;
-@@ -3224,3 +3272,31 @@ fn consolidation_walker_replaces_agent_message_cells() {
+@@ -3224,3 +3272,57 @@ fn consolidation_walker_replaces_agent_message_cells() {
          "second cell should be AgentMarkdownCell"
      );
  }
 +
 +#[test]
 +fn assistant_message_identity_distinguishes_equal_text_and_survives_reflow() {
-+    let first = AgentMarkdownCell::new("same text".into(), &test_cwd()).with_message_id(Some("message-one".into())).with_message_turn(Some("turn-one".into()));
-+    let second = AgentMarkdownCell::new("same text".into(), &test_cwd()).with_message_id(Some("message-two".into())).with_message_turn(Some("turn-one".into()));
++    let first = AgentMarkdownCell::new("same text".into(), &test_cwd())
++        .with_message_id(Some("message-one".into()))
++        .with_message_turn(Some("turn-one".into()));
++    let second = AgentMarkdownCell::new("same text".into(), &test_cwd())
++        .with_message_id(Some("message-two".into()))
++        .with_message_turn(Some("turn-one".into()));
 +    let original = first.render_target().unwrap();
 +    assert_eq!(original.props["message_id"], "turn-one:message-one");
-+    assert_ne!(original.props["message_id"], second.render_target().unwrap().props["message_id"]);
-+    let reused = AgentMarkdownCell::new("same text".into(), &test_cwd()).with_message_id(Some("message-one".into())).with_message_turn(Some("turn-two".into()));
-+    assert_ne!(original.props["message_id"], reused.render_target().unwrap().props["message_id"]);
++    assert_ne!(
++        original.props["message_id"],
++        second.render_target().unwrap().props["message_id"]
++    );
++    let reused = AgentMarkdownCell::new("same text".into(), &test_cwd())
++        .with_message_id(Some("message-one".into()))
++        .with_message_turn(Some("turn-two".into()));
++    assert_ne!(
++        original.props["message_id"],
++        reused.render_target().unwrap().props["message_id"]
++    );
 +    first.display_lines(8);
 +    first.display_lines(80);
-+    assert_eq!(original.props["message_id"], first.render_target().unwrap().props["message_id"]);
-+    let streaming = StreamingAgentTailCell::new(vec![Line::from("partial").into()], true).with_message_id(Some("message-one".into())).with_message_turn(Some("turn-one".into()));
-+    assert_eq!(original.props["message_id"], streaming.render_target().unwrap().props["message_id"]);
++    assert_eq!(
++        original.props["message_id"],
++        first.render_target().unwrap().props["message_id"]
++    );
++    let streaming = StreamingAgentTailCell::new(vec![Line::from("partial").into()], true)
++        .with_message_id(Some("message-one".into()))
++        .with_message_turn(Some("turn-one".into()));
++    assert_eq!(
++        original.props["message_id"],
++        streaming.render_target().unwrap().props["message_id"]
++    );
 +}
 +
 +#[test]
@@ -45347,9 +45454,15 @@ index cc7f2f668c054576111254d561e5d64104a86ddc..95c1d0c09b36a38635617c81fa32d33a
 +    let _environment = crate::omd::tests::omd_environment(&directory.path().join("store"));
 +    let thread = codex_protocol::ThreadId::new();
 +    crate::mod_render::remember_message_history(&thread.to_string(), false);
-+    assert_eq!(crate::mod_render::replay_message_id(Some(thread), "item-1".into()), None);
++    assert_eq!(
++        crate::mod_render::replay_message_id(Some(thread), "item-1".into()),
++        None
++    );
 +    crate::mod_render::remember_message_history(&thread.to_string(), true);
-+    assert_eq!(crate::mod_render::replay_message_id(Some(thread), "item-1".into()), Some("item-1".into()));
++    assert_eq!(
++        crate::mod_render::replay_message_id(Some(thread), "item-1".into()),
++        Some("item-1".into())
++    );
 +}
 diff --git a/codex-rs/tui/src/history_cell/warnings.rs b/codex-rs/tui/src/history_cell/warnings.rs
 index e74fde9314801522958fd14040c24d6458bebcec..8f2b0192d0db4ddb47b863d0e32b026067c03cc0 100644
@@ -45844,7 +45957,7 @@ index 41b1d239c1e3b81bcd4970e2aa0045e9c774912f..a075f0ea0999220e177129a1c6d54955
  /// `.tmTheme` file under `{CODEX_HOME}/themes/`.
  pub(crate) struct ThemeEntry {
 diff --git a/codex-rs/tui/src/resume_picker.rs b/codex-rs/tui/src/resume_picker.rs
-index c054f23d1dfefcc2ee38dc0369f9504cb4489a05..2dc6ac56a8a01a14a55e4c5f8913f41d60939d63 100644
+index c054f23d1dfefcc2ee38dc0369f9504cb4489a05..55b11b3cfc42bc06ab643a6e6a0a30b675946705 100644
 --- a/codex-rs/tui/src/resume_picker.rs
 +++ b/codex-rs/tui/src/resume_picker.rs
 @@ -7052,7 +7052,8 @@ session_picker_view = "dense"
@@ -45857,7 +45970,7 @@ index c054f23d1dfefcc2ee38dc0369f9504cb4489a05..2dc6ac56a8a01a14a55e4c5f8913f41d
          use crate::thread_transcript::thread_to_transcript_cells;
 
          let thread_id = ThreadId::new();
-@@ -7122,6 +7123,20 @@ session_picker_view = "dense"
+@@ -7122,6 +7123,34 @@ session_picker_view = "dense"
              }],
          };
 
@@ -45868,12 +45981,26 @@ index c054f23d1dfefcc2ee38dc0369f9504cb4489a05..2dc6ac56a8a01a14a55e4c5f8913f41d
 +        let mut repeated = canonical.turns[0].clone();
 +        repeated.id = "turn-two".into();
 +        canonical.turns.push(repeated);
-+        let identities = |thread| thread_to_transcript_cells(thread, RawReasoningVisibility::Visible, None)
-+            .into_iter().filter_map(|cell| cell.render_target()).filter(|target| target.component == "assistant_message")
-+            .map(|target| target.props["message_id"].clone()).collect::<Vec<_>>();
-+        assert_eq!(identities(canonical.clone()), vec![serde_json::json!("turn-1:agent-1"), serde_json::json!("turn-two:agent-1")]);
++        let identities = |thread| {
++            thread_to_transcript_cells(thread, RawReasoningVisibility::Visible, None)
++                .into_iter()
++                .filter_map(|cell| cell.render_target())
++                .filter(|target| target.component == "assistant_message")
++                .map(|target| target.props["message_id"].clone())
++                .collect::<Vec<_>>()
++        };
++        assert_eq!(
++            identities(canonical.clone()),
++            vec![
++                serde_json::json!("turn-1:agent-1"),
++                serde_json::json!("turn-two:agent-1")
++            ]
++        );
 +        canonical.history_mode = codex_app_server_protocol::ThreadHistoryMode::Legacy;
-+        assert_eq!(identities(canonical), vec![serde_json::Value::Null, serde_json::Value::Null]);
++        assert_eq!(
++            identities(canonical),
++            vec![serde_json::Value::Null, serde_json::Value::Null]
++        );
 +
          let rendered = thread_to_transcript_cells(
              thread,
@@ -47323,7 +47450,7 @@ index 3cb54b2cf73b665e2606e99b827e06973e695ac1..e328e146d698deed8e50555c6c599fb2
              shimmer,
          ));
 diff --git a/codex-rs/tui/src/streaming/controller.rs b/codex-rs/tui/src/streaming/controller.rs
-index 8937b4c096ba6bdd48fd11cf8e173261eb0ec564..bd27e3535b81e8a92c7a60019d76db7f2a69ecf1 100644
+index 8937b4c096ba6bdd48fd11cf8e173261eb0ec564..9337c117e5501bcc2dd09ee90648059e2abc8919 100644
 --- a/codex-rs/tui/src/streaming/controller.rs
 +++ b/codex-rs/tui/src/streaming/controller.rs
 @@ -588,11 +588,17 @@ impl StreamCore {
@@ -47352,12 +47479,14 @@ index 8937b4c096ba6bdd48fd11cf8e173261eb0ec564..bd27e3535b81e8a92c7a60019d76db7f
              header_emitted: false,
          }
      }
-@@ -728,7 +735,7 @@ impl StreamController {
+@@ -728,7 +735,9 @@ impl StreamController {
                  let header_emitted = self.header_emitted;
                  self.header_emitted = true;
                  !header_emitted
 -            }),
-+            }).with_message_id(self.message_identity.as_ref().map(|(_, id)| id.clone())).with_message_turn(self.message_identity.as_ref().map(|(turn, _)| turn.clone())),
++            })
++            .with_message_id(self.message_identity.as_ref().map(|(_, id)| id.clone()))
++            .with_message_turn(self.message_identity.as_ref().map(|(turn, _)| turn.clone())),
          ))
      }
  }
@@ -47576,7 +47705,7 @@ index 08118acd484916d477f447b805a64991a59a77ea..c7bf86f5126cb083c21c69eb7725dd83
              );
              let mut expected_replay = vec![b'x'; 2_048];
 diff --git a/codex-rs/tui/src/thread_transcript.rs b/codex-rs/tui/src/thread_transcript.rs
-index b2322a57a26aa172db5e8db736d86f6f5872f48f..46cff52d07fe58845702ff56ece9a1c1a5616b97 100644
+index b2322a57a26aa172db5e8db736d86f6f5872f48f..e80794086eba1b6d8008d5afa6e48d24c8aa941b 100644
 --- a/codex-rs/tui/src/thread_transcript.rs
 +++ b/codex-rs/tui/src/thread_transcript.rs
 @@ -16,6 +16,7 @@ use crate::history_cell::split_reasoning_summary_parts;
@@ -47621,15 +47750,18 @@ index b2322a57a26aa172db5e8db736d86f6f5872f48f..46cff52d07fe58845702ff56ece9a1c1
  enum PendingActivity {
      Computer(crate::history_cell::ComputerActivityCell),
      Exploration(crate::exec_cell::ExecCell),
-@@ -97,6 +125,7 @@ pub(crate) fn thread_to_transcript_cells(
+@@ -97,6 +125,10 @@ pub(crate) fn thread_to_transcript_cells(
      raw_reasoning_visibility: RawReasoningVisibility,
      config: Option<&Config>,
  ) -> TranscriptCells {
-+    crate::mod_render::remember_message_history(&thread.id, thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated);
++    crate::mod_render::remember_message_history(
++        &thread.id,
++        thread.history_mode == codex_app_server_protocol::ThreadHistoryMode::Paginated,
++    );
      let cwd = thread.cwd;
      let thread_id = ThreadId::from_string(&thread.id).ok();
      let mut cells = thread
-@@ -106,10 +135,13 @@ pub(crate) fn thread_to_transcript_cells(
+@@ -106,10 +138,18 @@ pub(crate) fn thread_to_transcript_cells(
              thread_items_to_transcript_cells(
                  thread_id,
                  &cwd,
@@ -47637,15 +47769,19 @@ index b2322a57a26aa172db5e8db736d86f6f5872f48f..46cff52d07fe58845702ff56ece9a1c1
 +                turn.items,
                  raw_reasoning_visibility,
                  config,
--            )
-+            ).into_iter().map(|mut cell| {
-+                if let Some(cell) = Arc::get_mut(&mut cell) { cell.set_message_turn(&turn.id); }
+             )
++            .into_iter()
++            .map(|mut cell| {
++                if let Some(cell) = Arc::get_mut(&mut cell) {
++                    cell.set_message_turn(&turn.id);
++                }
 +                cell
-+            }).collect::<TranscriptCells>()
++            })
++            .collect::<TranscriptCells>()
          })
          .collect::<TranscriptCells>();
      if cells.is_empty() {
-@@ -123,7 +155,7 @@ pub(crate) fn thread_to_transcript_cells(
+@@ -123,7 +163,7 @@ pub(crate) fn thread_to_transcript_cells(
  pub(crate) fn thread_items_to_transcript_cells(
      thread_id: Option<ThreadId>,
      cwd: &AbsolutePathBuf,
@@ -47654,7 +47790,7 @@ index b2322a57a26aa172db5e8db736d86f6f5872f48f..46cff52d07fe58845702ff56ece9a1c1
      raw_reasoning_visibility: RawReasoningVisibility,
      config: Option<&Config>,
  ) -> TranscriptCells {
-@@ -133,14 +165,17 @@ pub(crate) fn thread_items_to_transcript_cells(
+@@ -133,14 +173,17 @@ pub(crate) fn thread_items_to_transcript_cells(
      let mut cells: TranscriptCells = Vec::new();
      let mut pending = None;
      for item in items {
@@ -47672,7 +47808,7 @@ index b2322a57a26aa172db5e8db736d86f6f5872f48f..46cff52d07fe58845702ff56ece9a1c1
              ) {
                  match group {
                      PendingActivity::Computer(group) => group.group.push_detail(cell),
-@@ -202,9 +237,11 @@ pub(crate) fn thread_items_to_transcript_cells(
+@@ -202,9 +245,11 @@ pub(crate) fn thread_items_to_transcript_cells(
              item => {
                  let projected = item_to_cells(
                      item,
@@ -47684,7 +47820,7 @@ index b2322a57a26aa172db5e8db736d86f6f5872f48f..46cff52d07fe58845702ff56ece9a1c1
                  );
                  if !projected.is_empty() {
                      PendingActivity::flush(&mut pending, &mut cells);
-@@ -220,9 +257,11 @@ pub(crate) fn thread_items_to_transcript_cells(
+@@ -220,9 +265,11 @@ pub(crate) fn thread_items_to_transcript_cells(
  /// Project one item without changing the active widget or its turn lifecycle.
  fn item_to_cells(
      item: ThreadItemPayload,
@@ -47696,16 +47832,19 @@ index b2322a57a26aa172db5e8db736d86f6f5872f48f..46cff52d07fe58845702ff56ece9a1c1
  ) -> TranscriptCells {
      let mut cells: TranscriptCells = Vec::new();
      match item {
-@@ -269,7 +308,7 @@ fn item_to_cells(
+@@ -269,7 +316,10 @@ fn item_to_cells(
              cells.push(Arc::new(cell.with_async_replies(replies, cwd.as_path())));
          }
          ThreadItemPayload::AgentMessage {
 -            text, questions, ..
-+            id, text, questions, ..
++            id,
++            text,
++            questions,
++            ..
          } => {
              let parsed = parse_assistant_markdown(&text, cwd.as_path());
              if !parsed.visible_markdown.trim().is_empty() {
-@@ -279,6 +318,7 @@ fn item_to_cells(
+@@ -279,6 +329,7 @@ fn item_to_cells(
                          cwd.as_path(),
                          inline_visualization_context,
                      )
@@ -47713,7 +47852,7 @@ index b2322a57a26aa172db5e8db736d86f6f5872f48f..46cff52d07fe58845702ff56ece9a1c1
                      .with_questions(questions.as_deref().unwrap_or_default()),
                  ));
              }
-@@ -341,7 +381,7 @@ fn item_to_cells(
+@@ -341,7 +392,7 @@ fn item_to_cells(
                  cells.push(Arc::new(command.into_cell()));
              }
          }
@@ -70194,10 +70333,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b893868451e59ae3ce9437f49296aba03d70a475
+index 0000000000000000000000000000000000000000..b7444023d88331515cd6f82e074e7f981c338e62
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2634 @@
+@@ -0,0 +1,2639 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -71646,8 +71785,13 @@ index 0000000000000000000000000000000000000000..b893868451e59ae3ce9437f49296aba0
 +                        codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
 +                    })
 +                    .collect::<String>();
-+                if self.inventory.contains(thread) { self.inventory.answer(thread, &text); }
-+                if let Some(lead) = ThreadId::from_string(thread).ok().and_then(|thread| self.core.expansion.thread(thread)) {
++                if self.inventory.contains(thread) {
++                    self.inventory.answer(thread, &text);
++                }
++                if let Some(lead) = ThreadId::from_string(thread)
++                    .ok()
++                    .and_then(|thread| self.core.expansion.thread(thread))
++                {
 +                    self.core.event("assistant_message", json!({"thread_id": thread, "turn_id": turn_store.level_id(), "message_id": format!("{}:{}", turn_store.level_id(), message.id), "text": text.chars().take(8192).collect::<String>(), "truncated": text.chars().count() > 8192}), Some(&lead)).await;
 +                }
 +            }
@@ -78892,10 +79036,10 @@ index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..79965ad0653b0624a891bd41c1035b61b4fd21f9
+index 0000000000000000000000000000000000000000..f0f739685494460c5ece56d6eb9d07bfe1387fb3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,750 @@
+@@ -0,0 +1,752 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -79605,7 +79749,9 @@ index 0000000000000000000000000000000000000000..79965ad0653b0624a891bd41c1035b61
 +
 +pub(in crate::mods) fn release_thread(core: &Core, thread: ThreadId) {
 +    clear_timers(core, Some(thread), None);
-+    if let Ok(runtime) = core.runtime.lock() { runtime.release_thread_activations(&thread.to_string()); }
++    if let Ok(runtime) = core.runtime.lock() {
++        runtime.release_thread_activations(&thread.to_string());
++    }
 +}
 +
 +fn clear_timers(core: &Core, thread: Option<ThreadId>, owner: Option<&str>) {
@@ -115286,10 +115432,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b6fec094a5a6b986de36084b9c728c316dcb897d
+index 0000000000000000000000000000000000000000..b7b6dd2a2df056913111292bad522650ecc0f505
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7067 @@
+@@ -0,0 +1,7153 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -118838,17 +118984,49 @@ index 0000000000000000000000000000000000000000..b6fec094a5a6b986de36084b9c728c31
 +        }
 +        payload => payload,
 +    };
-+    let retained = !matches!(event, "terminal" | "inspect" | "workspace_pre_rename" | "command_list" | "config_list" | "component") && !(event == "intercept" && matches!(payload["surface"].as_str(), Some("render" | "input" | "mention" | "history_persist")));
-+    let activation_key = if retained { access.with(|runtime| {
-+        if !active() { return Err(failure("callback_cancelled")); }
-+        if generation != runtime.generation { return Err(failure("stale_mod_generation")); }
-+        let loaded = runtime.loaded.get(id).cloned().ok_or_else(|| failure("mod_disabled"))?;
-+        runtime.check_callback_authority(&loaded)?;
-+        runtime.session_key(id, thread.as_deref())
-+    })? } else { None };
-+    let _activation = activation_key.as_ref().map(|key| process::Stepping::enter_guarded(key, active)).transpose()?;
++    let retained = !matches!(
++        event,
++        "terminal"
++            | "inspect"
++            | "workspace_pre_rename"
++            | "command_list"
++            | "config_list"
++            | "component"
++    ) && !(event == "intercept"
++        && matches!(
++            payload["surface"].as_str(),
++            Some("render" | "input" | "mention" | "history_persist")
++        ));
++    let activation_key = if retained {
++        access.with(|runtime| {
++            if !active() {
++                return Err(failure("callback_cancelled"));
++            }
++            if generation != runtime.generation {
++                return Err(failure("stale_mod_generation"));
++            }
++            let loaded = runtime
++                .loaded
++                .get(id)
++                .cloned()
++                .ok_or_else(|| failure("mod_disabled"))?;
++            runtime.check_callback_authority(&loaded)?;
++            runtime.session_key(id, thread.as_deref())
++        })?
++    } else {
++        None
++    };
++    let _activation = activation_key
++        .as_ref()
++        .map(|key| process::Stepping::enter_guarded(key, active))
++        .transpose()?;
 +    let authority_active = active;
-+    let admitted = || authority_active() && activation_key.as_ref().is_none_or(|key| process::session_current(key));
++    let admitted = || {
++        authority_active()
++            && activation_key
++                .as_ref()
++                .is_none_or(|key| process::session_current(key))
++    };
 +    let active: &dyn Fn() -> bool = &admitted;
 +    let started = Instant::now();
 +    let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
@@ -118858,7 +119036,9 @@ index 0000000000000000000000000000000000000000..b6fec094a5a6b986de36084b9c728c31
 +        let replaying = !replay.is_empty();
 +        let mut invocation =
 +            access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
-+        if retained && invocation.loaded.session_key != activation_key { return Err(failure("callback_cancelled")); }
++        if retained && invocation.loaded.session_key != activation_key {
++            return Err(failure("callback_cancelled"));
++        }
 +        if invocation.migrate {
 +            invocation.loaded.state =
 +                packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
@@ -118985,11 +119165,13 @@ index 0000000000000000000000000000000000000000..b6fec094a5a6b986de36084b9c728c31
 +                replay = receipts;
 +            }
 +            result => {
-+                if result.is_err() && let Some(key) = session_key {
++                if result.is_err()
++                    && let Some(key) = session_key
++                {
 +                    process::invalidate_activation(&key);
 +                }
 +                return result;
-+            },
++            }
 +        }
 +    }
 +}
@@ -119133,7 +119315,9 @@ index 0000000000000000000000000000000000000000..b6fec094a5a6b986de36084b9c728c31
 +        command: Option<(&str, Value)>,
 +        runs: usize,
 +    ) -> Result<Value> {
-+        let _thread = StateThread::enter(bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())));
++        let _thread = StateThread::enter(
++            bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())),
++        );
 +        let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
 +        let mut usage = (0, 0);
 +        let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
@@ -119350,15 +119534,49 @@ index 0000000000000000000000000000000000000000..b6fec094a5a6b986de36084b9c728c31
 +    }
 +
 +    fn session_owner(&self, loaded: &Loaded) -> String {
-+        digest(json!([self.store.root, self.project, loaded.package.id, loaded.selection.scope]).to_string().as_bytes())
++        digest(
++            json!([
++                self.store.root,
++                self.project,
++                loaded.package.id,
++                loaded.selection.scope
++            ])
++            .to_string()
++            .as_bytes(),
++        )
 +    }
 +
 +    fn session_key(&self, id: &str, thread: Option<&str>) -> Result<Option<String>> {
-+        let Some(loaded) = self.loaded.get(id) else { return Ok(None); };
-+        if !loaded.package.compatibility.required_features.iter().any(|feature| feature == "session_activation_v1") { return Ok(None); }
-+        let Some(thread) = thread else { return Ok(None); };
-+        let reset = UI_RESETS.lock().ok().and_then(|resets| resets.get(&self.store.root).copied());
-+        let binding = digest(json!([loaded.selection, loaded.adapter, loaded.settings_file, loaded.withheld, reset]).to_string().as_bytes());
++        let Some(loaded) = self.loaded.get(id) else {
++            return Ok(None);
++        };
++        if !loaded
++            .package
++            .compatibility
++            .required_features
++            .iter()
++            .any(|feature| feature == "session_activation_v1")
++        {
++            return Ok(None);
++        }
++        let Some(thread) = thread else {
++            return Ok(None);
++        };
++        let reset = UI_RESETS
++            .lock()
++            .ok()
++            .and_then(|resets| resets.get(&self.store.root).copied());
++        let binding = digest(
++            json!([
++                loaded.selection,
++                loaded.adapter,
++                loaded.settings_file,
++                loaded.withheld,
++                reset
++            ])
++            .to_string()
++            .as_bytes(),
++        );
 +        process::session_key(&self.session_owner(loaded), thread, &binding).map(Some)
 +    }
 +
@@ -119369,7 +119587,9 @@ index 0000000000000000000000000000000000000000..b6fec094a5a6b986de36084b9c728c31
 +    }
 +
 +    pub fn reload(&mut self) -> Result<bool> {
-+        for loaded in self.loaded.values() { process::invalidate_session_owner(&self.session_owner(loaded), None); }
++        for loaded in self.loaded.values() {
++            process::invalidate_session_owner(&self.session_owner(loaded), None);
++        }
 +        for loaded in self.loaded.values_mut() {
 +            loaded.clear_ui();
 +        }
@@ -119765,7 +119985,19 @@ index 0000000000000000000000000000000000000000..b6fec094a5a6b986de36084b9c728c31
 +            if next.get(id).is_none_or(|loaded| {
 +                !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
 +            }) {
-+                process::invalidate_session_owner(&digest(json!([self.store.root, self.project, previous.package.id, previous.selection.scope]).to_string().as_bytes()), None);
++                process::invalidate_session_owner(
++                    &digest(
++                        json!([
++                            self.store.root,
++                            self.project,
++                            previous.package.id,
++                            previous.selection.scope
++                        ])
++                        .to_string()
++                        .as_bytes(),
++                    ),
++                    None,
++                );
 +                previous.clear_ui();
 +            }
 +        }
@@ -123477,10 +123709,10 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ff841ac778270df8844e07362727b986a49ad2e
+index 0000000000000000000000000000000000000000..fab58880a936b02e99ccd8443c5e60b193be6572
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,515 @@
+@@ -0,0 +1,530 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -123795,30 +124027,45 @@ index 0000000000000000000000000000000000000000..5ff841ac778270df8844e07362727b98
 +    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
 +    let render = event == "intercept" && request["payload"]["surface"] == "render";
 +    let component = event == "component";
-+    let session = loaded.session_key.as_ref().filter(|_| !render && !component && !matches!(event, "terminal" | "inspect" | "workspace_pre_rename" | "command_list" | "config_list") && !(event == "intercept" && matches!(request["payload"]["surface"].as_str(), Some("input" | "mention" | "history_persist"))));
++    let session = loaded.session_key.as_ref().filter(|_| {
++        !render
++            && !component
++            && !matches!(
++                event,
++                "terminal" | "inspect" | "workspace_pre_rename" | "command_list" | "config_list"
++            )
++            && !(event == "intercept"
++                && matches!(
++                    request["payload"]["surface"].as_str(),
++                    Some("input" | "mention" | "history_persist")
++                ))
++    });
 +    request.invocation["activation_id"] = json!(loaded.session_key);
 +    request.invocation["session_activation"] = json!(session.is_some());
-+    let warm = (session.is_some() || render || component || loaded.package.environment.is_empty()).then(|| {
-+        request.invocation["serve"] = Value::Bool(session.is_some() || render || component);
-+        request.invocation["reuse"] = Value::Bool(session.is_none() && !render && !component);
-+        if let Some(key) = session { return key.clone(); }
-+        if component {
-+            let instance = request["payload"]["instance"].as_str().unwrap_or(name);
-+            return component_key(&loaded.package.id, instance, identity);
-+        }
-+        if !render {
-+            return format!("runner:{identity}");
-+        }
-+        let mut key = Sha256::new();
-+        key.update(identity);
-+        for (field, value) in request.invocation.as_object().into_iter().flatten() {
-+            if !["name", "payload", "receipts", "virtual_time_ms"].contains(&field.as_str()) {
-+                key.update(field);
-+                key.update(value.to_string());
++    let warm = (session.is_some() || render || component || loaded.package.environment.is_empty())
++        .then(|| {
++            request.invocation["serve"] = Value::Bool(session.is_some() || render || component);
++            request.invocation["reuse"] = Value::Bool(session.is_none() && !render && !component);
++            if let Some(key) = session {
++                return key.clone();
 +            }
-+        }
-+        format!("runner:{:x}", key.finalize())
-+    });
++            if component {
++                let instance = request["payload"]["instance"].as_str().unwrap_or(name);
++                return component_key(&loaded.package.id, instance, identity);
++            }
++            if !render {
++                return format!("runner:{identity}");
++            }
++            let mut key = Sha256::new();
++            key.update(identity);
++            for (field, value) in request.invocation.as_object().into_iter().flatten() {
++                if !["name", "payload", "receipts", "virtual_time_ms"].contains(&field.as_str()) {
++                    key.update(field);
++                    key.update(value.to_string());
++                }
++            }
++            format!("runner:{:x}", key.finalize())
++        });
 +    let started = Instant::now();
 +    let budget = Duration::from_millis(loaded.package.hook_budget_ms);
 +    request.invocation["receipts"] = Value::Array(receipts.clone());
@@ -130821,10 +131068,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4da1f24764
+index 0000000000000000000000000000000000000000..ef6c59a7bfe0c015a59349e2c5e13b7d1477d962
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,965 @@
+@@ -0,0 +1,1024 @@
 +use super::Result;
 +use super::code_cache::CacheRoot;
 +use super::code_cache::CodeCache;
@@ -131256,8 +131503,14 @@ index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4d
 +
 +/// Stops every pooled and spare runner, so the next callback starts as at launch.
 +pub(super) fn stop_runners() {
-+    SESSION_BINDINGS.lock().unwrap_or_else(PoisonError::into_inner).clear();
-+    SESSION_KEYS.lock().unwrap_or_else(PoisonError::into_inner).clear();
++    SESSION_BINDINGS
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .clear();
++    SESSION_KEYS
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .clear();
 +    for runner in retire_warm(|_| true) {
 +        runner.stop();
 +    }
@@ -131290,10 +131543,20 @@ index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4d
 +pub(super) fn session_key(owner: &str, thread: &str, binding: &str) -> Result<String> {
 +    static EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 +    let scope = format!("{owner}:{thread}");
-+    let mut bindings = SESSION_BINDINGS.lock().unwrap_or_else(PoisonError::into_inner);
-+    if let Some((previous, key)) = bindings.get(&scope) && previous == binding { return Ok(key.clone()); }
-+    if bindings.len() >= 32 && !bindings.contains_key(&scope) { return Err(failure("session_activation_limit")); }
-+    if let Some((_, key)) = bindings.remove(&scope) { invalidate_warm(&key); }
++    let mut bindings = SESSION_BINDINGS
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner);
++    if let Some((previous, key)) = bindings.get(&scope)
++        && previous == binding
++    {
++        return Ok(key.clone());
++    }
++    if bindings.len() >= 32 && !bindings.contains_key(&scope) {
++        return Err(failure("session_activation_limit"));
++    }
++    if let Some((_, key)) = bindings.remove(&scope) {
++        invalidate_warm(&key);
++    }
 +    let epoch = EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 +    let key = format!("runner:session:{scope}:{epoch}");
 +    bindings.insert(scope, (binding.to_owned(), key.clone()));
@@ -131302,22 +131565,40 @@ index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4d
 +
 +pub(super) fn invalidate_session_owner(owner: &str, thread: Option<&str>) {
 +    let scope = format!("{owner}:");
-+    let mut bindings = SESSION_BINDINGS.lock().unwrap_or_else(PoisonError::into_inner);
-+    let keys = bindings.extract_if(.., |key, _| key.starts_with(&scope) && thread.is_none_or(|thread| *key == format!("{scope}{thread}"))).map(|(_, (_, key))| key).collect::<Vec<_>>();
-+    for key in keys { invalidate_warm(&key); }
++    let mut bindings = SESSION_BINDINGS
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner);
++    let keys = bindings
++        .extract_if(.., |key, _| {
++            key.starts_with(&scope)
++                && thread.is_none_or(|thread| *key == format!("{scope}{thread}"))
++        })
++        .map(|(_, (_, key))| key)
++        .collect::<Vec<_>>();
++    for key in keys {
++        invalidate_warm(&key);
++    }
 +}
 +
 +pub(super) fn session_current(key: &str) -> bool {
-+    SESSION_BINDINGS.lock().is_ok_and(|bindings| bindings.values().any(|(_, current)| current == key))
++    SESSION_BINDINGS
++        .lock()
++        .is_ok_and(|bindings| bindings.values().any(|(_, current)| current == key))
 +}
 +
 +pub(super) fn invalidate_activation(key: &str) {
-+    SESSION_BINDINGS.lock().unwrap_or_else(PoisonError::into_inner).retain(|_, (_, current)| current != key);
++    SESSION_BINDINGS
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .retain(|_, (_, current)| current != key);
 +    invalidate_warm(key);
 +}
 +
 +pub(super) fn invalidate_warm(key: &str) {
-+    SESSION_KEYS.lock().unwrap_or_else(PoisonError::into_inner).remove(key);
++    SESSION_KEYS
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .remove(key);
 +    for runner in retire_warm(|runner| runner.key == key) {
 +        runner.stop();
 +    }
@@ -131371,7 +131652,8 @@ index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4d
 +static REUSED_POOL: Mutex<BTreeMap<u64, usize>> = Mutex::new(BTreeMap::new());
 +const WARM_IDLE: Duration = Duration::from_secs(60);
 +
-+static SESSION_KEYS: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
++static SESSION_KEYS: Mutex<std::collections::BTreeSet<String>> =
++    Mutex::new(std::collections::BTreeSet::new());
 +
 +pub(super) struct Stepping(Option<String>);
 +
@@ -131381,11 +131663,20 @@ index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4d
 +        let mut stepping = stepping.lock().unwrap_or_else(PoisonError::into_inner);
 +        let started = Instant::now();
 +        while stepping.contains(key) {
-+            if !active() { return Err(failure("callback_cancelled")); }
-+            if started.elapsed() >= Duration::from_secs(5) { return Err(failure("callback_execution_budget")); }
-+            stepping = freed.wait_timeout(stepping, Duration::from_millis(25)).unwrap_or_else(PoisonError::into_inner).0;
++            if !active() {
++                return Err(failure("callback_cancelled"));
++            }
++            if started.elapsed() >= Duration::from_secs(5) {
++                return Err(failure("callback_execution_budget"));
++            }
++            stepping = freed
++                .wait_timeout(stepping, Duration::from_millis(25))
++                .unwrap_or_else(PoisonError::into_inner)
++                .0;
 +        }
-+        if !active() { return Err(failure("callback_cancelled")); }
++        if !active() {
++            return Err(failure("callback_cancelled"));
++        }
 +        stepping.insert(key.to_owned());
 +        Ok(Self(Some(key.to_owned())))
 +    }
@@ -131514,7 +131805,9 @@ index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4d
 +    let _stepping = Stepping::enter(key, request["event"] == "component");
 +    if request["session_activation"] == true {
 +        let mut keys = SESSION_KEYS.lock().unwrap_or_else(PoisonError::into_inner);
-+        if !keys.contains(key) && keys.len() >= 32 { return Err(failure("session_activation_limit")); }
++        if !keys.contains(key) && keys.len() >= 32 {
++            return Err(failure("session_activation_limit"));
++        }
 +        keys.insert(key.to_owned());
 +    }
 +    let mut reused = WARM.lock().ok().and_then(|mut runners| {
@@ -131522,7 +131815,10 @@ index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4d
 +        Some(runners.swap_remove(index))
 +    });
 +    if let Some(dead) = reused.take_if(|warm| exited(&mut warm.child)) {
-+        if dead.session { dead.halt(); return Err(failure("session_activation_lost")); }
++        if dead.session {
++            dead.halt();
++            return Err(failure("session_activation_lost"));
++        }
 +        let stateful = dead.serve || dead.pinned.is_some();
 +        if dead.halt().1 && stateful {
 +            return Err(memory_failure());
@@ -131652,8 +131948,14 @@ index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4d
 +    let kind = (runner.serve, runner.pinned.clone());
 +    if runner.session {
 +        let keys = SESSION_KEYS.lock().unwrap_or_else(PoisonError::into_inner);
-+        if !keys.contains(&runner.key) { drop(keys); runner.stop(); return; }
-+        WARM.lock().unwrap_or_else(PoisonError::into_inner).push(runner);
++        if !keys.contains(&runner.key) {
++            drop(keys);
++            runner.stop();
++            return;
++        }
++        WARM.lock()
++            .unwrap_or_else(PoisonError::into_inner)
++            .push(runner);
 +        return;
 +    }
 +    let size = match kind {
@@ -131679,14 +131981,18 @@ index 0000000000000000000000000000000000000000..13d03b8048f23ca5de916765c6888b4d
 +            let mut evicted = Vec::new();
 +            while runners
 +                .iter()
-+                .filter(|runner| !runner.session && (runner.serve, &runner.pinned) == (kind.0, &kind.1))
++                .filter(|runner| {
++                    !runner.session && (runner.serve, &runner.pinned) == (kind.0, &kind.1)
++                })
 +                .count()
 +                > size
 +            {
 +                let oldest = runners
 +                    .iter()
 +                    .enumerate()
-+                    .filter(|(_, runner)| !runner.session && (runner.serve, &runner.pinned) == (kind.0, &kind.1))
++                    .filter(|(_, runner)| {
++                        !runner.session && (runner.serve, &runner.pinned) == (kind.0, &kind.1)
++                    })
 +                    .min_by_key(|(_, runner)| runner.used)
 +                    .map_or(0, |(index, _)| index);
 +                evicted.push(runners.swap_remove(oldest));
@@ -150291,10 +150597,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f95080f40f33d3da533064aae3ea562bfd2df18f
+index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549320469b9
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5320 @@
+@@ -0,0 +1,5441 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -155528,11 +155834,18 @@ index 0000000000000000000000000000000000000000..f95080f40f33d3da533064aae3ea562b
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
 +    let store = ModStore::create(root.join("store")).unwrap();
-+    let path = package(&root, "jobs", "let calls = 0; export default api => { const job = api.background('refresh', input => ({input, calls: ++calls})); api.command('start', input => { job.start(input); return null; }); api.command('status', () => job.get()); };", &["commands", "store", "events"]);
++    let path = package(
++        &root,
++        "jobs",
++        "let calls = 0; export default api => { const job = api.background('refresh', input => ({input, calls: ++calls})); api.command('start', input => { job.start(input); return null; }); api.command('status', () => job.get()); };",
++        &["commands", "store", "events"],
++    );
 +    let manifest_path = path.join("mod.json");
-+    let mut manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
 +    manifest["state_scope"] = json!("thread");
-+    manifest["compatibility"] = json!({"required_features":["session_activation_v1", "background_jobs_v1"]});
++    manifest["compatibility"] =
++        json!({"required_features":["session_activation_v1", "background_jobs_v1"]});
 +    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 +    trust(&store, &path, &["commands", "store", "events"]);
 +    let mut ui = host(&temp);
@@ -155540,13 +155853,32 @@ index 0000000000000000000000000000000000000000..f95080f40f33d3da533064aae3ea562b
 +    let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
 +    for count in 1..=2 {
 +        let mut timer = Value::Null;
-+        ui.invoke_with("jobs", ui.generation(), "command", "start", json!(count), || true, |call| {
-+            assert_eq!(call.operation, "events.schedule");
-+            timer = call.arguments;
-+            Ok(json!({"key":timer["key"],"delay_ms":timer["delay_ms"]}))
-+        }).unwrap();
-+        native.invoke("jobs", native.generation(), "timer", "", json!({"key":timer["key"],"data":timer["data"]})).unwrap();
-+        let status = ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap();
++        ui.invoke_with(
++            "jobs",
++            ui.generation(),
++            "command",
++            "start",
++            json!(count),
++            || true,
++            |call| {
++                assert_eq!(call.operation, "events.schedule");
++                timer = call.arguments;
++                Ok(json!({"key":timer["key"],"delay_ms":timer["delay_ms"]}))
++            },
++        )
++        .unwrap();
++        native
++            .invoke(
++                "jobs",
++                native.generation(),
++                "timer",
++                "",
++                json!({"key":timer["key"],"data":timer["data"]}),
++            )
++            .unwrap();
++        let status = ui
++            .invoke("jobs", ui.generation(), "command", "status", Value::Null)
++            .unwrap();
 +        assert_eq!(status["status"], "completed");
 +        assert_eq!(status["result"], json!({"input":count,"calls":count}));
 +    }
@@ -155556,63 +155888,158 @@ index 0000000000000000000000000000000000000000..f95080f40f33d3da533064aae3ea562b
 +        let ui = &mut ui;
 +        let command = scope.spawn(move || {
 +            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
-+            ui.invoke_with("jobs", ui.generation(), "command", "start", json!(3), || true, |call| {
-+                scheduled.send(call.arguments.clone()).unwrap();
-+                released.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-+                Ok(json!({"key":call.arguments["key"], "delay_ms":call.arguments["delay_ms"]}))
-+            }).unwrap();
++            ui.invoke_with(
++                "jobs",
++                ui.generation(),
++                "command",
++                "start",
++                json!(3),
++                || true,
++                |call| {
++                    scheduled.send(call.arguments.clone()).unwrap();
++                    released
++                        .recv_timeout(std::time::Duration::from_secs(5))
++                        .unwrap();
++                    Ok(json!({"key":call.arguments["key"], "delay_ms":call.arguments["delay_ms"]}))
++                },
++            )
++            .unwrap();
 +        });
-+        let timer = delivered.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
++        let timer = delivered
++            .recv_timeout(std::time::Duration::from_secs(5))
++            .unwrap();
 +        let (waiting, waited) = std::sync::mpsc::channel();
 +        let native = &mut native;
 +        let delivery = scope.spawn(move || {
 +            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
 +            let checks = AtomicUsize::new(0);
-+            native.invoke_guarded("jobs", native.generation(), "timer", "", json!({"key":timer["key"],"data":timer["data"]}), || {
-+                if checks.fetch_add(1, Ordering::Relaxed) == 1 { waiting.send(()).unwrap(); }
-+                true
-+            }).unwrap();
++            native
++                .invoke_guarded(
++                    "jobs",
++                    native.generation(),
++                    "timer",
++                    "",
++                    json!({"key":timer["key"],"data":timer["data"]}),
++                    || {
++                        if checks.fetch_add(1, Ordering::Relaxed) == 1 {
++                            waiting.send(()).unwrap();
++                        }
++                        true
++                    },
++                )
++                .unwrap();
 +        });
-+        waited.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
++        waited
++            .recv_timeout(std::time::Duration::from_secs(5))
++            .unwrap();
 +        release.send(()).unwrap();
 +        command.join().unwrap();
 +        delivery.join().unwrap();
 +    });
-+    assert_eq!(ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap()["result"], json!({"input":3,"calls":3}));
++    assert_eq!(
++        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
++            .unwrap()["result"],
++        json!({"input":3,"calls":3})
++    );
 +    std::thread::scope(|scope| {
 +        let (scheduled, delivered) = std::sync::mpsc::channel();
 +        let (release, released) = std::sync::mpsc::channel();
 +        let ui = &mut ui;
 +        let command = scope.spawn(move || {
 +            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
-+            ui.invoke_with("jobs", ui.generation(), "command", "start", json!(4), || true, |call| {
-+                scheduled.send(()).unwrap();
-+                released.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-+                Ok(json!({"key":call.arguments["key"],"delay_ms":call.arguments["delay_ms"]}))
-+            })
++            ui.invoke_with(
++                "jobs",
++                ui.generation(),
++                "command",
++                "start",
++                json!(4),
++                || true,
++                |call| {
++                    scheduled.send(()).unwrap();
++                    released
++                        .recv_timeout(std::time::Duration::from_secs(5))
++                        .unwrap();
++                    Ok(json!({"key":call.arguments["key"],"delay_ms":call.arguments["delay_ms"]}))
++                },
++            )
 +        });
-+        delivered.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
++        delivered
++            .recv_timeout(std::time::Duration::from_secs(5))
++            .unwrap();
 +        native.reload().unwrap();
 +        release.send(()).unwrap();
-+        assert!(command.join().unwrap().unwrap_err().to_string().contains("callback_cancelled"));
++        assert!(
++            command
++                .join()
++                .unwrap()
++                .unwrap_err()
++                .to_string()
++                .contains("callback_cancelled")
++        );
 +    });
 +    ui.reload().unwrap();
-+    assert_eq!(ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap()["status"], "idle");
++    assert_eq!(
++        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
++            .unwrap()["status"],
++        "idle"
++    );
 +    let mut old_timer = Value::Null;
-+    ui.invoke_with("jobs", ui.generation(), "command", "start", json!("stale"), || true, |call| {
-+        old_timer = call.arguments;
-+        Ok(json!({"key":old_timer["key"],"delay_ms":old_timer["delay_ms"]}))
-+    }).unwrap();
++    ui.invoke_with(
++        "jobs",
++        ui.generation(),
++        "command",
++        "start",
++        json!("stale"),
++        || true,
++        |call| {
++            old_timer = call.arguments;
++            Ok(json!({"key":old_timer["key"],"delay_ms":old_timer["delay_ms"]}))
++        },
++    )
++    .unwrap();
 +    ui.reload().unwrap();
 +    let mut current_timer = Value::Null;
-+    ui.invoke_with("jobs", ui.generation(), "command", "start", json!("current"), || true, |call| {
-+        current_timer = call.arguments;
-+        Ok(json!({"key":current_timer["key"],"delay_ms":current_timer["delay_ms"]}))
-+    }).unwrap();
-+    native.invoke("jobs", native.generation(), "timer", "", json!({"key":old_timer["key"],"data":old_timer["data"]})).unwrap();
-+    assert_eq!(ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap()["status"], "pending");
-+    native.invoke("jobs", native.generation(), "timer", "", json!({"key":current_timer["key"],"data":current_timer["data"]})).unwrap();
-+    assert_eq!(ui.invoke("jobs", ui.generation(), "command", "status", Value::Null).unwrap()["result"], json!({"input":"current","calls":1}));
++    ui.invoke_with(
++        "jobs",
++        ui.generation(),
++        "command",
++        "start",
++        json!("current"),
++        || true,
++        |call| {
++            current_timer = call.arguments;
++            Ok(json!({"key":current_timer["key"],"delay_ms":current_timer["delay_ms"]}))
++        },
++    )
++    .unwrap();
++    native
++        .invoke(
++            "jobs",
++            native.generation(),
++            "timer",
++            "",
++            json!({"key":old_timer["key"],"data":old_timer["data"]}),
++        )
++        .unwrap();
++    assert_eq!(
++        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
++            .unwrap()["status"],
++        "pending"
++    );
++    native
++        .invoke(
++            "jobs",
++            native.generation(),
++            "timer",
++            "",
++            json!({"key":current_timer["key"],"data":current_timer["data"]}),
++        )
++        .unwrap();
++    assert_eq!(
++        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
++            .unwrap()["result"],
++        json!({"input":"current","calls":1})
++    );
 +    ui.release_thread_activations("jobs-thread");
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
@@ -175616,10 +176043,10 @@ index 0000000000000000000000000000000000000000..3bea68827cd061c3c0eb9138ae156fb5
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ce87fbc8a2c06f9e10f99e511ca2309eb1958465
+index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e233f4362
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,700 @@
+@@ -0,0 +1,716 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -175642,17 +176069,33 @@ index 0000000000000000000000000000000000000000..ce87fbc8a2c06f9e10f99e511ca2309e
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +
-+static MESSAGE_HISTORY: Mutex<std::collections::BTreeMap<String, bool>> = Mutex::new(std::collections::BTreeMap::new());
++static MESSAGE_HISTORY: Mutex<std::collections::BTreeMap<String, bool>> =
++    Mutex::new(std::collections::BTreeMap::new());
 +
 +pub(crate) fn remember_message_history(thread: &str, canonical: bool) {
-+    if !crate::omd::is_active() { return; }
-+    let mut modes = MESSAGE_HISTORY.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-+    if modes.len() >= 4096 && !modes.contains_key(thread) { modes.pop_first(); }
++    if !crate::omd::is_active() {
++        return;
++    }
++    let mut modes = MESSAGE_HISTORY
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if modes.len() >= 4096 && !modes.contains_key(thread) {
++        modes.pop_first();
++    }
 +    modes.insert(thread.to_owned(), canonical);
 +}
 +
-+pub(crate) fn replay_message_id(thread: Option<codex_protocol::ThreadId>, id: String) -> Option<String> {
-+    thread.filter(|thread| MESSAGE_HISTORY.lock().is_ok_and(|modes| modes.get(&thread.to_string()) == Some(&true))).map(|_| id)
++pub(crate) fn replay_message_id(
++    thread: Option<codex_protocol::ThreadId>,
++    id: String,
++) -> Option<String> {
++    thread
++        .filter(|thread| {
++            MESSAGE_HISTORY
++                .lock()
++                .is_ok_and(|modes| modes.get(&thread.to_string()) == Some(&true))
++        })
++        .map(|_| id)
 +}
 +
 +const DONE_LIMIT: usize = 2048;
@@ -176322,10 +176765,10 @@ index 0000000000000000000000000000000000000000..ce87fbc8a2c06f9e10f99e511ca2309e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..52d2a112c17e918ea5e91a202fb75d0b7ab41b5b
+index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b0e4d4b3a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,227 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -176492,13 +176935,28 @@ index 0000000000000000000000000000000000000000..52d2a112c17e918ea5e91a202fb75d0b
 +    impl Drop for Restore {
 +        fn drop(&mut self) {
 +            HOOKED.store(self.0, Ordering::Relaxed);
-+            *ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = self.1.take();
++            *ENGINE
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner) = self.1.take();
 +        }
 +    }
-+    let _restore = Restore(HOOKED.swap(true, Ordering::Relaxed), ENGINE.lock().unwrap().take());
++    let _restore = Restore(
++        HOOKED.swap(true, Ordering::Relaxed),
++        ENGINE.lock().unwrap().take(),
++    );
 +    engine(|engine| engine.running = true);
-+    let first = RenderTarget::new("assistant_message", "same-content-digest", false, json!({"text":"same", "message_id":"turn-one:message"}));
-+    let second = RenderTarget::new("assistant_message", "same-content-digest", false, json!({"text":"same", "message_id":"turn-two:message"}));
++    let first = RenderTarget::new(
++        "assistant_message",
++        "same-content-digest",
++        false,
++        json!({"text":"same", "message_id":"turn-one:message"}),
++    );
++    let second = RenderTarget::new(
++        "assistant_message",
++        "same-content-digest",
++        false,
++        json!({"text":"same", "message_id":"turn-two:message"}),
++    );
 +    assert!(resolve_state(&first, 80).is_none());
 +    assert!(resolve_state(&second, 80).is_none());
 +    let (first_instance, second_instance) = engine(|engine| {
@@ -176507,15 +176965,36 @@ index 0000000000000000000000000000000000000000..52d2a112c17e918ea5e91a202fb75d0b
 +    });
 +    assert_ne!(first_instance, second_instance);
 +    engine(|engine| {
-+        engine.latest.insert(first_instance, Some(Rendered {props: Some(json!({"card":"first"})), tree: Vec::new()}));
++        engine.latest.insert(
++            first_instance,
++            Some(Rendered {
++                props: Some(json!({"card":"first"})),
++                tree: Vec::new(),
++            }),
++        );
 +    });
 +    assert!(resolve_state(&second, 81).is_none());
-+    assert_eq!(resolve_state(&first, 81).flatten().unwrap().props.unwrap()["card"], "first");
++    assert_eq!(
++        resolve_state(&first, 81).flatten().unwrap().props.unwrap()["card"],
++        "first"
++    );
 +    engine(|engine| {
-+        engine.latest.insert(second_instance, Some(Rendered {props: Some(json!({"card":"second"})), tree: Vec::new()}));
++        engine.latest.insert(
++            second_instance,
++            Some(Rendered {
++                props: Some(json!({"card":"second"})),
++                tree: Vec::new(),
++            }),
++        );
 +    });
-+    assert_eq!(resolve_state(&second, 82).flatten().unwrap().props.unwrap()["card"], "second");
-+    assert_eq!(resolve_state(&first, 82).flatten().unwrap().props.unwrap()["card"], "first");
++    assert_eq!(
++        resolve_state(&second, 82).flatten().unwrap().props.unwrap()["card"],
++        "second"
++    );
++    assert_eq!(
++        resolve_state(&first, 82).flatten().unwrap().props.unwrap()["card"],
++        "first"
++    );
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
@@ -179088,10 +179567,10 @@ index 0000000000000000000000000000000000000000..f4adf434351e65995c9cf59b3f1087ac
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a1bd4a4456207bb79ce380976ee9e469faec895a
+index 0000000000000000000000000000000000000000..90b1bb7ba695a7ebf97b397d7e59c4bf46f8acb9
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1215 @@
+@@ -0,0 +1,1216 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -180225,7 +180704,8 @@ index 0000000000000000000000000000000000000000..a1bd4a4456207bb79ce380976ee9e469
 +            crate::mod_runtime::command_host_guarded(paths, policy, grants, caller, call, &scoped)
 +        }
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
-+        "model.complete" | "model.fork" | "session.info" | "tools.list" | "turns.abort" | "events.schedule" | "events.cancel" => {
++        "model.complete" | "model.fork" | "session.info" | "tools.list" | "turns.abort"
++        | "events.schedule" | "events.cancel" => {
 +            let thread = scope
 +                .thread
 +                .map(str::to_owned)
@@ -180309,10 +180789,10 @@ index 0000000000000000000000000000000000000000..a1bd4a4456207bb79ce380976ee9e469
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9f099bac94fea93d9365e53045367f62df227950
+index 0000000000000000000000000000000000000000..9f28ce1507914996ee958252f21ae23b76a9eb99
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,1201 @@
+@@ -0,0 +1,1221 @@
 +use super::*;
 +use crate::test_support::PathBufExt;
 +use codex_omd::app_routes::InvocationContext;
@@ -181496,20 +181976,40 @@ index 0000000000000000000000000000000000000000..9f099bac94fea93d9365e53045367f62
 +    let directory = tempfile::tempdir().unwrap();
 +    let paths = paths(directory.path());
 +    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
-+    let registration = codex_omd::host::install_session_dispatcher(Arc::new(|thread, caller, source, policy, call, active| {
-+        assert_eq!(thread, "captured-thread");
-+        assert_eq!(caller, "background_fixture");
-+        assert_eq!(source, Some("0".repeat(64).as_str()));
-+        assert!(policy.is_none());
-+        assert!(active());
-+        Ok(json!({"operation":call.operation,"arguments":call.arguments}))
-+    })).unwrap();
-+    let scope = crate::mod_runtime::CallScope { thread: Some("captured-thread"), ..scope(InvocationContext::User) };
++    let registration = codex_omd::host::install_session_dispatcher(Arc::new(
++        |thread, caller, source, policy, call, active| {
++            assert_eq!(thread, "captured-thread");
++            assert_eq!(caller, "background_fixture");
++            assert_eq!(source, Some("0".repeat(64).as_str()));
++            assert!(policy.is_none());
++            assert!(active());
++            Ok(json!({"operation":call.operation,"arguments":call.arguments}))
++        },
++    ))
++    .unwrap();
++    let scope = crate::mod_runtime::CallScope {
++        thread: Some("captured-thread"),
++        ..scope(InvocationContext::User)
++    };
 +    for (operation, arguments) in [
-+        ("events.schedule", json!({"key":"time:job.refresh","delay_ms":16,"data":{"input":"value"}})),
++        (
++            "events.schedule",
++            json!({"key":"time:job.refresh","delay_ms":16,"data":{"input":"value"}}),
++        ),
 +        ("events.cancel", json!({"key":"time:job.refresh"})),
 +    ] {
-+        let value = host_call(&paths, &policy, grants(&["events"]), "background_fixture", codex_omd::ModHostCall { operation: operation.into(), arguments: arguments.clone() }, &scope).unwrap();
++        let value = host_call(
++            &paths,
++            &policy,
++            grants(&["events"]),
++            "background_fixture",
++            codex_omd::ModHostCall {
++                operation: operation.into(),
++                arguments: arguments.clone(),
++            },
++            &scope,
++        )
++        .unwrap();
 +        assert_eq!(value, json!({"operation":operation,"arguments":arguments}));
 +    }
 +    drop(registration);

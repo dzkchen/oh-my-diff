@@ -1446,8 +1446,13 @@ impl TurnLifecycleContributor for Mods {
                         codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
                     })
                     .collect::<String>();
-                if self.inventory.contains(thread) { self.inventory.answer(thread, &text); }
-                if let Some(lead) = ThreadId::from_string(thread).ok().and_then(|thread| self.core.expansion.thread(thread)) {
+                if self.inventory.contains(thread) {
+                    self.inventory.answer(thread, &text);
+                }
+                if let Some(lead) = ThreadId::from_string(thread)
+                    .ok()
+                    .and_then(|thread| self.core.expansion.thread(thread))
+                {
                     self.core.event("assistant_message", json!({"thread_id": thread, "turn_id": turn_store.level_id(), "message_id": format!("{}:{}", turn_store.level_id(), message.id), "text": text.chars().take(8192).collect::<String>(), "truncated": text.chars().count() > 8192}), Some(&lead)).await;
                 }
             }

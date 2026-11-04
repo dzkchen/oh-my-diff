@@ -429,8 +429,14 @@ impl Warm {
 
 /// Stops every pooled and spare runner, so the next callback starts as at launch.
 pub(super) fn stop_runners() {
-    SESSION_BINDINGS.lock().unwrap_or_else(PoisonError::into_inner).clear();
-    SESSION_KEYS.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    SESSION_BINDINGS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+    SESSION_KEYS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
     for runner in retire_warm(|_| true) {
         runner.stop();
     }
@@ -463,10 +469,20 @@ static SESSION_BINDINGS: Mutex<BTreeMap<String, (String, String)>> = Mutex::new(
 pub(super) fn session_key(owner: &str, thread: &str, binding: &str) -> Result<String> {
     static EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let scope = format!("{owner}:{thread}");
-    let mut bindings = SESSION_BINDINGS.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some((previous, key)) = bindings.get(&scope) && previous == binding { return Ok(key.clone()); }
-    if bindings.len() >= 32 && !bindings.contains_key(&scope) { return Err(failure("session_activation_limit")); }
-    if let Some((_, key)) = bindings.remove(&scope) { invalidate_warm(&key); }
+    let mut bindings = SESSION_BINDINGS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some((previous, key)) = bindings.get(&scope)
+        && previous == binding
+    {
+        return Ok(key.clone());
+    }
+    if bindings.len() >= 32 && !bindings.contains_key(&scope) {
+        return Err(failure("session_activation_limit"));
+    }
+    if let Some((_, key)) = bindings.remove(&scope) {
+        invalidate_warm(&key);
+    }
     let epoch = EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let key = format!("runner:session:{scope}:{epoch}");
     bindings.insert(scope, (binding.to_owned(), key.clone()));
@@ -475,22 +491,40 @@ pub(super) fn session_key(owner: &str, thread: &str, binding: &str) -> Result<St
 
 pub(super) fn invalidate_session_owner(owner: &str, thread: Option<&str>) {
     let scope = format!("{owner}:");
-    let mut bindings = SESSION_BINDINGS.lock().unwrap_or_else(PoisonError::into_inner);
-    let keys = bindings.extract_if(.., |key, _| key.starts_with(&scope) && thread.is_none_or(|thread| *key == format!("{scope}{thread}"))).map(|(_, (_, key))| key).collect::<Vec<_>>();
-    for key in keys { invalidate_warm(&key); }
+    let mut bindings = SESSION_BINDINGS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let keys = bindings
+        .extract_if(.., |key, _| {
+            key.starts_with(&scope)
+                && thread.is_none_or(|thread| *key == format!("{scope}{thread}"))
+        })
+        .map(|(_, (_, key))| key)
+        .collect::<Vec<_>>();
+    for key in keys {
+        invalidate_warm(&key);
+    }
 }
 
 pub(super) fn session_current(key: &str) -> bool {
-    SESSION_BINDINGS.lock().is_ok_and(|bindings| bindings.values().any(|(_, current)| current == key))
+    SESSION_BINDINGS
+        .lock()
+        .is_ok_and(|bindings| bindings.values().any(|(_, current)| current == key))
 }
 
 pub(super) fn invalidate_activation(key: &str) {
-    SESSION_BINDINGS.lock().unwrap_or_else(PoisonError::into_inner).retain(|_, (_, current)| current != key);
+    SESSION_BINDINGS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .retain(|_, (_, current)| current != key);
     invalidate_warm(key);
 }
 
 pub(super) fn invalidate_warm(key: &str) {
-    SESSION_KEYS.lock().unwrap_or_else(PoisonError::into_inner).remove(key);
+    SESSION_KEYS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(key);
     for runner in retire_warm(|runner| runner.key == key) {
         runner.stop();
     }
@@ -544,7 +578,8 @@ const MAX_REUSED_RUNNERS: usize = 8;
 static REUSED_POOL: Mutex<BTreeMap<u64, usize>> = Mutex::new(BTreeMap::new());
 const WARM_IDLE: Duration = Duration::from_secs(60);
 
-static SESSION_KEYS: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
+static SESSION_KEYS: Mutex<std::collections::BTreeSet<String>> =
+    Mutex::new(std::collections::BTreeSet::new());
 
 pub(super) struct Stepping(Option<String>);
 
@@ -554,11 +589,20 @@ impl Stepping {
         let mut stepping = stepping.lock().unwrap_or_else(PoisonError::into_inner);
         let started = Instant::now();
         while stepping.contains(key) {
-            if !active() { return Err(failure("callback_cancelled")); }
-            if started.elapsed() >= Duration::from_secs(5) { return Err(failure("callback_execution_budget")); }
-            stepping = freed.wait_timeout(stepping, Duration::from_millis(25)).unwrap_or_else(PoisonError::into_inner).0;
+            if !active() {
+                return Err(failure("callback_cancelled"));
+            }
+            if started.elapsed() >= Duration::from_secs(5) {
+                return Err(failure("callback_execution_budget"));
+            }
+            stepping = freed
+                .wait_timeout(stepping, Duration::from_millis(25))
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
         }
-        if !active() { return Err(failure("callback_cancelled")); }
+        if !active() {
+            return Err(failure("callback_cancelled"));
+        }
         stepping.insert(key.to_owned());
         Ok(Self(Some(key.to_owned())))
     }
@@ -687,7 +731,9 @@ where
     let _stepping = Stepping::enter(key, request["event"] == "component");
     if request["session_activation"] == true {
         let mut keys = SESSION_KEYS.lock().unwrap_or_else(PoisonError::into_inner);
-        if !keys.contains(key) && keys.len() >= 32 { return Err(failure("session_activation_limit")); }
+        if !keys.contains(key) && keys.len() >= 32 {
+            return Err(failure("session_activation_limit"));
+        }
         keys.insert(key.to_owned());
     }
     let mut reused = WARM.lock().ok().and_then(|mut runners| {
@@ -695,7 +741,10 @@ where
         Some(runners.swap_remove(index))
     });
     if let Some(dead) = reused.take_if(|warm| exited(&mut warm.child)) {
-        if dead.session { dead.halt(); return Err(failure("session_activation_lost")); }
+        if dead.session {
+            dead.halt();
+            return Err(failure("session_activation_lost"));
+        }
         let stateful = dead.serve || dead.pinned.is_some();
         if dead.halt().1 && stateful {
             return Err(memory_failure());
@@ -825,8 +874,14 @@ fn pool(mut runner: Warm) {
     let kind = (runner.serve, runner.pinned.clone());
     if runner.session {
         let keys = SESSION_KEYS.lock().unwrap_or_else(PoisonError::into_inner);
-        if !keys.contains(&runner.key) { drop(keys); runner.stop(); return; }
-        WARM.lock().unwrap_or_else(PoisonError::into_inner).push(runner);
+        if !keys.contains(&runner.key) {
+            drop(keys);
+            runner.stop();
+            return;
+        }
+        WARM.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(runner);
         return;
     }
     let size = match kind {
@@ -852,14 +907,18 @@ fn pool(mut runner: Warm) {
             let mut evicted = Vec::new();
             while runners
                 .iter()
-                .filter(|runner| !runner.session && (runner.serve, &runner.pinned) == (kind.0, &kind.1))
+                .filter(|runner| {
+                    !runner.session && (runner.serve, &runner.pinned) == (kind.0, &kind.1)
+                })
                 .count()
                 > size
             {
                 let oldest = runners
                     .iter()
                     .enumerate()
-                    .filter(|(_, runner)| !runner.session && (runner.serve, &runner.pinned) == (kind.0, &kind.1))
+                    .filter(|(_, runner)| {
+                        !runner.session && (runner.serve, &runner.pinned) == (kind.0, &kind.1)
+                    })
                     .min_by_key(|(_, runner)| runner.used)
                     .map_or(0, |(index, _)| index);
                 evicted.push(runners.swap_remove(oldest));
