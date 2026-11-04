@@ -38,7 +38,7 @@ mise install
 pnpm --dir mods install
 ```
 
-Use `pnpm`, never `npm` or `npx`. Tool versions come from `mise.toml`. To build without a Mac, use the
+Use `pnpm`, never `npm` or `npx`. Runtime versions come from `mise.toml`; pnpm is specified in `mods/package.json`. Python is not pinned; use 3.12 or later. To build without a Mac, use the
 [Linux container](docs/contributing/runtime.md#build-on-linux).
 
 ## Check your change

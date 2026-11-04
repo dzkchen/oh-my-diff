@@ -50,6 +50,7 @@ on with `omd mods enable ID`. [Support](support.md#versions) lists the Node vers
 | [`omd_idle_compact`](../mods/first-party/omd_idle_compact/README.md) | Replaces a large idle conversation with a shorter summary just before the provider's prompt cache expires | |
 | [`omd_preview`](../mods/first-party/omd_preview/README.md) | Previews HTML and files, draws Mermaid diagrams | Node on your `PATH` |
 | [`omd_continue`](../mods/first-party/omd_continue/README.md) | `/continue [note]` resumes interrupted work in the current session | |
+| [`omd_checkpoint`](../mods/first-party/omd_checkpoint/README.md) | Snapshots your files around each turn; `/undo` puts back what the last turn changed and `/redo` brings it back, `/undo show` previews it, never over your later edits without `force` | A Git repository and `git` on your `PATH` |
 | [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) | Pins Codex's current plan above the prompt | |
 | [`omd_btw`](../mods/first-party/omd_btw/README.md) | Replaces `/btw`: side questions answered from the conversation without entering it, remembered across questions and resumes | |
 | [`omd_lsp_sync`](../mods/first-party/omd_lsp_sync/README.md) | Tells the agent about the errors each of its edits introduces; also go to definition, references and rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
