@@ -37503,7 +37503,7 @@ index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..ea297c01e178e08fd4bfa773388e5402
          let clear_result = tui.terminal.clear();
          if let Some(task) = app.daemon_restart.take()
 diff --git a/codex-rs/tui/src/app/test_support.rs b/codex-rs/tui/src/app/test_support.rs
-index a0efb33101b4f3b5a31d15e10815cbf8064cb890..fa77f063bd1e4106d6b9fb4af28af4294cb0b0cb 100644
+index a0efb33101b4f3b5a31d15e10815cbf8064cb890..6b3914129f173f5726a2e667e1b34304e082dde7 100644
 --- a/codex-rs/tui/src/app/test_support.rs
 +++ b/codex-rs/tui/src/app/test_support.rs
 @@ -14,6 +14,7 @@ use codex_models_manager::test_support::get_model_offline_for_tests;
@@ -37523,7 +37523,7 @@ index a0efb33101b4f3b5a31d15e10815cbf8064cb890..fa77f063bd1e4106d6b9fb4af28af429
          startup_protected_input_boundary: false,
          startup_pending_protected_request: false,
          account_email_request_id: None,
-@@ -162,3 +165,26 @@ pub(super) fn app_enabled_in_effective_config(config: &Config, app_id: &str) ->
+@@ -162,3 +165,31 @@ pub(super) fn app_enabled_in_effective_config(config: &Config, app_id: &str) ->
          .and_then(|app| app.get("enabled"))
          .and_then(TomlValue::as_bool)
  }
@@ -37533,28 +37533,41 @@ index a0efb33101b4f3b5a31d15e10815cbf8064cb890..fa77f063bd1e4106d6b9fb4af28af429
 +    tui: &mut tui::Tui,
 +    session: &mut AppServerSession,
 +    events: &mut mpsc::UnboundedReceiver<AppEvent>,
-+) -> Result<()> {
++) -> Result<Arc<crate::app_event::UserTurnSubmissionResult>> {
 +    tokio::time::timeout(Duration::from_secs(5), async {
 +        loop {
 +            let event = events
 +                .recv()
 +                .await
 +                .ok_or_else(|| color_eyre::eyre::eyre!("app event channel closed"))?;
-+            let finished = matches!(event, AppEvent::UserTurnSubmissionFinished { .. });
++            let completion = match &event {
++                AppEvent::UserTurnSubmissionFinished { completion, .. } => {
++                    Some(Arc::clone(completion))
++                }
++                _ => None,
++            };
 +            app.handle_event(tui, session, event).await?;
 +            app.drain_active_thread_events(tui).await?;
-+            if finished {
-+                return Ok(());
++            if let Some(completion) = completion {
++                return Ok(completion);
 +            }
 +        }
 +    })
 +    .await?
 +}
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0f59c9dcc 100644
+index a2d219157e81a9e140b07ad5d505a4bbc030b96e..d5a6cf1fc376290a17bb49acc1c26176ad449f6a 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
-@@ -138,6 +138,7 @@ use codex_utils_absolute_path::test_support::PathExt;
+@@ -119,6 +119,7 @@ mod user_verification_routes;
+ mod worktree_background_terminals_tests;
+
+ use super::agent_navigation::AgentPickerThreadVisibility;
++use super::test_support::wait_for_user_turn_submission;
+ use super::*;
+ use crate::app_backtrack::BacktrackSelection;
+ use crate::app_backtrack::BacktrackState;
+@@ -138,6 +139,7 @@ use codex_utils_absolute_path::test_support::PathExt;
  use crate::chatwidget::ChatWidgetInit;
  use crate::chatwidget::create_initial_user_message;
  use crate::chatwidget::tests::helpers::normalize_snapshot_paths;
@@ -37562,7 +37575,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
  use crate::chatwidget::tests::helpers::render_bottom_popup;
  use crate::chatwidget::tests::helpers::set_active_cell;
  use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
-@@ -2872,7 +2873,7 @@ fn selected_and_resumed_threads_use_server_capability_for_v1_and_v2_children() -
+@@ -2872,7 +2874,7 @@ fn selected_and_resumed_threads_use_server_capability_for_v1_and_v2_children() -
              );
              assert_app_snapshot!(
                  format!("selected_unloaded_subagent_{multi_agent_version:?}"),
@@ -37571,7 +37584,78 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
              );
              let saved_message = format!("Saved work from child-{index}");
              while let Ok(event) = app_event_rx.try_recv() {
-@@ -4467,6 +4468,31 @@ async fn inactive_thread_exec_approval_preserves_context() {
+@@ -3512,6 +3514,19 @@ async fn server_only_profile_selection_keeps_turns_on_the_selected_profile() ->
+         .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+     let turn = next_user_turn_op(&mut ops);
+     app.submit_thread_op(&mut server, thread_id, turn).await?;
++    let first_turn =
++        wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
++    let Ok(crate::app_event::UserTurnSubmissionOutcome::Started(first_turn_id)) =
++        &first_turn.result
++    else {
++        panic!("first submission should start a turn");
++    };
++    app.enqueue_thread_notification(
++        thread_id,
++        turn_started_notification(thread_id, first_turn_id),
++    )
++    .await?;
++    app.drain_active_thread_events(&mut tui).await?;
+     server.startup_interrupt(thread_id).await?;
+     let settings = next_thread_settings_updated(&mut server, thread_id).await;
+     app.enqueue_thread_notification(
+@@ -3556,9 +3571,12 @@ async fn server_only_profile_selection_keeps_turns_on_the_selected_profile() ->
+         next_history_message(&mut events),
+         @"■ Changing directories with a named profile is not supported."
+     );
+-    app.handle_thread_event_now(ThreadBufferedEvent::Notification(Box::new(
+-        turn_completed_notification(thread_id, "first", TurnStatus::Interrupted),
+-    )));
++    app.enqueue_thread_notification(
++        thread_id,
++        turn_completed_notification(thread_id, first_turn_id, TurnStatus::Interrupted),
++    )
++    .await?;
++    app.drain_active_thread_events(&mut tui).await?;
+     while events.try_recv().is_ok() {}
+     app.chat_widget
+         .restore_user_message_to_composer("busy".into());
+@@ -3573,10 +3591,18 @@ async fn server_only_profile_selection_keeps_turns_on_the_selected_profile() ->
+         *active_permission_profile = Some(ActivePermissionProfile::new("stale-profile"));
+     }
+     app.submit_thread_op(&mut server, thread_id, turn).await?;
++    wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+     let thread = server
+         .thread_read(thread_id, /*include_turns*/ true)
+         .await?;
+     assert_eq!(thread.turns.len(), 2);
++    let second_turn_id = thread.turns[1].id.clone();
++    app.enqueue_thread_notification(
++        thread_id,
++        turn_started_notification(thread_id, &second_turn_id),
++    )
++    .await?;
++    app.drain_active_thread_events(&mut tui).await?;
+     while events.try_recv().is_ok() {}
+     app.chat_widget
+         .set_queue_autosend_suppressed(/*suppressed*/ true);
+@@ -3597,9 +3623,12 @@ async fn server_only_profile_selection_keeps_turns_on_the_selected_profile() ->
+     );
+     app.handle_event(&mut tui, &mut server, AppEvent::SettingsSelectionSettled)
+         .await?;
+-    app.handle_thread_event_now(ThreadBufferedEvent::Notification(Box::new(
+-        turn_completed_notification(thread_id, "second", TurnStatus::Completed),
+-    )));
++    app.enqueue_thread_notification(
++        thread_id,
++        turn_completed_notification(thread_id, &second_turn_id, TurnStatus::Completed),
++    )
++    .await?;
++    app.drain_active_thread_events(&mut tui).await?;
+     assert!(!app.chat_widget.has_queued_follow_up_messages());
+     let _ = next_user_turn_op(&mut ops);
+     server.shutdown().await?;
+@@ -4467,6 +4496,31 @@ async fn inactive_thread_exec_approval_preserves_context() {
      );
  }
 
@@ -37603,7 +37687,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
  #[tokio::test]
  async fn inactive_thread_exec_approval_splits_shell_wrapped_command() {
      let app = make_test_app().await;
-@@ -4658,7 +4684,17 @@ async fn active_thread_file_change_approval_recovers_buffered_changes() {
+@@ -4658,7 +4712,17 @@ async fn active_thread_file_change_approval_recovers_buffered_changes() {
      let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 100);
      let destination = app.chat_widget.config_ref().cwd.join("visible-target.md");
      assert!(rendered.contains("Description: Apply proposed file edits"));
@@ -37622,7 +37706,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
      app_server.shutdown().await.expect("shutdown app server");
  }
 
-@@ -5548,7 +5584,7 @@ async fn side_parent_status_prioritizes_input_over_approval() -> Result<()> {
+@@ -5548,7 +5612,7 @@ async fn side_parent_status_prioritizes_input_over_approval() -> Result<()> {
              .store
              .lock()
              .await
@@ -37631,7 +37715,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
      );
 
      app.enqueue_thread_notification(
-@@ -5575,7 +5611,7 @@ async fn side_parent_status_prioritizes_input_over_approval() -> Result<()> {
+@@ -5575,7 +5639,7 @@ async fn side_parent_status_prioritizes_input_over_approval() -> Result<()> {
              .store
              .lock()
              .await
@@ -37640,7 +37724,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
      );
      assert_snapshot!(
          format!("{input_footer}\n{approval_footer}\n{cleared_footer}"),
-@@ -6401,6 +6437,7 @@ async fn ctrl_l_clears_owned_history_and_preserves_the_draft() -> Result<()> {
+@@ -6401,6 +6465,7 @@ async fn ctrl_l_clears_owned_history_and_preserves_the_draft() -> Result<()> {
  async fn make_test_app() -> Box<App> {
      let (mut chat_widget, app_event_tx, _rx, _op_rx) =
          boxed_future!(make_chatwidget_manual_with_sender()).await;
@@ -37648,7 +37732,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
      let test_codex_home = chat_widget.test_codex_home.take();
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-@@ -6505,6 +6542,8 @@ async fn make_test_app() -> Box<App> {
+@@ -6505,6 +6570,8 @@ async fn make_test_app() -> Box<App> {
          pending_managed_worktree_created: None,
          pending_managed_worktree_transition: None,
          pending_managed_worktree_attach: None,
@@ -37657,7 +37741,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
          startup_protected_input_boundary: false,
          startup_pending_protected_request: false,
          account_email_request_id: None,
-@@ -6526,6 +6565,7 @@ pub(super) async fn make_test_app_with_channels() -> (
+@@ -6526,6 +6593,7 @@ pub(super) async fn make_test_app_with_channels() -> (
  ) {
      let (mut chat_widget, app_event_tx, rx, op_rx) =
          boxed_future!(make_chatwidget_manual_with_sender()).await;
@@ -37665,7 +37749,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
      let test_codex_home = chat_widget.test_codex_home.take();
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-@@ -6631,6 +6671,8 @@ pub(super) async fn make_test_app_with_channels() -> (
+@@ -6631,6 +6699,8 @@ pub(super) async fn make_test_app_with_channels() -> (
              pending_managed_worktree_created: None,
              pending_managed_worktree_transition: None,
              pending_managed_worktree_attach: None,
@@ -37674,7 +37758,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
              startup_protected_input_boundary: false,
              startup_pending_protected_request: false,
              account_email_request_id: None,
-@@ -8682,6 +8724,159 @@ async fn remembered_current_cwd_stays_at_launch_across_in_app_resumes() -> Resul
+@@ -8682,6 +8752,159 @@ async fn remembered_current_cwd_stays_at_launch_across_in_app_resumes() -> Resul
      Ok(())
  }
 
@@ -37834,7 +37918,7 @@ index a2d219157e81a9e140b07ad5d505a4bbc030b96e..3162d2aef531b684eb2859ebe06a0bb0
  #[tokio::test]
  async fn prompt_edit_reverts_earlier_and_first_visible_prompts_in_place() -> Result<()> {
      // Allocate the whole scenario before Tokio polls it on the test thread.
-@@ -9909,6 +10104,41 @@ async fn changing_cyber_model_reasoning_preserves_selected_permissions() {
+@@ -9909,6 +10132,41 @@ async fn changing_cyber_model_reasoning_preserves_selected_permissions() {
      .await;
  }
 
@@ -38138,8 +38222,20 @@ index ecc4ba35e4887a910634623144d21504d4daab16..a30ca1eb786c6c1cdf043bd3570d0df6
          vec!["item-3-0", "item-5-0"]
      );
      assert_eq!(
+diff --git a/codex-rs/tui/src/app/tests/luna_reserve_recovery_tests.rs b/codex-rs/tui/src/app/tests/luna_reserve_recovery_tests.rs
+index 8dbceb0cda168c6470b3326ad40e5ebbe1ef99b7..9c492e093f87f7ddf9ad40ee5695e244ae6cc3a3 100644
+--- a/codex-rs/tui/src/app/tests/luna_reserve_recovery_tests.rs
++++ b/codex-rs/tui/src/app/tests/luna_reserve_recovery_tests.rs
+@@ -150,6 +150,7 @@ async fn luna_reserve_entry_dispatches_an_already_queued_turn_with_accepted_sett
+         )
+         .await?;
+         app.handle_event(&mut tui, &mut server, pending).await?;
++        wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+         let sent = requests.lock().unwrap().clone();
+         let methods: Vec<_> = sent.iter().map(|request| request.method.as_str()).collect();
+         assert_eq!(methods, ["thread/settings/update", "turn/start"]);
 diff --git a/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs b/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs
-index 6125e94028733dc501092df9f05d7dda8bb6e0e1..b2a82a63f6747268e50984b69766ed3bb1a33de7 100644
+index 6125e94028733dc501092df9f05d7dda8bb6e0e1..11586ba301c4fcd38dfee298dba381d4c39a9f04 100644
 --- a/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs
 +++ b/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs
 @@ -100,7 +100,7 @@ async fn reconnect_daemon_command_center_after_socket_replacement_without_a_conv
@@ -38151,6 +38247,14 @@ index 6125e94028733dc501092df9f05d7dda8bb6e0e1..b2a82a63f6747268e50984b69766ed3b
              }))?)
          };
          let child_thread = make_thread(child, "Cached child", ThreadStatus::NotLoaded)?;
+@@ -593,6 +593,7 @@ async fn reconnect_daemon_command_center_after_socket_replacement_without_a_conv
+                     app.handle_event(&mut tui, &mut session, event).await?;
+                 }
+             }
++            wait_for_user_turn_submission(&mut app, &mut tui, &mut session, &mut events).await?;
+             let channel = app.thread_event_channels.get(&id).unwrap();
+             let event = ThreadBufferedEvent::Notification(Box::new(
+                 agent_message_delta_notification(id, "new-turn", "new-item", "fresh delivery"),
 diff --git a/codex-rs/tui/src/app/tests/new_session_tests.rs b/codex-rs/tui/src/app/tests/new_session_tests.rs
 index 1571bef2058263fba4f2719b94e3cc9e4e4816b8..19bf20f14802bcb4f15504bacf26b5701274701e 100644
 --- a/codex-rs/tui/src/app/tests/new_session_tests.rs
@@ -38255,6 +38359,65 @@ index 8fe1861c74591ed99a4121a73f7f6ebf677d9b12..13f68e50a0a217b1da57b3d863d53f76
          app.handle_app_server_event(
              &app_server,
              AppServerEvent::ServerNotification(Box::new(
+diff --git a/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs b/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
+index f7812089cb68682763e0b44d175d7876367bdafa..bce23cf79eb7ec783482b8bced6ef164c37e8a52 100644
+--- a/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
++++ b/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
+@@ -93,7 +93,8 @@ async fn daybreak_command_persists_and_confirms_each_selection() -> Result<()> {
+
+     let started = server.start_thread(&app.config).await?;
+     let thread_id = started.session.thread_id;
+-    app.active_thread_id = Some(thread_id);
++    app.ensure_thread_channel(thread_id);
++    app.activate_thread_channel(thread_id).await;
+     app.chat_widget.handle_thread_session_quiet(started.session);
+     app.chat_widget.update_account_state(
+         /*status_account_display*/ None, /*plan_type*/ None,
+@@ -168,6 +169,7 @@ async fn daybreak_command_persists_and_confirms_each_selection() -> Result<()> {
+     while events.try_recv().is_ok() {}
+     app.submit_thread_op(&mut server, thread_id, unsupported_turn)
+         .await?;
++    wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+     assert!(recorded_params(&requests, "turn/start").is_empty());
+     assert!(next_history_message(&mut events).contains("Daybreak support for model standard-only"));
+
+@@ -175,10 +177,12 @@ async fn daybreak_command_persists_and_confirms_each_selection() -> Result<()> {
+         .set_side_conversation_active(/*active*/ true);
+     app.submit_thread_op(&mut server, thread_id, turn.clone())
+         .await?;
++    wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+     app.chat_widget
+         .set_side_conversation_active(/*active*/ false);
+     app.submit_thread_op(&mut server, thread_id, turn.clone())
+         .await?;
++    wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+     let background_thread_id = server.start_thread(&app.config).await?.session.thread_id;
+     app.side_threads.insert(
+         background_thread_id,
+@@ -186,6 +190,7 @@ async fn daybreak_command_persists_and_confirms_each_selection() -> Result<()> {
+     );
+     app.submit_thread_op(&mut server, background_thread_id, turn.clone())
+         .await?;
++    wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+     let turns = recorded_params(&requests, "turn/start");
+     assert_eq!(turns.len(), 3);
+     assert_eq!(turns[0]["cyberAccessProgram"], "standard");
+@@ -196,6 +201,7 @@ async fn daybreak_command_persists_and_confirms_each_selection() -> Result<()> {
+     for target in [thread_id, background_thread_id] {
+         app.submit_thread_op(&mut server, target, turn.clone())
+             .await?;
++        wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+     }
+     let turns = recorded_params(&requests, "turn/start");
+     assert!(turns[3]["cyberAccessProgram"].is_null());
+@@ -237,6 +243,7 @@ async fn daybreak_command_persists_and_confirms_each_selection() -> Result<()> {
+         app.chat_widget.set_daybreak_enabled(enabled);
+         app.submit_thread_op(&mut server, thread_id, turn.clone())
+             .await?;
++        wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+     }
+     let turns = recorded_params(&requests, "turn/start");
+     assert_eq!(
 diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap
 index df0ee6c0a1871611ab44b4e4c5cb26ac2027570e..0f901ba44e363c0a48a476877cab9755aba032fe 100644
 --- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap
@@ -38427,6 +38590,28 @@ index d45000ee78fe1ae9bfea05d87a800f17d436103a..e739dc69b7298a23c170f9bcd9c15d20
       /tmp/project
 
  • Conversation continues here.
+diff --git a/codex-rs/tui/src/app/tests/startup_defaults_tests.rs b/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
+index b964d4519595dea6e0229c4bf4e153d68790d492..24c1d40602c34e44cc4a41da499f8140480f3f33 100644
+--- a/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
++++ b/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
+@@ -511,7 +511,7 @@ requires_openai_auth = false
+         );
+         if choice == "saved" {
+             assert_eq!(started.session.approvals_reviewer, ApprovalsReviewer::User);
+-            let (mut app, _events, mut ops) = make_test_app_with_channels().await;
++            let (mut app, mut events, mut ops) = make_test_app_with_channels().await;
+             app.app_server_target = target;
+             app.config.permissions.approval_policy =
+                 codex_config::Constrained::allow_only(AskForApproval::Never.to_core());
+@@ -529,6 +529,8 @@ requires_openai_auth = false
+                 .handle_key_event(KeyEvent::from(KeyCode::Enter));
+             app.submit_thread_op(&mut server, thread_id, next_user_turn_op(&mut ops))
+                 .await?;
++            let mut tui = crate::tui::test_support::make_test_tui()?;
++            wait_for_user_turn_submission(&mut app, &mut tui, &mut server, &mut events).await?;
+             let turn = &recorded_params(&requests, "turn/start")[0];
+             assert_eq!(turn["approvalsReviewer"], "user");
+             assert_eq!(turn["approvalPolicy"], "on-request");
 diff --git a/codex-rs/tui/src/app/tests/startup_frame_tests.rs b/codex-rs/tui/src/app/tests/startup_frame_tests.rs
 index 9fe4a7663bdbd4555fd1d4679dd56bd55f517514..44317197a6d77d2b2963e883b519648c631445a8 100644
 --- a/codex-rs/tui/src/app/tests/startup_frame_tests.rs
@@ -38445,6 +38630,46 @@ index 9fe4a7663bdbd4555fd1d4679dd56bd55f517514..44317197a6d77d2b2963e883b519648c
      );
      // The source remains available to terminal scrollback in both presentation modes.
      for mode in [HistoryRenderMode::Rich, HistoryRenderMode::Raw] {
+diff --git a/codex-rs/tui/src/app/tests/turn_submission.rs b/codex-rs/tui/src/app/tests/turn_submission.rs
+index e04fc3da5d0c7eb12584f0ead760d02e7c558825..45b8fb6c4a179e2cbe5f01be887fbd181b474f06 100644
+--- a/codex-rs/tui/src/app/tests/turn_submission.rs
++++ b/codex-rs/tui/src/app/tests/turn_submission.rs
+@@ -111,7 +111,8 @@ async fn turn_start_failure_is_shown_without_exiting() -> Result<()> {
+     let mut tui = crate::tui::test_support::make_test_tui()?;
+     let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+     let thread_id = ThreadId::from_string("123e4567-e89b-12d3-a456-426614174000")?;
+-    app.active_thread_id = Some(thread_id);
++    app.ensure_thread_channel(thread_id);
++    app.activate_thread_channel(thread_id).await;
+     app.chat_widget
+         .handle_thread_session(test_thread_session(thread_id, app.config.cwd.to_path_buf()));
+     while app_event_rx.try_recv().is_ok() {}
+@@ -131,6 +132,7 @@ async fn turn_start_failure_is_shown_without_exiting() -> Result<()> {
+         .await?;
+
+     assert!(matches!(control, AppRunControl::Continue));
++    wait_for_user_turn_submission(&mut app, &mut tui, &mut app_server, &mut app_event_rx).await?;
+     let error_cell = std::iter::from_fn(|| app_event_rx.try_recv().ok())
+         .find_map(|event| match event {
+             AppEvent::InsertHistoryCell(cell) => Some(cell),
+@@ -363,7 +365,8 @@ async fn unsupported_legacy_permissions_are_shown_without_exiting() -> Result<()
+     let mut tui = crate::tui::test_support::make_test_tui()?;
+     let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+     let thread_id = ThreadId::new();
+-    app.active_thread_id = Some(thread_id);
++    app.ensure_thread_channel(thread_id);
++    app.activate_thread_channel(thread_id).await;
+     app.chat_widget
+         .handle_thread_session(test_thread_session(thread_id, app.config.cwd.to_path_buf()));
+
+@@ -423,6 +426,7 @@ async fn unsupported_legacy_permissions_are_shown_without_exiting() -> Result<()
+         .await?;
+
+     assert!(matches!(control, AppRunControl::Continue));
++    wait_for_user_turn_submission(&mut app, &mut tui, &mut app_server, &mut app_event_rx).await?;
+     assert!(app.chat_widget.has_queued_follow_up_messages());
+     let error_cell = std::iter::from_fn(|| app_event_rx.try_recv().ok())
+         .find_map(|event| match event {
 diff --git a/codex-rs/tui/src/app/tests/user_verification_routes_tests.rs b/codex-rs/tui/src/app/tests/user_verification_routes_tests.rs
 index ca06b5196d0be62fe7bf41a4ff86f141d1818d7d..715415358416ba729608c836ec597aa1a9977dfc 100644
 --- a/codex-rs/tui/src/app/tests/user_verification_routes_tests.rs
@@ -44562,7 +44787,7 @@ index 4b77a7722db2ba338e1c7034a54bc7ac59ae8f65..734e1715b0187166b8eea564439fded0
  async fn reconnect_keeps_queue_paused_after_pending_compact() {
      let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
 diff --git a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
-index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..ae270be9b61b64aaac1ae950e22a5a6ac8bbf676 100644
+index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..622a4a86fa414de2d9ac7a39e594b30b2de964bc 100644
 --- a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
 @@ -2,6 +2,70 @@ use super::*;
@@ -44636,6 +44861,15 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..ae270be9b61b64aaac1ae950e22a5a6a
  #[tokio::test]
  async fn external_writer_snapshot_freezes_active_command_and_mcp_rows() {
      let mut rendered = Vec::new();
+@@ -836,7 +900,7 @@ async fn unified_exec_wait_before_streamed_agent_message_snapshot() {
+     terminal_interaction(&mut chat, "call-wait-stream-stdin", "proc-1", "");
+
+     handle_agent_message_delta(&mut chat, "Streaming response.");
+-    handle_turn_completed(&mut chat, "turn-wait-1", /*duration_ms*/ None);
++    handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
+
+     let cells = drain_insert_history_transcript_normalized(&mut rx);
+     let combined = cells
 @@ -864,7 +928,7 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
              .reset_status_timer(Duration::from_secs(/*secs*/ 125));
          handle_agent_message_delta(&mut chat, "Final response.\n");
@@ -44961,6 +45195,50 @@ index 54e1f1fc67cc518cbbb7350725d1d234670f989c..d82c0f7c447f463e19ffd659204c0edf
 +            .any(|event| matches!(event, AppEvent::FetchModels { .. }))
 +    );
 +}
+diff --git a/codex-rs/tui/src/chatwidget/tests/question_notifications_tests.rs b/codex-rs/tui/src/chatwidget/tests/question_notifications_tests.rs
+index 8907c40f2f5e708f741095cd677497fa116a9da6..0f2dda8d2008551d8695fbed36fdfb53e256e705 100644
+--- a/codex-rs/tui/src/chatwidget/tests/question_notifications_tests.rs
++++ b/codex-rs/tui/src/chatwidget/tests/question_notifications_tests.rs
+@@ -121,7 +121,7 @@ async fn async_question_notification_expires_when_turn_ends() {
+             ServerNotification::TurnCompleted(TurnCompletedNotification {
+                 thread_id: "thread".into(),
+                 turn: app_server_turn(
+-                    "ended-turn",
++                    "turn",
+                     status.clone(),
+                     /*duration_ms*/ None,
+                     /*error*/ None,
+diff --git a/codex-rs/tui/src/chatwidget/tests/question_turn_end_tests.rs b/codex-rs/tui/src/chatwidget/tests/question_turn_end_tests.rs
+index 074aca193abb408d5873ea9d55813fff29e19c26..c918afe0d04e414d427227b524738dd7aa2a0604 100644
+--- a/codex-rs/tui/src/chatwidget/tests/question_turn_end_tests.rs
++++ b/codex-rs/tui/src/chatwidget/tests/question_turn_end_tests.rs
+@@ -105,7 +105,7 @@ async fn question_turn_end_appends_open_drafts_in_order_once() {
+
+     let recovered =
+         "$tool existing draft\n\n> Which style?\n\nOver-ear\n\n> What budget?\n\nUnder 250";
+-    handle_turn_completed(&mut chat, "ended-turn", /*duration_ms*/ None);
++    handle_turn_completed(&mut chat, "turn", /*duration_ms*/ None);
+     assert_eq!(
+         (
+             chat.bottom_pane.composer_text(),
+@@ -120,14 +120,15 @@ async fn question_turn_end_appends_open_drafts_in_order_once() {
+         normalize_snapshot_paths(render_bottom_popup(&chat, /*width*/ 80))
+     );
+
+-    handle_turn_completed(&mut chat, "ended-turn", /*duration_ms*/ None);
++    handle_turn_completed(&mut chat, "turn", /*duration_ms*/ None);
+     assert_recovered_draft(&mut chat, recovered);
+
++    handle_turn_started(&mut chat, "turn-2");
+     questions(&mut chat, "large", "Which way?");
+     chat.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+     let large_answer = "long answer ".repeat(/*n*/ 200);
+     chat.bottom_pane.handle_paste(large_answer.clone());
+-    handle_turn_completed(&mut chat, "ended-turn", /*duration_ms*/ None);
++    handle_turn_completed(&mut chat, "turn-2", /*duration_ms*/ None);
+     assert_eq!(
+         chat.bottom_pane.composer_text_with_pending(),
+         format!("{recovered}\n\n> Which way?\n\n{}", large_answer.trim())
 diff --git a/codex-rs/tui/src/chatwidget/tests/review_mode.rs b/codex-rs/tui/src/chatwidget/tests/review_mode.rs
 index 640019ba6ced9e8581022d9ecd536e81a585053e..a2defe6c3e1a155a2b304fe437c64bf992971f1b 100644
 --- a/codex-rs/tui/src/chatwidget/tests/review_mode.rs
@@ -44975,6 +45253,20 @@ index 640019ba6ced9e8581022d9ecd536e81a585053e..a2defe6c3e1a155a2b304fe437c64bf9
 
      match next_submit_op(&mut op_rx) {
          Op::UserTurn { items, .. } => assert_eq!(
+diff --git a/codex-rs/tui/src/chatwidget/tests/slash_commands.rs b/codex-rs/tui/src/chatwidget/tests/slash_commands.rs
+index e68d202b007614de41c22a49b88014626ae2b0f2..fc826a1dcc1765955a86f32a29353812d6fdbff6 100644
+--- a/codex-rs/tui/src/chatwidget/tests/slash_commands.rs
++++ b/codex-rs/tui/src/chatwidget/tests/slash_commands.rs
+@@ -2859,6 +2859,9 @@ async fn slash_clear_after_ctrl_c_keeps_stashed_draft_recallable() {
+
+     submit_composer_text(&mut chat, "ok");
+     assert_eq!(next_add_to_history_event(&mut rx), "ok");
++    handle_turn_started(&mut chat, "turn");
++    handle_turn_completed(&mut chat, "turn", /*duration_ms*/ None);
++    drain_insert_history(&mut rx);
+
+     let stashed_draft = "explain why history recall lost this draft";
+
 diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap
 index 0644d12b6f533ab6c69bebcfd695fe12279221a5..f6fb7e0854208d776708b3b8c653920a7e6bd678 100644
 --- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap
@@ -45001,6 +45293,16 @@ index d6537e354d9344d7715d5f8332026be424338639..d4e981ed0a23a50bbe4e0c94bcf6b097
  › Ask Codex to do anything
 
    Luna Reserve default · /tmp/project
+diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__questions_tests__questions_cleared_by_follow_up.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__questions_tests__questions_cleared_by_follow_up.snap
+index 5fc368856d2a9ceb90b176fe2574a76c0b449077..9670cfb6d0bfbee65655347be448a61c6867d919 100644
+--- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__questions_tests__questions_cleared_by_follow_up.snap
++++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__questions_tests__questions_cleared_by_follow_up.snap
+@@ -2,4 +2,4 @@
+ source: tui/src/chatwidget/tests/questions_tests.rs
+ expression: "render_bottom_popup(&chat, 80).lines().next().unwrap()"
+ ---
+-› Ask Codex to do anything
++• Working (0s • esc to interrupt)
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1f4ab1ed9 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
