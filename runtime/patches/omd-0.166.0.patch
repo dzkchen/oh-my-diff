@@ -117784,7 +117784,7 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b7b6dd2a2df056913111292bad522650ecc0f505
+index 0000000000000000000000000000000000000000..356c8356aeef7e2a0e61c17bc9de8210430a1ae0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,7153 @@
@@ -121336,7 +121336,7 @@ index 0000000000000000000000000000000000000000..b7b6dd2a2df056913111292bad522650
 +        }
 +        payload => payload,
 +    };
-+    let retained = !matches!(
++    let retained = !(matches!(
 +        event,
 +        "terminal"
 +            | "inspect"
@@ -121344,7 +121344,7 @@ index 0000000000000000000000000000000000000000..b7b6dd2a2df056913111292bad522650
 +            | "command_list"
 +            | "config_list"
 +            | "component"
-+    ) && !(event == "intercept"
++    ) || event == "intercept"
 +        && matches!(
 +            payload["surface"].as_str(),
 +            Some("render" | "input" | "mention" | "history_persist")
@@ -126061,7 +126061,7 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fab58880a936b02e99ccd8443c5e60b193be6572
+index 0000000000000000000000000000000000000000..c01edd021af989fb12d618d9f9cae76ee4ea557e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,530 @@
@@ -126380,13 +126380,13 @@ index 0000000000000000000000000000000000000000..fab58880a936b02e99ccd8443c5e60b1
 +    let render = event == "intercept" && request["payload"]["surface"] == "render";
 +    let component = event == "component";
 +    let session = loaded.session_key.as_ref().filter(|_| {
-+        !render
-+            && !component
-+            && !matches!(
++        !(render
++            || component
++            || matches!(
 +                event,
 +                "terminal" | "inspect" | "workspace_pre_rename" | "command_list" | "config_list"
 +            )
-+            && !(event == "intercept"
++            || event == "intercept"
 +                && matches!(
 +                    request["payload"]["surface"].as_str(),
 +                    Some("input" | "mention" | "history_persist")
