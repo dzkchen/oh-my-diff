@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "21ed182adf65b60e60d9c71fbf0bd22fe9fa0712c4814a875d569ddb5fdf88ed"
+    "sha256": "aa94a19a0851c52917c05df9b4ad30d883644bf075f09b3e6dd6b7dba09f72fb"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1843,7 +1843,7 @@
     },
     "codex-rs/tui/src/app.rs": {
       "before": "09941d72547d9addd5d9e650d66d0998296f4ccec380422762138442c5fe9746",
-      "after": "fdfe500ac70d326ab54ead6f64caf24d265e241c2ab61ed432ba32b142d69c16"
+      "after": "7d1b863d66b12950093c950ad23386bb5abc35c7469f095c8f5c6787bbb59816"
     },
     "codex-rs/tui/src/app/agent_status_feed.rs": {
       "before": "c9f6c237129c3f80275c456d8aecd16708ca6cb869df3972b95c506207ebcdc3",
@@ -1991,7 +1991,7 @@
     },
     "codex-rs/tui/src/app/startup.rs": {
       "before": "42e4b0946b5d4b4684803d079299a1efb91e7067d55a14fda594fcc83da90793",
-      "after": "6483e48cd96d2c38da4fd3f9f2553dec13a0307dbd595976deb92d804b558504"
+      "after": "e1b1fb361a55c3a3c18d5eb5fc0773af08689ef5d2ab1b215d567694a082d09e"
     },
     "codex-rs/tui/src/app/test_support.rs": {
       "before": "15f41be5ae05e24390e6be2647ec253281e254bcd31706a0d52cdb6993ef2424",
@@ -3011,7 +3011,7 @@
     },
     "codex-rs/tui/src/tui.rs": {
       "before": "35c83c273156ef817bf88bc87215061fbbdd7a90e677531a12035f0b0f4809e9",
-      "after": "aa15b2c0349c7e282d3ff7e7df3b648bddea91ce9dc4a68a78d0a21eba66ccd1"
+      "after": "fc5a4baf71e5f308826d6192aa497d6b3539c2a815cf5468427ff6bd96377144"
     },
     "codex-rs/tui/src/tui/alternate_screen.rs": {
       "before": "93c9cd9ed7a61f4e95f6c1d15c2e4276fa284f66cb497888abfda97fc4d4a9aa",
@@ -3019,11 +3019,11 @@
     },
     "codex-rs/tui/src/tui/event_stream.rs": {
       "before": "f2cc745d113bd5ad01f978bb523bc6bf9bdffe429e0c3cc2d95c1af96ea483d7",
-      "after": "b9bba36bcda37d386f9490fe31f269b38d9da15d708c677c8796d1a0a3ec7fec"
+      "after": "03b7e569f74cd7cf8960014043285ecefd734702c6f4d91dafb73a249319b2e7"
     },
     "codex-rs/tui/src/tui/frame_requester.rs": {
       "before": "ed05cdc6741c919430eb1910b0aa25e89a4aeba4c9510caa49ee4611d3ac5658",
-      "after": "3c2577d13367c709482305bd3820dc896403081f9c009e612cd0072a3bd98c0f"
+      "after": "7aac9bc5b8f0ecfddf524ddf88167b4ec97dbaf88ac81f99dd663314cb256efa"
     },
     "codex-rs/tui/src/tui/job_control.rs": {
       "before": "d76684a4f8a676d96d524430fa3cacff7f5f56ede9f09ceabe684645dcf1b436",

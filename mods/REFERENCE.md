@@ -7224,11 +7224,12 @@ events report native state: `view` (`{phase, view, view_id, dropped?}`) when a n
 or closes, and `focus` (`{focused, idle?, dropped?}`) when the terminal window gains or loses focus or enters/leaves display idle.
 `idle: true` means five minutes without terminal input. Stop visual timers while `!focused || idle` and restart
 them on the next active event. `terminal` callbacks also carry `client.active` so a newly shown
-thread can recover without waiting for another window focus change. Active turns, tools and monitors continue; the TUI suppresses redraws, frees
-finished render caches and releases unused stateless runners and spare processes. Session runners and mounted
-component state remain resident. After a minute without runner use, all spare runners are released. Focus, keys, paste, mouse or resize resume drawing. Background detection needs
-a terminal that reports focus events. This reduces display work and disposable memory; it does not unload the
-conversation or freeze the session process.
+thread can recover without waiting for another window focus change. Active turns, tools, monitors and desktop
+notifications continue; the TUI suppresses redraws, frees finished render caches and releases unused stateless
+runners and spare processes. Session runners and mounted component state remain resident. After a minute without
+runner use, all spare runners are released. Focus, keys, paste or mouse resume drawing; resize and returning from
+an external editor resume drawing while focused. Background detection needs a terminal that reports focus events.
+This reduces display work and disposable memory; it does not unload the conversation or freeze the session process.
 
 With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
 `view {phase: 'opened', view: 'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent.
@@ -7959,12 +7960,13 @@ In [`direct` mode](reference/glossary.md#stores-and-data), which runs plain Code
 
 ### `terminal` event `client`
 
-The `terminal` event has `client: {kind: 'terminal', graphics, pointer, reduced_motion, cell_px, columns,
+The `terminal` event has `client: {kind: 'terminal', active?, graphics, pointer, reduced_motion, cell_px, columns,
 rows, sites?}` and, with external clients attached, `clients` (see
 [Renderer capabilities and fallback](reference/omd-client-protocol.md#renderer-capabilities-and-fallback)):
 
 | Field | Meaning |
 | --- | --- |
+| `active` | When present, false while the terminal is unfocused or display-idle; true when active. |
 | `graphics` | `kitty` (pixel images), `iip` (iTerm2 inline images: Orca, iTerm2, WezTerm), `cells` (half-block) or `text` (`NO_COLOR`). |
 | `pointer` | `half_cell`, `cell` or `none` (no mouse capture: tmux, `OMD_TUI_MOUSE=off`, inline viewport). |
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |
