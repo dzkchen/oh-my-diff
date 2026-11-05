@@ -1052,6 +1052,57 @@ fn workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions() {
 }
 
 #[test]
+fn store_reads_create_nothing_and_follow_documents_replaced_on_disk() {
+    let (_temp, _repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["store"]);
+    let tool = caller(&capabilities, &[], Origin::Tool);
+    let user = |key: &str| json!({"key":key,"scope":"user"});
+    assert!(host.call(&tool, "store.get", user("k")).unwrap().is_null());
+    assert_eq!(
+        host.call(&tool, "store.list", json!({"scope":"user"}))
+            .unwrap()["generation"],
+        1
+    );
+    assert!(!data.join("data").exists());
+
+    host.call(
+        &tool,
+        "store.put",
+        json!({"key":"k","value":"first","expected_revision":null,"scope":"user"}),
+    )
+    .unwrap();
+    assert_eq!(
+        host.call(&tool, "store.get", user("k")).unwrap()["value"],
+        "first"
+    );
+    let path = data.join("data/user/fixture/store.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    document["entries"]["k"]["value"] = json!("second");
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    assert_eq!(
+        host.call(&tool, "store.get", user("k")).unwrap()["value"],
+        "second"
+    );
+
+    let mut padded = serde_json::to_vec(&document).unwrap();
+    padded.resize(16 * 1024 * 1024 + 1, b' ');
+    std::fs::write(&path, padded).unwrap();
+    assert_eq!(
+        host.call(&tool, "store.get", user("k")).unwrap_err(),
+        "store_document_invalid"
+    );
+}
+
+#[test]
 fn store_is_namespaced_compare_and_set_with_host_attested_provenance() {
     let (_temp, _repository, data, authority) = setup();
     let active = || true;
