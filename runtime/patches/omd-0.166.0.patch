@@ -26128,7 +26128,7 @@ index c3a82eff0f558d024600627771ccdfd8a5f1e5b6..026f68cc37c9047203bee6b41bc40cbf
              model,
              effort,
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6dc83142a5 100644
+index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..f97a182d624ee5d2488da297902e978d20e7d19f 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
 @@ -1,6 +1,7 @@
@@ -26242,10 +26242,10 @@ index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6d
                  // let the user continue the conversation
                  break;
              }
-@@ -930,6 +981,36 @@ pub(crate) async fn run_turn(
+@@ -929,6 +980,36 @@ pub(crate) async fn run_turn(
+     Ok(last_agent_message)
  }
 
- #[instrument(level = "trace", skip_all)]
 +async fn continue_turn(
 +    sess: &Session,
 +    turn_context: &TurnContext,
@@ -26276,9 +26276,9 @@ index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6d
 +    None
 +}
 +
+ #[instrument(level = "trace", skip_all)]
  async fn turn_diff_display_roots(step_context: &StepContext) -> Vec<(String, PathUri)> {
      let mut display_roots = Vec::new();
-     for turn_environment in step_context.environments.turn_environments() {
 @@ -1460,6 +1541,26 @@ async fn maybe_run_previous_model_inline_compact(
          turn_context.model_info().comp_hash.as_deref(),
      );
@@ -185000,10 +185000,10 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3a93eab32
+index 0000000000000000000000000000000000000000..d82801082f434c48993d7c31ef63e5246601f653
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5939 @@
+@@ -0,0 +1,5950 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -186787,13 +186787,24 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +                }
 +            }
 +            ModComponent::Line { .. } => 1,
-+            ModComponent::Text { text, .. } | ModComponent::Markdown { text, .. } => {
-+                u16::try_from(text.lines().count().max(1)).unwrap_or(u16::MAX)
++            ModComponent::Text { text, .. } => {
++                u16::try_from(text.lines().count()).unwrap_or(u16::MAX)
 +            }
-+            ModComponent::Code { text, start, .. } => {
-+                u16::try_from(text.lines().count().saturating_sub(*start).max(1))
-+                    .unwrap_or(u16::MAX)
++            ModComponent::Markdown { text, .. } => {
++                u16::try_from(markdown_lines(text, width).len()).unwrap_or(u16::MAX)
 +            }
++            ModComponent::Code {
++                text,
++                language,
++                start,
++                ..
++            } => u16::try_from(
++                usize::from(language.is_some())
++                    + code_lines(text, language.as_deref().unwrap_or_default())
++                        .len()
++                        .saturating_sub(*start),
++            )
++            .unwrap_or(u16::MAX),
 +            ModComponent::Button { .. }
 +            | ModComponent::Input { .. }
 +            | ModComponent::Select { .. } => 1,
@@ -186828,7 +186839,7 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +            ModComponent::Module { id, height, .. } => {
 +                height.unwrap_or_else(|| crate::mod_module::height(id))
 +            }
-+            ModComponent::Terminal { height, .. } => height.unwrap_or(16) + 1,
++            ModComponent::Terminal { height, .. } => height.unwrap_or(16).max(2) + 1,
 +            ModComponent::Slot | ModComponent::Native { .. } => 0,
 +        })
 +        .sum()
@@ -191196,10 +191207,10 @@ index 0000000000000000000000000000000000000000..9f178f292257e36d63b98bfe1e5d0c40
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bcb41e6409d090bc4a0792b228ff209a23805dc6
+index 0000000000000000000000000000000000000000..aa61b010439157f5413cbfcedfff0cf272027aec
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2789 @@
+@@ -0,0 +1,2821 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -191501,6 +191512,38 @@ index 0000000000000000000000000000000000000000..bcb41e6409d090bc4a0792b228ff209a
 +        input(KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE), true),
 +        Some(ModInput::Binding(_, ModKeyAction::Command { .. }))
 +    ));
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn dialog_heights_count_wrapped_markdown_and_code_language_rows() {
++    let paragraph = "word ".repeat(60);
++    let dialog = snapshot(serde_json::json!({
++        "sites":{"dialog":{"components":[{"type":"dialog","id":"ask","label":"Ask","title":"Ask",
++            "children":[{"type":"markdown","id":"body","label":"Body","text":paragraph},
++                {"type":"code","id":"snippet","label":"Snippet","text":"let a = 1;","language":"rust"},
++                {"type":"text","id":"empty","label":"Empty","text":""},
++                {"type":"button","id":"ok","label":"OK","text":"OK","action":{"insert":"x"}}]}]}}
++    }));
++    preview(dialog.clone());
++    let area = Rect::new(0, 0, 50, 40);
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &dialog);
++    let interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let dialog_area = interaction.dialog_area.unwrap();
++    let ok = interaction
++        .hitboxes
++        .iter()
++        .find(|hitbox| hitbox.id == "ok")
++        .cloned()
++        .unwrap();
++    drop(interaction);
++    assert!(ok.area.y >= dialog_area.y && ok.area.bottom() < dialog_area.bottom());
++    let text = rows(&buffer, area);
++    assert!(text.contains("rust") && text.contains("OK"), "{text}");
 +    preview(ModViewSnapshot::default());
 +}
 +
