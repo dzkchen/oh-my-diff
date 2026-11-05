@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "1e08ecac0b18b88f058184fd2f6e432d358876094a84e2b546fc9ef68cf80c41"
+    "sha256": "43e71b8cca9becc9b0b7c80a484d992c8e1353d6ca9c5ffa62a8dfe0d5f3f504"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -407,7 +407,7 @@
     },
     "codex-rs/codex-api/src/sse/responses.rs": {
       "before": "0de7416d0d1d0b3ca6a10520995e042a3affa6afce0ab2c9116f282d443a8ce0",
-      "after": "5ec5e24b1bd3589923ac23159acd4f49a19f589708290b6d6e7dbcccdf671ba6"
+      "after": "097c163bad3b01aabd36827056e1b0f8dcb00337a351507bae05530eb7f44efa"
     },
     "codex-rs/codex-api/tests/policed_transport.rs": {
       "before": null,
@@ -655,7 +655,7 @@
     },
     "codex-rs/core/src/session/turn.rs": {
       "before": "5c0ec0a968de15cabbb7bd0af66edf1dd42313a1d9aac861af9d8a549b7b2335",
-      "after": "3910c453b49f43a215df28bf5139150d1f5d4b21e4c53aa5832d4dfe8acc3ba8"
+      "after": "1c6073e2dc8123df1b3cd1d7c9e785a4c6d4c3822c78094710b376699511c6e2"
     },
     "codex-rs/core/src/session/turn_context.rs": {
       "before": "818853cc5b06456ac741b4fbc3f2a8b551298f9cee0ef5b6ba90a6bac4598e7e",

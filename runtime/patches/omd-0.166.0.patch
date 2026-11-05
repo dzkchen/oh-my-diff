@@ -20212,7 +20212,7 @@ index b4872ba6ac66bf9ad6e2eb8b7348d702b6c9b26a..30d13ca0a19d83f5fcaf74f7ee2f3e37
  pub(crate) use responses::process_responses_event;
 -pub use responses::spawn_response_stream;
 diff --git a/codex-rs/codex-api/src/sse/responses.rs b/codex-rs/codex-api/src/sse/responses.rs
-index 67f627e60173a29a9ba85ae45ab23b125edcd48b..83a647e3b238d1854db1e874f2e1d8484fed89e1 100644
+index 67f627e60173a29a9ba85ae45ab23b125edcd48b..723ee57f1bca79e111c838b94504c565aac8748d 100644
 --- a/codex-rs/codex-api/src/sse/responses.rs
 +++ b/codex-rs/codex-api/src/sse/responses.rs
 @@ -10,7 +10,6 @@ use crate::rate_limits::parse_all_rate_limits;
@@ -20307,36 +20307,52 @@ index 67f627e60173a29a9ba85ae45ab23b125edcd48b..83a647e3b238d1854db1e874f2e1d848
  ) {
      let mut stream = stream.eventsource();
      let mut response_error: Option<ApiError> = None;
-@@ -621,9 +663,20 @@ async fn process_sse_with_treatment(
+@@ -621,6 +663,22 @@ async fn process_sse_with_treatment(
 
          trace!("SSE event: {}", &sse.data);
 
--        let event: ResponsesStreamEvent = match serde_json::from_str(&sse.data) {
--            Ok(event) => event,
-+        let mut raw: Value = match serde_json::from_str(&sse.data) {
-+            Ok(raw) => raw,
++        if let Some(attempt) = attempt.as_mut() {
++            if observe_sse(
++                attempt.as_mut(),
++                &sse.data,
++                &tx_event,
++                &safety_buffering_treatment,
++                &mut last_server_model,
++                &mut response_error,
++            )
++            .await
++            {
++                continue;
++            }
++            return;
++        }
++
+         let event: ResponsesStreamEvent = match serde_json::from_str(&sse.data) {
+             Ok(event) => event,
              Err(e) => {
-+                if let Some(attempt) = attempt.as_mut() {
-+                    let mut raw = Value::Null;
-+                    if let Err(error) = attempt.observe(&mut raw, false) {
-+                        let _ = tx_event
-+                            .send(Err(ApiError::InvalidRequest {
-+                                message: error.to_string(),
-+                            }))
-+                            .await;
-+                        return;
-+                    }
-+                }
-                 debug!(
-                     error_category = ?e.classify(),
-                     error_line = e.line(),
-@@ -634,50 +687,95 @@ async fn process_sse_with_treatment(
+@@ -634,51 +692,168 @@ async fn process_sse_with_treatment(
                  continue;
              }
          };
 -        let safety_buffering = event.safety_buffering(&safety_buffering_treatment);
 -        let metadata_events = event.metadata_events(safety_buffering);
--
++        if !matches!(
++            emit_event(
++                event,
++                &tx_event,
++                &safety_buffering_treatment,
++                &mut last_server_model,
++                &mut response_error,
++                false,
++            )
++            .await,
++            Emitted::Next
++        ) {
++            return;
++        }
++    }
++}
+
 -        if let Some(model) = event.response_model()
 -            && last_server_model.as_deref() != Some(model.as_str())
 -        {
@@ -20346,68 +20362,142 @@ index 67f627e60173a29a9ba85ae45ab23b125edcd48b..83a647e3b238d1854db1e874f2e1d848
 -                .is_err()
 -            {
 -                return;
-+        let mut stopped = None;
-+        if let Some(attempt) = attempt.as_mut() {
-+            // Only an observer needs the up-front validity check; it borrows the parsed value rather than copying it.
-+            let valid = ResponsesStreamEvent::deserialize(&raw).is_ok();
-+            if let Err(error) = attempt.observe(&mut raw, valid) {
-+                let message = error.to_string();
-+                if crate::request_observer::stream_control(&message).is_none() {
-+                    let _ = tx_event
-+                        .send(Err(ApiError::InvalidRequest { message }))
-+                        .await;
-+                    return;
-+                }
-+                stopped = Some(ApiError::InvalidRequest { message });
++async fn observe_sse(
++    attempt: &mut dyn crate::request_observer::ResponseAttempt,
++    data: &str,
++    tx_event: &mpsc::Sender<Result<ResponseEvent, ApiError>>,
++    safety_buffering_treatment: &SafetyBufferingTreatment,
++    last_server_model: &mut Option<String>,
++    response_error: &mut Option<ApiError>,
++) -> bool {
++    let mut raw: Value = match serde_json::from_str(data) {
++        Ok(raw) => raw,
++        Err(e) => {
++            let mut raw = Value::Null;
++            if let Err(error) = attempt.observe(&mut raw, false) {
++                let _ = tx_event
++                    .send(Err(ApiError::InvalidRequest {
++                        message: error.to_string(),
++                    }))
++                    .await;
++                return false;
              }
 -            last_server_model = Some(model);
++            debug!(
++                error_category = ?e.classify(),
++                error_line = e.line(),
++                error_column = e.column(),
++                payload_bytes = data.len(),
++                "Failed to parse SSE event"
++            );
++            return true;
          }
 -        for metadata_event in metadata_events {
 -            if tx_event.send(Ok(metadata_event)).await.is_err() {
 -                return;
--            }
-+        let mut queue = Vec::new();
-+        if !raw.is_null() {
-+            queue.push(raw);
++    };
++    let mut stopped = None;
++    let valid = ResponsesStreamEvent::deserialize(&raw).is_ok();
++    if let Err(error) = attempt.observe(&mut raw, valid) {
++        let message = error.to_string();
++        if crate::request_observer::stream_control(&message).is_none() {
++            let _ = tx_event
++                .send(Err(ApiError::InvalidRequest { message }))
++                .await;
++            return false;
++        }
++        stopped = Some(ApiError::InvalidRequest { message });
++    }
++    let mut queue = Vec::new();
++    if !raw.is_null() {
++        queue.push(raw);
++    }
++    queue.extend(attempt.injected());
++    for raw in queue {
++        let event: ResponsesStreamEvent = match serde_json::from_value(raw) {
++            Ok(event) => event,
++            Err(e) => {
++                debug!(
++                    error_category = ?e.classify(),
++                    error_line = e.line(),
++                    error_column = e.column(),
++                    payload_bytes = data.len(),
++                    "Failed to parse transformed SSE event"
++                );
++                continue;
+             }
++        };
++        match emit_event(
++            event,
++            tx_event,
++            safety_buffering_treatment,
++            last_server_model,
++            response_error,
++            stopped.is_some(),
++        )
++        .await
++        {
++            Emitted::Next => {}
++            Emitted::Stopped => break,
++            Emitted::Done => return false,
          }
--
++    }
++    if let Some(stop) = stopped {
++        let _ = tx_event.send(Err(stop)).await;
++        return false;
++    }
++    true
++}
+
 -        match process_responses_event(event) {
 -            Ok(Some(event)) => {
 -                let is_completed = matches!(event, ResponseEvent::Completed { .. });
 -                if tx_event.send(Ok(event)).await.is_err() {
 -                    return;
-+        if let Some(attempt) = attempt.as_mut() {
-+            queue.extend(attempt.injected());
-+        }
-+        for raw in queue {
-+            let event: ResponsesStreamEvent = match serde_json::from_value(raw) {
-+                Ok(event) => event,
-+                Err(e) => {
-+                    debug!(
-+                        error_category = ?e.classify(),
-+                        error_line = e.line(),
-+                        error_column = e.column(),
-+                        payload_bytes = sse.data.len(),
-+                        "Failed to parse transformed SSE event"
-+                    );
-+                    continue;
-                 }
+-                }
 -                if is_completed {
-+            };
-+            let safety_buffering = event.safety_buffering(&safety_buffering_treatment);
-+            let metadata_events = event.metadata_events(safety_buffering);
+-                    return;
+-                }
++enum Emitted {
++    Next,
++    Done,
++    Stopped,
++}
 +
-+            if let Some(model) = event.response_model()
-+                && last_server_model.as_deref() != Some(model.as_str())
-+            {
-+                if tx_event
-+                    .send(Ok(ResponseEvent::ServerModel(model.clone())))
-+                    .await
-+                    .is_err()
-+                {
-                     return;
-                 }
-+                last_server_model = Some(model);
++async fn emit_event(
++    event: ResponsesStreamEvent,
++    tx_event: &mpsc::Sender<Result<ResponseEvent, ApiError>>,
++    safety_buffering_treatment: &SafetyBufferingTreatment,
++    last_server_model: &mut Option<String>,
++    response_error: &mut Option<ApiError>,
++    stopped: bool,
++) -> Emitted {
++    let safety_buffering = event.safety_buffering(safety_buffering_treatment);
++    let metadata_events = event.metadata_events(safety_buffering);
++
++    if let Some(model) = event.response_model()
++        && last_server_model.as_deref() != Some(model.as_str())
++    {
++        if tx_event
++            .send(Ok(ResponseEvent::ServerModel(model.clone())))
++            .await
++            .is_err()
++        {
++            return Emitted::Done;
++        }
++        *last_server_model = Some(model);
++    }
++    for metadata_event in metadata_events {
++        if tx_event.send(Ok(metadata_event)).await.is_err() {
++            return Emitted::Done;
++        }
++    }
++
++    match process_responses_event(event) {
++        Ok(Some(event)) => {
++            let is_completed = matches!(event, ResponseEvent::Completed { .. });
++            if is_completed && stopped {
++                return Emitted::Stopped;
              }
 -            Ok(None) => {}
 -            Err(error) => {
@@ -20417,50 +20507,35 @@ index 67f627e60173a29a9ba85ae45ab23b125edcd48b..83a647e3b238d1854db1e874f2e1d848
 -                    ApiError::FlexUnavailable | ApiError::ResponseIncomplete(_)
 -                ) {
 -                    let _ = tx_event.send(Err(error)).await;
-+            for metadata_event in metadata_events {
-+                if tx_event.send(Ok(metadata_event)).await.is_err() {
-                     return;
-                 }
+-                    return;
+-                }
 -                response_error = Some(error);
++            if tx_event.send(Ok(event)).await.is_err() {
++                return Emitted::Done;
              }
 -        };
-+
-+            let result = process_responses_event(event);
-+            match result {
-+                Ok(Some(event)) => {
-+                    let is_completed = matches!(event, ResponseEvent::Completed { .. });
-+                    if is_completed && stopped.is_some() {
-+                        break;
-+                    }
-+                    if tx_event.send(Ok(event)).await.is_err() {
-+                        return;
-+                    }
-+                    if is_completed {
-+                        return;
-+                    }
-+                }
-+                Ok(None) => {}
-+                Err(error) => {
-+                    let error = error.into_api_error();
-+                    if matches!(
-+                        error,
-+                        ApiError::FlexUnavailable | ApiError::ResponseIncomplete(_)
-+                    ) {
-+                        let _ = tx_event.send(Err(error)).await;
-+                        return;
-+                    }
-+                    response_error = Some(error);
-+                }
-+            };
++            if is_completed {
++                return Emitted::Done;
++            }
 +        }
-+        if let Some(stop) = stopped {
-+            let _ = tx_event.send(Err(stop)).await;
-+            return;
++        Ok(None) => {}
++        Err(error) => {
++            let error = error.into_api_error();
++            if matches!(
++                error,
++                ApiError::FlexUnavailable | ApiError::ResponseIncomplete(_)
++            ) {
++                let _ = tx_event.send(Err(error)).await;
++                return Emitted::Done;
++            }
++            *response_error = Some(error);
 +        }
      }
++    Emitted::Next
  }
 
-@@ -766,6 +864,52 @@ mod tests {
+ #[cfg(test)]
+@@ -766,6 +941,52 @@ mod tests {
          Duration::from_millis(1000)
      }
 
@@ -26128,7 +26203,7 @@ index c3a82eff0f558d024600627771ccdfd8a5f1e5b6..026f68cc37c9047203bee6b41bc40cbf
              model,
              effort,
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6dc83142a5 100644
+index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..f97a182d624ee5d2488da297902e978d20e7d19f 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
 @@ -1,6 +1,7 @@
@@ -26242,10 +26317,10 @@ index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6d
                  // let the user continue the conversation
                  break;
              }
-@@ -930,6 +981,36 @@ pub(crate) async fn run_turn(
+@@ -929,6 +980,36 @@ pub(crate) async fn run_turn(
+     Ok(last_agent_message)
  }
 
- #[instrument(level = "trace", skip_all)]
 +async fn continue_turn(
 +    sess: &Session,
 +    turn_context: &TurnContext,
@@ -26276,9 +26351,9 @@ index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6d
 +    None
 +}
 +
+ #[instrument(level = "trace", skip_all)]
  async fn turn_diff_display_roots(step_context: &StepContext) -> Vec<(String, PathUri)> {
      let mut display_roots = Vec::new();
-     for turn_environment in step_context.environments.turn_environments() {
 @@ -1460,6 +1541,26 @@ async fn maybe_run_previous_model_inline_compact(
          turn_context.model_info().comp_hash.as_deref(),
      );
