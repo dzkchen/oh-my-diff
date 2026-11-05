@@ -303,6 +303,12 @@
       "why_mod": "Lists the TCP listeners of the current session's background terminals from the live host."
     },
     {
+      "path": "mods/examples/repo_rules",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Refuses a force-push tool call before it runs and adds a slash command that submits a prompt, the README's example mod."
+    },
+    {
       "path": "mods/examples/quiet_inline",
       "extension_type": "mod",
       "role": "conformance_fixture",
