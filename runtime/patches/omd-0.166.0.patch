@@ -42341,7 +42341,7 @@ index ec00cf99a3a770c3c83bcb8c36cec08225fe171d..a64a759ba055f661f5bcad5bcc44db60
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..c9da88d02fc3ac139e91fbf3ee5902ff1e7c24d2 100644
+index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..a10edaa2e9c7844c88214cb8fcb8786d180ec0d0 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -311,6 +311,7 @@ pub(crate) use interaction::KeyEventAction;
@@ -42434,7 +42434,7 @@ index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..c9da88d02fc3ac139e91fbf3ee5902ff
          self.refresh_thread_usage_if_settlement_due();
 +    }
 +
-+    /// Title and tab status that tell a background terminal the session needs the user, also kept while drawing is paused.
++    /// Title and tab status that tell a background terminal the session needs the user, kept current between throttled frames.
 +    pub(crate) fn refresh_attention_status(&mut self) {
 +        if self.terminal_title_shows_action_required() != self.last_terminal_title_requires_action {
 +            self.refresh_terminal_title();
@@ -51833,10 +51833,10 @@ index 3ed439eec65824f9ff3f3fc5762c88848b295c9c..47723e6b74940bf9c3ea5a4992b91847
          broker: Arc<EventBroker<FakeEventSource>>,
          draw_rx: broadcast::Receiver<()>,
 diff --git a/codex-rs/tui/src/tui/frame_requester.rs b/codex-rs/tui/src/tui/frame_requester.rs
-index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce2932535e 100644
+index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..88d6e253319707fc49eb236862bb49db847fa882 100644
 --- a/codex-rs/tui/src/tui/frame_requester.rs
 +++ b/codex-rs/tui/src/tui/frame_requester.rs
-@@ -15,8 +15,13 @@
+@@ -15,8 +15,14 @@
  use std::time::Duration;
  use std::time::Instant;
 
@@ -51847,10 +51847,11 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
 +use tokio::sync::watch;
 +
 +const IDLE_AFTER: Duration = Duration::from_secs(300);
++const SLEEPING_FRAME_INTERVAL: Duration = Duration::from_secs(1);
 
  use super::frame_rate_limiter::FrameRateLimiter;
 
-@@ -30,6 +35,9 @@ use super::frame_rate_limiter::FrameRateLimiter;
+@@ -30,6 +36,9 @@ use super::frame_rate_limiter::FrameRateLimiter;
  #[derive(Clone, Debug)]
  pub struct FrameRequester {
      frame_schedule_tx: mpsc::UnboundedSender<Instant>,
@@ -51860,7 +51861,7 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
  }
 
  impl FrameRequester {
-@@ -38,21 +46,47 @@ impl FrameRequester {
+@@ -38,10 +47,32 @@ impl FrameRequester {
      /// The provided `draw_tx` is used to notify the TUI event loop of scheduled draws.
      pub fn new(draw_tx: broadcast::Sender<()>) -> Self {
          let (tx, rx) = mpsc::unbounded_channel();
@@ -51887,31 +51888,14 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
 +        self.awake.load(Ordering::Acquire)
 +    }
 +
-+    /// Ends display idle in a focused terminal when the session needs the user; a background terminal stays paused.
++    /// Ends display idle in a focused terminal when the session needs the user; a background terminal stays throttled.
 +    pub(crate) fn note_attention(&self) {
 +        if self.idle.load(Ordering::Acquire) {
 +            self.note_activity(/*focused*/ true);
          }
      }
 
-     /// Schedule a frame draw as soon as possible.
-     pub fn schedule_frame(&self) {
--        let _ = self.frame_schedule_tx.send(Instant::now());
-+        if self.is_awake() {
-+            let _ = self.frame_schedule_tx.send(Instant::now());
-+        }
-     }
-
-     /// Schedule a frame draw to occur after the specified duration.
-     pub fn schedule_frame_in(&self, dur: Duration) {
--        let _ = self.frame_schedule_tx.send(Instant::now() + dur);
-+        if self.is_awake() {
-+            let _ = self.frame_schedule_tx.send(Instant::now() + dur);
-+        }
-     }
- }
-
-@@ -63,6 +97,9 @@ impl FrameRequester {
+@@ -63,6 +94,9 @@ impl FrameRequester {
          let (tx, _rx) = mpsc::unbounded_channel();
          FrameRequester {
              frame_schedule_tx: tx,
@@ -51921,13 +51905,18 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
          }
      }
  }
-@@ -77,16 +114,38 @@ struct FrameScheduler {
+@@ -77,18 +111,45 @@ struct FrameScheduler {
      receiver: mpsc::UnboundedReceiver<Instant>,
      draw_tx: broadcast::Sender<()>,
      rate_limiter: FrameRateLimiter,
 +    activity: watch::Receiver<bool>,
 +    awake: Arc<AtomicBool>,
 +    idle: Arc<AtomicBool>,
++    sleeping_draw_after: Instant,
++}
++
++fn now() -> Instant {
++    tokio::time::Instant::now().into_std()
  }
 
  impl FrameScheduler {
@@ -51947,21 +51936,23 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
 +            activity,
 +            awake,
 +            idle,
-+        }
-+    }
-+
-+    fn sleep(&self, sleeping: &mut bool, deadline: &mut Option<Instant>) {
-+        self.awake.store(false, Ordering::Release);
-+        *deadline = None;
-+        if !*sleeping && crate::omd::is_active() {
-+            crate::mod_render::forget();
-+            tokio::task::spawn_blocking(codex_omd::release_disposable_runners);
++            sleeping_draw_after: now(),
          }
-+        *sleeping = true;
      }
 
++    fn sleep(&self, sleeping: &mut bool, deadline: &mut Option<Instant>) {
++        self.awake.store(false, Ordering::Release);
++        *deadline = deadline.map(|at| at.max(self.sleeping_draw_after));
++        if !*sleeping && crate::omd::is_active() {
++            tokio::task::spawn_blocking(codex_omd::release_disposable_runners);
++        }
++        *sleeping = true;
++    }
++
      /// Run the scheduling loop, coalescing frame requests and notifying the TUI event loop.
-@@ -96,17 +155,42 @@ impl FrameScheduler {
+     ///
+     /// This method runs indefinitely until all senders are dropped. A single draw notification
+@@ -96,18 +157,46 @@ impl FrameScheduler {
      async fn run(mut self) {
          const ONE_YEAR: Duration = Duration::from_secs(60 * 60 * 24 * 365);
          let mut next_deadline: Option<Instant> = None;
@@ -52000,11 +51991,16 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
                          // All senders dropped; exit the scheduler.
                          break
                      };
-+                    if sleeping { continue; }
-                     let draw_at = self.rate_limiter.clamp_deadline(draw_at);
+-                    let draw_at = self.rate_limiter.clamp_deadline(draw_at);
++                    let draw_at = if sleeping {
++                        draw_at.max(self.sleeping_draw_after)
++                    } else {
++                        self.rate_limiter.clamp_deadline(draw_at)
++                    };
                      next_deadline = Some(next_deadline.map_or(draw_at, |cur| cur.min(draw_at)));
 
-@@ -116,7 +200,9 @@ impl FrameScheduler {
+                     // Do not send a draw immediately here. By continuing the loop,
+@@ -116,9 +205,12 @@ impl FrameScheduler {
                      continue;
                  }
                  _ = &mut deadline => {
@@ -52013,8 +52009,11 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
 +                        codex_omd::frame_metrics::waited("schedule_lateness", target);
                          next_deadline = None;
                          self.rate_limiter.mark_emitted(Instant::now());
++                        self.sleeping_draw_after = now() + SLEEPING_FRAME_INTERVAL;
                          let _ = self.draw_tx.send(());
-@@ -140,6 +226,9 @@ mod tests {
+                     }
+                 }
+@@ -140,6 +232,9 @@ mod tests {
              (
                  FrameRequester {
                      frame_schedule_tx: tx,
@@ -52024,7 +52023,7 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
                  },
                  rx,
              )
-@@ -398,3 +487,96 @@ mod tests {
+@@ -398,3 +493,112 @@ mod tests {
          assert!(second.is_err(), "unexpected extra draw received");
      }
  }
@@ -52054,15 +52053,29 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
 +    }
 +
 +    #[tokio::test(start_paused = true)]
-+    async fn hidden_frames_are_suppressed_and_input_resumes() {
++    async fn hidden_frames_are_throttled_and_input_resumes() {
 +        let (draw_tx, mut draws) = broadcast::channel(16);
 +        let frames = FrameRequester::new(draw_tx);
 +        frames.note_activity(false);
 +        tokio::task::yield_now().await;
 +        frames.schedule_frame();
++        tokio::time::timeout(Duration::from_millis(5), draws.recv())
++            .await
++            .expect("first hidden draw")
++            .expect("draw channel remains open");
++        frames.schedule_frame();
 +        frames.schedule_frame_in(Duration::from_millis(16));
-+        tokio::time::advance(Duration::from_secs(1)).await;
++        assert!(
++            tokio::time::timeout(Duration::from_millis(500), draws.recv())
++                .await
++                .is_err(),
++            "hidden draws wait for the throttle interval"
++        );
 +        assert!(!frames.is_awake());
++        tokio::time::timeout(Duration::from_millis(600), draws.recv())
++            .await
++            .expect("throttled hidden draw")
++            .expect("draw channel remains open");
 +        assert!(draws.try_recv().is_err());
 +        frames.note_activity(true);
 +        tokio::task::yield_now().await;
@@ -52088,7 +52101,9 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce
 +        assert!(!frames.is_awake());
 +        while draws.try_recv().is_ok() {}
 +        frames.schedule_frame();
++        frames.schedule_frame();
 +        tokio::time::advance(Duration::from_secs(10)).await;
++        assert!(draws.try_recv().is_ok());
 +        assert!(draws.try_recv().is_err());
 +        frames.note_activity(true);
 +        tokio::task::yield_now().await;

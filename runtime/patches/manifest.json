@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "d7becde27eee8635b668a85c56f4b0050f88f8670e624b66c09c334d5fce88ad"
+    "sha256": "aeca13bb92277cf2d653ac58dec45f08700c136f6ea714ee500b0b4c1a019913"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -2307,7 +2307,7 @@
     },
     "codex-rs/tui/src/chatwidget.rs": {
       "before": "915fc19f502aa3f0952163e43a35b969197b3782a4ec070fbb0ed7f753e8ff96",
-      "after": "b768d819d8dee5acca8238a3c07236e554a7a60ec96eb085efb7613b7e7445c1"
+      "after": "a96effe9cc12ed093552fb381308ff91073acde665078a4da2cdc3b0dee93172"
     },
     "codex-rs/tui/src/chatwidget/activity_presentation.rs": {
       "before": "ad25f6544b8b48d949482793e61645aa9792bf54a130ef8b71d8682983899bd3",
@@ -3083,7 +3083,7 @@
     },
     "codex-rs/tui/src/tui/frame_requester.rs": {
       "before": "ed05cdc6741c919430eb1910b0aa25e89a4aeba4c9510caa49ee4611d3ac5658",
-      "after": "9e1c10cbd93134eda973a2f7519c32e5b3fce7c26a95c0ff7ff1aab7a9068ef6"
+      "after": "0b876de78dadc5dd15b6f9d48e23a7ffddac9c2f7c3302c42f67a1e75bf9d246"
     },
     "codex-rs/tui/src/tui/job_control.rs": {
       "before": "d76684a4f8a676d96d524430fa3cacff7f5f56ede9f09ceabe684645dcf1b436",
