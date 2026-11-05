@@ -336,6 +336,36 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
         .unwrap();
     assert_eq!(second["text"].as_str().unwrap().len(), 5000);
     assert!(second["cursor"].is_null());
+    let split = host
+        .call(
+            &owner,
+            "exec.run",
+            json!({"program":"sh", "argv":["-c", "printf 'aé'"], "output_artifact":true}),
+        )
+        .unwrap()["output_artifact"]
+        .clone();
+    let head = host
+        .call(
+            &owner,
+            "exec.output_page",
+            json!({"artifact":split,"max_bytes":2}),
+        )
+        .unwrap();
+    assert_eq!(
+        (head["text"].clone(), head["cursor"].clone()),
+        (json!("a"), json!(1))
+    );
+    let tail = host
+        .call(
+            &owner,
+            "exec.output_page",
+            json!({"artifact":split,"cursor":1,"max_bytes":2}),
+        )
+        .unwrap();
+    assert_eq!(
+        (tail["text"].clone(), tail["cursor"].clone()),
+        (json!("é"), Value::Null)
+    );
     let other = Caller {
         thread: Some("thread-2"),
         ..caller(&capabilities, &[], Origin::Tool)
@@ -344,13 +374,15 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
         host.call(&other, "exec.output_page", json!({"artifact":artifact}))
             .is_err()
     );
-    assert!(
+    assert_eq!(
         host.call(
             &owner,
             "exec.output_page",
             json!({"artifact":artifact,"cursor":1})
         )
-        .is_err()
+        .unwrap_err()
+        .to_string(),
+        "exec_output_cursor_invalid"
     );
     let path = data
         .join("exec-output")
