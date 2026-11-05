@@ -113913,10 +113913,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a7411df5928f82cfe22ecec42049f076a6367c1
+index 0000000000000000000000000000000000000000..0f77902cea1806a6e376da78f4804a3e32fe0458
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,2068 @@
+@@ -0,0 +1,2112 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -113931,6 +113931,8 @@ index 0000000000000000000000000000000000000000..4a7411df5928f82cfe22ecec42049f07
 +use std::collections::BTreeSet;
 +use std::fs;
 +use std::io::Read;
++use std::io::Seek;
++use std::io::SeekFrom;
 +use std::io::Write;
 +use std::os::unix::fs::DirBuilderExt;
 +use std::os::unix::fs::OpenOptionsExt;
@@ -114782,6 +114784,43 @@ index 0000000000000000000000000000000000000000..4a7411df5928f82cfe22ecec42049f07
 +    Ok(digest)
 +}
 +
++/// A stored output's length once its size, digest and UTF-8 are verified, rechecked only when its file stamp changes.
++fn verified_output(path: &Path, file: &mut fs::File, digest: &str) -> Result<usize, String> {
++    static VERIFIED: LazyLock<Mutex<BTreeMap<PathBuf, crate::FileStamp>>> =
++        LazyLock::new(Default::default);
++    let metadata = file.metadata().map_err(|error| error.to_string())?;
++    let len = metadata.len() as usize;
++    if len > EXEC_ARTIFACT_BYTES {
++        return Err("exec_output_integrity_failed".into());
++    }
++    let stamp = crate::file_stamp(&metadata);
++    if VERIFIED
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .get(path)
++        .is_some_and(|known| *known == stamp)
++    {
++        return Ok(len);
++    }
++    let mut bytes = Vec::with_capacity(len);
++    Read::by_ref(file)
++        .take((EXEC_ARTIFACT_BYTES + 1) as u64)
++        .read_to_end(&mut bytes)
++        .map_err(|error| error.to_string())?;
++    if bytes.len() != len
++        || crate::sha256_hex(&bytes) != digest
++        || std::str::from_utf8(&bytes).is_err()
++    {
++        return Err("exec_output_integrity_failed".into());
++    }
++    let mut verified = VERIFIED.lock().unwrap_or_else(PoisonError::into_inner);
++    if verified.len() >= 1024 {
++        verified.clear();
++    }
++    verified.insert(path.to_path_buf(), stamp);
++    Ok(len)
++}
++
 +fn stored_outputs(owner: &Path) -> Result<Vec<(std::time::SystemTime, PathBuf, u64)>, String> {
 +    let mut stored = Vec::new();
 +    let mut directories = vec![(owner.to_path_buf(), 0)];
@@ -114920,41 +114959,46 @@ index 0000000000000000000000000000000000000000..4a7411df5928f82cfe22ecec42049f07
 +        let mut file = fs::OpenOptions::new()
 +            .read(true)
 +            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-+            .open(path)
++            .open(&path)
 +            .map_err(|_| "exec_output_unavailable")?;
-+        let mut bytes = Vec::new();
-+        Read::by_ref(&mut file)
-+            .take((EXEC_ARTIFACT_BYTES + 1) as u64)
-+            .read_to_end(&mut bytes)
-+            .map_err(|error| error.to_string())?;
-+        if bytes.len() > EXEC_ARTIFACT_BYTES || crate::sha256_hex(&bytes) != *digest {
-+            return Err("exec_output_integrity_failed".into());
-+        }
++        let len = verified_output(&path, &mut file, digest)?;
 +        if !(self.active)() {
 +            return Err("host_operation_cancelled".into());
 +        }
-+        let text = std::str::from_utf8(&bytes).map_err(|_| "exec_output_integrity_failed")?;
-+        if input.cursor > bytes.len() || !text.is_char_boundary(input.cursor) {
++        if input.cursor > len {
 +            return Err("exec_output_cursor_invalid".into());
 +        }
 +        let max = input
 +            .max_bytes
 +            .unwrap_or(EXEC_ARTIFACT_PAGE_BYTES)
 +            .clamp(1, EXEC_ARTIFACT_PAGE_BYTES);
-+        let mut end = input.cursor.saturating_add(max).min(bytes.len());
-+        while end > input.cursor && !text.is_char_boundary(end) {
++        let mut window = Vec::with_capacity(max + 4);
++        file.seek(SeekFrom::Start(input.cursor as u64))
++            .map_err(|error| error.to_string())?;
++        Read::by_ref(&mut file)
++            .take((max + 4) as u64)
++            .read_to_end(&mut window)
++            .map_err(|error| error.to_string())?;
++        let continuation = |index: usize| window.get(index).is_some_and(|byte| byte & 0xc0 == 0x80);
++        if continuation(0) {
++            return Err("exec_output_cursor_invalid".into());
++        }
++        let mut end = max.min(window.len());
++        while end > 0 && continuation(end) {
 +            end -= 1;
 +        }
-+        if end == input.cursor && end < bytes.len() {
-+            end += text[end..]
-+                .chars()
-+                .next()
-+                .ok_or("exec_output_cursor_invalid")?
-+                .len_utf8();
++        if end == 0 && !window.is_empty() {
++            end = 1;
++            while continuation(end) {
++                end += 1;
++            }
 +        }
++        let text =
++            std::str::from_utf8(&window[..end]).map_err(|_| "exec_output_integrity_failed")?;
++        let next = input.cursor + end;
 +        Ok(
-+            json!({"text": &text[input.cursor..end], "cursor": if end < bytes.len() { Some(end) } else { None },
-+            "bytes": bytes.len(), "sha256": digest}),
++            json!({"text": text, "cursor": if next < len { Some(next) } else { None },
++            "bytes": len, "sha256": digest}),
 +        )
 +    }
 +
@@ -149275,10 +149319,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6a733bd9ac3e2e7b98549ee6fd07645cdfd19ae8
+index 0000000000000000000000000000000000000000..8f940f135a736d03f146d627da75de95baeacbd5
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2196 @@
+@@ -0,0 +1,2228 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -149617,6 +149661,36 @@ index 0000000000000000000000000000000000000000..6a733bd9ac3e2e7b98549ee6fd07645c
 +        .unwrap();
 +    assert_eq!(second["text"].as_str().unwrap().len(), 5000);
 +    assert!(second["cursor"].is_null());
++    let split = host
++        .call(
++            &owner,
++            "exec.run",
++            json!({"program":"sh", "argv":["-c", "printf 'aé'"], "output_artifact":true}),
++        )
++        .unwrap()["output_artifact"]
++        .clone();
++    let head = host
++        .call(
++            &owner,
++            "exec.output_page",
++            json!({"artifact":split,"max_bytes":2}),
++        )
++        .unwrap();
++    assert_eq!(
++        (head["text"].clone(), head["cursor"].clone()),
++        (json!("a"), json!(1))
++    );
++    let tail = host
++        .call(
++            &owner,
++            "exec.output_page",
++            json!({"artifact":split,"cursor":1,"max_bytes":2}),
++        )
++        .unwrap();
++    assert_eq!(
++        (tail["text"].clone(), tail["cursor"].clone()),
++        (json!("é"), Value::Null)
++    );
 +    let other = Caller {
 +        thread: Some("thread-2"),
 +        ..caller(&capabilities, &[], Origin::Tool)
@@ -149625,13 +149699,15 @@ index 0000000000000000000000000000000000000000..6a733bd9ac3e2e7b98549ee6fd07645c
 +        host.call(&other, "exec.output_page", json!({"artifact":artifact}))
 +            .is_err()
 +    );
-+    assert!(
++    assert_eq!(
 +        host.call(
 +            &owner,
 +            "exec.output_page",
 +            json!({"artifact":artifact,"cursor":1})
 +        )
-+        .is_err()
++        .unwrap_err()
++        .to_string(),
++        "exec_output_cursor_invalid"
 +    );
 +    let path = data
 +        .join("exec-output")
@@ -184520,10 +184596,10 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3a93eab32
+index 0000000000000000000000000000000000000000..9e839318d1903707632bcf35a5a29e2a4b709e96
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5939 @@
+@@ -0,0 +1,5950 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -186307,13 +186383,24 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +                }
 +            }
 +            ModComponent::Line { .. } => 1,
-+            ModComponent::Text { text, .. } | ModComponent::Markdown { text, .. } => {
-+                u16::try_from(text.lines().count().max(1)).unwrap_or(u16::MAX)
++            ModComponent::Text { text, .. } => {
++                u16::try_from(text.lines().count()).unwrap_or(u16::MAX)
 +            }
-+            ModComponent::Code { text, start, .. } => {
-+                u16::try_from(text.lines().count().saturating_sub(*start).max(1))
-+                    .unwrap_or(u16::MAX)
++            ModComponent::Markdown { text, .. } => {
++                u16::try_from(markdown_lines(text, width).len()).unwrap_or(u16::MAX)
 +            }
++            ModComponent::Code {
++                text,
++                language,
++                start,
++                ..
++            } => u16::try_from(
++                usize::from(language.is_some())
++                    + code_lines(text, language.as_deref().unwrap_or_default())
++                        .len()
++                        .saturating_sub(*start),
++            )
++            .unwrap_or(u16::MAX),
 +            ModComponent::Button { .. }
 +            | ModComponent::Input { .. }
 +            | ModComponent::Select { .. } => 1,
@@ -190716,10 +190803,10 @@ index 0000000000000000000000000000000000000000..9f178f292257e36d63b98bfe1e5d0c40
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bcb41e6409d090bc4a0792b228ff209a23805dc6
+index 0000000000000000000000000000000000000000..aeaecd27f8cdc7f4853021d13e370365754f4ece
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2789 @@
+@@ -0,0 +1,2817 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -192965,6 +193052,34 @@ index 0000000000000000000000000000000000000000..bcb41e6409d090bc4a0792b228ff209a
 +    assert!(top.contains("╔ Settings ═"), "{top}");
 +    let buttons = row(dialog.y + 1);
 +    assert!(buttons.contains("║ [ OK ] [ Cancel ]   "), "{buttons}");
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn dialog_height_counts_wrapped_markdown_and_code_language_rows() {
++    let paragraph = "wrapped words ".repeat(40);
++    let snapshot = snapshot(serde_json::json!({"sites": {"dialog": {"components": [
++        {"type": "dialog", "id": "about", "label": "About", "title": "About", "children": [
++            {"type": "markdown", "id": "body", "label": "Body", "text": paragraph},
++            {"type": "code", "id": "snippet", "label": "Snippet", "text": "let x = 1;", "language": "rust"},
++            {"type": "button", "id": "ok", "label": "OK", "text": "OK", "action": {"command": "m:ok"}}]}]}}}));
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 60, 40);
++    let mut buffer = Buffer::empty(area);
++    render(area, chat_area(area, &snapshot, 0), &mut buffer, &snapshot);
++    let interaction = INTERACTION.lock().unwrap();
++    let dialog = interaction.dialog_area.unwrap();
++    let ok = interaction
++        .hitboxes
++        .iter()
++        .find(|hitbox| hitbox.id == "ok")
++        .map(|hitbox| hitbox.area);
++    assert!(
++        ok.is_some_and(|ok| ok.y > dialog.y && ok.bottom() < dialog.bottom()),
++        "{ok:?} outside {dialog:?}"
++    );
++    drop(interaction);
 +    preview(ModViewSnapshot::default());
 +}
 +
