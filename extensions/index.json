@@ -30,7 +30,7 @@
       "id": "omd_privacy",
       "version": "1.0.0",
       "extension_type": "mod",
-      "capability": "Fail-closed final-request policy that replaces secrets and selected PII with stable opaque placeholders and asks before shell reads of sensitive paths",
+      "capability": "Fail-closed final-request policy that replaces secrets and selected PII with stable opaque placeholders and can ask before shell reads of sensitive paths",
       "source": "mods/first-party/omd_privacy",
       "license": "MIT",
       "maintainer": "Oh My Diff",

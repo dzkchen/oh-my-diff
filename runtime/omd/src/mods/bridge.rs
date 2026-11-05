@@ -256,7 +256,7 @@ fn metadata(loaded: &Loaded) -> Result<(Value, String, [u8; 32])> {
         "intercept": MOD_INTERCEPT_SURFACES.iter().map(|(surface, capability)| (surface.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
         "state": "store",
         "contracts": "contracts",
-        "adapter": loaded.adapter,
+        "adapter": loaded.adapter.as_ref().map(|adapter| &adapter.module),
     });
     // `entrypoint_sha256` stands for the source.
     let mut identity = Sha256::new();

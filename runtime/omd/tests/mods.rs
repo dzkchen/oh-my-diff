@@ -3896,7 +3896,11 @@ fn rethrowing_a_rejected_next_is_not_a_fault() {
             &["interception"],
         ),
     ]);
-    for _ in 0..6 {
+    for attempt in 0..6 {
+        let downstream = format!(
+            "tool_result_unavailable: succeeded{}",
+            "x".repeat(attempt % 2 * 1000)
+        );
         let error = codex_omd::intercept_shared(
             &runtime,
             "tool",
@@ -3905,7 +3909,7 @@ fn rethrowing_a_rejected_next_is_not_a_fault() {
             json!({"caller":"model"}),
             || true,
             |_, _| Err(std::io::Error::other("unexpected host call")),
-            |_| Err(std::io::Error::other("tool_result_unavailable: succeeded")),
+            |_| Err(std::io::Error::other(downstream.clone())),
         )
         .unwrap_err();
         assert!(
@@ -3927,6 +3931,44 @@ fn rethrowing_a_rejected_next_is_not_a_fault() {
     assert_eq!(telemetry("pass")["telemetry"]["faults"], 0);
     assert!(telemetry("pass")["error"].is_null());
     assert!(telemetry("wrap")["error"].is_string());
+    let (_temp, runtime) = interceptors(&[
+        (
+            "pass",
+            "export default api => api.intercept('tool', (e, next) => next(e))",
+            &["interception"],
+        ),
+        (
+            "policy",
+            "export default api => api.intercept('tool', {required: true}, () => { throw new Error('boom'); })",
+            &["interception"],
+        ),
+    ]);
+    for _ in 0..6 {
+        let error = codex_omd::intercept_shared(
+            &runtime,
+            "tool",
+            false,
+            json!({"tool":"exec","arguments":{}}),
+            json!({"caller":"model"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |_| Err(std::io::Error::other("unexpected tool run")),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("intercept_required_failed: policy")
+        );
+    }
+    let status = runtime.lock().unwrap().status();
+    let pass = status["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == "pass")
+        .unwrap();
+    assert_eq!(pass["telemetry"]["faults"], 0);
 }
 
 #[test]

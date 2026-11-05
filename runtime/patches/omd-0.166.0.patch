@@ -36837,7 +36837,7 @@ index 075a6256623bf8b6c86274f91eb4ba0e0e120db2..7f522f25483308ee218affc5940ab6a5
      let mut app = crate::app::test_support::make_test_app().await;
      let config = serde_json::from_value(serde_json::json!({
 diff --git a/codex-rs/tui/src/app/owned_transcript_tests.rs b/codex-rs/tui/src/app/owned_transcript_tests.rs
-index c3ec487f6d67f545c5504a109b525f7137fad7c3..468a942cd2d87067c0ff8747731c41279ec5e3db 100644
+index c3ec487f6d67f545c5504a109b525f7137fad7c3..5ca0ee1509f5127baae24e8b609292c3bc500003 100644
 --- a/codex-rs/tui/src/app/owned_transcript_tests.rs
 +++ b/codex-rs/tui/src/app/owned_transcript_tests.rs
 @@ -34,6 +34,10 @@ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
@@ -37036,7 +37036,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..468a942cd2d87067c0ff8747731c4127
  async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.copy_on_select = CopyOnSelect::Never;
-@@ -2004,3 +2030,266 @@ async fn footer_selection_defers_warning_clicks_and_preserves_the_draft() -> Res
+@@ -2004,3 +2030,269 @@ async fn footer_selection_defers_warning_clicks_and_preserves_the_draft() -> Res
      tui.set_owned_screen(/*owned*/ false)?;
      Ok(())
  }
@@ -37230,8 +37230,10 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..468a942cd2d87067c0ff8747731c4127
 +    let mut tui = crate::tui::test_support::make_test_tui()?;
 +    tui.set_owned_screen(/*owned*/ true)?;
 +    crate::mod_ui::preview(codex_omd::ModViewSnapshot {
-+        view: codex_omd::ModView::parse(serde_json::json!({"sites": {"above_composer": {"components": [
-+            {"type": "button", "id": "thumb", "label": "Thumb", "text": "Open thumbnail", "action": {"command": "fixture:open"}}]}}}))?,
++        view: codex_omd::ModView::parse(
++            serde_json::json!({"sites": {"above_composer": {"components": [
++            {"type": "button", "id": "thumb", "label": "Thumb", "text": "Open thumbnail", "action": {"command": "fixture:open"}}]}}}),
++        )?,
 +        contributors: vec!["fixture".into()],
 +        component_owners: [("thumb".to_string(), "fixture".to_string())].into(),
 +        ..Default::default()
@@ -37287,7 +37289,8 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..468a942cd2d87067c0ff8747731c4127
 +        }),
 +        /*replay_kind*/ None,
 +    );
-+    app.chat_widget.apply_external_edit("queued draft".to_string());
++    app.chat_widget
++        .apply_external_edit("queued draft".to_string());
 +    app.handle_tui_event(
 +        tui,
 +        app_server,
@@ -118191,10 +118194,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c85734a6f353
+index 0000000000000000000000000000000000000000..05fec903297e9ad9fe7e611d895aa31c3165db74
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7274 @@
+@@ -0,0 +1,7306 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -119039,6 +119042,28 @@ index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c857
 +
 +fn failure(message: impl ToString) -> io::Error {
 +    io::Error::other(message.to_string())
++}
++
++/// The runner reports a thrown error as its stack, cut to this many UTF-16 units.
++const RUNNER_ERROR_UNITS: usize = 768;
++
++fn rethrown(error: &str, downstream: &str) -> bool {
++    let described = |text: &str| {
++        let lines = text.split('\n').filter(|line| {
++            !(line.starts_with(char::is_whitespace) && line.trim_start().starts_with("at "))
++        });
++        lines.collect::<Vec<_>>().join("\n")
++    };
++    let thrown = described(error.strip_prefix("Error: ").unwrap_or(error));
++    let downstream = described(downstream);
++    let cut = error.encode_utf16().count() >= RUNNER_ERROR_UNITS;
++    let kept = match thrown.rsplit_once('\n') {
++        Some((kept, last)) if cut && last.starts_with(char::is_whitespace) => kept,
++        _ => &thrown,
++    };
++    !downstream.is_empty()
++        && (thrown.starts_with(&downstream)
++            || cut && downstream.starts_with(kept.trim_end_matches('\u{fffd}')))
 +}
 +
 +pub(crate) fn digest(bytes: &[u8]) -> String {
@@ -121114,6 +121139,12 @@ index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c857
 +    }
 +}
 +
++#[derive(PartialEq)]
++struct Adapter {
++    module: Value,
++    sha256: String,
++}
++
 +#[derive(Clone)]
 +struct Loaded {
 +    package: Arc<ModPackage>,
@@ -121124,7 +121155,7 @@ index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c857
 +    session_key: Option<String>,
 +    /// The store's code cache; `None` runs without one.
 +    code_cache: Option<Arc<code_cache::CacheRoot>>,
-+    adapter: Option<Value>,
++    adapter: Option<Arc<Adapter>>,
 +    state: Value,
 +    state_revision: u64,
 +    /// The state the inspection ran with; `state` follows later callbacks.
@@ -122010,7 +122041,7 @@ index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c857
 +    });
 +        // A handler that only rethrows what `next` rejected with is not at fault.
 +        invocation.rethrown = matches!((&reply, &downstream), (Err(error), Some(downstream))
-+            if error.to_string().trim_start_matches("Error: ").starts_with(downstream.as_str()));
++            if rethrown(&error.to_string(), downstream));
 +        // A retry replays recorded host results; a divergent replay of read-only calls runs fresh.
 +        if replaying && reply.is_err() {
 +            if replay.iter().all(read_only_receipt) && started.elapsed() < budget {
@@ -122439,7 +122470,7 @@ index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c857
 +        let binding = digest(
 +            json!([
 +                loaded.selection,
-+                loaded.adapter,
++                loaded.adapter.as_ref().map(|adapter| &adapter.sha256),
 +                loaded.settings_file,
 +                loaded.withheld,
 +                reset
@@ -123089,7 +123120,7 @@ index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c857
 +
 +    fn adapters(
 +        selected: &BTreeMap<String, (ModSelection, ModPackage, String)>,
-+    ) -> BTreeMap<String, Value> {
++    ) -> BTreeMap<String, Arc<Adapter>> {
 +        selected
 +            .iter()
 +            .filter_map(|(id, (selection, package, _))| {
@@ -123109,10 +123140,9 @@ index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c857
 +                    .iter()
 +                    .map(|(specifier, asset)| Some((specifier.clone(), file(asset)?)))
 +                    .collect::<Option<serde_json::Map<_, _>>>()?;
-+                Some((
-+                    id.clone(),
-+                    json!({"source": entry["source"], "filename": entry["filename"], "aliases": aliases}),
-+                ))
++                let module = json!({"source": entry["source"], "filename": entry["filename"], "aliases": aliases});
++                let sha256 = digest(module.to_string().as_bytes());
++                Some((id.clone(), Arc::new(Adapter { module, sha256 })))
 +            })
 +            .collect()
 +    }
@@ -124529,9 +124559,14 @@ index 0000000000000000000000000000000000000000..ed97893d5890e868b3ff6baa1a14c857
 +            "{}:{}",
 +            self.store.root.display(),
 +            digest(
-+                json!([self.project, thread, selection, loaded.adapter])
-+                    .to_string()
-+                    .as_bytes()
++                json!([
++                    self.project,
++                    thread,
++                    selection,
++                    loaded.adapter.as_ref().map(|adapter| &adapter.sha256)
++                ])
++                .to_string()
++                .as_bytes()
 +            )
 +        )
 +    }
@@ -126591,7 +126626,7 @@ index 0000000000000000000000000000000000000000..6a4214f20b1925475fcfec2ebaad35a1
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cace1aeee4f9252edb84b5a77f923cd1e2cea627
+index 0000000000000000000000000000000000000000..904ea3dd1739234a829c334cdfe9cd3d13930338
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,544 @@
@@ -126853,7 +126888,7 @@ index 0000000000000000000000000000000000000000..cace1aeee4f9252edb84b5a77f923cd1
 +        "intercept": MOD_INTERCEPT_SURFACES.iter().map(|(surface, capability)| (surface.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
 +        "state": "store",
 +        "contracts": "contracts",
-+        "adapter": loaded.adapter,
++        "adapter": loaded.adapter.as_ref().map(|adapter| &adapter.module),
 +    });
 +    // `entrypoint_sha256` stands for the source.
 +    let mut identity = Sha256::new();
@@ -153581,10 +153616,10 @@ index 0000000000000000000000000000000000000000..0ae91608d929c6b4433126a6ac04f963
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..70d5e616c1eba4177c40c1b844e1aa9e4effc02f
+index 0000000000000000000000000000000000000000..b7937a1e6fdebda083b1c88955e637ea066db78c
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5538 @@
+@@ -0,0 +1,5580 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -157483,7 +157518,11 @@ index 0000000000000000000000000000000000000000..70d5e616c1eba4177c40c1b844e1aa9e
 +            &["interception"],
 +        ),
 +    ]);
-+    for _ in 0..6 {
++    for attempt in 0..6 {
++        let downstream = format!(
++            "tool_result_unavailable: succeeded{}",
++            "x".repeat(attempt % 2 * 1000)
++        );
 +        let error = codex_omd::intercept_shared(
 +            &runtime,
 +            "tool",
@@ -157492,7 +157531,7 @@ index 0000000000000000000000000000000000000000..70d5e616c1eba4177c40c1b844e1aa9e
 +            json!({"caller":"model"}),
 +            || true,
 +            |_, _| Err(std::io::Error::other("unexpected host call")),
-+            |_| Err(std::io::Error::other("tool_result_unavailable: succeeded")),
++            |_| Err(std::io::Error::other(downstream.clone())),
 +        )
 +        .unwrap_err();
 +        assert!(
@@ -157514,6 +157553,44 @@ index 0000000000000000000000000000000000000000..70d5e616c1eba4177c40c1b844e1aa9e
 +    assert_eq!(telemetry("pass")["telemetry"]["faults"], 0);
 +    assert!(telemetry("pass")["error"].is_null());
 +    assert!(telemetry("wrap")["error"].is_string());
++    let (_temp, runtime) = interceptors(&[
++        (
++            "pass",
++            "export default api => api.intercept('tool', (e, next) => next(e))",
++            &["interception"],
++        ),
++        (
++            "policy",
++            "export default api => api.intercept('tool', {required: true}, () => { throw new Error('boom'); })",
++            &["interception"],
++        ),
++    ]);
++    for _ in 0..6 {
++        let error = codex_omd::intercept_shared(
++            &runtime,
++            "tool",
++            false,
++            json!({"tool":"exec","arguments":{}}),
++            json!({"caller":"model"}),
++            || true,
++            |_, _| Err(std::io::Error::other("unexpected host call")),
++            |_| Err(std::io::Error::other("unexpected tool run")),
++        )
++        .unwrap_err();
++        assert!(
++            error
++                .to_string()
++                .contains("intercept_required_failed: policy")
++        );
++    }
++    let status = runtime.lock().unwrap().status();
++    let pass = status["mods"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|entry| entry["id"] == "pass")
++        .unwrap();
++    assert_eq!(pass["telemetry"]["faults"], 0);
 +}
 +
 +#[test]
@@ -173153,10 +173230,10 @@ index 0000000000000000000000000000000000000000..da3a9bd5094c5c0dcd6e6cfe8c73ca2c
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..95bd906f1297e577ba3cf732c59bcf90ebc0b0be
+index 0000000000000000000000000000000000000000..8b87813df1e630f0f068b61c5da77e18603ff7e5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,702 @@
+@@ -0,0 +1,731 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -173175,6 +173252,8 @@ index 0000000000000000000000000000000000000000..95bd906f1297e577ba3cf732c59bcf90
 +use std::collections::BTreeSet;
 +use std::sync::Arc;
 +use std::sync::Mutex;
++use std::time::Duration;
++use std::time::Instant;
 +
 +const DEFAULT_HEIGHT: usize = 12;
 +
@@ -173554,6 +173633,32 @@ index 0000000000000000000000000000000000000000..95bd906f1297e577ba3cf732c59bcf90
 +    crate::mod_client::facts().no_color || width < 4
 +}
 +
++pub(crate) fn image_height(
++    reference: &codex_omd::resource_data::ResourceRef,
++    owners: &[String],
++    width: u16,
++    height: u16,
++) -> u16 {
++    if image_as_text(width) {
++        return 1;
++    }
++    let key = format!(
++        "{}:{owners:?}:{}",
++        reference.sha256,
++        crate::mod_surface::current_thread().unwrap_or_default()
++    );
++    let mut available = AVAILABLE.locked();
++    available.retain(|_, (_, checked)| checked.elapsed() < AVAILABILITY_TTL);
++    let (found, _) = *available
++        .entry(key)
++        .or_insert_with(|| (authorized_blob(reference, owners).is_some(), Instant::now()));
++    if found { height } else { 1 }
++}
++
++/// Whether an image's blob was readable, rechecked after `AVAILABILITY_TTL` so frames don't reread it.
++static AVAILABLE: Mutex<BTreeMap<String, (bool, Instant)>> = Mutex::new(BTreeMap::new());
++const AVAILABILITY_TTL: Duration = Duration::from_secs(1);
++
 +pub(crate) fn image_rows(
 +    component: &str,
 +    reference: &codex_omd::resource_data::ResourceRef,
@@ -173854,6 +173959,7 @@ index 0000000000000000000000000000000000000000..95bd906f1297e577ba3cf732c59bcf90
 +    documents().clear();
 +    crate::mod_raster::retain(&BTreeSet::new());
 +    IMAGES.locked().clear();
++    AVAILABLE.locked().clear();
 +}
 +
 +#[cfg(test)]
@@ -175755,10 +175861,10 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b089182b073c84cfb597c6a58ea1f3772f3e2d4
+index 0000000000000000000000000000000000000000..57b86bf468e9e7a43294b89fb8f4c7ef15c953fd
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,1896 @@
+@@ -0,0 +1,1898 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use crate::terminal_palette::StdoutColorLevel;
@@ -176678,12 +176784,16 @@ index 0000000000000000000000000000000000000000..2b089182b073c84cfb597c6a58ea1f37
 +    }
 +}
 +
-+pub(crate) fn height(session: &str, height: u16) -> u16 {
-+    sessions()
-+        .panes
-+        .iter()
-+        .find(|((_, name), _)| name == session)
-+        .map_or(1, |(_, pane)| {
++pub(crate) fn height(binding: Option<&Binding>, session: &str, height: u16) -> u16 {
++    let sessions = sessions();
++    binding
++        .filter(|binding| validate(&sessions, binding).is_ok())
++        .and_then(|binding| {
++            sessions
++                .panes
++                .get(&(binding.owner.clone(), session.to_owned()))
++        })
++        .map_or(1, |pane| {
 +            height.max(2) + u16::from(pane.exit.locked().is_some())
 +        })
 +}
@@ -177441,9 +177551,7 @@ index 0000000000000000000000000000000000000000..2b089182b073c84cfb597c6a58ea1f37
 +        assert!(text.contains("hello pane あい"), "{text}");
 +        let drawn = rows(Some(&a), "t1", "c", 40, 4, "", false);
 +        assert!(
-+            drawn
-+                .iter()
-+                .all(|(line, _)| line.to_string().width() == 40),
++            drawn.iter().all(|(line, _)| line.to_string().width() == 40),
 +            "{drawn:?}"
 +        );
 +        assert!(call(&other, &json!({"session": "t1", "action": "read"})).is_err());
@@ -185112,10 +185220,10 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba64b1d70a
+index 0000000000000000000000000000000000000000..f4da8a7f8f634a29dfed10bd58cb59566a5a309b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5962 @@
+@@ -0,0 +1,6020 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -185866,12 +185974,19 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +    }
 +}
 +
-+fn stack_height(children: &[ModComponent], width: u16, frame: &Frame) -> u16 {
++fn stack_height(
++    children: &[ModComponent],
++    width: u16,
++    frame: &Frame,
++    interaction: &Interaction,
++) -> u16 {
 +    match frame.direction {
 +        ModDirection::Column => {
 +            let heights = children
 +                .iter()
-+                .map(|child| component_height(std::slice::from_ref(child), width, frame.look))
++                .map(|child| {
++                    component_height(std::slice::from_ref(child), width, frame.look, interaction)
++                })
 +                .filter(|height| *height > 0)
 +                .collect::<Vec<_>>();
 +            heights.iter().sum::<u16>()
@@ -185880,7 +185995,7 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +        ModDirection::Row => columns(children, width, frame.gap)
 +            .into_iter()
 +            .map(|(child, _, width)| {
-+                component_height(std::slice::from_ref(child), width, frame.look)
++                component_height(std::slice::from_ref(child), width, frame.look, interaction)
 +            })
 +            .max()
 +            .unwrap_or(0),
@@ -186864,7 +186979,12 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +    view.sites.get(name)
 +}
 +
-+fn component_height(components: &[ModComponent], width: u16, look: (ModBorder, ModIcons)) -> u16 {
++fn component_height(
++    components: &[ModComponent],
++    width: u16,
++    look: (ModBorder, ModIcons),
++    interaction: &Interaction,
++) -> u16 {
 +    components
 +        .iter()
 +        .map(|component| match component {
@@ -186876,13 +186996,14 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +                ..
 +            } => {
 +                let frame = Frame::new(style.unwrap_or_default(), look, false, false);
-+                frame.rows(title.is_some()) + stack_height(children, frame.inner(width), &frame)
++                frame.rows(title.is_some())
++                    + stack_height(children, frame.inner(width), &frame, interaction)
 +            }
 +            ModComponent::Dialog {
 +                children, style, ..
 +            } => {
 +                let frame = Frame::card(*style, look, false, false);
-+                frame.rows(true) + stack_height(children, frame.inner(width), &frame)
++                frame.rows(true) + stack_height(children, frame.inner(width), &frame, interaction)
 +            }
 +            ModComponent::Pane {
 +                collapsed,
@@ -186895,7 +187016,8 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +                    frame.padding.0 = 0;
 +                    frame.rows(true)
 +                } else {
-+                    frame.rows(true) + stack_height(children, frame.inner(width), &frame).min(8)
++                    frame.rows(true)
++                        + stack_height(children, frame.inner(width), &frame, interaction).min(8)
 +                }
 +            }
 +            ModComponent::Line { .. } => 1,
@@ -186950,15 +187072,36 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +                *height,
 +            ))
 +            .unwrap_or(u16::MAX),
-+            ModComponent::Image { .. } if crate::mod_components::image_as_text(width) => 1,
-+            ModComponent::Image { height, .. } => height.unwrap_or(12),
++            ModComponent::Image {
++                id, image, height, ..
++            } => crate::mod_components::image_height(
++                image,
++                &interaction
++                    .component_owners
++                    .get(id)
++                    .cloned()
++                    .into_iter()
++                    .collect::<Vec<_>>(),
++                width,
++                height.unwrap_or(12),
++            ),
 +            ModComponent::Raster { height, .. } => height.unwrap_or(RASTER_HEIGHT),
 +            ModComponent::Module { id, height, .. } => {
 +                height.unwrap_or_else(|| crate::mod_module::height(id))
 +            }
 +            ModComponent::Terminal {
-+                session, height, ..
-+            } => crate::mod_pty::height(session, height.unwrap_or(16)),
++                id,
++                session,
++                height,
++                ..
++            } => crate::mod_pty::height(
++                interaction
++                    .component_owners
++                    .get(id)
++                    .and_then(|owner| interaction.pty_bindings.get(owner)),
++                session,
++                height.unwrap_or(16),
++            ),
 +            ModComponent::Slot | ModComponent::Native { .. } => 0,
 +        })
 +        .sum()
@@ -186988,6 +187131,11 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +            &header.components,
 +            width,
 +            (snapshot.view.theme.border, snapshot.view.theme.icons),
++            &Interaction {
++                component_owners: snapshot.component_owners.clone(),
++                pty_bindings: pty_bindings(snapshot),
++                ..Interaction::default()
++            },
 +        )
 +        .clamp(1, 6)
 +            + 1;
@@ -188129,12 +188277,18 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +            interaction.focus_region.clone(),
 +        );
 +    }
++    interaction.thread = snapshot.input["ledger"]["thread_id"]
++        .as_str()
++        .map(str::to_owned);
++    interaction.pty_bindings = pty_bindings(snapshot);
++}
++
++fn pty_bindings(snapshot: &ModViewSnapshot) -> BTreeMap<String, crate::mod_pty::Binding> {
 +    let thread = snapshot.input["ledger"]["thread_id"].as_str();
-+    interaction.thread = thread.map(str::to_owned);
 +    let epoch = snapshot.input["pty_scope"]["epoch"].as_u64();
 +    let admission = snapshot.input["pty_scope"]["admission"].as_u64();
 +    let configuration = snapshot.input["pty_scope"]["configuration"].as_str();
-+    interaction.pty_bindings = snapshot
++    snapshot
 +        .contributors
 +        .iter()
 +        .filter_map(|owner| {
@@ -188142,7 +188296,7 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +                .ok()
 +                .map(|binding| (owner.clone(), binding))
 +        })
-+        .collect();
++        .collect()
 +}
 +
 +/// Returns the content area of each `owner/name` site it drew, for `mod_client::record_sites`.
@@ -188464,7 +188618,7 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +        let frame = Frame::card(dialog_style, (theme.border, theme.icons), false, false);
 +        let width = stage.width.saturating_sub(4).min(76);
 +        let height = (frame.rows(title.is_some())
-+            + stack_height(components, frame.inner(width), &frame))
++            + stack_height(components, frame.inner(width), &frame, interaction))
 +        .min(stage.height.saturating_sub(2));
 +        let dialog_area = Rect::new(
 +            stage.x + (stage.width - width) / 2,
@@ -188677,7 +188831,13 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +}
 +
 +/// Components without a height share the rows a layout region leaves after its fixed components.
-+fn fill_heights(components: &mut [ModComponent], width: u16, rows: u16, frame: &Frame) {
++fn fill_heights(
++    components: &mut [ModComponent],
++    width: u16,
++    rows: u16,
++    frame: &Frame,
++    interaction: &Interaction,
++) {
 +    let fills = |component: &ModComponent| {
 +        matches!(
 +            component,
@@ -188703,13 +188863,18 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +    let visible = components
 +        .iter()
 +        .filter(|component| {
-+            component_height(std::slice::from_ref(component), width, frame.look) > 0
++            component_height(
++                std::slice::from_ref(component),
++                width,
++                frame.look,
++                interaction,
++            ) > 0
 +        })
 +        .count();
 +    let share = match frame.direction {
 +        ModDirection::Row => rows,
 +        ModDirection::Column => {
-+            rows.saturating_sub(component_height(&fixed, width, frame.look))
++            rows.saturating_sub(component_height(&fixed, width, frame.look, interaction))
 +                .saturating_sub(
 +                    frame.gap * u16::try_from(visible.saturating_sub(1)).unwrap_or(u16::MAX),
 +                )
@@ -188785,6 +188950,7 @@ index 0000000000000000000000000000000000000000..369a4cf938832867389291b1592ce5ba
 +            frame.inner(region.area.width),
 +            region.area.height.saturating_sub(frame.rows(true)),
 +            &frame,
++            &interaction,
 +        );
 +        let margin = frame.margin;
 +        let bordered = frame.border.is_some();
@@ -191331,10 +191497,10 @@ index 0000000000000000000000000000000000000000..9f178f292257e36d63b98bfe1e5d0c40
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1471591552362d0308bc7bc01e29ee0dd95c52c0
+index 0000000000000000000000000000000000000000..8ff89efd847cbd900a35523e561ad2b87e34aa04
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2826 @@
+@@ -0,0 +1,2845 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -193395,7 +193561,7 @@ index 0000000000000000000000000000000000000000..1471591552362d0308bc7bc01e29ee0d
 +        let drawn = stack(&components, width, &frame, &mut interaction).len();
 +        assert_eq!(
 +            u16::try_from(drawn).unwrap(),
-+            stack_height(&components, width, &frame)
++            stack_height(&components, width, &frame, &interaction)
 +        );
 +        render_site(
 +            area,
@@ -193593,9 +193759,11 @@ index 0000000000000000000000000000000000000000..1471591552362d0308bc7bc01e29ee0d
 +            {"type": "text", "id": "empty", "label": "Empty", "text": ""},
 +            {"type": "document", "id": "short_document", "label": "Notes", "lines": [[{"text": "a"}], [{"text": "b"}]]},
 +            {"type": "terminal", "id": "idle_terminal", "label": "Shell", "session": "idle"},
++            {"type": "image", "id": "missing_image", "label": "Chart", "alt": "chart", "image": {"reference": "a".repeat(64), "sha256": "a".repeat(64)}},
 +            {"type": "button", "id": "ok", "label": "OK", "text": "OK", "action": {"command": "m:ok"}}]}]}}}));
 +    preview(snapshot.clone());
-+    let [ModComponent::Dialog { children, .. }] = snapshot.view.sites["dialog"].components.as_slice()
++    let [ModComponent::Dialog { children, .. }] =
++        snapshot.view.sites["dialog"].components.as_slice()
 +    else {
 +        panic!("dialog");
 +    };
@@ -193603,7 +193771,12 @@ index 0000000000000000000000000000000000000000..1471591552362d0308bc7bc01e29ee0d
 +    for child in children {
 +        let child = std::slice::from_ref(child);
 +        assert_eq!(
-+            usize::from(component_height(child, width, look())),
++            usize::from(component_height(
++                child,
++                width,
++                look(),
++                &Interaction::default()
++            )),
 +            component_rows(child, width, &mut Interaction::default(), look()).len(),
 +            "{child:?}"
 +        );
@@ -193614,7 +193787,12 @@ index 0000000000000000000000000000000000000000..1471591552362d0308bc7bc01e29ee0d
 +    let interaction = INTERACTION.lock().unwrap();
 +    let dialog = interaction.dialog_area.unwrap();
 +    assert_eq!(dialog.width, 50);
-+    let ok = interaction.hitboxes.iter().find(|hitbox| hitbox.id == "ok").unwrap().area;
++    let ok = interaction
++        .hitboxes
++        .iter()
++        .find(|hitbox| hitbox.id == "ok")
++        .unwrap()
++        .area;
 +    assert_eq!(ok.bottom() + 1, dialog.bottom(), "{ok:?} {dialog:?}");
 +    drop(interaction);
 +    preview(ModViewSnapshot::default());
@@ -194094,6 +194272,13 @@ index 0000000000000000000000000000000000000000..1471591552362d0308bc7bc01e29ee0d
 +        {"type": "text", "id": "intro", "label": "Intro", "text": "line\n".repeat(20)},
 +        {"type": "terminal", "id": "term", "label": "Term", "session": "t1", "height": 4}]);
 +    let flat = parse(body.clone());
++    let foreign = parse(serde_json::json!([
++        {"type": "terminal", "id": "other", "label": "Other", "session": "t1", "height": 4}]));
++    assert_eq!(component_height(&foreign, 40, look(), &interaction), 1);
++    assert_eq!(
++        component_rows(&foreign, 40, &mut interaction, look()).len(),
++        1
++    );
 +    let paned = parse(serde_json::json!([
 +        {"type": "pane", "id": "box", "label": "Box", "children": body}]));
 +    let frame = Frame::new(ModBoxStyle::default(), look(), false, false);

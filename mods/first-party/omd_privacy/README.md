@@ -2,7 +2,7 @@
 
 Replaces secrets, and personal data you choose, with random placeholders such as
 `[REDACTED:github_token:q7xk2m9fhd4w]` in everything sent to the model. It can also ask before a shell command
-reads a sensitive file. It's off by default in OMD+. OMD Core doesn't include it.
+reads a sensitive file when you set `paths` to `ask`. It's off by default in OMD+. OMD Core doesn't include it.
 
 ## Turn it on
 
@@ -55,7 +55,7 @@ The default `sensitive_paths`: `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.p
   sensitive path ask first. The catch-all patterns `*` and `.*` are the exception, so neither `ls -la .*` nor `cat .*`
   asks. In inline interpreter code (`python -c`, `node -e`) and in heredoc bodies fed to an interpreter, `cat >` or
   `tee` only quoted strings count, so `open('.env')` asks and `config.key` doesn't. A heredoc piped or fed to a shell
-  or `ssh` is checked like any command. Input to a running session that is too large to check is treated as naming
+  or `ssh`, and code or an unquoted heredoc holding a `$(…)` or backtick substitution, is checked like any command. Input to a running session that is too large to check is treated as naming
   a sensitive path.
 - Web search isn't scanned. It sends your recent messages and its queries as they are.
 - While the mod is on, Realtime calls are refused (`request_policy_unsupported_transport`).

@@ -161,10 +161,16 @@ def keep_bundled_copies(manager, store):
             invoke(manager, "package-disable", store, item["id"])
 
 
-def retire_packages(manager, store, identifiers):
-    for item in invoke(manager, "selection-status", store)["selections"]:
-        if item["selected"] and item["id"] in identifiers and item["path"] == str(store / "sources" / item["id"]):
-            invoke(manager, "disable", store, item["path"])
+def retire_packages(manager, store, profile, previous):
+    retired = set(PACKAGES) - set(profile_packages("full")) - set(ROUTES.values())
+    if previous and profile != "full":
+        return set(previous.get("retired", ()))
+    newly = retired - set(previous.get("retired", ())) if previous else set()
+    if newly:
+        for item in invoke(manager, "selection-status", store)["selections"]:
+            if item["selected"] and item["id"] in newly and item["path"] == str(store / "sources" / item["id"]):
+                invoke(manager, "disable", store, item["path"])
+    return retired
 
 
 def reconcile(prefix, bin_dir):
@@ -847,9 +853,7 @@ def install(args):
             invoke(installed_manager, "enable", store, target)
         sync_sources(installed_manager, store, prefix / "sources", installed)
         keep_bundled_copies(installed_manager, store)
-        retired = set(PACKAGES) - set(profile_packages(args.profile)) - set(ROUTES.values()) if args.profile == "full" else set()
-        if previous:
-            retire_packages(installed_manager, store, retired - set(previous.get("retired", ())))
+        retired = retire_packages(installed_manager, store, args.profile, previous)
         if revoked:
             invoke(installed_manager, "trust-all", store, json.dumps([
                 {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],

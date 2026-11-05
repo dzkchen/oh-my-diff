@@ -173,13 +173,14 @@ test('sensitive path policy is off by default and, when opted in, asks only for 
     'git show HEAD:.env', 'cat .?nv', 'cat .aws//credentials', 'cat ~/.aws/./credentials', 'cat ~/.aws/x/../credentials', "cat .e''nv", 'cat ".e"nv', 'cat .e\\nv', 'cat .env///',
     `cat {.env,${'abcdefghijklmnopqr'.split('').join(',')}}`, 'cat .e{n..n}v', `python3 -c "print(open('.env').read())"`, "node -e 'require(\"fs\").readFileSync(\".env\")'",
     "python3 - <<'EOF'\nprint(open('server.key').read())\nEOF", 'cat <<EOF > out.txt; cat .env\nhi\nEOF', "bash <<'EOF'\ncat .env\nEOF", 'cat <<EOF | sh\ncat .env\nEOF',
-    "ssh host <<'EOF'\ncat .env\nEOF", "python3 - <<'EOF' | sh\nprint(cfg.key)\nEOF", "python3 -c 'x = 1 <<a'; bash <<a\ncat .env\na"]) {
+    "ssh host <<'EOF'\ncat .env\nEOF", "python3 - <<'EOF' | sh\nprint(cfg.key)\nEOF", "python3 -c 'x = 1 <<a'; bash <<a\ncat .env\na",
+    'cat > out.txt <<EOF\n$(cat .env)\nEOF', 'python3 - <<EOF\n`cat .env`\nEOF', 'python3 -c "#$(cat .env >&2)"', "node -c '.env'", "php -c '.env' -r 'echo 1;'", 'node -r .env -e "1"']) {
     assert.match(approval(['bash', '-lc', command])?.ask ?? '', /sensitive path/, command);
   }
   for (const command of ['ls ~/.config', 'cat *', 'ls *.md', 'cat ~/src/c*', 'grep -r key --include=*.json src', 'cat ~/.kube-notes.md',
     'mkdir -p ~/.docker/cli-plugins', 'ls ~/.kube/cache', 'cat ~/.aws/config', "sed 's/foo/.*/' f", 'grep -E ".*" f', 'find . -name ".*"', 'ls -la .*', 'echo {a,b}', 'ls [z-a]', 'ls [^]', `cat ${'*'.repeat(60)}z`,
     'git show HEAD:src/index.ts', 'cat src//a.ts ./b.ts', "echo 'hi' \"there\"", 'find . -exec cat {} +', "awk '{print $1}' f", 'ls .?', 'cat *.ts', 'ls src/*',
-    'python3 -c "print(api.key)"', 'python3 -c "self.key = 1"', 'node -e "console.log(req.key)"', "python3 - <<'EOF'\nprint(cfg.key)\nEOF", 'cat > notes.md <<EOF\nPut config in .env\nEOF']) {
+    'python3 -c "print(api.key)"', 'python3 -c "self.key = 1"', 'node -e "console.log(req.key)"', "python3 - <<'EOF'\nprint(cfg.key)\nEOF", 'cat > notes.md <<EOF\nPut config in .env\nEOF', "cat > notes.md <<'EOF'\nrun $(cat .env)\nEOF"]) {
     assert.equal(approval(['bash', '-lc', command]), null, command);
   }
   const started = Date.now();

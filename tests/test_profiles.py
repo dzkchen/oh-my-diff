@@ -750,8 +750,16 @@ enabled = true
             return {"selections": selections} if command == "selection-status" else {}
 
         with patch.object(profiles, "invoke", side_effect=invoke):
-            profiles.retire_packages("manager", store, {"omd_inspector", "omd_btw", "omd_continue"})
-        self.assertEqual(commands, [("selection-status",), ("disable", "/store/sources/omd_inspector")])
+            retired = profiles.retire_packages("manager", store, "full", {"retired": ["omd_advisor"]})
+            self.assertEqual(commands, [("selection-status",), ("disable", "/store/sources/omd_inspector")])
+            self.assertIn("omd_inspector", retired)
+            self.assertNotIn("omd_logo", retired)
+            commands.clear()
+            self.assertEqual(profiles.retire_packages("manager", store, "core", {"retired": ["omd_advisor"]}), {"omd_advisor"})
+            self.assertEqual(profiles.retire_packages("manager", store, "core", None), retired)
+            profiles.retire_packages("manager", store, "full", {"retired": sorted(retired)})
+            profiles.retire_packages("manager", store, "full", None)
+        self.assertEqual(commands, [])
 
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,

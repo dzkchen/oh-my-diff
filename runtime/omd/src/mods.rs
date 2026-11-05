@@ -844,6 +844,28 @@ fn failure(message: impl ToString) -> io::Error {
     io::Error::other(message.to_string())
 }
 
+/// The runner reports a thrown error as its stack, cut to this many UTF-16 units.
+const RUNNER_ERROR_UNITS: usize = 768;
+
+fn rethrown(error: &str, downstream: &str) -> bool {
+    let described = |text: &str| {
+        let lines = text.split('\n').filter(|line| {
+            !(line.starts_with(char::is_whitespace) && line.trim_start().starts_with("at "))
+        });
+        lines.collect::<Vec<_>>().join("\n")
+    };
+    let thrown = described(error.strip_prefix("Error: ").unwrap_or(error));
+    let downstream = described(downstream);
+    let cut = error.encode_utf16().count() >= RUNNER_ERROR_UNITS;
+    let kept = match thrown.rsplit_once('\n') {
+        Some((kept, last)) if cut && last.starts_with(char::is_whitespace) => kept,
+        _ => &thrown,
+    };
+    !downstream.is_empty()
+        && (thrown.starts_with(&downstream)
+            || cut && downstream.starts_with(kept.trim_end_matches('\u{fffd}')))
+}
+
 pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -2917,6 +2939,12 @@ impl std::ops::Deref for Registered {
     }
 }
 
+#[derive(PartialEq)]
+struct Adapter {
+    module: Value,
+    sha256: String,
+}
+
 #[derive(Clone)]
 struct Loaded {
     package: Arc<ModPackage>,
@@ -2927,7 +2955,7 @@ struct Loaded {
     session_key: Option<String>,
     /// The store's code cache; `None` runs without one.
     code_cache: Option<Arc<code_cache::CacheRoot>>,
-    adapter: Option<Value>,
+    adapter: Option<Arc<Adapter>>,
     state: Value,
     state_revision: u64,
     /// The state the inspection ran with; `state` follows later callbacks.
@@ -3813,7 +3841,7 @@ fn invoke(
     });
         // A handler that only rethrows what `next` rejected with is not at fault.
         invocation.rethrown = matches!((&reply, &downstream), (Err(error), Some(downstream))
-            if error.to_string().trim_start_matches("Error: ").starts_with(downstream.as_str()));
+            if rethrown(&error.to_string(), downstream));
         // A retry replays recorded host results; a divergent replay of read-only calls runs fresh.
         if replaying && reply.is_err() {
             if replay.iter().all(read_only_receipt) && started.elapsed() < budget {
@@ -4242,7 +4270,7 @@ impl ModHost {
         let binding = digest(
             json!([
                 loaded.selection,
-                loaded.adapter,
+                loaded.adapter.as_ref().map(|adapter| &adapter.sha256),
                 loaded.settings_file,
                 loaded.withheld,
                 reset
@@ -4892,7 +4920,7 @@ impl ModHost {
 
     fn adapters(
         selected: &BTreeMap<String, (ModSelection, ModPackage, String)>,
-    ) -> BTreeMap<String, Value> {
+    ) -> BTreeMap<String, Arc<Adapter>> {
         selected
             .iter()
             .filter_map(|(id, (selection, package, _))| {
@@ -4912,10 +4940,9 @@ impl ModHost {
                     .iter()
                     .map(|(specifier, asset)| Some((specifier.clone(), file(asset)?)))
                     .collect::<Option<serde_json::Map<_, _>>>()?;
-                Some((
-                    id.clone(),
-                    json!({"source": entry["source"], "filename": entry["filename"], "aliases": aliases}),
-                ))
+                let module = json!({"source": entry["source"], "filename": entry["filename"], "aliases": aliases});
+                let sha256 = digest(module.to_string().as_bytes());
+                Some((id.clone(), Arc::new(Adapter { module, sha256 })))
             })
             .collect()
     }
@@ -6332,9 +6359,14 @@ impl ModHost {
             "{}:{}",
             self.store.root.display(),
             digest(
-                json!([self.project, thread, selection, loaded.adapter])
-                    .to_string()
-                    .as_bytes()
+                json!([
+                    self.project,
+                    thread,
+                    selection,
+                    loaded.adapter.as_ref().map(|adapter| &adapter.sha256)
+                ])
+                .to_string()
+                .as_bytes()
             )
         )
     }

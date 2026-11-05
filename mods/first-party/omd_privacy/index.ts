@@ -297,7 +297,8 @@ const globReaches = (token: string, part: string) => {
 };
 
 const INTERPRETER = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php)$/;
-const CODE_OR_HEREDOC = /\b(?:python[\d.]*|node|bun|deno|ruby|perl|php)\b[^\n;|&]{0,200}?\s(?:-[ce]|--eval|eval)\s+(["'])([\s\S]*?)\1|<<-?[ \t]*(["']?)([A-Za-z_]\w*)\3([^\n]{0,400}\n)/g;
+const CODE_OR_HEREDOC = /\b(?:python[\d.]*\b[^\n;|&]{0,200}?\s-c|(?:node|bun|ruby|perl)\b[^\n;|&]{0,200}?\s(?:-e|--eval)|deno\b[^\n;|&]{0,200}?\seval|php\b[^\n;|&]{0,200}?\s-r)\s+(["'])([\s\S]*?)\1|<<-?[ \t]*(["']?)([A-Za-z_]\w*)\3([^\n]{0,400}\n)/g;
+const SUBSTITUTION = /\$\(|`/;
 const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:sh|bash|zsh|ksh|dash)\s+-\w*c\s+["']?/;
 const SHELL = /(?:^|[\s/(])(?:sh|bash|zsh|ksh|dash|ssh)(?=\s|$)/;
 const LITERAL = /(["'`])(?:(?!\1)[^\\\n]|\\.)*\1?/g;
@@ -313,11 +314,11 @@ function literalCode(command: string) {
   let at = 0;
   CODE_OR_HEREDOC.lastIndex = 0;
   for (let match; (match = CODE_OR_HEREDOC.exec(command));) {
-    const [, , code, , tag, line] = match;
+    const [whole, quote, code, quoted, tag, line] = match;
     out += command.slice(at, match.index);
     at = CODE_OR_HEREDOC.lastIndex;
     if (code !== undefined) {
-      out += literals(code);
+      out += whole.slice(0, -code.length - 2) + (quote === '"' && SUBSTITUTION.test(code) ? code : literals(code));
       continue;
     }
     out += line;
@@ -327,7 +328,8 @@ function literalCode(command: string) {
     const ends = closes.get(tag) ?? [];
     while (ends.length && ends[0] < at) ends.shift();
     const end = ends[0] ?? command.length;
-    out += literals(command.slice(at, end));
+    const body = command.slice(at, end);
+    out += !quoted && SUBSTITUTION.test(body) ? body : literals(body);
     at = CODE_OR_HEREDOC.lastIndex = end;
   }
   return out + command.slice(at);
