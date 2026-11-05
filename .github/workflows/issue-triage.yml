@@ -1,0 +1,34 @@
+name: Issue triage
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  area:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Label the area chosen in the form
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          area=$(printf '%s\n' "$BODY" | awk '/^### Area[[:space:]]*$/ {found = 1; next} found && NF {print; exit}')
+          case "$area" in
+            "Installer or updates") label="area: installer" ;;
+            "OMD host, TUI or patched Codex") label="area: runtime" ;;
+            "A first-party mod or the SDK") label="area: mods" ;;
+            "A bundled plugin or skill") label="area: plugins" ;;
+            *) exit 0 ;;
+          esac
+          gh issue view "$NUMBER" --json labels --jq '.labels[].name | select(startswith("area: "))' |
+            while read -r old; do
+              if [ "$old" != "$label" ]; then gh issue edit "$NUMBER" --remove-label "$old"; fi
+            done
+          gh issue edit "$NUMBER" --add-label "$label"
