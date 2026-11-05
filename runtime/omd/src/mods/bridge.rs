@@ -432,6 +432,8 @@ pub(super) fn run(
             process::invalidate_warm(key);
         }
     })?;
+    let execution = started.elapsed().saturating_sub(waited);
+    scope.charge_execution(execution)?;
     if event != "inspect"
         && reply
             .registrations
@@ -443,8 +445,6 @@ pub(super) fn run(
         }
         return Err(failure("registration_changed_during_callback"));
     }
-    let execution = started.elapsed().saturating_sub(waited);
-    scope.charge_execution(execution)?;
     if reply.calls != expected {
         if let Some(key) = &warm {
             process::invalidate_warm(key);

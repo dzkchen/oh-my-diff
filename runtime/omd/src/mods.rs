@@ -862,7 +862,7 @@ fn rethrown(error: &str, downstream: &str) -> bool {
         _ => &thrown,
     };
     !downstream.is_empty()
-        && (thrown.starts_with(&downstream)
+        && (thrown == downstream
             || cut && downstream.starts_with(kept.trim_end_matches('\u{fffd}')))
 }
 
@@ -3131,6 +3131,22 @@ mod reload_tests {
         ] {
             assert_eq!(glob(pattern, text), expected, "{pattern} vs {text}");
         }
+    }
+
+    #[test]
+    fn only_an_exact_rethrow_of_next_is_excused() {
+        let frames = "\n    at handler (mod.js:1:1)\n    at async next (runner.js:2:2)";
+        let downstream = "tool_result_unavailable: succeeded";
+        assert!(rethrown(
+            &format!("Error: {downstream}{frames}"),
+            downstream
+        ));
+        assert!(!rethrown(
+            &format!("Error: {downstream}: TypeError: x is undefined{frames}"),
+            downstream
+        ));
+        assert!(!rethrown(&format!("Error: other{frames}"), downstream));
+        assert!(!rethrown("Error: anything", ""));
     }
 
     #[test]

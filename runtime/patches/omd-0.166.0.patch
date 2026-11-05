@@ -118194,10 +118194,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..05fec903297e9ad9fe7e611d895aa31c3165db74
+index 0000000000000000000000000000000000000000..00911d9e85d3cfdaa2cf446aace3c5cff270ad09
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7306 @@
+@@ -0,0 +1,7322 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -119062,7 +119062,7 @@ index 0000000000000000000000000000000000000000..05fec903297e9ad9fe7e611d895aa31c
 +        _ => &thrown,
 +    };
 +    !downstream.is_empty()
-+        && (thrown.starts_with(&downstream)
++        && (thrown == downstream
 +            || cut && downstream.starts_with(kept.trim_end_matches('\u{fffd}')))
 +}
 +
@@ -121331,6 +121331,22 @@ index 0000000000000000000000000000000000000000..05fec903297e9ad9fe7e611d895aa31c
 +        ] {
 +            assert_eq!(glob(pattern, text), expected, "{pattern} vs {text}");
 +        }
++    }
++
++    #[test]
++    fn only_an_exact_rethrow_of_next_is_excused() {
++        let frames = "\n    at handler (mod.js:1:1)\n    at async next (runner.js:2:2)";
++        let downstream = "tool_result_unavailable: succeeded";
++        assert!(rethrown(
++            &format!("Error: {downstream}{frames}"),
++            downstream
++        ));
++        assert!(!rethrown(
++            &format!("Error: {downstream}: TypeError: x is undefined{frames}"),
++            downstream
++        ));
++        assert!(!rethrown(&format!("Error: other{frames}"), downstream));
++        assert!(!rethrown("Error: anything", ""));
 +    }
 +
 +    #[test]
@@ -126626,7 +126642,7 @@ index 0000000000000000000000000000000000000000..6a4214f20b1925475fcfec2ebaad35a1
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..904ea3dd1739234a829c334cdfe9cd3d13930338
+index 0000000000000000000000000000000000000000..66c772cef003d6f3dadec0890e0a729a7ab3a157
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,544 @@
@@ -127064,6 +127080,8 @@ index 0000000000000000000000000000000000000000..904ea3dd1739234a829c334cdfe9cd3d
 +            process::invalidate_warm(key);
 +        }
 +    })?;
++    let execution = started.elapsed().saturating_sub(waited);
++    scope.charge_execution(execution)?;
 +    if event != "inspect"
 +        && reply
 +            .registrations
@@ -127075,8 +127093,6 @@ index 0000000000000000000000000000000000000000..904ea3dd1739234a829c334cdfe9cd3d
 +        }
 +        return Err(failure("registration_changed_during_callback"));
 +    }
-+    let execution = started.elapsed().saturating_sub(waited);
-+    scope.charge_execution(execution)?;
 +    if reply.calls != expected {
 +        if let Some(key) = &warm {
 +            process::invalidate_warm(key);
@@ -185220,10 +185236,10 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4da8a7f8f634a29dfed10bd58cb59566a5a309b
+index 0000000000000000000000000000000000000000..6b7639b20eeaac976b8a336846e594e39e6c063b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,6020 @@
+@@ -0,0 +1,6035 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -187127,15 +187143,30 @@ index 0000000000000000000000000000000000000000..f4da8a7f8f634a29dfed10bd58cb5956
 +    }
 +    if let Some(header) = site(&snapshot.view, "header") {
 +        let width = column(screen, snapshot).width;
++        let mut components = Vec::new();
++        for component in &header.components {
++            component.descendants(&mut components);
++        }
++        let owned = components.iter().any(|component| {
++            matches!(
++                component,
++                ModComponent::Image { .. } | ModComponent::Terminal { .. }
++            )
++        });
++        let interaction = if owned {
++            Interaction {
++                component_owners: snapshot.component_owners.clone(),
++                pty_bindings: pty_bindings(snapshot),
++                ..Interaction::default()
++            }
++        } else {
++            Interaction::default()
++        };
 +        return component_height(
 +            &header.components,
 +            width,
 +            (snapshot.view.theme.border, snapshot.view.theme.icons),
-+            &Interaction {
-+                component_owners: snapshot.component_owners.clone(),
-+                pty_bindings: pty_bindings(snapshot),
-+                ..Interaction::default()
-+            },
++            &interaction,
 +        )
 +        .clamp(1, 6)
 +            + 1;
