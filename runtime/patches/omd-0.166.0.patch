@@ -26128,7 +26128,7 @@ index c3a82eff0f558d024600627771ccdfd8a5f1e5b6..026f68cc37c9047203bee6b41bc40cbf
              model,
              effort,
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6dc83142a5 100644
+index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..f97a182d624ee5d2488da297902e978d20e7d19f 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
 @@ -1,6 +1,7 @@
@@ -26242,10 +26242,10 @@ index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6d
                  // let the user continue the conversation
                  break;
              }
-@@ -930,6 +981,36 @@ pub(crate) async fn run_turn(
+@@ -929,6 +980,36 @@ pub(crate) async fn run_turn(
+     Ok(last_agent_message)
  }
 
- #[instrument(level = "trace", skip_all)]
 +async fn continue_turn(
 +    sess: &Session,
 +    turn_context: &TurnContext,
@@ -26276,9 +26276,9 @@ index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..7eeb4bff5060dc5959e81c8304621c6d
 +    None
 +}
 +
+ #[instrument(level = "trace", skip_all)]
  async fn turn_diff_display_roots(step_context: &StepContext) -> Vec<(String, PathUri)> {
      let mut display_roots = Vec::new();
-     for turn_environment in step_context.environments.turn_environments() {
 @@ -1460,6 +1541,26 @@ async fn maybe_run_previous_model_inline_compact(
          turn_context.model_info().comp_hash.as_deref(),
      );
