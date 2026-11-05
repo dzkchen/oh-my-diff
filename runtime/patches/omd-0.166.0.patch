@@ -37463,7 +37463,7 @@ index 8aa1bca71b37199ea5aa9956871c68de2b0c1dc5..0891416752835569c704d229e810b9a7
 
 
 diff --git a/codex-rs/tui/src/app/startup.rs b/codex-rs/tui/src/app/startup.rs
-index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..8881b76e0fc91a34fea4101d8d9712dd0c20ebb3 100644
+index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..1558c102ede555dd73400f92c823e34aae115e9e 100644
 --- a/codex-rs/tui/src/app/startup.rs
 +++ b/codex-rs/tui/src/app/startup.rs
 @@ -1071,6 +1071,8 @@ See the Codex keymap documentation for supported actions and examples."
@@ -37484,15 +37484,18 @@ index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..8881b76e0fc91a34fea4101d8d9712dd
 
          #[cfg(not(debug_assertions))]
          let pre_loop_exit_reason = if let Some(latest_version) = upgrade_version {
-@@ -1657,6 +1659,7 @@ See the Codex keymap documentation for supported actions and examples."
+@@ -1657,6 +1659,10 @@ See the Codex keymap documentation for supported actions and examples."
                  }
                  match control {
                      AppRunControl::Continue => {
 +                        app.chat_widget.maybe_post_pending_notification(tui);
++                        if !tui.frame_requester().is_awake() {
++                            app.chat_widget.refresh_attention_status();
++                        }
                          if app.reconnect.offline && !app.pending_startup_thread_start {
                              pending_startup_submission = false;
                              app.chat_widget.cancel_startup_submission();
-@@ -1685,6 +1688,7 @@ See the Codex keymap documentation for supported actions and examples."
+@@ -1685,6 +1691,7 @@ See the Codex keymap documentation for supported actions and examples."
          if let Err(err) = backends.shutdown().await {
              tracing::warn!(error = %err, "failed to shut down embedded app server");
          }
@@ -42338,7 +42341,7 @@ index ec00cf99a3a770c3c83bcb8c36cec08225fe171d..a64a759ba055f661f5bcad5bcc44db60
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..a5876014621bc49f703de092fae4717e0d5a596e 100644
+index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..c9da88d02fc3ac139e91fbf3ee5902ff1e7c24d2 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -311,6 +311,7 @@ pub(crate) use interaction::KeyEventAction;
@@ -42414,7 +42417,32 @@ index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..a5876014621bc49f703de092fae4717e
          self.update_due_hook_visibility();
          self.schedule_hook_timer_if_needed();
          self.bottom_pane.pre_draw_tick();
-@@ -1331,6 +1349,11 @@ impl ChatWidget {
+@@ -1197,9 +1215,7 @@ impl ChatWidget {
+             pet.schedule_next_frame();
+         }
+         self.refresh_goal_status_indicator_for_time_tick();
+-        if self.terminal_title_shows_action_required() != self.last_terminal_title_requires_action {
+-            self.refresh_terminal_title();
+-        }
++        self.refresh_attention_status();
+         if self.should_animate_terminal_title_spinner()
+             || self.should_animate_terminal_title_action_required()
+         {
+@@ -1207,6 +1223,13 @@ impl ChatWidget {
+         }
+         self.refresh_status_line_if_workspace_headline_due();
+         self.refresh_thread_usage_if_settlement_due();
++    }
++
++    /// Title and tab status that tell a background terminal the session needs the user, also kept while drawing is paused.
++    pub(crate) fn refresh_attention_status(&mut self) {
++        if self.terminal_title_shows_action_required() != self.last_terminal_title_requires_action {
++            self.refresh_terminal_title();
++        }
+         self.refresh_terminal_program_status();
+     }
+
+@@ -1331,6 +1354,11 @@ impl ChatWidget {
          from_replay: bool,
          turn_id: &str,
      ) {
@@ -42426,7 +42454,7 @@ index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..a5876014621bc49f703de092fae4717e
          if let Some(input) = realtime::realtime_delegation_input(items) {
              if !from_replay && self.should_hide_realtime_delegation(turn_id) {
                  return;
-@@ -1551,6 +1574,10 @@ impl ChatWidget {
+@@ -1551,6 +1579,10 @@ impl ChatWidget {
 
      /// Merge the real session info cell with any placeholder header to avoid double boxes.
      fn apply_session_info_cell(&mut self, cell: history_cell::SessionInfoCell) {
@@ -42437,7 +42465,7 @@ index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..a5876014621bc49f703de092fae4717e
          let mut session_info_cell = Some(Box::new(cell) as Box<dyn HistoryCell>);
          let merged_header = if let Some(active) = self.transcript.take_active_cell() {
              if active
-@@ -1913,6 +1940,53 @@ impl ChatWidget {
+@@ -1913,6 +1945,53 @@ impl ChatWidget {
              .send(AppEvent::AppendMessageHistoryEntry { thread_id, text });
      }
 
@@ -42491,7 +42519,7 @@ index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..a5876014621bc49f703de092fae4717e
      pub(crate) fn prepare_local_op_submission(&mut self, op: &AppCommand) {
          if matches!(
              op,
-@@ -1922,6 +1996,8 @@ impl ChatWidget {
+@@ -1922,6 +2001,8 @@ impl ChatWidget {
          ) {
              self.transcript.last_status_copy_targets = None;
              self.input_queue.user_turn_pending_start = true;
@@ -43100,6 +43128,18 @@ index 62af5d124d8080ab84d391ab4b66d444eda0fc94..1a180fdc9974e71825314878a9383bec
              ..SelectionViewParams::picker()
          });
      }
+diff --git a/codex-rs/tui/src/chatwidget/notifications.rs b/codex-rs/tui/src/chatwidget/notifications.rs
+index 92ef60bada2767a6678d19f8b2f6588889c10d55..a13fd2bae2f7a105a2e9fe82c096fb6e610637ae 100644
+--- a/codex-rs/tui/src/chatwidget/notifications.rs
++++ b/codex-rs/tui/src/chatwidget/notifications.rs
+@@ -4,6 +4,7 @@ use super::*;
+
+ impl ChatWidget {
+     pub(super) fn notify(&mut self, notification: Notification) {
++        self.frame_requester.note_attention();
+         if !notification.allowed_for(&self.local_settings.tui.notification_settings.notifications) {
+             return;
+         }
 diff --git a/codex-rs/tui/src/chatwidget/protocol.rs b/codex-rs/tui/src/chatwidget/protocol.rs
 index be7da50c038199528746c0b2287fd225198cd1c0..4c4908b9f5684d625bc54dc8b7ebae7122b1480c 100644
 --- a/codex-rs/tui/src/chatwidget/protocol.rs
@@ -51793,7 +51833,7 @@ index 3ed439eec65824f9ff3f3fc5762c88848b295c9c..47723e6b74940bf9c3ea5a4992b91847
          broker: Arc<EventBroker<FakeEventSource>>,
          draw_rx: broadcast::Receiver<()>,
 diff --git a/codex-rs/tui/src/tui/frame_requester.rs b/codex-rs/tui/src/tui/frame_requester.rs
-index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae081792fc7 100644
+index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..e40d5e384638e231d579bc419bcec8ce2932535e 100644
 --- a/codex-rs/tui/src/tui/frame_requester.rs
 +++ b/codex-rs/tui/src/tui/frame_requester.rs
 @@ -15,8 +15,13 @@
@@ -51810,31 +51850,34 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
 
  use super::frame_rate_limiter::FrameRateLimiter;
 
-@@ -30,6 +35,8 @@ use super::frame_rate_limiter::FrameRateLimiter;
+@@ -30,6 +35,9 @@ use super::frame_rate_limiter::FrameRateLimiter;
  #[derive(Clone, Debug)]
  pub struct FrameRequester {
      frame_schedule_tx: mpsc::UnboundedSender<Instant>,
 +    activity: watch::Sender<bool>,
 +    awake: Arc<AtomicBool>,
++    idle: Arc<AtomicBool>,
  }
 
  impl FrameRequester {
-@@ -38,21 +45,38 @@ impl FrameRequester {
+@@ -38,21 +46,47 @@ impl FrameRequester {
      /// The provided `draw_tx` is used to notify the TUI event loop of scheduled draws.
      pub fn new(draw_tx: broadcast::Sender<()>) -> Self {
          let (tx, rx) = mpsc::unbounded_channel();
 -        let scheduler = FrameScheduler::new(rx, draw_tx);
 +        let (activity, activity_rx) = watch::channel(true);
 +        let awake = Arc::new(AtomicBool::new(true));
-+        let scheduler = FrameScheduler::new(rx, draw_tx, activity_rx, awake.clone());
++        let idle = Arc::new(AtomicBool::new(false));
++        let scheduler = FrameScheduler::new(rx, draw_tx, activity_rx, awake.clone(), idle.clone());
          tokio::spawn(scheduler.run());
          Self {
              frame_schedule_tx: tx,
 +            activity,
 +            awake,
-         }
-     }
-
++            idle,
++        }
++    }
++
 +    pub(crate) fn note_activity(&self, focused: bool) {
 +        self.awake.store(focused, Ordering::Release);
 +        self.activity.send_replace(focused);
@@ -51844,6 +51887,13 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
 +        self.awake.load(Ordering::Acquire)
 +    }
 +
++    /// Ends display idle in a focused terminal when the session needs the user; a background terminal stays paused.
++    pub(crate) fn note_attention(&self) {
++        if self.idle.load(Ordering::Acquire) {
++            self.note_activity(/*focused*/ true);
+         }
+     }
+
      /// Schedule a frame draw as soon as possible.
      pub fn schedule_frame(&self) {
 -        let _ = self.frame_schedule_tx.send(Instant::now());
@@ -51861,21 +51911,23 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
      }
  }
 
-@@ -63,6 +87,8 @@ impl FrameRequester {
+@@ -63,6 +97,9 @@ impl FrameRequester {
          let (tx, _rx) = mpsc::unbounded_channel();
          FrameRequester {
              frame_schedule_tx: tx,
 +            activity: watch::channel(true).0,
 +            awake: Arc::new(AtomicBool::new(true)),
++            idle: Arc::new(AtomicBool::new(false)),
          }
      }
  }
-@@ -77,18 +103,37 @@ struct FrameScheduler {
+@@ -77,16 +114,38 @@ struct FrameScheduler {
      receiver: mpsc::UnboundedReceiver<Instant>,
      draw_tx: broadcast::Sender<()>,
      rate_limiter: FrameRateLimiter,
 +    activity: watch::Receiver<bool>,
 +    awake: Arc<AtomicBool>,
++    idle: Arc<AtomicBool>,
  }
 
  impl FrameScheduler {
@@ -51886,6 +51938,7 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
 +        draw_tx: broadcast::Sender<()>,
 +        activity: watch::Receiver<bool>,
 +        awake: Arc<AtomicBool>,
++        idle: Arc<AtomicBool>,
 +    ) -> Self {
          Self {
              receiver,
@@ -51893,23 +51946,22 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
              rate_limiter: FrameRateLimiter::default(),
 +            activity,
 +            awake,
-         }
-     }
-
++            idle,
++        }
++    }
++
 +    fn sleep(&self, sleeping: &mut bool, deadline: &mut Option<Instant>) {
 +        self.awake.store(false, Ordering::Release);
 +        *deadline = None;
 +        if !*sleeping && crate::omd::is_active() {
 +            crate::mod_render::forget();
 +            tokio::task::spawn_blocking(codex_omd::release_disposable_runners);
-+        }
+         }
 +        *sleeping = true;
-+    }
-+
+     }
+
      /// Run the scheduling loop, coalescing frame requests and notifying the TUI event loop.
-     ///
-     /// This method runs indefinitely until all senders are dropped. A single draw notification
-@@ -96,17 +141,40 @@ impl FrameScheduler {
+@@ -96,17 +155,42 @@ impl FrameScheduler {
      async fn run(mut self) {
          const ONE_YEAR: Duration = Duration::from_secs(60 * 60 * 24 * 365);
          let mut next_deadline: Option<Instant> = None;
@@ -51925,6 +51977,7 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
 +                changed = self.activity.changed() => {
 +                    if changed.is_err() { break; }
 +                    let focused = *self.activity.borrow_and_update();
++                    self.idle.store(false, Ordering::Release);
 +                    if focused {
 +                        if sleeping { crate::mod_surface::focus(true, false); }
 +                        sleeping = false;
@@ -51938,6 +51991,7 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
 +                }
 +                _ = tokio::time::sleep_until(idle_at), if !sleeping => {
 +                    crate::mod_surface::focus(true, true);
++                    self.idle.store(true, Ordering::Release);
 +                    self.sleep(&mut sleeping, &mut next_deadline);
 +                }
                  draw_at = self.receiver.recv() => {
@@ -51950,7 +52004,7 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
                      let draw_at = self.rate_limiter.clamp_deadline(draw_at);
                      next_deadline = Some(next_deadline.map_or(draw_at, |cur| cur.min(draw_at)));
 
-@@ -116,7 +184,9 @@ impl FrameScheduler {
+@@ -116,7 +200,9 @@ impl FrameScheduler {
                      continue;
                  }
                  _ = &mut deadline => {
@@ -51960,16 +52014,17 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
                          next_deadline = None;
                          self.rate_limiter.mark_emitted(Instant::now());
                          let _ = self.draw_tx.send(());
-@@ -140,6 +210,8 @@ mod tests {
+@@ -140,6 +226,9 @@ mod tests {
              (
                  FrameRequester {
                      frame_schedule_tx: tx,
 +                    activity: watch::channel(true).0,
 +                    awake: Arc::new(AtomicBool::new(true)),
++                    idle: Arc::new(AtomicBool::new(false)),
                  },
                  rx,
              )
-@@ -398,3 +470,71 @@ mod tests {
+@@ -398,3 +487,96 @@ mod tests {
          assert!(second.is_err(), "unexpected extra draw received");
      }
  }
@@ -52039,6 +52094,31 @@ index 9dc117bd48c4a78f40d5c3249c32cbaf0926869a..ded2da92e35f3371ce39d845a45feae0
 +        tokio::task::yield_now().await;
 +        tokio::time::advance(Duration::from_millis(20)).await;
 +        assert!(draws.try_recv().is_ok());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn attention_ends_display_idle_but_not_a_background_pause() {
++        let (draw_tx, mut draws) = broadcast::channel(16);
++        let frames = FrameRequester::new(draw_tx);
++        tokio::task::yield_now().await;
++        frames.note_attention();
++        tokio::time::advance(IDLE_AFTER + Duration::from_secs(1)).await;
++        tokio::task::yield_now().await;
++        assert!(!frames.is_awake());
++        while draws.try_recv().is_ok() {}
++        frames.note_attention();
++        tokio::task::yield_now().await;
++        tokio::time::advance(Duration::from_millis(20)).await;
++        assert!(frames.is_awake());
++        assert!(draws.try_recv().is_ok());
++
++        frames.note_activity(false);
++        tokio::task::yield_now().await;
++        frames.note_attention();
++        tokio::task::yield_now().await;
++        tokio::time::advance(Duration::from_secs(1)).await;
++        assert!(!frames.is_awake());
++        assert!(draws.try_recv().is_err());
 +    }
 +}
 diff --git a/codex-rs/tui/src/tui/job_control.rs b/codex-rs/tui/src/tui/job_control.rs

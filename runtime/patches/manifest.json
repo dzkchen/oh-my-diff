@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "b85b5aa864a6e372454459f79acf1b4841fa725a7f24784d108067b22ecd6c0f"
+    "sha256": "d7becde27eee8635b668a85c56f4b0050f88f8670e624b66c09c334d5fce88ad"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1991,7 +1991,7 @@
     },
     "codex-rs/tui/src/app/startup.rs": {
       "before": "42e4b0946b5d4b4684803d079299a1efb91e7067d55a14fda594fcc83da90793",
-      "after": "e1b1fb361a55c3a3c18d5eb5fc0773af08689ef5d2ab1b215d567694a082d09e"
+      "after": "31f9af694091fc024d76aeb133f0dc9f1f6ed5a02b29deb1a282c0f2a15be2aa"
     },
     "codex-rs/tui/src/app/test_support.rs": {
       "before": "15f41be5ae05e24390e6be2647ec253281e254bcd31706a0d52cdb6993ef2424",
@@ -2307,7 +2307,7 @@
     },
     "codex-rs/tui/src/chatwidget.rs": {
       "before": "915fc19f502aa3f0952163e43a35b969197b3782a4ec070fbb0ed7f753e8ff96",
-      "after": "7a0450385100bad226a6570cfc34ab24ecde0b12d39be9615bb9f75eecebad8e"
+      "after": "b768d819d8dee5acca8238a3c07236e554a7a60ec96eb085efb7613b7e7445c1"
     },
     "codex-rs/tui/src/chatwidget/activity_presentation.rs": {
       "before": "ad25f6544b8b48d949482793e61645aa9792bf54a130ef8b71d8682983899bd3",
@@ -2352,6 +2352,10 @@
     "codex-rs/tui/src/chatwidget/model_popups.rs": {
       "before": "7317687bfc85ade693f3a4fef40e38d1075cf7e2434592f68dc8152cc051e470",
       "after": "2483da92f0a72df9e81910aab47d03f229acf6f2d65885c4940b957b47c3a68a"
+    },
+    "codex-rs/tui/src/chatwidget/notifications.rs": {
+      "before": "28be8805af53daf15d1bb6b4892058120f4e4d0ab659be85e393255c48cae66d",
+      "after": "5e7e575c8049cffdb302611f6cb84170b34ee883ca74949b5c128dde4b363cc4"
     },
     "codex-rs/tui/src/chatwidget/omd_extensions.rs": {
       "before": null,
@@ -3079,7 +3083,7 @@
     },
     "codex-rs/tui/src/tui/frame_requester.rs": {
       "before": "ed05cdc6741c919430eb1910b0aa25e89a4aeba4c9510caa49ee4611d3ac5658",
-      "after": "7aac9bc5b8f0ecfddf524ddf88167b4ec97dbaf88ac81f99dd663314cb256efa"
+      "after": "9e1c10cbd93134eda973a2f7519c32e5b3fce7c26a95c0ff7ff1aab7a9068ef6"
     },
     "codex-rs/tui/src/tui/job_control.rs": {
       "before": "d76684a4f8a676d96d524430fa3cacff7f5f56ede9f09ceabe684645dcf1b436",
