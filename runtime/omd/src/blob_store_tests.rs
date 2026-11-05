@@ -27,7 +27,7 @@ const PNG: &[u8] = b"\x89PNG\r\n\x1a\nrest";
 fn blobs_are_content_addressed_and_verified() {
     with_store(|store| {
         let digest = store.put_blob(b"hello").unwrap();
-        assert_eq!(digest, hash(b"hello"));
+        assert_eq!(digest, crate::sha256_hex(b"hello"));
         assert_eq!(store.put_blob(b"hello").unwrap(), digest);
         assert_eq!(store.blob(&digest).unwrap(), b"hello");
         fs::write(store.blob_path(&digest).unwrap(), b"tampered").unwrap();
@@ -44,7 +44,7 @@ fn blobs_are_content_addressed_and_verified() {
 #[test]
 fn text_evidence_repairs_a_truncated_rotating_blob() {
     with_store(|store| {
-        let digest = hash(b"hello");
+        let digest = crate::sha256_hex(b"hello");
         let path = store
             .rotating_directory()
             .unwrap()
@@ -77,8 +77,12 @@ fn rotating_evidence_is_bounded_by_total_bytes() {
                 .reference
         });
         prune_rotating(&directory, 26).unwrap();
-        let kept =
-            |letter: &str| directory.join(format!("{}.bin", hash(letter.repeat(10).as_bytes())));
+        let kept = |letter: &str| {
+            directory.join(format!(
+                "{}.bin",
+                crate::sha256_hex(letter.repeat(10).as_bytes())
+            ))
+        };
         assert!(!orphan.exists() && fresh.exists() && !kept("a").exists());
         assert!(kept("b").exists() && kept("c").exists());
         assert!(!directory.join(format!("{}.json", references[0])).exists());
@@ -89,7 +93,7 @@ fn rotating_evidence_is_bounded_by_total_bytes() {
 #[test]
 fn put_blob_repairs_a_truncated_blob() {
     with_store(|store| {
-        let digest = hash(b"hello");
+        let digest = crate::sha256_hex(b"hello");
         let directory = store.blob_directory().unwrap();
         assert_eq!(store.put_blob(b"hello").unwrap(), digest);
         fs::write(directory.join(format!("{digest}.bin")), b"he").unwrap();

@@ -40,18 +40,12 @@ pub struct VersionMarker {
 
 impl VersionMarker {
     fn validate(&self) -> io::Result<()> {
-        let valid_hash = |value: &str| {
-            value.len() == 64
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        };
         if self.label.trim().is_empty()
             || self.label.len() > 256
-            || !valid_hash(&self.sha256)
+            || !crate::is_sha256_hex(&self.sha256)
             || self.evidence.trim().is_empty()
             || self.evidence.len() > 4096
-            || !valid_hash(&self.evidence_sha256)
+            || !crate::is_sha256_hex(&self.evidence_sha256)
         {
             return Err(io::Error::other("invalid version marker"));
         }
@@ -267,10 +261,6 @@ impl Task {
     }
 
     pub fn create(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
-        Self::create_inner(limits, evidence)
-    }
-
-    fn create_inner(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
         Self::validate_limits(&limits)?;
         fs::create_dir(&evidence)?;
         Self::create_in(limits, &evidence).inspect_err(|_| {
@@ -318,20 +308,12 @@ impl Task {
         evidence: PathBuf,
         explicit_resume: Option<&str>,
     ) -> io::Result<Self> {
-        Self::open_inner(limits, evidence, explicit_resume)
-    }
-
-    fn open_inner(
-        limits: Limits,
-        evidence: PathBuf,
-        explicit_resume: Option<&str>,
-    ) -> io::Result<Self> {
         Self::validate_limits(&limits)?;
         if !evidence.exists() {
             if explicit_resume.is_some() {
                 return Err(denied("explicit resume has no prior task evidence"));
             }
-            return Self::create_inner(limits, evidence);
+            return Self::create(limits, evidence);
         }
         let reference =
             explicit_resume.ok_or_else(|| denied("existing task requires explicit resume"))?;
@@ -378,7 +360,7 @@ impl Task {
                 return Err(denied("resume evidence must be a bounded regular file"));
             }
             let bytes = fs::read(entry.path())?;
-            last = crate::broker::sha256(&bytes);
+            last = crate::sha256_hex(&bytes);
             head = crate::broker::chain(&head, &last);
             let value: Value = serde_json::from_slice(&bytes)?;
             let sequence = value["sequence"]
@@ -687,7 +669,7 @@ impl Task {
             }
             let path = self.evidence.join(format!("{:08}.json", state.sequence));
             crate::fsio::create_new(&path, &bytes)?;
-            let written = crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes));
+            let written = crate::broker::anchor(&self.evidence, &crate::sha256_hex(&bytes));
             if written.is_err() {
                 let _ = fs::remove_file(&path);
             }

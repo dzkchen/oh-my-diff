@@ -173,7 +173,7 @@ pub(super) async fn finish(
     packet["usage"] = lead.session.evidence(
         &format!(
             "turn-usage-{}.json",
-            crate::execution::hash(format!("{}:{turn}", lead.thread).as_bytes())
+            codex_omd::sha256_hex(format!("{}:{turn}", lead.thread).as_bytes())
         ),
         &usage_delta(
             &cursor.usage_start,

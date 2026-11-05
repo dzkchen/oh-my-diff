@@ -116,7 +116,7 @@ pub fn environment_evidence(values: &EnvironmentValues) -> Value {
             .iter()
             .map(|(name, value)| {
                 let value = if secret_like(name) {
-                    json!({"sha256": format!("{:x}", Sha256::digest(value.as_bytes()))})
+                    json!({"sha256": crate::sha256_hex(value.as_bytes())})
                 } else {
                     json!({"value": value})
                 };

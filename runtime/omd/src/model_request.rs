@@ -42,7 +42,7 @@ pub fn bounded(value: &Value) -> Value {
     if bytes.len() <= TRACE_VALUE_BYTES {
         return value.clone();
     }
-    json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()})
+    json!({"sha256": crate::sha256_hex(&bytes), "bytes": bytes.len()})
 }
 
 struct Raw<'a> {
@@ -170,7 +170,7 @@ pub fn sections(request: &Value) -> Vec<Value> {
 }
 
 pub fn fingerprints(request: &Value) -> Vec<(String, String)> {
-    let digest = |bytes: &[u8]| crate::mods::digest(bytes);
+    let digest = |bytes: &[u8]| crate::sha256_hex(bytes);
     std::iter::once((
         "tools".to_owned(),
         digest(&serde_json::to_vec(&request["tools"]).unwrap_or_default()),
@@ -785,7 +785,7 @@ pub fn send_segment_refs(request: &Value) -> (Vec<SendSegment<'_>>, Vec<Value>, 
         .map(|(id, text)| {
             let (kind, role, editable) = classify(request, &id);
             SendSegment {
-                sha256: crate::mods::digest(text.as_bytes()),
+                sha256: crate::sha256_hex(text.as_bytes()),
                 id,
                 kind,
                 role,

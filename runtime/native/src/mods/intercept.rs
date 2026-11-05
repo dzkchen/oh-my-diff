@@ -63,7 +63,7 @@ pub(super) async fn chain(
                     .lock()
                     .map_err(|_| "mod_runtime_poisoned".to_owned())?;
                 runtime
-                    .refresh_guarded(&|| !flag.load(Ordering::Acquire))
+                    .refresh(&|| !flag.load(Ordering::Acquire))
                     .map_err(|error| error.to_string())?;
                 let grants = runtime.grants(&caller).ok_or("host_caller_inactive")?;
                 if grants.source_sha256 != source || Some(grants.capabilities) != capabilities {
