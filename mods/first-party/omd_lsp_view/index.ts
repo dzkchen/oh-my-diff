@@ -35,7 +35,7 @@ const status = (entry: Server): { text: string; tone: 'failure' | 'attention' | 
   };
 };
 const visible = (text: string, limit: number) => clip(text.replace(/\t/g, '    ').replace(/[\u0000-\u001f\u007f-\u009f]/g, ''), limit);
-const rows = (items: Item[], tone?: 'failure') => items.filter((item, index) => clip(item.value, 256) === item.value && items.findIndex(other => other.value === item.value) === index).map(item => {
+const rows = (items: Item[], tone?: 'failure') => items.filter((item, index) => clip(item.value, 256) === item.value && items.findIndex(other => other.value === item.value && other.label === item.label) === index).map(item => {
   const label = visible(item.label, 256);
   return { value: item.value, label, spans: [{ text: label, ...tone && { tone } }] };
 });
@@ -84,7 +84,9 @@ export default function activate(api: ModAPI) {
       const start = Math.max(1, line - 12);
       const read = api.host.tryCall('exec.run', { program: 'awk', argv: ['-v', `s=${start}`, '-v', `e=${line + 12}`, 'NR>=s && NR<=e { print substr($0, 1, 400) }', `./${path}`], timeout_ms: 5_000 });
       if (!read.ok || read.value.exit_code !== 0) return { display: `Cannot read ${path}` };
-      ask({ excerpt: { path, line, start, lines: read.value.stdout.split('\n').slice(0, -1), errors: [] }, status: 'working', message: '' }, { op: 'diagnostics', path });
+      const lines = read.value.stdout.split('\n').slice(0, -1);
+      if (start + lines.length <= line) return { display: `${path} has no line ${line}` };
+      ask({ excerpt: { path, line, start, lines, errors: [] }, status: 'working', message: '' }, { op: 'diagnostics', path });
       return null;
     }
     const [index, applyPath] = op === 'apply' ? [Number(argument.split(':')[0]), argument.slice(argument.indexOf(':') + 1)] : [0, ''];

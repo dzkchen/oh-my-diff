@@ -853,7 +853,7 @@ fn workspace_stat_hash_reads_contained_regular_files_only() {
         .unwrap();
     assert_eq!(
         stat["files"]["README.md"]["sha256"],
-        codex_omd::resource_data::hash(&std::fs::read(repository.join("README.md")).unwrap())
+        codex_omd::sha256_hex(&std::fs::read(repository.join("README.md")).unwrap())
     );
     for path in ["link.md", "outside/file"] {
         assert!(

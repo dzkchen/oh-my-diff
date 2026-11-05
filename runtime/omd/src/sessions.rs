@@ -1,5 +1,5 @@
 use crate::mods::{FileStamp, file_stamp};
-use crate::resource_data::{hash, redact, token};
+use crate::resource_data::{redact, token};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -313,7 +313,7 @@ impl SessionIndex<'_> {
         Ok(Some(Parsed {
             head: json!({"cwd": initial["cwd"], "timestamp": initial["timestamp"]}),
             meta: Value::Object(meta),
-            revision: hash(bytes),
+            revision: crate::sha256_hex(bytes),
             incomplete_tail,
         }))
     }
@@ -380,7 +380,7 @@ impl SessionIndex<'_> {
                 .map(str::to_owned),
             timestamp: timestamp.to_owned(),
             revision: parsed.revision.clone(),
-            handle: hash(name.as_bytes()),
+            handle: crate::sha256_hex(name.as_bytes()),
             history_mode: meta["history_mode"].as_str().unwrap_or("legacy").to_owned(),
             inherited_history: !meta["history_base"].is_null() || !meta["forked_from_id"].is_null(),
             incomplete_tail: parsed.incomplete_tail,
@@ -423,7 +423,7 @@ impl SessionIndex<'_> {
             Some(bytes) => bytes,
             None => {
                 reread = self.read(path)?.0;
-                if hash(&reread) != session.summary.revision {
+                if crate::sha256_hex(&reread) != session.summary.revision {
                     return Err(io::Error::other("session_revision_changed"));
                 }
                 &reread
@@ -556,7 +556,7 @@ impl SessionIndex<'_> {
                 record[field] = json!(limited);
             } else {
                 record["bytes"] = json!(text.len());
-                record["sha256"] = json!(hash(text.as_bytes()));
+                record["sha256"] = json!(crate::sha256_hex(text.as_bytes()));
             }
             records.push(record);
             if records.len() >= 4096 {
@@ -659,7 +659,7 @@ impl SessionIndex<'_> {
                 rows.sort_by(|a, b| {
                     (&b.timestamp, &b.session_id).cmp(&(&a.timestamp, &a.session_id))
                 });
-                let revision = hash(&serde_json::to_vec(&rows)?);
+                let revision = crate::sha256_hex(&serde_json::to_vec(&rows)?);
                 let start = match input.cursor {
                     Some(cursor) => {
                         let (digest, offset) = cursor
@@ -684,8 +684,8 @@ impl SessionIndex<'_> {
                 let input: ReadRequest = serde_json::from_value(arguments)?;
                 let limit = input.max_bytes.unwrap_or(PAGE_BYTES);
                 if !token(&input.session_id)
-                    || input.revision.len() != 64
-                    || input.handle.len() != 64
+                    || !crate::is_sha256_hex(&input.revision)
+                    || !crate::is_sha256_hex(&input.handle)
                     || !(1024..=PAGE_BYTES).contains(&limit)
                 {
                     return Err(io::Error::other("session_read_bounds"));
@@ -698,7 +698,7 @@ impl SessionIndex<'_> {
                     .iter()
                     .find(|path| {
                         self.name(path)
-                            .is_ok_and(|name| hash(name.as_bytes()) == input.handle)
+                            .is_ok_and(|name| crate::sha256_hex(name.as_bytes()) == input.handle)
                     })
                     .ok_or_else(|| io::Error::other("session_unavailable"))?;
                 let session = self

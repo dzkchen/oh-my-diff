@@ -92,8 +92,10 @@ impl Core {
             }
         }
         let text = lines.join("\n") + "\n";
-        let path = agents_dir(&lead.host)
-            .join(format!("{}.toml", &execution::hash(text.as_bytes())[..16]));
+        let path = agents_dir(&lead.host).join(format!(
+            "{}.toml",
+            &codex_omd::sha256_hex(text.as_bytes())[..16]
+        ));
         write_once(&path, &text)?;
         Ok(path)
     }
@@ -351,7 +353,10 @@ impl Core {
             tools,
         };
         let text = serde_json::to_string(&plan).map_err(|e| e.to_string())?;
-        let name = format!("{PLAN_PREFIX}{}", &execution::hash(text.as_bytes())[..16]);
+        let name = format!(
+            "{PLAN_PREFIX}{}",
+            &codex_omd::sha256_hex(text.as_bytes())[..16]
+        );
         write_once(
             &agents_dir(&lead.host)
                 .join("plans")

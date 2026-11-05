@@ -1,7 +1,25 @@
 name: Bug report
 description: Something in Oh My Diff, a mod or the installer does not work
+title: "[Bug]: "
 labels: ["type: bug", "status: triage"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Run `omd update` first: only the current release gets fixes. Upstream Codex bugs that also happen without
+        OMD belong in [openai/codex](https://github.com/openai/codex/issues). Please write in English.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Installer or updates
+        - OMD host, TUI or patched Codex
+        - A first-party mod or the SDK
+        - A bundled plugin or skill
+        - Not sure
+    validations:
+      required: true
   - type: textarea
     id: what
     attributes:
@@ -44,3 +62,8 @@ body:
       label: Logs or recovery output
       description: For example `omd-mod-author diagnostics STORE OUT` or the `/omd` recovery screen. Remove secrets and private paths.
       render: text
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot or recording
+      description: For display problems, drag in a screenshot or screen recording of the terminal.

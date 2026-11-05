@@ -1,4 +1,4 @@
-use codex_omd::resource_data::{ResourceBinding, ResourceStore, hash};
+use codex_omd::resource_data::{ResourceBinding, ResourceStore};
 use serde_json::json;
 use std::fs;
 
@@ -7,11 +7,11 @@ fn immutable_resources_bind_owner_repository_thread_generation_and_bytes() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let binding = ResourceBinding {
-        repository: hash(b"repo"),
+        repository: codex_omd::sha256_hex(b"repo"),
         owner: "fixture".into(),
         thread: "thread-1".into(),
         generation: 1,
-        source_sha256: hash(b"fixture-code"),
+        source_sha256: codex_omd::sha256_hex(b"fixture-code"),
     };
     let store = ResourceStore {
         root: &root,
@@ -32,7 +32,7 @@ fn immutable_resources_bind_owner_repository_thread_generation_and_bytes() {
     assert!(store.load(&reference, "knowledge").is_err());
     for modified in [
         ResourceBinding {
-            source_sha256: hash(b"changed-code"),
+            source_sha256: codex_omd::sha256_hex(b"changed-code"),
             ..binding.clone()
         },
         ResourceBinding {
@@ -48,7 +48,7 @@ fn immutable_resources_bind_owner_repository_thread_generation_and_bytes() {
             ..binding.clone()
         },
         ResourceBinding {
-            repository: hash(b"other"),
+            repository: codex_omd::sha256_hex(b"other"),
             ..binding.clone()
         },
     ] {

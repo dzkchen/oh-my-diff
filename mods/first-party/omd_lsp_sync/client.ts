@@ -74,7 +74,7 @@ export function createClient(api: ModAPI) {
     const body = () => ({ servers: { ...prior, [s.adapter]: stored } }) as unknown as Json;
     for (const path in stored.diagnostics) {
       if (serializedBytes(body()) <= 60_000) break;
-      stored.diagnostics[path] = { ...s.diagnostics[path], errors: [] };
+      delete stored.diagnostics[path];
     }
     api.state.set(body());
     dirty = true;
