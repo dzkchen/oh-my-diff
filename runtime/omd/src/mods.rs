@@ -7089,3 +7089,7 @@ fn service_ts_type(kind: &str) -> &'static str {
         _ => "Json",
     }
 }
+
+pub fn release_disposable_runners() {
+    process::release_disposable_runners();
+}
