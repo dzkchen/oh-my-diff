@@ -152,7 +152,8 @@ thread can recover without waiting for another window focus change. Active turns
 notifications continue; the TUI suppresses redraws, frees finished render caches and releases unused stateless
 runners and spare processes. Session runners and mounted component state remain resident. After a minute without
 runner use, all spare runners are released. Focus, keys, paste or mouse resume drawing; resize and returning from
-an external editor resume drawing while focused. Background detection needs a terminal that reports focus events.
+an external editor resume drawing while focused, and an approval, question or finished turn ends display idle in a
+focused terminal. Background detection needs a terminal that reports focus events.
 This reduces display work and disposable memory; it does not unload the conversation or freeze the session process.
 
 With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
