@@ -116,7 +116,7 @@ pub fn persist_texts(
     let _thread = StateThread::enter(Some(thread.to_owned()));
     let mut runtime = runtime.lock().map_err(|_| "persist_runtime_unavailable")?;
     runtime
-        .refresh_guarded(&active)
+        .refresh(&active)
         .map_err(|_| "persist_runtime_unavailable")?;
     let required = match runtime.intercepts("history_persist") {
         Some(required) => required,

@@ -2,8 +2,6 @@ use crate::resource_data::ResourceRef;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use sha2::Digest;
-use sha2::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const CONTRACT_DOCUMENT_SCHEMA: u32 = 2;
@@ -166,13 +164,6 @@ pub fn token(value: &str, limit: usize) -> bool {
         })
 }
 
-pub fn sha256_hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-}
-
 impl ContractDocument {
     pub fn parse(value: &Value) -> Result<Self, String> {
         let document: Self =
@@ -187,7 +178,7 @@ impl ContractDocument {
 
     pub fn digest(&self) -> String {
         let value = crate::broker::canonical(&serde_json::to_value(self).unwrap_or(Value::Null));
-        format!("{:x}", Sha256::digest(value))
+        crate::sha256_hex(value)
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -308,12 +299,12 @@ impl ContractDocument {
 impl Receipt {
     pub fn validate(&self) -> Result<(), String> {
         if !token(&self.kind, 64)
-            || !sha256_hex(&self.candidate_sha256)
+            || !crate::is_sha256_hex(&self.candidate_sha256)
             || self
                 .acceptance_sha256
                 .as_deref()
-                .is_some_and(|value| !sha256_hex(value))
-            || !sha256_hex(&self.evidence.sha256)
+                .is_some_and(|value| !crate::is_sha256_hex(value))
+            || !crate::is_sha256_hex(&self.evidence.sha256)
             || self.findings.len() > FINDING_LIMIT
             || self.resolves.len() > FINDING_LIMIT
             || self
@@ -470,7 +461,7 @@ impl ContractSelection {
                 })
             })
         };
-        let digest = |value: &Option<String>| value.as_deref().is_none_or(sha256_hex);
+        let digest = |value: &Option<String>| value.as_deref().is_none_or(crate::is_sha256_hex);
         if self.schema != CONTRACT_DOCUMENT_SCHEMA
             || !key(&self.contract)
             || !key(&self.floor)
@@ -515,16 +506,13 @@ impl ContractSelection {
 }
 
 pub fn contract_confirmation(from: Option<&ContractDocument>, to: &ContractDocument) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(
-            format!(
-                "{}\0{}",
-                from.map(ContractDocument::digest).unwrap_or_default(),
-                to.digest()
-            )
-            .as_bytes()
+    crate::sha256_hex(
+        format!(
+            "{}\0{}",
+            from.map(ContractDocument::digest).unwrap_or_default(),
+            to.digest()
         )
+        .as_bytes(),
     )[..16]
         .to_owned()
 }
