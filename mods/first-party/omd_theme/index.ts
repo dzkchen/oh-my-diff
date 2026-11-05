@@ -193,7 +193,7 @@ export default function activate(api: ModAPI) {
       again(reply.ok && 'status' in reply.value ? Math.max(HIDDEN_MS, reply.value.retry_after_ms) : misses > UNKNOWN_RETRIES ? HIDDEN_MS : RETRY_MS, { ...shown, misses });
       return;
     }
-    if (!lost && s.frame !== k) write({ frame: k });
+    if (!lost && paused(s) && s.frame !== k) write({ frame: k });
     again(quiet || paused(s) ? poll : origin + (k + 1) * period - now, { ...shown, drawn: lost ? -1 : k });
   };
 

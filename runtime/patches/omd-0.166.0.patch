@@ -51141,7 +51141,7 @@ index 1ce29ba3afe778b30f8b0ba49c7e3c43ebda5605..d1fc912ecd44eb169be830b37be1c4d7
                      if self.copy_on_select {
                          return Some(ViewAction::CopyOnSelect(text));
 diff --git a/codex-rs/tui/src/transcript_view/layout.rs b/codex-rs/tui/src/transcript_view/layout.rs
-index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dce45863f8 100644
+index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..eaca2850cfbc0eddbbd303c578d4269a43603644 100644
 --- a/codex-rs/tui/src/transcript_view/layout.rs
 +++ b/codex-rs/tui/src/transcript_view/layout.rs
 @@ -15,9 +15,12 @@ const MAX_CACHED_LAYOUT_BYTES: usize = 8 * 1024 * 1024;
@@ -51218,16 +51218,15 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
      foreground: Option<(u8, u8, u8)>,
      background: Option<(u8, u8, u8)>,
      color_level: crate::terminal_palette::StdoutColorLevel,
-@@ -123,6 +151,8 @@ struct CachedLayout {
+@@ -123,6 +151,7 @@ struct CachedLayout {
      layout: Arc<TextLayout>,
      rendered_frame: u64,
      animation_tick: Option<u64>,
-+    /// Hook answers for a still-changing tool row redraw it even when its height is stable.
-+    hooks: Option<u64>,
++    hooks: crate::mod_render::Stamp,
  }
 
  #[derive(Clone, Copy, PartialEq, Eq)]
-@@ -138,18 +168,15 @@ pub(super) struct CellPresentation {
+@@ -138,18 +167,15 @@ pub(super) struct CellPresentation {
 
  impl TranscriptView {
      fn content_presentation(
@@ -51248,7 +51247,7 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
          CellPresentation {
              separated: false,
              shares_prompt_background: false,
-@@ -157,9 +184,14 @@ impl TranscriptView {
+@@ -157,9 +183,14 @@ impl TranscriptView {
              expanded: disclosure && (full_content || manually_expanded),
              disclosure,
              detailed: full_content,
@@ -51266,7 +51265,7 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
          }
      }
 
-@@ -237,7 +269,7 @@ impl TranscriptView {
+@@ -237,7 +268,7 @@ impl TranscriptView {
              return Some(Arc::new(TextLayout::new(Vec::new(), width)));
          }
          let mode = self.mode;
@@ -51275,7 +51274,7 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
          let shortcut = self
              .disclosure
              .keymap
-@@ -256,7 +288,7 @@ impl TranscriptView {
+@@ -256,7 +287,7 @@ impl TranscriptView {
                          return layout.row_count() > 0;
                      }
                      let previous_presentation =
@@ -51284,7 +51283,7 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
                      self.cache
                          .has_visible_content(previous, width, previous_presentation, || {
                              cell_content_layout(
-@@ -265,6 +297,7 @@ impl TranscriptView {
+@@ -265,6 +296,7 @@ impl TranscriptView {
                                  mode,
                                  previous_presentation,
                                  shortcut,
@@ -51292,7 +51291,7 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
                              )
                          })
                  })
-@@ -274,8 +307,14 @@ impl TranscriptView {
+@@ -274,8 +306,14 @@ impl TranscriptView {
          presentation.shares_prompt_background = shares_prompt_background;
          presentation.turn_tip_space = self.turn_tip_key == Some(EntryKey::cell(cell));
          Some(self.cache.get(cell, width, presentation, || {
@@ -51309,7 +51308,7 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
              if shares_prompt_background {
                  layout = layout.without_leading_blank_row();
              }
-@@ -289,6 +328,7 @@ impl LayoutCache {
+@@ -289,6 +327,7 @@ impl LayoutCache {
          self.frame = self.frame.wrapping_add(/*rhs*/ 1);
          let state = RenderState {
              theme: crate::render::highlight::syntax_theme_revision(),
@@ -51317,44 +51316,40 @@ index dd81a380471e0cd7e4ee2dc3315f747c2d592f84..787aa50bad6de3350c526fe785d808dc
              foreground: crate::terminal_palette::default_fg(),
              background: crate::terminal_palette::default_bg(),
              color_level: crate::terminal_palette::stdout_color_level(),
-@@ -315,7 +355,10 @@ impl LayoutCache {
+@@ -315,7 +354,8 @@ impl LayoutCache {
                  && entry.source.ptr_eq(&source)
                  && (entry.rendered_frame == self.frame
                      || (cell.has_stable_transcript_height()
 -                        && entry.animation_tick == animation_tick))
 +                        && entry.animation_tick == animation_tick
-+                        && entry
-+                            .hooks
-+                            .is_none_or(|hooks| hooks == crate::mod_render::live_epoch())))
++                        && entry.hooks.is_current()))
          }) {
              let layout = Arc::clone(&self.entries[index].layout);
              if index + 1 != self.entries.len() {
-@@ -324,6 +367,8 @@ impl LayoutCache {
+@@ -324,7 +364,7 @@ impl LayoutCache {
              }
              return layout;
          }
-+        // Read before rendering, so an answer arriving meanwhile redraws the entry next frame.
-+        let hooks = crate::mod_render::live_epoch();
-         let layout = render();
+-        let layout = render();
++        let (layout, hooks) = crate::mod_render::track(render);
          let layout = if presentation.separated {
              layout.with_leading_separator()
-@@ -343,6 +388,7 @@ impl LayoutCache {
+         } else {
+@@ -343,6 +383,7 @@ impl LayoutCache {
              layout: Arc::clone(&layout),
              rendered_frame: self.frame,
              animation_tick,
-+            hooks: (!cell.activity_ids().is_empty()).then_some(hooks),
++            hooks,
          });
          self.evict();
          layout
-@@ -366,7 +412,10 @@ impl LayoutCache {
+@@ -366,7 +407,8 @@ impl LayoutCache {
                  && entry.source.ptr_eq(&source)
                  && (entry.rendered_frame == self.frame
                      || (cell.has_stable_transcript_height()
 -                        && entry.animation_tick == animation_tick))
 +                        && entry.animation_tick == animation_tick
-+                        && entry
-+                            .hooks
-+                            .is_none_or(|hooks| hooks == crate::mod_render::live_epoch())))
++                        && entry.hooks.is_current()))
          }) {
              let visible = self.entries[index].layout.row_count() > 0;
              if index + 1 != self.entries.len() {
@@ -118254,10 +118249,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f969f56c4c88d1a05c97a94b30f7fc17fc84a98
+index 0000000000000000000000000000000000000000..28e98d21105601c72f1faa042fe543df2724215c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7085 @@
+@@ -0,0 +1,7097 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -121107,6 +121102,18 @@ index 0000000000000000000000000000000000000000..6f969f56c4c88d1a05c97a94b30f7fc1
 +    completions: Vec<ModCompletion>,
 +}
 +
++impl Registrations {
++    fn calls_back(&self) -> bool {
++        !self.events.is_empty()
++            || !self.replacements.is_empty()
++            || !self.completions.is_empty()
++            || self
++                .interceptors
++                .iter()
++                .any(|interceptor| interceptor.pattern != "render")
++    }
++}
++
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +#[serde(deny_unknown_fields)]
 +struct ModCompletion {
@@ -122999,8 +123006,8 @@ index 0000000000000000000000000000000000000000..6f969f56c4c88d1a05c97a94b30f7fc1
 +            self.pool,
 +            Some(
 +                self.loaded
-+                    .keys()
-+                    .filter(|id| self.registered(id, "terminal"))
++                    .values()
++                    .filter(|m| m.error.is_none() && m.registrations.calls_back())
 +                    .count(),
 +            ),
 +        );
@@ -133826,7 +133833,7 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c94912b98496f
+index 0000000000000000000000000000000000000000..a0591473f52099db8b2d6aeb429011e75f1fb360
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
 @@ -0,0 +1,1025 @@
@@ -134406,7 +134413,7 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +const WARM_RUNNERS: usize = 4;
 +const PINNED_RUNNERS: usize = 4;
 +const REUSED_RUNNERS: usize = 2;
-+const MAX_REUSED_RUNNERS: usize = 8;
++const MAX_REUSED_RUNNERS: usize = 16;
 +static REUSED_POOL: Mutex<BTreeMap<u64, usize>> = Mutex::new(BTreeMap::new());
 +const WARM_IDLE: Duration = Duration::from_secs(60);
 +
@@ -134673,10 +134680,10 @@ index 0000000000000000000000000000000000000000..0961979b48682ce2878e479ae22c9491
 +    Err(warm.fail(error))
 +}
 +
-+/// Keeps one warm callback runner per active package with a `terminal` handler; every host in the process shares the pool, so it fits the host with the most handlers (`None` forgets a host).
-+pub(super) fn size_reused_pool(host: u64, terminal_handlers: Option<usize>) {
++/// Keeps one warm callback runner per active package that takes non-render callbacks; every host in the process shares the pool, so it fits the host with the most such packages (`None` forgets a host).
++pub(super) fn size_reused_pool(host: u64, packages: Option<usize>) {
 +    let mut sizes = REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner);
-+    match terminal_handlers {
++    match packages {
 +        Some(count) => sizes.insert(host, count),
 +        None => sizes.remove(&host),
 +    };
@@ -179484,10 +179491,10 @@ index 0000000000000000000000000000000000000000..c774f3c1004e1d4b2bb580a75ecf37c5
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e233f4362
+index 0000000000000000000000000000000000000000..82996be8423599cfa4c2bcf8c6b0f661e210edbc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,716 @@
+@@ -0,0 +1,788 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -179652,6 +179659,8 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +struct Engine {
 +    done: HashMap<u64, Option<Rendered>>,
 +    latest: HashMap<(String, String), Option<Rendered>>,
++    generations: HashMap<(String, String), u64>,
++    generation: u64,
 +    pending: VecDeque<(u64, (String, String), Value, u64)>,
 +    running: bool,
 +    revision: Option<(u64, u64)>,
@@ -179671,12 +179680,22 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +        }
 +        if self.latest.len() >= DONE_LIMIT {
 +            self.latest.clear();
++            self.generations.clear();
 +        }
 +        // A render started before the cache was cleared may reflect older state.
 +        if self.cleared == cleared {
 +            self.done.insert(key, rendered.clone());
 +        }
-+        self.latest.insert(instance, rendered.clone()).flatten() != rendered
++        let changed = self
++            .latest
++            .insert(instance.clone(), rendered.clone())
++            .flatten()
++            != rendered;
++        if changed {
++            self.generation += 1;
++            self.generations.insert(instance, self.generation);
++        }
++        changed
 +    }
 +}
 +
@@ -179687,6 +179706,7 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +static ROWS: AtomicU16 = AtomicU16::new(0);
 +static EPOCH: AtomicU64 = AtomicU64::new(0);
 +static LIVE_EPOCH: AtomicU64 = AtomicU64::new(0);
++static REFRESHES: AtomicU64 = AtomicU64::new(0);
 +static FRAMES: Mutex<Option<crate::tui::FrameRequester>> = Mutex::new(None);
 +static TOOL_NOTICES: Mutex<VecDeque<ToolNotice>> = Mutex::new(VecDeque::new());
 +static DRAWN_CALLS: Mutex<std::collections::BTreeSet<String>> =
@@ -179760,8 +179780,68 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +        .collect()
 +}
 +
++type Instance = (String, String);
++type Answers = Vec<(Instance, u64)>;
++
 +thread_local! {
 +    static WAITING: Cell<bool> = const { Cell::new(false) };
++    static TRACKED: std::cell::RefCell<Option<Option<Answers>>> = const { std::cell::RefCell::new(None) };
++}
++
++/// The hook answers one layout drew from, so a cache keeps it until one of them changes or a view refresh asks them again.
++#[derive(Clone, Default)]
++pub(crate) struct Stamp(Option<(u64, Answers)>);
++
++impl Stamp {
++    pub(crate) fn is_current(&self) -> bool {
++        let Some((refreshes, answers)) = &self.0 else {
++            return true;
++        };
++        *refreshes == REFRESHES.load(Ordering::Relaxed)
++            && (answers.is_empty()
++                || engine(|engine| {
++                    answers.iter().all(|(instance, generation)| {
++                        engine
++                            .generations
++                            .get(instance)
++                            .copied()
++                            .unwrap_or_default()
++                            == *generation
++                    })
++                }))
++    }
++}
++
++pub(crate) fn track<T>(run: impl FnOnce() -> T) -> (T, Stamp) {
++    let refreshes = REFRESHES.load(Ordering::Relaxed);
++    let outer = TRACKED.with(|tracked| tracked.replace(Some(None)));
++    let value = run();
++    let answers = TRACKED.with(|tracked| tracked.replace(outer)).flatten();
++    if let Some(answers) = &answers {
++        touch();
++        answers.iter().for_each(|(instance, _)| record(instance));
++    }
++    (value, Stamp(answers.map(|answers| (refreshes, answers))))
++}
++
++fn record(instance: &Instance) {
++    TRACKED.with(|tracked| {
++        if let Some(answers) = tracked.borrow_mut().as_mut() {
++            let generation =
++                engine(|engine| engine.generations.get(instance).copied()).unwrap_or_default();
++            answers
++                .get_or_insert_default()
++                .push((instance.clone(), generation));
++        }
++    });
++}
++
++fn touch() {
++    TRACKED.with(|tracked| {
++        if let Some(answers) = tracked.borrow_mut().as_mut() {
++            answers.get_or_insert_default();
++        }
++    });
 +}
 +
 +fn engine<T>(run: impl FnOnce(&mut Engine) -> T) -> T {
@@ -179791,7 +179871,7 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +    HOOKED.load(Ordering::Relaxed)
 +}
 +
-+/// Changes whenever a hook result changes what a retained layout drew.
++/// Changes whenever a tool notice changes what a retained layout drew.
 +pub(crate) fn epoch() -> u64 {
 +    EPOCH.load(Ordering::Relaxed)
 +}
@@ -179816,6 +179896,7 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +        Some(hooked) => {
 +            forget();
 +            HOOKED.store(hooked, Ordering::Relaxed);
++            REFRESHES.fetch_add(1, Ordering::Relaxed);
 +            LIVE_EPOCH.fetch_add(1, Ordering::Relaxed);
 +        }
 +        // A busy runtime leaves the flag and finished renders as they were and asks again next frame; forgetting them now would only queue renders needing the same busy runtime.
@@ -179901,16 +179982,12 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +        }) else {
 +            return;
 +        };
-+        let retained = input["lifecycle"] == "final";
 +        let Some(rendered) = run(input) else {
 +            schedule_frame(RETRY);
 +            continue;
 +        };
 +        let changed = engine(|engine| engine.remember(key, instance, rendered, cleared));
 +        if changed {
-+            if retained {
-+                EPOCH.fetch_add(1, Ordering::Relaxed);
-+            }
 +            LIVE_EPOCH.fetch_add(1, Ordering::Relaxed);
 +            schedule_frame(Duration::ZERO);
 +        }
@@ -179923,9 +180000,16 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +}
 +
 +pub(crate) fn resolve_state(target: &RenderTarget, width: u16) -> Option<Option<Rendered>> {
++    touch();
 +    if !HOOKED.load(Ordering::Relaxed) {
 +        return Some(None);
 +    }
++    let instance_id = match (target.component, target.props["message_id"].as_str()) {
++        ("assistant_message", Some(message)) => format!("{}:{message}", target.id),
++        _ => target.id.clone(),
++    };
++    let instance = (target.component.to_owned(), instance_id);
++    record(&instance);
 +    let mut hasher = std::collections::hash_map::DefaultHasher::new();
 +    (
 +        target.component,
@@ -179942,11 +180026,6 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +        return Some(done);
 +    }
 +    let input = input(target, width);
-+    let instance_id = match (target.component, target.props["message_id"].as_str()) {
-+        ("assistant_message", Some(message)) => format!("{}:{message}", target.id),
-+        _ => target.id.clone(),
-+    };
-+    let instance = (target.component.to_owned(), instance_id);
 +    if WAITING.with(Cell::get) {
 +        let cleared = engine(|engine| engine.cleared);
 +        let Some(rendered) = run(input) else {
@@ -180206,10 +180285,10 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b0e4d4b3a
+index 0000000000000000000000000000000000000000..e4b910e8f7e98647f73434104b88d10bdb804ef2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,281 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -180220,6 +180299,60 @@ index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b
 +
 +fn tree(value: Value) -> Vec<ModComponent> {
 +    serde_json::from_value(value).unwrap()
++}
++
++#[test]
++#[serial_test::serial]
++fn an_answer_stales_only_the_layouts_that_drew_from_it() {
++    struct Restore(bool, Option<Engine>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            HOOKED.store(self.0, Ordering::Relaxed);
++            *ENGINE
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner) = self.1.take();
++        }
++    }
++    let _restore = Restore(
++        HOOKED.swap(true, Ordering::Relaxed),
++        ENGINE.lock().unwrap().take(),
++    );
++    engine(|engine| engine.running = true);
++    let target = |id: &str| RenderTarget::new("tool_call", id, false, json!({"kind": "exec"}));
++    let ((), first) = track(|| {
++        resolve_state(&target("first"), 80);
++    });
++    let ((), second) = track(|| {
++        resolve_state(&target("second"), 80);
++    });
++    let ((), untouched) = track(|| ());
++    assert!(first.is_current() && second.is_current());
++    let rendered = Rendered {
++        props: None,
++        tree: tree(json!([{"type":"text","id":"own","label":"Own","text":"drawn"}])),
++    };
++    engine(|engine| {
++        engine.remember(
++            1,
++            ("tool_call".into(), "first".into()),
++            Some(rendered.clone()),
++            engine.cleared,
++        )
++    });
++    assert!(!first.is_current());
++    assert!(second.is_current());
++    engine(|engine| {
++        engine.remember(
++            1,
++            ("tool_call".into(), "second".into()),
++            None,
++            engine.cleared,
++        )
++    });
++    assert!(second.is_current());
++    REFRESHES.fetch_add(1, Ordering::Relaxed);
++    assert!(!second.is_current());
++    assert!(untouched.is_current());
 +}
 +
 +#[test]

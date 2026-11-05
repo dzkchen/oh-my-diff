@@ -574,7 +574,7 @@ static STEPPING: (Mutex<BTreeSet<String>>, Condvar) = (Mutex::new(BTreeSet::new(
 const WARM_RUNNERS: usize = 4;
 const PINNED_RUNNERS: usize = 4;
 const REUSED_RUNNERS: usize = 2;
-const MAX_REUSED_RUNNERS: usize = 8;
+const MAX_REUSED_RUNNERS: usize = 16;
 static REUSED_POOL: Mutex<BTreeMap<u64, usize>> = Mutex::new(BTreeMap::new());
 const WARM_IDLE: Duration = Duration::from_secs(60);
 
@@ -841,10 +841,10 @@ where
     Err(warm.fail(error))
 }
 
-/// Keeps one warm callback runner per active package with a `terminal` handler; every host in the process shares the pool, so it fits the host with the most handlers (`None` forgets a host).
-pub(super) fn size_reused_pool(host: u64, terminal_handlers: Option<usize>) {
+/// Keeps one warm callback runner per active package that takes non-render callbacks; every host in the process shares the pool, so it fits the host with the most such packages (`None` forgets a host).
+pub(super) fn size_reused_pool(host: u64, packages: Option<usize>) {
     let mut sizes = REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner);
-    match terminal_handlers {
+    match packages {
         Some(count) => sizes.insert(host, count),
         None => sizes.remove(&host),
     };

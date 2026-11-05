@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.166.0.patch",
-    "sha256": "8e94845191ffb8512ac33f01f59e3bbcdf49f1cd66cbc38c92a73fb03e69ab11"
+    "sha256": "62baa539b2518b5bf3ba3c08d35d7462ee8fd701aca6594045946bfcaf5ce329"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1527,7 +1527,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "d0d7a11d216dbce95c9f07673b715f6ab1bddd1f3cbccf7ef823f7949e2da5ff"
+      "after": "7163fad721166629754fd58d89ac75ab4b895dcca213061dad8071b77901afcd"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1575,7 +1575,7 @@
     },
     "codex-rs/omd/src/mods/process.rs": {
       "before": null,
-      "after": "09929802922bca4c0bba696cddbfa266e7979845f24a0d384c29f90f48e61a66"
+      "after": "70ccf67a9b8dbbbe24d879d34ebf2fd490ddc29df1ac6998a9dbce09cabf9400"
     },
     "codex-rs/omd/src/mods/process_tests.rs": {
       "before": null,
@@ -2731,11 +2731,11 @@
     },
     "codex-rs/tui/src/mod_render.rs": {
       "before": null,
-      "after": "8bd2a1f7f063d700ac25ce143daa44d1f6c03d5c8d5c71038df1270d6fb2b397"
+      "after": "a2bd70fe3f58a6aca2f78acd5c1628fa37d087addc445ad5b36fa535ad81b84a"
     },
     "codex-rs/tui/src/mod_render_tests.rs": {
       "before": null,
-      "after": "450a671ed0795256ddb3fa24ea9321dc68fb9c16499d5200150bafb42976a4ce"
+      "after": "c7560237a6c51e4f7f69b0612d9bff323e736630581123301606b550ffb44560"
     },
     "codex-rs/tui/src/mod_runtime.rs": {
       "before": null,
@@ -3047,7 +3047,7 @@
     },
     "codex-rs/tui/src/transcript_view/layout.rs": {
       "before": "e4c5c355a20f9ed0635d4346bc940983ffce7b30850ffbaed1da82ed247195a5",
-      "after": "492b537addc7f528ea5025aa2876b1fe231cfaaecbdd006a6dffa5bef23f55f5"
+      "after": "0f3e0a41352fc3ede9e2a7f3bfd0fb66eb4f23db574aa05902438e2e16cf4b03"
     },
     "codex-rs/tui/src/transcript_view/layout_tests.rs": {
       "before": "0642427a3fa7a6a1f967258c67ade1da26be63213fae04224679a58b08043f33",

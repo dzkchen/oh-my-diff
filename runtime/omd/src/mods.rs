@@ -2847,6 +2847,18 @@ struct Registrations {
     completions: Vec<ModCompletion>,
 }
 
+impl Registrations {
+    fn calls_back(&self) -> bool {
+        !self.events.is_empty()
+            || !self.replacements.is_empty()
+            || !self.completions.is_empty()
+            || self
+                .interceptors
+                .iter()
+                .any(|interceptor| interceptor.pattern != "render")
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct ModCompletion {
@@ -4739,8 +4751,8 @@ impl ModHost {
             self.pool,
             Some(
                 self.loaded
-                    .keys()
-                    .filter(|id| self.registered(id, "terminal"))
+                    .values()
+                    .filter(|m| m.error.is_none() && m.registrations.calls_back())
                     .count(),
             ),
         );
