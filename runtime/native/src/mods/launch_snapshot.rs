@@ -120,7 +120,7 @@ fn hash_tree(tree: &Tree) -> String {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned(),
-            ("file", super::execution::hash(bytes)),
+            ("file", codex_omd::sha256_hex(bytes)),
         );
     }
     for (path, target) in &tree.links {
@@ -136,7 +136,7 @@ fn hash_tree(tree: &Tree) -> String {
         .into_iter()
         .map(|(path, (kind, value))| (path, kind, value))
         .collect::<Vec<_>>();
-    super::execution::hash(&serde_json::to_vec(&rows).unwrap())
+    codex_omd::sha256_hex(&serde_json::to_vec(&rows).unwrap())
 }
 
 pub(super) fn path(root: &Path, source: &Path) -> Result<PathBuf, String> {

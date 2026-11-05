@@ -118,7 +118,7 @@ fn a_store_path_first_named_by_another_user_is_refused() {
     let owners = temp.path().canonicalize().unwrap().join("broker/owners");
     let record = owners.join(format!(
         "store-{}.json",
-        sha256(store.as_os_str().as_encoded_bytes())
+        crate::sha256_hex(store.as_os_str().as_encoded_bytes())
     ));
     assert_eq!(
         fs::read_to_string(&record).unwrap(),
@@ -226,7 +226,7 @@ fn anchors_chain_every_appended_digest() {
     let mut client = Client::at(&socket).unwrap();
     let (ledger, older) = (store.join("ledger"), store.join("older"));
     let (ledger, older) = (ledger.to_str().unwrap(), older.to_str().unwrap());
-    let (first, second) = (sha256(b"one"), sha256(b"two"));
+    let (first, second) = (crate::sha256_hex(b"one"), crate::sha256_hex(b"two"));
     for entry in [&first, &second] {
         client
             .call("anchor.append", json!({"stream": ledger, "sha256": entry}))
@@ -317,7 +317,7 @@ fn brokered_credentials_keep_secrets_in_the_broker_and_authorize_writes() {
 fn peer_tags_verify_only_the_sealed_digest() {
     let (_temp, socket, _store) = serve(Arc::new(TestGate::default()));
     let mut client = Client::at(&socket).unwrap();
-    let digest = sha256(b"message");
+    let digest = crate::sha256_hex(b"message");
     let tag = client.call("peer.seal", json!({"sha256": digest})).unwrap();
     assert_eq!(
         client
@@ -329,7 +329,7 @@ fn peer_tags_verify_only_the_sealed_digest() {
         client
             .call(
                 "peer.verify",
-                json!({"sha256": sha256(b"other"), "tag": tag})
+                json!({"sha256": crate::sha256_hex(b"other"), "tag": tag})
             )
             .unwrap(),
         false

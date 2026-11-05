@@ -34,10 +34,6 @@ fn failure(code: &str) -> io::Error {
     io::Error::other(code.to_owned())
 }
 
-pub fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
-
 pub fn deployed() -> bool {
     fs::symlink_metadata(DAEMON).is_ok_and(|metadata| metadata.is_file() && metadata.uid() == 0)
 }
@@ -73,7 +69,9 @@ pub fn canonical(value: &Value) -> String {
 }
 
 fn request_digest(op: &str, arguments: &Value) -> io::Result<String> {
-    Ok(sha256(canonical(&json!([op, arguments])).as_bytes()))
+    Ok(crate::sha256_hex(
+        canonical(&json!([op, arguments])).as_bytes(),
+    ))
 }
 
 pub struct Client {
@@ -218,7 +216,7 @@ fn hmac(key: &[u8], message: &[u8]) -> String {
 }
 
 pub fn chain(head: &str, sha256: &str) -> String {
-    self::sha256(format!("{head}{sha256}").as_bytes())
+    crate::sha256_hex(format!("{head}{sha256}").as_bytes())
 }
 
 pub fn anchor(stream: &Path, sha256: &str) -> io::Result<()> {
@@ -347,7 +345,7 @@ fn text_within<'a>(arguments: &'a Value, key: &str, limit: usize) -> io::Result<
 
 fn digest_text(arguments: &Value, key: &str) -> io::Result<String> {
     let value = text(arguments, key)?;
-    if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !crate::is_sha256_hex(&value) {
         return Err(failure("authority_request_invalid"));
     }
     Ok(value.to_owned())
@@ -466,7 +464,7 @@ impl Broker {
             )?;
             let record = directory.join(format!(
                 "{field}-{}.json",
-                sha256(path.as_os_str().as_encoded_bytes())
+                crate::sha256_hex(path.as_os_str().as_encoded_bytes())
             ));
             let _state = self
                 .state
@@ -506,7 +504,7 @@ impl Broker {
         }
         crate::workspace::private_path(
             &self.root,
-            &["stores", &sha256(store.as_bytes())],
+            &["stores", &crate::sha256_hex(store.as_bytes())],
             "authority_directory_invalid",
         )
     }
@@ -704,7 +702,7 @@ impl Broker {
                     &["anchors"],
                     "authority_directory_invalid",
                 )?
-                .join(format!("{}.json", sha256(stream.as_bytes())));
+                .join(format!("{}.json", crate::sha256_hex(stream.as_bytes())));
                 let mut anchor = read_json(
                     &path,
                     json!({"stream": stream, "count": 0, "head": "", "last": null}),

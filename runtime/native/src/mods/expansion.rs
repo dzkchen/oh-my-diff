@@ -715,7 +715,7 @@ pub(in crate::mods) fn blit_sink(
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         };
         let result = runtime
-            .refresh_authority()
+            .refresh(&|| true)
             .map_err(|_| codex_omd::client_surface::BlitError::retryable("callback_cancelled"))
             .and_then(|_| {
                 (runtime.generation() == generation
@@ -816,7 +816,7 @@ async fn surface(
             let mut runtime = runtime
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if runtime.refresh_authority().is_err() {
+            if runtime.refresh(&|| true).is_err() {
                 return false;
             }
             runtime.generation() == generation

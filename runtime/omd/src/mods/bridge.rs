@@ -241,7 +241,7 @@ fn metadata(loaded: &Loaded) -> Result<(Value, String, [u8; 32])> {
         "api": MOD_API_VERSION,
         "assets": loaded.assets.as_ref(),
         "entrypoint": loaded.package.entrypoint,
-        "entrypoint_sha256": digest(loaded.source.as_bytes()),
+        "entrypoint_sha256": crate::sha256_hex(loaded.source.as_bytes()),
         "package": {"id": loaded.package.id, "version": loaded.package.version},
         "session_model": loaded.package.compatibility.required_features.iter().any(|feature| feature == "session_activation_v1"),
         "state_scope": loaded.package.state_scope,

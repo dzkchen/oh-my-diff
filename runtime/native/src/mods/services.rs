@@ -486,7 +486,7 @@ impl Services {
                     .map_err(|_| "service_source_unavailable")?
                     != *path
                 || bytes.len() > 4 * 1024 * 1024
-                || execution::hash(&bytes) != *expected
+                || codex_omd::sha256_hex(&bytes) != *expected
             {
                 return Err("service_source_changed".into());
             }
