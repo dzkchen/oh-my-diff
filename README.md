@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Codex starts with the OMD logo, /mods lists five mods, a force-push is blocked by a mod, and a /standup command from the same mod writes a standup from git log" width="100%">
+  <img src="docs/demo.gif" alt="Codex starts with the OMD logo over a fire, /theme switches to a jellyfish scene, /mods lists the mods, a force-push is blocked by a mod, and a /standup command from the same mod writes a standup from git log" width="100%">
 </p>
 
 You still run `codex`, with your settings, sign-in and sessions, and you can go back to plain Codex at any time with
@@ -40,7 +40,7 @@ A mod is a small TypeScript program. It can add a slash command, give the model 
 draw a status line, panel or dialog, or react when the agent runs a tool. Before a mod runs, OMD shows its source,
 license and the permissions it asks for, and you can turn any mod off at any time.
 
-This is the mod in the demo above. It blocks force-pushes and adds a `/standup` command:
+The mod in the demo blocks force-pushes and adds `/standup`:
 
 ```ts
 import type { ModAPI } from '@oh-my-diff/mod-api';
@@ -54,43 +54,24 @@ export default function activate(api: ModAPI) {
 }
 ```
 
-A `mod.json` next to it names the mod and asks for the `interception` and `commands` capabilities. The full example
-is in [`mods/examples/repo_rules`](mods/examples/repo_rules), and the [agent mod guide](docs/AGENT_MOD_GUIDE.md) lets
-Codex write one for you.
+The full mod, with its `mod.json`, is in [`mods/examples/repo_rules`](mods/examples/repo_rules).
 
 [How OMD works](docs/how-omd-works.md) · [Trust and permissions](docs/trust-and-permissions.md) ·
 [Write your first mod](docs/mod-authors/first-mod.md)
 
 ## Included mods
 
-OMD+ turns these on:
+OMD+ comes with these, among others:
 
-| Mod | What it does |
-| --- | --- |
-| [Tool lines](mods/first-party/omd_tool_lines/README.md) | One line per tool call, with adjacent shell commands grouped; open a row for the full output |
-| [Status line](mods/first-party/omd_statusline/README.md) | Model, context, usage limits, cost, Git branch and CI status under the prompt; `/statusline` edits it |
-| [Auto-continue](mods/first-party/omd_auto_continue/README.md) | An unanswered approval or question no longer stalls the turn |
-| [Mods](mods/first-party/omd_mods/README.md) | The `/mods` screen: turn mods on or off, change their settings, install new ones |
-| [Update](mods/first-party/omd_update/README.md) | Update notices, `/update`, and signed mod fixes between releases |
+- **[Themes](mods/first-party/omd_theme/README.md)**: animated scenes behind the conversation, picked with `/theme`.
+- **[Grouped tool lines](mods/first-party/omd_tool_lines/README.md)**: adjacent shell commands collapse into one row; open it for the full output.
+- **[Status line](mods/first-party/omd_statusline/README.md)**: configurable, edited with `/statusline`.
+- **[Auto-continue](mods/first-party/omd_auto_continue/README.md)**: an unanswered approval or question no longer stalls the turn.
+- **[Privacy](mods/first-party/omd_privacy/README.md)**: hides secrets and chosen personal data from what's sent to the model.
+- **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request.
 
-OMD+ also installs these for you to turn on in `/mods`:
-
-| Mod | What it does |
-| --- | --- |
-| [Observation mask](mods/first-party/omd_observation_mask/README.md) | Hides old, large tool outputs so long sessions stay cheap; the model can recall any of them |
-| [Usage](mods/first-party/omd_usage/README.md) | Context, cache, cost and quota for each request (Alt+a) |
-| [Privacy](mods/first-party/omd_privacy/README.md) | Keeps secrets and personal data you choose out of what's sent to the model |
-| [Monitor](mods/first-party/omd_monitor/README.md) | Watches a command, file or GitHub run and messages the agent once it finishes, so it doesn't poll |
-| [Frecency](mods/first-party/omd_frecency/README.md) | Ranks `@` file mentions by fuzzy match and how often you use them |
-| [Tool fix](mods/first-party/omd_tool_fix/README.md) | Repairs clearly malformed tool arguments before they fail |
-
-Experimental mods add other providers, a workspace dock, [`/undo`](mods/first-party/omd_checkpoint/README.md) and
-language-server feedback. The [included mods](docs/collection.md) page lists every one and says which are on by
-default and which are experimental.
-
-In a [pilot benchmark](docs/benchmarks/harness-mods.md) of 43 tasks, four of the experimental mods cut Codex's cost
-by an estimated 25% (95% CI 19% to 31%) with no measurable change in pass rate. It was one model and one run, so
-read it as a direction, not a guarantee.
+Experimental mods add other providers, a workspace dock, `/undo` and language-server feedback. The
+[included mods](docs/collection.md) page lists every one and says which are on by default and which are experimental.
 
 ## Works with
 
