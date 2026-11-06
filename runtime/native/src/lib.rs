@@ -192,7 +192,7 @@ pub fn install(
     };
     accounting::set_credential_root(root.clone());
     let host = Arc::new(Host {
-        repository_identity: execution::hash(repository.as_os_str().as_encoded_bytes()),
+        repository_identity: codex_omd::sha256_hex(repository.as_os_str().as_encoded_bytes()),
         routes: std::sync::Mutex::new(RouteTable {
             stamp,
             config: Arc::new(config.clone()),
@@ -273,7 +273,7 @@ impl Host {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Host {
-            repository_identity: execution::hash(repository.as_os_str().as_encoded_bytes()),
+            repository_identity: codex_omd::sha256_hex(repository.as_os_str().as_encoded_bytes()),
             routes: std::sync::Mutex::new(RouteTable {
                 stamp: routes.stamp,
                 config: routes.config.clone(),
@@ -657,7 +657,7 @@ impl Session {
             }
             result => result.map_err(|e| e.to_string())?,
         }
-        Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
+        Ok(json!({"path": path, "sha256": codex_omd::sha256_hex(&bytes)}))
     }
 
     /// Holds the contract lock so concurrent writers anchor and store states in the same order.
@@ -674,11 +674,8 @@ impl Session {
             write_bytes(&self.contract_state, &bytes, Durability::Durable)
                 .map_err(|error| error.to_string())
                 .and_then(|()| {
-                    codex_omd::broker::anchor(
-                        &self.contract_state,
-                        &codex_omd::broker::sha256(&bytes),
-                    )
-                    .map_err(|error| error.to_string())
+                    codex_omd::broker::anchor(&self.contract_state, &codex_omd::sha256_hex(&bytes))
+                        .map_err(|error| error.to_string())
                 })
         };
         if let Err(error) = &result {

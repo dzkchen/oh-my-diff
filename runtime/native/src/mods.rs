@@ -421,8 +421,11 @@ pub fn validate_tool_schema(schema: &Value) -> std::io::Result<()> {
         .map_err(std::io::Error::other)
 }
 
-fn create_owner(host: Arc<Host>, owner: Arc<Mutex<codex_omd::ConfigurationOverrides>>, terminal_owner: Option<String>) -> Result<Arc<Mods>, String> {
-
+fn create_owner(
+    host: Arc<Host>,
+    owner: Arc<Mutex<codex_omd::ConfigurationOverrides>>,
+    terminal_owner: Option<String>,
+) -> Result<Arc<Mods>, String> {
     let open = || {
         ModHost::open_with_overrides(
             host.root.clone(),
@@ -433,22 +436,45 @@ fn create_owner(host: Arc<Host>, owner: Arc<Mutex<codex_omd::ConfigurationOverri
         )
         .map_err(|error| error.to_string())
     };
-    let (turns, provider_switches) = if terminal_owner.is_some() { clients::shared_native_tasks().ok_or("native_task_state_unavailable")? } else { (Arc::default(), Arc::default()) };
-    let sessions = if terminal_owner.is_some() { clients::shared_native_sessions().ok_or("native_sessions_unavailable")? } else { Arc::default() };
-    let inventory = if terminal_owner.is_some() { clients::shared_inventory().ok_or("native_inventory_unavailable")? } else { Arc::default() };
+    let (turns, provider_switches) = if terminal_owner.is_some() {
+        clients::shared_native_tasks().ok_or("native_task_state_unavailable")?
+    } else {
+        (Arc::default(), Arc::default())
+    };
+    let sessions = if terminal_owner.is_some() {
+        clients::shared_native_sessions().ok_or("native_sessions_unavailable")?
+    } else {
+        Arc::default()
+    };
+    let inventory = if terminal_owner.is_some() {
+        clients::shared_inventory().ok_or("native_inventory_unavailable")?
+    } else {
+        Arc::default()
+    };
     let runtime = open()?;
     let runtime_required = runtime.required_surfaces();
     let input_runtime = open()?;
     let persist_runtime = open()?;
     let persist_required = persist_runtime.required_surfaces();
     services::define_providers(&host.config, |id| runtime.grants(id).is_some());
-    if terminal_owner.is_none() { let _ = host.persist_json("mod-status.json", &runtime.status()); }
+    if terminal_owner.is_none() {
+        let _ = host.persist_json("mod-status.json", &runtime.status());
+    }
     let environment = runtime.environment();
     let codex_config = input_runtime.codex_config();
     let runtime = Arc::new(Mutex::new(runtime));
     let views = Arc::new(view::Views::new(terminal_owner.is_none()));
-    let removed_features = Arc::new(Mutex::new(codex_omd::BuiltinSnapshot::from_controls(&input_runtime.builtin_controls()).removed_features()));
-    let disabled_modes = Arc::new(Mutex::new(input_runtime.builtin_controls().into_iter().flat_map(|(_, controls)| controls.modes.disable).collect()));
+    let removed_features = Arc::new(Mutex::new(
+        codex_omd::BuiltinSnapshot::from_controls(&input_runtime.builtin_controls())
+            .removed_features(),
+    ));
+    let disabled_modes = Arc::new(Mutex::new(
+        input_runtime
+            .builtin_controls()
+            .into_iter()
+            .flat_map(|(_, controls)| controls.modes.disable)
+            .collect(),
+    ));
     let input_runtime = Arc::new(Mutex::new(input_runtime));
     let persist_runtime = Arc::new(Mutex::new(persist_runtime));
     let extension = Arc::new(Mods {
@@ -497,7 +523,12 @@ fn initialize(
     let registration =
         codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
     let extension = create_owner(host, Arc::default(), None)?;
-    let required = extension.core.runtime.lock().unwrap_or_else(std::sync::PoisonError::into_inner).required_surfaces();
+    let required = extension
+        .core
+        .runtime
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .required_surfaces();
     let dispatcher = intercept::dispatcher(&extension.core);
     registration
         .install(dispatcher.clone())
@@ -608,7 +639,9 @@ fn publish(
         rendered_ms,
         state_fingerprint,
     );
-    if terminal_owner { return; }
+    if terminal_owner {
+        return;
+    }
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
     codex_features::set_removed(
@@ -635,7 +668,7 @@ fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) -> Opt
         .err()
         .map(|error| format!("OMD session refresh failed: {error}"));
     if let Ok(mut runtime) = runtime.lock() {
-        runtime.turn_boundary();
+        runtime.turn_boundary(&|| true);
         refresh_contract(&runtime, session);
         codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
     }
@@ -768,9 +801,15 @@ impl Core {
             let Ok(mut runtime) = runtime.lock() else {
                 return fragments;
             };
-            publish(&mut runtime, &host, &views, terminal_owner, event, ledger, || {
-                !flag.load(Ordering::Acquire)
-            });
+            publish(
+                &mut runtime,
+                &host,
+                &views,
+                terminal_owner,
+                event,
+                ledger,
+                || !flag.load(Ordering::Acquire),
+            );
             if let Some(error) = runtime.status()["reload_error"].as_str() {
                 fragments.push(PromptFragment::developer_capability(
                     format!("Mod reload failed; previous eligible mods retained: {error}"),
@@ -1086,40 +1125,101 @@ struct NativeConfigBaseline {
 
 impl Core {
     fn refresh_native_configuration(&self) -> Result<(), String> {
-        let mut runtime = self.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-        runtime.refresh_authority().map_err(|error| error.to_string())?;
-        *self.removed_features.lock().map_err(|_| "mod_configuration_poisoned")? = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls()).removed_features();
+        let mut runtime = self
+            .input_runtime
+            .lock()
+            .map_err(|_| "mod_runtime_poisoned")?;
+        runtime
+            .refresh(&|| true)
+            .map_err(|error| error.to_string())?;
+        *self
+            .removed_features
+            .lock()
+            .map_err(|_| "mod_configuration_poisoned")? =
+            codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls())
+                .removed_features();
         Ok(())
     }
 
     fn apply_native_configuration(&self, config: &mut Config) -> Result<(), String> {
-        let current = (config.update_plan_enabled, config.agent_completion_wake, config.tool_output_token_limit);
+        let current = (
+            config.update_plan_enabled,
+            config.agent_completion_wake,
+            config.tool_output_token_limit,
+        );
         let mut base = current;
-        if let Some(previous) = config.extension_baselines.data.get::<NativeConfigBaseline>() {
-            if current.0 == previous.applied.0 { base.0 = previous.base.0; }
-            if current.1 == previous.applied.1 { base.1 = previous.base.1; }
-            if current.2 == previous.applied.2 { base.2 = previous.base.2; }
+        if let Some(previous) = config
+            .extension_baselines
+            .data
+            .get::<NativeConfigBaseline>()
+        {
+            if current.0 == previous.applied.0 {
+                base.0 = previous.base.0;
+            }
+            if current.1 == previous.applied.1 {
+                base.1 = previous.base.1;
+            }
+            if current.2 == previous.applied.2 {
+                base.2 = previous.base.2;
+            }
         }
-        let keys = self.codex_config.lock().map_err(|_| "mod_configuration_poisoned")?;
+        let keys = self
+            .codex_config
+            .lock()
+            .map_err(|_| "mod_configuration_poisoned")?;
         config.update_plan_enabled = base.0 || keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN);
-        config.agent_completion_wake = base.1 || keys.contains(codex_omd::CODEX_CONFIG_COMPLETION_WAKE);
-        config.tool_output_token_limit = if keys.contains(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE) { Some(base.2.unwrap_or_default().max(codex_omd::RAISED_TOOL_OUTPUT_TOKENS)) } else { base.2 };
-        let applied = (config.update_plan_enabled, config.agent_completion_wake, config.tool_output_token_limit);
-        config.extension_baselines.data.insert(NativeConfigBaseline { base, applied });
+        config.agent_completion_wake =
+            base.1 || keys.contains(codex_omd::CODEX_CONFIG_COMPLETION_WAKE);
+        config.tool_output_token_limit = if keys.contains(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE)
+        {
+            Some(
+                base.2
+                    .unwrap_or_default()
+                    .max(codex_omd::RAISED_TOOL_OUTPUT_TOKENS),
+            )
+        } else {
+            base.2
+        };
+        let applied = (
+            config.update_plan_enabled,
+            config.agent_completion_wake,
+            config.tool_output_token_limit,
+        );
+        config
+            .extension_baselines
+            .data
+            .insert(NativeConfigBaseline { base, applied });
         Ok(())
     }
 }
 
 impl codex_extension_api::ConfigContributor<Config> for Mods {
-    fn prepare_turn_config(&self, config: &mut Config, _thread_store: &ExtensionData, turn_store: &ExtensionData) -> Result<(), String> {
-        let selected = turn_store.get::<codex_protocol::turn_input::TerminalOwner>().as_deref().map(clients::ensure_owner).transpose()?;
-        if let Some(owner) = selected.as_ref() { turn_store.insert_arc(owner.clone()); }
+    fn prepare_turn_config(
+        &self,
+        config: &mut Config,
+        _thread_store: &ExtensionData,
+        turn_store: &ExtensionData,
+    ) -> Result<(), String> {
+        let selected = turn_store
+            .get::<codex_protocol::turn_input::TerminalOwner>()
+            .as_deref()
+            .map(clients::ensure_owner)
+            .transpose()?;
+        if let Some(owner) = selected.as_ref() {
+            turn_store.insert_arc(owner.clone());
+        }
         let this = selected.as_deref().unwrap_or(self);
         this.refresh_native_configuration()?;
-        let removed = this.removed_features.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-        config.features.set_removed(removed).map_err(|error| error.to_string())?;
+        let removed = this
+            .removed_features
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        config
+            .features
+            .set_removed(removed)
+            .map_err(|error| error.to_string())?;
         this.apply_native_configuration(config)
-
     }
 
     fn prepare_thread_config(
@@ -1129,7 +1229,11 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         forked_from: Option<&str>,
         thread_init: &codex_extension_api::ExtensionDataInit,
     ) -> Result<(), String> {
-        let selected = thread_init.get::<codex_protocol::turn_input::TerminalOwner>().as_deref().map(clients::ensure_owner).transpose()?;
+        let selected = thread_init
+            .get::<codex_protocol::turn_input::TerminalOwner>()
+            .as_deref()
+            .map(clients::ensure_owner)
+            .transpose()?;
         if let Some(lifetime) = thread_init.get::<codex_extension_api::ThreadOwnedTerminal>()
             && let Some(owner) = thread_init.get::<codex_protocol::turn_input::TerminalOwner>()
         {
@@ -1152,7 +1256,15 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             );
         }
         this.refresh_native_configuration()?;
-        config.features.set_removed(this.removed_features.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()).map_err(|error| error.to_string())?;
+        config
+            .features
+            .set_removed(
+                this.removed_features
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            )
+            .map_err(|error| error.to_string())?;
         config.permissions.sandbox_denied_paths = denied;
         config.model_provider.supports_websockets = false;
         this.apply_native_configuration(config)?;
@@ -1189,7 +1301,9 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             Some(owner) => clients::for_owner(owner),
             None => clients::for_store(thread_store),
         };
-        if terminal_owner.is_some() && selected.is_none() { return; }
+        if terminal_owner.is_some() && selected.is_none() {
+            return;
+        }
         let this = selected.as_deref().unwrap_or(self);
         if previous.model_provider_id != next.model_provider_id
             && let Some(lead) = thread_store.get::<Lead>()
@@ -1209,10 +1323,25 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         if lead_thread(thread_store)
             && let Some(change) = settings_change(&settings_view(previous), &settings_view(next))
         {
-            let Some(lead) = thread_store.get::<Lead>() else { return; };
-            let mut recipients = if terminal_owner.is_none() { clients::cores_for_thread(lead.thread) } else { Vec::new() };
-            if !recipients.iter().any(|core| Arc::ptr_eq(core, &this.core)) { recipients.push(this.core.clone()); }
-            for core in recipients { expansion::broadcast_thread(&core.expansion, lead.thread, "thread_settings", change.clone()); }
+            let Some(lead) = thread_store.get::<Lead>() else {
+                return;
+            };
+            let mut recipients = if terminal_owner.is_none() {
+                clients::cores_for_thread(lead.thread)
+            } else {
+                Vec::new()
+            };
+            if !recipients.iter().any(|core| Arc::ptr_eq(core, &this.core)) {
+                recipients.push(this.core.clone());
+            }
+            for core in recipients {
+                expansion::broadcast_thread(
+                    &core.expansion,
+                    lead.thread,
+                    "thread_settings",
+                    change.clone(),
+                );
+            }
         }
     }
 }
@@ -1520,16 +1649,14 @@ impl TurnLifecycleContributor for Mods {
     fn on_item_completed<'a>(
         &'a self,
         thread_store: &'a codex_extension_api::ExtensionData,
-        _turn_store: &'a codex_extension_api::ExtensionData,
+        turn_store: &'a codex_extension_api::ExtensionData,
         item: &'a codex_protocol::items::TurnItem,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            let selected = clients::for_store(_turn_store);
+            let selected = clients::for_store(turn_store);
             let this = selected.as_deref().unwrap_or(self);
             let thread = thread_store.level_id();
-            if let codex_protocol::items::TurnItem::AgentMessage(message) = item
-                && this.inventory.contains(thread)
-            {
+            if let codex_protocol::items::TurnItem::AgentMessage(message) = item {
                 let text = message
                     .content
                     .iter()
@@ -1537,24 +1664,53 @@ impl TurnLifecycleContributor for Mods {
                         codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
                     })
                     .collect::<String>();
-                this.inventory.answer(thread, &text);
+                if this.inventory.contains(thread) {
+                    this.inventory.answer(thread, &text);
+                }
+                if let Some(lead) = ThreadId::from_string(thread)
+                    .ok()
+                    .and_then(|thread| this.core.expansion.thread(thread))
+                {
+                    this.core.event("assistant_message", json!({"thread_id": thread, "turn_id": turn_store.level_id(), "message_id": format!("{}:{}", turn_store.level_id(), message.id), "text": text.chars().take(8192).collect::<String>(), "truncated": text.chars().count() > 8192}), Some(&lead)).await;
+                }
             }
         })
     }
 
-    fn disabled_collaboration_modes(&self, terminal_owner: Option<&codex_protocol::turn_input::TerminalOwner>) -> Vec<String> {
-        if let Some(owner) = terminal_owner.and_then(clients::for_owner).filter(|owner| !Arc::ptr_eq(&owner.core, &self.core)) { return owner.disabled_collaboration_modes(terminal_owner); }
-        if let Ok(mut runtime) = self.input_runtime.try_lock()
-            && runtime.refresh_authority().is_ok()
+    fn disabled_collaboration_modes(
+        &self,
+        terminal_owner: Option<&codex_protocol::turn_input::TerminalOwner>,
+    ) -> Vec<String> {
+        if let Some(owner) = terminal_owner
+            .and_then(clients::for_owner)
+            .filter(|owner| !Arc::ptr_eq(&owner.core, &self.core))
         {
-            let modes: Vec<_> = runtime.builtin_controls().into_iter().flat_map(|(_, controls)| controls.modes.disable).collect();
-            *self.disabled_modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = modes.clone();
+            return owner.disabled_collaboration_modes(terminal_owner);
+        }
+        if let Ok(mut runtime) = self.input_runtime.try_lock()
+            && runtime.refresh(&|| true).is_ok()
+        {
+            let modes: Vec<_> = runtime
+                .builtin_controls()
+                .into_iter()
+                .flat_map(|(_, controls)| controls.modes.disable)
+                .collect();
+            *self
+                .disabled_modes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = modes.clone();
             return modes;
         }
-        self.disabled_modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+        self.disabled_modes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
-    fn rewrites_persisted_text(&self, turn_store: Option<&codex_extension_api::ExtensionData>) -> bool {
+    fn rewrites_persisted_text(
+        &self,
+        turn_store: Option<&codex_extension_api::ExtensionData>,
+    ) -> bool {
         let selected = turn_store.and_then(clients::for_store);
         let this = selected.as_deref().unwrap_or(self);
         this.core
@@ -1572,7 +1728,12 @@ impl TurnLifecycleContributor for Mods {
         Box::pin(async move {
             let selected = input.turn_store.and_then(clients::for_store);
             let this = selected.as_deref().unwrap_or(self);
-            persisted::rewrite(this.core.persist_runtime.clone(), this.core.persist_required.clone(), input).await
+            persisted::rewrite(
+                this.core.persist_runtime.clone(),
+                this.core.persist_required.clone(),
+                input,
+            )
+            .await
         })
     }
 
@@ -1581,9 +1742,18 @@ impl TurnLifecycleContributor for Mods {
         input: UserInputInterceptInput<'a>,
     ) -> ExtensionFuture<'a, UserInputDecision> {
         Box::pin(async move {
-            let selected = match input.terminal_owner.as_ref().map(clients::ensure_owner).transpose() {
+            let selected = match input
+                .terminal_owner
+                .as_ref()
+                .map(clients::ensure_owner)
+                .transpose()
+            {
                 Ok(selected) => selected,
-                Err(error) => return UserInputDecision::Deny { notice: format!("Terminal mod configuration is unavailable: {error}") },
+                Err(error) => {
+                    return UserInputDecision::Deny {
+                        notice: format!("Terminal mod configuration is unavailable: {error}"),
+                    };
+                }
             };
             let this = selected.as_deref().unwrap_or(self);
             if !lead_thread(input.thread_store) {
@@ -1593,7 +1763,12 @@ impl TurnLifecycleContributor for Mods {
                 return UserInputDecision::Keep;
             };
             this.expansion.thread_started(&lead);
-            if this.expansion.current().as_ref().is_none_or(|current| current.thread != lead.thread) {
+            if this
+                .expansion
+                .current()
+                .as_ref()
+                .is_none_or(|current| current.thread != lead.thread)
+            {
                 expansion::lead_started(&this.core, &lead, None);
             }
             let runtime = this.input_runtime.clone();
@@ -1630,10 +1805,20 @@ impl TurnLifecycleContributor for Mods {
                 let _thread = codex_omd::StateThread::enter(scoped);
                 let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
                 runtime
-                    .refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire))
+                    .refresh(&|| !boundary_cancelled.load(Ordering::Acquire))
                     .map_err(|error| error.to_string())?;
-                *removed_features.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls()).removed_features();
-                *disabled_modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = runtime.builtin_controls().into_iter().flat_map(|(_, controls)| controls.modes.disable).collect();
+                *removed_features
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls())
+                        .removed_features();
+                *disabled_modes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = runtime
+                    .builtin_controls()
+                    .into_iter()
+                    .flat_map(|(_, controls)| controls.modes.disable)
+                    .collect();
                 Ok::<_, String>(runtime.intercepts("input"))
             })
             .await
@@ -1848,10 +2033,7 @@ impl TurnLifecycleContributor for Mods {
             let this = selected.as_deref().unwrap_or(self);
             this.inventory.turn_started(input.thread_store.level_id());
             this.set_provider_worker_idle(input.thread_store.level_id(), false);
-            let Some(lead) = input
-                .thread_store
-                .get::<Lead>()
-            else {
+            let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
             if lead.owner == "lead" {
@@ -1864,13 +2046,24 @@ impl TurnLifecycleContributor for Mods {
                     this.switch_ledger_provider(&lead, &config);
                 }
             }
-            if let Err(error) = this.host.accounts.capture_task(&lead.thread.to_string(), input.turn_store) {
+            if let Err(error) = this
+                .host
+                .accounts
+                .capture_task(&lead.thread.to_string(), input.turn_store)
+            {
                 this.host.accounts.refuse(&lead.thread.to_string(), error);
                 return;
             }
-            if lead.owner != "lead" { return; }
+            if lead.owner != "lead" {
+                return;
+            }
             this.expansion.thread_started(&lead);
-            if this.expansion.current().as_ref().is_none_or(|current| current.thread != lead.thread) {
+            if this
+                .expansion
+                .current()
+                .as_ref()
+                .is_none_or(|current| current.thread != lead.thread)
+            {
                 expansion::lead_started(&this.core, &lead, None);
             }
             this.views
@@ -1950,7 +2143,8 @@ impl codex_extension_api::TokenUsageContributor for Mods {
     ) -> ExtensionFuture<'a, ()> {
         let selected = clients::for_store(_turn_store);
         let this = selected.as_deref().unwrap_or(self);
-        this.inventory.tokens(thread_store.level_id(), &token_usage.total_token_usage);
+        this.inventory
+            .tokens(thread_store.level_id(), &token_usage.total_token_usage);
         Box::pin(std::future::ready(()))
     }
 }
@@ -1971,7 +2165,9 @@ impl ThreadLifecycleContributor<Config> for Mods {
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             let selected = clients::for_store(input.thread_store);
-            if let Some(owner) = selected.as_ref() { input.thread_store.insert_arc(owner.clone()); }
+            if let Some(owner) = selected.as_ref() {
+                input.thread_store.insert_arc(owner.clone());
+            }
             let this = selected.as_deref().unwrap_or(self);
             let Ok(thread) = ThreadId::from_string(input.thread_store.level_id()) else {
                 return;
@@ -2187,8 +2383,14 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 .get::<Lead>()
                 .filter(|lead| lead.owner == "lead")
             {
-                let first = this.initialized_threads.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(lead.thread.to_string());
-                if first { this.event("start", Value::Null, Some(&*lead)).await; }
+                let first = this
+                    .initialized_threads
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(lead.thread.to_string());
+                if first {
+                    this.event("start", Value::Null, Some(&*lead)).await;
+                }
             }
         })
     }
@@ -2246,8 +2448,13 @@ impl ThreadLifecycleContributor<Config> for Mods {
             let selected = clients::for_store(input.thread_store);
             let this = selected.as_deref().unwrap_or(self);
             let thread = input.thread_store.level_id();
-            if input.thread_store.get::<codex_extension_api::ThreadOwnedTerminal>().is_some()
-                && let Some(owner) = input.thread_store.get::<codex_protocol::turn_input::TerminalOwner>()
+            if input
+                .thread_store
+                .get::<codex_extension_api::ThreadOwnedTerminal>()
+                .is_some()
+                && let Some(owner) = input
+                    .thread_store
+                    .get::<codex_protocol::turn_input::TerminalOwner>()
             {
                 clients::release_native_owner(&owner);
             }
@@ -2302,7 +2509,10 @@ impl ThreadLifecycleContributor<Config> for Mods {
             lead.session.processes.cleanup();
             lead.session.power.clear();
             if this.terminal_owner.is_none() {
-                codex_features::set_removed(&lead.host.repository.to_string_lossy(), Default::default());
+                codex_features::set_removed(
+                    &lead.host.repository.to_string_lossy(),
+                    Default::default(),
+                );
             }
             lead.session.access.cleanup();
             let _ = lead.session.persist_cost_capture();
@@ -2415,7 +2625,11 @@ impl ToolLifecycleContributor for Mods {
                     .lock()
                     .is_ok_and(|intercepts| intercepts.is_some());
             if !spawn && roles::is_spawn(input.tool_name) {
-                roles::spawn_route_admitted(&lead, arguments["model"].as_str(), this.terminal_owner.as_deref())?;
+                roles::spawn_route_admitted(
+                    &lead,
+                    arguments["model"].as_str(),
+                    this.terminal_owner.as_deref(),
+                )?;
             }
             let surface = if spawn { "agent_spawn" } else { "tool" };
             let payload = if spawn {

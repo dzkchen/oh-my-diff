@@ -19,6 +19,19 @@ pub struct PackageControl {
     pub(crate) owner_revision: Option<(usize, u64, Value)>,
 }
 
+impl PackageControl {
+    pub fn scope(&self) -> Option<&str> {
+        self.request
+            .as_ref()
+            .map(|request| request.scope.as_str())
+            .or_else(|| {
+                self.selection
+                    .as_ref()
+                    .map(|selection| selection.scope.as_str())
+            })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Selection {
     path: PathBuf,
@@ -92,7 +105,9 @@ pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
     store.package_index_entries(&path, &arguments.query, start, limit)
 }
 
-fn terminal() -> String { "terminal".into() }
+fn terminal() -> String {
+    "terminal".into()
+}
 
 fn user() -> String {
     "user".into()
@@ -205,14 +220,20 @@ pub fn list_fields(
     {
         listed = with_route_choices(store.root(), listed, repository, terminal_owner);
     }
-    project_fields(listed, fields.map_or(Value::Null, |fields| json!({"fields":fields})))
+    project_fields(
+        listed,
+        fields.map_or(Value::Null, |fields| json!({"fields":fields})),
+    )
 }
 
 pub fn project_fields(mut listed: Value, arguments: Value) -> io::Result<Value> {
     let fields = match arguments {
         Value::Null => return Ok(listed),
-        arguments => serde_json::from_value::<ListArguments>(arguments)
-            .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?.fields,
+        arguments => {
+            serde_json::from_value::<ListArguments>(arguments)
+                .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?
+                .fields
+        }
     };
     if let Some(packages) = listed["packages"].as_array_mut() {
         for package in packages.iter_mut().filter_map(Value::as_object_mut) {
@@ -248,11 +269,14 @@ pub fn set_connected_models(connected: fn(Option<&str>, &str, &str) -> bool) {
 }
 
 /// Read per call since `host.json` and plan grants change outside the listing cache; without a repository plan routes are always offered.
-fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>, terminal_owner: Option<&str>) -> Value {
+fn with_route_choices(
+    root: &Path,
+    mut listed: Value,
+    repository: Option<&Path>,
+    terminal_owner: Option<&str>,
+) -> Value {
     let here = repository.map(|repository| {
-        Value::from(crate::resource_data::hash(
-            repository.as_os_str().as_encoded_bytes(),
-        ))
+        Value::from(crate::sha256_hex(repository.as_os_str().as_encoded_bytes()))
     });
     let mut routes: Option<Vec<Value>> = None;
     for package in listed["packages"].as_array_mut().into_iter().flatten() {
@@ -486,7 +510,9 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
 pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview> {
     let arguments: Arguments = serde_json::from_value(arguments)
         .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
-    if !["terminal", "shared"].contains(&arguments.target.as_str()) { return Err(failure("configuration_target_invalid")); }
+    if !["terminal", "shared"].contains(&arguments.target.as_str()) {
+        return Err(failure("configuration_target_invalid"));
+    }
     let generation = generation(store)?;
     if arguments
         .expected_generation
@@ -758,12 +784,16 @@ fn requested(
 }
 
 pub fn validate_generation(store: &ModStore, control: &PackageControl) -> io::Result<()> {
-    if generation(store)? != control.generation { return Err(failure("package_state_changed: preview again")); }
+    if generation(store)? != control.generation {
+        return Err(failure("package_state_changed: preview again"));
+    }
     Ok(())
 }
 
 pub fn apply(store: &ModStore, control: &PackageControl) -> io::Result<Value> {
-    if control.target == "terminal" && ["enable", "disable", "reset", "save-defaults"].contains(&control.action.as_str()) {
+    if control.target == "terminal"
+        && ["enable", "disable", "reset", "save-defaults"].contains(&control.action.as_str())
+    {
         return Err(failure("terminal_configuration_unavailable"));
     }
     if generation(store)? != control.generation {

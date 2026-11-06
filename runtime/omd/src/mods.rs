@@ -2,8 +2,8 @@ mod author;
 mod bridge;
 mod chain;
 mod code_cache;
-mod operation_validation;
 mod configuration_overrides;
+mod operation_validation;
 pub use configuration_overrides::ConfigurationOverrides;
 pub use configuration_overrides::terminal_configuration_owner;
 pub use configuration_overrides::write_settings_shared;
@@ -16,12 +16,7 @@ pub use chain::access_receipt;
 pub use chain::compose_rows;
 pub use chain::continue_operation;
 pub use chain::intercept_shared;
-pub use persisted::PERSIST_CHUNK_BYTES;
 pub use persisted::PERSIST_WITHHELD;
-pub use persisted::PersistedRewrite;
-pub use persisted::persist_changed_by;
-pub use persisted::persist_chunks;
-pub use persisted::persist_cut;
 pub use persisted::persist_texts;
 pub use render::MOD_RENDER_COMPONENTS;
 pub use render::client_component_unmount;
@@ -32,12 +27,10 @@ pub use render::component_unmount;
 pub use render::render_shared;
 mod packages;
 mod view;
-pub use view::MOD_KEY_LIMIT;
 pub use view::MOD_TEXT_BYTES;
 pub use view::ModActivity;
 pub use view::ModAnchor;
 pub use view::ModBorder;
-pub use view::ModBoxAccent;
 pub use view::ModBoxBorder;
 pub use view::ModBoxStyle;
 pub use view::ModColor;
@@ -53,11 +46,6 @@ pub use view::ModKeyAction;
 pub use view::ModKeyContext;
 pub use view::ModKeys;
 pub use view::ModLayout;
-pub use view::ModLayoutLeaf;
-pub use view::ModLayoutSplit;
-pub use view::ModLayoutTabs;
-pub use view::ModListRow;
-pub use view::ModOffset;
 pub use view::ModOverlay;
 pub use view::ModOverlayClip;
 pub use view::ModPaint;
@@ -74,21 +62,16 @@ pub use view::ModSpan;
 pub use view::ModSplit;
 pub use view::ModStyle;
 pub use view::ModSurfacePaint;
-pub use view::ModTab;
-pub use view::ModTheme;
-pub use view::ModThemePatch;
 pub use view::ModTone;
 pub use view::ModView;
 pub use view::ModViewConflict;
 pub use view::ModViewPatch;
 pub use view::ModViewSnapshot;
 pub use view::component_ids_of;
-pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
 pub use view::mod_component_id;
 pub use view::mod_key_name;
 pub use view::owned_command;
-pub use view::valid_glyphs;
 mod outcome;
 pub use outcome::ModCommandOutcome;
 mod package_manager;
@@ -279,6 +262,10 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_copy_v1",
     "environment_overrides_v1",
     "timers_16ms_v1",
+    "timer_data_v1",
+    "session_activation_v1",
+    "background_jobs_v1",
+    "assistant_message_identity_v1",
     "author_diagnostics_v1",
     "author_offline_runner_v1",
     "author_tooling_v1",
@@ -768,6 +755,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("workspace_pre_rename", "fs.write"),
     ("turn_start", "lifecycle"),
     ("turn_end", "lifecycle"),
+    ("assistant_message", "lifecycle"),
     ("compaction_start", "lifecycle"),
     ("compaction_end", "lifecycle"),
     ("agent_end", "lifecycle"),
@@ -855,12 +843,14 @@ pub const MOD_SCOPES: &[&str] = &["user", "project"];
 pub const MOD_ENVIRONMENT: &[&str] = &["crypto"];
 type Result<T> = io::Result<T>;
 
-fn failure(message: impl ToString) -> io::Error {
-    io::Error::other(message.to_string())
+fn native_task_unavailable(_: ModHostCall) -> Result<Value> {
+    Err(failure(
+        "host_operation_unavailable: requires a native task",
+    ))
 }
 
-pub(crate) fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+fn failure(message: impl ToString) -> io::Error {
+    io::Error::other(message.to_string())
 }
 
 /// A selection that never reaches activation; a later reload stays transactional.
@@ -910,7 +900,7 @@ impl TerminalPayload {
                 Value::Object(sites) => Some(sites),
                 _ => None,
             });
-        let hash = digest(shared.to_string().as_bytes());
+        let hash = crate::sha256_hex(shared.to_string().as_bytes());
         Self {
             shared,
             hash,
@@ -932,7 +922,7 @@ impl TerminalPayload {
             return self.hash.clone();
         }
         let sites = serde_json::to_string(own).unwrap_or_default();
-        format!("{}:{}", self.hash, digest(sites.as_bytes()))
+        format!("{}:{}", self.hash, crate::sha256_hex(sites.as_bytes()))
     }
 
     fn payload(&self, own: serde_json::Map<String, Value>) -> Value {
@@ -1139,14 +1129,33 @@ struct SemanticVersion(u64, u64, u64);
 
 impl SemanticVersion {
     fn parse(value: &str) -> Option<Self> {
+        let number = |part: Option<&str>| {
+            part.filter(|part| part.bytes().all(|byte| byte.is_ascii_digit()))?
+                .parse()
+                .ok()
+        };
         let mut parts = value.split('.');
         let parsed = Self(
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
+            number(parts.next())?,
+            number(parts.next())?,
+            number(parts.next())?,
         );
         parts.next().is_none().then_some(parsed)
     }
+}
+
+fn relative_path(value: &str, limit: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= limit
+        && !value.starts_with('/')
+        && value.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
 }
 
 fn service_version_satisfies(requirement: &str, provided: &str) -> bool {
@@ -1843,18 +1852,22 @@ pub fn host_namespace(operation: &str, arguments: &Value) -> String {
     }
 }
 
-pub fn namespace_matches(pattern: &str, namespace: &str) -> bool {
-    match pattern.split_once('*') {
-        None => pattern == namespace,
-        Some((prefix, rest)) => {
-            namespace.starts_with(prefix)
-                && (0..=namespace.len() - prefix.len()).any(|skip| {
-                    namespace
-                        .get(prefix.len() + skip..)
-                        .is_some_and(|tail| namespace_matches(rest, tail))
-                })
-        }
+pub(crate) fn glob(pattern: &str, text: &str) -> bool {
+    let parts = pattern.split('*').collect::<Vec<_>>();
+    let [first, .., last] = parts.as_slice() else {
+        return pattern == text;
+    };
+    if text.len() < first.len() + last.len() || !text.starts_with(first) || !text.ends_with(last) {
+        return false;
     }
+    let (mut at, end) = (first.len(), text.len() - last.len());
+    parts[1..parts.len() - 1].iter().all(|part| {
+        let found = text[at..end].find(part);
+        if let Some(found) = found {
+            at += found + part.len();
+        }
+        found.is_some()
+    })
 }
 
 pub const DELEGABLE_APPROVAL_KINDS: &[&str] = &["exec", "stdin", "patch", "mcp_tool", "network"];
@@ -2035,7 +2048,7 @@ impl ModPackage {
             || !matches!(self.state_scope.as_str(), "store" | "thread" | "checkout")
             || !version(&self.version)
             || !(25..=2000).contains(&self.hook_budget_ms)
-            || !package_file(&self.entrypoint)
+            || !(self.entrypoint.ends_with(".ts") && relative_path(&self.entrypoint, 128))
         {
             return Err(failure(
                 "incompatible_package: valid identity/version, supported API, positive state_version and state_scope store, thread or checkout required",
@@ -2299,7 +2312,8 @@ impl ModPackage {
         }
         if self.lifecycle.len() > 3
             || self.lifecycle.iter().any(|(event, path)| {
-                !["install", "update", "uninstall"].contains(&event.as_str()) || !package_file(path)
+                !["install", "update", "uninstall"].contains(&event.as_str())
+                    || !(path.ends_with(".ts") && relative_path(path, 128))
             })
         {
             return Err(failure("invalid_lifecycle_scripts"));
@@ -2307,10 +2321,13 @@ impl ModPackage {
         let assets: BTreeSet<_> = self.assets.iter().collect();
         if self.assets.len() > 16
             || assets.len() != self.assets.len()
-            || self
-                .assets
-                .iter()
-                .any(|asset| !asset_file(asset) || asset == &self.entrypoint)
+            || self.assets.iter().any(|asset| {
+                ![".ts", ".mjs", ".json"]
+                    .iter()
+                    .any(|ending| asset.ends_with(ending))
+                    || !relative_path(asset, 128)
+                    || asset == &self.entrypoint
+            })
         {
             return Err(failure("invalid_package_assets"));
         }
@@ -2398,38 +2415,6 @@ impl ModPackage {
         }
         Ok(())
     }
-}
-
-fn package_file(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value.ends_with(".ts")
-        && !value.starts_with('/')
-        && value.split('/').all(|part| {
-            !part.is_empty()
-                && part != "."
-                && part != ".."
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        })
-}
-
-fn asset_file(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && [".ts", ".mjs", ".json"]
-            .iter()
-            .any(|ending| value.ends_with(ending))
-        && !value.starts_with('/')
-        && value.split('/').all(|part| {
-            !part.is_empty()
-                && part != "."
-                && part != ".."
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        })
 }
 
 fn version_requirement(value: &str) -> bool {
@@ -2590,8 +2575,15 @@ pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Valu
     write_settings_in(store, id, values, None)
 }
 
-pub fn write_settings_in(store: &ModStore, id: &str, values: &Value, scope: Option<&str>) -> Result<Value> {
-    if scope.is_some_and(|scope| !matches!(scope, "user" | "project")) { return Err(failure("configuration_scope_invalid")); }
+pub fn write_settings_in(
+    store: &ModStore,
+    id: &str,
+    values: &Value,
+    scope: Option<&str>,
+) -> Result<Value> {
+    if scope.is_some_and(|scope| !matches!(scope, "user" | "project")) {
+        return Err(failure("configuration_scope_invalid"));
+    }
     let values = values
         .as_object()
         .ok_or_else(|| failure("settings_values_must_be_object"))?;
@@ -2600,7 +2592,13 @@ pub fn write_settings_in(store: &ModStore, id: &str, values: &Value, scope: Opti
         .as_array()
         .into_iter()
         .flatten()
-        .find(|selection| selection["id"] == id && match scope { Some(scope) => selection["scope"] == scope && selection["error"].is_null(), None => selection["effective"] == true })
+        .find(|selection| {
+            selection["id"] == id
+                && match scope {
+                    Some(scope) => selection["scope"] == scope && selection["error"].is_null(),
+                    None => selection["effective"] == true,
+                }
+        })
         .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
     let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
     if let Some(name) = values
@@ -2687,7 +2685,9 @@ pub struct ModSelection {
     pub required: bool,
 }
 
-fn zero_configuration_epoch(epoch: &u64) -> bool { *epoch == 0 }
+fn zero_configuration_epoch(epoch: &u64) -> bool {
+    *epoch == 0
+}
 
 impl ModSelection {
     pub fn authority_current(&self) -> bool {
@@ -2896,8 +2896,6 @@ struct Reply {
     #[serde(default)]
     calls: Vec<ModHostCall>,
     #[serde(default)]
-    host_call: Option<ModHostCall>,
-    #[serde(default)]
     updates: Vec<String>,
     #[serde(skip)]
     receipts: Vec<Value>,
@@ -2917,6 +2915,7 @@ struct Loaded {
     source: Arc<str>,
     assets: Arc<BTreeMap<String, Value>>,
     request_metadata: Arc<OnceLock<(Value, String, [u8; 32])>>,
+    session_key: Option<String>,
     /// The store's code cache; `None` runs without one.
     code_cache: Option<Arc<code_cache::CacheRoot>>,
     adapter: Option<Value>,
@@ -3050,14 +3049,14 @@ fn read_configuration(
     let mut hashed = bytes.as_deref().unwrap_or_default().to_vec();
     for (name, _) in stamp.iter().flat_map(|(_, settings)| settings) {
         let content = store::read(&root.join("settings").join(name), 65_536).unwrap_or_default();
-        hashed.extend(digest(name.as_encoded_bytes()).as_bytes());
-        hashed.extend(digest(&content).as_bytes());
+        hashed.extend(crate::sha256_hex(name.as_encoded_bytes()).as_bytes());
+        hashed.extend(crate::sha256_hex(&content).as_bytes());
     }
     (
         stamp
             .clone()
             .filter(|_| configuration_stamps(root) == stamp),
-        digest(&hashed),
+        crate::sha256_hex(&hashed),
         bytes,
     )
 }
@@ -3071,6 +3070,24 @@ mod reload_tests {
     use super::*;
 
     #[test]
+    fn glob_matches_any_run_of_characters() {
+        for (pattern, text, expected) in [
+            ("*", "", true),
+            ("*", "anything", true),
+            ("service:x/*", "service:x/read", true),
+            ("service:x/*", "service:y/read", false),
+            ("a*b*c", "abc", true),
+            ("a*b*c", "a-b-b-c", true),
+            ("a*b*c", "acb", false),
+            ("a*a", "a", false),
+            ("exact", "exact", true),
+            ("exact", "exactly", false),
+        ] {
+            assert_eq!(glob(pattern, text), expected, "{pattern} vs {text}");
+        }
+    }
+
+    #[test]
     fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap().join("store");
@@ -3078,23 +3095,23 @@ mod reload_tests {
         let mut host = ModHost::open(root.clone()).unwrap();
         let reads = store::READS.get();
         for _ in 0..100 {
-            assert!(!host.refresh_authority().unwrap());
+            assert!(!host.refresh(&|| true).unwrap());
         }
         assert_eq!(store::READS.get(), reads);
         host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
-        assert!(!host.refresh_authority().unwrap());
+        assert!(!host.refresh(&|| true).unwrap());
         assert!(store::READS.get() > reads);
         let path = root.join("mods.json");
         let original = std::fs::read(&path).unwrap();
         std::fs::write(&path, b"invalid").unwrap();
-        assert!(host.refresh_authority().is_err());
-        assert!(host.refresh_authority().is_err());
+        assert!(host.refresh(&|| true).is_err());
+        assert!(host.refresh(&|| true).is_err());
         std::fs::write(&path, original).unwrap();
-        assert!(!host.refresh_authority().unwrap());
+        assert!(!host.refresh(&|| true).unwrap());
         let moved = root.join("moved.json");
         std::fs::rename(&path, &moved).unwrap();
         std::os::unix::fs::symlink(&moved, &path).unwrap();
-        assert!(host.refresh_authority().is_err());
+        assert!(host.refresh(&|| true).is_err());
     }
 
     #[test]
@@ -3555,6 +3572,50 @@ fn invoke(
         }
         payload => payload,
     };
+    let retained = !(matches!(
+        event,
+        "terminal"
+            | "inspect"
+            | "workspace_pre_rename"
+            | "command_list"
+            | "config_list"
+            | "component"
+    ) || event == "intercept"
+        && matches!(
+            payload["surface"].as_str(),
+            Some("render" | "input" | "mention" | "history_persist")
+        ));
+    let activation_key = if retained {
+        access.with(|runtime| {
+            if !active() {
+                return Err(failure("callback_cancelled"));
+            }
+            if generation != runtime.generation {
+                return Err(failure("stale_mod_generation"));
+            }
+            let loaded = runtime
+                .loaded
+                .get(id)
+                .cloned()
+                .ok_or_else(|| failure("mod_disabled"))?;
+            runtime.check_callback_authority(&loaded)?;
+            runtime.session_key(id, thread.as_deref())
+        })?
+    } else {
+        None
+    };
+    let _activation = activation_key
+        .as_ref()
+        .map(|key| process::Stepping::enter_guarded(key, active))
+        .transpose()?;
+    let authority_active = active;
+    let admitted = || {
+        authority_active()
+            && activation_key
+                .as_ref()
+                .is_none_or(|key| process::session_current(key))
+    };
+    let active: &dyn Fn() -> bool = &admitted;
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
     let now_ms = crate::peers::now_ms();
@@ -3563,6 +3624,9 @@ fn invoke(
         let replaying = !replay.is_empty();
         let mut invocation =
             access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
+        if retained && invocation.loaded.session_key != activation_key {
+            return Err(failure("callback_cancelled"));
+        }
         if invocation.migrate {
             invocation.loaded.state =
                 packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
@@ -3673,12 +3737,14 @@ fn invoke(
             }
             reply = Err(failure("state_conflict: reload before retry"));
         }
+        let session_key = activation_key.clone();
         let receipts = reply.as_ref().ok().map(|reply| reply.receipts.clone());
         match access
             .with(|runtime| runtime.finish(id, generation, event, name, invocation, reply, active))
         {
             Err(error)
                 if started.elapsed() < budget
+                    && session_key.is_none()
                     && error.to_string().starts_with("state_conflict") =>
             {
                 let Some(receipts) = receipts else {
@@ -3686,7 +3752,14 @@ fn invoke(
                 };
                 replay = receipts;
             }
-            result => return result,
+            result => {
+                if result.is_err()
+                    && let Some(key) = session_key
+                {
+                    process::invalidate_activation(&key);
+                }
+                return result;
+            }
         }
     }
 }
@@ -3806,19 +3879,7 @@ pub fn event_shared(
 
 impl ModHost {
     pub fn open(root: PathBuf) -> Result<Self> {
-        Self::open_validated(root, |_| Ok(()))
-    }
-
-    pub fn open_validated(root: PathBuf, tool_validator: fn(&Value) -> Result<()>) -> Result<Self> {
-        Self::open_with(root, tool_validator, None, &|| true)
-    }
-
-    pub fn open_in(
-        root: PathBuf,
-        tool_validator: fn(&Value) -> Result<()>,
-        repository: &Path,
-    ) -> Result<Self> {
-        Self::open_in_guarded(root, tool_validator, repository, &|| true)
+        Self::open_with(root, |_| Ok(()), None, &|| true)
     }
 
     /// One mod's launch-like cost for `omd-mod cost`; it stops every runner in the process.
@@ -3830,6 +3891,9 @@ impl ModHost {
         command: Option<(&str, Value)>,
         runs: usize,
     ) -> Result<Value> {
+        let _thread = StateThread::enter(
+            bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())),
+        );
         let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
         let mut usage = (0, 0);
         let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
@@ -3840,7 +3904,8 @@ impl ModHost {
                 .unwrap_or_else(PoisonError::into_inner)
                 .retain(|((store, _), _)| store != &root);
             let started = Instant::now();
-            let mut host = Self::open_in(root.clone(), tool_validator, repository)?;
+            let mut host =
+                Self::open_with(root.clone(), tool_validator, Some(repository), &|| true)?;
             samples
                 .entry("activation_ms")
                 .or_default()
@@ -3892,16 +3957,7 @@ impl ModHost {
         Ok(report)
     }
 
-    pub fn open_in_guarded(
-        root: PathBuf,
-        tool_validator: fn(&Value) -> Result<()>,
-        repository: &Path,
-        active: &dyn Fn() -> bool,
-    ) -> Result<Self> {
-        Self::open_with(root, tool_validator, Some(repository), active)
-    }
-
-    fn open_with(
+    pub fn open_with(
         root: PathBuf,
         tool_validator: fn(&Value) -> Result<()>,
         repository: Option<&Path>,
@@ -3979,7 +4035,7 @@ impl ModHost {
                 .map(|(id, loaded)| (id.clone(), loaded.inspected()))
                 .collect();
         }
-        host.reload_guarded(active)?;
+        host.refresh(active)?;
         Ok(host)
     }
 
@@ -4057,20 +4113,72 @@ impl ModHost {
         }
     }
 
+    fn session_owner(&self, loaded: &Loaded) -> String {
+        crate::sha256_hex(
+            json!([
+                self.store.root,
+                self.project,
+                loaded.package.id,
+                loaded.selection.scope
+            ])
+            .to_string()
+            .as_bytes(),
+        )
+    }
+
+    fn session_key(&self, id: &str, thread: Option<&str>) -> Result<Option<String>> {
+        let Some(loaded) = self.loaded.get(id) else {
+            return Ok(None);
+        };
+        if !loaded
+            .package
+            .compatibility
+            .required_features
+            .iter()
+            .any(|feature| feature == "session_activation_v1")
+        {
+            return Ok(None);
+        }
+        let Some(thread) = thread else {
+            return Ok(None);
+        };
+        let reset = UI_RESETS
+            .lock()
+            .ok()
+            .and_then(|resets| resets.get(&self.store.root).copied());
+        let binding = crate::sha256_hex(
+            json!([
+                loaded.selection,
+                loaded.adapter,
+                loaded.settings_file,
+                loaded.withheld,
+                reset
+            ])
+            .to_string()
+            .as_bytes(),
+        );
+        process::session_key(&self.session_owner(loaded), thread, &binding).map(Some)
+    }
+
+    pub fn release_thread_activations(&self, thread: &str) {
+        for loaded in self.loaded.values() {
+            process::invalidate_session_owner(&self.session_owner(loaded), Some(thread));
+        }
+    }
+
     pub fn reload(&mut self) -> Result<bool> {
         self.configuration_stamp = None;
         self.override_revision = None;
+        for loaded in self.loaded.values() {
+            process::invalidate_session_owner(&self.session_owner(loaded), None);
+        }
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
-        self.refresh_authority()
+        self.refresh(&|| true)
     }
 
-    pub fn refresh_authority(&mut self) -> Result<bool> {
-        self.reload_guarded(&|| true)
-    }
-
-    fn reload_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
+    pub fn refresh(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
         let result = self.reload_active(active);
         if result.is_err() && !active() {
             self.fail_closed("callback_cancelled".to_owned());
@@ -4108,7 +4216,10 @@ impl ModHost {
     }
 
     fn current_overrides(&self) -> ConfigurationOverrides {
-        self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        self.configuration_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
@@ -4149,7 +4260,10 @@ impl ModHost {
         if !active() {
             return Err(failure("callback_cancelled"));
         }
-        self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner).retain_sources()?;
+        self.configuration_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain_sources()?;
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamps(&self.store.root);
         if self.current(&stamp) {
@@ -4208,7 +4322,7 @@ impl ModHost {
             self.fail_closed(error.to_string());
             return Err(error);
         }
-        let ui_signature = digest(serde_json::to_vec(&config.mods)?.as_slice());
+        let ui_signature = crate::sha256_hex(serde_json::to_vec(&config.mods)?.as_slice());
         if self
             .ui_configuration
             .as_ref()
@@ -4238,7 +4352,10 @@ impl ModHost {
         let administered = selections.len();
         selections.extend(config.mods.iter().cloned());
         let overrides = {
-            let mut owner = self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut owner = self
+                .configuration_overrides
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             owner.retain(&selections)?;
             owner.retain_unblocked(&self.store)?;
             owner.clone()
@@ -4398,6 +4515,7 @@ impl ModHost {
                 source: source.into(),
                 assets: Arc::new(assets),
                 request_metadata: Arc::new(OnceLock::new()),
+                session_key: None,
                 code_cache: caching.then(cache_root),
                 selection,
                 state: Value::Null,
@@ -4488,6 +4606,19 @@ impl ModHost {
             if next.get(id).is_none_or(|loaded| {
                 !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
             }) {
+                process::invalidate_session_owner(
+                    &crate::sha256_hex(
+                        json!([
+                            self.store.root,
+                            self.project,
+                            previous.package.id,
+                            previous.selection.scope
+                        ])
+                        .to_string()
+                        .as_bytes(),
+                    ),
+                    None,
+                );
                 previous.clear_ui();
             }
         }
@@ -5288,23 +5419,15 @@ impl ModHost {
         name: &str,
         payload: Value,
     ) -> Result<Value> {
-        self.invoke_guarded(id, generation, event, name, payload, || true)
-    }
-
-    pub fn invoke_guarded(
-        &mut self,
-        id: &str,
-        generation: u64,
-        event: &str,
-        name: &str,
-        payload: Value,
-        active: impl Fn() -> bool,
-    ) -> Result<Value> {
-        self.invoke_with(id, generation, event, name, payload, active, |_| {
-            Err(failure(
-                "host_operation_unavailable: requires a native task",
-            ))
-        })
+        self.invoke_with(
+            id,
+            generation,
+            event,
+            name,
+            payload,
+            || true,
+            native_task_unavailable,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5316,24 +5439,9 @@ impl ModHost {
         name: &str,
         payload: Value,
         active: impl Fn() -> bool,
-        host: impl FnMut(ModHostCall) -> Result<Value>,
-    ) -> Result<Value> {
-        self.invoke_streaming(id, generation, event, name, payload, active, host, |_| {})
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn invoke_streaming(
-        &mut self,
-        id: &str,
-        generation: u64,
-        event: &str,
-        name: &str,
-        payload: Value,
-        active: impl Fn() -> bool,
         mut host: impl FnMut(ModHostCall) -> Result<Value>,
-        progress: impl FnMut(String),
     ) -> Result<Value> {
-        self.invoke_scoped_streaming(
+        self.invoke_scoped(
             id,
             generation,
             event,
@@ -5346,26 +5454,12 @@ impl ModHost {
                 }
                 host(call)
             },
-            progress,
+            |_| {},
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn invoke_scoped_with(
-        &mut self,
-        id: &str,
-        generation: u64,
-        event: &str,
-        name: &str,
-        payload: Value,
-        active: impl Fn() -> bool,
-        host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-    ) -> Result<Value> {
-        self.invoke_scoped_streaming(id, generation, event, name, payload, active, host, |_| {})
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn invoke_scoped_streaming(
+    pub fn invoke_scoped(
         &mut self,
         id: &str,
         generation: u64,
@@ -5376,7 +5470,6 @@ impl ModHost {
         mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
         mut progress: impl FnMut(String),
     ) -> Result<Value> {
-        let scope = InvocationScope::default();
         self.invoke_scoped_inner(
             id,
             generation,
@@ -5386,7 +5479,7 @@ impl ModHost {
             &active,
             &mut host,
             &mut progress,
-            &scope,
+            &InvocationScope::default(),
         )
     }
 
@@ -5479,7 +5572,10 @@ impl ModHost {
             .get(&loaded.package.id)
             .unwrap_or(&loaded.selection);
         // An unchanged authority inventory cannot introduce a different precedence winner.
-        self.configuration_overrides.lock().unwrap_or_else(PoisonError::into_inner).retain_unblocked(&self.store)?;
+        self.configuration_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain_unblocked(&self.store)?;
         let overrides = self.current_overrides();
         let unchanged = hash == self.configuration_sha256
             && self.override_revision == Some(overrides.revision());
@@ -5578,11 +5674,10 @@ impl ModHost {
             }
         })?;
         if let Some(error) = &loaded.error {
-            return Err(failure(format!(
-                "mod_failed: {error}; reload it with /omd (Reload mods)"
-            )));
+            return Err(failure(format!("mod_failed: {error}")));
         }
         self.check_callback_authority(&loaded)?;
+        loaded.session_key = self.session_key(id, thread)?;
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         let mut migrate = false;
         loaded.state = match self
@@ -6029,7 +6124,15 @@ impl ModHost {
         let Some(owner) = self.replacement_owner("history") else {
             return Ok(None);
         };
-        let value = self.invoke_guarded(&owner, self.generation, "history", "", payload, active)?;
+        let value = self.invoke_with(
+            &owner,
+            self.generation,
+            "history",
+            "",
+            payload,
+            active,
+            native_task_unavailable,
+        )?;
         Ok((!value.is_null()).then_some((owner, value)))
     }
 
@@ -6065,21 +6168,18 @@ impl ModHost {
         let ids = self.event_ids(event);
         ids.into_iter()
             .map(|id| {
-                let result =
-                    self.invoke_guarded(&id, self.generation, event, "", payload.clone(), &active);
+                let result = self.invoke_with(
+                    &id,
+                    self.generation,
+                    event,
+                    "",
+                    payload.clone(),
+                    &active,
+                    native_task_unavailable,
+                );
                 (id, result)
             })
             .collect()
-    }
-
-    pub fn event_guarded_with(
-        &mut self,
-        event: &str,
-        payload: Value,
-        active: impl Fn() -> bool,
-        host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-    ) -> Vec<(String, Result<Value>)> {
-        self.event_scoped_with(event, |_| payload.clone(), active, host)
     }
 
     pub fn event_scoped_with(
@@ -6092,7 +6192,7 @@ impl ModHost {
         let ids = self.event_ids(event);
         ids.into_iter()
             .map(|id| {
-                let result = self.invoke_scoped_with(
+                let result = self.invoke_scoped(
                     &id,
                     self.generation,
                     event,
@@ -6100,6 +6200,7 @@ impl ModHost {
                     payload(&id),
                     &active,
                     &mut host,
+                    |_| {},
                 );
                 (id, result)
             })
@@ -6145,7 +6246,7 @@ impl ModHost {
         format!(
             "{}:{}",
             self.store.root.display(),
-            digest(
+            crate::sha256_hex(
                 json!([self.project, thread, selection, loaded.adapter])
                     .to_string()
                     .as_bytes()
@@ -6154,7 +6255,7 @@ impl ModHost {
     }
 
     fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, &Value)>) -> String {
-        digest(
+        crate::sha256_hex(
             json!([
                 loaded.selection.sha256,
                 loaded.selection.settings,
@@ -6259,13 +6360,14 @@ impl ModHost {
                 Ok((invocation, reply)) => {
                     match self.finish(&id, generation, "terminal", "", invocation, reply, &active) {
                         Err(error) if error.to_string().starts_with("state_conflict") => self
-                            .invoke_guarded(
+                            .invoke_with(
                                 &id,
                                 generation,
                                 "terminal",
                                 "",
                                 payload.payload(payload.own(&id)),
                                 &active,
+                                native_task_unavailable,
                             ),
                         result => result,
                     }
@@ -6491,16 +6593,8 @@ impl ModHost {
         }
     }
 
-    pub fn turn_boundary(&mut self) {
-        self.turn_boundary_guarded(&|| true);
-    }
-
-    pub fn refresh_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
-        self.reload_guarded(active)
-    }
-
-    pub fn turn_boundary_guarded(&mut self, active: &dyn Fn() -> bool) {
-        if let Err(error) = self.reload_guarded(active) {
+    pub fn turn_boundary(&mut self, active: &dyn Fn() -> bool) {
+        if let Err(error) = self.refresh(active) {
             self.reload_error = Some(error.to_string());
         }
     }
@@ -6634,8 +6728,15 @@ impl ModHost {
                 continue;
             }
             let payload = json!({"thread_id":thread_id,"ledger":ledger,"available":available});
-            let result =
-                self.invoke_guarded(&id, self.generation, "tool_exposure", "", payload, &active);
+            let result = self.invoke_with(
+                &id,
+                self.generation,
+                "tool_exposure",
+                "",
+                payload,
+                &active,
+                native_task_unavailable,
+            );
             let selection = result.ok().and_then(|value| {
                 let object = value.as_object().filter(|object| object.len() == 1)?;
                 let names = object.get("enable")?.as_array()?;
@@ -7085,4 +7186,8 @@ fn service_ts_type(kind: &str) -> &'static str {
         "object" => "Record<string, Json>",
         _ => "Json",
     }
+}
+
+pub fn release_disposable_runners() {
+    process::release_disposable_runners();
 }

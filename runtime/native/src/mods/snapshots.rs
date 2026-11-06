@@ -177,7 +177,7 @@ impl Snapshots {
     ) -> Result<Value, String> {
         let reference = format!(
             "snapshot:{}",
-            execution::hash(
+            codex_omd::sha256_hex(
                 &serde_json::to_vec(&(
                     caller.id,
                     caller.generation,

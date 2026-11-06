@@ -63,7 +63,7 @@ pub(super) async fn chain(
                     .lock()
                     .map_err(|_| "mod_runtime_poisoned".to_owned())?;
                 runtime
-                    .refresh_guarded(&|| !flag.load(Ordering::Acquire))
+                    .refresh(&|| !flag.load(Ordering::Acquire))
                     .map_err(|error| error.to_string())?;
                 let grants = runtime.grants(&caller).ok_or("host_caller_inactive")?;
                 if grants.source_sha256 != source || Some(grants.capabilities) != capabilities {
@@ -125,19 +125,34 @@ pub(super) fn install_notifier(core: &Arc<Core>) {
     let notified = Arc::downgrade(core);
     core.host.accounts.install_mod_notifier(Arc::new(
         move |terminal_owner: Option<&str>, event: &'static str, payload: Value| {
-            let Some(base) = notified.upgrade() else { return; };
-            if event == "model_response" { base.inventory.usage(&payload); }
+            let Some(base) = notified.upgrade() else {
+                return;
+            };
+            if event == "model_response" {
+                base.inventory.usage(&payload);
+            }
             let core = match terminal_owner {
                 Some(owner) => {
-                    let Ok(owner) = owner.parse() else { return; };
-                    let Some(mods) = clients::session_owner(&codex_protocol::turn_input::TerminalOwner(owner)) else { return; };
+                    let Ok(owner) = owner.parse() else {
+                        return;
+                    };
+                    let Some(mods) =
+                        clients::session_owner(&codex_protocol::turn_input::TerminalOwner(owner))
+                    else {
+                        return;
+                    };
                     mods.core.clone()
                 }
                 None => base,
             };
-            let thread = payload["scope"]["thread_id"].as_str().and_then(|thread| ThreadId::from_string(thread).ok());
-            if event == "model_response" && let Some(thread) = thread {
-                core.autonomy.charge(&core.inventory.root_thread(&thread.to_string()), &payload);
+            let thread = payload["scope"]["thread_id"]
+                .as_str()
+                .and_then(|thread| ThreadId::from_string(thread).ok());
+            if event == "model_response"
+                && let Some(thread) = thread
+            {
+                core.autonomy
+                    .charge(&core.inventory.root_thread(&thread.to_string()), &payload);
             }
             if let Some(thread) = thread {
                 expansion::broadcast_thread(&core.expansion, thread, event, payload);
@@ -162,11 +177,20 @@ pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher
             let unavailable = |reason: &str| {
                 std::io::Error::other(format!("host_operation_unavailable: {reason}"))
             };
-            let base = weak.upgrade().ok_or_else(|| unavailable("native host stopped"))?;
+            let base = weak
+                .upgrade()
+                .ok_or_else(|| unavailable("native host stopped"))?;
             let core = match terminal_owner {
                 Some(owner) => {
-                    let owner = codex_protocol::turn_input::TerminalOwner(owner.parse().map_err(|_| unavailable("invalid terminal owner"))?);
-                    clients::session_owner(&owner).ok_or_else(|| unavailable("terminal owner stopped"))?.core.clone()
+                    let owner = codex_protocol::turn_input::TerminalOwner(
+                        owner
+                            .parse()
+                            .map_err(|_| unavailable("invalid terminal owner"))?,
+                    );
+                    clients::session_owner(&owner)
+                        .ok_or_else(|| unavailable("terminal owner stopped"))?
+                        .core
+                        .clone()
                 }
                 None => base,
             };
@@ -205,7 +229,7 @@ pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher
                     .runtime
                     .lock()
                     .map_err(|_| std::io::Error::other("mod_runtime_poisoned"))?;
-                runtime.refresh_guarded(active)?;
+                runtime.refresh(active)?;
                 (
                     facts(&runtime).remove(caller).unwrap_or_default(),
                     runtime.generation(),

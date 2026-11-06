@@ -3,8 +3,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::Serialize;
 use serde_json::Value;
-use sha2::Digest as _;
-use sha2::Sha256;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
@@ -315,19 +313,25 @@ pub fn enter_terminal_user(admitted: bool) -> TerminalUserGuard {
 }
 
 impl Drop for TerminalUserGuard {
-    fn drop(&mut self) { TERMINAL_USER.set(self.0); }
+    fn drop(&mut self) {
+        TERMINAL_USER.set(self.0);
+    }
 }
 
 pub struct TerminalOwnerGuard(Option<String>);
 
-pub fn terminal_owner_id() -> Option<String> { TERMINAL_OWNER.with(|owner| owner.borrow().clone()) }
+pub fn terminal_owner_id() -> Option<String> {
+    TERMINAL_OWNER.with(|owner| owner.borrow().clone())
+}
 
 pub fn enter_terminal_owner(owner: Option<String>) -> TerminalOwnerGuard {
     TerminalOwnerGuard(TERMINAL_OWNER.with(|current| current.replace(owner)))
 }
 
 impl Drop for TerminalOwnerGuard {
-    fn drop(&mut self) { TERMINAL_OWNER.with(|current| current.replace(self.0.take())); }
+    fn drop(&mut self) {
+        TERMINAL_OWNER.with(|current| current.replace(self.0.take()));
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -681,7 +685,10 @@ fn submit_bound(
         && (matches!(operation, "terminal.panel" | "prompts.consent")
             || operation == "packages.apply"
                 && arguments["target"].as_str().unwrap_or("terminal") == "terminal"
-                && matches!(arguments["action"].as_str(), Some("enable" | "disable" | "reset" | "save-defaults")));
+                && matches!(
+                    arguments["action"].as_str(),
+                    Some("enable" | "disable" | "reset" | "save-defaults")
+                ));
 
     if remote && needs_terminal(operation, &arguments) && !terminal_user {
         return Err(BlitError::fatal(needs_terminal_error(operation)));
@@ -1510,7 +1517,7 @@ impl Blit {
             });
             let bytes = bytes.ok_or("terminal_blit_image_invalid")?;
             self.content = BlitContent::Image {
-                sha256: format!("{:x}", Sha256::digest(&bytes)),
+                sha256: crate::sha256_hex(&bytes),
                 bytes: bytes.into(),
             };
         }

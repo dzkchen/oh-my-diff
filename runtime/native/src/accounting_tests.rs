@@ -288,15 +288,22 @@ fn final_request_policies_redact_unary_image_and_memory_bodies() {
         reasoning: None,
     })
     .unwrap();
-    ResponseObserver::police_unary(&accounts, Some("child"), &mut memory, &http::Extensions::new()).unwrap();
+    ResponseObserver::police_unary(
+        &accounts,
+        Some("child"),
+        &mut memory,
+        &http::Extensions::new(),
+    )
+    .unwrap();
     assert_eq!(
         memory["traces"][0]["items"][0]["content"][0]["text"],
         "key [secret]"
     );
     let mut edit = json!({"model":"image-model","prompt":"edit","images":[{"file_id":"f1"}]});
-    let refused = ResponseObserver::police_unary(&accounts, None, &mut edit, &http::Extensions::new())
-        .unwrap_err()
-        .to_string();
+    let refused =
+        ResponseObserver::police_unary(&accounts, None, &mut edit, &http::Extensions::new())
+            .unwrap_err()
+            .to_string();
     assert!(refused.contains("unscanned file"), "{refused}");
 }
 
@@ -964,7 +971,7 @@ fn paid_preset_grants_bind_repository_route_and_current_bytes() {
     let path = root.path().join("paid.json");
     let grant = json!({"schema":1,"paid_api_key":true,"revocable":true,"repository":"repo-a","provider":"provider-a","model":"model-a","responses_url":"https://example.invalid/responses"});
     std::fs::write(&path, grant.to_string()).unwrap();
-    let sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
     let allowed = || {
         worker_authorized(
             &path,
@@ -1010,7 +1017,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     let path = root.path().join("subscription.json");
     let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repository":"fixture","provider":"openai","model":"fixture-model","responses_url":SUBSCRIPTION_RESPONSES_URL});
     std::fs::write(&path, grant.to_string()).unwrap();
-    let sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
     assert!(worker_authorized(
         &path,
         &sha,
@@ -1102,7 +1109,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     let mut mixed = grant.clone();
     mixed["paid_api_key"] = true.into();
     std::fs::write(&path, mixed.to_string()).unwrap();
-    let mixed_sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    let mixed_sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
     assert!(!worker_authorized(
         &path,
         &mixed_sha,
@@ -1308,7 +1315,7 @@ fn an_added_plan_route_authorizes_only_the_repositories_it_was_approved_in() {
         worker_authorized(
             &grant.path,
             &grant.sha256,
-            &crate::execution::hash(repository.as_os_str().as_encoded_bytes()),
+            &codex_omd::sha256_hex(repository.as_os_str().as_encoded_bytes()),
             &route.provider,
             &route.model,
             &route.responses_url,
@@ -1378,46 +1385,111 @@ fn request_policy_context_captures_terminal_middleware_through_the_response() {
     let (store, package, _) = install_package(&accounts, root.path(), source, &["middleware"]);
     let manifest = package.join("mod.json");
     let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
-    value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"saved"}}});
+    value["settings_schema"] =
+        json!({"type":"object","properties":{"mode":{"type":"string","default":"saved"}}});
     std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     let inspected = ModStore::inspect_package(&package).unwrap();
-    store.trust(package.clone(), inspected["sha256"].as_str().unwrap(), vec!["middleware".into()], "user").unwrap();
+    store
+        .trust(
+            package.clone(),
+            inspected["sha256"].as_str().unwrap(),
+            vec!["middleware".into()],
+            "user",
+        )
+        .unwrap();
     store.enable(&package, true).unwrap();
     let shared = std::fs::read(store.root().join("mods.json")).unwrap();
-    let a = Arc::new(Mutex::new(ModHost::open(store.root().to_path_buf()).unwrap()));
-    let b = Arc::new(Mutex::new(ModHost::open(store.root().to_path_buf()).unwrap()));
+    let a = Arc::new(Mutex::new(
+        ModHost::open(store.root().to_path_buf()).unwrap(),
+    ));
+    let b = Arc::new(Mutex::new(
+        ModHost::open(store.root().to_path_buf()).unwrap(),
+    ));
     let notified = Arc::new(Mutex::new(Vec::new()));
     let sink = notified.clone();
-    accounts.install_mod_notifier(Arc::new(move |owner, _, _| { sink.lock().unwrap().push(owner.map(str::to_owned)); }));
-    let bind = |runtime: &Arc<Mutex<ModHost>>, owner: &str| RuntimeBinding { terminal_owner: Some(owner.into()), runtime:runtime.clone(), required:runtime.lock().unwrap().required_surfaces() };
-    a.lock().unwrap().write_configuration("request_router", &json!({"mode":"blocked"}), "terminal", &[]).unwrap();
-    a.lock().unwrap().refresh_authority().unwrap();
+    accounts.install_mod_notifier(Arc::new(move |owner, _, _| {
+        sink.lock().unwrap().push(owner.map(str::to_owned));
+    }));
+    let bind = |runtime: &Arc<Mutex<ModHost>>, owner: &str| RuntimeBinding {
+        terminal_owner: Some(owner.into()),
+        runtime: runtime.clone(),
+        required: runtime.lock().unwrap().required_surfaces(),
+    };
+    a.lock()
+        .unwrap()
+        .write_configuration(
+            "request_router",
+            &json!({"mode":"blocked"}),
+            "terminal",
+            &[],
+        )
+        .unwrap();
+    a.lock().unwrap().refresh(&|| true).unwrap();
     request.policy_context.insert(bind(&a, "terminal-a"));
     let mut encoded = Some(body.clone());
-    assert!(accounts.prepare(&mut request, &mut encoded).unwrap_err().to_string().contains("terminal blocked"));
+    assert!(
+        accounts
+            .prepare(&mut request, &mut encoded)
+            .unwrap_err()
+            .to_string()
+            .contains("terminal blocked")
+    );
     request.policy_context.clear();
     request.policy_context.insert(bind(&b, "terminal-b"));
     let mut encoded = Some(body.clone());
     accounts.prepare(&mut request, &mut encoded).unwrap();
-    let captured_account = accounts.by_thread.lock().unwrap().get("child").unwrap().clone();
-    accounts.by_thread.lock().unwrap().get_mut("child").unwrap().owner = "unadmitted-worker".into();
-    let mut attempt = accounts.before_send(&mut request, encoded.as_ref()).unwrap().unwrap();
-    accounts.by_thread.lock().unwrap().insert("child".into(), captured_account);
+    let captured_account = accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .get("child")
+        .unwrap()
+        .clone();
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .get_mut("child")
+        .unwrap()
+        .owner = "unadmitted-worker".into();
+    let mut attempt = accounts
+        .before_send(&mut request, encoded.as_ref())
+        .unwrap()
+        .unwrap();
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("child".into(), captured_account);
     request.policy_context.clear();
     request.policy_context.insert(bind(&a, "terminal-a"));
-    let mut delta = json!({"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":"hello"});
+    let mut delta =
+        json!({"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":"hello"});
     attempt.observe(&mut delta, true).unwrap();
     assert_eq!(delta["delta"], "saved:hello");
     drop(attempt);
-    a.lock().unwrap().write_configuration("request_router", &json!({"mode":"local"}), "terminal", &[]).unwrap();
-    a.lock().unwrap().refresh_authority().unwrap();
+    a.lock()
+        .unwrap()
+        .write_configuration("request_router", &json!({"mode":"local"}), "terminal", &[])
+        .unwrap();
+    a.lock().unwrap().refresh(&|| true).unwrap();
     let mut encoded = Some(body);
     accounts.prepare(&mut request, &mut encoded).unwrap();
-    let mut attempt = accounts.before_send(&mut request, encoded.as_ref()).unwrap().unwrap();
-    let mut delta = json!({"type":"response.output_text.delta","output_index":0,"item_id":"n","delta":"hello"});
+    let mut attempt = accounts
+        .before_send(&mut request, encoded.as_ref())
+        .unwrap()
+        .unwrap();
+    let mut delta =
+        json!({"type":"response.output_text.delta","output_index":0,"item_id":"n","delta":"hello"});
     attempt.observe(&mut delta, true).unwrap();
     assert_eq!(delta["delta"], "local:hello");
     drop(attempt);
-    assert_eq!(*notified.lock().unwrap(), vec![Some("terminal-b".to_owned()), Some("terminal-a".to_owned())]);
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), shared);
+    assert_eq!(
+        *notified.lock().unwrap(),
+        vec![Some("terminal-b".to_owned()), Some("terminal-a".to_owned())]
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        shared
+    );
 }

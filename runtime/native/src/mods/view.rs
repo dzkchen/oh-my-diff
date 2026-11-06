@@ -102,7 +102,9 @@ impl Views {
             .map(|(_, diagnostic)| diagnostic.clone())
             .collect();
         state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
-        if self.persist { let _ = owner.persist_json("mod-view.json", &state.snapshot); }
+        if self.persist {
+            let _ = owner.persist_json("mod-view.json", &state.snapshot);
+        }
         if let Ok(mut published) = self.published.lock() {
             *published = Some(Arc::new(state.snapshot.clone()));
         }

@@ -786,10 +786,19 @@ fn configuration_controls_use_project_policy_for_nongit_and_external_gitdirs() {
         if external_gitdir {
             let gitdir = admin.root.join("external-git");
             std::fs::create_dir(&gitdir).unwrap();
-            std::fs::write(repository.join(".git"), format!("gitdir: {}\n", gitdir.display())).unwrap();
+            std::fs::write(
+                repository.join(".git"),
+                format!("gitdir: {}\n", gitdir.display()),
+            )
+            .unwrap();
         }
         let (user, user_sha) = admin.package("user-copy", "scoped", COMMAND, &["commands"]);
-        let (managed, managed_sha) = admin.package("managed-copy", "scoped", &format!("{COMMAND};\n"), &["commands"]);
+        let (managed, managed_sha) = admin.package(
+            "managed-copy",
+            "scoped",
+            &format!("{COMMAND};\n"),
+            &["commands"],
+        );
         let store = ModStore::create(admin.root.join("store-alice")).unwrap();
         trust(&store, &user, &user_sha, &["commands"], "user");
         admin.administer(json!({"schema":1,"packages":[entry("scoped", &managed, &managed_sha, json!({"capabilities":["commands"],"projects":[repository]}))]}), "alice");
@@ -797,11 +806,37 @@ fn configuration_controls_use_project_policy_for_nongit_and_external_gitdirs() {
         host.set_checkout(&repository);
         host.reload().unwrap();
         let before = std::fs::read(store.root().join("mods.json")).unwrap();
-        let error = host.write_configuration_in("scoped", &json!({"mode":"local"}), "terminal", &[], Some("user")).unwrap_err();
-        assert!(error.to_string().contains("configuration_override_forbidden"), "external_gitdir={external_gitdir}: {error}");
-        let error = host.preview_configuration(json!({"id":"scoped","scope":"user","action":"enable","target":"terminal"})).err().unwrap();
-        assert!(error.to_string().contains("configuration_override_forbidden"), "external_gitdir={external_gitdir}: {error}");
-        assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), before);
+        let error = host
+            .write_configuration_in(
+                "scoped",
+                &json!({"mode":"local"}),
+                "terminal",
+                &[],
+                Some("user"),
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("configuration_override_forbidden"),
+            "external_gitdir={external_gitdir}: {error}"
+        );
+        let error = host
+            .preview_configuration(
+                json!({"id":"scoped","scope":"user","action":"enable","target":"terminal"}),
+            )
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("configuration_override_forbidden"),
+            "external_gitdir={external_gitdir}: {error}"
+        );
+        assert_eq!(
+            std::fs::read(store.root().join("mods.json")).unwrap(),
+            before
+        );
     }
 }
 

@@ -36,7 +36,7 @@ fn write_once(path: &std::path::Path, text: &str) -> Result<(), String> {
 impl Core {
     fn refresh_role_definitions(&self) -> Option<()> {
         let mut runtime = self.input_runtime.lock().ok()?;
-        runtime.refresh_authority().ok()?;
+        runtime.refresh(&|| true).ok()?;
         *self.expansion.definitions.lock().ok()? = runtime.agent_definitions();
         Some(())
     }
@@ -99,8 +99,10 @@ impl Core {
             }
         }
         let text = lines.join("\n") + "\n";
-        let path = agents_dir(&lead.host)
-            .join(format!("{}.toml", &execution::hash(text.as_bytes())[..16]));
+        let path = agents_dir(&lead.host).join(format!(
+            "{}.toml",
+            &codex_omd::sha256_hex(text.as_bytes())[..16]
+        ));
         write_once(&path, &text)?;
         Ok(path)
     }
@@ -312,7 +314,11 @@ impl Core {
                 value => arguments[key] = value.clone(),
             }
         }
-        spawn_route_admitted(lead, arguments["model"].as_str(), self.terminal_owner.as_deref())?;
+        spawn_route_admitted(
+            lead,
+            arguments["model"].as_str(),
+            self.terminal_owner.as_deref(),
+        )?;
         let definition = effective["definition"].as_str();
         if let Some(name) = definition.filter(|name| name.contains('/'))
             && self.definition(name).is_none()
@@ -358,7 +364,10 @@ impl Core {
             tools,
         };
         let text = serde_json::to_string(&plan).map_err(|e| e.to_string())?;
-        let name = format!("{PLAN_PREFIX}{}", &execution::hash(text.as_bytes())[..16]);
+        let name = format!(
+            "{PLAN_PREFIX}{}",
+            &codex_omd::sha256_hex(text.as_bytes())[..16]
+        );
         write_once(
             &agents_dir(&lead.host)
                 .join("plans")
@@ -381,11 +390,23 @@ pub(super) fn spawn_result(result: &Value) -> Value {
 }
 
 impl AgentRoleContributor for Mods {
-    fn offered_agent_roles(&self, thread_store: &ExtensionData, turn_store: &ExtensionData) -> Vec<ContributedAgentRole> {
+    fn offered_agent_roles(
+        &self,
+        thread_store: &ExtensionData,
+        turn_store: &ExtensionData,
+    ) -> Vec<ContributedAgentRole> {
         let selected = clients::for_store(turn_store);
-        if selected.is_none() && turn_store.get::<codex_protocol::turn_input::TerminalOwner>().is_some() { return Vec::new(); }
+        if selected.is_none()
+            && turn_store
+                .get::<codex_protocol::turn_input::TerminalOwner>()
+                .is_some()
+        {
+            return Vec::new();
+        }
         let this = selected.as_deref().unwrap_or(self);
-        if this.refresh_role_definitions().is_none() { return Vec::new(); }
+        if this.refresh_role_definitions().is_none() {
+            return Vec::new();
+        }
         let Some(lead) = thread_store.get::<Lead>() else {
             return Vec::new();
         };
@@ -419,7 +440,13 @@ impl AgentRoleContributor for Mods {
         let selected = match turn_store {
             Some(store) => {
                 let selected = clients::for_store(store);
-                if selected.is_none() && store.get::<codex_protocol::turn_input::TerminalOwner>().is_some() { return None; }
+                if selected.is_none()
+                    && store
+                        .get::<codex_protocol::turn_input::TerminalOwner>()
+                        .is_some()
+                {
+                    return None;
+                }
                 selected.or_else(|| clients::for_store(thread_store))
             }
             None => clients::for_store(thread_store),
@@ -468,8 +495,14 @@ pub(super) fn spawn_capacity_admitted(
     )
 }
 
-pub(super) fn spawn_route_admitted(lead: &Lead, model: Option<&str>, owner: Option<&str>) -> Result<(), String> {
-    let Some((provider, _)) = model.and_then(|model| codex_models_manager::runtime_models::find_for(owner, model)) else {
+pub(super) fn spawn_route_admitted(
+    lead: &Lead,
+    model: Option<&str>,
+    owner: Option<&str>,
+) -> Result<(), String> {
+    let Some((provider, _)) =
+        model.and_then(|model| codex_models_manager::runtime_models::find_for(owner, model))
+    else {
         return Ok(());
     };
     let parent = lead

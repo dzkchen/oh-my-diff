@@ -59,6 +59,22 @@ const settled = (answer = host()) => {
 };
 const started = () => settled();
 
+test('child tool results do not schedule refreshes without a session', () => {
+  const state = started();
+  const denied = host({ 'events.schedule': () => { throw new Error('host_operation_unavailable: no session'); } });
+  const child = call({ event: 'tool_call', payload: { call_id: 'child-exec', agent_id: 'child', tool: 'exec_command', arguments: {} }, state }, denied);
+  assert.deepEqual(child.state.tools, {});
+  for (const scope of [{ agent_id: 'child', thread_id: 'child-thread' }, { agent_id: null, thread_id: 'other-thread' }]) {
+    const done = call({ event: 'tool_result', payload: { call_id: 'child-exec', tool: 'exec_command', ...scope }, state }, denied);
+    assert.ok(!done.calls.some(item => item.operation === 'events.schedule'));
+  }
+  const plan = call({ event: 'app_notification', payload: { method: 'turn/plan/updated', thread_id: 'lead', params: { plan: [{ step: 'Goal work', status: 'inProgress' }] } }, state }, denied);
+  assert.deepEqual(plan.state.plan, { done: 0, total: 1, step: 'Goal work' });
+  assert.deepEqual(plan.calls, []);
+  const lead = call({ event: 'tool_result', payload: { call_id: 'lead-exec', tool: 'exec_command', agent_id: null, thread_id: 'lead' }, state });
+  assert.ok(lead.calls.some(item => item.operation === 'events.schedule' && item.arguments.key === 'time:git_soon'));
+});
+
 test('cost follows the ledger basis: included on the ChatGPT plan, unknown when unpriced', () => {
   const settings = { preset: 'custom', layout: 'provider cost' };
   const plan = host({ 'app.request': args => args.method === 'config/read' ? { config: {} } : { rateLimits: { planType: 'plus' } } });

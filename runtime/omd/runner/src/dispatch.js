@@ -3,8 +3,8 @@ if (typeof globalThis.__activate !== 'function') throw new Error('default_export
 const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
 await globalThis.__activate(activation);
 globalThis.__omd.ready();
+globalThis.__dispatch = async () => {
 let value = null;
-try {
 if (request.event !== 'inspect') {
   const handler = request.event === 'tool' ? tools.get(request.name) ?? globalThis.__omd.dynamicTool(request.name)
     : request.event === 'command' ? commands.get(request.name)
@@ -17,10 +17,9 @@ if (request.event !== 'inspect') {
   if (handler) value = await handler(request.payload) ?? null;
   await globalThis.__omd.flushSubscriptions();
 }
-if (globalThis.__omd.pending()) throw new Error('swallowed_host_suspension');
-} catch (error) {
-  if (error !== globalThis.__omd.suspension) throw error;
-}
 if (globalThis.__omd.calls.length < (request.receipts ?? []).length) throw new Error('host_call_replay_diverged');
-globalThis.__result = JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
-  calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
+return JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
+  calls: globalThis.__omd.calls, updates: globalThis.__omd.updates });
+
+};
+globalThis.__result = await globalThis.__dispatch();

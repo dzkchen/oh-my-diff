@@ -73,7 +73,14 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
         list_fields(&store, None, Value::Null, None, None).unwrap(),
         listed
     );
-    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]}), None, None).unwrap();
+    let narrow = list_fields(
+        &store,
+        None,
+        json!({"fields": ["id", "enabled"]}),
+        None,
+        None,
+    )
+    .unwrap();
     assert_eq!(
         (narrow["packages"].clone(), narrow["generation"].as_u64()),
         (
@@ -97,7 +104,11 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
     apply(&store, &enable.control).unwrap();
     assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], true);
 
-    let disable = preview(&store, json!({"action": "disable", "target": "shared", "id": "sample_mod"})).unwrap();
+    let disable = preview(
+        &store,
+        json!({"action": "disable", "target": "shared", "id": "sample_mod"}),
+    )
+    .unwrap();
     apply(&store, &disable.control).unwrap();
     assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], false);
 
@@ -134,7 +145,13 @@ fn stale_previews_and_invalid_requests_are_refused() {
         )
         .is_err()
     );
-    assert!(preview(&store, json!({"action": "enable", "target": "shared", "id": "missing"})).is_err());
+    assert!(
+        preview(
+            &store,
+            json!({"action": "enable", "target": "shared", "id": "missing"})
+        )
+        .is_err()
+    );
     assert!(preview(&store, json!({"action": "explode", "id": "sample_mod"})).is_err());
     assert!(preview(&store, json!({"action": "install"})).is_err());
     assert!(
@@ -208,7 +225,11 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
             "user",
         )
         .unwrap();
-    let enable = preview(&store, json!({"action": "enable", "target": "shared", "id": "author_mod"})).unwrap();
+    let enable = preview(
+        &store,
+        json!({"action": "enable", "target": "shared", "id": "author_mod"}),
+    )
+    .unwrap();
     assert_eq!(enable.public["grants_added"], json!(["commands"]));
     apply(&store, &enable.control).unwrap();
     let idle = json!({"mods": [], "rejected": [], "reload_error": null});
@@ -256,7 +277,11 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
     )
     .unwrap();
     apply(&store, &install.control).unwrap();
-    let disable = preview(&store, json!({"action": "disable", "target": "shared", "id": "author_mod"})).unwrap();
+    let disable = preview(
+        &store,
+        json!({"action": "disable", "target": "shared", "id": "author_mod"}),
+    )
+    .unwrap();
     apply(&store, &disable.control).unwrap();
     let states = list(&store, None).unwrap()["packages"]
         .as_array()
@@ -271,12 +296,20 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
         })
         .collect::<Vec<_>>();
     assert!(states.contains(&(json!("user"), json!("selection"), json!(false))));
-    let enable = preview(&store, json!({"action": "enable", "target": "shared", "id": "author_mod"})).unwrap();
+    let enable = preview(
+        &store,
+        json!({"action": "enable", "target": "shared", "id": "author_mod"}),
+    )
+    .unwrap();
     apply(&store, &enable.control).unwrap();
 
     let before = list(&store, None).unwrap()["generation"].as_u64().unwrap();
     assert!(reload(&store).unwrap()["generation"].as_u64().unwrap() > before);
-    let disable = preview(&store, json!({"action": "disable", "target": "shared", "id": "author_mod"})).unwrap();
+    let disable = preview(
+        &store,
+        json!({"action": "disable", "target": "shared", "id": "author_mod"}),
+    )
+    .unwrap();
     apply(&store, &disable.control).unwrap();
     assert_eq!(
         list(&store, Some(&running)).unwrap()["packages"][0]["pending"],
@@ -304,7 +337,7 @@ fn listing_offers_host_routes_and_marks_required_selections() {
     let repository = root.join("repo");
     let grant = |name: &str, listed: &Path| {
         let path = root.join(format!("{name}.json"));
-        let hash = crate::resource_data::hash(listed.as_os_str().as_encoded_bytes());
+        let hash = crate::sha256_hex(listed.as_os_str().as_encoded_bytes());
         std::fs::write(&path, json!({"repositories": [hash]}).to_string()).unwrap();
         json!({"name": name, "roles": ["worker"], "mods": ["routed_mod"], "grant": {"path": path}})
     };

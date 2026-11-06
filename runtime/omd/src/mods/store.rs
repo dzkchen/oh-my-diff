@@ -3,7 +3,6 @@ use super::ModConfiguration;
 use super::ModPackage;
 use super::ModSelection;
 use super::Result;
-use super::digest;
 use super::failure;
 use super::file_stamp;
 use super::identifier;
@@ -361,7 +360,7 @@ pub(super) fn asset_map(assets: BTreeMap<String, String>) -> BTreeMap<String, Va
     assets
         .into_iter()
         .map(|(name, text)| {
-            let sha256 = digest(text.as_bytes());
+            let sha256 = crate::sha256_hex(text.as_bytes());
             (name, serde_json::json!({"text": text, "sha256": sha256}))
         })
         .collect()
@@ -598,12 +597,19 @@ pub(super) fn migrate_directory_state(
         return directory_state(directory, name, version);
     }
     crate::fsio::write_bytes(
-        &directory.join(format!("{name}-backup-{}", digest(&bytes))),
+        &directory.join(format!("{name}-backup-{}", crate::sha256_hex(&bytes))),
         &bytes,
         crate::fsio::Durability::Ordered,
     )?;
     crate::fsio::write_bytes(&path, &migrated, crate::fsio::Durability::Ordered)?;
     Ok(value)
+}
+
+pub(super) fn next_revision(revision: &mut u64) -> Result<()> {
+    *revision = revision
+        .checked_add(1)
+        .ok_or_else(|| failure("revision_overflow"))?;
+    Ok(())
 }
 
 impl ModStore {
@@ -626,8 +632,7 @@ impl ModStore {
 
     /// Grants the runner beside this binary, after an install or update replaced it, when the broker is deployed.
     pub fn authorize_runner(&self) -> Result<()> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let Some((_, grants)) = brokered_grants(&self.root)? else {
             return Ok(());
         };
@@ -635,10 +640,7 @@ impl ModStore {
             return Ok(());
         }
         let mut config = self.configuration()?;
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        next_revision(&mut config.revision)?;
         self.write_granting(
             "mods.json",
             &serde_json::to_value(config)?,
@@ -711,6 +713,12 @@ impl ModStore {
 
     pub(super) fn lock(&self) -> Result<File> {
         lock(&self.root.join("store.lock"))
+    }
+
+    pub(super) fn transaction(&self) -> Result<File> {
+        let lock = self.lock()?;
+        self.recover_package_transaction()?;
+        Ok(lock)
     }
 
     pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
@@ -1082,7 +1090,7 @@ impl ModStore {
                 "expires_at": selection.expires_at,
                 "authority_current": selection.authority_current(),
                 "settings_keys": selection.settings.keys().collect::<Vec<_>>(),
-                "settings_sha256": digest(&serde_json::to_vec(&selection.settings)?),
+                "settings_sha256": crate::sha256_hex(&serde_json::to_vec(&selection.settings)?),
                 "error": error,
                 "effective": false,
                 "reason": if selection.enabled { "pending_runtime_validation" } else { "disabled" },
@@ -1163,8 +1171,7 @@ impl ModStore {
                 "managed_sideload_denied: administrator policy loads mods only from installed packages",
             ));
         }
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let mut config = self.configuration()?;
         let mut trusted = BTreeSet::new();
         for Trust {
@@ -1197,7 +1204,10 @@ impl ModStore {
             config.mods.retain(|m| m.path != path);
             trusted.insert(path.clone());
             config.mods.push(ModSelection {
-                configuration_epoch: config.revision.checked_add(1).ok_or_else(|| failure("revision_overflow"))?,
+                configuration_epoch: config
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| failure("revision_overflow"))?,
                 path,
                 sha256: actual,
                 enabled: false,
@@ -1210,10 +1220,7 @@ impl ModStore {
                 required,
             });
         }
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        next_revision(&mut config.revision)?;
         let approved = config
             .mods
             .iter()
@@ -1232,8 +1239,7 @@ impl ModStore {
     }
 
     pub fn broker_grants_import(&self, snapshot: Option<Value>) -> Result<Value> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let config = self.configuration()?;
         let current = serde_json::to_value(&config)?;
         let Some(snapshot) = snapshot else {
@@ -1279,8 +1285,7 @@ impl ModStore {
     }
 
     pub fn revoke(&self, target: &str) -> Result<()> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let mut lock = self.read_package_lock().unwrap_or_default();
         let managed = lock.packages.get_mut(target).map(|package| {
             package.enabled = false;
@@ -1289,7 +1294,10 @@ impl ModStore {
         });
         let mut config = self.configuration()?;
         let mut revoked = Vec::new();
-        let epoch = config.revision.checked_add(1).ok_or_else(|| failure("revision_overflow"))?;
+        let epoch = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         for selection in &mut config.mods {
             if managed
                 .as_ref()
@@ -1308,16 +1316,10 @@ impl ModStore {
         if revoked.is_empty() {
             return Err(failure("package_not_trusted"));
         }
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        next_revision(&mut config.revision)?;
         let event = json!({"mod": target, "selections": revoked});
         if managed.is_some() {
-            lock.revision = lock
-                .revision
-                .checked_add(1)
-                .ok_or_else(|| failure("revision_overflow"))?;
+            next_revision(&mut lock.revision)?;
             self.commit_package_transaction(lock, config, &[], "revoke", event, &[])?;
             Ok(())
         } else {
@@ -1328,8 +1330,7 @@ impl ModStore {
     }
 
     pub fn enable(&self, path: &Path, enabled: bool) -> Result<()> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         if self
             .read_package_lock()?
             .packages
@@ -1372,10 +1373,7 @@ impl ModStore {
             refuse_second_copy(&config, path, &selection.scope, &manifest.id)?;
         }
         config.mods[index].enabled = enabled;
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        next_revision(&mut config.revision)?;
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 
@@ -1392,10 +1390,7 @@ impl ModStore {
             .find(|m| m.path == path)
             .ok_or_else(|| failure("package_not_trusted"))?;
         selection.required = true;
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        next_revision(&mut config.revision)?;
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 
@@ -1452,13 +1447,9 @@ impl ModStore {
     }
 
     pub fn reload(&self) -> Result<()> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let mut config = self.configuration()?;
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        next_revision(&mut config.revision)?;
         let revision = config.revision;
         self.write("mods.json", &serde_json::to_value(config)?)?;
         drop(_lock);
@@ -1530,8 +1521,7 @@ impl ModStore {
         previous: &Value,
         value: &Value,
     ) -> Result<()> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         if &self.state(id, scope, version)? != previous {
             return Err(failure("state_conflict: reload before retry"));
         }

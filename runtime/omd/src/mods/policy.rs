@@ -92,7 +92,8 @@ impl ManagedIndex {
         self.locations
             .iter()
             .find(|location| {
-                store::read(location, 524_288).is_ok_and(|bytes| digest(&bytes) == self.sha256)
+                store::read(location, 524_288)
+                    .is_ok_and(|bytes| crate::sha256_hex(&bytes) == self.sha256)
             })
             .cloned()
             .ok_or_else(|| {
@@ -120,7 +121,7 @@ impl ManagedPolicy {
             list.iter()
                 .all(|capability| MOD_CAPABILITIES.contains(&capability.as_str()))
         };
-        let sha256 = crate::contract_document::sha256_hex;
+        let sha256 = crate::is_sha256_hex;
         if policy.schema != 1 {
             return Err(invalid("schema must be 1"));
         }
@@ -251,7 +252,7 @@ impl ManagedPolicy {
 }
 
 pub fn managed(value: Value, origin: String) -> Result<Managed> {
-    let sha256 = digest(crate::broker::canonical(&value).as_bytes());
+    let sha256 = crate::sha256_hex(crate::broker::canonical(&value).as_bytes());
     Ok(Managed {
         origin,
         sha256,
@@ -320,7 +321,7 @@ pub fn login() -> String {
 }
 
 fn cohort(user: &str, id: &str) -> u8 {
-    let hash = digest(format!("{user}\0{id}").as_bytes());
+    let hash = crate::sha256_hex(format!("{user}\0{id}").as_bytes());
     (u64::from_str_radix(&hash[..8], 16).unwrap_or_default() % 100) as u8
 }
 

@@ -758,20 +758,77 @@ fn admitted_terminal_user_keeps_remote_authority_boundaries() {
     for (operation, arguments) in [
         ("terminal.panel", json!({"title":"Settings","items":[]})),
         ("prompts.consent", json!({"title":"Confirm"})),
-        ("packages.apply", json!({"action":"reset","id":"m","target":"terminal"})),
+        (
+            "packages.apply",
+            json!({"action":"reset","id":"m","target":"terminal"}),
+        ),
     ] {
-        assert!(submit("m", operation, arguments, InvocationContext::User, true, None, None).is_ok(), "{operation}");
+        assert!(
+            submit(
+                "m",
+                operation,
+                arguments,
+                InvocationContext::User,
+                true,
+                None,
+                None
+            )
+            .is_ok(),
+            "{operation}"
+        );
     }
     for (operation, arguments) in [
-        ("packages.apply", json!({"action":"install","reference":"folder"})),
+        (
+            "packages.apply",
+            json!({"action":"install","reference":"folder"}),
+        ),
         ("packages.apply", json!({"action":"trust","id":"m"})),
-        ("packages.apply", json!({"action":"disable","id":"m","target":"shared"})),
+        (
+            "packages.apply",
+            json!({"action":"disable","id":"m","target":"shared"}),
+        ),
         ("credentials.request", json!({})),
         ("terminal.copy", json!({"text":"secret"})),
     ] {
-        assert_eq!(submit("m", operation, arguments, InvocationContext::User, true, None, None).err(), Some(needs_terminal_error(operation)));
+        assert_eq!(
+            submit(
+                "m",
+                operation,
+                arguments,
+                InvocationContext::User,
+                true,
+                None,
+                None
+            )
+            .err(),
+            Some(needs_terminal_error(operation))
+        );
     }
-    assert_eq!(submit("m", "terminal.panel", json!({}), InvocationContext::Event, true, None, None).err(), Some("host_operation_user_only: terminal.panel".into()));
+    assert_eq!(
+        submit(
+            "m",
+            "terminal.panel",
+            json!({}),
+            InvocationContext::Event,
+            true,
+            None,
+            None
+        )
+        .err(),
+        Some("host_operation_user_only: terminal.panel".into())
+    );
     drop(_owner);
-    assert_eq!(submit("m", "terminal.panel", json!({}), InvocationContext::User, true, None, None).err(), Some(needs_terminal_error("terminal.panel")));
+    assert_eq!(
+        submit(
+            "m",
+            "terminal.panel",
+            json!({}),
+            InvocationContext::User,
+            true,
+            None,
+            None
+        )
+        .err(),
+        Some(needs_terminal_error("terminal.panel"))
+    );
 }

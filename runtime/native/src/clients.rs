@@ -13,7 +13,9 @@ static SESSION_OWNERS: Mutex<BTreeMap<String, std::sync::Weak<Mods>>> = Mutex::n
 static CLIENT_OWNERS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
 
 pub fn configuration(client: &str, request: Value) -> Result<Value, String> {
-    let action = request["action"].as_str().ok_or("configuration_action_invalid")?;
+    let action = request["action"]
+        .as_str()
+        .ok_or("configuration_action_invalid")?;
     let allowed: &[&str] = match action {
         "read" | "catalog" => &["action"],
         "command" => &["action", "command", "args"],
@@ -21,18 +23,34 @@ pub fn configuration(client: &str, request: Value) -> Result<Value, String> {
         "package" => &["action", "request"],
         _ => return Err("configuration_action_invalid".into()),
     };
-    let object = request.as_object().ok_or("configuration_arguments_invalid")?;
-    if object.keys().any(|key| !allowed.contains(&key.as_str())) { return Err("configuration_arguments_invalid".into()); }
-    if request.get("target").is_some_and(|target| !matches!(target.as_str(), Some("terminal" | "shared"))) { return Err("configuration_target_invalid".into()); }
-    if request.get("scope").is_some_and(|scope| !scope.is_null() && !matches!(scope.as_str(), Some("user" | "project"))) { return Err("configuration_scope_invalid".into()); }
+    let object = request
+        .as_object()
+        .ok_or("configuration_arguments_invalid")?;
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err("configuration_arguments_invalid".into());
+    }
+    if request
+        .get("target")
+        .is_some_and(|target| !matches!(target.as_str(), Some("terminal" | "shared")))
+    {
+        return Err("configuration_target_invalid".into());
+    }
+    if request.get("scope").is_some_and(|scope| {
+        !scope.is_null() && !matches!(scope.as_str(), Some("user" | "project"))
+    }) {
+        return Err("configuration_scope_invalid".into());
+    }
     let core = client_core(client)?;
     if action == "command" {
         let command = request["command"].as_str().ok_or("command_required")?;
         let args = request["args"].as_str().ok_or("command_args_required")?;
         return user_command(core, command.to_owned(), args.to_owned());
     }
-    let mut runtime = core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-    runtime.refresh_authority().map_err(|e| e.to_string())?;
+    let mut runtime = core
+        .input_runtime
+        .lock()
+        .map_err(|_| "mod_runtime_poisoned")?;
+    runtime.refresh(&|| true).map_err(|e| e.to_string())?;
     let result = match action {
         "catalog" => {
             let store = codex_omd::ModStore::open(core.host.root.clone()).map_err(|error| error.to_string())?;
@@ -63,59 +81,137 @@ pub fn configuration(client: &str, request: Value) -> Result<Value, String> {
     Ok(result)
 }
 
-pub fn terminal_package_preview(owner: &str, arguments: Value) -> Result<codex_omd::package_controls::PackagePreview, String> {
-    let owner = codex_protocol::turn_input::TerminalOwner(owner.parse().map_err(|_| "terminal_owner_invalid")?);
+pub fn terminal_package_preview(
+    owner: &str,
+    arguments: Value,
+) -> Result<codex_omd::package_controls::PackagePreview, String> {
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        owner.parse().map_err(|_| "terminal_owner_invalid")?,
+    );
     let mods = for_owner(&owner).ok_or("terminal_owner_unavailable")?;
-    if !arguments["expected_generation"].is_u64() { return Err("expected_generation_required".into()); }
-    if arguments["target"].as_str().unwrap_or("terminal") != "terminal" || !matches!(arguments["action"].as_str(), Some("enable" | "disable" | "reset" | "save-defaults")) { return Err("package_action_requires_local_terminal".into()); }
-    mods.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?.preview_configuration(arguments).map_err(|e| e.to_string())
+    if !arguments["expected_generation"].is_u64() {
+        return Err("expected_generation_required".into());
+    }
+    if arguments["target"].as_str().unwrap_or("terminal") != "terminal"
+        || !matches!(
+            arguments["action"].as_str(),
+            Some("enable" | "disable" | "reset" | "save-defaults")
+        )
+    {
+        return Err("package_action_requires_local_terminal".into());
+    }
+    mods.input_runtime
+        .lock()
+        .map_err(|_| "mod_runtime_poisoned")?
+        .preview_configuration(arguments)
+        .map_err(|e| e.to_string())
 }
 
-pub fn terminal_package_apply(owner: &str, control: &codex_omd::package_controls::PackageControl) -> Result<Value, String> {
-    let owner = codex_protocol::turn_input::TerminalOwner(owner.parse().map_err(|_| "terminal_owner_invalid")?);
+pub fn terminal_package_apply(
+    owner: &str,
+    control: &codex_omd::package_controls::PackageControl,
+) -> Result<Value, String> {
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        owner.parse().map_err(|_| "terminal_owner_invalid")?,
+    );
     let mods = for_owner(&owner).ok_or("terminal_owner_unavailable")?;
-    let mut runtime = mods.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-    runtime.apply_configuration(control).map_err(|e| e.to_string())
+    let mut runtime = mods
+        .input_runtime
+        .lock()
+        .map_err(|_| "mod_runtime_poisoned")?;
+    runtime
+        .apply_configuration(control)
+        .map_err(|e| e.to_string())
 }
 
-pub(crate) fn request_runtime(store: &codex_extension_api::ExtensionData) -> Result<Option<crate::accounting::RuntimeBinding>, String> {
-    if store.get::<codex_protocol::turn_input::TerminalOwner>().is_none() { return Ok(None); }
+pub(crate) fn request_runtime(
+    store: &codex_extension_api::ExtensionData,
+) -> Result<Option<crate::accounting::RuntimeBinding>, String> {
+    if store
+        .get::<codex_protocol::turn_input::TerminalOwner>()
+        .is_none()
+    {
+        return Ok(None);
+    }
     let mods = for_store(store).ok_or("terminal_owner_unavailable")?;
-    Ok(Some(crate::accounting::RuntimeBinding { terminal_owner: mods.terminal_owner.clone(), runtime: mods.runtime.clone(), required: mods.runtime_required.clone() }))
+    Ok(Some(crate::accounting::RuntimeBinding {
+        terminal_owner: mods.terminal_owner.clone(),
+        runtime: mods.runtime.clone(),
+        required: mods.runtime_required.clone(),
+    }))
 }
 
 pub(super) fn release_native_owner(owner: &codex_protocol::turn_input::TerminalOwner) {
     let key = owner.0.to_string();
-    let mut owners = OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let clients = CLIENT_OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !clients.values().any(|value| value == &key) { owners.remove(&key); }
+    let mut owners = OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let clients = CLIENT_OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !clients.values().any(|value| value == &key) {
+        owners.remove(&key);
+    }
 }
 
 pub fn release_owner(owner: codex_protocol::turn_input::TerminalOwner) {
     let key = owner.0.to_string();
-    OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&key);
-    CLIENT_OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|_, value| value != &key);
+    OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&key);
+    CLIENT_OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|_, value| value != &key);
 }
 
 pub fn bind(client: &str, owner: codex_protocol::turn_input::TerminalOwner) -> Result<(), String> {
     let key = owner.0.to_string();
     let mut owners = OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?;
-    if !owners.contains_key(&key) && let Ok(base) = core() {
+    if !owners.contains_key(&key)
+        && let Ok(base) = core()
+    {
         let runtime_owner = codex_omd::terminal_configuration_owner(&key);
-        owners.insert(key.clone(), create_owner(base.host.clone(), runtime_owner, Some(key.clone()))?);
+        owners.insert(
+            key.clone(),
+            create_owner(base.host.clone(), runtime_owner, Some(key.clone()))?,
+        );
     }
-    if let Some(owner) = owners.get(&key) { SESSION_OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?.insert(key.clone(), Arc::downgrade(owner)); }
-    CLIENT_OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?.insert(client.into(), key);
+    if let Some(owner) = owners.get(&key) {
+        SESSION_OWNERS
+            .lock()
+            .map_err(|_| "terminal_owner_poisoned")?
+            .insert(key.clone(), Arc::downgrade(owner));
+    }
+    CLIENT_OWNERS
+        .lock()
+        .map_err(|_| "terminal_owner_poisoned")?
+        .insert(client.into(), key);
     Ok(())
 }
 
-pub(super) fn ensure_owner(owner: &codex_protocol::turn_input::TerminalOwner) -> Result<Arc<Mods>, String> {
+pub(super) fn ensure_owner(
+    owner: &codex_protocol::turn_input::TerminalOwner,
+) -> Result<Arc<Mods>, String> {
     let key = owner.0.to_string();
     let mut owners = OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?;
-    if let Some(mods) = owners.get(&key) { return Ok(mods.clone()); }
+    if let Some(mods) = owners.get(&key) {
+        return Ok(mods.clone());
+    }
     let base = core()?;
-    let mods = create_owner(base.host.clone(), codex_omd::terminal_configuration_owner(&key), Some(key.clone()))?;
-    { let mut sessions = SESSION_OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?; sessions.retain(|_, owner| owner.strong_count() > 0); sessions.insert(key.clone(), Arc::downgrade(&mods)); }
+    let mods = create_owner(
+        base.host.clone(),
+        codex_omd::terminal_configuration_owner(&key),
+        Some(key.clone()),
+    )?;
+    {
+        let mut sessions = SESSION_OWNERS
+            .lock()
+            .map_err(|_| "terminal_owner_poisoned")?;
+        sessions.retain(|_, owner| owner.strong_count() > 0);
+        sessions.insert(key.clone(), Arc::downgrade(&mods));
+    }
     owners.insert(key, mods.clone());
     Ok(mods)
 }
@@ -124,34 +220,92 @@ pub(super) fn for_owner(owner: &codex_protocol::turn_input::TerminalOwner) -> Op
     OWNERS.lock().ok()?.get(&owner.0.to_string()).cloned()
 }
 
-pub(super) fn session_owner(owner: &codex_protocol::turn_input::TerminalOwner) -> Option<Arc<Mods>> {
-    for_owner(owner).or_else(|| SESSION_OWNERS.lock().ok()?.get(&owner.0.to_string())?.upgrade())
+pub(super) fn session_owner(
+    owner: &codex_protocol::turn_input::TerminalOwner,
+) -> Option<Arc<Mods>> {
+    for_owner(owner).or_else(|| {
+        SESSION_OWNERS
+            .lock()
+            .ok()?
+            .get(&owner.0.to_string())?
+            .upgrade()
+    })
 }
 
 pub(super) fn for_store(store: &codex_extension_api::ExtensionData) -> Option<Arc<Mods>> {
-    if let Some(owner) = store.get::<Mods>() { return Some(owner); }
-    for_owner(store.get::<codex_protocol::turn_input::TerminalOwner>()?.as_ref())
+    if let Some(owner) = store.get::<Mods>() {
+        return Some(owner);
+    }
+    for_owner(
+        store
+            .get::<codex_protocol::turn_input::TerminalOwner>()?
+            .as_ref(),
+    )
 }
 
-
 fn client_core(client: &str) -> Result<Arc<Core>, String> {
-    let key = CLIENT_OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?.get(client).cloned().ok_or("terminal_owner_missing")?;
-    let owner = codex_protocol::turn_input::TerminalOwner(key.parse().map_err(|_| "terminal_owner_invalid")?);
+    let key = CLIENT_OWNERS
+        .lock()
+        .map_err(|_| "terminal_owner_poisoned")?
+        .get(client)
+        .cloned()
+        .ok_or("terminal_owner_missing")?;
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        key.parse().map_err(|_| "terminal_owner_invalid")?,
+    );
     ensure_owner(&owner).map(|mods| mods.core.clone())
 }
 
-pub async fn select_thread(owner: codex_protocol::turn_input::TerminalOwner, thread: &str) -> Result<(), String> {
-    let Ok(base) = core() else { return Ok(()); };
+pub async fn select_thread(
+    owner: codex_protocol::turn_input::TerminalOwner,
+    thread: &str,
+) -> Result<(), String> {
+    let Ok(base) = core() else {
+        return Ok(());
+    };
     let thread = ThreadId::from_string(thread).map_err(|error| error.to_string())?;
-    let sources: Vec<_> = OWNERS.lock().map_err(|_| "terminal_owner_poisoned")?.values().map(|mods| mods.core.clone()).chain(std::iter::once(base)).collect();
-    let lead = sources.iter().find_map(|core| core.expansion.thread(thread)).ok_or("session_unavailable")?;
+    let sources: Vec<_> = OWNERS
+        .lock()
+        .map_err(|_| "terminal_owner_poisoned")?
+        .values()
+        .map(|mods| mods.core.clone())
+        .chain(std::iter::once(base))
+        .collect();
+    let lead = sources
+        .iter()
+        .find_map(|core| core.expansion.thread(thread))
+        .ok_or("session_unavailable")?;
     let target = ensure_owner(&owner)?;
-    let changed = target.expansion.current().is_none_or(|current| current.thread != thread);
-    let first = target.initialized_threads.lock().map_err(|_| "terminal_owner_poisoned")?.insert(thread.to_string());
+    let changed = target
+        .expansion
+        .current()
+        .is_none_or(|current| current.thread != thread);
+    let first = target
+        .initialized_threads
+        .lock()
+        .map_err(|_| "terminal_owner_poisoned")?
+        .insert(thread.to_string());
     target.expansion.select_thread(&target.core, &lead);
-    target.sessions.lock().map_err(|_| "terminal_owner_poisoned")?.insert(thread.to_string(), Arc::downgrade(&lead.session));
-    if let Some(invoker) = sources.iter().find_map(|source| source.expansion.invokers.lock().ok()?.get(&thread.to_string()).cloned()) {
-        target.expansion.invokers.lock().map_err(|_| "terminal_owner_poisoned")?.insert(thread.to_string(), invoker);
+    target
+        .sessions
+        .lock()
+        .map_err(|_| "terminal_owner_poisoned")?
+        .insert(thread.to_string(), Arc::downgrade(&lead.session));
+    if let Some(invoker) = sources.iter().find_map(|source| {
+        source
+            .expansion
+            .invokers
+            .lock()
+            .ok()?
+            .get(&thread.to_string())
+            .cloned()
+    }) {
+        target
+            .expansion
+            .invokers
+            .lock()
+            .map_err(|_| "terminal_owner_poisoned")?
+            .insert(thread.to_string(), invoker);
     }
     if changed || first {
         let store = ExtensionData::new(thread.to_string());
@@ -160,13 +314,27 @@ pub async fn select_thread(owner: codex_protocol::turn_input::TerminalOwner, thr
         target.views.start_thread(&store);
     }
     if first {
-        target.event("session", json!({"phase":"start","thread_id":thread.to_string()}), None).await;
+        target
+            .event(
+                "session",
+                json!({"phase":"start","thread_id":thread.to_string()}),
+                None,
+            )
+            .await;
         target.event("start", Value::Null, Some(&lead)).await;
         peering::start(&target.core, thread);
     }
     if changed {
-        target.views.presentation(&thread.to_string(), Some("resumed"));
-        target.event("session", json!({"phase":"resume","thread_id":thread.to_string()}), None).await;
+        target
+            .views
+            .presentation(&thread.to_string(), Some("resumed"));
+        target
+            .event(
+                "session",
+                json!({"phase":"resume","thread_id":thread.to_string()}),
+                None,
+            )
+            .await;
         let payload = expansion::resume_payload(&target.core, &lead).await;
         target.event("resume", payload, Some(&lead)).await;
     }
@@ -174,8 +342,13 @@ pub async fn select_thread(owner: codex_protocol::turn_input::TerminalOwner, thr
 }
 
 pub(super) fn cores_for_thread(thread: ThreadId) -> Vec<Arc<Core>> {
-    OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).values()
-        .filter(|owner| owner.expansion.thread(thread).is_some()).map(|owner| owner.core.clone()).collect()
+    OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .filter(|owner| owner.expansion.thread(thread).is_some())
+        .map(|owner| owner.core.clone())
+        .collect()
 }
 
 pub fn published_for(client: &str) -> Option<Arc<ModViewSnapshot>> {
@@ -208,9 +381,18 @@ impl Drop for Registration {
         {
             *installed = None;
             drop(installed);
-            OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
-            CLIENT_OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
-            SESSION_OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+            OWNERS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
+            CLIENT_OWNERS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
+            SESSION_OWNERS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
         }
     }
 }
@@ -263,10 +445,18 @@ pub(super) fn install(
     let roster = codex_omd::client_surface::register_observer(Arc::new(|observed| {
         if matches!(observed, codex_omd::client_surface::Observed::Roster) {
             REPUBLISH.request(|| {
-                let mut cores = OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .values().map(|owner| owner.core.clone()).collect::<Vec<_>>();
-                if let Ok(core) = self::core() { cores.push(core); }
-                for core in cores { republish(&core); }
+                let mut cores = OWNERS
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .values()
+                    .map(|owner| owner.core.clone())
+                    .collect::<Vec<_>>();
+                if let Ok(core) = self::core() {
+                    cores.push(core);
+                }
+                for core in cores {
+                    republish(&core);
+                }
             });
         }
     }));
@@ -291,17 +481,29 @@ fn republish(core: &Core) {
     let _thread = codex_omd::StateThread::enter(lead.as_ref().map(|lead| lead.thread.to_string()));
     let ledger = lead.as_ref().map_or(Value::Null, Lead::ledger);
     if let Ok(mut runtime) = core.runtime.lock() {
-        publish(&mut runtime, &core.host, &core.views, core.terminal_owner.is_some(), event, ledger, || {
-            true
-        });
+        publish(
+            &mut runtime,
+            &core.host,
+            &core.views,
+            core.terminal_owner.is_some(),
+            event,
+            ledger,
+            || true,
+        );
     }
 }
 
-pub(super) fn shared_native_tasks() -> Option<(Arc<Mutex<BTreeMap<String, TurnRecord>>>, Arc<Mutex<BTreeMap<String, Config>>>)> {
-    core().ok().map(|core| (core.turns.clone(), core.provider_switches.clone()))
+pub(super) fn shared_native_tasks() -> Option<(
+    Arc<Mutex<BTreeMap<String, TurnRecord>>>,
+    Arc<Mutex<BTreeMap<String, Config>>>,
+)> {
+    core()
+        .ok()
+        .map(|core| (core.turns.clone(), core.provider_switches.clone()))
 }
 
-pub(super) fn shared_native_sessions() -> Option<Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>> {
+pub(super) fn shared_native_sessions()
+-> Option<Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>> {
     Some(core().ok()?.sessions.clone())
 }
 
@@ -454,7 +656,9 @@ pub(super) fn reconcile(views: &view::Views, snapshot: &ModViewSnapshot) {
         return;
     };
     modules.retain(|(client, component), module| {
-        if !client_core(client).is_ok_and(|core| std::ptr::eq(&*core.views, views)) { return true; }
+        if !client_core(client).is_ok_and(|core| std::ptr::eq(&*core.views, views)) {
+            return true;
+        }
         let current = snapshot.component_owners.get(component) == Some(&module.owner)
             && snapshot
                 .view
@@ -528,7 +732,13 @@ fn module_step(
     let frame = json!({"instance": instance(client, component), "client": client,
         "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
         "columns": columns, "rows": rows, "events": events});
-    let source = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?.grants(&owner).ok_or("host_caller_inactive")?.source_sha256;
+    let source = core
+        .runtime
+        .lock()
+        .map_err(|_| "mod_runtime_poisoned")?
+        .grants(&owner)
+        .ok_or("host_caller_inactive")?
+        .source_sha256;
     let step = codex_omd::component_shared(&core.runtime, &owner, &module, frame, || {
         !revoked.load(Ordering::Acquire)
     });
@@ -545,7 +755,14 @@ fn module_step(
                     || queued.payload["component"] != payload["component"]
                     || queued.payload["client"] != payload["client"]
             });
-            posts.push(ComponentPost { core: Arc::downgrade(&core), lead:session(&core)?, owner, source, payload, revoked });
+            posts.push(ComponentPost {
+                core: Arc::downgrade(&core),
+                lead: session(&core)?,
+                owner,
+                source,
+                payload,
+                revoked,
+            });
         }
         POSTING.request(deliver_posts);
     }
@@ -553,19 +770,44 @@ fn module_step(
 }
 
 fn deliver_posts() {
-    while let Some(post) = POSTS.lock().ok().and_then(|mut posts| (!posts.is_empty()).then(|| posts.remove(0))) {
-        if post.revoked.load(Ordering::Acquire) { continue; }
-        let Some(core) = post.core.upgrade() else { continue; };
-        let registered = core.runtime.lock().is_ok_and(|runtime| runtime.registered(&post.owner, "component_post") && runtime.grants(&post.owner).is_some_and(|grants| grants.source_sha256 == post.source));
+    while let Some(post) = POSTS
+        .lock()
+        .ok()
+        .and_then(|mut posts| (!posts.is_empty()).then(|| posts.remove(0)))
+    {
+        if post.revoked.load(Ordering::Acquire) {
+            continue;
+        }
+        let Some(core) = post.core.upgrade() else {
+            continue;
+        };
+        let registered = core.runtime.lock().is_ok_and(|runtime| {
+            runtime.registered(&post.owner, "component_post")
+                && runtime
+                    .grants(&post.owner)
+                    .is_some_and(|grants| grants.source_sha256 == post.source)
+        });
         if registered {
-            let lead = Lead { permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())), ..post.lead };
-            let _ = block(&core, expansion::REMOTE.scope(true, expansion::invoke_one(&core, &lead, post.owner, "component_post", post.payload)));
+            let lead = Lead {
+                permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
+                ..post.lead
+            };
+            let _ = block(
+                &core,
+                expansion::REMOTE.scope(
+                    true,
+                    expansion::invoke_one(&core, &lead, post.owner, "component_post", post.payload),
+                ),
+            );
         }
     }
 }
 
 pub fn detached(client: &str) {
-    CLIENT_OWNERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(client);
+    CLIENT_OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(client);
     if let Ok(mut modules) = MODULES.lock() {
         modules.retain(|(owner, _), module| {
             if owner == client {
@@ -708,7 +950,15 @@ fn user_command(core: Arc<Core>, command: String, args: String) -> Result<Value,
             )
             .map_err(|error| error.to_string());
             if let Ok(mut runtime) = runtime.lock() {
-                publish(&mut runtime, &owner_host, &views, terminal_owner, "command", ledger, active);
+                publish(
+                    &mut runtime,
+                    &owner_host,
+                    &views,
+                    terminal_owner,
+                    "command",
+                    ledger,
+                    active,
+                );
             }
             result
         },
@@ -716,8 +966,14 @@ fn user_command(core: Arc<Core>, command: String, args: String) -> Result<Value,
     let result =
         block(&core, expansion::REMOTE.scope(true, run))?.ok_or("mod_runtime_poisoned")??;
     let snapshot = snapshot(&core)?;
-    let status = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?.status();
-    Ok(json!({"status": "completed", "result": result["result"], "snapshot": snapshot.as_ref(), "catalog": status}))
+    let status = core
+        .runtime
+        .lock()
+        .map_err(|_| "mod_runtime_poisoned")?
+        .status();
+    Ok(
+        json!({"status": "completed", "result": result["result"], "snapshot": snapshot.as_ref(), "catalog": status}),
+    )
 }
 
 pub fn render(client: &str, slot: &str, props: Value) -> Result<Value, String> {
@@ -771,9 +1027,16 @@ pub fn resource(client: &str, reference: &str) -> Result<(String, Vec<u8>), Stri
     let (resource, owners) = view_resource(&snapshot, reference)
         .ok_or_else(|| format!("resource_not_in_view: {reference}"))?;
     let sources = {
-        let mut runtime = core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-        runtime.refresh_authority().map_err(|e| e.to_string())?;
-        runtime.owners().into_iter().map(|(id, owner)| (id, owner.sha256)).collect::<BTreeMap<_, _>>()
+        let mut runtime = core
+            .input_runtime
+            .lock()
+            .map_err(|_| "mod_runtime_poisoned")?;
+        runtime.refresh(&|| true).map_err(|e| e.to_string())?;
+        runtime
+            .owners()
+            .into_iter()
+            .map(|(id, owner)| (id, owner.sha256))
+            .collect::<BTreeMap<_, _>>()
     };
     let thread = core
         .expansion
@@ -832,34 +1095,54 @@ pub fn recovery_read(client: &str) -> Result<Value, String> {
     recovery_read_from(client, &root, &store)
 }
 
-fn recovery_read_from(client: &str, root: &std::path::Path, store: &codex_omd::ModStore) -> Result<Value, String> {
+fn recovery_read_from(
+    client: &str,
+    root: &std::path::Path,
+    store: &codex_omd::ModStore,
+) -> Result<Value, String> {
     let core = match client_core(client) {
         Ok(core) => core,
         Err(_) if core().is_err() => {
             let status = std::fs::read(root.join("mod-status.json"))
-                .ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()).unwrap_or_default();
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .unwrap_or_default();
             let (mods, store_error) = match store.selection_status() {
                 Ok(selections) => (recovery_entries(&selections, &status), Value::Null),
                 Err(error) => (Vec::new(), Value::from(error.to_string())),
             };
-            return Ok(json!({"mods":mods,"resettable":RESETTABLE,"store_error":store_error,
-                "activation_error":status["activation_error"],"reload_error":status["reload_error"]}));
+            return Ok(
+                json!({"mods":mods,"resettable":RESETTABLE,"store_error":store_error,
+                "activation_error":status["activation_error"],"reload_error":status["reload_error"]}),
+            );
         }
         Err(error) => return Err(error),
     };
-    let mut runtime = core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-    let refresh_error = runtime.refresh_authority().err().map(|error| error.to_string());
+    let mut runtime = core
+        .input_runtime
+        .lock()
+        .map_err(|_| "mod_runtime_poisoned")?;
+    let refresh_error = runtime
+        .refresh(&|| true)
+        .err()
+        .map(|error| error.to_string());
     let status = runtime.status();
     let (mods, store_error) = match store.selection_status().and_then(|mut selections| {
-        let projected = runtime.configuration_listing(json!({"packages":selections["selections"]}))?;
+        let projected =
+            runtime.configuration_listing(json!({"packages":selections["selections"]}))?;
         selections["selections"] = projected["packages"].clone();
         Ok(selections)
     }) {
-        Ok(selections) => (recovery_entries(&selections, &status), refresh_error.map_or(Value::Null, Value::from)),
+        Ok(selections) => (
+            recovery_entries(&selections, &status),
+            refresh_error.map_or(Value::Null, Value::from),
+        ),
         Err(error) => (Vec::new(), Value::from(error.to_string())),
     };
-    Ok(json!({"mods": mods, "resettable": RESETTABLE, "store_error": store_error,
-        "activation_error": status["activation_error"], "reload_error": status["reload_error"]}))
+    Ok(
+        json!({"mods": mods, "resettable": RESETTABLE, "store_error": store_error,
+        "activation_error": status["activation_error"], "reload_error": status["reload_error"]}),
+    )
 }
 
 fn recovery_entries(selections: &Value, status: &Value) -> Vec<Value> {
@@ -903,11 +1186,17 @@ pub fn recovery_apply(client: Option<&str>, action: &str, target: &str) -> Resul
     }
     let selected = client.map(client_core).transpose()?;
     let selected = selected.or_else(|| core().ok());
-    if let Some(core) = &selected { idle(core)?; }
+    if let Some(core) = &selected {
+        idle(core)?;
+    }
     let (_, store) = store()?;
     store.reload().map_err(|error| error.to_string())?;
     if let Some(core) = selected {
-        core.input_runtime.lock().map_err(|_| "mod_runtime_poisoned")?.reload().map_err(|error| error.to_string())?;
+        core.input_runtime
+            .lock()
+            .map_err(|_| "mod_runtime_poisoned")?
+            .reload()
+            .map_err(|error| error.to_string())?;
         reloaded(&core);
     }
     Ok(json!({"action": action, "target": target, "status": "applied"}))
@@ -931,7 +1220,7 @@ pub(super) fn reloaded(core: &Core) {
         }
         None => {
             if let Ok(mut runtime) = core.runtime.lock() {
-                runtime.turn_boundary();
+                runtime.turn_boundary(&|| true);
             }
         }
     }

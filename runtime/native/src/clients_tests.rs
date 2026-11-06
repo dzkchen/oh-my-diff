@@ -7,8 +7,14 @@ async fn inactive_host_keeps_client_attachment_and_recovery_available() {
     let directory = tempfile::tempdir().unwrap();
     let store = codex_omd::ModStore::create(directory.path().join("store")).unwrap();
     let root = directory.path().join("store");
-    std::fs::write(root.join("mod-status.json"), json!({"activation_error":"invalid_host_config"}).to_string()).unwrap();
-    let owner = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000397".parse().unwrap());
+    std::fs::write(
+        root.join("mod-status.json"),
+        json!({"activation_error":"invalid_host_config"}).to_string(),
+    )
+    .unwrap();
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000397".parse().unwrap(),
+    );
     bind("inactive-recovery", owner.clone()).unwrap();
     assert!(published_for("inactive-recovery").is_none());
     let recovery = recovery_read_from("inactive-recovery", &root, &store).unwrap();

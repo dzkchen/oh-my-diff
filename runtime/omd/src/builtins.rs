@@ -21,7 +21,7 @@ pub fn builtins_snapshot(repository: &Path) -> String {
     let repository = repository
         .canonicalize()
         .unwrap_or_else(|_| repository.to_path_buf());
-    let digest = crate::broker::sha256(repository.to_string_lossy().as_bytes());
+    let digest = crate::sha256_hex(repository.to_string_lossy().as_bytes());
     format!("builtins-{}.json", &digest[..16])
 }
 

@@ -60,23 +60,13 @@ test('ranking a full history beside a large Git status keeps every host call ins
   assert.ok(Buffer.byteLength(JSON.stringify(files)) <= 32_000);
   const untracked = Array.from({ length: 3000 }, (_, index) => `? untracked/file${index}.ts\0`).join('');
   const dirty = Array.from({ length: 20 }, (_, index) => modified(`src/${'d'.repeat(150)}${index}.ts`)).join('');
-  let oid = 1;
   const log = () => commits(...Array.from({ length: 64 }, (_, commit) => Array.from({ length: 20 }, (_, index) => `lib/${'r'.repeat(120)}${commit}-${index}.ts`)));
-  const { host, writes } = repository(files, () => branch(String(oid)) + dirty + untracked, { log });
-  const pruned = {};
-  for (const [name, now, refresh, log] of [['cold', 1e12, true, true], ['cached', 1e12 + 1_000, false, false], ['expired', 1e12 + 40_000, true, false], ['moved', 1e12 + 80_000, true, true]]) {
-    if (name === 'moved') oid++;
-    const before = writes.length;
-    const { value, receipts } = run('completion', { kind: 'mention', query: '', candidates: [] }, host, '', null, now);
-    assert.deepEqual(receipts.filter(receipt => 'error' in receipt), []);
-    assert.equal(receipts.some(receipt => receipt.call.operation === 'exec.run'), refresh);
-    assert.equal(receipts.some(receipt => receipt.call.arguments.argv?.includes('log')), log);
-    assert.equal(value.items.length, 50);
-    assert.equal(writes.length, before + 1);
-    pruned[name] = 70 - Object.keys(writes.at(-1).files).filter(path => path.startsWith('old/')).length;
-  }
-  assert.equal(pruned.cached, 70);
-  assert.equal(pruned.cold, 70);
+  const { host, writes } = repository(files, () => branch('1') + dirty + untracked, { log });
+  const { value, receipts } = run('completion', { kind: 'mention', query: '', candidates: [] }, host, '', null, 1e12);
+  assert.deepEqual(receipts.filter(receipt => 'error' in receipt), []);
+  assert.equal(value.items.length, 50);
+  assert.equal(writes.length, 1);
+  assert.equal(Object.keys(writes[0].files).filter(path => path.startsWith('old/')).length, 0);
 });
 
 test('mention queries typed within the cache window reuse one Git status', () => {

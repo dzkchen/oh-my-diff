@@ -1,4 +1,4 @@
-use codex_omd::resource_data::hash;
+use codex_omd::sha256_hex as hash;
 use codex_omd::{ModHost, ModStore};
 use serde_json::{Value, json};
 use std::fs;
@@ -110,13 +110,13 @@ fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
     assert_eq!(status["status"], "denied");
     assert_eq!(status["reason"], "allowance_exhausted");
     store.enable(&package, false).unwrap();
-    host.turn_boundary();
+    host.turn_boundary(&|| true);
     assert!(
         host.subscribers_with_capability("turn_end", "lifecycle")
             .is_empty()
     );
     assert!(
-        host.event_guarded_with("turn_end", json!({}), || true, |_, _| panic!())
+        host.event_scoped_with("turn_end", |_| json!({}).clone(), || true, |_, _| panic!())
             .is_empty()
     );
 }

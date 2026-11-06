@@ -382,12 +382,14 @@ fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
     let reader = scoped("reader", "checkout");
     std::fs::write(reader.join("index.ts"), "export default api => { const seen = api.state.get() !== null; api.command(seen ? 'seen' : 'fresh', () => { api.state.set(true); return seen; }); }").unwrap();
     trust(&second, &reader, &["commands", "store"]);
-    let mut opened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
+    let mut opened =
+        ModHost::open_with(root.join("second"), |_| Ok(()), Some(&checkout), &|| true).unwrap();
     assert_eq!(
         invoke(&mut opened, "reader", "fresh", Value::Null).unwrap(),
         json!(false)
     );
-    let mut reopened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
+    let mut reopened =
+        ModHost::open_with(root.join("second"), |_| Ok(()), Some(&checkout), &|| true).unwrap();
     assert_eq!(
         invoke(&mut reopened, "reader", "seen", Value::Null).unwrap(),
         json!(true)
@@ -468,7 +470,8 @@ fn hosts_opened_in_one_process_share_inspections_of_unchanged_selections() {
         &["commands"],
     );
     let root = temp.path().canonicalize().unwrap();
-    let open = || ModHost::open_in(root.join("store"), |_| Ok(()), &root).unwrap();
+    let open =
+        || ModHost::open_with(root.join("store"), |_| Ok(()), Some(&root), &|| true).unwrap();
     let registrations = |host: &ModHost| host.status()["mods"][0]["registrations"].clone();
     let first = registrations(&open());
     assert_eq!(registrations(&open()), first);
@@ -532,13 +535,18 @@ fn mod_cancellation_discards_state_and_explicit_reload_recovers() {
     let (temp, store, _) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
     let calls = AtomicUsize::new(0);
-    let result = runtime.invoke_guarded(
+    let result = runtime.invoke_with(
         "fixture",
         runtime.generation(),
         "command",
         "count",
         Value::Null,
         || calls.fetch_add(1, Ordering::Relaxed) == 0,
+        |_| {
+            Err(std::io::Error::other(
+                "host_operation_unavailable: requires a native task",
+            ))
+        },
     );
     assert!(
         result
@@ -770,9 +778,9 @@ fn lifecycle_route_registration_resumes_across_two_host_calls() {
     let (temp, _, _) = fixture(source, &["lifecycle", "model"]);
     let mut runtime = host(&temp);
     let mut operations = Vec::new();
-    let results = runtime.event_guarded_with(
+    let results = runtime.event_scoped_with(
         "turn_start",
-        Value::Null,
+        |_| Value::Null.clone(),
         || true,
         |_, call| {
             operations.push(call.operation.clone());
@@ -786,9 +794,9 @@ fn lifecycle_route_registration_resumes_across_two_host_calls() {
     assert!(results.iter().all(|(_, result)| result.is_ok()));
     assert_eq!(operations, vec!["routes.list", "providers.register"]);
     operations.clear();
-    let results = runtime.event_guarded_with(
+    let results = runtime.event_scoped_with(
         "turn_start",
-        Value::Null,
+        |_| Value::Null.clone(),
         || true,
         |_, call| {
             operations.push(call.operation.clone());
@@ -1711,8 +1719,8 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     };
     assert!(invoke(&mut first, "read", Value::Null).is_null());
     invoke(&mut first, "write", json!(2));
-    assert!(!first.refresh_guarded(&|| true).unwrap());
-    assert!(!second.refresh_guarded(&|| true).unwrap());
+    assert!(!first.refresh(&|| true).unwrap());
+    assert!(!second.refresh(&|| true).unwrap());
     assert_eq!(invoke(&mut second, "read", Value::Null), 2);
     assert!(first.state("fixture").unwrap().is_null());
     let mut raced = false;
@@ -1735,7 +1743,7 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     assert_eq!(value, 11);
     assert_eq!(invoke(&mut second, "read", Value::Null), 11);
     store.enable(&path, false).unwrap();
-    first.turn_boundary();
+    first.turn_boundary(&|| true);
     assert!(
         second
             .invoke(
@@ -1753,7 +1761,7 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     store.reload().unwrap();
     assert!(invoke(&mut second, "read", Value::Null).is_null());
     invoke(&mut first, "write", json!(5));
-    first.turn_boundary();
+    first.turn_boundary(&|| true);
     {
         let _thread = codex_omd::StateThread::enter(Some("another".into()));
         assert!(invoke(&mut first, "read", Value::Null).is_null());
@@ -2113,7 +2121,7 @@ fn service_host_operations_keep_provider_identity_and_grants() {
     let mut runtime = host(&temp);
     let mut observed = Vec::new();
     let result = runtime
-        .invoke_scoped_with(
+        .invoke_scoped(
             "consumer",
             runtime.generation(),
             "command",
@@ -2126,6 +2134,7 @@ fn service_host_operations_keep_provider_identity_and_grants() {
                 assert_eq!(call.arguments, json!({"key":"owned"}));
                 Ok(json!({"value":"provider-owned"}))
             },
+            |_| {},
         )
         .unwrap();
     assert_eq!(result, json!({"value":"provider-owned"}));
@@ -2133,7 +2142,7 @@ fn service_host_operations_keep_provider_identity_and_grants() {
     assert_eq!(runtime.status()["service_calls"][0]["provider"], "provider");
     let active = std::cell::Cell::new(true);
     let cancelled = runtime
-        .invoke_scoped_with(
+        .invoke_scoped(
             "consumer",
             runtime.generation(),
             "command",
@@ -2145,6 +2154,7 @@ fn service_host_operations_keep_provider_identity_and_grants() {
                 active.set(false);
                 Ok(json!({"value":"cancelled"}))
             },
+            |_| {},
         )
         .unwrap_err();
     assert!(
@@ -2567,14 +2577,14 @@ fn tool_progress_is_forwarded_once_across_host_call_replay() {
     let generation = runtime.generation();
     let mut updates = Vec::new();
     let value = runtime
-        .invoke_streaming(
+        .invoke_scoped(
             "fixture",
             generation,
             "tool",
             "work",
             json!({}),
             || true,
-            |_| Ok(json!({"ok":true})),
+            |_, _| Ok(json!({"ok":true})),
             |update| updates.push(update),
         )
         .unwrap();
@@ -2662,7 +2672,7 @@ fn disabling_during_native_work_rejects_completion_and_next_generation() {
         )
         .unwrap_err();
     assert!(result.to_string().contains("callback_authority_changed"));
-    runtime.turn_boundary();
+    runtime.turn_boundary(&|| true);
     assert!(
         runtime
             .invoke("fixture", generation, "command", "run", Value::Null)
@@ -2677,7 +2687,7 @@ fn disabling_during_native_work_rejects_completion_and_next_generation() {
 fn native_schema_validation_applies_to_reload_before_activation() {
     let source = "export default api => api.tool({name:'probe',description:'probe',parameters:{type:'object',properties:{}}},()=>null)";
     let (temp, store, path) = fixture(source, &["tools"]);
-    let mut runtime = ModHost::open_validated(
+    let mut runtime = ModHost::open_with(
         temp.path().canonicalize().unwrap().join("store"),
         |schema| {
             if schema["properties"].get("invalid").is_some() {
@@ -2686,6 +2696,8 @@ fn native_schema_validation_applies_to_reload_before_activation() {
                 Ok(())
             }
         },
+        None,
+        &|| true,
     )
     .unwrap();
     let generation = runtime.generation();
@@ -2695,7 +2707,7 @@ fn native_schema_validation_applies_to_reload_before_activation() {
     )
     .unwrap();
     trust(&store, &path, &["tools"]);
-    runtime.turn_boundary();
+    runtime.turn_boundary(&|| true);
     assert_eq!(runtime.generation(), generation);
     assert!(
         runtime.status()["reload_error"]
@@ -3294,6 +3306,64 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
 }
 
 #[test]
+fn timer_data_survives_fresh_callbacks_replacement_and_cancellation_offline() {
+    let (temp, _, _) = fixture(
+        "export default api => { \
+         const later = api.time.after('work', 16, event => api.state.set([...(api.state.get() ?? []), event])); \
+         api.command('start', value => later.start(value)); \
+         api.command('cancel', () => later.cancel()); \
+         api.command('raw', value => api.host.call('events.schedule', value)); \
+         }",
+        &["commands", "events", "store"],
+    );
+    let mut runtime = host(&temp);
+    runtime.offline_test(json!({"schema": 1, "virtual_time_ms": 0, "steps": [
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": {"turn_id": "old"}},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": {"turn_id": "new"}},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": "x".repeat(65_535), "expect_error": "timer_data_limit"},
+        {"type": "advance_time", "ms": 16},
+        {"type": "state", "mod": "fixture", "expect": [{"key": "work", "data": {"turn_id": "new"}}]},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": "cancelled"},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "cancel", "expect": {"cancelled": true}},
+        {"type": "advance_time", "ms": 16},
+        {"type": "state", "mod": "fixture", "expect": [{"key": "work", "data": {"turn_id": "new"}}]},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "start", "payload": null},
+        {"type": "advance_time", "ms": 16},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "raw", "payload": {"key": "time:work", "delay_ms": 16}},
+        {"type": "advance_time", "ms": 16},
+        {"type": "state", "mod": "fixture", "expect": [
+            {"key": "work", "data": {"turn_id": "new"}}, {"key": "work", "data": null}, {"key": "work"}
+        ]}
+    ]})).unwrap();
+}
+
+#[test]
+fn timer_data_cannot_schedule_work_during_rendering() {
+    let (temp, _, _) = fixture(
+        "export default api => { const later = api.time.after('work', 16, () => {}); \
+         api.intercept('render', () => later.start({turn_id: 't'})); }",
+        &["events", "terminal"],
+    );
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let result = codex_omd::render_shared(
+        &runtime,
+        json!({"component": "assistant_message", "id": "m", "surface": "fullscreen",
+            "viewport": {"columns": 80, "rows": 24}, "lifecycle": "final", "owner": null,
+            "props": {"text": "Hello", "first": true, "truncated": false}}),
+        || true,
+    )
+    .unwrap();
+    assert_eq!(result.result, json!({"tree": [{"type": "native"}]}));
+    assert!(
+        result.trace.iter().any(|entry| entry["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("host_operation_unavailable"))),
+        "{:?}",
+        result.trace
+    );
+}
+
+#[test]
 fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
     let (temp, _, _) = fixture(
         "export default api => { api.command('nap', () => api.time.sleep(300)); api.command('doze', () => api.time.sleep(5000)); api.intercept('command_list', async (e, next) => { await api.time.sleep(10); return next(e); }); api.intercept('composer_edit', async (e, next) => { await api.time.sleep(10); return next(e); }); }",
@@ -3538,19 +3608,41 @@ fn settings_write_explicit_scope_requires_package_authority() {
         ("{values:{}}", vec!["commands"], true),
         ("{scope:'user',values:{}}", vec!["commands"], false),
         ("{scope:'project',values:{}}", vec!["commands"], false),
-        ("{scope:'user',values:{}}", vec!["commands", "packages"], true),
+        (
+            "{scope:'user',values:{}}",
+            vec!["commands", "packages"],
+            true,
+        ),
     ] {
-        let source = format!("export default api => api.command('write', () => api.host.call('settings.write', {arguments}))");
+        let source = format!(
+            "export default api => api.command('write', () => api.host.call('settings.write', {arguments}))"
+        );
         let (temp, _, _) = fixture(&source, &capabilities);
         let mut runtime = host(&temp);
         let mut called = false;
-        let result = runtime.invoke_with("fixture", runtime.generation(), "command", "write", Value::Null, || true, |_| {
-            called = true;
-            Ok(json!({"settings":{}}))
-        });
+        let result = runtime.invoke_with(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "write",
+            Value::Null,
+            || true,
+            |_| {
+                called = true;
+                Ok(json!({"settings":{}}))
+            },
+        );
         assert_eq!(called, allowed, "{arguments}");
-        if allowed { assert!(result.is_ok(), "{result:?}"); }
-        else { assert!(result.unwrap_err().to_string().contains("capability_denied: packages")); }
+        if allowed {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("capability_denied: packages")
+            );
+        }
     }
 }
 
@@ -4020,7 +4112,7 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
     let mut runtime = host(&temp);
     let mut observed = Vec::new();
     let mut run = |runtime: &mut ModHost, command: &str| {
-        runtime.invoke_scoped_with(
+        runtime.invoke_scoped(
             "consumer",
             runtime.generation(),
             "command",
@@ -4035,6 +4127,7 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
                     Value::Null
                 })
             },
+            |_| {},
         )
     };
     assert_eq!(run(&mut runtime, "read").unwrap(), json!("value"));
@@ -4081,7 +4174,7 @@ fn host_operation_events_mask_store_credential_and_exec_payloads() {
     trust(&store, &consumer, granted);
     let mut runtime = host(&temp);
     runtime
-        .invoke_scoped_with(
+        .invoke_scoped(
             "consumer",
             runtime.generation(),
             "command",
@@ -4094,6 +4187,7 @@ fn host_operation_events_mask_store_credential_and_exec_payloads() {
                 }
                 Ok(json!({"secret": "result"}))
             },
+            |_| {},
         )
         .unwrap();
     let seen = runtime
@@ -4344,7 +4438,7 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
     );
     assert!(runtime.grants("helper").is_some() && runtime.grants("guard").is_some());
     let invoke = |runtime: &mut ModHost, command: &str| {
-        runtime.invoke_scoped_with(
+        runtime.invoke_scoped(
             "limited",
             runtime.generation(),
             "command",
@@ -4352,6 +4446,7 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
             Value::Null,
             || true,
             |_, _| Ok(json!("ran")),
+            |_| {},
         )
     };
     assert!(
@@ -5192,22 +5287,39 @@ fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
 
 #[test]
 fn configuration_owners_reload_independently_without_writing_defaults() {
-    let (temp, store, path) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
+    let (temp, store, path) = fixture(
+        "export default api => api.command('value', () => 1)",
+        &["commands"],
+    );
     let saved = std::fs::read(store.root().join("mods.json")).unwrap();
     let config: Value = serde_json::from_slice(&saved).unwrap();
     let selection = serde_json::from_value(config["mods"][0].clone()).unwrap();
     let mut first = host(&temp);
     let mut second = host(&temp);
     let owner = first.configuration_overrides();
-    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
+    owner
+        .lock()
+        .unwrap()
+        .set_enabled(&selection, false)
+        .unwrap();
     assert!(first.refresh_due());
     first.reload().unwrap();
     assert!(first.status()["mods"].as_array().unwrap().is_empty());
     second.reload().unwrap();
     assert_eq!(second.status()["mods"][0]["id"], "fixture");
     assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
-    second = ModHost::open_with_overrides(store.root().to_path_buf(), |_| Ok(()), None, &|| true, owner.clone()).unwrap();
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        saved
+    );
+    second = ModHost::open_with_overrides(
+        store.root().to_path_buf(),
+        |_| Ok(()),
+        None,
+        &|| true,
+        owner.clone(),
+    )
+    .unwrap();
     second.reload().unwrap();
     assert!(second.status()["mods"].as_array().unwrap().is_empty());
     store.enable(&path, false).unwrap();
@@ -5215,7 +5327,12 @@ fn configuration_owners_reload_independently_without_writing_defaults() {
     first.reload().unwrap();
     assert_eq!(first.status()["mods"][0]["id"], "fixture");
     let generation = first.generation();
-    assert_eq!(first.invoke("fixture", generation, "command", "value", Value::Null).unwrap(), json!(1));
+    assert_eq!(
+        first
+            .invoke("fixture", generation, "command", "value", Value::Null)
+            .unwrap(),
+        json!(1)
+    );
     owner.lock().unwrap().reset(&selection).unwrap();
     first.reload().unwrap();
     assert!(first.status()["mods"].as_array().unwrap().is_empty());
@@ -5223,7 +5340,10 @@ fn configuration_owners_reload_independently_without_writing_defaults() {
 
 #[test]
 fn configuration_owner_settings_override_files_and_reset_to_latest_inheritance() {
-    let (temp, store, path) = fixture("export default api => api.command('read', () => JSON.stringify(api.settings))", &["commands"]);
+    let (temp, store, path) = fixture(
+        "export default api => api.command('read', () => JSON.stringify(api.settings))",
+        &["commands"],
+    );
     let manifest = path.join("mod.json");
     let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
     value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"schema"}},"additionalProperties":false});
@@ -5238,47 +5358,98 @@ fn configuration_owner_settings_override_files_and_reset_to_latest_inheritance()
     let mut b = host(&temp);
     let saved = std::fs::read(store.root().join("mods.json")).unwrap();
     let owner = a.configuration_overrides();
-    owner.lock().unwrap().write_settings(&selection, &package, &selection.settings, json!({"mode":"local"}).as_object().unwrap()).unwrap();
+    owner
+        .lock()
+        .unwrap()
+        .write_settings(
+            &selection,
+            &package,
+            &selection.settings,
+            json!({"mode":"local"}).as_object().unwrap(),
+        )
+        .unwrap();
     let read = |runtime: &mut ModHost| {
         runtime.reload().unwrap();
-        runtime.invoke("fixture", runtime.generation(), "command", "read", Value::Null).unwrap()
+        runtime
+            .invoke(
+                "fixture",
+                runtime.generation(),
+                "command",
+                "read",
+                Value::Null,
+            )
+            .unwrap()
     };
     assert_eq!(read(&mut a), json!(r#"{"mode":"local"}"#));
     assert_eq!(read(&mut b), json!(r#"{"mode":"file"}"#));
     std::fs::write(settings.join("fixture.json"), r#"{"mode":"latest"}"#).unwrap();
     assert_eq!(read(&mut a), json!(r#"{"mode":"local"}"#));
-    owner.lock().unwrap().reset_setting(&selection, "mode").unwrap();
+    owner
+        .lock()
+        .unwrap()
+        .reset_setting(&selection, "mode")
+        .unwrap();
     assert_eq!(read(&mut a), json!(r#"{"mode":"latest"}"#));
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        saved
+    );
 }
 
 #[test]
 fn configuration_owner_applies_before_initial_activation() {
-    let (temp, store, _) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
+    let (temp, store, _) = fixture(
+        "export default api => api.command('value', () => 1)",
+        &["commands"],
+    );
     let selection = store.configuration().unwrap().mods[0].clone();
-    let owner = std::sync::Arc::new(std::sync::Mutex::new(codex_omd::ConfigurationOverrides::default()));
-    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
+    let owner = std::sync::Arc::new(std::sync::Mutex::new(
+        codex_omd::ConfigurationOverrides::default(),
+    ));
+    owner
+        .lock()
+        .unwrap()
+        .set_enabled(&selection, false)
+        .unwrap();
     for _ in 0..3 {
         let runtime = ModHost::open_with_overrides(
-            store.root().to_path_buf(), |_| Ok(()), Some(temp.path()), &|| true, owner.clone(),
-        ).unwrap();
+            store.root().to_path_buf(),
+            |_| Ok(()),
+            Some(temp.path()),
+            &|| true,
+            owner.clone(),
+        )
+        .unwrap();
         assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
-        assert!(std::sync::Arc::ptr_eq(&runtime.configuration_overrides(), &owner));
+        assert!(std::sync::Arc::ptr_eq(
+            &runtime.configuration_overrides(),
+            &owner
+        ));
     }
     assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
 }
 
 #[test]
 fn configuration_owner_revocation_discards_overrides_before_retrust() {
-    let (temp, store, path) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
+    let (temp, store, path) = fixture(
+        "export default api => api.command('value', () => 1)",
+        &["commands"],
+    );
     let selection = store.configuration().unwrap().mods[0].clone();
     let mut runtime = host(&temp);
     let owner = runtime.configuration_overrides();
     let saved = std::fs::read(store.root().join("mods.json")).unwrap();
-    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
+    owner
+        .lock()
+        .unwrap()
+        .set_enabled(&selection, false)
+        .unwrap();
     runtime.reload().unwrap();
     assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        saved
+    );
     store.revoke(path.to_str().unwrap()).unwrap();
     runtime.reload().unwrap();
     assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
@@ -5290,18 +5461,28 @@ fn configuration_owner_revocation_discards_overrides_before_retrust() {
 
 #[test]
 fn configuration_owner_missed_revocation_does_not_restore_old_overrides() {
-    let (temp, store, path) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
+    let (temp, store, path) = fixture(
+        "export default api => api.command('value', () => 1)",
+        &["commands"],
+    );
     let selection = store.configuration().unwrap().mods[0].clone();
     let mut runtime = host(&temp);
     let owner = runtime.configuration_overrides();
-    owner.lock().unwrap().set_enabled(&selection, false).unwrap();
+    owner
+        .lock()
+        .unwrap()
+        .set_enabled(&selection, false)
+        .unwrap();
     runtime.reload().unwrap();
     store.revoke(path.to_str().unwrap()).unwrap();
     trust(&store, &path, &["commands"]);
     runtime.reload().unwrap();
     assert_eq!(runtime.status()["mods"][0]["id"], "fixture");
     let current = store.configuration().unwrap().mods[0].clone();
-    assert_eq!(owner.lock().unwrap().values(&current), json!({"settings":{}}));
+    assert_eq!(
+        owner.lock().unwrap().values(&current),
+        json!({"settings":{}})
+    );
 }
 
 #[test]
@@ -5316,14 +5497,28 @@ fn configuration_owner_missed_package_lifecycle_discards_overrides() {
     value["provenance"] = json!({"maintainer":"Fixture", "source":"fixture"});
     std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     let request = codex_omd::ModInstallRequest {
-        action: None, source: codex_omd::ModPackageSource::Local { path: source }, index: None,
-        scope: "user".into(), offline: false,
-        trust: codex_omd::ModPackageTrust { packages: std::collections::BTreeMap::from([("fixture".into(), codex_omd::ModPackageGrant {
-            capabilities: vec![], dependencies: false, lifecycle: vec![], secret_environment: vec![],
-        })]) }, settings: Default::default(),
+        action: None,
+        source: codex_omd::ModPackageSource::Local { path: source },
+        index: None,
+        scope: "user".into(),
+        offline: false,
+        trust: codex_omd::ModPackageTrust {
+            packages: std::collections::BTreeMap::from([(
+                "fixture".into(),
+                codex_omd::ModPackageGrant {
+                    capabilities: vec![],
+                    dependencies: false,
+                    lifecycle: vec![],
+                    secret_environment: vec![],
+                },
+            )]),
+        },
+        settings: Default::default(),
     };
     let plan = store.package_plan(request.clone()).unwrap();
-    store.package_apply(request.clone(), &plan.confirmation).unwrap();
+    store
+        .package_apply(request.clone(), &plan.confirmation)
+        .unwrap();
     let mut runtime = host(&temp);
     for remove in [false, true] {
         store.package_enable("fixture").unwrap();
@@ -5333,19 +5528,32 @@ fn configuration_owner_missed_package_lifecycle_discards_overrides() {
         runtime.reload().unwrap();
         if remove {
             let plan = store.package_uninstall_plan("fixture").unwrap();
-            store.package_uninstall("fixture", &plan.confirmation).unwrap();
+            store
+                .package_uninstall("fixture", &plan.confirmation)
+                .unwrap();
             let plan = store.package_plan(request.clone()).unwrap();
-            store.package_apply(request.clone(), &plan.confirmation).unwrap();
+            store
+                .package_apply(request.clone(), &plan.confirmation)
+                .unwrap();
         } else {
-            store.package_quarantine("fixture", "fixture restriction").unwrap();
+            store
+                .package_quarantine("fixture", "fixture restriction")
+                .unwrap();
             store.package_unblock("fixture").unwrap();
         }
         store.package_enable("fixture").unwrap();
         runtime.reload().unwrap();
-        assert_eq!(runtime.status()["mods"][0]["id"], "fixture", "remove={remove}");
+        assert_eq!(
+            runtime.status()["mods"][0]["id"],
+            "fixture",
+            "remove={remove}"
+        );
         let current = store.configuration().unwrap().mods[0].clone();
         assert!(current.configuration_epoch > saved.configuration_epoch);
-        assert_eq!(owner.lock().unwrap().values(&current), json!({"settings":{}}));
+        assert_eq!(
+            owner.lock().unwrap().values(&current),
+            json!({"settings":{}})
+        );
     }
 }
 
@@ -5371,12 +5579,19 @@ fn configuration_owner_cannot_reactivate_revoked_empty_grant() {
 #[test]
 fn configuration_owner_source_changes_discard_disabled_overrides() {
     for name in ["index.ts", "mod.json"] {
-        let (temp, store, path) = fixture("export default api => api.command('value', () => 1)", &["commands"]);
+        let (temp, store, path) = fixture(
+            "export default api => api.command('value', () => 1)",
+            &["commands"],
+        );
         let selection = store.configuration().unwrap().mods[0].clone();
         let mut runtime = host(&temp);
         let owner = runtime.configuration_overrides();
         let saved = std::fs::read(store.root().join("mods.json")).unwrap();
-        owner.lock().unwrap().set_enabled(&selection, false).unwrap();
+        owner
+            .lock()
+            .unwrap()
+            .set_enabled(&selection, false)
+            .unwrap();
         runtime.reload().unwrap();
         let file = path.join(name);
         let original = std::fs::read(&file).unwrap();
@@ -5384,17 +5599,28 @@ fn configuration_owner_source_changes_discard_disabled_overrides() {
             std::fs::write(&file, "export default api => api.command('value', () => 2)").unwrap();
         } else {
             let mut manifest: Value = serde_json::from_slice(&original).unwrap();
-            manifest["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string"}}});
+            manifest["settings_schema"] =
+                json!({"type":"object","properties":{"mode":{"type":"string"}}});
             std::fs::write(&file, serde_json::to_vec(&manifest).unwrap()).unwrap();
         }
         assert!(runtime.refresh_due(), "{name}");
-        assert!(runtime.refresh_authority().unwrap_err().to_string().contains("untrusted_source"), "{name}");
+        assert!(
+            runtime
+                .refresh(&|| true)
+                .unwrap_err()
+                .to_string()
+                .contains("untrusted_source"),
+            "{name}"
+        );
         assert!(owner.lock().unwrap().enabled(&selection), "{name}");
         assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
         std::fs::write(&file, original).unwrap();
         runtime.reload().unwrap();
         assert_eq!(runtime.status()["mods"][0]["id"], "fixture", "{name}");
-        assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+        assert_eq!(
+            std::fs::read(store.root().join("mods.json")).unwrap(),
+            saved
+        );
     }
 }
 
@@ -5409,20 +5635,55 @@ fn terminal_configuration_controls_are_atomic_and_reset_to_current_defaults() {
     let mut a = host(&temp);
     let mut b = host(&temp);
     let saved = std::fs::read(store.root().join("mods.json")).unwrap();
-    assert_eq!(a.write_configuration("fixture", &json!({"mode":"local"}), "terminal", &[]).unwrap()["settings"]["mode"], "local");
-    assert!(a.write_configuration("fixture", &json!({"mode":2}), "terminal", &["mode".into()]).is_err());
-    assert!(a.write_configuration("fixture", &json!({"mode":"bad"}), "bogus", &[]).is_err());
-    assert_eq!(a.write_configuration("fixture", &json!({}), "terminal", &[]).unwrap()["settings"]["mode"], "local");
-    assert_eq!(b.write_configuration("fixture", &json!({}), "terminal", &[]).unwrap()["settings"]["mode"], "schema");
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
-    b.write_configuration("fixture", &json!({"mode":"latest"}), "shared", &[]).unwrap();
+    assert_eq!(
+        a.write_configuration("fixture", &json!({"mode":"local"}), "terminal", &[])
+            .unwrap()["settings"]["mode"],
+        "local"
+    );
+    assert!(
+        a.write_configuration("fixture", &json!({"mode":2}), "terminal", &["mode".into()])
+            .is_err()
+    );
+    assert!(
+        a.write_configuration("fixture", &json!({"mode":"bad"}), "bogus", &[])
+            .is_err()
+    );
+    assert_eq!(
+        a.write_configuration("fixture", &json!({}), "terminal", &[])
+            .unwrap()["settings"]["mode"],
+        "local"
+    );
+    assert_eq!(
+        b.write_configuration("fixture", &json!({}), "terminal", &[])
+            .unwrap()["settings"]["mode"],
+        "schema"
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        saved
+    );
+    b.write_configuration("fixture", &json!({"mode":"latest"}), "shared", &[])
+        .unwrap();
     let shared = std::fs::read(store.root().join("mods.json")).unwrap();
     assert_ne!(saved, shared);
-    assert_eq!(a.write_configuration("fixture", &json!({}), "terminal", &[]).unwrap()["settings"]["mode"], "local");
-    assert_eq!(a.write_configuration("fixture", &json!({}), "terminal", &["mode".into()]).unwrap()["settings"]["mode"], "latest");
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), shared);
+    assert_eq!(
+        a.write_configuration("fixture", &json!({}), "terminal", &[])
+            .unwrap()["settings"]["mode"],
+        "local"
+    );
+    assert_eq!(
+        a.write_configuration("fixture", &json!({}), "terminal", &["mode".into()])
+            .unwrap()["settings"]["mode"],
+        "latest"
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        shared
+    );
     store.enable(&path, false).unwrap();
-    let preview = a.preview_configuration(json!({"action":"enable","id":"fixture","target":"terminal"})).unwrap();
+    let preview = a
+        .preview_configuration(json!({"action":"enable","id":"fixture","target":"terminal"}))
+        .unwrap();
     a.apply_configuration(&preview.control).unwrap();
     a.reload().unwrap();
     assert_eq!(a.status()["mods"][0]["id"], "fixture");
@@ -5435,26 +5696,56 @@ fn terminal_configuration_controls_are_atomic_and_reset_to_current_defaults() {
 fn terminal_configuration_same_id_listing_keeps_project_and_user_authority_separate() {
     let (temp, store, user) = fixture("export default api => {}", &[]);
     let root = temp.path().canonicalize().unwrap();
-    let project = packaged(&root, "project-copy", "fixture", "export default api => {};", &[], &[]);
+    let project = packaged(
+        &root,
+        "project-copy",
+        "fixture",
+        "export default api => {};",
+        &[],
+        &[],
+    );
     trust_scoped(&store, &project, &[], "project");
     store.enable(&project, false).unwrap();
     let saved = std::fs::read(store.root().join("mods.json")).unwrap();
     let mut runtime = host(&temp);
-    let preview = runtime.preview_configuration(json!({"action":"enable","id":"fixture","scope":"project","target":"terminal"})).unwrap();
+    let preview = runtime
+        .preview_configuration(
+            json!({"action":"enable","id":"fixture","scope":"project","target":"terminal"}),
+        )
+        .unwrap();
     runtime.apply_configuration(&preview.control).unwrap();
-    let listed = runtime.configuration_listing(codex_omd::package_controls::list(&store, Some(&runtime.status())).unwrap()).unwrap();
+    let listed = runtime
+        .configuration_listing(
+            codex_omd::package_controls::list(&store, Some(&runtime.status())).unwrap(),
+        )
+        .unwrap();
     let rows = listed["packages"].as_array().unwrap();
-    let project_row = rows.iter().find(|row| row["path"] == json!(project)).unwrap();
+    let project_row = rows
+        .iter()
+        .find(|row| row["path"] == json!(project))
+        .unwrap();
     assert_eq!(project_row["enabled"], true);
     assert_eq!(project_row["inherited_enabled"], false);
     assert_eq!(project_row["overrides"]["enabled"], true);
     let user_row = rows.iter().find(|row| row["path"] == json!(user)).unwrap();
     assert_eq!(user_row["enabled"], true);
     assert!(user_row["overrides"]["enabled"].is_null());
-    let preview = runtime.preview_configuration(json!({"action":"disable","id":"fixture","scope":"user","target":"terminal"})).unwrap();
+    let preview = runtime
+        .preview_configuration(
+            json!({"action":"disable","id":"fixture","scope":"user","target":"terminal"}),
+        )
+        .unwrap();
     runtime.apply_configuration(&preview.control).unwrap();
-    let listed = runtime.configuration_listing(codex_omd::package_controls::list(&store, Some(&runtime.status())).unwrap()).unwrap();
-    let listed = codex_omd::package_controls::project_fields(listed, json!({"fields":["id","scope","enabled","overrides"]})).unwrap();
+    let listed = runtime
+        .configuration_listing(
+            codex_omd::package_controls::list(&store, Some(&runtime.status())).unwrap(),
+        )
+        .unwrap();
+    let listed = codex_omd::package_controls::project_fields(
+        listed,
+        json!({"fields":["id","scope","enabled","overrides"]}),
+    )
+    .unwrap();
     let rows = listed["packages"].as_array().unwrap();
     let user_row = rows.iter().find(|row| row["scope"] == "user").unwrap();
     let project_row = rows.iter().find(|row| row["scope"] == "project").unwrap();
@@ -5462,7 +5753,10 @@ fn terminal_configuration_same_id_listing_keeps_project_and_user_authority_separ
     assert_eq!(user_row["overrides"]["enabled"], false);
     assert_eq!(project_row["enabled"], true);
     assert!(user_row.get("settings").is_none());
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        saved
+    );
 }
 
 #[test]
@@ -5478,40 +5772,89 @@ fn terminal_configuration_installed_save_defaults_is_validated_before_shared_mut
     value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"schema"}},"additionalProperties":false});
     std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     let request = codex_omd::ModInstallRequest {
-        action: None, source: codex_omd::ModPackageSource::Local { path: source }, index: None,
-        scope: "user".into(), offline: false,
-        trust: codex_omd::ModPackageTrust { packages: std::collections::BTreeMap::from([("fixture".into(), codex_omd::ModPackageGrant {
-            capabilities: vec![], dependencies: false, lifecycle: vec![], secret_environment: vec![],
-        })]) }, settings: Default::default(),
+        action: None,
+        source: codex_omd::ModPackageSource::Local { path: source },
+        index: None,
+        scope: "user".into(),
+        offline: false,
+        trust: codex_omd::ModPackageTrust {
+            packages: std::collections::BTreeMap::from([(
+                "fixture".into(),
+                codex_omd::ModPackageGrant {
+                    capabilities: vec![],
+                    dependencies: false,
+                    lifecycle: vec![],
+                    secret_environment: vec![],
+                },
+            )]),
+        },
+        settings: Default::default(),
     };
     let plan = store.package_plan(request.clone()).unwrap();
     store.package_apply(request, &plan.confirmation).unwrap();
     let mut runtime = host(&temp);
-    let preview = runtime.preview_configuration(json!({"action":"enable","id":"fixture","target":"terminal"})).unwrap();
+    let preview = runtime
+        .preview_configuration(json!({"action":"enable","id":"fixture","target":"terminal"}))
+        .unwrap();
     let before = std::fs::read(store.root().join("mods.json")).unwrap();
     runtime.apply_configuration(&preview.control).unwrap();
-    runtime.write_configuration("fixture", &json!({"mode":"local"}), "terminal", &[]).unwrap();
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), before);
+    runtime
+        .write_configuration("fixture", &json!({"mode":"local"}), "terminal", &[])
+        .unwrap();
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        before
+    );
     let selection = store.configuration().unwrap().mods[0].clone();
-    assert!(store.save_configuration(&selection.path, std::collections::BTreeMap::from([("mode".into(), json!(42))]), true).is_err());
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), before);
-    let save = runtime.preview_configuration(json!({"action":"save-defaults","id":"fixture","target":"terminal"})).unwrap();
+    assert!(
+        store
+            .save_configuration(
+                &selection.path,
+                std::collections::BTreeMap::from([("mode".into(), json!(42))]),
+                true
+            )
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        before
+    );
+    let save = runtime
+        .preview_configuration(json!({"action":"save-defaults","id":"fixture","target":"terminal"}))
+        .unwrap();
     runtime.apply_configuration(&save.control).unwrap();
     let saved = store.configuration().unwrap().mods[0].clone();
     assert!(saved.enabled);
     assert_eq!(saved.settings["mode"], "local");
     let fresh = host(&temp);
     assert_eq!(fresh.status()["mods"][0]["id"], "fixture");
-    runtime.write_configuration("fixture", &json!({"mode":"temporary"}), "terminal", &[]).unwrap();
-    let enable = runtime.preview_configuration(json!({"action":"enable","id":"fixture","target":"terminal"})).unwrap();
+    runtime
+        .write_configuration("fixture", &json!({"mode":"temporary"}), "terminal", &[])
+        .unwrap();
+    let enable = runtime
+        .preview_configuration(json!({"action":"enable","id":"fixture","target":"terminal"}))
+        .unwrap();
     runtime.apply_configuration(&enable.control).unwrap();
-    store.package_quarantine("fixture", "fixture rejection").unwrap();
+    store
+        .package_quarantine("fixture", "fixture rejection")
+        .unwrap();
     let quarantined = std::fs::read(store.root().join("mods.json")).unwrap();
-    runtime.refresh_authority().unwrap();
+    runtime.refresh(&|| true).unwrap();
     assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
-    assert!(runtime.write_configuration("fixture", &json!({"mode":"forbidden"}), "terminal", &[]).is_err());
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), quarantined);
-    let values = runtime.configuration_overrides().lock().unwrap().values(&saved);
+    assert!(
+        runtime
+            .write_configuration("fixture", &json!({"mode":"forbidden"}), "terminal", &[])
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        quarantined
+    );
+    let values = runtime
+        .configuration_overrides()
+        .lock()
+        .unwrap()
+        .values(&saved);
     assert!(values["settings"].as_object().unwrap().is_empty());
     assert!(values["enabled"].is_null());
     store.package_unblock("fixture").unwrap();
@@ -5519,7 +5862,11 @@ fn terminal_configuration_installed_save_defaults_is_validated_before_shared_mut
     assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
     store.package_enable("fixture").unwrap();
     runtime.reload().unwrap();
-    let listed = runtime.configuration_listing(codex_omd::package_controls::list(&store, Some(&runtime.status())).unwrap()).unwrap();
+    let listed = runtime
+        .configuration_listing(
+            codex_omd::package_controls::list(&store, Some(&runtime.status())).unwrap(),
+        )
+        .unwrap();
     assert_eq!(listed["packages"][0]["settings"]["mode"], "local");
 }
 
@@ -5536,54 +5883,98 @@ fn terminal_configuration_save_defaults_updates_settings_files_and_recovers_them
         std::fs::create_dir_all(&directory).unwrap();
         let name = format!("settings/fixture.{extension}");
         let settings_path = store.root().join(&name);
-        let original = if extension == "json" { "{\"mode\":\"file\"}\n" } else { "# preserve this on rollback\nmode: file\n" };
+        let original = if extension == "json" {
+            "{\"mode\":\"file\"}\n"
+        } else {
+            "# preserve this on rollback\nmode: file\n"
+        };
         std::fs::write(&settings_path, original).unwrap();
         let old_config = serde_json::to_value(store.configuration().unwrap()).unwrap();
         let old_lock = serde_json::to_value(store.package_lock().unwrap()).unwrap();
         let mut runtime = host(&temp);
-        runtime.write_configuration("fixture", &json!({"mode":"local"}), "terminal", &[]).unwrap();
-        let save = runtime.preview_configuration(json!({"action":"save-defaults","id":"fixture"})).unwrap();
+        runtime
+            .write_configuration("fixture", &json!({"mode":"local"}), "terminal", &[])
+            .unwrap();
+        let save = runtime
+            .preview_configuration(json!({"action":"save-defaults","id":"fixture"}))
+            .unwrap();
         runtime.apply_configuration(&save.control).unwrap();
-        let listed = runtime.configuration_listing(codex_omd::package_controls::list(&store, None).unwrap()).unwrap();
+        let listed = runtime
+            .configuration_listing(codex_omd::package_controls::list(&store, None).unwrap())
+            .unwrap();
         assert_eq!(listed["packages"][0]["settings"]["mode"], "local");
         assert_eq!(listed["packages"][0]["overrides"]["settings"], json!({}));
         let fresh = host(&temp);
-        let listed = fresh.configuration_listing(codex_omd::package_controls::list(&store, None).unwrap()).unwrap();
+        let listed = fresh
+            .configuration_listing(codex_omd::package_controls::list(&store, None).unwrap())
+            .unwrap();
         assert_eq!(listed["packages"][0]["settings"]["mode"], "local");
         let committed_config = std::fs::read(store.root().join("mods.json")).unwrap();
         let committed_lock = std::fs::read(store.root().join("packages.lock.json")).unwrap();
         let committed_file = std::fs::read(&settings_path).unwrap();
-        assert!(store.save_configuration(&path, std::collections::BTreeMap::from([("mode".into(), json!("x".repeat(70_000)))]), true).is_err());
-        assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), committed_config);
-        assert_eq!(std::fs::read(store.root().join("packages.lock.json")).unwrap(), committed_lock);
+        assert!(
+            store
+                .save_configuration(
+                    &path,
+                    std::collections::BTreeMap::from([("mode".into(), json!("x".repeat(70_000)))]),
+                    true
+                )
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(store.root().join("mods.json")).unwrap(),
+            committed_config
+        );
+        assert_eq!(
+            std::fs::read(store.root().join("packages.lock.json")).unwrap(),
+            committed_lock
+        );
         assert_eq!(std::fs::read(&settings_path).unwrap(), committed_file);
         std::fs::write(store.root().join("package-transaction.json"), serde_json::to_vec(&json!({
             "old_config":old_config,"old_lock":old_lock,"old_settings":{"name":name,"bytes":original.as_bytes()}
         })).unwrap()).unwrap();
         store.authorize_runner().unwrap();
         assert_eq!(std::fs::read(&settings_path).unwrap(), original.as_bytes());
-        assert_eq!(serde_json::to_value(store.configuration().unwrap()).unwrap(), old_config);
-        assert_eq!(serde_json::to_value(store.package_lock().unwrap()).unwrap(), old_lock);
+        assert_eq!(
+            serde_json::to_value(store.configuration().unwrap()).unwrap(),
+            old_config
+        );
+        assert_eq!(
+            serde_json::to_value(store.package_lock().unwrap()).unwrap(),
+            old_lock
+        );
         assert!(!store.root().join("package-transaction.json").exists());
     }
 }
 
 #[test]
 fn configuration_owner_open_must_not_inherit_failed_activation_controls() {
-    let (temp, store, path) = fixture("export default api => { api.builtins({modes:{disable:['plan']}}); if (api.settings.mode === 'broken') throw new Error('owner activation failed'); }", &["builtins"]);
+    let (temp, store, path) = fixture(
+        "export default api => { api.builtins({modes:{disable:['plan']}}); if (api.settings.mode === 'broken') throw new Error('owner activation failed'); }",
+        &["builtins"],
+    );
     let manifest = path.join("mod.json");
     let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
-    value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"good"}}});
+    value["settings_schema"] =
+        json!({"type":"object","properties":{"mode":{"type":"string","default":"good"}}});
     std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     trust(&store, &path, &["builtins"]);
     let previous = host(&temp);
     assert_eq!(previous.builtin_controls().len(), 1);
     let mut next = host(&temp);
-    next.write_configuration("fixture", &json!({"mode":"broken"}), "terminal", &[]).unwrap();
+    next.write_configuration("fixture", &json!({"mode":"broken"}), "terminal", &[])
+        .unwrap();
     let owner = next.configuration_overrides();
     assert!(next.reload().is_err());
     assert_eq!(previous.builtin_controls().len(), 1);
-    let fresh = ModHost::open_with_overrides(store.root().to_path_buf(), |_| Ok(()), None, &|| true, owner).unwrap();
+    let fresh = ModHost::open_with_overrides(
+        store.root().to_path_buf(),
+        |_| Ok(()),
+        None,
+        &|| true,
+        owner,
+    )
+    .unwrap();
     assert!(fresh.builtin_controls().is_empty());
 }
 
@@ -5598,29 +5989,68 @@ fn terminal_configuration_preview_reviews_effective_values_and_rejects_changes()
     value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"schema"}},"additionalProperties":false});
     std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     let inspected = ModStore::inspect_package(&source).unwrap();
-    store.trust(source.clone(), inspected["sha256"].as_str().unwrap(), vec![], "user").unwrap();
+    store
+        .trust(
+            source.clone(),
+            inspected["sha256"].as_str().unwrap(),
+            vec![],
+            "user",
+        )
+        .unwrap();
     store.enable(&source, true).unwrap();
     let shared = std::fs::read(store.root().join("mods.json")).unwrap();
     let mut a = host(&temp);
     let mut b = host(&temp);
-    let disable = a.preview_configuration(json!({"action":"disable","id":"fixture"})).unwrap();
+    let disable = a
+        .preview_configuration(json!({"action":"disable","id":"fixture"}))
+        .unwrap();
     a.apply_configuration(&disable.control).unwrap();
-    a.write_configuration("fixture", &json!({"mode":"local"}), "terminal", &[]).unwrap();
-    let reset = a.preview_configuration(json!({"action":"reset","id":"fixture"})).unwrap();
+    a.write_configuration("fixture", &json!({"mode":"local"}), "terminal", &[])
+        .unwrap();
+    let reset = a
+        .preview_configuration(json!({"action":"reset","id":"fixture"}))
+        .unwrap();
     assert_eq!(reset.public["changes"]["enabled"], true);
     assert_eq!(reset.public["changes"]["settings"]["mode"], "schema");
-    let save = a.preview_configuration(json!({"action":"save-defaults","id":"fixture"})).unwrap();
+    let save = a
+        .preview_configuration(json!({"action":"save-defaults","id":"fixture"}))
+        .unwrap();
     assert_eq!(save.public["changes"]["enabled"], false);
     assert_eq!(save.public["changes"]["settings"]["mode"], "local");
     assert_eq!(save.public["changes"]["target"], "shared");
-    assert!(b.apply_configuration(&save.control).unwrap_err().to_string().contains("terminal_configuration_changed"));
-    a.write_configuration("fixture", &json!({"mode":"changed"}), "terminal", &[]).unwrap();
-    assert!(a.apply_configuration(&save.control).unwrap_err().to_string().contains("terminal_configuration_changed"));
-    let save = a.preview_configuration(json!({"action":"save-defaults","id":"fixture"})).unwrap();
+    assert!(
+        b.apply_configuration(&save.control)
+            .unwrap_err()
+            .to_string()
+            .contains("terminal_configuration_changed")
+    );
+    a.write_configuration("fixture", &json!({"mode":"changed"}), "terminal", &[])
+        .unwrap();
+    assert!(
+        a.apply_configuration(&save.control)
+            .unwrap_err()
+            .to_string()
+            .contains("terminal_configuration_changed")
+    );
+    let save = a
+        .preview_configuration(json!({"action":"save-defaults","id":"fixture"}))
+        .unwrap();
     std::fs::create_dir_all(store.root().join("settings")).unwrap();
-    std::fs::write(store.root().join("settings/fixture.json"), "{\"mode\":\"file\"}").unwrap();
-    assert!(a.apply_configuration(&save.control).unwrap_err().to_string().contains("terminal_configuration_changed"));
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), shared);
+    std::fs::write(
+        store.root().join("settings/fixture.json"),
+        "{\"mode\":\"file\"}",
+    )
+    .unwrap();
+    assert!(
+        a.apply_configuration(&save.control)
+            .unwrap_err()
+            .to_string()
+            .contains("terminal_configuration_changed")
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        shared
+    );
 }
 
 #[test]
@@ -5628,42 +6058,179 @@ fn terminal_configuration_settings_scope_uses_each_copys_schema_and_authority() 
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store")).unwrap();
-    let user = packaged(&root, "user-copy", "fixture", "export default api => {};", &[], &[]);
-    let project = packaged(&root, "project-copy", "fixture", "export default api => {};", &[], &[]);
-    for (path, schema) in [(&user, json!({"type":"string","default":"user-default"})), (&project, json!({"type":"number","default":7}))] {
+    let user = packaged(
+        &root,
+        "user-copy",
+        "fixture",
+        "export default api => {};",
+        &[],
+        &[],
+    );
+    let project = packaged(
+        &root,
+        "project-copy",
+        "fixture",
+        "export default api => {};",
+        &[],
+        &[],
+    );
+    for (path, schema) in [
+        (&user, json!({"type":"string","default":"user-default"})),
+        (&project, json!({"type":"number","default":7})),
+    ] {
         let manifest = path.join("mod.json");
         let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
-        value["settings_schema"] = json!({"type":"object","properties":{"mode":schema},"additionalProperties":false});
+        value["settings_schema"] =
+            json!({"type":"object","properties":{"mode":schema},"additionalProperties":false});
         std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     }
     trust_scoped(&store, &user, &[], "user");
     trust_scoped(&store, &project, &[], "project");
     let shared = std::fs::read(store.root().join("mods.json")).unwrap();
     let mut runtime = host(&temp);
-    assert_eq!(runtime.write_configuration_in("fixture", &json!({"mode":"local-user"}), "terminal", &[], Some("user")).unwrap()["settings"]["mode"], "local-user");
-    assert_eq!(runtime.write_configuration_in("fixture", &json!({"mode":42}), "terminal", &[], Some("project")).unwrap()["settings"]["mode"], 42);
-    assert_eq!(runtime.write_configuration("fixture", &json!({}), "terminal", &[]).unwrap()["settings"]["mode"], 42);
-    assert!(runtime.write_configuration_in("fixture", &json!({"mode":42}), "terminal", &[], Some("user")).is_err());
-    assert!(runtime.write_configuration_in("fixture", &json!({"mode":"wrong"}), "terminal", &[], Some("project")).is_err());
-    assert!(runtime.write_configuration_in("fixture", &json!({}), "terminal", &[], Some("managed")).is_err());
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), shared);
-    let disable = runtime.preview_configuration(json!({"action":"disable","id":"fixture","scope":"project"})).unwrap();
+    assert_eq!(
+        runtime
+            .write_configuration_in(
+                "fixture",
+                &json!({"mode":"local-user"}),
+                "terminal",
+                &[],
+                Some("user")
+            )
+            .unwrap()["settings"]["mode"],
+        "local-user"
+    );
+    assert_eq!(
+        runtime
+            .write_configuration_in(
+                "fixture",
+                &json!({"mode":42}),
+                "terminal",
+                &[],
+                Some("project")
+            )
+            .unwrap()["settings"]["mode"],
+        42
+    );
+    assert_eq!(
+        runtime
+            .write_configuration("fixture", &json!({}), "terminal", &[])
+            .unwrap()["settings"]["mode"],
+        42
+    );
+    assert!(
+        runtime
+            .write_configuration_in(
+                "fixture",
+                &json!({"mode":42}),
+                "terminal",
+                &[],
+                Some("user")
+            )
+            .is_err()
+    );
+    assert!(
+        runtime
+            .write_configuration_in(
+                "fixture",
+                &json!({"mode":"wrong"}),
+                "terminal",
+                &[],
+                Some("project")
+            )
+            .is_err()
+    );
+    assert!(
+        runtime
+            .write_configuration_in("fixture", &json!({}), "terminal", &[], Some("managed"))
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        shared
+    );
+    let disable = runtime
+        .preview_configuration(json!({"action":"disable","id":"fixture","scope":"project"}))
+        .unwrap();
     runtime.apply_configuration(&disable.control).unwrap();
-    assert_eq!(runtime.write_configuration("fixture", &json!({}), "terminal", &[]).unwrap()["settings"]["mode"], "local-user");
-    let listed = runtime.configuration_listing(codex_omd::package_controls::list(&store, Some(&runtime.status())).unwrap()).unwrap();
+    assert_eq!(
+        runtime
+            .write_configuration("fixture", &json!({}), "terminal", &[])
+            .unwrap()["settings"]["mode"],
+        "local-user"
+    );
+    let listed = runtime
+        .configuration_listing(
+            codex_omd::package_controls::list(&store, Some(&runtime.status())).unwrap(),
+        )
+        .unwrap();
     let rows = listed["packages"].as_array().unwrap();
-    assert_eq!(rows.iter().find(|row| row["scope"] == "user").unwrap()["settings"]["mode"], "local-user");
-    assert_eq!(rows.iter().find(|row| row["scope"] == "project").unwrap()["settings"]["mode"], 42);
-    runtime.write_configuration_in("fixture", &json!({"mode":"saved-user"}), "shared", &[], Some("user")).unwrap();
+    assert_eq!(
+        rows.iter().find(|row| row["scope"] == "user").unwrap()["settings"]["mode"],
+        "local-user"
+    );
+    assert_eq!(
+        rows.iter().find(|row| row["scope"] == "project").unwrap()["settings"]["mode"],
+        42
+    );
+    runtime
+        .write_configuration_in(
+            "fixture",
+            &json!({"mode":"saved-user"}),
+            "shared",
+            &[],
+            Some("user"),
+        )
+        .unwrap();
     let configuration = store.configuration().unwrap();
-    assert_eq!(configuration.mods.iter().find(|item| item.path == user).unwrap().settings["mode"], "saved-user");
-    assert!(configuration.mods.iter().find(|item| item.path == project).unwrap().settings.is_empty());
-    assert_eq!(host(&temp).write_configuration_in("fixture", &json!({}), "terminal", &[], Some("user")).unwrap()["settings"]["mode"], "saved-user");
+    assert_eq!(
+        configuration
+            .mods
+            .iter()
+            .find(|item| item.path == user)
+            .unwrap()
+            .settings["mode"],
+        "saved-user"
+    );
+    assert!(
+        configuration
+            .mods
+            .iter()
+            .find(|item| item.path == project)
+            .unwrap()
+            .settings
+            .is_empty()
+    );
+    assert_eq!(
+        host(&temp)
+            .write_configuration_in("fixture", &json!({}), "terminal", &[], Some("user"))
+            .unwrap()["settings"]["mode"],
+        "saved-user"
+    );
     std::fs::create_dir_all(store.root().join("settings")).unwrap();
-    std::fs::write(store.root().join("settings/fixture.json"), "{\"mode\":\"file-user\"}").unwrap();
+    std::fs::write(
+        store.root().join("settings/fixture.json"),
+        "{\"mode\":\"file-user\"}",
+    )
+    .unwrap();
     let shared = std::fs::read(store.root().join("mods.json")).unwrap();
-    assert!(runtime.write_configuration_in("fixture", &json!({"mode":"blocked"}), "shared", &[], Some("user")).unwrap_err().to_string().contains("setting_set_by_file"));
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), shared);
+    assert!(
+        runtime
+            .write_configuration_in(
+                "fixture",
+                &json!({"mode":"blocked"}),
+                "shared",
+                &[],
+                Some("user")
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("setting_set_by_file")
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        shared
+    );
 }
 
 #[test]
@@ -5673,10 +6240,26 @@ fn required_disabled_mod_can_only_be_restored_through_explicit_shared_enablement
     store.enable(&path, false).unwrap();
     let before = std::fs::read(store.root().join("mods.json")).unwrap();
     let mut runtime = host(&temp);
-    let local = runtime.preview_configuration(json!({"id":"fixture","action":"enable","scope":"user","target":"terminal"})).err().unwrap();
-    assert!(local.to_string().contains("configuration_override_forbidden"));
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), before);
-    let shared = runtime.preview_configuration(json!({"id":"fixture","action":"enable","scope":"user","target":"shared"})).unwrap();
+    let local = runtime
+        .preview_configuration(
+            json!({"id":"fixture","action":"enable","scope":"user","target":"terminal"}),
+        )
+        .err()
+        .unwrap();
+    assert!(
+        local
+            .to_string()
+            .contains("configuration_override_forbidden")
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        before
+    );
+    let shared = runtime
+        .preview_configuration(
+            json!({"id":"fixture","action":"enable","scope":"user","target":"shared"}),
+        )
+        .unwrap();
     runtime.apply_configuration(&shared.control).unwrap();
     let selection = &store.configuration().unwrap().mods[0];
     assert!(selection.required && selection.enabled);
@@ -5692,36 +6275,344 @@ fn settings_write_preserves_interceptors_notifications_and_atomic_terminal_chang
     value["settings_schema"] = json!({"type":"object","properties":{"mode":{"type":"string","default":"saved"},"other":{"type":"string","default":"base"}},"additionalProperties":false});
     std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     trust(&store, &path, &[]);
-    let guard = package(&temp.path().canonicalize().unwrap(), "guard", "export default api => { api.intercept('config_set', (e, next) => e.value === 'denied' ? {deny:'blocked'} : next({...e,value:typeof e.value === 'string' ? e.value.toLowerCase() : e.value})); api.on('config_change', e => api.state.set(e)); api.command('last', () => api.state.get()); }", &["config","config.write","store","commands"]);
-    trust(&store, &guard, &["config","config.write","store","commands"]);
+    let guard = package(
+        &temp.path().canonicalize().unwrap(),
+        "guard",
+        "export default api => { api.intercept('config_set', (e, next) => e.value === 'denied' ? {deny:'blocked'} : next({...e,value:typeof e.value === 'string' ? e.value.toLowerCase() : e.value})); api.on('config_change', e => api.state.set(e)); api.command('last', () => api.state.get()); }",
+        &["config", "config.write", "store", "commands"],
+    );
+    trust(
+        &store,
+        &guard,
+        &["config", "config.write", "store", "commands"],
+    );
     let runtime = std::sync::Mutex::new(host(&temp));
     let mut peer = host(&temp);
     let saved = std::fs::read(store.root().join("mods.json")).unwrap();
-    let write = |values: Value, target: &str, reset: &[String], caller: &str| codex_omd::write_settings_shared(&runtime, "fixture", &values, target, reset, Some("user"), caller, None, &|| true, |_, _| Err(std::io::Error::other("unexpected host call")));
-    assert_eq!(write(json!({"mode":"LOCAL"}), "terminal", &[], "fixture").unwrap()["settings"]["mode"], "local");
-    let read_event = || { let mut runtime = runtime.lock().unwrap(); let generation = runtime.generation(); runtime.invoke("guard", generation, "command", "last", Value::Null).unwrap() };
+    let write = |values: Value, target: &str, reset: &[String], caller: &str| {
+        codex_omd::write_settings_shared(
+            &runtime,
+            "fixture",
+            &values,
+            target,
+            reset,
+            Some("user"),
+            caller,
+            None,
+            &|| true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+        )
+    };
+    assert_eq!(
+        write(json!({"mode":"LOCAL"}), "terminal", &[], "fixture").unwrap()["settings"]["mode"],
+        "local"
+    );
+    let read_event = || {
+        let mut runtime = runtime.lock().unwrap();
+        let generation = runtime.generation();
+        runtime
+            .invoke("guard", generation, "command", "last", Value::Null)
+            .unwrap()
+    };
     assert_eq!(read_event()["effective"], "local");
     assert_eq!(read_event()["caller"], "fixture");
-    assert!(write(json!({"mode":"changed","other":"denied"}), "terminal", &[], "fixture").unwrap_err().to_string().contains("config_set_denied"));
-    assert_eq!(write(json!({}), "terminal", &[], "fixture").unwrap()["settings"]["mode"], "local");
-    assert!(write(json!({"mode":"changed","other":42}), "terminal", &[], "fixture").is_err());
-    assert_eq!(write(json!({}), "terminal", &[], "fixture").unwrap()["settings"]["mode"], "local");
-    assert_eq!(write(json!({}), "terminal", &["mode".into()], "fixture").unwrap()["settings"]["mode"], "saved");
+    assert!(
+        write(
+            json!({"mode":"changed","other":"denied"}),
+            "terminal",
+            &[],
+            "fixture"
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("config_set_denied")
+    );
+    assert_eq!(
+        write(json!({}), "terminal", &[], "fixture").unwrap()["settings"]["mode"],
+        "local"
+    );
+    assert!(
+        write(
+            json!({"mode":"changed","other":42}),
+            "terminal",
+            &[],
+            "fixture"
+        )
+        .is_err()
+    );
+    assert_eq!(
+        write(json!({}), "terminal", &[], "fixture").unwrap()["settings"]["mode"],
+        "local"
+    );
+    assert_eq!(
+        write(json!({}), "terminal", &["mode".into()], "fixture").unwrap()["settings"]["mode"],
+        "saved"
+    );
     assert_eq!(read_event()["effective"], "saved");
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        saved
+    );
     peer.reload().unwrap();
-    let row = peer.configuration_listing(codex_omd::package_controls::list(&store, Some(&peer.status())).unwrap()).unwrap();
-    assert_eq!(row["packages"].as_array().unwrap().iter().find(|row| row["id"] == "fixture").unwrap()["settings"]["mode"], "saved");
+    let row = peer
+        .configuration_listing(
+            codex_omd::package_controls::list(&store, Some(&peer.status())).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        row["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "fixture")
+            .unwrap()["settings"]["mode"],
+        "saved"
+    );
     write(json!({"mode":"SHARED"}), "shared", &[], "fixture").unwrap();
-    assert_ne!(std::fs::read(store.root().join("mods.json")).unwrap(), saved);
+    assert_ne!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        saved
+    );
     let previous = read_event();
-    assert_eq!(write(json!({"mode":"SELF"}), "terminal", &[], "guard").unwrap()["settings"]["mode"], "SELF");
+    assert_eq!(
+        write(json!({"mode":"SELF"}), "terminal", &[], "guard").unwrap()["settings"]["mode"],
+        "SELF"
+    );
     assert_eq!(read_event(), previous);
-    let mut config: Value = serde_json::from_slice(&std::fs::read(store.root().join("mods.json")).unwrap()).unwrap();
+    let mut config: Value =
+        serde_json::from_slice(&std::fs::read(store.root().join("mods.json")).unwrap()).unwrap();
     for selected in config["mods"].as_array_mut().unwrap() {
-        if selected["path"] == json!(path) { selected["required"] = json!(true); }
+        if selected["path"] == json!(path) {
+            selected["required"] = json!(true);
+        }
     }
-    std::fs::write(store.root().join("mods.json"), serde_json::to_vec(&config).unwrap()).unwrap();
+    std::fs::write(
+        store.root().join("mods.json"),
+        serde_json::to_vec(&config).unwrap(),
+    )
+    .unwrap();
     assert!(write(json!({"mode":"local"}), "terminal", &[], "fixture").is_err());
-    assert_eq!(write(json!({"mode":"REQUIRED"}), "shared", &[], "fixture").unwrap()["settings"]["mode"], "required");
+    assert_eq!(
+        write(json!({"mode":"REQUIRED"}), "shared", &[], "fixture").unwrap()["settings"]["mode"],
+        "required"
+    );
+}
+
+#[test]
+fn background_jobs_cross_host_instances_and_keep_session_variables() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "jobs",
+        "let calls = 0; export default api => { const job = api.background('refresh', input => ({input, calls: ++calls})); api.command('start', input => { job.start(input); return null; }); api.command('status', () => job.get()); };",
+        &["commands", "store", "events"],
+    );
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    manifest["compatibility"] =
+        json!({"required_features":["session_activation_v1", "background_jobs_v1"]});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &["commands", "store", "events"]);
+    let mut ui = host(&temp);
+    let mut native = host(&temp);
+    let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
+    for count in 1..=2 {
+        let mut timer = Value::Null;
+        ui.invoke_with(
+            "jobs",
+            ui.generation(),
+            "command",
+            "start",
+            json!(count),
+            || true,
+            |call| {
+                assert_eq!(call.operation, "events.schedule");
+                timer = call.arguments;
+                Ok(json!({"key":timer["key"],"delay_ms":timer["delay_ms"]}))
+            },
+        )
+        .unwrap();
+        native
+            .invoke(
+                "jobs",
+                native.generation(),
+                "timer",
+                "",
+                json!({"key":timer["key"],"data":timer["data"]}),
+            )
+            .unwrap();
+        let status = ui
+            .invoke("jobs", ui.generation(), "command", "status", Value::Null)
+            .unwrap();
+        assert_eq!(status["status"], "completed");
+        assert_eq!(status["result"], json!({"input":count,"calls":count}));
+    }
+    std::thread::scope(|scope| {
+        let (scheduled, delivered) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let ui = &mut ui;
+        let command = scope.spawn(move || {
+            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
+            ui.invoke_with(
+                "jobs",
+                ui.generation(),
+                "command",
+                "start",
+                json!(3),
+                || true,
+                |call| {
+                    scheduled.send(call.arguments.clone()).unwrap();
+                    released
+                        .recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    Ok(json!({"key":call.arguments["key"], "delay_ms":call.arguments["delay_ms"]}))
+                },
+            )
+            .unwrap();
+        });
+        let timer = delivered
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let (waiting, waited) = std::sync::mpsc::channel();
+        let native = &mut native;
+        let delivery = scope.spawn(move || {
+            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
+            let checks = AtomicUsize::new(0);
+            native
+                .invoke_with(
+                    "jobs",
+                    native.generation(),
+                    "timer",
+                    "",
+                    json!({"key":timer["key"],"data":timer["data"]}),
+                    || {
+                        if checks.fetch_add(1, Ordering::Relaxed) == 1 {
+                            waiting.send(()).unwrap();
+                        }
+                        true
+                    },
+                    |_| {
+                        Err(std::io::Error::other(
+                            "host_operation_unavailable: requires a native task",
+                        ))
+                    },
+                )
+                .unwrap();
+        });
+        waited
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        release.send(()).unwrap();
+        command.join().unwrap();
+        delivery.join().unwrap();
+    });
+    assert_eq!(
+        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
+            .unwrap()["result"],
+        json!({"input":3,"calls":3})
+    );
+    std::thread::scope(|scope| {
+        let (scheduled, delivered) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let ui = &mut ui;
+        let command = scope.spawn(move || {
+            let _thread = codex_omd::StateThread::enter(Some("jobs-thread".into()));
+            ui.invoke_with(
+                "jobs",
+                ui.generation(),
+                "command",
+                "start",
+                json!(4),
+                || true,
+                |call| {
+                    scheduled.send(()).unwrap();
+                    released
+                        .recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    Ok(json!({"key":call.arguments["key"],"delay_ms":call.arguments["delay_ms"]}))
+                },
+            )
+        });
+        delivered
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        native.reload().unwrap();
+        release.send(()).unwrap();
+        assert!(
+            command
+                .join()
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("callback_cancelled")
+        );
+    });
+    ui.reload().unwrap();
+    assert_eq!(
+        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
+            .unwrap()["status"],
+        "idle"
+    );
+    let mut old_timer = Value::Null;
+    ui.invoke_with(
+        "jobs",
+        ui.generation(),
+        "command",
+        "start",
+        json!("stale"),
+        || true,
+        |call| {
+            old_timer = call.arguments;
+            Ok(json!({"key":old_timer["key"],"delay_ms":old_timer["delay_ms"]}))
+        },
+    )
+    .unwrap();
+    ui.reload().unwrap();
+    let mut current_timer = Value::Null;
+    ui.invoke_with(
+        "jobs",
+        ui.generation(),
+        "command",
+        "start",
+        json!("current"),
+        || true,
+        |call| {
+            current_timer = call.arguments;
+            Ok(json!({"key":current_timer["key"],"delay_ms":current_timer["delay_ms"]}))
+        },
+    )
+    .unwrap();
+    native
+        .invoke(
+            "jobs",
+            native.generation(),
+            "timer",
+            "",
+            json!({"key":old_timer["key"],"data":old_timer["data"]}),
+        )
+        .unwrap();
+    assert_eq!(
+        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
+            .unwrap()["status"],
+        "pending"
+    );
+    native
+        .invoke(
+            "jobs",
+            native.generation(),
+            "timer",
+            "",
+            json!({"key":current_timer["key"],"data":current_timer["data"]}),
+        )
+        .unwrap();
+    assert_eq!(
+        ui.invoke("jobs", ui.generation(), "command", "status", Value::Null)
+            .unwrap()["result"],
+        json!({"input":"current","calls":1})
+    );
+    ui.release_thread_activations("jobs-thread");
 }

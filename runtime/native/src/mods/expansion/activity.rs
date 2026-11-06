@@ -222,8 +222,8 @@ pub(in crate::mods) fn output_replaced(
         turn_id: turn.to_owned(),
         call_id: call_id.to_owned(),
         r#mod: owner.to_owned(),
-        original_sha256: crate::execution::hash(original.as_bytes()),
-        replacement_sha256: crate::execution::hash(replacement.as_bytes()),
+        original_sha256: codex_omd::sha256_hex(original.as_bytes()),
+        replacement_sha256: codex_omd::sha256_hex(replacement.as_bytes()),
     });
 }
 
@@ -252,7 +252,7 @@ pub(in crate::mods) fn file_hash(root: &std::path::Path, path: &str) -> Option<S
     )
     .ok()?;
     let file = snapshot.files.get(path)?;
-    Some(crate::execution::hash(&file.bytes))
+    Some(codex_omd::sha256_hex(&file.bytes))
 }
 
 pub(in crate::mods) async fn external_changes(

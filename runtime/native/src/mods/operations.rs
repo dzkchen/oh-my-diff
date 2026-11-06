@@ -52,7 +52,11 @@ pub(super) struct Caller<'a> {
 pub(super) fn event_allows(event: &str, operation: &str) -> bool {
     crate::generic_host::event_allows(event, operation)
         || super::expansion::event_allows(event)
-        || event == "command" && matches!(operation, "process.status" | "process.exchange" | "settings.write" | "packages.reload")
+        || event == "command"
+            && matches!(
+                operation,
+                "process.status" | "process.exchange" | "settings.write" | "packages.reload"
+            )
         || event == "context"
             && (codex_omd::scoped_data::operation(operation)
                 || matches!(
@@ -79,6 +83,8 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "turns.activity"
                         | "turns.abort"
                         | "events.publish"
+                        | "events.schedule"
+                        | "events.cancel"
                         | "credentials.list"
                         | "packages.list"
                         | "packages.preview"
@@ -226,7 +232,7 @@ async fn submit_receipt(
     receipt.validate()?;
     let value = serde_json::to_value(&receipt).map_err(|e| e.to_string())?;
     let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
-    let name = format!("receipt-{}.json", execution::hash(&bytes));
+    let name = format!("receipt-{}.json", codex_omd::sha256_hex(&bytes));
     // Only an accepted receipt leaves evidence; a failed write withdraws it.
     let submitted = {
         let mut contract = lead
@@ -814,7 +820,13 @@ mod tests {
     fn terminal_configuration_mutations_are_admitted_only_during_commands() {
         for operation in ["settings.write", "packages.reload"] {
             assert!(event_allows("command", operation));
-            for event in ["component_event", "component_post", "context", "tool", "terminal"] {
+            for event in [
+                "component_event",
+                "component_post",
+                "context",
+                "tool",
+                "terminal",
+            ] {
                 assert!(!event_allows(event, operation), "{event}: {operation}");
             }
         }

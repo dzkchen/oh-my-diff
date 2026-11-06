@@ -1,6 +1,8 @@
 use super::*;
 use std::collections::VecDeque;
 
+type OfflineTimers = BTreeMap<(Option<String>, String, String), (u64, Option<Value>)>;
+
 #[derive(Default)]
 struct OfflineHost {
     replies: BTreeMap<String, VecDeque<Value>>,
@@ -8,7 +10,7 @@ struct OfflineHost {
     violations: Vec<String>,
     now_ms: u64,
     /// Live timers are per thread: (thread, owner, key), firing in the thread that scheduled them.
-    timers: BTreeMap<(Option<String>, String, String), u64>,
+    timers: OfflineTimers,
     thread: Option<String>,
     /// Mods with `state_scope: "thread"`; the others' timers share the one session thread, as live.
     thread_scoped: std::collections::BTreeSet<String>,
@@ -233,7 +235,7 @@ impl OfflineHost {
                     .ok_or_else(|| failure("offline_time_overflow"))?;
                 self.timers.insert(
                     (self.timer_thread(caller), caller.to_owned(), key.clone()),
-                    deadline,
+                    (deadline, call.arguments.get("data").cloned()),
                 );
                 return Ok(json!({"key": key, "delay_ms": delay}));
             }
@@ -505,12 +507,12 @@ impl ModHost {
                     .ok_or_else(|| failure("offline_virtual_time_overflow"))?;
                 let mut fired = Vec::new();
                 // Due timers fire in due order at their own virtual time; a handler may reschedule.
-                while let Some(((thread, owner, key), due)) = host
+                while let Some(((thread, owner, key), (due, data))) = host
                     .timers
                     .iter()
-                    .filter(|(_, due)| **due <= until)
-                    .min_by_key(|(_, due)| **due)
-                    .map(|(timer, due)| (timer.clone(), *due))
+                    .filter(|(_, (due, _))| *due <= until)
+                    .min_by_key(|(_, (due, _))| *due)
+                    .map(|(timer, value)| (timer.clone(), value.clone()))
                 {
                     if fired.len() >= 256 {
                         return Err(failure("offline_timer_limit"));
@@ -521,14 +523,19 @@ impl ModHost {
                     self.virtual_time_ms = Some(due);
                     host.thread = thread.clone().or_else(bound_thread);
                     let _thread = StateThread::enter(host.thread.clone());
-                    let value = self.invoke_scoped_with(
+                    let mut payload = json!({"key": key});
+                    if let Some(data) = data {
+                        payload["data"] = data;
+                    }
+                    let value = self.invoke_scoped(
                         &owner,
                         self.generation,
                         "timer",
                         "",
-                        json!({"key": key}),
+                        payload,
                         || active,
                         |caller, call| host.call(caller, call),
+                        |_| {},
                     );
                     fired.push(match value {
                         Ok(_) => json!({"mod": owner, "key": key, "at_ms": due}),
@@ -628,7 +635,7 @@ impl ModHost {
             }
             "reload" => {
                 self.store.reload()?;
-                self.turn_boundary();
+                self.turn_boundary(&|| true);
                 if let Some(error) = &self.reload_error {
                     return Err(failure(error));
                 }
@@ -701,7 +708,7 @@ impl ModHost {
                 let mut values = Vec::new();
                 for id in ids {
                     let generation = self.generation;
-                    let value = self.invoke_scoped_with(
+                    let value = self.invoke_scoped(
                         &id,
                         generation,
                         event,
@@ -709,6 +716,7 @@ impl ModHost {
                         payload.clone(),
                         || active,
                         |caller, call| host.call(caller, call),
+                        |_| {},
                     )?;
                     values.push(json!({"mod":id,"value":value}));
                 }
@@ -718,7 +726,7 @@ impl ModHost {
                 let id = required_string(step, "mod")?;
                 let event = required_string(step, "event")?;
                 let name = required_string(step, "name")?;
-                self.invoke_scoped_with(
+                self.invoke_scoped(
                     id,
                     self.generation,
                     event,
@@ -726,6 +734,7 @@ impl ModHost {
                     payload,
                     || active,
                     |caller, call| host.call(caller, call),
+                    |_| {},
                 )
             }
             "component" => {
@@ -742,7 +751,7 @@ impl ModHost {
                     "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
                     "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
                     "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
-                let result = self.invoke_scoped_with(
+                let result = self.invoke_scoped(
                     id,
                     self.generation,
                     "component",
@@ -755,6 +764,7 @@ impl ModHost {
                             call.operation
                         )))
                     },
+                    |_| {},
                 )?;
                 render::checked_tree(&result)?;
                 Ok(result)
@@ -767,7 +777,7 @@ impl ModHost {
                         .entry("clients")
                         .or_insert_with(|| json!(host.clients));
                 }
-                let view = self.invoke_scoped_with(
+                let view = self.invoke_scoped(
                     id,
                     self.generation,
                     "terminal",
@@ -775,6 +785,7 @@ impl ModHost {
                     payload,
                     || active,
                     |caller, call| host.call(caller, call),
+                    |_| {},
                 )?;
                 ModViewPatch::parse(view.clone())?;
                 let parsed = ModView::parse(view.clone())?;
@@ -823,7 +834,7 @@ impl ModHost {
                         Some(_) => return Err(failure("offline_client_not_attached")),
                         None => event["origin"] = json!("user"),
                     }
-                    let result = self.invoke_scoped_with(
+                    let result = self.invoke_scoped(
                         id,
                         self.generation,
                         "component_event",
@@ -831,6 +842,7 @@ impl ModHost {
                         event.clone(),
                         || active,
                         |caller, call| host.call(caller, call),
+                        |_| {},
                     )?;
                     return Ok(json!({"event": event, "result": result}));
                 }
@@ -858,7 +870,7 @@ impl ModHost {
                 if let Some(command) = action.get("command").and_then(Value::as_str) {
                     let (owner, name) = command.split_once(':').unwrap_or((id, command));
                     let args = action.get("args").cloned().unwrap_or_else(|| json!(""));
-                    let result = self.invoke_scoped_with(
+                    let result = self.invoke_scoped(
                         owner,
                         self.generation,
                         "command",
@@ -866,6 +878,7 @@ impl ModHost {
                         args,
                         || active,
                         |caller, call| host.call(caller, call),
+                        |_| {},
                     )?;
                     Ok(json!({"action":action,"result":result}))
                 } else {

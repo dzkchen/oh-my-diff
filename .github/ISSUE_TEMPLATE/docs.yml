@@ -1,5 +1,6 @@
 name: Documentation
 description: Something in the docs is wrong, missing or unclear
+title: "[Docs]: "
 labels: ["type: docs", "status: triage"]
 body:
   - type: input

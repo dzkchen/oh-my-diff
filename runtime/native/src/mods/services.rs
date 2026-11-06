@@ -116,8 +116,16 @@ struct Service {
 impl Drop for Service {
     fn drop(&mut self) {
         if let Some(route) = &self.route {
-            codex_models_manager::runtime_models::set_for(self.terminal_owner.as_deref(), &route.provider, Vec::new());
-            codex_models_manager::runtime_models::set_name_for(self.terminal_owner.as_deref(), &route.provider, None);
+            codex_models_manager::runtime_models::set_for(
+                self.terminal_owner.as_deref(),
+                &route.provider,
+                Vec::new(),
+            );
+            codex_models_manager::runtime_models::set_name_for(
+                self.terminal_owner.as_deref(),
+                &route.provider,
+                None,
+            );
         }
         if let Some(job) = self.job.take() {
             job.abort();
@@ -143,7 +151,10 @@ impl Service {
 
 impl Services {
     pub(super) fn new(terminal_owner: Option<String>) -> Self {
-        Self { terminal_owner, records: Default::default() }
+        Self {
+            terminal_owner,
+            records: Default::default(),
+        }
     }
     #[expect(
         clippy::await_holding_invalid_type,
@@ -260,8 +271,11 @@ impl Services {
                     .any(|known: &codex_protocol::openai_models::ModelInfo| {
                         known.slug == model.slug
                     })
-                || codex_models_manager::runtime_models::find_for(self.terminal_owner.as_deref(), &model.slug)
-                    .is_some_and(|(owner, _)| owner != input.provider)
+                || codex_models_manager::runtime_models::find_for(
+                    self.terminal_owner.as_deref(),
+                    &model.slug,
+                )
+                .is_some_and(|(owner, _)| owner != input.provider)
             {
                 return Err(format!("provider_model_invalid: {}", model.slug));
             }
@@ -306,8 +320,16 @@ impl Services {
             return Err("provider_not_registered_or_stopped".into());
         }
         let count = models.len();
-        codex_models_manager::runtime_models::set_name_for(self.terminal_owner.as_deref(), &input.provider, input.name);
-        codex_models_manager::runtime_models::set_for(self.terminal_owner.as_deref(), &input.provider, models);
+        codex_models_manager::runtime_models::set_name_for(
+            self.terminal_owner.as_deref(),
+            &input.provider,
+            input.name,
+        );
+        codex_models_manager::runtime_models::set_for(
+            self.terminal_owner.as_deref(),
+            &input.provider,
+            models,
+        );
         drop(records);
         Ok(json!({"provider": input.provider, "models": count}))
     }
@@ -491,7 +513,7 @@ impl Services {
                     .map_err(|_| "service_source_unavailable")?
                     != *path
                 || bytes.len() > 4 * 1024 * 1024
-                || execution::hash(&bytes) != *expected
+                || codex_omd::sha256_hex(&bytes) != *expected
             {
                 return Err("service_source_changed".into());
             }
@@ -845,7 +867,7 @@ impl Services {
         records.insert(
             grant.id.clone(),
             Service {
-                terminal_owner:self.terminal_owner.clone(),
+                terminal_owner: self.terminal_owner.clone(),
                 mod_id: mod_id.into(),
                 generation,
                 started_at_ms: codex_omd::peers::now_ms(),

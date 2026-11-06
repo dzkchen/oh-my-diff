@@ -105,24 +105,6 @@ impl Core<'_> {
 
 type HostFn<'h> = dyn FnMut(&str, ModHostCall) -> Result<Value> + 'h;
 
-fn glob(pattern: &str, text: &str) -> bool {
-    let parts = pattern.split('*').collect::<Vec<_>>();
-    let [first, .., last] = parts.as_slice() else {
-        return pattern == text;
-    };
-    if text.len() < first.len() + last.len() || !text.starts_with(first) || !text.ends_with(last) {
-        return false;
-    }
-    let (mut at, end) = (first.len(), text.len() - last.len());
-    parts[1..parts.len() - 1].iter().all(|part| {
-        let found = text[at..end].find(part);
-        if let Some(found) = found {
-            at += found + part.len();
-        }
-        found.is_some()
-    })
-}
-
 pub struct SendPolicy {
     pub required: bool,
     pub unavailable: Option<String>,
@@ -776,7 +758,7 @@ use crate::model_request::bounded;
 fn recorded(surface: &str, value: &Value) -> Value {
     if surface == "model_send" {
         let bytes = serde_json::to_vec(value).unwrap_or_default();
-        return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
+        return json!({"sha256": crate::sha256_hex(&bytes), "bytes": bytes.len()});
     }
     if surface == "history_persist" {
         let texts = value["entries"]
@@ -786,7 +768,7 @@ fn recorded(surface: &str, value: &Value) -> Value {
             .map(|entry| &entry["text"])
             .collect::<Vec<_>>();
         let bytes = serde_json::to_vec(&texts).unwrap_or_default();
-        return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
+        return json!({"sha256": crate::sha256_hex(&bytes), "bytes": bytes.len()});
     }
     bounded(value)
 }
@@ -1182,10 +1164,7 @@ fn effective_call(
             .unwrap_or_default())
     })?;
     let namespace = crate::mods::host_namespace(&call.operation, &call.arguments);
-    if withheld
-        .iter()
-        .any(|pattern| crate::mods::namespace_matches(pattern, &namespace))
-    {
+    if withheld.iter().any(|pattern| glob(pattern, &namespace)) {
         return Err(failure(format!("capability_withheld: {namespace}")));
     }
     if let Some(missing) = call
@@ -1527,7 +1506,7 @@ impl ModHost {
             .filter_map(|id| self.loaded.get(id)?.package.policy.as_ref())
             .flat_map(|policy| policy.namespaces.clone())
             .collect::<Vec<_>>();
-        let policy = crate::mods::digest(
+        let policy = crate::sha256_hex(
             &serde_json::to_vec(
                 &exempt
                     .iter()
@@ -1723,7 +1702,7 @@ impl ModHost {
             })
             .map(|(id, loaded)| json!([id, loaded.selection.sha256, loaded.selection.settings]))
             .collect::<Vec<_>>();
-        let fingerprint = crate::mods::digest(
+        let fingerprint = crate::sha256_hex(
             &serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
         );
         Some(SendPolicy {
@@ -1879,11 +1858,10 @@ fn admission(result: &Value, scope: &[String]) -> std::result::Result<Vec<String
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    match withheld.iter().find(|namespace| {
-        !scope
-            .iter()
-            .any(|pattern| crate::mods::namespace_matches(pattern, namespace))
-    }) {
+    match withheld
+        .iter()
+        .find(|namespace| !scope.iter().any(|pattern| glob(pattern, namespace)))
+    {
         Some(namespace) => Err(format!(
             "admission_policy_invalid: {namespace} is outside policy.namespaces"
         )),

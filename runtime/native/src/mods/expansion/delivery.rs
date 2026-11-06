@@ -33,6 +33,7 @@ pub(in crate::mods) enum Pending {
         key: String,
         source: String,
         incarnation: u64,
+        data: Option<Value>,
     },
 }
 
@@ -358,8 +359,14 @@ async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending
         Pending::Broadcast { event, payload } => {
             core.event(event, payload, current).await;
         }
-        Pending::ThreadBroadcast { thread, event, payload } => {
-            if let Some(lead) = core.expansion.thread(thread) { core.event(event, payload, Some(&lead)).await; }
+        Pending::ThreadBroadcast {
+            thread,
+            event,
+            payload,
+        } => {
+            if let Some(lead) = core.expansion.thread(thread) {
+                core.event(event, payload, Some(&lead)).await;
+            }
         }
         Pending::Timer {
             thread,
@@ -367,6 +374,7 @@ async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending
             key,
             source,
             incarnation,
+            data,
         } => {
             let Some(lead) = core.expansion.thread(thread) else {
                 if let Ok(mut timers) = core.expansion.timers.lock() {
@@ -380,12 +388,16 @@ async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending
                 }
                 return;
             };
+            let mut payload = json!({"key": key});
+            if let Some(data) = data {
+                payload["data"] = data;
+            }
             invoke_one_guarded(
                 core,
                 &lead,
                 owner,
                 "timer",
-                json!({"key": key}),
+                payload,
                 Some((key, source, incarnation)),
             )
             .await;
@@ -585,6 +597,7 @@ pub(in crate::mods) fn schedule(
     arguments: Value,
 ) -> Result<Value, String> {
     let (key, delay_ms) = codex_omd::host::validate_timer_request("events.schedule", &arguments)?;
+    let data = arguments.get("data").cloned();
     let weak = core
         .expansion
         .core
@@ -629,6 +642,7 @@ pub(in crate::mods) fn schedule(
                     key: timer_key,
                     source,
                     incarnation,
+                    data,
                 },
             );
         }
@@ -707,6 +721,9 @@ pub(in crate::mods) fn release_owner(core: &Core, owner: &str) {
 
 pub(in crate::mods) fn release_thread(core: &Core, thread: ThreadId) {
     clear_timers(core, Some(thread), None);
+    if let Ok(runtime) = core.runtime.lock() {
+        runtime.release_thread_activations(&thread.to_string());
+    }
 }
 
 fn clear_timers(core: &Core, thread: Option<ThreadId>, owner: Option<&str>) {

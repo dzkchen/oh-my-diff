@@ -683,7 +683,7 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
     let policy =
         serde_json::to_value(codex_protocol::models::PermissionProfile::read_only()).unwrap();
     let read = codex_omd::host::session_call(
-            None,
+        None,
         &thread,
         "control",
         Some(&source),
@@ -718,7 +718,7 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
     assert_eq!(read_snapshot["exit_code"], 0);
     assert_eq!(read_snapshot["stdout"], "scoped");
     let denied = codex_omd::host::session_call(
-            None,
+        None,
         &thread,
         "control",
         Some(&source),
@@ -834,7 +834,7 @@ async fn scoped_environment_snapshot_execution_records_effective_values_and_secr
                     .starts_with("execution-")
             })
             .map(|path| std::fs::read(path).unwrap())
-            .find(|bytes| json!(crate::execution::hash(bytes)) == result["evidence"]["sha256"])
+            .find(|bytes| json!(codex_omd::sha256_hex(bytes)) == result["evidence"]["sha256"])
             .unwrap();
         let recorded: Value = serde_json::from_slice(&evidence).unwrap();
         assert_eq!(
@@ -843,7 +843,7 @@ async fn scoped_environment_snapshot_execution_records_effective_values_and_secr
         );
         assert_eq!(
             recorded["environment"]["FIXTURE_TOKEN"],
-            json!({"sha256": crate::execution::hash(b"private-token")})
+            json!({"sha256": codex_omd::sha256_hex(b"private-token")})
         );
         assert!(
             !String::from_utf8(evidence)
@@ -1450,7 +1450,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     assert_eq!(report["original"]["bytes"], complete.len());
     assert_eq!(
         report["original"]["sha256"],
-        codex_omd::resource_data::hash(complete.as_bytes())
+        codex_omd::sha256_hex(complete.as_bytes())
     );
     assert!(
         fixture.core.expansion.originals.lock().unwrap().is_empty(),
@@ -2153,7 +2153,10 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
     };
     let mods = mods(&fixture.core);
     let thread_store = ExtensionData::new("thread".to_owned());
-    assert_eq!(mods.adjust_tool_specs(&thread_store, &thread_store, &[]), None);
+    assert_eq!(
+        mods.adjust_tool_specs(&thread_store, &thread_store, &[]),
+        None
+    );
     thread_store.insert(fixture.lead.clone());
     let view = |name: &str| ToolSpecView {
         name: name.to_owned(),
@@ -2291,6 +2294,7 @@ fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
         key: key.into(),
         source: "source".into(),
         incarnation: 0,
+        data: None,
     };
     for item in [
         timer("a", "one"),
@@ -2312,6 +2316,90 @@ fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
     assert!(
         matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(16)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timer_data_replacement_cancellation_and_owner_release_use_existing_slots() {
+    fn timer_count(state: &State) -> usize {
+        state
+            .pending
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|pending| matches!(pending, delivery::Pending::Timer { .. }))
+            .count()
+    }
+    async fn queued(state: &State) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while timer_count(state) == 0 {
+                state.wake.notified().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["events", "store", "commands"],
+        manifest: Value::Null,
+        source: "export default api => { api.on('timer', e => api.state.set(e)); api.command('seen', () => api.state.get()); }",
+    }]) else {
+        return;
+    };
+    let (core, lead) = (&fixture.core, &fixture.lead);
+    core.expansion.core.set(Arc::downgrade(core)).unwrap();
+    let (generation, grants) = {
+        let runtime = core.runtime.lock().unwrap();
+        (runtime.generation(), runtime.grants("observer"))
+    };
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let caller = Caller {
+        id: "observer",
+        source: &source,
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let schedule = |data: Value| {
+        delivery::schedule(
+            core,
+            lead,
+            &caller,
+            json!({"key": "k", "delay_ms": 16, "data": data}),
+        )
+    };
+    schedule(json!("old")).unwrap();
+    queued(&core.expansion).await;
+    assert_eq!(timer_count(&core.expansion), 1);
+    assert_eq!(
+        schedule(json!("x".repeat(65_535))).unwrap_err(),
+        "timer_data_limit"
+    );
+    assert_eq!(timer_count(&core.expansion), 1);
+    schedule(json!({"turn_id": "new"})).unwrap();
+    assert!(core.expansion.pending.lock().unwrap().iter().filter(|pending| matches!(pending, delivery::Pending::Timer { .. })).all(|pending| {
+        matches!(pending, delivery::Pending::Timer { data: Some(data), .. } if *data == json!({"turn_id": "new"}))
+    }));
+    queued(&core.expansion).await;
+    delivery::deliver(core).await;
+    let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
+    assert_eq!(
+        command(core, "observer", "seen"),
+        json!({"key": "k", "data": {"turn_id": "new"}})
+    );
+    assert!(core.expansion.timers.lock().unwrap().is_empty());
+    schedule(Value::Null).unwrap();
+    queued(&core.expansion).await;
+    assert_eq!(
+        delivery::cancel(core, lead, "observer", &json!({"key": "k"})).unwrap(),
+        json!({"cancelled": true})
+    );
+    assert_eq!(timer_count(&core.expansion), 0);
+    schedule(json!("released")).unwrap();
+    delivery::release_owner(core, "observer");
+    assert!(core.expansion.timers.lock().unwrap().is_empty());
+    assert_eq!(timer_count(&core.expansion), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2548,7 +2636,7 @@ async fn turn_evidence_survives_reload_and_clears_stale_diagnostics() {
             .runtime
             .lock()
             .unwrap()
-            .refresh_authority()
+            .refresh(&|| true)
             .unwrap()
     );
     assert!(fixture.core.runtime.lock().unwrap().generation() > generation);
@@ -2654,7 +2742,7 @@ async fn turn_evidence_excludes_replaced_and_disabled_subscribers() {
                 .runtime
                 .lock()
                 .unwrap()
-                .refresh_authority()
+                .refresh(&|| true)
                 .unwrap()
         );
         let private = super::super::evidence::finish(
@@ -2687,7 +2775,7 @@ async fn turn_evidence_excludes_replaced_and_disabled_subscribers() {
                 .runtime
                 .lock()
                 .unwrap()
-                .refresh_authority()
+                .refresh(&|| true)
                 .unwrap()
         );
         assert!(
@@ -2735,7 +2823,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         .persist_runtime
         .lock()
         .unwrap()
-        .refresh_guarded(&|| true)
+        .refresh(&|| true)
         .unwrap();
     assert!(!extension.rewrites_persisted_text(None));
     let held = fixture.core.persist_runtime.lock().unwrap();
@@ -2760,7 +2848,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         text: "hi".to_owned(),
     }];
     let input = || codex_extension_api::PersistedTextInput {
-                turn_store: None,
+        turn_store: None,
         thread_id: "thread",
         entries: &entries,
     };
@@ -2849,7 +2937,7 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
             assert!(result.is_err(), "{lane} {change}");
             assert_eq!(std::fs::read(&state).ok(), before, "{lane} {change}");
             if change == "broken" {
-                assert!(runtime.refresh_guarded(&|| true).is_err());
+                assert!(runtime.refresh(&|| true).is_err());
             }
             let next = runtime.invoke_with(
                 "writer",
@@ -3474,7 +3562,7 @@ fn external_change_hashes_regular_files_and_never_follow_links_or_fifos() {
     );
     assert_eq!(
         super::activity::file_hash(&root, "a.txt"),
-        Some(crate::execution::hash(b"a\n"))
+        Some(codex_omd::sha256_hex(b"a\n"))
     );
     assert_eq!(super::activity::file_hash(&root, "link"), None);
     assert_eq!(super::activity::file_hash(&root, "fifo"), None);
@@ -3856,7 +3944,10 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         mods.resolve_agent_role(&thread_store, None, "missing/review")
             .is_none()
     );
-    assert!(mods.resolve_agent_role(&thread_store, None, "explorer").is_none());
+    assert!(
+        mods.resolve_agent_role(&thread_store, None, "explorer")
+            .is_none()
+    );
 
     static SPAWN: std::sync::LazyLock<ToolName> =
         std::sync::LazyLock::new(|| ToolName::plain("spawn_agent"));
@@ -4898,7 +4989,7 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         "secret forms are never offered to mods"
     );
     mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
-            turn_store: None,
+        turn_store: None,
         server: "docs",
         request_id: "7",
         action: "accept",
@@ -5431,8 +5522,14 @@ async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
         .unwrap();
     let mods = mods(&fixture.core);
     let prepare = |config: &mut codex_core::config::Config| {
-        codex_extension_api::ConfigContributor::prepare_thread_config(&mods, config, None, None, &codex_extension_api::ExtensionDataInit::default())
-            .unwrap();
+        codex_extension_api::ConfigContributor::prepare_thread_config(
+            &mods,
+            config,
+            None,
+            None,
+            &codex_extension_api::ExtensionDataInit::default(),
+        )
+        .unwrap();
     };
     config.tool_output_token_limit = Some(777);
     prepare(&mut config);
@@ -5457,54 +5554,144 @@ async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
 async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_clients() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
-    let Some(fixture) = fixture_with_registry(&[Package {
-        id: "control", capabilities: &["lifecycle", "commands", "store"],
-        manifest: json!({"settings_schema":{"type":"object","properties":{"choice":{"type":"string","default":"saved"}}}}),
-        source: "export default api => { api.on('start', () => api.state.set({starts:(api.state.get()?.starts ?? 0)+1})); api.command('starts', () => api.state.get()?.starts ?? 0); }",
-    }], Some(&mut registry)) else { return; };
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "control",
+            capabilities: &["lifecycle", "commands", "store"],
+            manifest: json!({"settings_schema":{"type":"object","properties":{"choice":{"type":"string","default":"saved"}}}}),
+            source: "export default api => { api.on('start', () => api.state.set({starts:(api.state.get()?.starts ?? 0)+1})); api.command('starts', () => api.state.get()?.starts ?? 0); }",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
     let shared = std::fs::read(fixture.core.host.root.join("mods.json")).unwrap();
-    let shared_files: Vec<_> = ["mod-status.json".to_owned(), "mod-view.json".to_owned(), codex_omd::builtins_snapshot(&fixture.core.host.repository)].into_iter().map(|name| {
+    let shared_files: Vec<_> = [
+        "mod-status.json".to_owned(),
+        "mod-view.json".to_owned(),
+        codex_omd::builtins_snapshot(&fixture.core.host.repository),
+    ]
+    .into_iter()
+    .map(|name| {
         let path = fixture.core.host.root.join(name);
         let bytes = std::fs::read(&path).ok();
         (path, bytes)
-    }).collect();
-    let a = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000001".parse().unwrap());
-    let b = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000002".parse().unwrap());
+    })
+    .collect();
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+    );
+    let b = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000002".parse().unwrap(),
+    );
     clients::bind("terminal-a", a.clone()).unwrap();
     clients::bind("terminal-b", b.clone()).unwrap();
     fixture.core.expansion.thread_started(&fixture.lead);
-    clients::select_thread(a.clone(), &fixture.lead.thread.to_string()).await.unwrap();
-    clients::select_thread(b.clone(), &fixture.lead.thread.to_string()).await.unwrap();
-    assert_eq!(clients::for_owner(&a).unwrap().expansion.current().unwrap().thread, fixture.lead.thread);
-    assert_eq!(clients::for_owner(&b).unwrap().expansion.current().unwrap().thread, fixture.lead.thread);
+    clients::select_thread(a.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    clients::select_thread(b.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        clients::for_owner(&a)
+            .unwrap()
+            .expansion
+            .current()
+            .unwrap()
+            .thread,
+        fixture.lead.thread
+    );
+    assert_eq!(
+        clients::for_owner(&b)
+            .unwrap()
+            .expansion
+            .current()
+            .unwrap()
+            .thread,
+        fixture.lead.thread
+    );
     {
         let _thread = codex_omd::StateThread::enter(Some(fixture.lead.thread.to_string()));
-        assert_eq!(command(&clients::for_owner(&a).unwrap().core, "control", "starts"), json!(2));
-        assert_eq!(command(&clients::for_owner(&b).unwrap().core, "control", "starts"), json!(2));
+        assert_eq!(
+            command(&clients::for_owner(&a).unwrap().core, "control", "starts"),
+            json!(2)
+        );
+        assert_eq!(
+            command(&clients::for_owner(&b).unwrap().core, "control", "starts"),
+            json!(2)
+        );
     }
-    clients::select_thread(b.clone(), &fixture.lead.thread.to_string()).await.unwrap();
+    clients::select_thread(b.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
     {
         let _thread = codex_omd::StateThread::enter(Some(fixture.lead.thread.to_string()));
-        assert_eq!(command(&clients::for_owner(&b).unwrap().core, "control", "starts"), json!(2));
+        assert_eq!(
+            command(&clients::for_owner(&b).unwrap().core, "control", "starts"),
+            json!(2)
+        );
     }
     clients::configuration("terminal-a", json!({"action":"write","id":"control","values":{"choice":"local"},"target":"terminal","reset":[]})).unwrap();
     let read_choice = |client: &str| {
         let response = clients::configuration(client, json!({"action":"read"})).unwrap();
-        response["packages"].as_array().unwrap().iter().find(|row| row["id"] == "control").unwrap()["settings"]["choice"].clone()
+        response["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "control")
+            .unwrap()["settings"]["choice"]
+            .clone()
     };
     assert_eq!(read_choice("terminal-a"), json!("local"));
     assert_eq!(read_choice("terminal-b"), json!("saved"));
-    let selection = codex_omd::ModStore::open(fixture.core.host.root.clone()).unwrap().configuration().unwrap().mods.into_iter().find(|selection| selection.path.ends_with("control")).unwrap();
-    clients::for_owner(&a).unwrap().input_runtime.lock().unwrap().configuration_overrides().lock().unwrap().set_enabled(&selection, false).unwrap();
-    let recovery_row = |client| clients::recovery_read(client).unwrap()["mods"].as_array().unwrap().iter().find(|row| row["id"] == "control").unwrap().clone();
+    let selection = codex_omd::ModStore::open(fixture.core.host.root.clone())
+        .unwrap()
+        .configuration()
+        .unwrap()
+        .mods
+        .into_iter()
+        .find(|selection| selection.path.ends_with("control"))
+        .unwrap();
+    clients::for_owner(&a)
+        .unwrap()
+        .input_runtime
+        .lock()
+        .unwrap()
+        .configuration_overrides()
+        .lock()
+        .unwrap()
+        .set_enabled(&selection, false)
+        .unwrap();
+    let recovery_row = |client| {
+        clients::recovery_read(client).unwrap()["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "control")
+            .unwrap()
+            .clone()
+    };
     let recovered_a = recovery_row("terminal-a");
     assert_eq!(recovered_a["enabled"], false);
     assert_eq!(recovered_a["inherited_enabled"], true);
     assert_eq!(recovered_a["overrides"]["enabled"], false);
     assert_eq!(recovered_a["settings"]["choice"], "local");
     assert_eq!(recovery_row("terminal-b")["enabled"], true);
-    assert_eq!(std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(), shared);
-    clients::for_owner(&a).unwrap().input_runtime.lock().unwrap().configuration_overrides().lock().unwrap().set_enabled(&selection, true).unwrap();
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(),
+        shared
+    );
+    clients::for_owner(&a)
+        .unwrap()
+        .input_runtime
+        .lock()
+        .unwrap()
+        .configuration_overrides()
+        .lock()
+        .unwrap()
+        .set_enabled(&selection, true)
+        .unwrap();
 
     let task_a = ExtensionData::new("same-thread-turn-a");
     task_a.insert(a.clone());
@@ -5515,11 +5702,28 @@ async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_c
     assert!(!Arc::ptr_eq(&owner_a, &owner_b));
     let mut admitted_config = codex_core::config::ConfigBuilder::default()
         .codex_home(fixture._dir.path().join("codex"))
-        .harness_overrides(codex_core::config::ConfigOverrides { cwd: Some(fixture.lead.host.repository.clone()), ..Default::default() })
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
         .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
-        .build().await.unwrap();
-    codex_extension_api::ConfigContributor::prepare_turn_config(owner_a.as_ref(), &mut admitted_config, &task_a, &task_a).unwrap();
-    codex_extension_api::ConfigContributor::prepare_turn_config(owner_b.as_ref(), &mut admitted_config, &task_b, &task_b).unwrap();
+        .build()
+        .await
+        .unwrap();
+    codex_extension_api::ConfigContributor::prepare_turn_config(
+        owner_a.as_ref(),
+        &mut admitted_config,
+        &task_a,
+        &task_a,
+    )
+    .unwrap();
+    codex_extension_api::ConfigContributor::prepare_turn_config(
+        owner_b.as_ref(),
+        &mut admitted_config,
+        &task_b,
+        &task_b,
+    )
+    .unwrap();
     let shared_thread = ExtensionData::new(fixture.lead.thread.to_string());
     shared_thread.insert(fixture.lead.clone());
     shared_thread.insert_arc(owner_a.clone());
@@ -5534,69 +5738,182 @@ async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_c
     }
     let pending_a = owner_a.expansion.pending.lock().unwrap().len();
     let pending_b = owner_b.expansion.pending.lock().unwrap().len();
-    codex_extension_api::ConfigContributor::on_config_changed(&mods(&fixture.core), &shared_thread, &shared_thread, &admitted_config, &changed_config, Some(&b));
+    codex_extension_api::ConfigContributor::on_config_changed(
+        &mods(&fixture.core),
+        &shared_thread,
+        &shared_thread,
+        &admitted_config,
+        &changed_config,
+        Some(&b),
+    );
     assert_eq!(owner_a.expansion.pending.lock().unwrap().len(), pending_a);
-    assert_eq!(owner_b.expansion.pending.lock().unwrap().len(), pending_b + 1);
-    codex_extension_api::ConfigContributor::on_config_changed(&mods(&fixture.core), &shared_thread, &shared_thread, &admitted_config, &changed_config, None);
-    assert_eq!(owner_a.expansion.pending.lock().unwrap().len(), pending_a + 1);
-    assert_eq!(owner_b.expansion.pending.lock().unwrap().len(), pending_b + 2);
+    assert_eq!(
+        owner_b.expansion.pending.lock().unwrap().len(),
+        pending_b + 1
+    );
+    codex_extension_api::ConfigContributor::on_config_changed(
+        &mods(&fixture.core),
+        &shared_thread,
+        &shared_thread,
+        &admitted_config,
+        &changed_config,
+        None,
+    );
+    assert_eq!(
+        owner_a.expansion.pending.lock().unwrap().len(),
+        pending_a + 1
+    );
+    assert_eq!(
+        owner_b.expansion.pending.lock().unwrap().len(),
+        pending_b + 2
+    );
     assert!(Arc::ptr_eq(&owner_a.turns, &owner_b.turns));
-    owner_a.turns.lock().unwrap().insert(fixture.lead.thread.to_string(), TurnRecord { turn_id: "native-active-turn".into(), error: None, evidence: None });
-    assert_eq!(owner_b.turns.lock().unwrap().get(&fixture.lead.thread.to_string()).unwrap().turn_id, "native-active-turn");
-    owner_a.turns.lock().unwrap().remove(&fixture.lead.thread.to_string());
-    assert!(Arc::ptr_eq(&owner_a.provider_switches, &owner_b.provider_switches));
+    owner_a.turns.lock().unwrap().insert(
+        fixture.lead.thread.to_string(),
+        TurnRecord {
+            turn_id: "native-active-turn".into(),
+            error: None,
+            evidence: None,
+        },
+    );
+    assert_eq!(
+        owner_b
+            .turns
+            .lock()
+            .unwrap()
+            .get(&fixture.lead.thread.to_string())
+            .unwrap()
+            .turn_id,
+        "native-active-turn"
+    );
+    owner_a
+        .turns
+        .lock()
+        .unwrap()
+        .remove(&fixture.lead.thread.to_string());
+    assert!(Arc::ptr_eq(
+        &owner_a.provider_switches,
+        &owner_b.provider_switches
+    ));
     assert!(Arc::ptr_eq(&owner_a.inventory, &owner_b.inventory));
     assert!(Arc::ptr_eq(&owner_a.inventory, &fixture.core.inventory));
     let shared_view = std::fs::read(fixture.core.host.root.join("mod-view.json")).ok();
-    owner_a.views.diagnostic(&owner_a.host, "terminal-test", Some("only terminal A".into()));
-    assert!(owner_a.views.published().unwrap().diagnostics.iter().any(|message| message == "only terminal A"));
-    assert!(owner_b.views.published().is_none_or(|view| !view.diagnostics.iter().any(|message| message == "only terminal A")));
-    assert_eq!(std::fs::read(fixture.core.host.root.join("mod-view.json")).ok(), shared_view);
+    owner_a.views.diagnostic(
+        &owner_a.host,
+        "terminal-test",
+        Some("only terminal A".into()),
+    );
+    assert!(
+        owner_a
+            .views
+            .published()
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(|message| message == "only terminal A")
+    );
+    assert!(owner_b.views.published().is_none_or(|view| {
+        !view
+            .diagnostics
+            .iter()
+            .any(|message| message == "only terminal A")
+    }));
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mod-view.json")).ok(),
+        shared_view
+    );
 
     *owner_a.disabled_modes.lock().unwrap() = vec!["plan".into()];
     let busy_a = owner_a.input_runtime.lock().unwrap();
     let busy_b = owner_b.input_runtime.lock().unwrap();
-    assert_eq!(owner_a.disabled_collaboration_modes(Some(&a)), vec!["plan".to_owned()]);
+    assert_eq!(
+        owner_a.disabled_collaboration_modes(Some(&a)),
+        vec!["plan".to_owned()]
+    );
     assert!(owner_b.disabled_collaboration_modes(Some(&b)).is_empty());
     drop((busy_a, busy_b));
     assert_ne!(read_choice("terminal-a"), read_choice("terminal-b"));
     let next_conversation = ExtensionData::new("another-conversation-turn");
     next_conversation.insert(a.clone());
-    assert!(Arc::ptr_eq(&owner_a, &clients::for_store(&next_conversation).unwrap()));
-    let next_lead = Lead { thread: ThreadId::new(), ..fixture.lead.clone() };
+    assert!(Arc::ptr_eq(
+        &owner_a,
+        &clients::for_store(&next_conversation).unwrap()
+    ));
+    let next_lead = Lead {
+        thread: ThreadId::new(),
+        ..fixture.lead.clone()
+    };
     fixture.core.expansion.thread_started(&next_lead);
-    clients::select_thread(a.clone(), &next_lead.thread.to_string()).await.unwrap();
-    assert_eq!(owner_a.expansion.current().unwrap().thread, next_lead.thread);
-    assert_eq!(owner_b.expansion.current().unwrap().thread, fixture.lead.thread);
+    clients::select_thread(a.clone(), &next_lead.thread.to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        owner_a.expansion.current().unwrap().thread,
+        next_lead.thread
+    );
+    assert_eq!(
+        owner_b.expansion.current().unwrap().thread,
+        fixture.lead.thread
+    );
     assert_eq!(read_choice("terminal-a"), json!("local"));
     clients::detached("terminal-a");
     clients::bind("reconnected-a", a.clone()).unwrap();
     assert!(Arc::ptr_eq(&owner_a, &clients::for_owner(&a).unwrap()));
     assert_eq!(read_choice("reconnected-a"), json!("local"));
-    let plain_rpc_owner = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000005".parse().unwrap());
+    let plain_rpc_owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000005".parse().unwrap(),
+    );
     assert!(clients::for_owner(&plain_rpc_owner).is_none());
-    clients::select_thread(plain_rpc_owner.clone(), &fixture.lead.thread.to_string()).await.unwrap();
+    clients::select_thread(plain_rpc_owner.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
     assert!(clients::for_owner(&plain_rpc_owner).is_some());
     clients::release_owner(plain_rpc_owner);
-    let child = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000003".parse().unwrap());
+    let child = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000003".parse().unwrap(),
+    );
     clients::bind("child", child.clone()).unwrap();
     assert_eq!(read_choice("child"), read_choice("terminal-b"));
     let native_child = ThreadId::new();
     let child_store = ExtensionData::new(native_child.to_string());
     child_store.insert(child.clone());
     let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-        parent_thread_id: fixture.lead.thread, depth: 1, agent_path: None, agent_nickname: None, agent_role: None,
+        parent_thread_id: fixture.lead.thread,
+        depth: 1,
+        agent_path: None,
+        agent_nickname: None,
+        agent_role: None,
     });
     let session_store = ExtensionData::new("native-child-session");
-    codex_extension_api::ThreadLifecycleContributor::on_thread_start(&mods(&fixture.core), codex_extension_api::ThreadStartInput {
-        config: &admitted_config, session_source: &source, persistent_thread_state_available: true,
-        environments: &[], mcp_resource_client: None, extension_metrics: None,
-        session_store: &session_store, thread_store: &child_store,
-    }).await;
-    let child_lead = child_store.get::<Lead>().expect("fresh owner retains native parent linkage");
+    codex_extension_api::ThreadLifecycleContributor::on_thread_start(
+        &mods(&fixture.core),
+        codex_extension_api::ThreadStartInput {
+            config: &admitted_config,
+            session_source: &source,
+            persistent_thread_state_available: true,
+            environments: &[],
+            mcp_resource_client: None,
+            extension_metrics: None,
+            session_store: &session_store,
+            thread_store: &child_store,
+        },
+    )
+    .await;
+    let child_lead = child_store
+        .get::<Lead>()
+        .expect("fresh owner retains native parent linkage");
     assert!(Arc::ptr_eq(&child_lead.session, &fixture.lead.session));
     assert_eq!(child_lead.owner, format!("agent:{native_child}"));
-    assert!(fixture.core.host.accounts.by_thread.lock().unwrap().contains_key(&native_child.to_string()));
+    assert!(
+        fixture
+            .core
+            .host
+            .accounts
+            .by_thread
+            .lock()
+            .unwrap()
+            .contains_key(&native_child.to_string())
+    );
     let child_binding = clients::request_runtime(&child_store).unwrap().unwrap();
     assert_eq!(child_binding.terminal_owner, Some(child.0.to_string()));
     assert!(!Arc::ptr_eq(&child_binding.runtime, &owner_a.runtime));
@@ -5604,28 +5921,73 @@ async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_c
     {
         let mut runtime = owner_a.runtime.lock().unwrap();
         runtime.reload().unwrap();
-        super::publish(&mut runtime, &owner_a.host, &owner_a.views, true, "owner-test", Value::Null, || true);
+        super::publish(
+            &mut runtime,
+            &owner_a.host,
+            &owner_a.views,
+            true,
+            "owner-test",
+            Value::Null,
+            || true,
+        );
     }
-    for (path, bytes) in shared_files { assert_eq!(std::fs::read(path).ok(), bytes); }
-    assert_eq!(std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(), shared);
+    for (path, bytes) in shared_files {
+        assert_eq!(std::fs::read(path).ok(), bytes);
+    }
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(),
+        shared
+    );
     let mut required: Value = serde_json::from_slice(&shared).unwrap();
     required["mods"][0]["required"] = json!(true);
-    let source = std::path::PathBuf::from(required["mods"][0]["path"].as_str().unwrap()).join("index.ts");
+    let source =
+        std::path::PathBuf::from(required["mods"][0]["path"].as_str().unwrap()).join("index.ts");
     let original_source = std::fs::read(&source).unwrap();
-    std::fs::write(&source, "export default () => { throw new Error('changed'); }").unwrap();
-    std::fs::write(fixture.core.host.root.join("mods.json"), serde_json::to_vec(&required).unwrap()).unwrap();
-    let quarantined_child = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000004".parse().unwrap());
+    std::fs::write(
+        &source,
+        "export default () => { throw new Error('changed'); }",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.core.host.root.join("mods.json"),
+        serde_json::to_vec(&required).unwrap(),
+    )
+    .unwrap();
+    let quarantined_child = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000004".parse().unwrap(),
+    );
     let quarantined = clients::ensure_owner(&quarantined_child).unwrap();
     assert!(!Arc::ptr_eq(&quarantined.core, &fixture.core));
-    assert!(quarantined.runtime.lock().unwrap().grants("control").is_none());
-    assert!(quarantined.runtime.lock().unwrap().status()["rejected"].as_array().is_some_and(|items| !items.is_empty()));
+    assert!(
+        quarantined
+            .runtime
+            .lock()
+            .unwrap()
+            .grants("control")
+            .is_none()
+    );
+    assert!(
+        quarantined.runtime.lock().unwrap().status()["rejected"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+    );
     std::fs::write(fixture.core.host.root.join("mods.json"), "{").unwrap();
-    let rejected_child = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000006".parse().unwrap());
+    let rejected_child = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000006".parse().unwrap(),
+    );
     assert!(clients::ensure_owner(&rejected_child).is_err());
     assert!(clients::for_owner(&rejected_child).is_none());
     let denied_task = ExtensionData::new("denied-child-task");
     denied_task.insert(rejected_child);
-    assert!(codex_extension_api::ConfigContributor::prepare_turn_config(owner_a.as_ref(), &mut admitted_config, &task_a, &denied_task).is_err());
+    assert!(
+        codex_extension_api::ConfigContributor::prepare_turn_config(
+            owner_a.as_ref(),
+            &mut admitted_config,
+            &task_a,
+            &denied_task
+        )
+        .is_err()
+    );
     assert!(clients::for_store(&denied_task).is_none());
     std::fs::write(&source, original_source).unwrap();
     std::fs::write(fixture.core.host.root.join("mods.json"), &shared).unwrap();
@@ -5634,7 +5996,10 @@ async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_c
     assert!(clients::for_owner(&a).is_none());
     assert!(Arc::ptr_eq(&owner_a, &clients::for_store(&task_a).unwrap()));
     assert!(Arc::ptr_eq(&owner_b, &clients::for_store(&task_b).unwrap()));
-    assert_ne!(clients::for_store(&task_a).unwrap().terminal_owner, fixture.core.terminal_owner);
+    assert_ne!(
+        clients::for_store(&task_a).unwrap().terminal_owner,
+        fixture.core.terminal_owner
+    );
     clients::release_owner(b);
     clients::release_owner(child);
 }
@@ -5643,29 +6008,67 @@ async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_c
 async fn terminal_owner_external_modules_render_and_receive_events_in_their_owner() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
-    let Some(fixture) = fixture_with_registry(&[Package {
-        id:"module_owner", capabilities:&["terminal"],
-        manifest:json!({"compatibility":{"required_features":["component_modules_v1"]},"settings_schema":{"type":"object","properties":{"choice":{"type":"string","default":"saved"}}}}),
-        source:"export default api => { api.component('screen', { init: () => 0, key: n => n + 1, view: n => [{type:'text',id:'value',label:'Value',text:api.settings.choice + ':' + n}] }); api.on('terminal', () => ({sites:{above_composer:{components:[{type:'module',id:'screen',label:'Screen',module:'screen',keys:true}]}}})); }",
-    }], Some(&mut registry)) else { return; };
-    let a = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000061".parse().unwrap());
-    let b = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000062".parse().unwrap());
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "module_owner",
+            capabilities: &["terminal"],
+            manifest: json!({"compatibility":{"required_features":["component_modules_v1"]},"settings_schema":{"type":"object","properties":{"choice":{"type":"string","default":"saved"}}}}),
+            source: "export default api => { api.component('screen', { init: () => 0, key: n => n + 1, view: n => [{type:'text',id:'value',label:'Value',text:api.settings.choice + ':' + n}] }); api.on('terminal', () => ({sites:{above_composer:{components:[{type:'module',id:'screen',label:'Screen',module:'screen',keys:true}]}}})); }",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000061".parse().unwrap(),
+    );
+    let b = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000062".parse().unwrap(),
+    );
     clients::bind("module-a", a.clone()).unwrap();
     clients::bind("module-b", b.clone()).unwrap();
-    clients::select_thread(a.clone(), &fixture.lead.thread.to_string()).await.unwrap();
-    clients::select_thread(b.clone(), &fixture.lead.thread.to_string()).await.unwrap();
-    clients::configuration("module-a", json!({"action":"write","id":"module_owner","values":{"choice":"local"}})).unwrap();
+    clients::select_thread(a.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    clients::select_thread(b.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    clients::configuration(
+        "module-a",
+        json!({"action":"write","id":"module_owner","values":{"choice":"local"}}),
+    )
+    .unwrap();
     for owner in [&a, &b] {
         let mods = clients::for_owner(owner).unwrap();
         let mut runtime = mods.runtime.lock().unwrap();
-        runtime.refresh_authority().unwrap();
-        super::publish(&mut runtime, &mods.host, &mods.views, true, "module_owner-test", Value::Null, || true);
+        runtime.refresh(&|| true).unwrap();
+        super::publish(
+            &mut runtime,
+            &mods.host,
+            &mods.views,
+            true,
+            "module_owner-test",
+            Value::Null,
+            || true,
+        );
     }
-    let render = |client: &str| clients::render(client, "module", json!({"component":"screen"})).unwrap()["tree"][0]["text"].clone();
+    let render = |client: &str| {
+        clients::render(client, "module", json!({"component":"screen"})).unwrap()["tree"][0]["text"]
+            .clone()
+    };
     assert_eq!(render("module-a"), "local:0");
     assert_eq!(render("module-b"), "saved:0");
-    assert!(clients::resource("module-a", "not-in-this-view").unwrap_err().contains("resource_not_in_view"));
-    clients::component_event("module-a", "screen", json!({"kind":"key","key":"x","text":"x"})).unwrap();
+    assert!(
+        clients::resource("module-a", "not-in-this-view")
+            .unwrap_err()
+            .contains("resource_not_in_view")
+    );
+    clients::component_event(
+        "module-a",
+        "screen",
+        json!({"kind":"key","key":"x","text":"x"}),
+    )
+    .unwrap();
     assert_eq!(render("module-a"), "local:1");
     assert_eq!(render("module-b"), "saved:0");
     clients::detached("module-a");
@@ -5680,22 +6083,55 @@ async fn terminal_owner_external_modules_render_and_receive_events_in_their_owne
 async fn embedded_session_dispatch_uses_explicit_terminal_owner_and_preserves_authority() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
-    let Some(mut fixture) = fixture_with_registry(&[Package {
-        id: "probe", capabilities: &["inventory"], manifest: Value::Null,
-        source: "export default () => {}",
-    }], Some(&mut registry)) else { return; };
+    let Some(mut fixture) = fixture_with_registry(
+        &[Package {
+            id: "probe",
+            capabilities: &["inventory"],
+            manifest: Value::Null,
+            source: "export default () => {}",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
     let _manager = attach_thread(&mut fixture).await;
     fixture.core.expansion.thread_started(&fixture.lead);
-    let a = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000011".parse().unwrap());
-    let b = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000012".parse().unwrap());
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000011".parse().unwrap(),
+    );
+    let b = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000012".parse().unwrap(),
+    );
     clients::bind("session-a", a.clone()).unwrap();
     clients::bind("session-b", b.clone()).unwrap();
-    clients::select_thread(a.clone(), &fixture.lead.thread.to_string()).await.unwrap();
-    clients::select_thread(b.clone(), &fixture.lead.thread.to_string()).await.unwrap();
-    let source = fixture.core.runtime.lock().unwrap().grants("probe").unwrap().source_sha256;
+    clients::select_thread(a.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    clients::select_thread(b.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    let source = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .grants("probe")
+        .unwrap()
+        .source_sha256;
     let thread = fixture.lead.thread.to_string();
     let call = |owner: &codex_protocol::turn_input::TerminalOwner, source: &str| {
-        codex_omd::host::session_call(Some(&owner.0.to_string()), &thread, "probe", Some(source), None, ModHostCall { operation: "session.info".into(), arguments: Value::Null }, &|| true)
+        codex_omd::host::session_call(
+            Some(&owner.0.to_string()),
+            &thread,
+            "probe",
+            Some(source),
+            None,
+            ModHostCall {
+                operation: "session.info".into(),
+                arguments: Value::Null,
+            },
+            &|| true,
+        )
     };
     assert_eq!(call(&a, &source).unwrap()["thread_id"], json!(thread));
     assert_eq!(call(&b, &source).unwrap()["thread_id"], json!(thread));
@@ -5703,7 +6139,9 @@ async fn embedded_session_dispatch_uses_explicit_terminal_owner_and_preserves_au
     clients::configuration("session-b", json!({"action":"package","request":{"action":"disable","id":"probe","scope":"user","target":"terminal"}})).unwrap();
     assert!(call(&b, &source).is_err());
     assert_eq!(call(&a, &source).unwrap()["thread_id"], json!(thread));
-    let unknown = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000013".parse().unwrap());
+    let unknown = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000013".parse().unwrap(),
+    );
     assert!(call(&unknown, &source).is_err());
     let admitted = clients::for_owner(&a).unwrap();
     clients::release_owner(a.clone());
@@ -5728,27 +6166,80 @@ async fn terminal_owner_user_commands_admit_settings_and_confirmed_package_contr
     }
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
-    let Some(fixture) = fixture_with_registry(&[Package {
-        id:"command_control", capabilities:&["commands","packages"],
-        manifest:json!({"settings_schema":{"type":"object","properties":{"choice":{"type":"string","default":"saved"}}}}),
-        source:"export default api => api.command('configuration_probe', arg => { if(arg==='write') return api.host.call('settings.write',{values:{choice:'local'}}); if(arg==='reload') return api.host.call('packages.reload',null); const listed=api.host.call('packages.list',null); return api.host.call('packages.apply',{action:'disable',id:'controlled_subject',target:'terminal',expected_generation:listed.generation}); });",
-    }, Package { id:"controlled_subject", capabilities:&[], manifest:json!({}), source:"export default () => {}" }], Some(&mut registry)) else { return; };
-    *fixture.lead.session.contract.lock().unwrap() = crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let Some(fixture) = fixture_with_registry(
+        &[
+            Package {
+                id: "command_control",
+                capabilities: &["commands", "packages"],
+                manifest: json!({"settings_schema":{"type":"object","properties":{"choice":{"type":"string","default":"saved"}}}}),
+                source: "export default api => api.command('configuration_probe', arg => { if(arg==='write') return api.host.call('settings.write',{values:{choice:'local'}}); if(arg==='reload') return api.host.call('packages.reload',null); const listed=api.host.call('packages.list',null); return api.host.call('packages.apply',{action:'disable',id:'controlled_subject',target:'terminal',expected_generation:listed.generation}); });",
+            },
+            Package {
+                id: "controlled_subject",
+                capabilities: &[],
+                manifest: json!({}),
+                source: "export default () => {}",
+            },
+        ],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
     let _surface = codex_omd::client_surface::register(Arc::new(Confirm));
-    let a = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000071".parse().unwrap());
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000071".parse().unwrap(),
+    );
     clients::bind("command_control-client", a.clone()).unwrap();
-    clients::select_thread(a.clone(), &fixture.lead.thread.to_string()).await.unwrap();
+    clients::select_thread(a.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
     let shared = std::fs::read(fixture.core.host.root.join("mods.json")).unwrap();
-    clients::configuration("command_control-client", json!({"action":"command","command":"configuration_probe","args":"write"})).unwrap();
-    let read = clients::configuration("command_control-client",json!({"action":"read"})).unwrap();
-    assert_eq!(read["packages"].as_array().unwrap().iter().find(|row| row["id"] == "command_control").unwrap()["settings"]["choice"], "local");
-    assert_eq!(std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(), shared);
-    clients::configuration("command_control-client", json!({"action":"command","command":"configuration_probe","args":"reload"})).unwrap();
+    clients::configuration(
+        "command_control-client",
+        json!({"action":"command","command":"configuration_probe","args":"write"}),
+    )
+    .unwrap();
+    let read = clients::configuration("command_control-client", json!({"action":"read"})).unwrap();
+    assert_eq!(
+        read["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "command_control")
+            .unwrap()["settings"]["choice"],
+        "local"
+    );
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(),
+        shared
+    );
+    clients::configuration(
+        "command_control-client",
+        json!({"action":"command","command":"configuration_probe","args":"reload"}),
+    )
+    .unwrap();
     let shared = std::fs::read(fixture.core.host.root.join("mods.json")).unwrap();
-    clients::configuration("command_control-client", json!({"action":"command","command":"configuration_probe","args":"toggle"})).unwrap();
-    let read = clients::configuration("command_control-client",json!({"action":"read"})).unwrap();
-    assert_eq!(read["packages"].as_array().unwrap().iter().find(|row| row["id"] == "controlled_subject").unwrap()["enabled"], false);
-    assert_eq!(std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(), shared);
+    clients::configuration(
+        "command_control-client",
+        json!({"action":"command","command":"configuration_probe","args":"toggle"}),
+    )
+    .unwrap();
+    let read = clients::configuration("command_control-client", json!({"action":"read"})).unwrap();
+    assert_eq!(
+        read["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "controlled_subject")
+            .unwrap()["enabled"],
+        false
+    );
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(),
+        shared
+    );
     clients::detached("command_control-client");
     clients::release_owner(a);
 }
@@ -5759,94 +6250,184 @@ async fn terminal_owner_unowned_native_child_uses_current_shared_defaults_and_re
     type Captured = Arc<Mutex<Option<(codex_protocol::turn_input::TerminalOwner, Arc<Mods>)>>>;
     struct Capture(Captured);
     impl ThreadLifecycleContributor<Config> for Capture {
-        fn on_thread_start<'a>(&'a self, input: ThreadStartInput<'a, Config>) -> ExtensionFuture<'a, ()> {
+        fn on_thread_start<'a>(
+            &'a self,
+            input: ThreadStartInput<'a, Config>,
+        ) -> ExtensionFuture<'a, ()> {
             Box::pin(async move {
-                assert!(input.thread_store.get::<codex_extension_api::ThreadOwnedTerminal>().is_some());
-                let owner = input.thread_store.get::<codex_protocol::turn_input::TerminalOwner>().unwrap();
-                *self.0.lock().unwrap() = Some(((*owner).clone(), clients::for_store(input.thread_store).unwrap()));
+                assert!(
+                    input
+                        .thread_store
+                        .get::<codex_extension_api::ThreadOwnedTerminal>()
+                        .is_some()
+                );
+                let owner = input
+                    .thread_store
+                    .get::<codex_protocol::turn_input::TerminalOwner>()
+                    .unwrap();
+                *self.0.lock().unwrap() = Some((
+                    (*owner).clone(),
+                    clients::for_store(input.thread_store).unwrap(),
+                ));
             })
         }
     }
     struct Reject(Captured, Arc<std::sync::atomic::AtomicBool>);
     impl codex_extension_api::ConfigContributor<Config> for Reject {
-        fn prepare_thread_config(&self, _config: &mut Config, _thread: Option<&str>, _forked_from: Option<&str>, init: &codex_extension_api::ExtensionDataInit) -> Result<(), String> {
+        fn prepare_thread_config(
+            &self,
+            _config: &mut Config,
+            _thread: Option<&str>,
+            _forked_from: Option<&str>,
+            init: &codex_extension_api::ExtensionDataInit,
+        ) -> Result<(), String> {
             if self.1.load(std::sync::atomic::Ordering::SeqCst) {
-                let owner = init.get::<codex_protocol::turn_input::TerminalOwner>().unwrap();
-                *self.0.lock().unwrap() = Some(((*owner).clone(), clients::for_owner(&owner).unwrap()));
+                let owner = init
+                    .get::<codex_protocol::turn_input::TerminalOwner>()
+                    .unwrap();
+                *self.0.lock().unwrap() =
+                    Some(((*owner).clone(), clients::for_owner(&owner).unwrap()));
                 return Err("later contributor rejected native startup".into());
             }
             Ok(())
         }
     }
     let mut registry = ExtensionRegistryBuilder::new();
-    let Some(fixture) = fixture_with_registry(&[Package {
-        id: "child_defaults", capabilities: &["commands"],
-        manifest: json!({"settings_schema":{"type":"object","properties":{"mode":{"type":"string","default":"saved"}}}}),
-        source: "export default api => api.command('mode', () => api.settings.mode)",
-    }], Some(&mut registry)) else { return; };
-    let parent = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000091".parse().unwrap());
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "child_defaults",
+            capabilities: &["commands"],
+            manifest: json!({"settings_schema":{"type":"object","properties":{"mode":{"type":"string","default":"saved"}}}}),
+            source: "export default api => api.command('mode', () => api.settings.mode)",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let parent = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000091".parse().unwrap(),
+    );
     clients::bind("native-parent", parent.clone()).unwrap();
-    clients::select_thread(parent.clone(), &fixture.lead.thread.to_string()).await.unwrap();
+    clients::select_thread(parent.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
     clients::configuration("native-parent", json!({"action":"write","id":"child_defaults","values":{"mode":"shared"},"target":"shared","reset":[]})).unwrap();
     clients::configuration("native-parent", json!({"action":"write","id":"child_defaults","values":{"mode":"local"},"target":"terminal","reset":[]})).unwrap();
-    clients::for_owner(&parent).unwrap().runtime.lock().unwrap().refresh_authority().unwrap();
-    assert_eq!(command(&clients::for_owner(&parent).unwrap().core, "child_defaults", "mode"), json!("local"));
+    clients::for_owner(&parent)
+        .unwrap()
+        .runtime
+        .lock()
+        .unwrap()
+        .refresh(&|| true)
+        .unwrap();
+    assert_eq!(
+        command(
+            &clients::for_owner(&parent).unwrap().core,
+            "child_defaults",
+            "mode"
+        ),
+        json!("local")
+    );
     let captured: Captured = Arc::default();
     registry.thread_lifecycle_contributor(Arc::new(Capture(captured.clone())));
     let reject = Arc::new(std::sync::atomic::AtomicBool::new(true));
     registry.config_contributor(Arc::new(Reject(captured.clone(), reject.clone())));
     let mut config = codex_core::config::ConfigBuilder::default()
         .codex_home(fixture._dir.path().join("native-codex"))
-        .harness_overrides(codex_core::config::ConfigOverrides { cwd: Some(fixture.lead.host.repository.clone()), ..Default::default() })
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
         .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
-        .build().await.unwrap();
+        .build()
+        .await
+        .unwrap();
     config.model_provider.base_url = Some("http://127.0.0.1:9/v1".into());
     let manager = codex_core::test_support::with_extensions(
-        codex_core::test_support::thread_manager_with_models_provider(codex_login::CodexAuth::from_api_key("test"), config.model_provider.clone()),
+        codex_core::test_support::thread_manager_with_models_provider(
+            codex_login::CodexAuth::from_api_key("test"),
+            config.model_provider.clone(),
+        ),
         Arc::new(registry.build()),
     );
-    let rejected = manager.start_thread(codex_core::StartThreadOptions {
-        environments: Some(Vec::new()),
-        ..codex_core::StartThreadOptions::new(config.clone())
-    }).await;
+    let rejected = manager
+        .start_thread(codex_core::StartThreadOptions {
+            environments: Some(Vec::new()),
+            ..codex_core::StartThreadOptions::new(config.clone())
+        })
+        .await;
     assert!(rejected.is_err());
     let (rejected_owner, captured_runtime) = captured.lock().unwrap().take().unwrap();
     assert!(clients::for_owner(&rejected_owner).is_none());
-    assert!(Arc::ptr_eq(&clients::session_owner(&rejected_owner).unwrap(), &captured_runtime));
+    assert!(Arc::ptr_eq(
+        &clients::session_owner(&rejected_owner).unwrap(),
+        &captured_runtime
+    ));
     drop(captured_runtime);
     assert!(clients::session_owner(&rejected_owner).is_none());
     reject.store(false, std::sync::atomic::Ordering::SeqCst);
-    let started = manager.start_thread(codex_core::StartThreadOptions {
-        session_source: Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-            parent_thread_id: fixture.lead.thread, depth: 1, agent_path: None, agent_nickname: None, agent_role: None,
-        })),
-        environments: Some(Vec::new()),
-        ..codex_core::StartThreadOptions::new(config)
-    }).await.unwrap();
+    let started = manager
+        .start_thread(codex_core::StartThreadOptions {
+            session_source: Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: fixture.lead.thread,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            })),
+            environments: Some(Vec::new()),
+            ..codex_core::StartThreadOptions::new(config)
+        })
+        .await
+        .unwrap();
     let (owner, admitted) = captured.lock().unwrap().take().unwrap();
     assert_ne!(owner, parent);
-    assert_eq!(command(&admitted.core, "child_defaults", "mode"), json!("shared"));
-    assert!(admitted.host.accounts.by_thread.lock().unwrap().contains_key(&started.thread_id.to_string()));
+    assert_eq!(
+        command(&admitted.core, "child_defaults", "mode"),
+        json!("shared")
+    );
+    assert!(
+        admitted
+            .host
+            .accounts
+            .by_thread
+            .lock()
+            .unwrap()
+            .contains_key(&started.thread_id.to_string())
+    );
     let task = ExtensionData::new("admitted-native-task");
     task.insert(owner.clone());
     task.insert_arc(admitted.clone());
     started.thread.shutdown_and_wait().await.unwrap();
     assert!(clients::for_owner(&owner).is_none());
     assert!(Arc::ptr_eq(&clients::for_store(&task).unwrap(), &admitted));
-    assert!(Arc::ptr_eq(&clients::session_owner(&owner).unwrap(), &admitted));
-    assert_eq!(command(&admitted.core, "child_defaults", "mode"), json!("shared"));
+    assert!(Arc::ptr_eq(
+        &clients::session_owner(&owner).unwrap(),
+        &admitted
+    ));
+    assert_eq!(
+        command(&admitted.core, "child_defaults", "mode"),
+        json!("shared")
+    );
     assert!(clients::for_owner(&parent).is_some());
     clients::release_owner(parent);
 }
 
 #[tokio::test]
 async fn terminal_owner_native_config_baselines_restore_child_defaults_and_native_edits() {
-    let Some(fixture) = fixture(&[]) else { return; };
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
     let mut config = codex_core::config::ConfigBuilder::default()
         .codex_home(fixture._dir.path().join("baseline-codex"))
-        .harness_overrides(codex_core::config::ConfigOverrides { cwd:Some(fixture.lead.host.repository.clone()), ..Default::default() })
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
         .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
-        .build().await.unwrap();
+        .build()
+        .await
+        .unwrap();
     config.update_plan_enabled = false;
     config.agent_completion_wake = false;
     config.tool_output_token_limit = Some(123);
@@ -5854,10 +6435,23 @@ async fn terminal_owner_native_config_baselines_restore_child_defaults_and_nativ
     let mut metadata_only = config.clone();
     metadata_only.extension_baselines.data.insert(42_u8);
     assert_eq!(metadata_only, config);
-    *fixture.core.codex_config.lock().unwrap() = [codex_omd::CODEX_CONFIG_UPDATE_PLAN, codex_omd::CODEX_CONFIG_COMPLETION_WAKE, codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE].into_iter().map(str::to_owned).collect();
-    fixture.core.apply_native_configuration(&mut config).unwrap();
+    *fixture.core.codex_config.lock().unwrap() = [
+        codex_omd::CODEX_CONFIG_UPDATE_PLAN,
+        codex_omd::CODEX_CONFIG_COMPLETION_WAKE,
+        codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    fixture
+        .core
+        .apply_native_configuration(&mut config)
+        .unwrap();
     assert!(config.update_plan_enabled && config.agent_completion_wake);
-    assert_eq!(config.tool_output_token_limit, Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS));
+    assert_eq!(
+        config.tool_output_token_limit,
+        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS)
+    );
     let mut child = config.clone();
     fixture.core.codex_config.lock().unwrap().clear();
     fixture.core.apply_native_configuration(&mut child).unwrap();
@@ -5868,12 +6462,21 @@ async fn terminal_owner_native_config_baselines_restore_child_defaults_and_nativ
     assert_eq!(child.tool_output_token_limit, Some(123));
     config.update_plan_enabled = false;
     config.tool_output_token_limit = Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS + 17);
-    fixture.core.apply_native_configuration(&mut config).unwrap();
+    fixture
+        .core
+        .apply_native_configuration(&mut config)
+        .unwrap();
     assert!(!config.update_plan_enabled && !config.agent_completion_wake);
-    assert_eq!(config.tool_output_token_limit, Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS + 17));
+    assert_eq!(
+        config.tool_output_token_limit,
+        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS + 17)
+    );
     config.update_plan_enabled = true;
     config.agent_completion_wake = true;
-    fixture.core.apply_native_configuration(&mut config).unwrap();
+    fixture
+        .core
+        .apply_native_configuration(&mut config)
+        .unwrap();
     assert!(config.update_plan_enabled && config.agent_completion_wake);
 }
 
@@ -5881,20 +6484,36 @@ async fn terminal_owner_native_config_baselines_restore_child_defaults_and_nativ
 async fn terminal_owner_native_configuration_refreshes_before_turn_and_conversation_admission() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
-    let Some(fixture) = fixture_with_registry(&[Package {
-        id:"native_config", capabilities:&[], source:"export default () => {}",
-        manifest:json!({"codex_config":{"tools.update_plan.enabled":true,"agents.completion_wake":true,"tool_output_token_limit.raise":true},"compatibility":{"required_features":["codex_config_v1"]}}),
-    }], Some(&mut registry)) else { return; };
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "native_config",
+            capabilities: &[],
+            source: "export default () => {}",
+            manifest: json!({"codex_config":{"tools.update_plan.enabled":true,"agents.completion_wake":true,"tool_output_token_limit.raise":true},"compatibility":{"required_features":["codex_config_v1"]}}),
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
     let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
     let selection = store.configuration().unwrap().mods[0].clone();
     store.enable(&selection.path, false).unwrap();
-    let owner = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-0000000000a1".parse().unwrap());
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-0000000000a1".parse().unwrap(),
+    );
     clients::bind("native_config-client", owner.clone()).unwrap();
     clients::configuration("native_config-client",json!({"action":"package","request":{"action":"enable","id":"native_config","scope":"user","target":"terminal"}})).unwrap();
     let original = std::fs::read(store.root().join("mods.json")).unwrap();
-    let mut config = codex_core::config::ConfigBuilder::default().codex_home(fixture._dir.path().join("refresh-codex"))
-        .harness_overrides(codex_core::config::ConfigOverrides {cwd:Some(fixture.lead.host.repository.clone()),..Default::default()})
-        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests()).build().await.unwrap();
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("refresh-codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
     config.update_plan_enabled = false;
     config.agent_completion_wake = false;
     config.tool_output_token_limit = Some(123);
@@ -5909,59 +6528,124 @@ async fn terminal_owner_native_configuration_refreshes_before_turn_and_conversat
         let store = ExtensionData::new("contended-turn");
         store.insert(worker_owner);
         entered_tx.send(()).unwrap();
-        let result = codex_extension_api::ConfigContributor::prepare_turn_config(&worker_mods, &mut waiting_config, &ExtensionData::new("thread"), &store);
+        let result = codex_extension_api::ConfigContributor::prepare_turn_config(
+            &worker_mods,
+            &mut waiting_config,
+            &ExtensionData::new("thread"),
+            &store,
+        );
         finished_tx.send((result, waiting_config)).unwrap();
     });
-    entered_rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
-    assert!(matches!(finished_rx.recv_timeout(std::time::Duration::from_millis(50)), Err(std::sync::mpsc::RecvTimeoutError::Timeout)));
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(matches!(
+        finished_rx.recv_timeout(std::time::Duration::from_millis(50)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
     drop(held);
-    let (result, admitted) = finished_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    let (result, admitted) = finished_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
     result.unwrap();
     worker.join().unwrap();
     assert!(admitted.update_plan_enabled && admitted.agent_completion_wake);
-    assert_eq!(admitted.tool_output_token_limit, Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS));
+    assert_eq!(
+        admitted.tool_output_token_limit,
+        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS)
+    );
     let mut turn = config.clone();
     let turn_store = ExtensionData::new("next-turn");
     turn_store.insert(owner.clone());
-    codex_extension_api::ConfigContributor::prepare_turn_config(&mods(&fixture.core), &mut turn, &ExtensionData::new("thread"), &turn_store).unwrap();
+    codex_extension_api::ConfigContributor::prepare_turn_config(
+        &mods(&fixture.core),
+        &mut turn,
+        &ExtensionData::new("thread"),
+        &turn_store,
+    )
+    .unwrap();
     assert!(turn.update_plan_enabled && turn.agent_completion_wake);
-    assert_eq!(turn.tool_output_token_limit,Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS));
+    assert_eq!(
+        turn.tool_output_token_limit,
+        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS)
+    );
     let mut thread_init = codex_extension_api::ExtensionDataInit::default();
     thread_init.insert(owner.clone());
-    codex_extension_api::ConfigContributor::prepare_thread_config(&mods(&fixture.core), &mut config, None, None, &thread_init).unwrap();
+    codex_extension_api::ConfigContributor::prepare_thread_config(
+        &mods(&fixture.core),
+        &mut config,
+        None,
+        None,
+        &thread_init,
+    )
+    .unwrap();
     assert!(config.update_plan_enabled && config.agent_completion_wake);
     clients::configuration("native_config-client",json!({"action":"package","request":{"action":"disable","id":"native_config","scope":"user","target":"terminal"}})).unwrap();
-    codex_extension_api::ConfigContributor::prepare_turn_config(&mods(&fixture.core), &mut turn, &ExtensionData::new("thread"), &turn_store).unwrap();
+    codex_extension_api::ConfigContributor::prepare_turn_config(
+        &mods(&fixture.core),
+        &mut turn,
+        &ExtensionData::new("thread"),
+        &turn_store,
+    )
+    .unwrap();
     assert!(!turn.update_plan_enabled && !turn.agent_completion_wake);
-    assert_eq!(turn.tool_output_token_limit,Some(123));
-    assert_eq!(std::fs::read(store.root().join("mods.json")).unwrap(),original);
+    assert_eq!(turn.tool_output_token_limit, Some(123));
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        original
+    );
     clients::detached("native_config-client");
     clients::release_owner(owner);
 }
-
 
 #[tokio::test(flavor = "multi_thread")]
 async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
-    let Some(fixture) = fixture_with_registry(&[Package {
-        id: "roster_view", capabilities: &["terminal"], manifest: Value::Null,
-        source: "export default api => api.on('terminal', ({clients}) => ({sites:{above_composer:{components:[{type:'text',id:'focus',label:'Focus',text:clients.some(client => client.id === 'roster-client' && client.focused) ? 'focused' : 'blurred'}]}}}));",
-    }], Some(&mut registry)) else { return; };
-    let a = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000071".parse().unwrap());
-    let b = codex_protocol::turn_input::TerminalOwner("00000000-0000-4000-8000-000000000072".parse().unwrap());
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "roster_view",
+            capabilities: &["terminal"],
+            manifest: Value::Null,
+            source: "export default api => api.on('terminal', ({clients}) => ({sites:{above_composer:{components:[{type:'text',id:'focus',label:'Focus',text:clients.some(client => client.id === 'roster-client' && client.focused) ? 'focused' : 'blurred'}]}}}));",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000071".parse().unwrap(),
+    );
+    let b = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000072".parse().unwrap(),
+    );
     clients::bind("roster-a", a.clone()).unwrap();
     clients::bind("roster-b", b.clone()).unwrap();
     let entry = codex_omd::client_surface::attach(codex_omd::client_surface::ClientEntry {
-        id: "roster-client".into(), name: "Roster client".into(), renderer: json!({}),
-        viewport: Value::Null, operations: Vec::new(), attached_ms: 0, focused: false,
+        id: "roster-client".into(),
+        name: "Roster client".into(),
+        renderer: json!({}),
+        viewport: Value::Null,
+        operations: Vec::new(),
+        attached_ms: 0,
+        focused: false,
     });
     for owner in [&a, &b] {
         let mods = clients::for_owner(owner).unwrap();
-        publish(&mut mods.runtime.lock().unwrap(), &mods.host, &mods.views, true, "start", Value::Null, || true);
+        publish(
+            &mut mods.runtime.lock().unwrap(),
+            &mods.host,
+            &mods.views,
+            true,
+            "start",
+            Value::Null,
+            || true,
+        );
     }
     let text = |client: &str| {
-        json!(clients::published_for(client).unwrap().view)["sites"]["above_composer"]["components"][0]["text"].clone()
+        json!(clients::published_for(client).unwrap().view)["sites"]["above_composer"]["components"]
+            [0]["text"]
+            .clone()
     };
     assert_eq!(text("roster-a"), "blurred");
     assert_eq!(text("roster-b"), "blurred");
@@ -5970,12 +6654,16 @@ async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
         while text("roster-a") != "focused" || text("roster-b") != "focused" {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-    }).await;
+    })
+    .await;
     drop(entry);
     clients::detached("roster-a");
     clients::detached("roster-b");
     clients::release_owner(a);
     clients::release_owner(b);
-    assert!(refreshed.is_ok(), "roster focus changes must rerender every terminal owner's view");
+    assert!(
+        refreshed.is_ok(),
+        "roster focus changes must rerender every terminal owner's view"
+    );
     drop(fixture);
 }

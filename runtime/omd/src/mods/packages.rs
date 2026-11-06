@@ -10,41 +10,92 @@ pub struct SettingsFile {
 }
 
 impl ModStore {
-    pub fn save_configuration(&self, path: &Path, settings: BTreeMap<String, Value>, enabled: bool) -> Result<()> {
+    pub fn save_configuration(
+        &self,
+        path: &Path,
+        settings: BTreeMap<String, Value>,
+        enabled: bool,
+    ) -> Result<()> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
         let mut config = self.configuration()?;
-        let index = config.mods.iter().position(|item| item.path == path).ok_or_else(|| failure("package_not_trusted"))?;
+        let index = config
+            .mods
+            .iter()
+            .position(|item| item.path == path)
+            .ok_or_else(|| failure("package_not_trusted"))?;
         let selection = &config.mods[index];
-        if selection.required || selection.scope == MANAGED_SCOPE || !selection.authority_current() { return Err(failure("configuration_override_forbidden")); }
+        if selection.required || selection.scope == MANAGED_SCOPE || !selection.authority_current()
+        {
+            return Err(failure("configuration_override_forbidden"));
+        }
         let (package, _, hash) = store::package(path)?;
-        if hash != selection.sha256 { return Err(failure("source_changed")); }
+        if hash != selection.sha256 {
+            return Err(failure("source_changed"));
+        }
         validate_settings(&package, &settings)?;
         let (file, _) = self.settings_file(&package, selection);
-        if file.status == "invalid" { return Err(failure("settings_file_invalid")); }
-        let file_name = (file.status == "loaded").then(|| format!("settings/{}", Path::new(&file.path).file_name().unwrap().to_string_lossy()));
+        if file.status == "invalid" {
+            return Err(failure("settings_file_invalid"));
+        }
+        let file_name = (file.status == "loaded").then(|| {
+            format!(
+                "settings/{}",
+                Path::new(&file.path).file_name().unwrap().to_string_lossy()
+            )
+        });
         let file_settings = serde_json::to_value(&settings)?;
         let settings_write = file_name.as_deref().map(|name| (name, &file_settings));
         if enabled {
-            if package.capabilities.iter().any(|capability| !selection.capabilities.contains(capability)) { return Err(failure("capability_denied")); }
+            if package
+                .capabilities
+                .iter()
+                .any(|capability| !selection.capabilities.contains(capability))
+            {
+                return Err(failure("capability_denied"));
+            }
             self.check_service_providers(&package, path)?;
             store::refuse_second_copy(&config, path, &selection.scope, &package.id)?;
         }
         let mut lock = self.read_package_lock()?;
-        let installed = lock.packages.values().find(|item| item.path == path).map(|item| item.id.clone());
+        let installed = lock
+            .packages
+            .values()
+            .find(|item| item.path == path)
+            .map(|item| item.id.clone());
         if let Some(id) = &installed {
             let item = &lock.packages[id];
-            if item.integrity != hash || item.state_version != package.state_version { return Err(failure("package_state_changed")); }
-            if enabled && let Some(reason) = lock.blocked_reason(id, &item.version, &item.integrity) { return Err(failure(format!("package_blocked: {reason}"))); }
+            if item.integrity != hash || item.state_version != package.state_version {
+                return Err(failure("package_state_changed"));
+            }
+            if enabled && let Some(reason) = lock.blocked_reason(id, &item.version, &item.integrity)
+            {
+                return Err(failure(format!("package_blocked: {reason}")));
+            }
             lock.packages.get_mut(id).unwrap().enabled = enabled;
             package_manager::validate_locked_graph(&lock.packages)?;
-            lock.revision = lock.revision.checked_add(1).ok_or_else(|| failure("revision_overflow"))?;
+            lock.revision = lock
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| failure("revision_overflow"))?;
         }
         config.mods[index].settings = settings;
         config.mods[index].enabled = enabled;
-        config.revision = config.revision.checked_add(1).ok_or_else(|| failure("revision_overflow"))?;
+        config.revision = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         if installed.is_some() || settings_write.is_some() {
-            self.commit_configuration_transaction(lock, config, &[], "save-defaults", json!({"mod":package.id}), &[], settings_write).map(drop)
+            self.commit_configuration_transaction(
+                lock,
+                config,
+                &[],
+                "save-defaults",
+                json!({"mod":package.id}),
+                &[],
+                settings_write,
+            )
+            .map(drop)
         } else {
             self.write("mods.json", &serde_json::to_value(config)?)
         }
@@ -136,8 +187,7 @@ impl ModStore {
         path: &Path,
         change: impl FnOnce(&mut BTreeMap<String, Value>),
     ) -> Result<BTreeMap<String, Value>> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let mut config = self.configuration()?;
         let selection = config
             .mods
@@ -155,10 +205,7 @@ impl ModStore {
             return Ok(settings);
         }
         selection.settings = settings.clone();
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut config.revision)?;
         self.write("mods.json", &serde_json::to_value(config)?)?;
         Ok(settings)
     }
@@ -208,8 +255,7 @@ impl ModStore {
     }
 
     pub fn migrate(&self, target: &Path) -> Result<Value> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let config = self.configuration()?;
         let selection = selected(&config, target)?;
         let (package, source, hash, assets) = store::package_with_assets(&selection.path)?;
@@ -248,7 +294,10 @@ impl ModStore {
         self.verified_runner()?;
         loaded.registrations = migration_registrations(&loaded)?;
         let state = run_migration(&loaded, from, &|| true)?;
-        let backup = format!("{name}-backup-{}", digest(&serde_json::to_vec(&previous)?));
+        let backup = format!(
+            "{name}-backup-{}",
+            crate::sha256_hex(&serde_json::to_vec(&previous)?)
+        );
         self.write(&backup, &previous)?;
         self.write(
             &name,
@@ -256,13 +305,12 @@ impl ModStore {
         )?;
         Ok(
             json!({"id":loaded.package.id,"from":from,"to":to,"backup":self.root.join(backup),
-            "source_sha256":hash,"settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
+            "source_sha256":hash,"settings_sha256":crate::sha256_hex(&serde_json::to_vec(&selection.settings)?)}),
         )
     }
 
     pub fn rollback(&self, target: &Path, backup: &Path) -> Result<Value> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let config = self.configuration()?;
         let selection = selected(&config, target)?;
         let (package, _, hash) = store::package(&selection.path)?;
@@ -293,7 +341,7 @@ impl ModStore {
         };
         let restored: Value =
             serde_json::from_slice(&store::read(&backup, store::STATE_LIMIT as u64)?)?;
-        if digest(&serde_json::to_vec(&restored)?) != expected_digest {
+        if crate::sha256_hex(&serde_json::to_vec(&restored)?) != expected_digest {
             return Err(failure("rollback_backup_digest_mismatch"));
         }
         let restored_version = restored["version"]
@@ -312,14 +360,14 @@ impl ModStore {
         }
         let recovery = format!(
             "{state_name}-rollback-{}",
-            digest(&serde_json::to_vec(&current)?)
+            crate::sha256_hex(&serde_json::to_vec(&current)?)
         );
         self.write(&recovery, &current)?;
         self.write(&state_name, &restored)?;
         Ok(
             json!({"id":package.id,"from":current["version"],"to":restored_version,
             "restored":backup,"recovery":self.root.join(recovery),"source_sha256":hash,
-            "settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
+            "settings_sha256":crate::sha256_hex(&serde_json::to_vec(&selection.settings)?)}),
         )
     }
 }
@@ -389,6 +437,7 @@ pub(super) fn detached(
         source: source.into(),
         assets: Arc::new(store::asset_map(assets)),
         request_metadata: Arc::new(OnceLock::new()),
+        session_key: None,
         code_cache: None,
         selection,
         adapter: None,

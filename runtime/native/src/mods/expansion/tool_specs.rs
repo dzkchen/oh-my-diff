@@ -104,13 +104,21 @@ pub(super) fn adjustment(original: &[Value], tools: &Value) -> ToolSpecAdjustmen
 
 impl ToolSpecContributor for Mods {
     fn adjusting(&self, turn_store: &ExtensionData, thread_store: &ExtensionData) -> bool {
-        if let Some(owner) = clients::for_store(turn_store).filter(|owner| !Arc::ptr_eq(&owner.core, &self.core)) { return owner.adjusting(turn_store, thread_store); }
+        if let Some(owner) =
+            clients::for_store(turn_store).filter(|owner| !Arc::ptr_eq(&owner.core, &self.core))
+        {
+            return owner.adjusting(turn_store, thread_store);
+        }
         self.expansion.tool_specs.load(Ordering::Acquire) && lead_thread(thread_store)
             || thread_store.get::<roles::AgentTools>().is_some()
     }
 
     fn observing(&self, turn_store: &ExtensionData, thread_store: &ExtensionData) -> bool {
-        if let Some(owner) = clients::for_store(turn_store).filter(|owner| !Arc::ptr_eq(&owner.core, &self.core)) { return owner.observing(turn_store, thread_store); }
+        if let Some(owner) =
+            clients::for_store(turn_store).filter(|owner| !Arc::ptr_eq(&owner.core, &self.core))
+        {
+            return owner.observing(turn_store, thread_store);
+        }
         lead_thread(thread_store) && self.expansion.tool_inventory.load(Ordering::Acquire)
     }
 
@@ -120,7 +128,11 @@ impl ToolSpecContributor for Mods {
         thread_store: &ExtensionData,
         inventory: &[ToolInventoryEntry],
     ) {
-        if let Some(owner) = clients::for_store(turn_store).filter(|owner| !Arc::ptr_eq(&owner.core, &self.core)) { return owner.observe_tool_inventory(turn_store, thread_store, inventory); }
+        if let Some(owner) =
+            clients::for_store(turn_store).filter(|owner| !Arc::ptr_eq(&owner.core, &self.core))
+        {
+            return owner.observe_tool_inventory(turn_store, thread_store, inventory);
+        }
         let Some(lead) = thread_store.get::<Lead>() else {
             return;
         };
@@ -144,7 +156,11 @@ impl ToolSpecContributor for Mods {
         thread_store: &ExtensionData,
         specs: &[ToolSpecView],
     ) -> Option<ToolSpecAdjustment> {
-        if let Some(owner) = clients::for_store(turn_store).filter(|owner| !Arc::ptr_eq(&owner.core, &self.core)) { return owner.adjust_tool_specs(turn_store, thread_store, specs); }
+        if let Some(owner) =
+            clients::for_store(turn_store).filter(|owner| !Arc::ptr_eq(&owner.core, &self.core))
+        {
+            return owner.adjust_tool_specs(turn_store, thread_store, specs);
+        }
         if let Some(allowed) = thread_store.get::<roles::AgentTools>() {
             return Some(ToolSpecAdjustment {
                 hide: specs
