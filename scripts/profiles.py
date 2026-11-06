@@ -655,6 +655,14 @@ def session_options(codex):
     return kept
 
 
+def author_launcher_text(node, cli):
+    if node:
+        return f"#!/bin/sh\nexec {shlex.quote(str(node))} {shlex.quote(str(cli))} \"$@\"\n"
+    return ("#!/bin/sh\ncommand -v node >/dev/null 2>&1 || "
+            "{ echo 'omd-mod-author needs Node.js 22.18 or later on PATH' >&2; exit 127; }\n"
+            f"exec node {shlex.quote(str(cli))} \"$@\"\n")
+
+
 def mini(prefix, bin_dir, codex):
     record = load(prefix)
     check(record, bin_dir)
@@ -905,9 +913,7 @@ def install(args):
         made_launchers.append(launcher)
         record["activation"]["sha256"] = support.digest(launcher)
         author_launcher = bin_dir / "omd-mod-author"
-        support.atomic_text(author_launcher,
-                            f"#!/bin/sh\nexec {shlex.quote(str(node or 'node'))} {shlex.quote(str(author_cli))} \"$@\"\n",
-                            0o755)
+        support.atomic_text(author_launcher, author_launcher_text(node, author_cli), 0o755)
         made_launchers.append(author_launcher)
         record["author"]["launcher_sha256"] = support.digest(author_launcher)
         control_launcher = bin_dir / "omd-package"
