@@ -1,4 +1,6 @@
 use codex_file_system::FileSystemSandboxContext;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSandboxPolicyContext;
 use codex_protocol::permissions::ReadDenyMatcher;
@@ -393,32 +395,38 @@ impl WorkspaceAuthority {
             .filter_map(|id| runtime.grants(&id).map(|grants| (id, grants)))
             .collect();
         let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
-        let proposals = runtime.event_scoped_with(
+        let proposals = runtime.event(
             "workspace_pre_rename",
-            |_| payload.clone().clone(),
-            &active,
-            |id, call| {
-                let audited =
-                    codex_omd::access_receipt(id, &call, Ok(&Value::Null)).map(|_| call.clone());
-                let result = self.pre_rename_call(
-                    id,
-                    call,
-                    grants.get(id),
-                    &|operation, arguments| lead.restricted(operation, arguments),
-                    &lead.session.processes,
-                    protected,
-                    generation,
-                    thread,
-                    environment,
-                    &active,
-                );
-                if let Some(call) = audited
-                    && let Some(receipt) =
-                        codex_omd::access_receipt(id, &call, result.as_ref().map_err(Clone::clone))
-                {
-                    lead.session.record_access(&receipt);
-                }
-                result.map_err(std::io::Error::other)
+            payload.clone(),
+            ModInvokeOptions {
+                active: &active,
+                host: ModHostCallback::Scoped(&mut |id, call| {
+                    let audited = codex_omd::access_receipt(id, &call, Ok(&Value::Null))
+                        .map(|_| call.clone());
+                    let result = self.pre_rename_call(
+                        id,
+                        call,
+                        grants.get(id),
+                        &|operation, arguments| lead.restricted(operation, arguments),
+                        &lead.session.processes,
+                        protected,
+                        generation,
+                        thread,
+                        environment,
+                        &active,
+                    );
+                    if let Some(call) = audited
+                        && let Some(receipt) = codex_omd::access_receipt(
+                            id,
+                            &call,
+                            result.as_ref().map_err(Clone::clone),
+                        )
+                    {
+                        lead.session.record_access(&receipt);
+                    }
+                    result.map_err(std::io::Error::other)
+                }),
+                ..ModInvokeOptions::default()
             },
         );
         let mut ready = Vec::new();

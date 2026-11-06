@@ -556,7 +556,7 @@ mod tests {
         .unwrap()
         .output()
         .unwrap();
-        assert!(output.status.success(), "{:?}", output);
+        assert!(output.status.success(), "{output:?}");
         assert_eq!(output.stdout, b"sandbox-ok");
     }
 
@@ -590,7 +590,7 @@ mod tests {
         .unwrap()
         .output()
         .unwrap();
-        assert!(output.status.success(), "{:?}", output);
+        assert!(output.status.success(), "{output:?}");
         assert_eq!(output.stdout, b"sandbox-ok");
     }
 

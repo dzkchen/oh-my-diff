@@ -185,11 +185,12 @@ fn concurrent_admissions_cannot_oversubscribe_the_shared_limit() {
             std::thread::spawn(move || task.admit("lead", "openai", "gpt-5.6-sol", 30).is_ok())
         })
         .collect();
-    let admitted = threads
-        .into_iter()
-        .filter_map(|thread| thread.join().ok())
-        .filter(|ok| *ok)
-        .count();
+    let mut admitted = 0;
+    for thread in threads {
+        if thread.join().is_ok_and(|ok| ok) {
+            admitted += 1;
+        }
+    }
     assert_eq!(admitted, 3);
     assert_eq!(task.remaining().unwrap().2, 10);
 }

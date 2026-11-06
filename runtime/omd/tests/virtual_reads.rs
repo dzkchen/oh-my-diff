@@ -1,3 +1,6 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use codex_omd::ModOpenOptions;
 use codex_omd::{ModHost, ModStore};
 use serde_json::json;
 use std::fs;
@@ -35,7 +38,7 @@ fn independent_provider_revision_and_disabled_recovery() {
     let (temp, store, package) = fixture();
     enable(&store, &package);
     let root = temp.path().canonicalize().unwrap().join("store");
-    let mut host = ModHost::open(root.clone()).unwrap();
+    let mut host = ModHost::open(root.clone(), ModOpenOptions::default()).unwrap();
     assert_eq!(host.virtual_readers().len(), 1, "{}", host.status());
     let result = host
         .read_virtual(
@@ -74,7 +77,7 @@ fn independent_provider_revision_and_disabled_recovery() {
         .is_err()
     );
     store.enable(&package, false).unwrap();
-    let mut host = ModHost::open(root).unwrap();
+    let mut host = ModHost::open(root, ModOpenOptions::default()).unwrap();
     assert!(host.virtual_readers().is_empty());
     assert!(
         host.read_virtual(
@@ -92,7 +95,11 @@ fn independent_provider_revision_and_disabled_recovery() {
 fn common_read_keeps_local_and_virtual_authority_separate() {
     let (_temp, store, package) = fixture();
     enable(&store, &package);
-    let mut host = ModHost::open(package.parent().unwrap().join("store")).unwrap();
+    let mut host = ModHost::open(
+        package.parent().unwrap().join("store"),
+        ModOpenOptions::default(),
+    )
+    .unwrap();
     assert!(
         host.tools()
             .iter()

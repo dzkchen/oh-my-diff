@@ -1,4 +1,9 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::MOD_API_VERSION;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 const CURRENT_API: &str = MOD_API_VERSION;
 use codex_omd::ModHost;
 use codex_omd::ModStore;
@@ -41,14 +46,21 @@ fn written(root: &Path, id: &str, source: &str, capabilities: &[&str], extra: Va
 
 fn trust(store: &ModStore, path: &Path, capabilities: &[&str]) {
     let inspected = ModStore::inspect_package(path).unwrap();
-    let granted: Vec<String> = capabilities.iter().map(|value| value.to_string()).collect();
+    let granted: Vec<String> = capabilities
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     let sha256 = inspected["sha256"].as_str().unwrap().to_owned();
     contended(|| store.trust(path.to_path_buf(), &sha256, granted.clone(), "user"));
     contended(|| store.enable(path, true));
 }
 
 fn host(temp: &TempDir) -> ModHost {
-    ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap()
+    ModHost::open(
+        temp.path().canonicalize().unwrap().join("store"),
+        ModOpenOptions::default(),
+    )
+    .unwrap()
 }
 
 fn workspace(temp: &TempDir) -> (PathBuf, ModStore) {
@@ -146,7 +158,8 @@ fn colliding_tool_slots_and_contested_replacements_disable_only_the_claimants() 
                 runtime.generation(),
                 "command",
                 "ping",
-                Value::Null
+                Value::Null,
+                ModInvokeOptions::default()
             )
             .unwrap(),
         json!("pong")
@@ -183,7 +196,11 @@ fn composed_key_bindings_run_only_their_owners_commands() {
     trust(&store, &observer, &["lifecycle"]);
 
     let mut runtime = host(&temp);
-    let drawn = runtime.event("terminal", json!({"event":"draw","checkpoint":null}));
+    let drawn = runtime.event(
+        "terminal",
+        json!({"event":"draw","checkpoint":null}),
+        ModInvokeOptions::default(),
+    );
     assert_eq!(drawn.len(), 1);
     let view = codex_omd::ModView::parse(drawn[0].1.as_ref().unwrap().clone()).unwrap();
     assert_eq!(
@@ -222,7 +239,8 @@ fn composed_key_bindings_run_only_their_owners_commands() {
                 runtime.generation(),
                 "command",
                 "ping",
-                Value::Null
+                Value::Null,
+                ModInvokeOptions::default()
             )
             .unwrap(),
         json!("pong")
@@ -279,7 +297,14 @@ fn disabling_a_shared_service_provider_stops_only_its_required_consumer() {
     let call = |runtime: &mut ModHost, id: &str, command: &str| {
         let generation = runtime.generation();
         runtime
-            .invoke(id, generation, "command", command, Value::Null)
+            .invoke(
+                id,
+                generation,
+                "command",
+                command,
+                Value::Null,
+                ModInvokeOptions::default(),
+            )
             .unwrap()
     };
     assert_eq!(
@@ -321,7 +346,7 @@ fn disabling_a_shared_service_provider_stops_only_its_required_consumer() {
             .contains("optional_service_unavailable")
     );
     assert_eq!(
-        reopened.event("context", Value::Null)[0]
+        reopened.event("context", Value::Null, ModInvokeOptions::default())[0]
             .1
             .as_ref()
             .unwrap(),
@@ -385,7 +410,7 @@ fn reloading_during_streamed_work_rejects_changed_sources_and_swaps_the_next_gen
     let generation = runtime.generation();
     let text = |runtime: &mut codex_omd::ModHost| {
         runtime
-            .event("context", json!({}))
+            .event("context", json!({}), ModInvokeOptions::default())
             .into_iter()
             .find(|(id, _)| id == "stream")
             .unwrap()
@@ -397,26 +422,28 @@ fn reloading_during_streamed_work_rejects_changed_sources_and_swaps_the_next_gen
 
     let mut updates = Vec::new();
     let value = runtime
-        .invoke_scoped(
+        .invoke(
             "worker",
             generation,
             "tool",
             "work",
             json!({}),
-            || true,
-            |_, _| {
-                std::fs::write(stream.join("index.ts"), middleware("hello!"))?;
-                trust(&store, &stream, &["context"]);
-                Ok(json!({"task":"running"}))
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |_| {
+                    std::fs::write(stream.join("index.ts"), middleware("hello!"))?;
+                    trust(&store, &stream, &["context"]);
+                    Ok(json!({"task":"running"}))
+                }),
+                progress: Some(&mut |update| updates.push(update)),
+                ..ModInvokeOptions::default()
             },
-            |update| updates.push(update),
         )
         .unwrap();
     assert_eq!(value, json!({"task":"running"}));
     assert_eq!(updates, ["started".to_string(), "finished".to_string()]);
     assert!(
         runtime
-            .event("context", json!({}))
+            .event("context", json!({}), ModInvokeOptions::default())
             .into_iter()
             .find(|(id, _)| id == "stream")
             .unwrap()
@@ -429,7 +456,14 @@ fn reloading_during_streamed_work_rejects_changed_sources_and_swaps_the_next_gen
     assert_eq!(text(&mut runtime), json!("hello!"));
     assert!(
         runtime
-            .invoke("worker", generation, "tool", "work", json!({}))
+            .invoke(
+                "worker",
+                generation,
+                "tool",
+                "work",
+                json!({}),
+                ModInvokeOptions::default()
+            )
             .unwrap_err()
             .to_string()
             .contains("stale_mod_generation")
@@ -472,7 +506,7 @@ fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
 
     let mut runtime = host(&temp);
     assert_eq!(active(&runtime), ["alpha", "beta", "gamma"]);
-    let results = runtime.event("context", Value::Null);
+    let results = runtime.event("context", Value::Null, ModInvokeOptions::default());
     let observed: Vec<(String, String)> = results
         .iter()
         .map(|(id, result)| {
@@ -489,9 +523,9 @@ fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
     assert!(observed[1].1.contains("beta failed"), "{:?}", observed[1]);
     assert!(observed[2].1.contains("context_limit"), "{:?}", observed[2]);
     for _ in 1..5 {
-        runtime.event("context", Value::Null);
+        runtime.event("context", Value::Null, ModInvokeOptions::default());
     }
-    let remaining = runtime.event("context", Value::Null);
+    let remaining = runtime.event("context", Value::Null, ModInvokeOptions::default());
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].0, "alpha");
     assert_eq!(remaining[0].1.as_ref().unwrap(), &json!({"text":"alpha"}));
@@ -499,13 +533,27 @@ fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
     let generation = runtime.generation();
     assert_eq!(
         runtime
-            .invoke("alpha", generation, "command", "count", Value::Null)
+            .invoke(
+                "alpha",
+                generation,
+                "command",
+                "count",
+                Value::Null,
+                ModInvokeOptions::default()
+            )
             .unwrap(),
         json!(1)
     );
     assert!(
         runtime
-            .invoke("beta", generation, "command", "count", Value::Null)
+            .invoke(
+                "beta",
+                generation,
+                "command",
+                "count",
+                Value::Null,
+                ModInvokeOptions::default()
+            )
             .is_err()
     );
     let state = |id: &str| root.join(format!("store/state-{id}.json"));

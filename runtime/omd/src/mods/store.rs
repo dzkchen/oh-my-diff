@@ -208,7 +208,7 @@ mod provenance_tests {
         let mut changed = selection.clone();
         changed.sha256 = "b".repeat(64);
         assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
-        changed = selection.clone();
+        changed = selection;
         changed.path = "/other".into();
         assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
     }

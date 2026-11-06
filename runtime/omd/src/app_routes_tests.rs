@@ -13,7 +13,7 @@ fn fixture(capabilities: &[&str]) -> Fixture {
     let root = dir.path().canonicalize().unwrap();
     std::fs::create_dir_all(root.join("sub")).unwrap();
     Fixture {
-        capabilities: capabilities.iter().map(|c| c.to_string()).collect(),
+        capabilities: capabilities.iter().map(ToString::to_string).collect(),
         visible: ["other".to_owned()].into(),
         roots: vec![root],
         routes: vec![("gpt-test".to_owned(), "openai".to_owned())],
