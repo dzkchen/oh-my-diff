@@ -153,6 +153,14 @@ def sync_sources(manager, store, origin, packages):
     return changed
 
 
+def refresh_kept_copies(manager, store, origin, packages, installed):
+    kept = {identifier: {"sha256": package["package_sha256"], "files": package["files"],
+                         "capabilities": package["capabilities"]}
+            for identifier, package in packages.items()
+            if identifier not in installed and (store / "sources" / identifier).is_dir()}
+    return sync_sources(manager, store, origin, kept)
+
+
 def keep_bundled_copies(manager, store):
     selected = [item for item in invoke(manager, "selection-status", store)["selections"] if item["selected"]]
     for item in selected:
@@ -854,6 +862,7 @@ def install(args):
         sync_sources(installed_manager, store, prefix / "sources", installed)
         keep_bundled_copies(installed_manager, store)
         retired = retire_packages(installed_manager, store, args.profile, previous)
+        refresh_kept_copies(installed_manager, store, prefix / "sources", packages, installed)
         if revoked:
             invoke(installed_manager, "trust-all", store, json.dumps([
                 {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],
