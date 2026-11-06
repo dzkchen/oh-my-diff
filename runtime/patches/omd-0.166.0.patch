@@ -192214,10 +192214,10 @@ index 0000000000000000000000000000000000000000..db9882f2468090380f949e1c1e144114
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b1b4ba1944c434158ea0c244479a7ccae483386
+index 0000000000000000000000000000000000000000..750df01d90a2e0ea4ae9ca5c3e5c8af5f2c42375
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2909 @@
+@@ -0,0 +1,2910 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -194497,6 +194497,7 @@ index 0000000000000000000000000000000000000000..2b1b4ba1944c434158ea0c244479a7cc
 +#[test]
 +#[serial_test::serial]
 +fn dialog_height_counts_wrapped_markdown_and_code_language_rows() {
++    let test_interaction = INTERACTION.capture();
 +    let paragraph = "wrapped words ".repeat(40);
 +    let snapshot = snapshot(serde_json::json!({"sites": {"dialog": {"components": [
 +        {"type": "dialog", "id": "about", "label": "About", "title": "About", "children": [
@@ -194507,7 +194508,7 @@ index 0000000000000000000000000000000000000000..2b1b4ba1944c434158ea0c244479a7cc
 +    let area = Rect::new(0, 0, 60, 40);
 +    let mut buffer = Buffer::empty(area);
 +    render(area, chat_area(area, &snapshot, 0), &mut buffer, &snapshot);
-+    let interaction = INTERACTION.lock().unwrap();
++    let interaction = test_interaction.lock().unwrap();
 +    let dialog = interaction.dialog_area.unwrap();
 +    let ok = interaction
 +        .hitboxes
