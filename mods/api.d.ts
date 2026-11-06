@@ -220,6 +220,7 @@ export interface TerminalTheme {
   glyphs?: Record<string, string>;
 }
 export type TerminalClient = {
+  active?: boolean;
   kind: 'terminal'; graphics: 'kitty' | 'iip' | 'cells' | 'text'; pointer: 'half_cell' | 'cell' | 'none'; reduced_motion: boolean;
   cell_px: { width: number; height: number } | null; columns: number; rows: number;
   /** Needs `terminal_site_area_v1`: the content area the last frame gave each of this mod's own `mod/site` layout leaves and overlays. */
@@ -570,7 +571,7 @@ export interface Events {
   /** The latest value a component module posted this frame. */
   component_post: { input: { component: string; module: string; client?: string; data: Json }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay' | 'thread'; view_id: string | null; dropped?: number }; output: void };
-  focus: { input: { focused: boolean; dropped?: number }; output: void };
+  focus: { input: { focused: boolean; idle?: boolean; dropped?: number }; output: void };
   config_change: { input: { key: string; original: Json; effective: Json; source: string; scope: 'codex' | 'mod'; caller: string }; output: void };
   peer_message: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json; sent_at_ms: number }; output: void };
   peer_receipt: { input: PeerReceipt; output: void };

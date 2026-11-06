@@ -1,7 +1,6 @@
 //! Single-use user consents for prompts a mod captured, kept per thread outside mod state.
 
 use crate::resource_data::ResourceRef;
-use crate::resource_data::hash;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
@@ -22,15 +21,7 @@ pub struct Consent {
 }
 
 pub fn digest(text: &str, attachments: &[ResourceRef]) -> String {
-    hash(&serde_json::to_vec(&(text, attachments)).unwrap_or_default())
-}
-
-fn token(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    crate::sha256_hex(&serde_json::to_vec(&(text, attachments)).unwrap_or_default())
 }
 
 fn with<T>(
@@ -38,7 +29,7 @@ fn with<T>(
     thread: &str,
     change: impl FnOnce(&mut Vec<Consent>) -> io::Result<T>,
 ) -> io::Result<T> {
-    if !token(thread) {
+    if !crate::resource_data::dotted_token(thread) {
         return Err(io::Error::other("consent_thread_invalid"));
     }
     let directory = root.join("consents");
@@ -126,7 +117,7 @@ pub fn restore(root: &Path, thread: &str, id: &str) -> io::Result<()> {
 }
 
 pub fn delivered(root: &Path, thread: &str, client_id: &str, turn_id: &str) -> io::Result<()> {
-    if !token(thread)
+    if !crate::resource_data::dotted_token(thread)
         || !root
             .join("consents")
             .join(format!("{thread}.json"))
@@ -146,7 +137,7 @@ pub fn delivered(root: &Path, thread: &str, client_id: &str, turn_id: &str) -> i
 }
 
 pub fn status(root: &Path, thread: &str, owner: &str, id: &str) -> io::Result<Option<Consent>> {
-    if !token(thread) {
+    if !crate::resource_data::dotted_token(thread) {
         return Err(io::Error::other("consent_thread_invalid"));
     }
     Ok(read(&root.join("consents").join(format!("{thread}.json")))?

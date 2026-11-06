@@ -40,9 +40,8 @@ fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
     if exclusive && created.is_none() {
         return Err(io::Error::other("workspace_ownership_unavailable"));
     }
-    let key = crate::resource_data::hash(
-        format!("{}:{}:{created:?}", metadata.dev(), metadata.ino()).as_bytes(),
-    );
+    let key =
+        crate::sha256_hex(format!("{}:{}:{created:?}", metadata.dev(), metadata.ino()).as_bytes());
     Ok((root.to_owned(), key))
 }
 

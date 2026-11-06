@@ -11,6 +11,7 @@ part of it. For the test commands you run locally, see [tests/README.md](../../t
 | `validate.yml` | Called by the two below | Tests, lints, builds and packages on `macos-15` |
 | `nightly.yml` | Daily at 07:17 UTC, or **Run workflow** | Validates; on `main` publishes a nightly prerelease |
 | `release.yml` | A `vX.Y.Z` or `vX.Y.Z-rc.N` tag; **Run workflow** is a dry run | Checks versions, validates, publishes the release |
+| `issue-triage.yml` | An issue is opened or edited | Adds the `area:` label for the form's Area field |
 
 ## Pull requests
 

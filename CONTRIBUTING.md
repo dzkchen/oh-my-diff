@@ -12,6 +12,8 @@ best. For anything large, open an issue first.
   [mod or API request](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml). The patched Codex
   code in `runtime/` only gets general building blocks that several unrelated mods can use, never one feature.
 - A bug or docs fix: send a pull request.
+- Anything else: open an issue first and wait for `status: accepted`. Pull requests from outside contributors
+  without a linked issue may be closed. Issues labeled `good first issue` or `help wanted` are open for you to take.
 - A security problem: report it privately as described in [SECURITY.md](SECURITY.md).
 
 ## Find your way around
@@ -71,7 +73,9 @@ nightly on GitHub. [How CI checks a change](docs/contributing/ci.md) says what r
 
 1. Branch from `main`.
 2. Title it with a [Conventional Commits](https://www.conventionalcommits.org) prefix, from the table below.
-3. Fill in the [pull request template](.github/pull_request_template.md): what changed and how you checked it.
+3. Fill in the [pull request template](.github/pull_request_template.md): what changed and why, the linked issue,
+   how you checked it, with a before and after screenshot or recording for anything visible in the terminal, and
+   the risk.
 
 | Prefix | Changelog section |
 | --- | --- |
@@ -85,6 +89,16 @@ commits aren't listed. A rebase merge lists each commit, so give each one a pref
 
 Write no code comments except one line on genuinely abstract code. Don't commit secrets, credentials or personal
 paths.
+
+AI-assisted changes are welcome. Say which tools you used in the template's AI section, review the result yourself
+and run the checks; you are responsible for every line.
+
+## Issues and labels
+
+Issue forms label each issue with a `type:`, `status: triage` and, from the form's Area field, an `area:` label.
+The maintainer then sets a status: `accepted`, `blocked`, `needs-info`, `needs-repro` or `upstream`. Closed issues
+may get `resolution: duplicate` or `resolution: wontfix`. The labels are listed in
+[.github/settings.json](.github/settings.json).
 
 ## Releases
 

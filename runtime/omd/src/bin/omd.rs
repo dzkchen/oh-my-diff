@@ -594,7 +594,7 @@ fn run(args: Vec<String>) -> io::Result<Value> {
             .ok_or_else(|| io::Error::other("command_owner_missing"))?,
     )?;
     let deadline = Instant::now() + Duration::from_secs(30);
-    runtime.invoke_scoped_with(
+    runtime.invoke_scoped(
         owner,
         runtime.generation(),
         "command",
@@ -652,6 +652,7 @@ fn run(args: Vec<String>) -> io::Result<Value> {
                 Instant::now() < deadline
             })
         },
+        |_| {},
     )
 }
 
