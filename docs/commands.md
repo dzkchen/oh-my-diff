@@ -66,6 +66,7 @@ set.
 
 | Command | What it does |
 | --- | --- |
+| `omd --version` | Print the OMD, Codex and mod API versions |
 | `omd update` | Install the newest release, or first-party mod updates when no newer release is out |
 | `omd update status` | Show the install and update settings |
 | `omd update check` | Check for a release or first-party mod updates without installing them |
