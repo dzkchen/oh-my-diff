@@ -20,3 +20,6 @@ swc_common = "=26.0.0"
 swc_ts_fast_strip = "=59.0.1"
 uuid = { workspace = true }
 v8 = { workspace = true, features = ["v8_enable_sandbox"] }
+
+[lints]
+workspace = true

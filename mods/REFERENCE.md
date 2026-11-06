@@ -343,7 +343,8 @@ These failures don't count:
 
 - errors starting `state_conflict`, `state_thread_unavailable`, `state_checkout_unavailable`, `callback_cancelled`,
   `host_receipt_limit`, `host_result_limit`, `host_call_limit` or `callback_execution_budget`;
-- failures of `service` and `component` events.
+- failures of `service` and `component` events;
+- an interceptor that throws the error its `next` rejected with, such as a tool result the host could not hand back.
 
 The count is kept in process memory and is not persisted, so each `omd-mod command` starts at 0 and `omd-mod status`
 shows `faults: 0` afterwards.
@@ -1444,7 +1445,7 @@ A package over the per-callback text limit is refused by inspection, install and
 const sent = api.host.tryCall('process.exchange', { session: session(m), send: [{ src: api.assets.read('github.mjs').text }], wait_ms: 0 });
 ```
 
-That call is from [`omd_monitor`](first-party/omd_monitor/index.ts). The mod owns its watch/list/cancel subscriptions, persistence, timeouts and delivery; companion plugin guidance teaches the agent when to subscribe and how to handle results. Enabling the mod with its declared grants is sufficient to watch repositories through the user’s `gh` login.
+That call is from [`omd_monitor`](first-party/omd_monitor/index.ts). The mod owns its watch/list/cancel subscriptions, persistence, timeouts and delivery; companion plugin guidance teaches the agent when to subscribe and how to handle results. Enabling the mod with its declared grants is sufficient to watch repositories through the user’s `gh` login. Watches and results belong to their creating thread; forks do not adopt them.
 
 ### Installed package manifests
 
@@ -3547,11 +3548,14 @@ is smaller. The result contains a 4 KiB preview, `{reference, sha256}` in `outpu
 `stdout_preview_truncated`. Oversize output fails with `exec_output_artifact_limit` without creating an artifact.
 
 `exec.output_page {artifact, cursor?, max_bytes?}` (experimental) reads at most 16 KiB per call with a byte cursor and
-returns `{text, cursor, bytes, sha256}`.
+returns `{text, cursor, bytes, sha256}`. The host seeks to the cursor and reads only that page, so paging a large
+artifact does not reread it. A cursor inside a UTF-8 character or past the end fails with `exec_output_cursor_invalid`,
+and a page never splits a character. `cursor` is `null` on the last page.
 
-The artifact is bound to the repository, the current mod source and the thread. Reads check its hash, and each
-repository, source and thread combination has a 64 MiB quota. Large command output stays outside mod callback
-receipts, and later callbacks can page it in.
+The artifact is bound to the repository, the current mod source and the thread. Each page is checked against block
+hashes recorded when the artifact was written or first verified, so a modified artifact fails with
+`exec_output_integrity_failed`. Each repository, source and thread combination has a 64 MiB quota. Large command
+output stays outside mod callback receipts, and later callbacks can page it in.
 
 #### `exclusive_workspace`
 
@@ -8621,10 +8625,9 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
   `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with
   `client_surface_operation_unavailable`.
 - `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them.
-- When a mod's source changes after trust, its last trusted code keeps running. The mod reports
-  `source_changed: ...`, and `reload_error` is `untrusted_source: ...`. The new source loads after `omd-mod trust`
-  and a reload. Administered content that no longer matches its pin reports `managed_content_stale: ...` instead and
-  loads after `omd-mod package-sync`.
+- When a mod's source changes after trust, its last trusted code keeps running. The mod and `reload_error` both
+  report `source_changed: ...`. The new source loads after `omd-mod trust` and a reload. Administered content that
+  no longer matches its pin reports `managed_content_stale: ...` instead and loads after `omd-mod package-sync`.
 
 ### Host notifications and server requests
 

@@ -161,6 +161,18 @@ def keep_bundled_copies(manager, store):
             invoke(manager, "package-disable", store, item["id"])
 
 
+def retire_packages(manager, store, profile, previous):
+    retired = set(PACKAGES) - set(profile_packages("full")) - set(ROUTES.values())
+    if previous and profile != "full":
+        return set(previous.get("retired", ()))
+    newly = retired - set(previous.get("retired", ())) if previous else set()
+    if newly:
+        for item in invoke(manager, "selection-status", store)["selections"]:
+            if item["selected"] and item["id"] in newly and item["path"] == str(store / "sources" / item["id"]):
+                invoke(manager, "disable", store, item["path"])
+    return retired
+
+
 def reconcile(prefix, bin_dir):
     record = load(prefix)
     _, manager = check(record, bin_dir)
@@ -841,6 +853,7 @@ def install(args):
             invoke(installed_manager, "enable", store, target)
         sync_sources(installed_manager, store, prefix / "sources", installed)
         keep_bundled_copies(installed_manager, store)
+        retired = retire_packages(installed_manager, store, args.profile, previous)
         if revoked:
             invoke(installed_manager, "trust-all", store, json.dumps([
                 {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],
@@ -878,7 +891,7 @@ def install(args):
                   "runtime_patch_sha256": patch_lock["patch"]["sha256"],
                   "shared_state": {"codex_home": str(home), "codex_sqlite_home": str(sqlite),
                                    "policy": "inherited unchanged; never removed by uninstall"},
-                  "activation": {"selection": args.profile}}
+                  "activation": {"selection": args.profile}, "retired": sorted(retired)}
         if managed:
             record["update"] = {"root": str(prefix.parents[2]), "installer": str(management_root / "install.sh"),
                                 "python": sys.executable}

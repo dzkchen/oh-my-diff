@@ -29,6 +29,7 @@ fn mounted_component_refreshes_background_activation_identity() {
             None,
             BUDGET,
             &|| true,
+            &|_| true,
             &mut |_| unreachable!(),
         )
         .unwrap();
@@ -51,6 +52,7 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
             None,
             BUDGET,
             &|| true,
+            &|_| true,
             &mut |_| unreachable!(),
         )
         .unwrap();
@@ -68,6 +70,7 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
         None,
         BUDGET,
         &|| started.elapsed() < Duration::from_millis(100),
+        &|_| true,
         &mut |_| unreachable!(),
     )
     .unwrap_err();
@@ -87,6 +90,7 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
         None,
         BUDGET,
         &|| true,
+        &|_| true,
         &mut |_| unreachable!(),
     )
     .unwrap();
@@ -110,6 +114,7 @@ fn reused_process_resends_changed_package_fields_and_replaces_a_runner_that_died
             None,
             BUDGET,
             &|| true,
+            &|_| true,
             &mut |_| unreachable!(),
         )
         .unwrap()["value"]
@@ -164,6 +169,7 @@ fn a_render_runner_killed_idle_by_the_watchdog_fails_the_next_render_once() {
             None,
             BUDGET,
             &|| true,
+            &|_| true,
             &mut |_| unreachable!(),
         )
     };
@@ -198,6 +204,7 @@ fn reused_process_keeps_each_packages_authority_and_host_identity() {
                 None,
                 BUDGET,
                 &|| true,
+                &|_| true,
                 &mut |frame| {
                     assert_eq!(event, "command");
                     assert_eq!(frame["call"]["operation"], "identity");
@@ -235,6 +242,7 @@ fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
             None,
             Duration::from_secs(5),
             &|| true,
+            &|_| true,
             &mut |_| unreachable!(),
         )
     };
@@ -277,6 +285,7 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
             None,
             BUDGET,
             &|| true,
+            &|_| true,
             &mut |_| unreachable!(),
         )
         .unwrap_err();
@@ -306,6 +315,7 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
         None,
         BUDGET,
         &|| true,
+        &|_| true,
         &mut |_| unreachable!(),
     )
     .unwrap();
@@ -324,6 +334,7 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
         None,
         BUDGET,
         &|| false,
+        &|_| true,
         &mut |_| unreachable!(),
     )
     .unwrap_err();

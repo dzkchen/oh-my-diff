@@ -212,7 +212,8 @@ These failures don't count:
 
 - errors starting `state_conflict`, `state_thread_unavailable`, `state_checkout_unavailable`, `callback_cancelled`,
   `host_receipt_limit`, `host_result_limit`, `host_call_limit` or `callback_execution_budget`;
-- failures of `service` and `component` events.
+- failures of `service` and `component` events;
+- an interceptor that throws the error its `next` rejected with, such as a tool result the host could not hand back.
 
 The count is kept in process memory and is not persisted, so each `omd-mod command` starts at 0 and `omd-mod status`
 shows `faults: 0` afterwards.

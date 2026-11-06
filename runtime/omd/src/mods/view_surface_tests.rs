@@ -35,8 +35,8 @@ fn box_styles_are_bounded_and_render_hook_trees_refuse_them() {
     );
     assert_eq!(style.unwrap().padding.unwrap().axes(), (0, 4));
     assert!(
-        view(json!({"sidebar_style": still.clone(), "layout": {"split": "horizontal", "gap": 4, "children": [
-            {"content": "site:a/b", "style": still.clone()},
+        view(json!({"sidebar_style": still, "layout": {"split": "horizontal", "gap": 4, "children": [
+            {"content": "site:a/b", "style": still},
             {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}]},
             "sites": {"dialog": {"components": [{"type": "dialog", "id": "d", "label": "D", "title": "D", "style": still}]}}}))
         .is_ok()
@@ -321,7 +321,7 @@ fn key_contexts_are_bounded_and_compose_with_their_owner() {
         "h": {"region": "left"}, "1": {"region": 1}, "?": {"action": {"help": true}, "label": "Keys"},
         "Shift+Tab": {"region": "previous"}, "Enter": {"command": "open", "args": "x"}, "x": {"command": "other:run"}}});
     let chat = json!({"when": {"focus": "chat"}, "keys": {"Alt+1": {"region": "a/b"}}});
-    let parsed = view(json!({"key_contexts": [site.clone(), chat.clone()],
+    let parsed = view(json!({"key_contexts": [site, chat],
         "sites": {"a/b": {"components": [{"type": "document", "id": "d", "label": "D", "keys": "all"}]}}}))
     .unwrap();
     assert_eq!(
@@ -348,7 +348,7 @@ fn key_contexts_are_bounded_and_compose_with_their_owner() {
         context(json!({"Esc": {"help": true}})),
         context(json!({"hh": {"help": true}})),
         json!({"key_contexts": [{"when": {"focus": "site"}, "owner": "a", "keys": {"h": {"help": true}}}]}),
-        json!({"key_contexts": vec![chat.clone(); 9]}),
+        json!({"key_contexts": vec![chat; 9]}),
         context(Value::Object(
             (b'a'..=b'z')
                 .chain(b'0'..=b'6')

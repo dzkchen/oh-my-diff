@@ -8,6 +8,10 @@ The crate covers the mod host and package manager, the host operations mods call
 stores, sessions, credentials, drafts and events), the task ledger and workflow contracts, and the terminal view model.
 `src/lib.rs` lists the modules.
 
+`ModHost` has one entry point per operation: `open`, `invoke`, `event`, `refresh` and `turn_boundary`; `open` takes
+`ModOpenOptions` and `invoke` and `event` take `ModInvokeOptions`. The crate uses the workspace lints, so production
+code returns errors instead of unwrapping.
+
 Binaries in this crate:
 
 - `omd`: runs an enabled mod's CLI export outside a session; `omd install` and `omd mods` manage mod packages;

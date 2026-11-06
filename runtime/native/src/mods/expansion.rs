@@ -411,9 +411,11 @@ async fn invoke_one_guarded(
                 event,
                 "",
                 payload,
-                active,
-                host,
-                |_| {},
+                codex_omd::ModInvokeOptions {
+                    active,
+                    host: codex_omd::ModHostCallback::Scoped(host),
+                    ..codex_omd::ModInvokeOptions::default()
+                },
             )
             .map_err(|error| error.to_string());
             // The tool_result event that follows every tool_output republishes the view.

@@ -483,28 +483,30 @@ impl Notifier {
                 "agent_end",
                 "",
                 payload,
-                || lead.session.task.check_active().is_ok(),
-                |caller, call| {
-                    let (source, grants) = ownership.get(caller).cloned().unwrap_or_default();
-                    handle
-                        .block_on(operations::dispatch(
-                            &core,
-                            &lead,
-                            operations::Caller {
-                                id: caller,
-                                source: &source,
-                                grants,
-                                generation,
-                                origin: codex_omd::data_store::Origin::Event,
-                                record_changes: true,
-                            },
-                            None,
-                            call,
-                            &cancelled,
-                        ))
-                        .map_err(std::io::Error::other)
+                codex_omd::ModInvokeOptions {
+                    active: &|| lead.session.task.check_active().is_ok(),
+                    host: codex_omd::ModHostCallback::Scoped(&mut |caller, call| {
+                        let (source, grants) = ownership.get(caller).cloned().unwrap_or_default();
+                        handle
+                            .block_on(operations::dispatch(
+                                &core,
+                                &lead,
+                                operations::Caller {
+                                    id: caller,
+                                    source: &source,
+                                    grants,
+                                    generation,
+                                    origin: codex_omd::data_store::Origin::Event,
+                                    record_changes: true,
+                                },
+                                None,
+                                call,
+                                &cancelled,
+                            ))
+                            .map_err(std::io::Error::other)
+                    }),
+                    ..codex_omd::ModInvokeOptions::default()
                 },
-                |_| {},
             ) {
                 notifier.views.diagnostic(
                     &notifier.host,

@@ -143,7 +143,7 @@ file.
   `package_approval_required`. Show the user the permissions in `mod.json` and pass `--yes` only after they agree.
   `omd mods disable` doesn't ask for approval, so it's safe without a terminal.
 - `omd install --scope project` fails with `package_scope_conflict` if the same mod is installed for the user.
-- A folder install stops after any edit, with `untrusted_source`, until `omd mods update ID`.
+- A folder install stops after any edit, with `source_changed`, until `omd mods update ID`.
 - A changed `state_version` keeps the mod off with `state_migration_required` until its `migrate` handler runs.
 - The model finds mod tools through tool search, named `mod_<id>_<tool>`.
 - A denial you don't understand: run `omd-mod-author explain 'DENIAL TEXT'`.

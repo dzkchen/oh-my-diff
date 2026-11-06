@@ -271,7 +271,7 @@ async function headless() {
   await reconnected.session.recovery({ action: 'reload', target: 'approval_desk' });
   const untrusted = await reconnected.session.recovery();
   assert.match(untrusted.mods.find(entry => entry.id === 'approval_desk').error, /^source_changed: /);
-  assert.match(untrusted.reload_error, /^untrusted_source: approval_desk changed after it was trusted/);
+  assert.match(untrusted.reload_error, /^source_changed: approval_desk changed after it was trusted/);
   assert.notEqual(component(reconnected.view(), 'desk_log')?.label, 'Approvals v2', 'an untrusted source change never runs');
   await ask('trust_source');
   await reconnected.session.recovery({ action: 'reload', target: 'approval_desk' });

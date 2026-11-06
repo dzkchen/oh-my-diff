@@ -35,6 +35,8 @@ use codex_extension_api::UserInputInterceptInput;
 use codex_omd::ModGrants;
 use codex_omd::ModHost;
 use codex_omd::ModHostCall;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModTool;
 use codex_protocol::models::PermissionProfile;
 use std::sync::Mutex;
@@ -332,7 +334,7 @@ fn event_fragments_scoped(
     private: BTreeMap<String, Value>,
     active: impl Fn() -> bool,
     authority: &str,
-    host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
+    mut host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
 ) -> Vec<PromptFragment> {
     let mut fragments = Vec::new();
     let mut remaining_bytes = 6144;
@@ -352,8 +354,11 @@ fn event_fragments_scoped(
             }
             value
         },
-        active,
-        host,
+        codex_omd::ModInvokeOptions {
+            active: &active,
+            host: codex_omd::ModHostCallback::Scoped(&mut host),
+            ..codex_omd::ModInvokeOptions::default()
+        },
     ) {
         match result {
             Ok(value) if event == "context" => {
@@ -422,27 +427,20 @@ fn initialize(
 ) -> Result<Arc<Mods>, String> {
     let registration =
         codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-    let runtime = ModHost::open_with(
-        host.root.clone(),
-        validate_tool_schema,
-        Some(&host.repository),
-        &|| true,
-    )
-    .map_err(|e| e.to_string())?;
-    let input_runtime = ModHost::open_with(
-        host.root.clone(),
-        validate_tool_schema,
-        Some(&host.repository),
-        &|| true,
-    )
-    .map_err(|e| e.to_string())?;
-    let persist_runtime = ModHost::open_with(
-        host.root.clone(),
-        validate_tool_schema,
-        Some(&host.repository),
-        &|| true,
-    )
-    .map_err(|e| e.to_string())?;
+    let open = || {
+        ModHost::open(
+            host.root.clone(),
+            ModOpenOptions {
+                tool_validator: validate_tool_schema,
+                repository: Some(&host.repository),
+                ..ModOpenOptions::default()
+            },
+        )
+        .map_err(|e| e.to_string())
+    };
+    let runtime = open()?;
+    let input_runtime = open()?;
+    let persist_runtime = open()?;
     let persist_required = persist_runtime.required_surfaces();
     services::define_providers(&host.config, |id| runtime.grants(id).is_some());
     let _ = host.persist_json("mod-status.json", &runtime.status());
@@ -909,6 +907,7 @@ impl Mods {
             json!({"token_limit":config.model_auto_compact_token_limit
                 .or_else(|| config.model_context_window.map(|window| window * 9 / 10)),
                 "context_window":config.model_context_window}),
+            ModInvokeOptions::default(),
         );
         let mut selected: Option<(String, Option<String>)> = None;
         for (id, result) in compaction {
@@ -1009,6 +1008,7 @@ impl Mods {
             "routing",
             json!({"routes":routes,"model":config.model,"provider":config.model_provider_id,
                 "reasoning":config.model_reasoning_effort}),
+            ModInvokeOptions::default(),
         );
         let mut selected: Option<String> = None;
         let mut diagnostic = None;
@@ -1541,8 +1541,14 @@ impl TurnLifecycleContributor for Mods {
                 tokio::task::spawn_blocking(move || {
                     let _thread = codex_omd::StateThread::enter(scoped);
                     if let Ok(mut runtime) = runtime.lock() {
-                        let _ = runtime
-                            .event_guarded("prompt", prompt, || !flag.load(Ordering::Acquire));
+                        let _ = runtime.event(
+                            "prompt",
+                            prompt,
+                            ModInvokeOptions {
+                                active: &|| !flag.load(Ordering::Acquire),
+                                ..ModInvokeOptions::default()
+                            },
+                        );
                     }
                 })
             };
@@ -2298,7 +2304,7 @@ impl ToolLifecycleContributor for Mods {
             let intercepting = tokio::task::spawn_blocking(move || {
                 let _thread = codex_omd::StateThread::enter(Some(thread));
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-                let _ = runtime.event_guarded("tool_call", observed, || true);
+                let _ = runtime.event("tool_call", observed, ModInvokeOptions::default());
                 Ok::<_, String>((
                     runtime.intercepts(surface),
                     runtime.intercepts_with(surface, "code_mode_values_v1"),

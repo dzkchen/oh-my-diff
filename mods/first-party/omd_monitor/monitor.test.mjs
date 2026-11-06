@@ -494,15 +494,36 @@ test('re-arming an until change monitor whose path vanished reports the removal 
   assert.deepEqual([monitor(resumed.state).status, w.watches.size], ['done', 0]);
 });
 
-test('a forked thread arms its copied monitors under its own keys, and a timer lost meanwhile is set again', () => {
+test('a fork does not adopt or deliver its parent monitors on start or resume', () => {
+  for (const [event, payload, now] of [['start', null, NOW], ['resume', { restarted: true }, NOW + 700_000]]) {
+    const w = world({ fs: { dist: { kind: 'dir' } } });
+    let parent = watch(w, { source: 'files', paths: ['dist'] }).state;
+    parent = watch(w, { source: 'github', repo: 'acme/app', run_id: '9' }, parent).state;
+    parent = watch(w, { source: 'process', session_id: '4242' }, parent).state;
+    w.thread = 't2';
+    const fork = run(w, event, payload, parent, { now });
+    assert.deepEqual(fork.state.mons, []);
+    assert.deepEqual([...w.watches.keys()], ['w_t1_m1']);
+    assert.deepEqual([...w.procs.keys()], ['mon_t1_m2']);
+    assert.deepEqual([...w.timers.keys()], ['t1/deadline']);
+    assert.deepEqual([w.steers, w.queued, w.notices], [[], [], []]);
+    assert.equal(tool(w, 'list', {}, fork.state).value.monitors.length, 0);
+    assert.equal(run(w, 'terminal', { ledger: null }, fork.state).value, null);
+    const child = watch(w, { source: 'process', session_id: '7', timeout_s: 900 }, fork.state);
+    assert.equal(child.value.status, 'watching');
+    assert.equal(w.timers.get('t2/deadline'), 900_000);
+    w.thread = 't1';
+    const resumed = run(w, 'resume', { restarted: false }, parent);
+    assert.equal(resumed.state.mons.filter(m => m.status === 'active').length, 3);
+  }
+});
+
+test('a missing timer is restored when another monitor is created in the same thread', () => {
   const w = world({ fs: { dist: { kind: 'dir' } } });
-  const parent = watch(w, { source: 'files', paths: ['dist'] }).state;
-  w.thread = 't2';
-  const fork = run(w, 'start', null, parent).state;
-  assert.deepEqual([...w.watches.keys()], ['w_t1_m1', 'w_t2_m1']);
-  w.timers.delete('t2/deadline');
-  watch(w, { source: 'process', session_id: '7', timeout_s: 900 }, fork);
-  assert.equal(w.timers.get('t2/deadline'), 600_000);
+  const state = watch(w, { source: 'files', paths: ['dist'] }).state;
+  w.timers.delete('t1/deadline');
+  watch(w, { source: 'process', session_id: '7', timeout_s: 900 }, state);
+  assert.equal(w.timers.get('t1/deadline'), 600_000);
 });
 
 test('/monitor pr starts a PR watcher with declared grants', () => {

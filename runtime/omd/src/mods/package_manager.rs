@@ -757,13 +757,7 @@ impl ModStore {
         let (Ok(config), Ok(managed)) = (self.configuration(), self.managed_deployment()) else {
             return;
         };
-        let mut paths = lock
-            .packages
-            .values()
-            .chain(lock.history.values().flatten())
-            .flat_map(|package| [&package.path, &package.cache_path])
-            .chain(config.mods.iter().map(|selection| &selection.path))
-            .collect::<Vec<_>>();
+        let mut deployed = Vec::new();
         let mut integrities = config
             .mods
             .iter()
@@ -772,14 +766,19 @@ impl ModStore {
         let mut generation = Some(&managed);
         while let Some(deployment) = generation {
             for package in &deployment.packages {
-                paths.push(&package.path);
+                deployed.push(&package.path);
                 integrities.insert(&package.sha256);
                 integrities.extend(&package.dependencies);
             }
             generation = deployment.previous.as_deref();
         }
-        let paths = paths
-            .into_iter()
+        let paths = lock
+            .packages
+            .values()
+            .chain(lock.history.values().flatten())
+            .flat_map(|package| [&package.path, &package.cache_path])
+            .chain(config.mods.iter().map(|selection| &selection.path))
+            .chain(deployed)
             .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
             .collect::<Vec<_>>();
         for package in evicted {
@@ -2776,7 +2775,7 @@ mod repository_tests {
             ("A", "${B}"),
             ("B", "${A}"),
         ]);
-        let resolve = |name: &str| environment.get(name).map(|value| value.to_string());
+        let resolve = |name: &str| environment.get(name).map(ToString::to_string);
         for (value, expected) in [
             ("${LITERAL}", "${TOKEN}"),
             ("${TOKEN}-${LITERAL}", "secret-${TOKEN}"),

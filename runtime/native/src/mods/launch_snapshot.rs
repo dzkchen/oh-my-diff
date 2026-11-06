@@ -89,7 +89,7 @@ type TreeStamp = (
 );
 
 /// The tree's digest, rehashed only when its file list, link targets or any file stamp changes.
-pub(super) fn digest(tree: &Tree) -> String {
+pub(super) fn digest(tree: &Tree) -> Result<String, String> {
     static DIGESTS: LazyLock<Mutex<BTreeMap<PathBuf, (TreeStamp, String)>>> =
         LazyLock::new(Default::default);
     if !tree.stable {
@@ -102,22 +102,22 @@ pub(super) fn digest(tree: &Tree) -> String {
         .get(&tree.root)
         && *known == fingerprint
     {
-        return digest.clone();
+        return Ok(digest.clone());
     }
-    let digest = hash_tree(tree);
+    let digest = hash_tree(tree)?;
     DIGESTS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .insert(tree.root.clone(), (fingerprint, digest.clone()));
-    digest
+    Ok(digest)
 }
 
-fn hash_tree(tree: &Tree) -> String {
+fn hash_tree(tree: &Tree) -> Result<String, String> {
     let mut rows = BTreeMap::new();
     for (path, bytes) in &tree.files {
         rows.insert(
             path.strip_prefix(&tree.root)
-                .unwrap()
+                .map_err(|_| "service_source_path_invalid")?
                 .to_string_lossy()
                 .into_owned(),
             ("file", codex_omd::sha256_hex(bytes)),
@@ -126,7 +126,7 @@ fn hash_tree(tree: &Tree) -> String {
     for (path, target) in &tree.links {
         rows.insert(
             path.strip_prefix(&tree.root)
-                .unwrap()
+                .map_err(|_| "service_source_path_invalid")?
                 .to_string_lossy()
                 .into_owned(),
             ("link", target.to_string_lossy().into_owned()),
@@ -136,7 +136,9 @@ fn hash_tree(tree: &Tree) -> String {
         .into_iter()
         .map(|(path, (kind, value))| (path, kind, value))
         .collect::<Vec<_>>();
-    codex_omd::sha256_hex(&serde_json::to_vec(&rows).unwrap())
+    Ok(codex_omd::sha256_hex(
+        &serde_json::to_vec(&rows).map_err(|error| error.to_string())?,
+    ))
 }
 
 pub(super) fn path(root: &Path, source: &Path) -> Result<PathBuf, String> {
@@ -165,7 +167,8 @@ pub(super) fn materialize(
         .map_err(|error| error.to_string())?;
     for (source, bytes) in files {
         let target = path(snapshot.path(), source)?;
-        fs::create_dir_all(target.parent().unwrap()).map_err(|error| error.to_string())?;
+        fs::create_dir_all(target.parent().ok_or("service_source_path_invalid")?)
+            .map_err(|error| error.to_string())?;
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -176,7 +179,8 @@ pub(super) fn materialize(
     }
     for (source, relative) in links {
         let target = path(snapshot.path(), source)?;
-        fs::create_dir_all(target.parent().unwrap()).map_err(|error| error.to_string())?;
+        fs::create_dir_all(target.parent().ok_or("service_source_path_invalid")?)
+            .map_err(|error| error.to_string())?;
         std::os::unix::fs::symlink(relative, target).map_err(|error| error.to_string())?;
     }
     fs::set_permissions(snapshot.path(), fs::Permissions::from_mode(0o700))
@@ -199,10 +203,10 @@ mod tests {
         fs::write(code.join("executable"), "#!/bin/sh\nexit 0\n").unwrap();
         std::os::unix::fs::symlink("dependency.mjs", code.join("link.mjs")).unwrap();
         let captured = capture(&code).unwrap();
-        let expected = digest(&captured);
+        let expected = digest(&captured).unwrap();
         fs::write(code.join("helper.mjs"), "changed helper").unwrap();
         fs::write(code.join("dependency.mjs"), "changed dependency").unwrap();
-        assert_ne!(digest(&capture(&code).unwrap()), expected);
+        assert_ne!(digest(&capture(&code).unwrap()).unwrap(), expected);
         let snapshot = materialize(root.path(), &captured.files, &captured.links).unwrap();
         assert!(
             std::process::Command::new(path(snapshot.path(), &code.join("executable")).unwrap())

@@ -118,14 +118,16 @@ pub fn component_shared(
         "component",
         component,
         frame,
-        &active,
-        |_, call| {
-            Err(failure(format!(
-                "host_operation_unavailable: {} is not available to component modules",
-                call.operation
-            )))
+        ModInvokeOptions {
+            active: &active,
+            host: ModHostCallback::Scoped(&mut |_, call| {
+                Err(failure(format!(
+                    "host_operation_unavailable: {} is not available to component modules",
+                    call.operation
+                )))
+            }),
+            ..ModInvokeOptions::default()
         },
-        |_| {},
     )?;
     if let Err(error) = checked_tree(&value) {
         if active() {

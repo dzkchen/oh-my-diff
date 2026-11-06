@@ -228,7 +228,7 @@ A package over the per-callback text limit is refused by inspection, install and
 const sent = api.host.tryCall('process.exchange', { session: session(m), send: [{ src: api.assets.read('github.mjs').text }], wait_ms: 0 });
 ```
 
-That call is from [`omd_monitor`](../first-party/omd_monitor/index.ts). The mod owns its watch/list/cancel subscriptions, persistence, timeouts and delivery; companion plugin guidance teaches the agent when to subscribe and how to handle results. Enabling the mod with its declared grants is sufficient to watch repositories through the user’s `gh` login.
+That call is from [`omd_monitor`](../first-party/omd_monitor/index.ts). The mod owns its watch/list/cancel subscriptions, persistence, timeouts and delivery; companion plugin guidance teaches the agent when to subscribe and how to handle results. Enabling the mod with its declared grants is sufficient to watch repositories through the user’s `gh` login. Watches and results belong to their creating thread; forks do not adopt them.
 
 ## Installed package manifests
 

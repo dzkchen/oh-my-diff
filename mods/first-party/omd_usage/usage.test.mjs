@@ -179,3 +179,17 @@ test('tool and agent events write state only when the dialog shows them or somet
   assert.equal(event(seen, 'agent', { agent }, NOW + 60_000).hud.agents.a1.at, NOW, 'an unchanged agent status is not rewritten');
   assert.equal(event(seen, 'agent', { agent: { ...agent, status: 'completed' } }).hud.agents.a1.status, 'completed');
 });
+
+test('the model_request intercept sizes the assembled request by role and passes the request on unchanged', () => {
+  const section = (id, kind, role, bytes) => ({ id, kind, role, group: id, protected: false, text: id, bytes, truncated: false });
+  const input = { request_id: 'r1', attempt: 1, scope: { thread_id: 'lead', agent_id: null, kind: 'main' }, routes: [], original: {}, route: 'lead', model: 'm', provider: 'p', effort: null, tools: [],
+    sections: [section('a', 'instructions', 'system', 4000), section('b', 'user_message', 'user', 2000), section('c', 'agents_md.instructions', 'user', 1000), section('d', 'tool_output', 'tool', 3000)] };
+  const result = { route: 'lead', effort: null, cache: { from: null } };
+  const forwarded = [];
+  const out = call(usageMod, { event: 'intercept', name: '0', payload: { surface: 'model_request', input, original: input, origin: { caller: 'engine' } }, state: start(), settings: hud },
+    ({ operation, arguments: args }) => operation === 'continuation.next' ? (forwarded.push(args.input), { result, trace: [] }) : { delivered: 1, dropped: 0 });
+  assert.deepEqual(forwarded, [input]);
+  assert.deepEqual(out.value.result, result);
+  assert.deepEqual(out.state.hud.assembled, { at: NOW, bytes: 10_000, categories: [['system', 4000], ['tool output', 3000], ['user', 2000], ['context', 1000]] });
+  assert.match(dialog(out.state).text, /system 40% · tool output 30% · user 20% · context 10%/);
+});

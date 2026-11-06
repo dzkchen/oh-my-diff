@@ -256,7 +256,7 @@ fn metadata(loaded: &Loaded) -> Result<(Value, String, [u8; 32])> {
         "intercept": MOD_INTERCEPT_SURFACES.iter().map(|(surface, capability)| (surface.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
         "state": "store",
         "contracts": "contracts",
-        "adapter": loaded.adapter,
+        "adapter": loaded.adapter.as_ref().map(|adapter| &adapter.module),
     });
     // `entrypoint_sha256` stands for the source.
     let mut identity = Sha256::new();
@@ -310,6 +310,9 @@ pub(super) fn run(
         invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload}),
     };
     request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
+    if event != "inspect" {
+        request.invocation["registrations_sha256"] = json!(loaded.registrations.sha256());
+    }
     let render = event == "intercept" && request["payload"]["surface"] == "render";
     let component = event == "component";
     let session = loaded.session_key.as_ref().filter(|_| {
@@ -401,6 +404,11 @@ pub(super) fn run(
         scope.check_execution(started.elapsed().saturating_sub(waited))?;
         Ok(receipt)
     };
+    let registered = |value: &Value| {
+        value["registrations"].is_null()
+            || serde_json::from_value::<Registrations>(value["registrations"].clone())
+                .is_ok_and(|registrations| registrations == *loaded.registrations)
+    };
     let evaluated = match &warm {
         Some(key) => process::evaluate_warm(
             key,
@@ -408,6 +416,7 @@ pub(super) fn run(
             loaded.code_cache.as_deref(),
             budget,
             active,
+            &registered,
             &mut answer,
         ),
         None => process::evaluate(
@@ -425,7 +434,12 @@ pub(super) fn run(
     })?;
     let execution = started.elapsed().saturating_sub(waited);
     scope.charge_execution(execution)?;
-    if event != "inspect" && reply.registrations != loaded.registrations {
+    if event != "inspect"
+        && reply
+            .registrations
+            .as_ref()
+            .is_some_and(|registrations| registrations != &*loaded.registrations)
+    {
         if let Some(key) = &warm {
             process::invalidate_warm(key);
         }
