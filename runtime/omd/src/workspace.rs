@@ -85,7 +85,7 @@ fn fingerprint_matches(
 ) -> bool {
     match (expected, entry) {
         (None, None) => true,
-        (Some(Fingerprint::Hash(hash)), Some((bytes, _))) => *hash == content_hash(bytes),
+        (Some(Fingerprint::Hash(hash)), Some((bytes, _))) => *hash == crate::sha256_hex(bytes),
         (Some(Fingerprint::Stat { size, mtime_ms }), Some(_)) => {
             metadata == Some((*size, *mtime_ms))
         }
@@ -134,10 +134,6 @@ fn hardlink(name: &str) -> io::Error {
 
 fn too_large() -> io::Error {
     io::Error::new(io::ErrorKind::FileTooLarge, "snapshot size limit")
-}
-
-fn content_hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn identity(metadata: &fs::Metadata) -> Vec<u8> {
@@ -330,13 +326,13 @@ impl WorkspaceTransaction {
         let current_hash = |name: &str| -> io::Result<Option<String>> {
             Ok(read_version(repository, name, 4 * 1024 * 1024)?
                 .as_ref()
-                .map(|(bytes, _)| content_hash(bytes)))
+                .map(|(bytes, _)| crate::sha256_hex(bytes)))
         };
         let before_hash = |name: &str| {
             before
                 .get(name)
                 .and_then(Option::as_ref)
-                .map(|(bytes, _)| content_hash(bytes))
+                .map(|(bytes, _)| crate::sha256_hex(bytes))
         };
         for rename in &self.renames {
             if before.get(&rename.old).is_none_or(Option::is_none)
@@ -354,7 +350,8 @@ impl WorkspaceTransaction {
                     return Err(invalid("transaction cancelled"));
                 }
                 let current = read_version(repository, name, 4 * 1024 * 1024)?;
-                if current.as_ref().map(|(bytes, _)| content_hash(bytes)) != before_hash(name) {
+                if current.as_ref().map(|(bytes, _)| crate::sha256_hex(bytes)) != before_hash(name)
+                {
                     return Err(invalid("workspace changed before write"));
                 }
                 let permissions = current
@@ -362,7 +359,7 @@ impl WorkspaceTransaction {
                     .map(|(_, permissions)| permissions.clone())
                     .unwrap_or_else(|| fs::Permissions::from_mode(0o644));
                 write_version(repository, name, bytes, &permissions)?;
-                applied.insert(name.clone(), Some(content_hash(bytes)));
+                applied.insert(name.clone(), Some(crate::sha256_hex(bytes)));
             }
             for name in &deletes {
                 if !active() {
@@ -389,7 +386,7 @@ impl WorkspaceTransaction {
                     .unwrap_or_else(|| before_hash(&rename.old));
                 if read_version(repository, &rename.old, 4 * 1024 * 1024)?
                     .as_ref()
-                    .map(|(bytes, _)| content_hash(bytes))
+                    .map(|(bytes, _)| crate::sha256_hex(bytes))
                     != expected_old
                     || read_version(repository, &rename.new, 4 * 1024 * 1024)?.is_some()
                 {
@@ -405,7 +402,7 @@ impl WorkspaceTransaction {
             for (name, expected_after) in &applied {
                 let current = read_version(repository, name, 4 * 1024 * 1024)?
                     .as_ref()
-                    .map(|(bytes, _)| content_hash(bytes));
+                    .map(|(bytes, _)| crate::sha256_hex(bytes));
                 if &current != expected_after {
                     return Err(invalid(format!(
                         "transaction failed: {error}; rollback conflict at {name}"
@@ -434,7 +431,7 @@ impl WorkspaceTransaction {
                 name.clone(),
                 read_version(repository, name, 4 * 1024 * 1024)?
                     .as_ref()
-                    .map(|(bytes, _)| content_hash(bytes)),
+                    .map(|(bytes, _)| crate::sha256_hex(bytes)),
             );
         }
         Ok(WorkspaceTransactionResult { files, backup })
@@ -492,11 +489,11 @@ impl WorkspaceIndex {
                 let hash = match cached.get(&name) {
                     Some((seen, hash)) if *seen == stamp => hash.clone(),
                     // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
-                    _ if metadata.nlink() != 1 => content_hash(&identity(&metadata)),
+                    _ if metadata.nlink() != 1 => crate::sha256_hex(&identity(&metadata)),
                     _ => {
                         let (content, _) = read_version(repository, &name, max_bytes)?
                             .ok_or_else(|| invalid("workspace file disappeared during index"))?;
-                        content_hash(&content)
+                        crate::sha256_hex(&content)
                     }
                 };
                 if stamp.1 < settled {
@@ -1265,7 +1262,7 @@ mod transaction_tests {
         let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
         fs::write(root.join("a.txt"), "two\n").unwrap();
         let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
-        assert_eq!(after.files["a.txt"], content_hash(b"two\n"));
+        assert_eq!(after.files["a.txt"], crate::sha256_hex(b"two\n"));
         assert_eq!(before.changed(&after).len(), 1);
     }
 
@@ -1323,7 +1320,7 @@ mod transaction_tests {
         fs::write(root.join("a.txt"), "one\n").unwrap();
         fs::hard_link(root.join("a.txt"), root.join("b.txt")).unwrap();
         let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
-        assert_ne!(before.files["b.txt"], content_hash(b"one\n"));
+        assert_ne!(before.files["b.txt"], crate::sha256_hex(b"one\n"));
         fs::write(root.join("b.txt"), "two\n").unwrap();
         let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
         assert_eq!(before.changed(&after).len(), 2);
@@ -1342,7 +1339,7 @@ mod transaction_tests {
         let transaction = WorkspaceTransaction {
             expected: BTreeMap::from([(
                 "a.txt".into(),
-                Some(Fingerprint::Hash(content_hash(b"one\n"))),
+                Some(Fingerprint::Hash(crate::sha256_hex(b"one\n"))),
             )]),
             writes: BTreeMap::from([("a.txt".into(), "two\n".into())]),
             ..Default::default()
@@ -1414,14 +1411,16 @@ mod transaction_tests {
             expected: BTreeMap::from([
                 (
                     "old.ts".into(),
-                    Some(Fingerprint::Hash(content_hash(
+                    Some(Fingerprint::Hash(crate::sha256_hex(
                         b"export const value = 1;\n",
                     ))),
                 ),
                 ("new.ts".into(), None),
                 (
                     "barrel.ts".into(),
-                    Some(Fingerprint::Hash(content_hash(b"export * from './old';\n"))),
+                    Some(Fingerprint::Hash(crate::sha256_hex(
+                        b"export * from './old';\n",
+                    ))),
                 ),
             ]),
             writes: BTreeMap::from([("barrel.ts".into(), "export * from './new';\n".into())]),
@@ -1444,7 +1443,7 @@ mod transaction_tests {
         assert_eq!(result.files["old.ts"], None);
         assert_eq!(
             result.files["new.ts"],
-            Some(content_hash(b"export const value = 1;\n"))
+            Some(crate::sha256_hex(b"export const value = 1;\n"))
         );
     }
 
@@ -1456,7 +1455,7 @@ mod transaction_tests {
         let transaction = WorkspaceTransaction {
             expected: BTreeMap::from([(
                 "file.py".into(),
-                Some(Fingerprint::Hash(content_hash(b"old\n"))),
+                Some(Fingerprint::Hash(crate::sha256_hex(b"old\n"))),
             )]),
             writes: BTreeMap::from([("file.py".into(), "new\n".into())]),
             renames: Vec::new(),
@@ -1483,8 +1482,14 @@ mod transaction_tests {
         fs::write(root.join("b.py"), "b\n").unwrap();
         let transaction = WorkspaceTransaction {
             expected: BTreeMap::from([
-                ("a.py".into(), Some(Fingerprint::Hash(content_hash(b"a\n")))),
-                ("b.py".into(), Some(Fingerprint::Hash(content_hash(b"b\n")))),
+                (
+                    "a.py".into(),
+                    Some(Fingerprint::Hash(crate::sha256_hex(b"a\n"))),
+                ),
+                (
+                    "b.py".into(),
+                    Some(Fingerprint::Hash(crate::sha256_hex(b"b\n"))),
+                ),
             ]),
             writes: BTreeMap::from([
                 ("a.py".into(), "new a\n".into()),
@@ -1546,7 +1551,7 @@ mod transaction_tests {
                 ),
                 (
                     "keep.txt".into(),
-                    Some(Fingerprint::Hash(content_hash(b"keep\n"))),
+                    Some(Fingerprint::Hash(crate::sha256_hex(b"keep\n"))),
                 ),
             ]),
             writes: BTreeMap::from([("keep.txt".into(), "kept\n".into())]),
@@ -1583,7 +1588,7 @@ mod transaction_tests {
         let missing_sink = WorkspaceTransaction {
             expected: BTreeMap::from([(
                 "keep.txt".into(),
-                Some(Fingerprint::Hash(content_hash(b"kept\n"))),
+                Some(Fingerprint::Hash(crate::sha256_hex(b"kept\n"))),
             )]),
             deletes: vec!["keep.txt".into()],
             backup: true,

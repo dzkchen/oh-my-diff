@@ -831,7 +831,7 @@ async fn scoped_environment_snapshot_execution_records_effective_values_and_secr
                     .starts_with("execution-")
             })
             .map(|path| std::fs::read(path).unwrap())
-            .find(|bytes| json!(crate::execution::hash(bytes)) == result["evidence"]["sha256"])
+            .find(|bytes| json!(codex_omd::sha256_hex(bytes)) == result["evidence"]["sha256"])
             .unwrap();
         let recorded: Value = serde_json::from_slice(&evidence).unwrap();
         assert_eq!(
@@ -840,7 +840,7 @@ async fn scoped_environment_snapshot_execution_records_effective_values_and_secr
         );
         assert_eq!(
             recorded["environment"]["FIXTURE_TOKEN"],
-            json!({"sha256": crate::execution::hash(b"private-token")})
+            json!({"sha256": codex_omd::sha256_hex(b"private-token")})
         );
         assert!(
             !String::from_utf8(evidence)
@@ -1451,7 +1451,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     assert_eq!(report["original"]["bytes"], complete.len());
     assert_eq!(
         report["original"]["sha256"],
-        codex_omd::resource_data::hash(complete.as_bytes())
+        codex_omd::sha256_hex(complete.as_bytes())
     );
     assert!(
         fixture.core.expansion.originals.lock().unwrap().is_empty(),
@@ -3565,7 +3565,7 @@ fn external_change_hashes_regular_files_and_never_follow_links_or_fifos() {
     );
     assert_eq!(
         super::activity::file_hash(&root, "a.txt"),
-        Some(crate::execution::hash(b"a\n"))
+        Some(codex_omd::sha256_hex(b"a\n"))
     );
     assert_eq!(super::activity::file_hash(&root, "link"), None);
     assert_eq!(super::activity::file_hash(&root, "fifo"), None);

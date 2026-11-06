@@ -529,7 +529,7 @@ impl Accounts {
         let context =
             json!([policy.fingerprint, provider, route, value["model"], scope]).to_string();
         let key = |segment: &codex_omd::model_request::SendSegment<'_>| {
-            crate::execution::hash(
+            codex_omd::sha256_hex(
                 json!([
                     context,
                     segment.kind,
@@ -660,7 +660,7 @@ impl Accounts {
                 for (start, end, _) in ranges {
                     let original = text.get(*start..*end).unwrap_or_default();
                     applied.push(json!({"segment":id,"start":start,"end":end,
-                        "sha256":crate::execution::hash(original.as_bytes())}));
+                        "sha256":codex_omd::sha256_hex(original.as_bytes())}));
                 }
             }
             codex_omd::model_request::apply_send_edits(value, &edits).map_err(refuse)?;
@@ -776,7 +776,7 @@ pub fn worker_authorized(
     let Ok(bytes) = std::fs::read(path) else {
         return false;
     };
-    if crate::execution::hash(&bytes) != expected {
+    if codex_omd::sha256_hex(&bytes) != expected {
         return false;
     }
     let Ok(grant) = serde_json::from_slice::<Value>(&bytes) else {
@@ -1208,7 +1208,7 @@ impl ResponseObserver for Accounts {
             ]);
             let key = format!(
                 "omd-cache-{}",
-                &crate::execution::hash(key.to_string().as_bytes())[..32]
+                &codex_omd::sha256_hex(key.to_string().as_bytes())[..32]
             );
             // The ChatGPT backend routes prompt caches by session id, not by the body key.
             request

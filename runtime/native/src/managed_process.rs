@@ -2100,7 +2100,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             blit: None,
         };
         let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
-        let sha256 = crate::execution::hash(&fs::read(&sh).unwrap());
+        let sha256 = codex_omd::sha256_hex(&fs::read(&sh).unwrap());
         let pidfile = repository.join("child.pid");
         let start = |owner: ProcessOwner<'_>, session: &str| {
             processes.call(

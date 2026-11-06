@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
@@ -10,16 +9,20 @@ use std::path::{Path, PathBuf};
 pub const PAGE_BYTES: usize = 65_536;
 pub const SNAPSHOT_BYTES: usize = 262_144;
 
-pub fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+fn word(value: &str, extra: &[u8]) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || b"-_".contains(&byte) || extra.contains(&byte)
+        })
 }
 
 pub fn token(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    word(value, b"")
+}
+
+pub fn dotted_token(value: &str) -> bool {
+    word(value, b".")
 }
 
 pub fn redact(text: &str) -> String {
@@ -160,13 +163,8 @@ pub struct ResourceBinding {
 
 impl ResourceBinding {
     pub fn validate(&self) -> io::Result<()> {
-        if self.source_sha256.len() != 64
-            || !self
-                .source_sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-            || self.repository.len() != 64
-            || !self.repository.bytes().all(|byte| byte.is_ascii_hexdigit())
+        if !crate::is_sha256_hex(&self.source_sha256)
+            || !crate::is_sha256_hex(&self.repository)
             || !token(&self.owner)
             || !token(&self.thread)
         {
@@ -226,7 +224,7 @@ impl ResourceStore<'_> {
         if bytes.len() > SNAPSHOT_BYTES {
             return Err(io::Error::other("resource_snapshot_limit"));
         }
-        let sha256 = hash(&bytes);
+        let sha256 = crate::sha256_hex(&bytes);
         let name = format!("{sha256}.json");
         let directory = self.directory()?;
         let path = directory.join(&name);
@@ -277,13 +275,7 @@ impl ResourceStore<'_> {
     }
 
     pub fn load(&self, reference: &ResourceRef, kind: &str) -> io::Result<Value> {
-        if reference.reference != reference.sha256
-            || reference.sha256.len() != 64
-            || !reference
-                .sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-        {
+        if reference.reference != reference.sha256 || !crate::is_sha256_hex(&reference.sha256) {
             return Err(io::Error::other("resource_reference_invalid"));
         }
         let name = format!("{}.json", reference.reference);
@@ -298,7 +290,7 @@ impl ResourceStore<'_> {
             .get(&name)
             .ok_or_else(|| io::Error::other("resource_unavailable"))?
             .bytes;
-        if hash(bytes) != reference.sha256 {
+        if crate::sha256_hex(bytes) != reference.sha256 {
             return Err(io::Error::other("resource_integrity_failed"));
         }
         let value: StoredResource = serde_json::from_slice(bytes)?;

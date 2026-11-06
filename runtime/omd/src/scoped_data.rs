@@ -1,4 +1,4 @@
-use crate::resource_data::{ResourceBinding, ResourceStore, hash};
+use crate::resource_data::{ResourceBinding, ResourceStore};
 use crate::sessions::SessionIndex;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ impl ScopedDataHost {
             return Err(io::Error::other("data_source_not_selected"));
         }
         let binding = ResourceBinding {
-            repository: hash(repository.as_os_str().as_encoded_bytes()),
+            repository: crate::sha256_hex(repository.as_os_str().as_encoded_bytes()),
             owner,
             thread,
             generation: configuration.revision,

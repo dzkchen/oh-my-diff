@@ -792,13 +792,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "495972554f2b0ec8b56af4ac8914d628429a2a1c42864810795029c11c18fe7d",
+        "index.ts": "b082a12d7f6183f24eae64efa433f2325d7933b01156dce8d7b62ce7432bf00e",
         "mod.json": "72b561cee833d9a8ad065d18f76801caa0865c6eaacfbab3ed352f091802283e",
         "scenes.ts": "b7eeabe1934126643703443569975c172919098d1440756fbfb6f013c70bb404",
         "steps.ts": "94f79d6f963178b87a347403dee7a8765351afc19b1c4e4ca39be870cfd73127"
       },
       "id": "omd_theme",
-      "package_sha256": "7f463e6cf777cb26739e7df35efed87770c9b1dc510e769675563ed0bdc4488c",
+      "package_sha256": "0cc55546c01bdeaa047fbdbc7d0e656d0ae7df0ec107cf5c0c0ee0f69713793d",
       "source": "mods/first-party/omd_theme",
       "version": "1.1.0"
     },

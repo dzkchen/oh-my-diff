@@ -60,7 +60,7 @@ experimental may change in any release
 | `component_event` | `{component, thread_id, kind, ...}` | nothing | `api.on` | frozen; experimental fields: `content`, `target`, `edge`, `columns`, `rows` | [Terminal input](terminal-input.md#component_event) |
 | `component_post` | `{component, module, client?, data}` | nothing | `api.on` | frozen | [Terminal input](terminal-input.md#component-module-handlers) |
 | `view` | `{phase, view, view_id, dropped?}` | nothing | `api.on` | experimental | [Terminal input](terminal-input.md#component_event) |
-| `focus` | `{focused, dropped?}` | nothing | `api.on` | experimental | [Terminal input](terminal-input.md#component_event) |
+| `focus` | `{focused, idle?, dropped?}` | nothing | `api.on` | experimental | [Terminal input](terminal-input.md#component_event) |
 | `composer` | `{kind: 'change', ...}` or `{kind: 'suggestion', ...}` | nothing | `api.on` | frozen | [Commands and composer](commands-and-composer.md#composer-event) |
 | `prompt_expanded` | `{turn_id, items}` | nothing | `api.on` | experimental | [Commands and composer](commands-and-composer.md#submitted-drafts-and-prompt_expanded) |
 | `config_change` | `{key, original, effective, source, scope, caller}` | nothing | `api.on` | experimental | [Commands and composer](commands-and-composer.md#configset) |

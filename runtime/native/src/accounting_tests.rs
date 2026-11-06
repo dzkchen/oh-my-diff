@@ -968,7 +968,7 @@ fn paid_preset_grants_bind_repository_route_and_current_bytes() {
     let path = root.path().join("paid.json");
     let grant = json!({"schema":1,"paid_api_key":true,"revocable":true,"repository":"repo-a","provider":"provider-a","model":"model-a","responses_url":"https://example.invalid/responses"});
     std::fs::write(&path, grant.to_string()).unwrap();
-    let sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
     let allowed = || {
         worker_authorized(
             &path,
@@ -1014,7 +1014,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     let path = root.path().join("subscription.json");
     let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repository":"fixture","provider":"openai","model":"fixture-model","responses_url":SUBSCRIPTION_RESPONSES_URL});
     std::fs::write(&path, grant.to_string()).unwrap();
-    let sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
     assert!(worker_authorized(
         &path,
         &sha,
@@ -1106,7 +1106,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     let mut mixed = grant.clone();
     mixed["paid_api_key"] = true.into();
     std::fs::write(&path, mixed.to_string()).unwrap();
-    let mixed_sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    let mixed_sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
     assert!(!worker_authorized(
         &path,
         &mixed_sha,
@@ -1312,7 +1312,7 @@ fn an_added_plan_route_authorizes_only_the_repositories_it_was_approved_in() {
         worker_authorized(
             &grant.path,
             &grant.sha256,
-            &crate::execution::hash(repository.as_os_str().as_encoded_bytes()),
+            &codex_omd::sha256_hex(repository.as_os_str().as_encoded_bytes()),
             &route.provider,
             &route.model,
             &route.responses_url,

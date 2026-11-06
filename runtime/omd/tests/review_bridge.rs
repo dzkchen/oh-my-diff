@@ -1,7 +1,7 @@
 use codex_omd::ModHostCallback;
 use codex_omd::ModInvokeOptions;
 use codex_omd::ModOpenOptions;
-use codex_omd::resource_data::hash;
+use codex_omd::sha256_hex as hash;
 use codex_omd::{ModHost, ModStore};
 use serde_json::{Value, json};
 use std::fs;

@@ -296,7 +296,7 @@ fn listing_offers_host_routes_and_marks_required_selections() {
     let repository = root.join("repo");
     let grant = |name: &str, listed: &Path| {
         let path = root.join(format!("{name}.json"));
-        let hash = crate::resource_data::hash(listed.as_os_str().as_encoded_bytes());
+        let hash = crate::sha256_hex(listed.as_os_str().as_encoded_bytes());
         std::fs::write(&path, json!({"repositories": [hash]}).to_string()).unwrap();
         json!({"name": name, "roles": ["worker"], "mods": ["routed_mod"], "grant": {"path": path}})
     };

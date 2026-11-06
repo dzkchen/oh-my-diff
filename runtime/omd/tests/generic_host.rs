@@ -344,6 +344,36 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
         .unwrap();
     assert_eq!(second["text"].as_str().unwrap().len(), 5000);
     assert!(second["cursor"].is_null());
+    let split = host
+        .call(
+            &owner,
+            "exec.run",
+            json!({"program":"sh", "argv":["-c", "printf 'aé'"], "output_artifact":true}),
+        )
+        .unwrap()["output_artifact"]
+        .clone();
+    let head = host
+        .call(
+            &owner,
+            "exec.output_page",
+            json!({"artifact":split,"max_bytes":2}),
+        )
+        .unwrap();
+    assert_eq!(
+        (head["text"].clone(), head["cursor"].clone()),
+        (json!("a"), json!(1))
+    );
+    let tail = host
+        .call(
+            &owner,
+            "exec.output_page",
+            json!({"artifact":split,"cursor":1,"max_bytes":2}),
+        )
+        .unwrap();
+    assert_eq!(
+        (tail["text"].clone(), tail["cursor"].clone()),
+        (json!("é"), Value::Null)
+    );
     let other = Caller {
         thread: Some("thread-2"),
         ..caller(&capabilities, &[], Origin::Tool)
@@ -352,13 +382,15 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
         host.call(&other, "exec.output_page", json!({"artifact":artifact}))
             .is_err()
     );
-    assert!(
+    assert_eq!(
         host.call(
             &owner,
             "exec.output_page",
             json!({"artifact":artifact,"cursor":1})
         )
-        .is_err()
+        .unwrap_err()
+        .to_string(),
+        "exec_output_cursor_invalid"
     );
     let path = data
         .join("exec-output")
@@ -993,7 +1025,7 @@ fn workspace_stat_hash_reads_contained_regular_files_only() {
         .unwrap();
     assert_eq!(
         stat["files"]["README.md"]["sha256"],
-        codex_omd::resource_data::hash(&std::fs::read(repository.join("README.md")).unwrap())
+        codex_omd::sha256_hex(&std::fs::read(repository.join("README.md")).unwrap())
     );
     for path in ["link.md", "outside/file"] {
         assert!(
@@ -1156,6 +1188,57 @@ fn workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions() {
         )
         .unwrap_err(),
         "workspace_write_permission_denied"
+    );
+}
+
+#[test]
+fn store_reads_create_nothing_and_follow_documents_replaced_on_disk() {
+    let (_temp, _repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["store"]);
+    let tool = caller(&capabilities, &[], Origin::Tool);
+    let user = |key: &str| json!({"key":key,"scope":"user"});
+    assert!(host.call(&tool, "store.get", user("k")).unwrap().is_null());
+    assert_eq!(
+        host.call(&tool, "store.list", json!({"scope":"user"}))
+            .unwrap()["generation"],
+        1
+    );
+    assert!(!data.join("data").exists());
+
+    host.call(
+        &tool,
+        "store.put",
+        json!({"key":"k","value":"first","expected_revision":null,"scope":"user"}),
+    )
+    .unwrap();
+    assert_eq!(
+        host.call(&tool, "store.get", user("k")).unwrap()["value"],
+        "first"
+    );
+    let path = data.join("data/user/fixture/store.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    document["entries"]["k"]["value"] = json!("second");
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    assert_eq!(
+        host.call(&tool, "store.get", user("k")).unwrap()["value"],
+        "second"
+    );
+
+    let mut padded = serde_json::to_vec(&document).unwrap();
+    padded.resize(16 * 1024 * 1024 + 1, b' ');
+    std::fs::write(&path, padded).unwrap();
+    assert_eq!(
+        host.call(&tool, "store.get", user("k")).unwrap_err(),
+        "store_document_invalid"
     );
 }
 

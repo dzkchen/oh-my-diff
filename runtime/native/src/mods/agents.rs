@@ -111,7 +111,7 @@ fn frozen_history(
         records.push(item);
     }
     let text = serde_json::to_string(&records).map_err(|e| e.to_string())?;
-    let provenance = json!({"sha256": execution::hash(text.as_bytes()), "bytes": text.len(), "items": records.len(), "revision": revision});
+    let provenance = json!({"sha256": codex_omd::sha256_hex(text.as_bytes()), "bytes": text.len(), "items": records.len(), "revision": revision});
     Ok((text, provenance))
 }
 
@@ -424,7 +424,7 @@ mod history_tests {
         ];
         let (text, provenance) = frozen_history(items.clone().into_iter(), 7).unwrap();
         assert_eq!(serde_json::from_str::<Vec<Value>>(&text).unwrap(), items);
-        assert_eq!(provenance["sha256"], execution::hash(text.as_bytes()));
+        assert_eq!(provenance["sha256"], codex_omd::sha256_hex(text.as_bytes()));
         assert_eq!(provenance["revision"], 7);
         assert_eq!(provenance["items"], 3);
         let (private, _) = frozen_history(vec![json!({"type":"reasoning","content":"private reasoning"}),
@@ -983,7 +983,7 @@ impl Agents {
             .map(|(candidate, _)| candidate.as_str())
             != Some(candidate_sha256)
             || evidence.reference != format!("native-thread:{handle}")
-            || evidence.sha256 != execution::hash(text.as_bytes())
+            || evidence.sha256 != codex_omd::sha256_hex(text.as_bytes())
         {
             return Err("receipt_agent_evidence_or_candidate_mismatch".into());
         }
@@ -1497,7 +1497,7 @@ impl Agents {
         let evidence = lead.session.evidence(
             &format!(
                 "integration-{}-{}.json",
-                execution::hash(handle.as_bytes()),
+                codex_omd::sha256_hex(handle.as_bytes()),
                 codex_omd::peers::now_ms()
             ),
             &json!({"schema":2,"agent":handle,"candidate_sha256":candidate_sha256,
@@ -1681,7 +1681,7 @@ impl Agents {
                             ));
                         }
                         let mut value = json!({"status":"completed","text":text,"consumed":agent.consumed,
-                            "evidence":{"reference":format!("native-thread:{}", handle.handle),"sha256":execution::hash(text.as_bytes())}});
+                            "evidence":{"reference":format!("native-thread:{}", handle.handle),"sha256":codex_omd::sha256_hex(text.as_bytes())}});
                         if let Some((sha256, paths)) = &agent.candidate {
                             value["candidate_sha256"] = json!(sha256);
                             value["changed_paths"] = json!(paths);
@@ -2395,7 +2395,7 @@ impl Agents {
             .map_err(|error| error.to_string())?;
         session
             .task
-            .claim_worker_objective(&id, &execution::hash(request.prompt.as_bytes()))
+            .claim_worker_objective(&id, &codex_omd::sha256_hex(request.prompt.as_bytes()))
             .map_err(|e| e.to_string())?;
         host.enroll(thread_id, session, &id, Some(&route), None)?;
         if let Ok(mut accounts) = host.accounts.by_thread.lock()
@@ -2548,9 +2548,9 @@ impl Agents {
                     &worker,
                     VersionMarker {
                         label: "mod-agent-result".into(),
-                        sha256: execution::hash(text.as_bytes()),
+                        sha256: codex_omd::sha256_hex(text.as_bytes()),
                         evidence: format!("native-thread:{thread_id}"),
-                        evidence_sha256: execution::hash(thread_id.to_string().as_bytes()),
+                        evidence_sha256: codex_omd::sha256_hex(thread_id.to_string().as_bytes()),
                     },
                 )
                 .map_err(|e| e.to_string())?;
@@ -2559,7 +2559,7 @@ impl Agents {
             });
             let payload = match &completed {
                 Ok(text) => {
-                    json!({"handle":handle,"role":role,"status":"completed","text":text,"sha256":execution::hash(text.as_bytes())})
+                    json!({"handle":handle,"role":role,"status":"completed","text":text,"sha256":codex_omd::sha256_hex(text.as_bytes())})
                 }
                 Err(error) => json!({"handle":handle,"role":role,"status":"failed","error":error,
                     "failure":failed.lock().ok().and_then(|failure| failure.clone())}),

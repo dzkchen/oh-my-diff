@@ -40,18 +40,12 @@ pub struct VersionMarker {
 
 impl VersionMarker {
     fn validate(&self) -> io::Result<()> {
-        let valid_hash = |value: &str| {
-            value.len() == 64
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        };
         if self.label.trim().is_empty()
             || self.label.len() > 256
-            || !valid_hash(&self.sha256)
+            || !crate::is_sha256_hex(&self.sha256)
             || self.evidence.trim().is_empty()
             || self.evidence.len() > 4096
-            || !valid_hash(&self.evidence_sha256)
+            || !crate::is_sha256_hex(&self.evidence_sha256)
         {
             return Err(io::Error::other("invalid version marker"));
         }
@@ -362,7 +356,7 @@ impl Task {
                 return Err(denied("resume evidence must be a bounded regular file"));
             }
             let bytes = fs::read(entry.path())?;
-            last = crate::broker::sha256(&bytes);
+            last = crate::sha256_hex(&bytes);
             head = crate::broker::chain(&head, &last);
             let value: Value = serde_json::from_slice(&bytes)?;
             let sequence = value["sequence"]
@@ -671,7 +665,7 @@ impl Task {
             }
             let path = self.evidence.join(format!("{:08}.json", state.sequence));
             crate::fsio::create_new(&path, &bytes)?;
-            let written = crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes));
+            let written = crate::broker::anchor(&self.evidence, &crate::sha256_hex(&bytes));
             if written.is_err() {
                 let _ = fs::remove_file(&path);
             }

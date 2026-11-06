@@ -120,7 +120,7 @@ fn hash_tree(tree: &Tree) -> Result<String, String> {
                 .map_err(|_| "service_source_path_invalid")?
                 .to_string_lossy()
                 .into_owned(),
-            ("file", super::execution::hash(bytes)),
+            ("file", codex_omd::sha256_hex(bytes)),
         );
     }
     for (path, target) in &tree.links {
@@ -136,7 +136,7 @@ fn hash_tree(tree: &Tree) -> Result<String, String> {
         .into_iter()
         .map(|(path, (kind, value))| (path, kind, value))
         .collect::<Vec<_>>();
-    Ok(super::execution::hash(
+    Ok(codex_omd::sha256_hex(
         &serde_json::to_vec(&rows).map_err(|error| error.to_string())?,
     ))
 }

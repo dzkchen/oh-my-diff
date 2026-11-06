@@ -179,7 +179,7 @@ fn track(child: &Child) {
     });
 }
 
-/// Trims the warm pool to one runner after five idle seconds and stops render runners unused for a minute.
+/// Trims spares after five idle seconds and releases all spares and unpinned stateless runners after a minute.
 fn reap() {
     static REAPER: std::sync::Once = std::sync::Once::new();
     REAPER.call_once(|| {
@@ -198,7 +198,9 @@ fn reap() {
                     if spares.1.is_some_and(|last| last.elapsed() >= IDLE_AFTER)
                         && !spares.0.is_empty()
                     {
-                        spares.0.split_off(1)
+                        let kept =
+                            usize::from(spares.1.is_some_and(|last| last.elapsed() < WARM_IDLE));
+                        spares.0.split_off(kept)
                     } else {
                         Vec::new()
                     }
@@ -424,6 +426,16 @@ impl Warm {
             (_, true) => memory_failure(),
             (errors, false) => error.unwrap_or_else(|| process_failure(&errors)),
         }
+    }
+}
+
+pub(crate) fn release_disposable_runners() {
+    for runner in retire_warm(|runner| !runner.session && runner.pinned.is_none()) {
+        runner.stop();
+    }
+    let spares = std::mem::take(&mut SPARES.lock().unwrap_or_else(PoisonError::into_inner).0);
+    for child in spares {
+        stop(child);
     }
 }
 

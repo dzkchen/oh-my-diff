@@ -21,7 +21,7 @@ const PRUNE_EVERY: u64 = LIMIT / 8;
 
 /// The runner's key for a module: the hex SHA-256 of `"{typescript}:{source}"`.
 fn key(typescript: bool, source: &str) -> String {
-    format!("{:x}", Sha256::digest(format!("{typescript}:{source}")))
+    crate::sha256_hex(format!("{typescript}:{source}"))
 }
 
 /// Every module a runner may compile for `request`, as the runner keys them.
@@ -82,7 +82,7 @@ impl CodeCache {
     {
         let runner = super::process::runner_path().ok()?;
         let stamp = super::file_stamp(&std::fs::metadata(runner).ok()?);
-        let name = format!("{:x}", Sha256::digest(format!("{stamp:?}")));
+        let name = crate::sha256_hex(format!("{stamp:?}"));
         Some(Self {
             directory: cache.root.join(&name[..16]),
             expected: cache.expected.get_or_init(|| keys(request)).clone(),

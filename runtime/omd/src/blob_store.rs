@@ -1,4 +1,4 @@
-use crate::resource_data::{ResourceStore, hash};
+use crate::resource_data::ResourceStore;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
@@ -137,13 +137,6 @@ fn svg(bytes: &[u8]) -> Result<(), &'static str> {
     }
 }
 
-fn sha(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-}
-
 impl ResourceStore<'_> {
     fn blob_directory(&self) -> io::Result<PathBuf> {
         crate::workspace::private_path(&self.directory()?, &["blobs"], "blob_directory_invalid")
@@ -247,7 +240,7 @@ impl ResourceStore<'_> {
         if bytes.len() > BLOB_BYTES {
             return Err(io::Error::other("blob_too_large"));
         }
-        let digest = hash(bytes);
+        let digest = crate::sha256_hex(bytes);
         let directory = self.blob_directory()?;
         let path = directory.join(format!("{digest}.bin"));
         let lock = fs::OpenOptions::new()
@@ -279,7 +272,7 @@ impl ResourceStore<'_> {
     }
 
     pub fn blob_path(&self, digest: &str) -> io::Result<PathBuf> {
-        if !sha(digest) {
+        if !crate::is_sha256_hex(digest) {
             return Err(io::Error::other("blob_reference_invalid"));
         }
         let mut path = self.blob_directory()?.join(format!("{digest}.bin"));
@@ -303,7 +296,7 @@ impl ResourceStore<'_> {
             .open(path)?
             .take(BLOB_BYTES as u64 + 1)
             .read_to_end(&mut bytes)?;
-        if hash(&bytes) != digest {
+        if crate::sha256_hex(&bytes) != digest {
             return Err(io::Error::other("blob_integrity_failed"));
         }
         Ok(bytes)
@@ -383,13 +376,13 @@ impl ResourceStore<'_> {
             return Err(io::Error::other("blob_too_large"));
         }
         let directory = self.rotating_directory()?;
-        let blob = hash(text.as_bytes());
+        let blob = crate::sha256_hex(text.as_bytes());
         crate::fsio::write_if_changed(&directory.join(format!("{blob}.bin")), text.as_bytes())?;
         let record = self.record(
             "evidence",
             json!({"media_type": "text/plain", "label": label, "blob": blob, "bytes": text.len()}),
         )?;
-        let sha256 = hash(&record);
+        let sha256 = crate::sha256_hex(&record);
         crate::fsio::write_if_changed(&directory.join(format!("{sha256}.json")), &record)?;
         if prune_due(&directory, text.len()) {
             prune_rotating(&directory, BLOB_TOTAL_BYTES)?;

@@ -843,10 +843,6 @@ fn failure(message: impl ToString) -> io::Error {
     io::Error::other(message.to_string())
 }
 
-pub(crate) fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
-
 /// A selection that never reaches activation; a later reload stays transactional.
 fn reject(
     initial: bool,
@@ -894,7 +890,7 @@ impl TerminalPayload {
                 Value::Object(sites) => Some(sites),
                 _ => None,
             });
-        let hash = digest(shared.to_string().as_bytes());
+        let hash = crate::sha256_hex(shared.to_string().as_bytes());
         Self {
             shared,
             hash,
@@ -916,7 +912,7 @@ impl TerminalPayload {
             return self.hash.clone();
         }
         let sites = serde_json::to_string(own).unwrap_or_default();
-        format!("{}:{}", self.hash, digest(sites.as_bytes()))
+        format!("{}:{}", self.hash, crate::sha256_hex(sites.as_bytes()))
     }
 
     fn payload(&self, own: serde_json::Map<String, Value>) -> Value {
@@ -1123,14 +1119,33 @@ struct SemanticVersion(u64, u64, u64);
 
 impl SemanticVersion {
     fn parse(value: &str) -> Option<Self> {
+        let number = |part: Option<&str>| {
+            part.filter(|part| part.bytes().all(|byte| byte.is_ascii_digit()))?
+                .parse()
+                .ok()
+        };
         let mut parts = value.split('.');
         let parsed = Self(
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
+            number(parts.next())?,
+            number(parts.next())?,
+            number(parts.next())?,
         );
         parts.next().is_none().then_some(parsed)
     }
+}
+
+fn relative_path(value: &str, limit: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= limit
+        && !value.starts_with('/')
+        && value.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
 }
 
 fn service_version_satisfies(requirement: &str, provided: &str) -> bool {
@@ -2023,7 +2038,7 @@ impl ModPackage {
             || !matches!(self.state_scope.as_str(), "store" | "thread" | "checkout")
             || !version(&self.version)
             || !(25..=2000).contains(&self.hook_budget_ms)
-            || !package_file(&self.entrypoint)
+            || !(self.entrypoint.ends_with(".ts") && relative_path(&self.entrypoint, 128))
         {
             return Err(failure(
                 "incompatible_package: valid identity/version, supported API, positive state_version and state_scope store, thread or checkout required",
@@ -2287,7 +2302,8 @@ impl ModPackage {
         }
         if self.lifecycle.len() > 3
             || self.lifecycle.iter().any(|(event, path)| {
-                !["install", "update", "uninstall"].contains(&event.as_str()) || !package_file(path)
+                !["install", "update", "uninstall"].contains(&event.as_str())
+                    || !(path.ends_with(".ts") && relative_path(path, 128))
             })
         {
             return Err(failure("invalid_lifecycle_scripts"));
@@ -2295,10 +2311,13 @@ impl ModPackage {
         let assets: BTreeSet<_> = self.assets.iter().collect();
         if self.assets.len() > 16
             || assets.len() != self.assets.len()
-            || self
-                .assets
-                .iter()
-                .any(|asset| !asset_file(asset) || asset == &self.entrypoint)
+            || self.assets.iter().any(|asset| {
+                ![".ts", ".mjs", ".json"]
+                    .iter()
+                    .any(|ending| asset.ends_with(ending))
+                    || !relative_path(asset, 128)
+                    || asset == &self.entrypoint
+            })
         {
             return Err(failure("invalid_package_assets"));
         }
@@ -2386,38 +2405,6 @@ impl ModPackage {
         }
         Ok(())
     }
-}
-
-fn package_file(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value.ends_with(".ts")
-        && !value.starts_with('/')
-        && value.split('/').all(|part| {
-            !part.is_empty()
-                && part != "."
-                && part != ".."
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        })
-}
-
-fn asset_file(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && [".ts", ".mjs", ".json"]
-            .iter()
-            .any(|ending| value.ends_with(ending))
-        && !value.starts_with('/')
-        && value.split('/').all(|part| {
-            !part.is_empty()
-                && part != "."
-                && part != ".."
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        })
 }
 
 fn version_requirement(value: &str) -> bool {
@@ -3040,14 +3027,14 @@ fn read_configuration(
     let mut hashed = bytes.as_deref().unwrap_or_default().to_vec();
     for (name, _) in stamp.iter().flat_map(|(_, settings)| settings) {
         let content = store::read(&root.join("settings").join(name), 65_536).unwrap_or_default();
-        hashed.extend(digest(name.as_encoded_bytes()).as_bytes());
-        hashed.extend(digest(&content).as_bytes());
+        hashed.extend(crate::sha256_hex(name.as_encoded_bytes()).as_bytes());
+        hashed.extend(crate::sha256_hex(&content).as_bytes());
     }
     (
         stamp
             .clone()
             .filter(|_| configuration_stamps(root) == stamp),
-        digest(&hashed),
+        crate::sha256_hex(&hashed),
         bytes,
     )
 }
@@ -4183,7 +4170,7 @@ impl ModHost {
     }
 
     fn session_owner(&self, loaded: &Loaded) -> String {
-        digest(
+        crate::sha256_hex(
             json!([
                 self.store.root,
                 self.project,
@@ -4215,7 +4202,7 @@ impl ModHost {
             .lock()
             .ok()
             .and_then(|resets| resets.get(&self.store.root).copied());
-        let binding = digest(
+        let binding = crate::sha256_hex(
             json!([
                 loaded.selection,
                 loaded.adapter,
@@ -4370,7 +4357,7 @@ impl ModHost {
             self.fail_closed(error.to_string());
             return Err(error);
         }
-        let ui_signature = digest(serde_json::to_vec(&config.mods)?.as_slice());
+        let ui_signature = crate::sha256_hex(serde_json::to_vec(&config.mods)?.as_slice());
         if self
             .ui_configuration
             .as_ref()
@@ -4631,7 +4618,7 @@ impl ModHost {
                 !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
             }) {
                 process::invalidate_session_owner(
-                    &digest(
+                    &crate::sha256_hex(
                         json!([
                             self.store.root,
                             self.project,
@@ -6159,7 +6146,7 @@ impl ModHost {
         format!(
             "{}:{}",
             self.store.root.display(),
-            digest(
+            crate::sha256_hex(
                 json!([self.project, thread, selection, loaded.adapter])
                     .to_string()
                     .as_bytes()
@@ -6168,7 +6155,7 @@ impl ModHost {
     }
 
     fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, &Value)>) -> String {
-        digest(
+        crate::sha256_hex(
             json!([
                 loaded.selection.sha256,
                 loaded.selection.settings,
@@ -7094,4 +7081,8 @@ fn service_ts_type(kind: &str) -> &'static str {
         "object" => "Record<string, Json>",
         _ => "Json",
     }
+}
+
+pub fn release_disposable_runners() {
+    process::release_disposable_runners();
 }

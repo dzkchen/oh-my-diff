@@ -27,7 +27,11 @@ pub(super) fn validate_registrations(
     }
     let mut names = BTreeSet::new();
     for reader in readers {
-        if !scheme(&reader.scheme) || !names.insert(&reader.scheme) || !version(&reader.version) {
+        if !scheme(&reader.scheme)
+            || !names.insert(&reader.scheme)
+            || reader.version.len() > 32
+            || SemanticVersion::parse(&reader.version).is_none()
+        {
             return Err(failure("invalid_virtual_registration"));
         }
     }
@@ -44,14 +48,6 @@ fn scheme(value: &str) -> bool {
             value,
             "file" | "http" | "https" | "ftp" | "data" | "ssh" | "vscode" | "javascript"
         )
-}
-
-fn version(value: &str) -> bool {
-    value.len() <= 32
-        && value.split('.').count() == 3
-        && value
-            .split('.')
-            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 impl ModHost {
@@ -228,7 +224,7 @@ impl ModHost {
             .loaded
             .get(owner)
             .ok_or_else(|| failure("virtual_provider_unavailable"))?;
-        let sha256 = digest(reply.text.as_bytes());
+        let sha256 = crate::sha256_hex(reply.text.as_bytes());
         Ok(
             json!({"source":"virtual","untrusted":true,"provider":owner,"provider_version":reader.version,"provider_sha256":source.selection.sha256,"package_version":source.package.version,"generation":self.generation,"sha256":sha256,"resource":reply}),
         )
@@ -316,7 +312,7 @@ impl ModHost {
         let text = file["text"]
             .as_str()
             .ok_or_else(|| failure("local_resource_unavailable"))?;
-        let revision = digest(text.as_bytes());
+        let revision = crate::sha256_hex(text.as_bytes());
         if input
             .expected_revision
             .as_ref()

@@ -10,8 +10,6 @@ use codex_omd::load_managed;
 use codex_omd_extension::validate_tool_schema;
 use serde_json::Value;
 use serde_json::json;
-use sha2::Digest;
-use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -84,7 +82,7 @@ fn plugin_files(root: &std::path::Path) -> io::Result<BTreeMap<String, String>> 
             let path = entry_path.strip_prefix(root).map_err(io::Error::other)?;
             files.insert(
                 path.to_string_lossy().into_owned(),
-                format!("{:x}", Sha256::digest(bytes)),
+                codex_omd::sha256_hex(bytes),
             );
         }
     }

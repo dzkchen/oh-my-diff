@@ -417,14 +417,7 @@ fn environment(
 }
 
 pub fn repository_key(repository: &Path) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(repository.as_os_str().as_encoded_bytes())
-    )
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::sha256_hex(repository.as_os_str().as_encoded_bytes())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -888,7 +881,7 @@ fn verified_output(
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
     if bytes.len() > EXEC_ARTIFACT_BYTES
-        || sha256(&bytes) != digest
+        || crate::sha256_hex(&bytes) != digest
         || std::str::from_utf8(&bytes).is_err()
     {
         return Err("exec_output_integrity_failed".into());
@@ -999,11 +992,7 @@ impl Host<'_> {
         let thread = caller.thread.unwrap_or("cli");
         if !crate::resource_data::token(caller.id)
             || !crate::resource_data::token(thread)
-            || caller.source_sha256.len() != 64
-            || !caller
-                .source_sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
+            || !crate::is_sha256_hex(&caller.source_sha256)
             || self
                 .data_root
                 .canonicalize()
@@ -1038,7 +1027,7 @@ impl Host<'_> {
             .parent()
             .and_then(Path::parent)
             .ok_or("exec_output_directory_invalid")?;
-        let digest = sha256(bytes);
+        let digest = crate::sha256_hex(bytes);
         let path = directory.join(format!("{digest}.txt"));
         let lock = fs::OpenOptions::new()
             .read(true)
@@ -1099,10 +1088,7 @@ impl Host<'_> {
         }
         let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         let digest = &input.artifact.sha256;
-        if digest.len() != 64
-            || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-            || input.artifact.reference != *digest
-        {
+        if !crate::is_sha256_hex(&digest) || input.artifact.reference != *digest {
             return Err("exec_output_reference_invalid".into());
         }
         let directory = self.output_directory(caller)?;
@@ -1360,13 +1346,10 @@ impl Host<'_> {
         }
         if input.guards.len() > 4
             || !input.guards.is_empty() && !input.write
-            || input.guards.iter().any(|guard| {
-                guard.stdout_sha256.len() != 64
-                    || !guard
-                        .stdout_sha256
-                        .bytes()
-                        .all(|byte| byte.is_ascii_hexdigit())
-            })
+            || input
+                .guards
+                .iter()
+                .any(|guard| !crate::is_sha256_hex(&guard.stdout_sha256))
         {
             return Err("exec_guards_invalid".into());
         }
@@ -1723,7 +1706,7 @@ impl Host<'_> {
             "exit_code": status.and_then(|status| status.code()),
             "signal": signal,
             "stdout": String::from_utf8_lossy(visible_stdout),
-            "stdout_sha256": sha256(&stdout),
+            "stdout_sha256": crate::sha256_hex(&stdout),
             "stdout_bytes": stdout.len(),
             "output_artifact": output_artifact,
             "stderr": String::from_utf8_lossy(visible_stderr),
@@ -1754,7 +1737,7 @@ impl Host<'_> {
             let value = match snapshot.files.get(&name) {
                 Some(file) => json!({
                     "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
-                    "sha256": sha256(&file.bytes),
+                    "sha256": crate::sha256_hex(&file.bytes),
                 }),
                 None => Value::Null,
             };
@@ -1799,7 +1782,7 @@ impl Host<'_> {
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes)
                 .map_err(|error| error.to_string())?;
-            value["sha256"] = json!(sha256(&bytes));
+            value["sha256"] = json!(crate::sha256_hex(&bytes));
         }
         Ok(value)
     }
@@ -1957,7 +1940,7 @@ impl Host<'_> {
             "files": files.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
         });
         let bytes = serde_json::to_vec(&record)?;
-        let digest = sha256(&bytes);
+        let digest = crate::sha256_hex(&bytes);
         let mut count = 0;
         let mut total = 0;
         for entry in fs::read_dir(&directory)? {
@@ -2022,7 +2005,7 @@ impl Host<'_> {
             )?;
             let matches = match (expected, &current) {
                 (None, None) => true,
-                (Some(Fingerprint::Hash(hash)), Some(bytes)) => *hash == sha256(bytes),
+                (Some(Fingerprint::Hash(hash)), Some(bytes)) => *hash == crate::sha256_hex(bytes),
                 (Some(Fingerprint::Stat { size, mtime_ms }), Some(_)) => {
                     stat["size"] == json!(size) && stat["mtime_ms"] == json!(mtime_ms)
                 }
@@ -2048,12 +2031,7 @@ impl Host<'_> {
         }
         let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         if input.backup.reference != input.backup.sha256
-            || input.backup.sha256.len() != 64
-            || !input
-                .backup
-                .sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
+            || !crate::is_sha256_hex(&input.backup.sha256)
         {
             return Err("backup_reference_invalid".into());
         }
@@ -2061,7 +2039,7 @@ impl Host<'_> {
             .backup_directory(caller)?
             .join(format!("{}.json", input.backup.sha256));
         let bytes = fs::read(&path).map_err(|_| "backup_unavailable")?;
-        if sha256(&bytes) != input.backup.sha256 {
+        if crate::sha256_hex(&bytes) != input.backup.sha256 {
             return Err("backup_integrity_failed".into());
         }
         let record: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
@@ -2176,9 +2154,9 @@ mod program_hash_tests {
         let program = directory.path().join("program");
         fs::write(&program, "one").unwrap();
         let first = program_hash(&program).unwrap();
-        assert_eq!(first, sha256(b"one"));
+        assert_eq!(first, crate::sha256_hex(b"one"));
         assert_eq!(program_hash(&program).unwrap(), first);
         fs::write(&program, "three").unwrap();
-        assert_eq!(program_hash(&program).unwrap(), sha256(b"three"));
+        assert_eq!(program_hash(&program).unwrap(), crate::sha256_hex(b"three"));
     }
 }

@@ -229,7 +229,7 @@ async fn submit_receipt(
     receipt.validate()?;
     let value = serde_json::to_value(&receipt).map_err(|e| e.to_string())?;
     let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
-    let name = format!("receipt-{}.json", execution::hash(&bytes));
+    let name = format!("receipt-{}.json", codex_omd::sha256_hex(&bytes));
     // Only an accepted receipt leaves evidence; a failed write withdraws it.
     let submitted = {
         let mut contract = lead

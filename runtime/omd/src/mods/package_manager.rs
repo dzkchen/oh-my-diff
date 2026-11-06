@@ -383,8 +383,7 @@ struct ResolvedPackage {
 
 impl ModStore {
     pub fn package_lock(&self) -> Result<ModPackageLock> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         self.read_package_lock()
     }
 
@@ -471,14 +470,12 @@ impl ModStore {
                 "package_plan_action_invalid: use install or update; remove, rollback, enable and disable have their own commands",
             ));
         }
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         self.package_plan_locked(request, false, None)
     }
 
     pub fn package_requirements(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         self.package_plan_locked(request, true, None)
     }
 
@@ -640,7 +637,7 @@ impl ModStore {
             changes,
             confirmation: String::new(),
         };
-        plan.confirmation = digest(&serde_json::to_vec(&plan)?);
+        plan.confirmation = crate::sha256_hex(&serde_json::to_vec(&plan)?);
         Ok(plan)
     }
 
@@ -649,8 +646,7 @@ impl ModStore {
         request: ModInstallRequest,
         confirmation: &str,
     ) -> Result<ModPackageLock> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         let source = redacted_source(&request.source);
         let result = self.package_apply_locked(request, confirmation);
         if let Err(error) = &result {
@@ -738,14 +734,8 @@ impl ModStore {
             }
         }
         validate_locked_graph(&lock.packages)?;
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
-        lock.revision = lock
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut config.revision)?;
+        store::next_revision(&mut lock.revision)?;
         let event =
             json!({"packages": plan.packages.iter().map(package_event).collect::<Vec<_>>()});
         let lock = self.commit_package_transaction(
@@ -796,11 +786,7 @@ impl ModStore {
                 continue;
             };
             if !identifier(&package.id)
-                || package.integrity.len() != 64
-                || !package
-                    .integrity
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit())
+                || !crate::is_sha256_hex(&package.integrity)
                 || !source.is_absolute()
                 || source.starts_with(&self.root)
                 || source
@@ -830,8 +816,7 @@ impl ModStore {
     }
 
     pub fn package_uninstall_plan(&self, id: &str) -> Result<ModPackagePlan> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         self.package_uninstall_plan_locked(id)
     }
 
@@ -860,7 +845,7 @@ impl ModStore {
                 "cache_retained_for_offline_reuse":true,"state_retained":true,"local_source_untouched":true}),
             confirmation: String::new(),
         };
-        plan.confirmation = digest(&serde_json::to_vec(&plan)?);
+        plan.confirmation = crate::sha256_hex(&serde_json::to_vec(&plan)?);
         Ok(plan)
     }
 
@@ -880,25 +865,20 @@ impl ModStore {
     }
 
     pub fn package_unblock(&self, id: &str) -> Result<ModPackageLock> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         let mut lock = self.read_package_lock()?;
         let before = lock.blocked.len();
         lock.blocked.retain(|blocked| blocked.id != id);
         if lock.blocked.len() == before {
             return Err(failure("package_not_blocked"));
         }
-        lock.revision = lock
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut lock.revision)?;
         let config = self.configuration()?;
         self.commit_package_transaction(lock, config, &[], "unblock", json!({"mod": id}), &[])
     }
 
     fn package_disable_blocking(&self, id: &str, block: Option<&str>) -> Result<ModPackageLock> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         let mut lock = self.read_package_lock()?;
         let package = lock
             .packages
@@ -920,10 +900,7 @@ impl ModStore {
             });
             lock.blocked.push(blocked);
         }
-        lock.revision = lock
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut lock.revision)?;
         let mut config = self.configuration()?;
         let selection = config
             .mods
@@ -931,10 +908,7 @@ impl ModStore {
             .find(|selection| selection.path == path && selection.scope == scope)
             .ok_or_else(|| failure("package_selection_missing"))?;
         selection.enabled = false;
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut config.revision)?;
         match block {
             Some(reason) => self.commit_package_transaction(
                 lock,
@@ -956,8 +930,7 @@ impl ModStore {
     }
 
     pub fn package_enable(&self, id: &str) -> Result<ModPackageLock> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         let mut lock = self.read_package_lock()?;
         let blocked = lock.packages.get(id).and_then(|package| {
             lock.blocked_reason(id, &package.version, &package.integrity)
@@ -986,10 +959,7 @@ impl ModStore {
         package.enabled = true;
         let path = package.path.clone();
         let scope = package.scope.clone();
-        lock.revision = lock
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut lock.revision)?;
         validate_locked_graph(&lock.packages)?;
         let mut config = self.configuration()?;
         let selection = config
@@ -1010,17 +980,13 @@ impl ModStore {
         super::validate_stored_settings(&manifest, &selection.settings)?;
         selection.enabled = true;
         store::refuse_second_copy(&config, &path, &scope, &manifest.id)?;
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut config.revision)?;
         let event = json!({"package": package_event(&lock.packages[id])});
         self.commit_package_transaction(lock, config, &[], "enable", event, &[])
     }
 
     pub fn package_uninstall(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         let plan = self.package_uninstall_plan_locked(id)?;
         if plan.confirmation != confirmation {
             return Err(failure("package_plan_changed: preview again"));
@@ -1038,10 +1004,7 @@ impl ModStore {
         }
         let installed = lock.packages.keys().cloned().collect::<BTreeSet<_>>();
         lock.history.retain(|name, _| installed.contains(name));
-        lock.revision = lock
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut lock.revision)?;
         let mut config = self.configuration()?;
         // Earlier cached versions of this package go too; another copy of the same mod, such as a bundled source, stays.
         let cached = package.cache_path.parent().unwrap_or(&package.cache_path);
@@ -1053,17 +1016,13 @@ impl ModStore {
                         && store::package(&selection.path)
                             .is_ok_and(|(manifest, _, _)| manifest.id == id)))
         });
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut config.revision)?;
         let event = json!({"package": package_event(&package)});
         self.commit_package_transaction(lock, config, &[], "uninstall", event, &[])
     }
 
     pub fn package_rollback_plan(&self, id: &str) -> Result<ModPackagePlan> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         self.package_rollback_plan_locked(id)
     }
 
@@ -1112,13 +1071,12 @@ impl ModStore {
                 "settings_preserved":selected_settings(&self.configuration()?, current)}),
             confirmation: String::new(),
         };
-        plan.confirmation = digest(&serde_json::to_vec(&plan)?);
+        plan.confirmation = crate::sha256_hex(&serde_json::to_vec(&plan)?);
         Ok(plan)
     }
 
     pub fn package_rollback(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
-        let _guard = self.lock()?;
-        self.recover_package_transaction()?;
+        let _guard = self.transaction()?;
         let plan = self.package_rollback_plan_locked(id)?;
         if plan.confirmation != confirmation {
             return Err(failure("package_plan_changed: preview again"));
@@ -1148,10 +1106,7 @@ impl ModStore {
         history.push(current);
         lock.packages.insert(id.to_owned(), previous.clone());
         validate_locked_graph(&lock.packages)?;
-        lock.revision = lock
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut lock.revision)?;
         let mut config = self.configuration()?;
         let selection = config
             .mods
@@ -1170,10 +1125,7 @@ impl ModStore {
             tier: None,
             required: selection.required,
         };
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut config.revision)?;
         let event = json!({"package": package_event(&plan.packages[0])});
         self.commit_package_transaction(lock, config, &[], "rollback", event, &[])
     }
@@ -1639,7 +1591,7 @@ impl ModStore {
                 authority
             },
             exec_environment: package.exec_environment.clone(),
-            settings_schema_sha256: digest(
+            settings_schema_sha256: crate::sha256_hex(
                 &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
             ),
             lifecycle: declared_lifecycle,
@@ -1702,7 +1654,7 @@ impl ModStore {
                     || repository.is_empty()
                     || repository.len() > 2048
                     || repository.starts_with('-')
-                    || !package_directory(subdirectory)
+                    || !(subdirectory.is_empty() || relative_path(subdirectory, 256))
                 {
                     return Err(failure("repository_reference_invalid"));
                 }
@@ -1733,8 +1685,8 @@ impl ModStore {
                     }
                     let repositories = self.root.join("repository-cache");
                     std::fs::create_dir_all(&repositories)?;
-                    let cached =
-                        repositories.join(format!("{}.git", digest(repository.as_bytes())));
+                    let cached = repositories
+                        .join(format!("{}.git", crate::sha256_hex(repository.as_bytes())));
                     if offline && !cached.exists() {
                         return Err(failure("repository_unavailable_offline_and_not_cached"));
                     }
@@ -1973,7 +1925,7 @@ impl ModStore {
         }
         let staging = staging_dir(
             &self.root,
-            &format!(".npm-{}.", &digest(expected.as_bytes())[..12]),
+            &format!(".npm-{}.", &crate::sha256_hex(expected.as_bytes())[..12]),
         )?;
         let result = (|| {
             let archive = npm_fetch(
@@ -1987,7 +1939,7 @@ impl ModStore {
             }
             let archive_path = self.root.join(format!(
                 ".npm-{}.{}.tgz",
-                &digest(expected.as_bytes())[..12],
+                &crate::sha256_hex(expected.as_bytes())[..12],
                 std::process::id()
             ));
             std::fs::write(&archive_path, &archive)?;
@@ -2650,33 +2602,15 @@ fn npm_archive_files(archive: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     Ok(files)
 }
 
-fn package_directory(value: &str) -> bool {
-    value.is_empty()
-        || (!value.starts_with('/')
-            && value.len() <= 256
-            && value.split('/').all(|part| {
-                !part.is_empty()
-                    && part != "."
-                    && part != ".."
-                    && part.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-                    })
-            }))
-}
-
 fn validate_package_lock(lock: &ModPackageLock) -> Result<()> {
     if lock
         .history
         .values()
         .any(|history| history.len() > PACKAGE_HISTORY_LIMIT)
-        || lock.packages.iter().any(|(id, package)| {
-            id != &package.id
-                || package.integrity.len() != 64
-                || !package
-                    .integrity
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit())
-        })
+        || lock
+            .packages
+            .iter()
+            .any(|(id, package)| id != &package.id || !crate::is_sha256_hex(&package.integrity))
     {
         return Err(failure("invalid_package_lock"));
     }

@@ -24,7 +24,7 @@ fn dispatch(
         "workspace.read" if readable => {
             let bytes = fs::read(repo.join("fact.txt"))?;
             Ok(
-                json!({"files":{"fact.txt":{"text":String::from_utf8(bytes.clone()).unwrap(),"sha256":codex_omd::resource_data::hash(&bytes)}}}),
+                json!({"files":{"fact.txt":{"text":String::from_utf8(bytes.clone()).unwrap(),"sha256":codex_omd::sha256_hex(&bytes)}}}),
             )
         }
         "workspace.read" => Err(std::io::Error::other("workspace_read_denied")),
@@ -88,7 +88,7 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         hash.to_owned(),
     )
     .unwrap();
-    let repository_key = codex_omd::resource_data::hash(repo.as_os_str().as_encoded_bytes());
+    let repository_key = codex_omd::sha256_hex(repo.as_os_str().as_encoded_bytes());
     let stored = DataStore {
         root: &store_path,
         repository_key: &repository_key,
@@ -171,7 +171,7 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         )
         .unwrap();
     assert!(context["text"].as_str().unwrap().contains("A scoped fact."));
-    let snapshot = json!({"reference":codex_omd::resource_data::hash(b"snapshot"),"sha256":codex_omd::resource_data::hash(b"snapshot")});
+    let snapshot = json!({"reference":codex_omd::sha256_hex(b"snapshot"),"sha256":codex_omd::sha256_hex(b"snapshot")});
     let worker = host.invoke("example_scoped_data", generation, "tool", "worker", json!({}), ModInvokeOptions { host: ModHostCallback::Own(&mut |call| match call.operation.as_str() {
             "workspace.snapshot" => Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]})),
             "routes.list" => Ok(json!([{"name":"reviewer","roles":["worker"],"available":true}])),
@@ -183,7 +183,7 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
             "agents.wait" => {
                 assert_eq!(call.arguments["consume"], true);
                 Ok(json!({"status":"completed","text":"A scoped fact.","consumed":true,
-                    "evidence":{"reference":"native-thread:fixture-worker","sha256":codex_omd::resource_data::hash(b"A scoped fact.")}}))
+                    "evidence":{"reference":"native-thread:fixture-worker","sha256":codex_omd::sha256_hex(b"A scoped fact.")}}))
             }
             _ => dispatch(&mut data, &stored, &repo, &call.operation, call.arguments, true),
         }), ..ModInvokeOptions::default() }).unwrap();
