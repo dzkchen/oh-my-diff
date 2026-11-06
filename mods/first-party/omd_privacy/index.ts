@@ -296,6 +296,45 @@ const globReaches = (token: string, part: string) => {
     !plain(choice) && (choice.startsWith('.') ? choice !== '.*' : !text.startsWith('.')) && globMatches(atoms(choice), text));
 };
 
+const INTERPRETER = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php)$/;
+const CODE_OR_HEREDOC = /\b(?:python[\d.]*\b[^\n;|&]{0,200}?\s-c|(?:node|bun|ruby|perl)\b[^\n;|&]{0,200}?\s(?:-e|--eval)|deno\b[^\n;|&]{0,200}?\seval|php\b[^\n;|&]{0,200}?\s-r)\s+(["'])([\s\S]*?)\1|<<-?[ \t]*(["']?)([A-Za-z_]\w*)\3([^\n]{0,400}\n)/g;
+const SUBSTITUTION = /\$\(|`/;
+const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:sh|bash|zsh|ksh|dash)\s+-\w*c\s+["']?/;
+const SHELL = /(?:^|[\s/(])(?:sh|bash|zsh|ksh|dash|ssh)(?=\s|$)/;
+const LITERAL = /(["'`])(?:(?!\1)[^\\\n]|\\.)*\1?/g;
+const literals = (code: string) => ` ${(code.match(LITERAL) ?? []).join(' ')} `;
+
+function literalCode(command: string) {
+  const closes = new Map<string, number[]>();
+  for (const { 1: tag, index } of command.matchAll(/^[ \t]*([A-Za-z_]\w*)$/gm)) {
+    if (!closes.has(tag)) closes.set(tag, []);
+    closes.get(tag)!.push(index);
+  }
+  let out = '';
+  let at = 0;
+  CODE_OR_HEREDOC.lastIndex = 0;
+  for (let match; (match = CODE_OR_HEREDOC.exec(command));) {
+    const [whole, quote, code, quoted, tag, line] = match;
+    out += command.slice(at, match.index);
+    at = CODE_OR_HEREDOC.lastIndex;
+    if (code !== undefined) {
+      out += whole.slice(0, -code.length - 2) + (quote === '"' && SUBSTITUTION.test(code) ? code : literals(code));
+      continue;
+    }
+    out += line;
+    const header = command.slice(command.lastIndexOf('\n', match.index) + 1, match.index).split(/[;&(]/).pop()!.replace(SHELL_WRAPPER, '') + line;
+    const program = header.trim().split(/\s+/).find(word => !/^\w+=/.test(word))?.split('/').pop() ?? '';
+    if (header.includes('|') || SHELL.test(header) || !(INTERPRETER.test(program) || program === 'tee' || program === 'cat' && header.includes('>'))) continue;
+    const ends = closes.get(tag) ?? [];
+    while (ends.length && ends[0] < at) ends.shift();
+    const end = ends[0] ?? command.length;
+    const body = command.slice(at, end);
+    out += !quoted && SUBSTITUTION.test(body) ? body : literals(body);
+    at = CODE_OR_HEREDOC.lastIndex = end;
+  }
+  return out + command.slice(at);
+}
+
 function pathHit(command: string, patterns: PathPattern[], exempt: PathPattern[]) {
   const names = (tokens: string[], { parts, want, directory }: PathPattern, globs = false) => {
     for (let at = 0; at + want.length <= tokens.length; at++) {
@@ -414,7 +453,7 @@ export default function activate(api: ModAPI) {
     const details = (event.details ?? {}) as Record<string, Json>;
     const text = [details.command, details.input].map(value => Array.isArray(value) ? value.map(String).join(' ') : typeof value === 'string' ? value : '').join(' ');
     const unchecked = event.kind === 'stdin' && typeof details.input !== 'string';
-    const hit = pathHit(text, config.sensitive, config.exempt.paths);
+    const hit = pathHit(literalCode(text), config.sensitive, config.exempt.paths);
     if (!hit && !unchecked) return null;
     const reason = hit ? `omd_privacy: this command names a sensitive path (${hit}), so its output would reach the model`
       : 'omd_privacy: this session input is too large to check for sensitive paths';

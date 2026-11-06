@@ -735,6 +735,32 @@ enabled = true
             profiles.keep_bundled_copies("manager", store)
         self.assertEqual(commands, [("selection-status",), ("package-disable", "omd_advisor")])
 
+    def test_an_upgrade_turns_off_only_profile_copies_of_newly_experimental_mods(self):
+        store = Path("/store")
+        selections = [
+            {"id": "omd_inspector", "path": "/store/sources/omd_inspector", "selected": True},
+            {"id": "omd_advisor", "path": "/store/sources/omd_advisor", "selected": True},
+            {"id": "omd_btw", "path": "/store/package-cache/omd_btw/old", "selected": True},
+            {"id": "omd_continue", "path": "/store/sources/omd_continue", "selected": False},
+            {"id": "omd_logo", "path": "/store/sources/omd_logo", "selected": True}]
+        commands = []
+
+        def invoke(_manager, command, _store, *arguments):
+            commands.append((command, *arguments))
+            return {"selections": selections} if command == "selection-status" else {}
+
+        with patch.object(profiles, "invoke", side_effect=invoke):
+            retired = profiles.retire_packages("manager", store, "full", {"retired": ["omd_advisor"]})
+            self.assertEqual(commands, [("selection-status",), ("disable", "/store/sources/omd_inspector")])
+            self.assertIn("omd_inspector", retired)
+            self.assertNotIn("omd_logo", retired)
+            commands.clear()
+            self.assertEqual(profiles.retire_packages("manager", store, "core", {"retired": ["omd_advisor"]}), {"omd_advisor"})
+            self.assertEqual(profiles.retire_packages("manager", store, "core", None), retired)
+            profiles.retire_packages("manager", store, "full", {"retired": sorted(retired)})
+            profiles.retire_packages("manager", store, "full", None)
+        self.assertEqual(commands, [])
+
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
                               "sha256": "a" * 64, "capabilities": ["exec"],
