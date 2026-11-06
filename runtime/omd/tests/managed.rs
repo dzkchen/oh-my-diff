@@ -474,9 +474,8 @@ fn selection_status_and_activation_agree_on_precedence_and_changed_sources() {
             .map(|(path, (effective, _))| (path, effective))
             .collect::<Vec<_>>()
     );
-    assert_eq!(rows[edited.to_str().unwrap()].1, "source_changed");
-    assert_eq!(activation[edited.to_str().unwrap()].1, "untrusted_source");
     for (path, reason) in [
+        (&edited, "source_changed"),
         (&first, "mod_conflict"),
         (&second, "mod_conflict"),
         (&user, "shadowed_by_project_scope"),

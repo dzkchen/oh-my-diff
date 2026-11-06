@@ -30,7 +30,7 @@
       "id": "omd_privacy",
       "version": "1.0.0",
       "extension_type": "mod",
-      "capability": "Fail-closed final-request policy that replaces secrets and selected PII with stable opaque placeholders and asks before shell reads of sensitive paths",
+      "capability": "Fail-closed final-request policy that replaces secrets and selected PII with stable opaque placeholders and can ask before shell reads of sensitive paths",
       "source": "mods/first-party/omd_privacy",
       "license": "MIT",
       "maintainer": "Oh My Diff",
@@ -563,7 +563,7 @@
     },
     {
       "id": "omd-code-execution",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "extension_type": "plugin",
       "capability": "Guides the model to run JavaScript cells with session storage, and persistent Python and Bun cells, in Codex code mode through Codex's own tool router",
       "source": "plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution",
@@ -573,7 +573,7 @@
       "tested_versions": [
         "Codex 0.166.0",
         "OMD 1.4.2 (offline checks)",
-        "plugin 0.2.0"
+        "plugin 0.3.0"
       ],
       "support_status": "experimental",
       "components": [

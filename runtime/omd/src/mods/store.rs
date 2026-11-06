@@ -1032,20 +1032,15 @@ impl ModStore {
                         };
                         settings_origin.insert(key.clone(), origin);
                     }
-                    // A user can re-trust an edited source; administered content needs a package sync instead.
-                    let error = if integrity != selection.sha256 && !administered {
-                        Some("source_changed: inspect and trust the new digest".to_owned())
-                    } else {
-                        super::selection_verdict(
-                            selection,
-                            &manifest,
-                            &integrity,
-                            administered,
-                            brokered.as_ref().map(|(_, grants)| grants),
-                            managed.as_ref().map(|managed| &managed.policy),
-                        )
-                        .unwrap_or_else(|error| Some(error.to_string()))
-                    };
+                    let error = super::selection_verdict(
+                        selection,
+                        &manifest,
+                        &integrity,
+                        administered,
+                        brokered.as_ref().map(|(_, grants)| grants),
+                        managed.as_ref().map(|managed| &managed.policy),
+                    )
+                    .unwrap_or_else(|error| Some(error.to_string()));
                     (Some(manifest.id), error, manifest.exec_environment)
                 }
                 Err(error) => {

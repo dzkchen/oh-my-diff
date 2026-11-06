@@ -375,7 +375,7 @@ impl ModHost {
                 .loaded
                 .get(id)
                 .ok_or_else(|| failure(format!("offline_tier_unknown_mod: {id}")))?;
-            tiers.insert(id.clone(), (tier, loaded.selection.clone()));
+            tiers.insert(id.clone(), (tier, (*loaded.selection).clone()));
         }
         self.tier_selections = tiers
             .iter()
@@ -390,8 +390,9 @@ impl ModHost {
                 .get_mut(&id)
                 .filter(|loaded| loaded.selection.scope == MANAGED_SCOPE)
             {
-                loaded.selection.scope = selection.scope;
-                loaded.selection.tier = selection.tier;
+                let current = Arc::make_mut(&mut loaded.selection);
+                current.scope = selection.scope;
+                current.tier = selection.tier;
             }
         }
         self.virtual_time_ms = None;
@@ -421,8 +422,9 @@ impl ModHost {
         for (index, step) in steps.iter().enumerate() {
             for (id, (tier, _)) in tiers {
                 if let Some(loaded) = self.loaded.get_mut(id) {
-                    loaded.selection.scope = MANAGED_SCOPE.to_owned();
-                    loaded.selection.tier = Some(*tier);
+                    let selection = Arc::make_mut(&mut loaded.selection);
+                    selection.scope = MANAGED_SCOPE.to_owned();
+                    selection.tier = Some(*tier);
                 }
             }
             let kind = step

@@ -98,6 +98,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -839,6 +840,28 @@ pub const MOD_SCOPES: &[&str] = &["user", "project"];
 pub const MOD_ENVIRONMENT: &[&str] = &["crypto"];
 type Result<T> = io::Result<T>;
 
+/// The runner reports a thrown error as its stack, cut to this many UTF-16 units.
+const RUNNER_ERROR_UNITS: usize = 768;
+
+fn rethrown(error: &str, downstream: &str) -> bool {
+    let described = |text: &str| {
+        let lines = text.split('\n').filter(|line| {
+            !(line.starts_with(char::is_whitespace) && line.trim_start().starts_with("at "))
+        });
+        lines.collect::<Vec<_>>().join("\n")
+    };
+    let thrown = described(error.strip_prefix("Error: ").unwrap_or(error));
+    let downstream = described(downstream);
+    let cut = error.encode_utf16().count() >= RUNNER_ERROR_UNITS;
+    let kept = match thrown.rsplit_once('\n') {
+        Some((kept, last)) if cut && last.starts_with(char::is_whitespace) => kept,
+        _ => &thrown,
+    };
+    !downstream.is_empty()
+        && (thrown == downstream
+            || cut && downstream.starts_with(kept.trim_end_matches('\u{fffd}')))
+}
+
 fn failure(message: impl ToString) -> io::Error {
     io::Error::other(message.to_string())
 }
@@ -973,7 +996,7 @@ fn concurrently<T: Send, R: Send>(
 }
 
 /// A mod's validated registrations, its source use, and its unused grants and environment.
-type Inspection = (Registrations, ModSourceUse, Vec<String>, Vec<String>);
+type Inspection = (Registered, ModSourceUse, Vec<String>, Vec<String>);
 
 fn fail(initial: bool, loaded: &mut Loaded, error: io::Error) -> Result<()> {
     if !initial {
@@ -1018,7 +1041,7 @@ fn selection_verdict(
             )
         } else {
             format!(
-                "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
+                "source_changed: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
                 package.id
             )
         }));
@@ -2860,7 +2883,8 @@ fn completion_trigger(trigger: &str) -> bool {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Reply {
-    registrations: Registrations,
+    #[serde(default)]
+    registrations: Option<Registrations>,
     state: Value,
     #[serde(default)]
     ui_state: Option<String>,
@@ -2887,16 +2911,50 @@ struct AcceptedCommandView {
 }
 
 #[derive(Clone)]
+struct Registered(Arc<(Registrations, String)>);
+
+impl Registered {
+    fn new(registrations: Registrations) -> Result<Self> {
+        let sha256 = crate::sha256_hex(&serde_json::to_vec(&registrations)?);
+        Ok(Self(Arc::new((registrations, sha256))))
+    }
+
+    fn sha256(&self) -> &str {
+        &self.0.1
+    }
+}
+
+impl Default for Registered {
+    fn default() -> Self {
+        Self(Arc::new((Registrations::default(), String::new())))
+    }
+}
+
+impl std::ops::Deref for Registered {
+    type Target = Registrations;
+
+    fn deref(&self) -> &Registrations {
+        &self.0.0
+    }
+}
+
+#[derive(PartialEq)]
+struct Adapter {
+    module: Value,
+    sha256: String,
+}
+
+#[derive(Clone)]
 struct Loaded {
-    package: ModPackage,
-    selection: ModSelection,
+    package: Arc<ModPackage>,
+    selection: Arc<ModSelection>,
     source: Arc<str>,
     assets: Arc<BTreeMap<String, Value>>,
     request_metadata: Arc<OnceLock<(Value, String, [u8; 32])>>,
     session_key: Option<String>,
     /// The store's code cache; `None` runs without one.
     code_cache: Option<Arc<code_cache::CacheRoot>>,
-    adapter: Option<Value>,
+    adapter: Option<Arc<Adapter>>,
     state: Value,
     state_revision: u64,
     /// The state the inspection ran with; `state` follows later callbacks.
@@ -2906,8 +2964,8 @@ struct Loaded {
     ui_revision: u64,
     ui_clears: u64,
     command_view: Option<AcceptedCommandView>,
-    registrations: Registrations,
-    source_use: ModSourceUse,
+    registrations: Registered,
+    source_use: Arc<ModSourceUse>,
     unused_grants: Vec<String>,
     unused_environment: Vec<String>,
     withheld: Vec<String>,
@@ -2972,7 +3030,16 @@ struct ModTelemetry {
     last_micros: u128,
     faults: u32,
     last_error: Option<String>,
-    logs: Vec<Value>,
+    logs: VecDeque<TelemetryLog>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct TelemetryLog {
+    generation: u64,
+    event: String,
+    name: String,
+    outcome: &'static str,
+    elapsed_micros: u128,
 }
 
 const MOD_FAULT_LIMIT: u32 = 5;
@@ -3066,6 +3133,66 @@ mod reload_tests {
     }
 
     #[test]
+    fn only_an_exact_rethrow_of_next_is_excused() {
+        let frames = "\n    at handler (mod.js:1:1)\n    at async next (runner.js:2:2)";
+        let downstream = "tool_result_unavailable: succeeded";
+        assert!(rethrown(
+            &format!("Error: {downstream}{frames}"),
+            downstream
+        ));
+        assert!(!rethrown(
+            &format!("Error: {downstream}: TypeError: x is undefined{frames}"),
+            downstream
+        ));
+        assert!(!rethrown(&format!("Error: other{frames}"), downstream));
+        assert!(!rethrown("Error: anything", ""));
+    }
+
+    #[test]
+    fn activation_refuses_unbrokered_user_selections_but_not_administered_ones() {
+        let temp = tempfile::tempdir().unwrap();
+        let package = temp.path().canonicalize().unwrap().join("hello");
+        std::fs::create_dir(&package).unwrap();
+        std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "hello",
+            "version": "1.0.0", "api": MOD_API_VERSION, "state_version": 1, "capabilities": ["commands"],
+            "license": "Apache-2.0", "provenance": {"maintainer": "Fixture", "source": "fixture"}})).unwrap()).unwrap();
+        std::fs::write(
+            package.join("index.ts"),
+            "export default api => api.command('hello', () => 'hi')",
+        )
+        .unwrap();
+        let selection: ModSelection = serde_json::from_value(json!({"path": package,
+            "sha256": store::verified(&package).unwrap().sha256, "enabled": true,
+            "capabilities": ["commands"], "settings": {}, "scope": "user"}))
+        .unwrap();
+        let select = |administered: usize, grants: &BTreeSet<String>| {
+            let mut rejected = Vec::new();
+            let selected = ModHost::select(
+                std::slice::from_ref(&selection),
+                administered,
+                true,
+                Some(grants),
+                None,
+                &mut rejected,
+                |path| {
+                    store::verified(path)
+                        .map(|v| (v.package.clone(), v.source.clone(), v.sha256.clone()))
+                },
+            )
+            .unwrap();
+            let reasons = rejected.into_iter().map(|rejection| rejection.reason);
+            (selected.contains_key("hello"), reasons.collect::<Vec<_>>())
+        };
+        let mut grants = BTreeSet::new();
+        let (selected, reasons) = select(0, &grants);
+        assert!(!selected);
+        assert!(reasons[0].starts_with("grant_not_brokered"), "{reasons:?}");
+        assert_eq!(select(1, &grants), (true, Vec::new()));
+        grants.insert(store::grant(&json!(selection)));
+        assert_eq!(select(0, &grants), (true, Vec::new()));
+    }
+
+    #[test]
     fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap().join("store");
@@ -3139,7 +3266,7 @@ mod reload_tests {
             host.check_callback_authority(&loaded)
                 .unwrap_err()
                 .to_string()
-                .contains("untrusted_source")
+                .contains("source_changed")
         );
     }
 
@@ -3248,6 +3375,14 @@ impl Loaded {
         }
     }
 
+    fn invocation(&mut self) -> Self {
+        let state = std::mem::take(&mut self.state);
+        let telemetry = std::mem::take(&mut self.telemetry);
+        let copy = self.clone();
+        (self.state, self.telemetry) = (state, telemetry);
+        copy
+    }
+
     fn set_state(&mut self, state: Value) {
         static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         self.state = state;
@@ -3283,16 +3418,27 @@ impl Loaded {
 }
 
 impl ModTelemetry {
-    fn record(&mut self, generation: u64, event: &str, name: &str, elapsed: u128, outcome: &str) {
+    fn record(
+        &mut self,
+        generation: u64,
+        event: &str,
+        name: &str,
+        elapsed: u128,
+        outcome: &'static str,
+    ) {
         self.invocations = self.invocations.saturating_add(1);
         self.total_micros = self.total_micros.saturating_add(elapsed);
         self.last_micros = elapsed;
-        self.logs
-            .push(json!({"generation":generation,"event":event,"name":name,
-            "outcome":outcome,"elapsed_micros":elapsed}));
-        if self.logs.len() > 64 {
-            self.logs.remove(0);
+        if self.logs.len() == 64 {
+            self.logs.pop_front();
         }
+        self.logs.push_back(TelemetryLog {
+            generation,
+            event: event.to_owned(),
+            name: name.to_owned(),
+            outcome,
+            elapsed_micros: elapsed,
+        });
     }
 }
 
@@ -3420,6 +3566,7 @@ struct Invocation {
     virtual_time_ms: Option<u64>,
     started: Instant,
     migrate: bool,
+    rethrown: bool,
 }
 
 fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str) -> Result<()> {
@@ -3598,6 +3745,7 @@ fn invoke(
     let mut replay: Vec<Value> = Vec::new();
     loop {
         let replaying = !replay.is_empty();
+        let mut downstream = None;
         let mut invocation =
             access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
         if retained && invocation.loaded.session_key != activation_key {
@@ -3619,7 +3767,8 @@ fn invoke(
                 if call.operation == "continuation.next" {
                     let input = call.arguments.get("input").cloned().unwrap_or(Value::Null);
                     return match next.as_mut() {
-                        Some(next) => next(&mut *access, &mut *host, input),
+                        Some(next) => next(&mut *access, &mut *host, input)
+                            .inspect_err(|error| downstream = Some(error.to_string())),
                         None => Err(failure("continuation_outside_interceptor")),
                     };
                 }
@@ -3705,6 +3854,9 @@ fn invoke(
             scope,
         )
     });
+        // A handler that only rethrows what `next` rejected with is not at fault.
+        invocation.rethrown = matches!((&reply, &downstream), (Err(error), Some(downstream))
+            if rethrown(&error.to_string(), downstream));
         // A retry replays recorded host results; a divergent replay of read-only calls runs fresh.
         if replaying && reply.is_err() {
             if replay.iter().all(read_only_receipt) && started.elapsed() < budget {
@@ -4205,7 +4357,7 @@ impl ModHost {
         let binding = crate::sha256_hex(
             json!([
                 loaded.selection,
-                loaded.adapter,
+                loaded.adapter.as_ref().map(|adapter| &adapter.sha256),
                 loaded.settings_file,
                 loaded.withheld,
                 reset
@@ -4493,7 +4645,7 @@ impl ModHost {
                 let verified = store::verified(&selection.path)?;
                 if verified.sha256 != selection.sha256 {
                     return Err(failure(format!(
-                        "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
+                        "source_changed: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
                         package.id
                     )));
                 }
@@ -4522,13 +4674,13 @@ impl ModHost {
                 adapter: adapter
                     .as_ref()
                     .and_then(|value| value.as_ref().ok().cloned()),
-                package,
+                package: Arc::new(package),
                 source: source.into(),
                 assets: Arc::new(assets),
                 request_metadata: Arc::new(OnceLock::new()),
                 session_key: None,
                 code_cache: caching.then(cache_root),
-                selection,
+                selection: Arc::new(selection),
                 state: Value::Null,
                 state_revision: 0,
                 registered_state: Arc::default(),
@@ -4537,8 +4689,8 @@ impl ModHost {
                 ui_revision: 0,
                 ui_clears: 0,
                 command_view: None,
-                registrations: Registrations::default(),
-                source_use: ModSourceUse::default(),
+                registrations: Registered::default(),
+                source_use: Arc::default(),
                 unused_grants: Vec::new(),
                 unused_environment: Vec::new(),
                 withheld: Vec::new(),
@@ -4562,7 +4714,7 @@ impl ModHost {
                 Ok((registrations, source_use, unused_grants, unused_environment)) => {
                     loaded.registered_state = Arc::new(loaded.state.clone());
                     loaded.registrations = registrations;
-                    loaded.source_use = source_use;
+                    loaded.source_use = Arc::new(source_use);
                     loaded.unused_grants = unused_grants;
                     loaded.unused_environment = unused_environment;
                 }
@@ -4781,7 +4933,7 @@ impl ModHost {
                 !self.loaded.get(&target.id).is_some_and(|loaded| {
                     loaded.selection.scope == MANAGED_SCOPE
                         && (loaded.error.is_none()
-                            || loaded.registrations != Registrations::default())
+                            || *loaded.registrations != Registrations::default())
                 })
             })
             .map(|target| {
@@ -4851,7 +5003,7 @@ impl ModHost {
 
     fn adapters(
         selected: &BTreeMap<String, (ModSelection, ModPackage, String)>,
-    ) -> BTreeMap<String, Value> {
+    ) -> BTreeMap<String, Arc<Adapter>> {
         selected
             .iter()
             .filter_map(|(id, (selection, package, _))| {
@@ -4871,10 +5023,9 @@ impl ModHost {
                     .iter()
                     .map(|(specifier, asset)| Some((specifier.clone(), file(asset)?)))
                     .collect::<Option<serde_json::Map<_, _>>>()?;
-                Some((
-                    id.clone(),
-                    json!({"source": entry["source"], "filename": entry["filename"], "aliases": aliases}),
-                ))
+                let module = json!({"source": entry["source"], "filename": entry["filename"], "aliases": aliases});
+                let sha256 = crate::sha256_hex(module.to_string().as_bytes());
+                Some((id.clone(), Arc::new(Adapter { module, sha256 })))
             })
             .collect()
     }
@@ -5365,7 +5516,9 @@ impl ModHost {
         if reply.state != loaded.state {
             return Err(failure("state_write_during_registration"));
         }
-        let registrations = reply.registrations;
+        let registrations = reply
+            .registrations
+            .ok_or_else(|| failure("registrations_missing"))?;
         Self::validate_registrations(&loaded.package, &registrations)?;
         for tool in &registrations.tools {
             tool_validator(&tool.parameters)?;
@@ -5393,7 +5546,12 @@ impl ModHost {
                 code
             },
         )?;
-        Ok((registrations, source_use, unused_grants, unused_environment))
+        Ok((
+            Registered::new(registrations)?,
+            source_use,
+            unused_grants,
+            unused_environment,
+        ))
     }
 
     fn run(
@@ -5583,16 +5741,18 @@ impl ModHost {
         if generation != self.generation {
             return Err(failure("stale_mod_generation: retry on the next turn"));
         }
-        let mut loaded = self.loaded.get(id).cloned().ok_or_else(|| {
-            match self
-                .rejected
-                .iter()
-                .find(|rejection| rejection.id.as_deref() == Some(id))
-            {
-                Some(rejection) => failure(format!("mod_disabled: {}", rejection.reason)),
-                None => failure("mod_disabled"),
-            }
-        })?;
+        let Some(mut loaded) = self.loaded.get_mut(id).map(Loaded::invocation) else {
+            return Err(
+                match self
+                    .rejected
+                    .iter()
+                    .find(|rejection| rejection.id.as_deref() == Some(id))
+                {
+                    Some(rejection) => failure(format!("mod_disabled: {}", rejection.reason)),
+                    None => failure("mod_disabled"),
+                },
+            );
+        };
         if let Some(error) = &loaded.error {
             return Err(failure(format!("mod_failed: {error}")));
         }
@@ -5652,6 +5812,7 @@ impl ModHost {
             virtual_time_ms: self.virtual_time_ms,
             started: Instant::now(),
             migrate,
+            rethrown: false,
         })
     }
 
@@ -5667,9 +5828,6 @@ impl ModHost {
         let ui_state = validate_ui_state(reply.ui_state.as_deref().unwrap_or("null"))?;
         if !active() {
             return Err(failure("callback_cancelled"));
-        }
-        if reply.registrations != loaded.registrations {
-            return Err(failure("registration_changed_during_callback"));
         }
         let mut ui = loaded
             .ui
@@ -5867,7 +6025,11 @@ impl ModHost {
                 active,
             )
         });
-        let (started, previous_state) = (invocation.started, invocation.loaded.state);
+        let (started, previous_state, rethrown) = (
+            invocation.started,
+            invocation.loaded.state,
+            invocation.rethrown,
+        );
         let current = self
             .loaded
             .get_mut(id)
@@ -5902,6 +6064,7 @@ impl ModHost {
                 .iter()
                 .any(|transient| message.trim_start_matches("Error: ").starts_with(transient))
                     && !matches!(event, "service" | "component")
+                    && !rethrown
                 {
                     current.fault(message);
                 }
@@ -6147,9 +6310,14 @@ impl ModHost {
             "{}:{}",
             self.store.root.display(),
             crate::sha256_hex(
-                json!([self.project, thread, selection, loaded.adapter])
-                    .to_string()
-                    .as_bytes()
+                json!([
+                    self.project,
+                    thread,
+                    selection,
+                    loaded.adapter.as_ref().map(|adapter| &adapter.sha256)
+                ])
+                .to_string()
+                .as_bytes()
             )
         )
     }
@@ -7043,7 +7211,7 @@ impl ModHost {
                 "scope": m.selection.scope, "requires": m.package.requires, "services": m.package.services,
                 "source_use":m.source_use,"unused_grants":m.unused_grants,
                 "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
-                "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error});
+                "registrations": *m.registrations, "telemetry":m.telemetry, "error": m.error});
                 status["settings_file"] = json!(m.settings_file);
                 status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
                     "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
