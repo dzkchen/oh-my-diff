@@ -5,6 +5,8 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import readline from 'node:readline';
 
+const RESULT = 'CODE_KERNEL_RESULT:fixture:';
+
 for (const language of ['python', 'javascript']) {
   test(`${language} kernel preserves state and isolates late calls, denials and disconnects`, { timeout: 15_000 }, async t => {
     const calls = [];
@@ -40,16 +42,16 @@ for (const language of ['python', 'javascript']) {
       child.stdin.write(JSON.stringify({ port: server.address().port, token: 'fixture', code }) + '\n');
       const { value, done } = await lines.next();
       assert.equal(done, false);
-      assert.ok(value.startsWith('CODE_KERNEL_RESULT:'), value);
-      return JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length));
+      assert.ok(value.startsWith(RESULT), value);
+      return JSON.parse(value.slice(RESULT.length));
     };
     assert.deepEqual(await cell(python ? 'values = tool("read"); print(values)' : 'globalThis.values = await tool("read"); console.log(values)'),
       { ok: true, output: python ? '[2, 4, 3]\n' : '[2,4,3]\n', bridge_failed: false });
     assert.deepEqual(await cell(python ? 'print(sum(values))' : 'console.log(values.reduce((a, b) => a + b, 0))'),
       { ok: true, output: '9\n', bridge_failed: false });
-    const noisy = await cell(python ? 'import sys, os\nprint("e", file=sys.stderr)\nos.system("echo y")\nprint("CODE_KERNEL_RESULT:{}")' : 'console.error("e"); process.stdout.write("y\\n"); process.stderr.write("z\\n"); console.log("CODE_KERNEL_RESULT:{}")');
+    const noisy = await cell(python ? 'import sys, os\nprint("e", file=sys.stderr)\nos.system("echo y")\nprint("CODE_KERNEL_RESULT:fixture:{\\"ok\\":false}")' : 'console.error("e"); process.stdout.write("y\\n"); process.stderr.write("z\\n"); console.log("CODE_KERNEL_RESULT:fixture:{\\"ok\\":false}")');
     assert.equal(noisy.ok, true);
-    assert.equal(noisy.output, python ? 'e\ny\nCODE_KERNEL_RESULT:{}\n' : 'e\ny\nz\nCODE_KERNEL_RESULT:{}\n');
+    assert.equal(noisy.output, python ? 'e\ny\nCODE_KERNEL_RESULT:fixture:{"ok":false}\n' : 'e\ny\nz\nCODE_KERNEL_RESULT:fixture:{"ok":false}\n');
     const started = await cell(python ? `import threading, contextvars
 release = threading.Event()
 def late_call():
@@ -98,7 +100,7 @@ test('tool bridge preserves UTF-8 split across TCP chunks', async () => {
     const lines = readline.createInterface({ input: child.stdout });
     child.stdin.write(JSON.stringify({ port: server.address().port, token: 'fixture', code: 'console.log(await tool("read", {}))' }) + '\n');
     const [line] = await once(lines, 'line');
-    const result = JSON.parse(line.replace('CODE_KERNEL_RESULT:', ''));
+    const result = JSON.parse(line.slice(RESULT.length));
     assert.equal(result.ok, true);
     assert.equal(result.output, '雪😀café\n');
     lines.close();
@@ -124,8 +126,8 @@ for (const language of ['python', 'javascript']) {
     const cell = async code => {
       child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code }) + '\n');
       const { value } = await lines.next();
-      assert.ok(value.startsWith('CODE_KERNEL_RESULT:'), value.slice(0, 200));
-      return JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length));
+      assert.ok(value.startsWith(RESULT), value.slice(0, 200));
+      return JSON.parse(value.slice(RESULT.length));
     };
     const flood = "yes x | head -c 3000000";
     await cell(python
@@ -159,8 +161,8 @@ test('javascript kernel survives a background child writing while the result fra
   const cell = async code => {
     child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code }) + '\n');
     const { value } = await Promise.race([lines.next(), exited.then(() => assert.fail('kernel exited'))]);
-    assert.ok(value.startsWith('CODE_KERNEL_RESULT:'), value.slice(0, 200));
-    return JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length));
+    assert.ok(value.startsWith(RESULT), value.slice(0, 200));
+    return JSON.parse(value.slice(RESULT.length));
   };
   const spawnNoise = delay => `const { spawn } = await import("node:child_process");\nglobalThis.noise = [1, 2, 3].map(() => spawn("sh", ["-c", "sleep ${delay}; exec yes noise"], { stdio: "inherit" }));\nconsole.log("x".repeat(60000));`;
   const stopNoise = 'noise.forEach(child => child.kill());\nawait new Promise(resolve => setTimeout(resolve, 300));';
@@ -191,7 +193,7 @@ test('javascript kernel waits out a full stdout pipe instead of dropping output 
   await new Promise(resolve => setTimeout(resolve, 700));
   child.kill('SIGCONT');
   const { value } = await Promise.race([lines.next(), exited.then(() => assert.fail('kernel exited'))]);
-  assert.deepEqual(JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length)), { ok: true, output: 'x'.repeat(65499) + '\n', bridge_failed: false });
+  assert.deepEqual(JSON.parse(value.slice(RESULT.length)), { ok: true, output: 'x'.repeat(65499) + '\n', bridge_failed: false });
 });
 
 for (const language of ['python', 'javascript']) {
@@ -209,8 +211,8 @@ for (const language of ['python', 'javascript']) {
       child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code }) + '\n');
       const { value, done } = await Promise.race([lines.next(), exited.then(() => assert.fail('kernel exited'))]);
       assert.equal(done, false, 'kernel exited');
-      assert.ok(value.startsWith('CODE_KERNEL_RESULT:'), value.slice(0, 200));
-      return JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length));
+      assert.ok(value.startsWith(RESULT), value.slice(0, 200));
+      return JSON.parse(value.slice(RESULT.length));
     };
     const alive = async () => assert.deepEqual(await cell(python ? 'print("alive")' : 'console.log("alive")'), { ok: true, output: 'alive\n', bridge_failed: false });
     if (python) {

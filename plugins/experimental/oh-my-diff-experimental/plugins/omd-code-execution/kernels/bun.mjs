@@ -116,6 +116,7 @@ let overflow = false;
 let held = Buffer.alloc(0);
 let ended = false;
 let response;
+let token = "";
 const keep = (chunk) => {
   const room = 65536 - extra.length;
   if (chunk.length > room) overflow = true;
@@ -128,7 +129,7 @@ const finish = () => {
     response.error = response.ok ? `Error: ${limit}` : `${response.error}\nError: ${limit}`;
     response.ok = false;
   }
-  process.stdout.write("CODE_KERNEL_RESULT:" + JSON.stringify(response) + "\n");
+  process.stdout.write(`CODE_KERNEL_RESULT:${token}:` + JSON.stringify(response) + "\n");
   response = undefined;
 };
 child.stdout.on("data", (chunk) => {
@@ -158,5 +159,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   overflow = false;
   ended = false;
   response = undefined;
+  try {
+    token = String(JSON.parse(line).token ?? "");
+  } catch {
+    token = "";
+  }
   child.stdin.write(line + "\n");
 }).on("close", () => child.stdin.end());

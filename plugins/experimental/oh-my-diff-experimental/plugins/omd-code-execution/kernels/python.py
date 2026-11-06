@@ -98,12 +98,14 @@ commands = os.fdopen(os.dup(0), encoding="utf-8")  # exit() closes sys.stdin
 for line in commands:
     output = LimitedOutput()
     bridge_failed = False
+    token = ""
     with condition:
         captured.update(data=bytearray(), held=b"", overflow=False, ended=False)
     try:
         request = json.loads(line)
         if request.get("shutdown") is True:
             break
+        token = str(request.get("token", ""))
         active = {"active": True}
         context_token = bridge_context.set((request["port"], request["token"], active))
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
@@ -127,5 +129,5 @@ for line in commands:
         response["ok"] = False
     response["output"] = extra.decode("utf-8", "replace")
     response["bridge_failed"] = bridge_failed
-    protocol.write("CODE_KERNEL_RESULT:" + json.dumps(response, separators=(",", ":")) + "\n")
+    protocol.write(f"CODE_KERNEL_RESULT:{token}:" + json.dumps(response, separators=(",", ":")) + "\n")
     protocol.flush()

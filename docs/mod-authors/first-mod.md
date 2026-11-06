@@ -153,7 +153,7 @@ again:
 omd mods update my_mod
 ```
 
-Until then, `omd-mod status STORE` lists the mod under `rejected` as `untrusted_source`. `STORE` is the path of your
+Until then, `omd-mod status STORE` lists the mod under `rejected` as `source_changed`. `STORE` is the path of your
 mod store, listed under [`omd-mod`](../commands.md#omd-mod) in Commands. To install a fixed version instead, share
 the mod through Git or npm and install that.
 

@@ -157,6 +157,56 @@ fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() 
 }
 
 #[test]
+fn callbacks_refuse_registrations_that_differ_from_the_inspection() {
+    let source = "export default api => { api.command('flip', () => { api.state.set(true); return 1; }); if (api.state.get()) api.command('extra', () => 2); }";
+    let (temp, _, _) = fixture(source, &["commands", "store"]);
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    let mut flip = || runtime.invoke("fixture", generation, "command", "flip", Value::Null);
+    assert_eq!(flip().unwrap(), json!(1));
+    let refused = flip().unwrap_err().to_string();
+    assert!(
+        refused.contains("registration_changed_during_callback"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn session_runners_omit_unchanged_registrations_and_refuse_differently_activated_ones() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "sessions",
+        "let calls = 0; export default api => { api.command('flip', () => { api.state.set(true); return ++calls; }); if (api.state.get()) api.command('extra', () => 0); };",
+        &["commands", "store"],
+    );
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    manifest["compatibility"] = json!({"required_features":["session_activation_v1"]});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &["commands", "store"]);
+    let _thread = codex_omd::StateThread::enter(Some("sessions-thread".into()));
+    let flip = |runtime: &mut ModHost| {
+        let generation = runtime.generation();
+        runtime.invoke("sessions", generation, "command", "flip", Value::Null)
+    };
+    let mut first = host(&temp);
+    assert_eq!(flip(&mut first).unwrap(), json!(1));
+    assert_eq!(flip(&mut first).unwrap(), json!(2));
+    let mut second = host(&temp);
+    let refused = flip(&mut second).unwrap_err().to_string();
+    assert!(
+        refused.contains("registration_changed_during_callback"),
+        "{refused}"
+    );
+    assert_eq!(flip(&mut second).unwrap(), json!(1));
+}
+
+#[test]
 fn state_fingerprint_changes_only_when_mod_state_changes() {
     let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('read', () => api.state.get()); }";
     let (temp, _, _) = fixture(source, &["commands", "store"]);
@@ -441,7 +491,7 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
             .invoke("fixture", generation, "command", "count", Value::Null)
             .unwrap_err()
             .to_string()
-            .contains("untrusted_source")
+            .contains("source_changed")
     );
     trust(&store, &path, &["commands", "store"]);
     assert!(runtime.reload().is_err());
@@ -3842,6 +3892,95 @@ fn outcomes(chain: &codex_omd::ModChain) -> Vec<(String, String)> {
             )
         })
         .collect()
+}
+
+#[test]
+fn rethrowing_a_rejected_next_is_not_a_fault() {
+    let (_temp, runtime) = interceptors(&[
+        (
+            "pass",
+            "export default api => api.intercept('tool', (e, next) => next(e))",
+            &["interception"],
+        ),
+        (
+            "wrap",
+            "export default api => api.intercept('tool', async (e, next) => { try { return await next(e); } catch { throw new Error('wrapped'); } })",
+            &["interception"],
+        ),
+    ]);
+    for attempt in 0..6 {
+        let downstream = format!(
+            "tool_result_unavailable: succeeded{}",
+            "x".repeat(attempt % 2 * 1000)
+        );
+        let error = codex_omd::intercept_shared(
+            &runtime,
+            "tool",
+            false,
+            json!({"tool":"exec","arguments":{}}),
+            json!({"caller":"model"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |_| Err(std::io::Error::other(downstream.clone())),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("tool_result_unavailable: succeeded")
+        );
+    }
+    let status = runtime.lock().unwrap().status();
+    let telemetry = |id: &str| {
+        status["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(telemetry("pass")["telemetry"]["faults"], 0);
+    assert!(telemetry("pass")["error"].is_null());
+    assert!(telemetry("wrap")["error"].is_string());
+    let (_temp, runtime) = interceptors(&[
+        (
+            "pass",
+            "export default api => api.intercept('tool', (e, next) => next(e))",
+            &["interception"],
+        ),
+        (
+            "policy",
+            "export default api => api.intercept('tool', {required: true}, () => { throw new Error('boom'); })",
+            &["interception"],
+        ),
+    ]);
+    for _ in 0..6 {
+        let error = codex_omd::intercept_shared(
+            &runtime,
+            "tool",
+            false,
+            json!({"tool":"exec","arguments":{}}),
+            json!({"caller":"model"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |_| Err(std::io::Error::other("unexpected tool run")),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("intercept_required_failed: policy")
+        );
+    }
+    let status = runtime.lock().unwrap().status();
+    let pass = status["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == "pass")
+        .unwrap();
+    assert_eq!(pass["telemetry"]["faults"], 0);
 }
 
 #[test]
