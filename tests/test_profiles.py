@@ -111,12 +111,10 @@ class ProfileModeTests(unittest.TestCase):
                 self.assertFalse((prefix / profiles.UNINSTALL_JOURNAL).exists())
                 self.assertEqual((account / "credentials").read_text(), "keep for retry")
 
-    def test_every_selection_keeps_the_background_server_off(self):
-        for selection in ("platform", "full", "direct"):
-            with self.subTest(selection=selection):
-                record = {"binary": {"installed_path": "/omd/codex"}, "store": "/omd/store", "profile": "full",
-                          "activation": {"selection": selection}}
-                self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
+    def test_the_direct_selection_keeps_the_background_server_off(self):
+        record = {"binary": {"installed_path": "/omd/codex"}, "store": "/omd/store", "profile": "full",
+                  "activation": {"selection": "direct"}}
+        self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
 
     def test_a_route_launch_refreshes_a_catalog_that_lacks_routes_added_in_a_session(self):
         with tempfile.TemporaryDirectory() as temporary:

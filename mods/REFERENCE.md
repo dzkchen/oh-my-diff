@@ -3548,11 +3548,14 @@ is smaller. The result contains a 4 KiB preview, `{reference, sha256}` in `outpu
 `stdout_preview_truncated`. Oversize output fails with `exec_output_artifact_limit` without creating an artifact.
 
 `exec.output_page {artifact, cursor?, max_bytes?}` (experimental) reads at most 16 KiB per call with a byte cursor and
-returns `{text, cursor, bytes, sha256}`.
+returns `{text, cursor, bytes, sha256}`. The host seeks to the cursor and reads only that page, so paging a large
+artifact does not reread it. A cursor inside a UTF-8 character or past the end fails with `exec_output_cursor_invalid`,
+and a page never splits a character. `cursor` is `null` on the last page.
 
-The artifact is bound to the repository, the current mod source and the thread. Reads check its hash, and each
-repository, source and thread combination has a 64 MiB quota. Large command output stays outside mod callback
-receipts, and later callbacks can page it in.
+The artifact is bound to the repository, the current mod source and the thread. Each page is checked against block
+hashes recorded when the artifact was written or first verified, so a modified artifact fails with
+`exec_output_integrity_failed`. Each repository, source and thread combination has a 64 MiB quota. Large command
+output stays outside mod callback receipts, and later callbacks can page it in.
 
 #### `exclusive_workspace`
 

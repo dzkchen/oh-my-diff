@@ -840,12 +840,6 @@ pub const MOD_SCOPES: &[&str] = &["user", "project"];
 pub const MOD_ENVIRONMENT: &[&str] = &["crypto"];
 type Result<T> = io::Result<T>;
 
-fn native_task_unavailable(_: ModHostCall) -> Result<Value> {
-    Err(failure(
-        "host_operation_unavailable: requires a native task",
-    ))
-}
-
 /// The runner reports a thrown error as its stack, cut to this many UTF-16 units.
 const RUNNER_ERROR_UNITS: usize = 768;
 
@@ -2863,6 +2857,18 @@ struct Registrations {
     completions: Vec<ModCompletion>,
 }
 
+impl Registrations {
+    fn calls_back(&self) -> bool {
+        !self.events.is_empty()
+            || !self.replacements.is_empty()
+            || !self.completions.is_empty()
+            || self
+                .interceptors
+                .iter()
+                .any(|interceptor| interceptor.pattern != "render")
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct ModCompletion {
@@ -3057,7 +3063,7 @@ pub fn file_stamp(metadata: &std::fs::Metadata) -> FileStamp {
 fn configuration_stamp(path: &Path) -> Option<FileStamp> {
     std::fs::symlink_metadata(path)
         .ok()
-        .filter(|metadata| metadata.is_file())
+        .filter(std::fs::Metadata::is_file)
         .map(|metadata| file_stamp(&metadata))
 }
 
@@ -3191,7 +3197,7 @@ mod reload_tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap().join("store");
         ModStore::create(root.clone()).unwrap();
-        let mut host = ModHost::open(root.clone()).unwrap();
+        let mut host = ModHost::open(root.clone(), ModOpenOptions::default()).unwrap();
         let reads = store::READS.get();
         for _ in 0..100 {
             assert!(!host.refresh(&|| true).unwrap());
@@ -3238,7 +3244,7 @@ mod reload_tests {
         store.enable(&package, true).unwrap();
         let policy = base.join("policy.json");
         std::fs::write(&policy, br#"{"schema": 1}"#).unwrap();
-        let mut host = ModHost::open(base.join("store")).unwrap();
+        let mut host = ModHost::open(base.join("store"), ModOpenOptions::default()).unwrap();
         let owner = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&base).unwrap());
         assert!(host.loaded["hello"].code_cache.is_some());
         host.set_managed_policy(policy, owner, "alice").unwrap();
@@ -3269,7 +3275,7 @@ mod reload_tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap().join("store");
         ModStore::create(root.clone()).unwrap();
-        let mut host = ModHost::open(root).unwrap();
+        let mut host = ModHost::open(root, ModOpenOptions::default()).unwrap();
         let view = json!({"sites": {"sidebar": {"components": [{"type": "text", "id": "tree", "label": "Tree", "text": "src"}]}}});
         let first = host.compose_terminal(vec![("a".into(), Ok(view))], "terminal", None);
         assert_eq!(first.diagnostics, Vec::<String>::new());
@@ -3290,7 +3296,7 @@ mod reload_tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap().join("store");
         ModStore::create(root.clone()).unwrap();
-        let mut host = ModHost::open(root).unwrap();
+        let mut host = ModHost::open(root, ModOpenOptions::default()).unwrap();
         host.ui_mods = Some(vec!["b".into()]);
         let text =
             |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
@@ -3941,7 +3947,43 @@ fn read_only(operation: &str, arguments: &Value) -> bool {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+fn invoke_with_options(
+    access: &mut Access<'_>,
+    id: &str,
+    generation: u64,
+    event: &str,
+    name: &str,
+    payload: Value,
+    options: ModInvokeOptions<'_>,
+) -> Result<Value> {
+    let ModInvokeOptions {
+        active,
+        mut host,
+        progress,
+    } = options;
+    let mut dispatch = |caller: &str, call: ModHostCall| match &mut host {
+        ModHostCallback::Scoped(host) => host(caller, call),
+        _ if caller != id => Err(failure("service_provider_host_dispatch_unavailable")),
+        ModHostCallback::Own(host) => host(call),
+        ModHostCallback::Unavailable => Err(failure(
+            "host_operation_unavailable: requires a native task",
+        )),
+    };
+    invoke(
+        access,
+        id,
+        generation,
+        event,
+        name,
+        payload,
+        active,
+        &mut dispatch,
+        progress.unwrap_or(&mut |_| {}),
+        &InvocationScope::default(),
+        None,
+    )
+}
+
 pub fn invoke_shared(
     runtime: &Mutex<ModHost>,
     id: &str,
@@ -3949,22 +3991,16 @@ pub fn invoke_shared(
     event: &str,
     name: &str,
     payload: Value,
-    active: impl Fn() -> bool,
-    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-    mut progress: impl FnMut(String),
+    options: ModInvokeOptions<'_>,
 ) -> Result<Value> {
-    invoke(
+    invoke_with_options(
         &mut Access::Shared(runtime),
         id,
         generation,
         event,
         name,
         payload,
-        &active,
-        &mut host,
-        &mut progress,
-        &InvocationScope::default(),
-        None,
+        options,
     )
 }
 
@@ -3972,8 +4008,7 @@ pub fn event_shared(
     runtime: &Mutex<ModHost>,
     event: &str,
     mut payload: impl FnMut(&str) -> Value,
-    active: impl Fn() -> bool,
-    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
+    mut options: ModInvokeOptions<'_>,
 ) -> Vec<(String, Result<Value>)> {
     let Ok((ids, generation)) = runtime
         .lock()
@@ -3990,101 +4025,76 @@ pub fn event_shared(
                 event,
                 "",
                 payload(&id),
-                &active,
-                &mut host,
-                |_| {},
+                options.reborrow(),
             );
             (id, result)
         })
         .collect()
 }
 
+fn always_active() -> bool {
+    true
+}
+
+pub struct ModOpenOptions<'a> {
+    pub tool_validator: fn(&Value) -> Result<()>,
+    pub repository: Option<&'a Path>,
+    pub active: &'a dyn Fn() -> bool,
+}
+
+impl Default for ModOpenOptions<'_> {
+    fn default() -> Self {
+        Self {
+            tool_validator: |_| Ok(()),
+            repository: None,
+            active: &always_active,
+        }
+    }
+}
+
+pub enum ModHostCallback<'a> {
+    Unavailable,
+    Own(&'a mut dyn FnMut(ModHostCall) -> Result<Value>),
+    Scoped(&'a mut dyn FnMut(&str, ModHostCall) -> Result<Value>),
+}
+
+pub struct ModInvokeOptions<'a> {
+    pub active: &'a dyn Fn() -> bool,
+    pub host: ModHostCallback<'a>,
+    pub progress: Option<&'a mut dyn FnMut(String)>,
+}
+
+impl Default for ModInvokeOptions<'_> {
+    fn default() -> Self {
+        Self {
+            active: &always_active,
+            host: ModHostCallback::Unavailable,
+            progress: None,
+        }
+    }
+}
+
+impl ModInvokeOptions<'_> {
+    fn reborrow(&mut self) -> ModInvokeOptions<'_> {
+        ModInvokeOptions {
+            active: self.active,
+            host: match &mut self.host {
+                ModHostCallback::Unavailable => ModHostCallback::Unavailable,
+                ModHostCallback::Own(host) => ModHostCallback::Own(&mut **host),
+                ModHostCallback::Scoped(host) => ModHostCallback::Scoped(&mut **host),
+            },
+            progress: self.progress.as_deref_mut().map(|progress| progress as _),
+        }
+    }
+}
+
 impl ModHost {
-    pub fn open(root: PathBuf) -> Result<Self> {
-        Self::open_with(root, |_| Ok(()), None, &|| true)
-    }
-
-    /// One mod's launch-like cost for `omd-mod cost`; it stops every runner in the process.
-    pub fn cost(
-        root: PathBuf,
-        tool_validator: fn(&Value) -> Result<()>,
-        repository: &Path,
-        id: &str,
-        command: Option<(&str, Value)>,
-        runs: usize,
-    ) -> Result<Value> {
-        let _thread = StateThread::enter(
-            bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())),
-        );
-        let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
-        let mut usage = (0, 0);
-        let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
-        for _ in 0..runs {
-            process::stop_runners();
-            ACTIVATED
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .retain(|((store, _), _)| store != &root);
-            let started = Instant::now();
-            let mut host =
-                Self::open_with(root.clone(), tool_validator, Some(repository), &|| true)?;
-            samples
-                .entry("activation_ms")
-                .or_default()
-                .push(elapsed(started));
-            let loaded = host.loaded.get(id).ok_or_else(|| failure("mod_disabled"))?;
-            if let Some(error) = &loaded.error {
-                return Err(failure(format!("mod_failed: {error}")));
-            }
-            if host
-                .event_ids("terminal")
-                .iter()
-                .any(|handler| handler == id)
-            {
-                let started = Instant::now();
-                let view = host.terminal_view(json!({"event": "draw", "ledger": null}), || true);
-                let render_ms = elapsed(started);
-                let prefix = format!("{id}: ");
-                if let Some(error) = view
-                    .diagnostics
-                    .iter()
-                    .find_map(|d| d.strip_prefix(&prefix))
-                {
-                    return Err(failure(format!("mod_failed: {error}")));
-                }
-                samples
-                    .entry("first_render_ms")
-                    .or_default()
-                    .push(render_ms);
-            }
-            if let Some((name, payload)) = &command {
-                for sample in ["fresh_callback_ms", "reused_callback_ms"] {
-                    let started = Instant::now();
-                    host.invoke(id, host.generation, "command", name, payload.clone())?;
-                    samples.entry(sample).or_default().push(elapsed(started));
-                }
-            }
-            usage = process::runner_usage();
-        }
-        let mut report = json!({"mod": id, "runs": runs, "runners": usage.0,
-            "runner_peak_footprint_bytes": usage.1});
-        for (metric, values) in samples {
-            let first = values[0];
-            let mut sorted = values;
-            sorted.sort_by(f64::total_cmp);
-            let at =
-                |quantile: f64| sorted[((sorted.len() - 1) as f64 * quantile).round() as usize];
-            report[metric] = json!({"first": first, "p50": at(0.5), "p95": at(0.95)});
-        }
-        Ok(report)
-    }
-
-    pub fn open_with(
-        root: PathBuf,
-        tool_validator: fn(&Value) -> Result<()>,
-        repository: Option<&Path>,
-        active: &dyn Fn() -> bool,
-    ) -> Result<Self> {
+    pub fn open(root: PathBuf, options: ModOpenOptions<'_>) -> Result<Self> {
+        let ModOpenOptions {
+            tool_validator,
+            repository,
+            active,
+        } = options;
         let store = ModStore::open(root)?;
         let mut host = Self {
             store,
@@ -4147,6 +4157,94 @@ impl ModHost {
         }
         host.refresh(active)?;
         Ok(host)
+    }
+
+    /// One mod's launch-like cost for `omd-mod cost`; it stops every runner in the process.
+    pub fn cost(
+        root: PathBuf,
+        tool_validator: fn(&Value) -> Result<()>,
+        repository: &Path,
+        id: &str,
+        command: Option<(&str, Value)>,
+        runs: usize,
+    ) -> Result<Value> {
+        let _thread = StateThread::enter(
+            bound_thread().or_else(|| Some("00000000-0000-4000-8000-000000000001".to_owned())),
+        );
+        let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+        let mut usage = (0, 0);
+        let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
+        for _ in 0..runs {
+            process::stop_runners();
+            ACTIVATED
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .retain(|((store, _), _)| store != &root);
+            let started = Instant::now();
+            let mut host = Self::open(
+                root.clone(),
+                ModOpenOptions {
+                    tool_validator,
+                    repository: Some(repository),
+                    ..ModOpenOptions::default()
+                },
+            )?;
+            samples
+                .entry("activation_ms")
+                .or_default()
+                .push(elapsed(started));
+            let loaded = host.loaded.get(id).ok_or_else(|| failure("mod_disabled"))?;
+            if let Some(error) = &loaded.error {
+                return Err(failure(format!("mod_failed: {error}")));
+            }
+            if host
+                .event_ids("terminal")
+                .iter()
+                .any(|handler| handler == id)
+            {
+                let started = Instant::now();
+                let view = host.terminal_view(json!({"event": "draw", "ledger": null}), || true);
+                let render_ms = elapsed(started);
+                let prefix = format!("{id}: ");
+                if let Some(error) = view
+                    .diagnostics
+                    .iter()
+                    .find_map(|d| d.strip_prefix(&prefix))
+                {
+                    return Err(failure(format!("mod_failed: {error}")));
+                }
+                samples
+                    .entry("first_render_ms")
+                    .or_default()
+                    .push(render_ms);
+            }
+            if let Some((name, payload)) = &command {
+                for sample in ["fresh_callback_ms", "reused_callback_ms"] {
+                    let started = Instant::now();
+                    host.invoke(
+                        id,
+                        host.generation,
+                        "command",
+                        name,
+                        payload.clone(),
+                        ModInvokeOptions::default(),
+                    )?;
+                    samples.entry(sample).or_default().push(elapsed(started));
+                }
+            }
+            usage = process::runner_usage();
+        }
+        let mut report = json!({"mod": id, "runs": runs, "runners": usage.0,
+            "runner_peak_footprint_bytes": usage.1});
+        for (metric, values) in samples {
+            let first = values[0];
+            let mut sorted = values;
+            sorted.sort_by(f64::total_cmp);
+            let at =
+                |quantile: f64| sorted[((sorted.len() - 1) as f64 * quantile).round() as usize];
+            report[metric] = json!({"first": first, "p50": at(0.5), "p95": at(0.95)});
+        }
+        Ok(report)
     }
 
     /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
@@ -4283,7 +4381,7 @@ impl ModHost {
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
-        self.refresh(&|| true)
+        self.refresh(&always_active)
     }
 
     pub fn refresh(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
@@ -4391,7 +4489,7 @@ impl ModHost {
             Err(error) if managed.is_some() => {
                 // Administrator policy still loads when the user's configuration is broken.
                 rejected.push(ModRejection {
-                    path: path.clone(),
+                    path,
                     id: None,
                     scope: user_scope(),
                     reason: format!("invalid_mod_configuration: {error}"),
@@ -4792,8 +4890,8 @@ impl ModHost {
             self.pool,
             Some(
                 self.loaded
-                    .keys()
-                    .filter(|id| self.registered(id, "terminal"))
+                    .values()
+                    .filter(|m| m.error.is_none() && m.registrations.calls_back())
                     .count(),
             ),
         );
@@ -5488,96 +5586,16 @@ impl ModHost {
         event: &str,
         name: &str,
         payload: Value,
+        options: ModInvokeOptions<'_>,
     ) -> Result<Value> {
-        self.invoke_with(
-            id,
-            generation,
-            event,
-            name,
-            payload,
-            || true,
-            native_task_unavailable,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn invoke_with(
-        &mut self,
-        id: &str,
-        generation: u64,
-        event: &str,
-        name: &str,
-        payload: Value,
-        active: impl Fn() -> bool,
-        mut host: impl FnMut(ModHostCall) -> Result<Value>,
-    ) -> Result<Value> {
-        self.invoke_scoped(
-            id,
-            generation,
-            event,
-            name,
-            payload,
-            active,
-            |caller, call| {
-                if caller != id {
-                    return Err(failure("service_provider_host_dispatch_unavailable"));
-                }
-                host(call)
-            },
-            |_| {},
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn invoke_scoped(
-        &mut self,
-        id: &str,
-        generation: u64,
-        event: &str,
-        name: &str,
-        payload: Value,
-        active: impl Fn() -> bool,
-        mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-        mut progress: impl FnMut(String),
-    ) -> Result<Value> {
-        self.invoke_scoped_inner(
-            id,
-            generation,
-            event,
-            name,
-            payload,
-            &active,
-            &mut host,
-            &mut progress,
-            &InvocationScope::default(),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn invoke_scoped_inner(
-        &mut self,
-        id: &str,
-        generation: u64,
-        event: &str,
-        name: &str,
-        payload: Value,
-        active: &dyn Fn() -> bool,
-        host: &mut dyn FnMut(&str, ModHostCall) -> Result<Value>,
-        progress: &mut dyn FnMut(String),
-        scope: &InvocationScope,
-    ) -> Result<Value> {
-        invoke(
+        invoke_with_options(
             &mut Access::Held(self),
             id,
             generation,
             event,
             name,
             payload,
-            active,
-            host,
-            progress,
-            scope,
-            None,
+            options,
         )
     }
 
@@ -5768,7 +5786,10 @@ impl ModHost {
                 .unwrap_or_default();
             states.insert(key.clone(), Arc::downgrade(&state));
             loaded.ui = Some((key, state));
-            self.loaded.get_mut(id).unwrap().ui = loaded.ui.clone();
+            self.loaded
+                .get_mut(id)
+                .ok_or_else(|| failure("mod_disabled"))?
+                .ui = loaded.ui.clone();
         }
         if let Some((_, state)) = &loaded.ui {
             let state = state.lock().map_err(|_| failure("ui_state_unavailable"))?;
@@ -6073,11 +6094,13 @@ impl ModHost {
             })
             .map(|(id, _)| id.clone())
             .collect();
+        let generation = self.generation;
         ids.into_iter()
             .map(|id| {
-                let result = self.invoke_scoped_inner(
+                let result = invoke(
+                    &mut Access::Held(self),
                     &id,
-                    self.generation,
+                    generation,
                     event,
                     "",
                     payload.clone(),
@@ -6085,6 +6108,7 @@ impl ModHost {
                     &mut |_, _| Err(failure("observer_host_operation_unavailable")),
                     &mut |_| {},
                     scope,
+                    None,
                 );
                 (id, result)
             })
@@ -6152,7 +6176,8 @@ impl ModHost {
             .ok_or_else(|| failure("unknown_service_method"))?;
         validate_service_value(&call.input, &method.input)?;
         let qualified = format!("{}.{}", call.name, call.method);
-        let result = self.invoke_scoped_inner(
+        let result = invoke(
+            &mut Access::Held(self),
             &provider,
             generation,
             "service",
@@ -6162,6 +6187,7 @@ impl ModHost {
             host,
             &mut |_| {},
             scope,
+            None,
         )?;
         validate_service_value(&result, &method.output)?;
         if serde_json::to_vec(&result)?.len() > 32_768 {
@@ -6177,10 +6203,6 @@ impl ModHost {
         Ok(result)
     }
 
-    pub fn event(&mut self, event: &str, payload: Value) -> Vec<(String, Result<Value>)> {
-        self.event_guarded(event, payload, || true)
-    }
-
     pub fn history(
         &mut self,
         payload: Value,
@@ -6189,14 +6211,16 @@ impl ModHost {
         let Some(owner) = self.replacement_owner("history") else {
             return Ok(None);
         };
-        let value = self.invoke_with(
+        let value = self.invoke(
             &owner,
             self.generation,
             "history",
             "",
             payload,
-            active,
-            native_task_unavailable,
+            ModInvokeOptions {
+                active: &active,
+                ..ModInvokeOptions::default()
+            },
         )?;
         Ok((!value.is_null()).then_some((owner, value)))
     }
@@ -6224,48 +6248,22 @@ impl ModHost {
         })
     }
 
-    pub fn event_guarded(
+    pub fn event(
         &mut self,
         event: &str,
         payload: Value,
-        active: impl Fn() -> bool,
+        mut options: ModInvokeOptions<'_>,
     ) -> Vec<(String, Result<Value>)> {
         let ids = self.event_ids(event);
         ids.into_iter()
             .map(|id| {
-                let result = self.invoke_with(
+                let result = self.invoke(
                     &id,
                     self.generation,
                     event,
                     "",
                     payload.clone(),
-                    &active,
-                    native_task_unavailable,
-                );
-                (id, result)
-            })
-            .collect()
-    }
-
-    pub fn event_scoped_with(
-        &mut self,
-        event: &str,
-        mut payload: impl FnMut(&str) -> Value,
-        active: impl Fn() -> bool,
-        mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-    ) -> Vec<(String, Result<Value>)> {
-        let ids = self.event_ids(event);
-        ids.into_iter()
-            .map(|id| {
-                let result = self.invoke_scoped(
-                    &id,
-                    self.generation,
-                    event,
-                    "",
-                    payload(&id),
-                    &active,
-                    &mut host,
-                    |_| {},
+                    options.reborrow(),
                 );
                 (id, result)
             })
@@ -6430,14 +6428,16 @@ impl ModHost {
                 Ok((invocation, reply)) => {
                     match self.finish(&id, generation, "terminal", "", invocation, reply, &active) {
                         Err(error) if error.to_string().starts_with("state_conflict") => self
-                            .invoke_with(
+                            .invoke(
                                 &id,
                                 generation,
                                 "terminal",
                                 "",
                                 payload.payload(payload.own(&id)),
-                                &active,
-                                native_task_unavailable,
+                                ModInvokeOptions {
+                                    active: &active,
+                                    ..ModInvokeOptions::default()
+                                },
                             ),
                         result => result,
                     }
@@ -6556,18 +6556,12 @@ impl ModHost {
                     self.valid_views.remove(&id);
                     continue;
                 }
-                Ok(value) => {
-                    if accepted_patch
-                        .as_ref()
-                        .is_some_and(|(owner, _)| *owner == id)
-                    {
-                        Ok(accepted_patch.take().expect("matched command owner").1)
-                    } else {
-                        ModViewPatch::parse(value.clone()).inspect(|_| {
-                            self.valid_views.insert(id.clone(), value);
-                        })
-                    }
-                }
+                Ok(value) => match accepted_patch.take_if(|(owner, _)| *owner == id) {
+                    Some((_, patch)) => Ok(patch),
+                    None => ModViewPatch::parse(value.clone()).inspect(|_| {
+                        self.valid_views.insert(id.clone(), value);
+                    }),
+                },
                 Err(error) => Err(error),
             };
             let parsed = parsed.or_else(|error| {
@@ -6608,16 +6602,13 @@ impl ModHost {
                     if let Some(composing) = hides {
                         hiding_welcome.insert(id.clone(), composing);
                     }
-                    component_owners.extend(
-                        view::site_component_ids(&view.sites)
-                            .into_iter()
-                            .filter(|component| {
-                                !before.contains(component)
-                                    && !component_owners.contains_key(component)
-                            })
-                            .map(|component| (component, id.clone()))
-                            .collect::<Vec<_>>(),
-                    );
+                    for component in view::site_component_ids(&view.sites) {
+                        if !before.contains(&component) {
+                            component_owners
+                                .entry(component)
+                                .or_insert_with(|| id.clone());
+                        }
+                    }
                     contributors.push(id);
                 }
                 Err(error) => diagnostics.push(format!("{id}: {error}")),
@@ -6798,14 +6789,16 @@ impl ModHost {
                 continue;
             }
             let payload = json!({"thread_id":thread_id,"ledger":ledger,"available":available});
-            let result = self.invoke_with(
+            let result = self.invoke(
                 &id,
                 self.generation,
                 "tool_exposure",
                 "",
                 payload,
-                &active,
-                native_task_unavailable,
+                ModInvokeOptions {
+                    active: &active,
+                    ..ModInvokeOptions::default()
+                },
             );
             let selection = result.ok().and_then(|value| {
                 let object = value.as_object().filter(|object| object.len() == 1)?;

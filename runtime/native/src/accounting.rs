@@ -1836,7 +1836,7 @@ impl Attempt {
                 };
                 self.account
                     .task
-                    .settle(&admission, usage.clone(), amount)
+                    .settle(&admission, usage, amount)
                     .map_err(denied)?;
                 self.settled = true;
                 self.microusd = Some(amount);

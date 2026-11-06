@@ -124,7 +124,8 @@ commands from the repository root; the wrapper runs Cargo in your scratch tree:
    python3 .github/scripts/build.py cargo NAME LOG nextest run --locked -p CRATE
    ```
 
-3. Before integration, Clippy and Rustfmt for the touched crates:
+3. Before integration, Clippy and Rustfmt for the touched crates. The `omd` crates use the workspace lints
+   (`[lints] workspace = true`), so unwrap and expect are denied outside tests:
 
    ```sh
    python3 .github/scripts/build.py cargo NAME LOG clippy --locked -p CRATE --tests

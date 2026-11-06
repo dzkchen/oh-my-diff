@@ -3,6 +3,7 @@ use codex_extension_api::ApprovalGate;
 use codex_extension_api::ApprovalGateContributor;
 use codex_extension_api::ApprovalGateInput;
 use codex_extension_api::ApprovalResultInput;
+use codex_omd::ModInvokeOptions;
 
 fn reason(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).take(512).collect()
@@ -251,8 +252,14 @@ impl ApprovalGateContributor for Mods {
             );
             let results = tokio::task::spawn_blocking(move || {
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-                let results = runtime
-                    .event_guarded("approval", payload, || !cancelled.load(Ordering::Acquire));
+                let results = runtime.event(
+                    "approval",
+                    payload,
+                    ModInvokeOptions {
+                        active: &|| !cancelled.load(Ordering::Acquire),
+                        ..ModInvokeOptions::default()
+                    },
+                );
                 let grants = results
                     .iter()
                     .filter_map(|(id, _)| runtime.grants(id).map(|grants| (id.clone(), grants)))

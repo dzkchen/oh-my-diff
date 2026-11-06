@@ -272,8 +272,9 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
             .as_object()
             .into_iter()
             .chain(previous.as_object())
-            .flat_map(|map| map.keys());
-        for key in keys.collect::<std::collections::BTreeSet<_>>() {
+            .flat_map(|map| map.keys())
+            .collect::<std::collections::BTreeSet<_>>();
+        for key in keys {
             if !matches!(key.as_str(), "name" | "provider" | "roles" | "model")
                 && previous.get(key) != route.get(key)
             {

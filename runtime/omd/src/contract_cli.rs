@@ -2,6 +2,7 @@ use crate::ContractDocument;
 use crate::ContractResolution;
 use crate::ContractSelection;
 use crate::ModHost;
+use crate::ModOpenOptions;
 use crate::PolicyOwner;
 use serde_json::Value;
 use serde_json::json;
@@ -11,7 +12,7 @@ use std::path::PathBuf;
 
 pub fn documents(store: &Path) -> io::Result<Vec<(ContractDocument, PolicyOwner)>> {
     let root = store.canonicalize()?;
-    Ok(ModHost::open(root)?.contract_documents())
+    Ok(ModHost::open(root, ModOpenOptions::default())?.contract_documents())
 }
 
 pub fn user_path(store: &Path) -> io::Result<PathBuf> {
