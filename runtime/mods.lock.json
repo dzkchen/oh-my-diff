@@ -523,11 +523,11 @@
       "extension_type": "mod",
       "files": {
         "github.mjs": "122f3888832bbc37f2f8c69452baedfa6ff5b41eaacbb99d8491d329d2d4083f",
-        "index.ts": "0950b167c9b46056adf4613e7d5e8ab8381a68b5365cbfb824bc7cc58e2d7420",
+        "index.ts": "35493bb8b0e77056f5a51af4f70871d7f150a79967f548e121896ea08eef4a84",
         "mod.json": "8d35f793ae2473f60179f5f9305ed4f820ef2a1764b0d8c210fec5ad0cd89aa9"
       },
       "id": "omd_monitor",
-      "package_sha256": "8ae66505d7f86272f8f2deeec9622471ddefc64cec65f5016a05dcdaed4c72ab",
+      "package_sha256": "a1a25b1d74f674ec4bdd51cad3247181fc09bf70c3193553355820080640c986",
       "source": "mods/first-party/omd_monitor",
       "version": "1.0.0"
     },
@@ -792,13 +792,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "495972554f2b0ec8b56af4ac8914d628429a2a1c42864810795029c11c18fe7d",
+        "index.ts": "823a0bef3d2d58fe660d3ce52fcedda77299e8064ed323d16ca023709dbf26a8",
         "mod.json": "72b561cee833d9a8ad065d18f76801caa0865c6eaacfbab3ed352f091802283e",
         "scenes.ts": "b7eeabe1934126643703443569975c172919098d1440756fbfb6f013c70bb404",
         "steps.ts": "94f79d6f963178b87a347403dee7a8765351afc19b1c4e4ca39be870cfd73127"
       },
       "id": "omd_theme",
-      "package_sha256": "7f463e6cf777cb26739e7df35efed87770c9b1dc510e769675563ed0bdc4488c",
+      "package_sha256": "0e3fbdd115a0eb84ed2d661e10e87e0ec67149a75f7457b428848cfe40b95ed0",
       "source": "mods/first-party/omd_theme",
       "version": "1.1.0"
     },

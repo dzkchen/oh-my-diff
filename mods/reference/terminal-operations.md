@@ -344,12 +344,13 @@ In [`direct` mode](glossary.md#stores-and-data), which runs plain Codex with no 
 
 ## `terminal` event `client`
 
-The `terminal` event has `client: {kind: 'terminal', graphics, pointer, reduced_motion, cell_px, columns,
+The `terminal` event has `client: {kind: 'terminal', active?, graphics, pointer, reduced_motion, cell_px, columns,
 rows, sites?}` and, with external clients attached, `clients` (see
 [Renderer capabilities and fallback](omd-client-protocol.md#renderer-capabilities-and-fallback)):
 
 | Field | Meaning |
 | --- | --- |
+| `active` | When present, false while the terminal is unfocused or display-idle; true when active. |
 | `graphics` | `kitty` (pixel images), `iip` (iTerm2 inline images: Orca, iTerm2, WezTerm), `cells` (half-block) or `text` (`NO_COLOR`). |
 | `pointer` | `half_cell`, `cell` or `none` (no mouse capture: tmux, `OMD_TUI_MOUSE=off`, inline viewport). |
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |

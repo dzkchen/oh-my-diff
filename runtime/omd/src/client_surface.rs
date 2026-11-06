@@ -3,8 +3,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::Serialize;
 use serde_json::Value;
-use sha2::Digest as _;
-use sha2::Sha256;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
@@ -1468,7 +1466,7 @@ impl Blit {
             });
             let bytes = bytes.ok_or("terminal_blit_image_invalid")?;
             self.content = BlitContent::Image {
-                sha256: format!("{:x}", Sha256::digest(&bytes)),
+                sha256: crate::sha256_hex(&bytes),
                 bytes: bytes.into(),
             };
         }

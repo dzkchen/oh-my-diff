@@ -157,7 +157,7 @@ fn common_read_keeps_local_and_virtual_authority_separate() {
         .is_err()
     );
     store.enable(&package, false).unwrap();
-    host.turn_boundary();
+    host.turn_boundary(&|| true);
     assert!(!host.tools().iter().any(|(owner, _, _)| owner.is_empty()));
     assert!(
         host.invoke_tool(
