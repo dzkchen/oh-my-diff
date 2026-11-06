@@ -20,16 +20,10 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Op;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
-use sha2::Digest;
-use sha2::Sha256;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
-
-pub fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
 
 fn error(e: impl ToString) -> String {
     e.to_string()

@@ -16,6 +16,19 @@ pub struct PackageControl {
     generation: u64,
 }
 
+impl PackageControl {
+    pub fn scope(&self) -> Option<&str> {
+        self.request
+            .as_ref()
+            .map(|request| request.scope.as_str())
+            .or_else(|| {
+                self.selection
+                    .as_ref()
+                    .map(|selection| selection.scope.as_str())
+            })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Selection {
     path: PathBuf,
@@ -233,9 +246,7 @@ pub fn set_connected_models(connected: fn(&str, &str) -> bool) {
 /// Read per call since `host.json` and plan grants change outside the listing cache; without a repository plan routes are always offered.
 fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>) -> Value {
     let here = repository.map(|repository| {
-        Value::from(crate::resource_data::hash(
-            repository.as_os_str().as_encoded_bytes(),
-        ))
+        Value::from(crate::sha256_hex(repository.as_os_str().as_encoded_bytes()))
     });
     let mut routes: Option<Vec<Value>> = None;
     for package in listed["packages"].as_array_mut().into_iter().flatten() {

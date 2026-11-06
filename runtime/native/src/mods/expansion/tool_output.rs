@@ -77,7 +77,7 @@ pub(super) async fn stored(
         .ok_or("tool_original_unavailable: only the call's own interceptor chain can read it")?;
     let reference = original(lead, caller.id, caller.source, &input.call_id, text.clone()).await?;
     Ok(
-        json!({"reference": reference, "sha256": codex_omd::resource_data::hash(text.as_bytes()),
+        json!({"reference": reference, "sha256": codex_omd::sha256_hex(text.as_bytes()),
         "bytes": text.len()}),
     )
 }

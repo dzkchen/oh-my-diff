@@ -393,9 +393,9 @@ impl WorkspaceAuthority {
             .filter_map(|id| runtime.grants(&id).map(|grants| (id, grants)))
             .collect();
         let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
-        let proposals = runtime.event_guarded_with(
+        let proposals = runtime.event_scoped_with(
             "workspace_pre_rename",
-            payload.clone(),
+            |_| payload.clone().clone(),
             &active,
             |id, call| {
                 let audited =
@@ -551,7 +551,7 @@ impl WorkspaceAuthority {
                     let value = match snapshot.files.get(&name) {
                         Some(file) => json!({
                             "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
-                            "sha256": crate::execution::hash(&file.bytes),
+                            "sha256": codex_omd::sha256_hex(&file.bytes),
                         }),
                         None => Value::Null,
                     };
@@ -674,7 +674,7 @@ mod tests {
         let result = writable
             .call("workspace.transaction", edit, || true)
             .unwrap();
-        assert_eq!(result["files"]["a.py"], crate::execution::hash(b"new\n"));
+        assert_eq!(result["files"]["a.py"], codex_omd::sha256_hex(b"new\n"));
         assert_eq!(std::fs::read_to_string(root.join("a.py")).unwrap(), "new\n");
     }
 

@@ -1,6 +1,7 @@
 name: Mod or API request
 description: Ask for a mod, an API surface or a host primitive a mod needs
-labels: ["type: mod-api", "status: triage"]
+title: "[Mod API]: "
+labels: ["type: mod-api", "area: mods", "status: triage"]
 body:
   - type: textarea
     id: goal

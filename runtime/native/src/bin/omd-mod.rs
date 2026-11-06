@@ -8,8 +8,6 @@ use codex_omd::load_managed;
 use codex_omd_extension::validate_tool_schema;
 use serde_json::Value;
 use serde_json::json;
-use sha2::Digest;
-use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -25,7 +23,7 @@ fn store(root: &str) -> io::Result<PathBuf> {
         };
         io::Error::new(
             error.kind(),
-            format!("store_unavailable: {root}: {error}{hint}"),
+            format!("mod_store_unavailable: {root}: {error}{hint}"),
         )
     })
 }
@@ -65,7 +63,7 @@ fn plugin_files(root: &std::path::Path) -> io::Result<BTreeMap<String, String>> 
             let path = entry_path.strip_prefix(root).map_err(io::Error::other)?;
             files.insert(
                 path.to_string_lossy().into_owned(),
-                format!("{:x}", Sha256::digest(bytes)),
+                codex_omd::sha256_hex(bytes),
             );
         }
     }
@@ -317,7 +315,7 @@ fn run(args: &[String]) -> io::Result<Value> {
             Ok(Value::String("updated".into()))
         }
         [command, root, id, program] if command == "trust-program" => {
-            let access = ModHost::open_validated(store(root)?, validate_tool_schema)?
+            let access = ModHost::open_with(store(root)?, validate_tool_schema, None, &|| true)?
                 .grants(id)
                 .and_then(|grants| grants.os_access)
                 .ok_or_else(|| {
@@ -482,10 +480,11 @@ fn run(args: &[String]) -> io::Result<Value> {
             Ok(json!({"reset": name, "aside": aside}))
         }
         [command, root] if command == "status" => {
-            let mut host = ModHost::open_in(
+            let mut host = ModHost::open_with(
                 store(root)?,
                 validate_tool_schema,
-                &std::env::current_dir()?,
+                Some(&std::env::current_dir()?),
+                &|| true,
             )?;
             let terminal = host.terminal_view(
                 serde_json::json!({"event": "status", "ledger": null}),
@@ -510,7 +509,8 @@ fn run(args: &[String]) -> io::Result<Value> {
             }
         }
         [command, root] if command == "report" => {
-            let status = ModHost::open_validated(store(root)?, validate_tool_schema)?.status();
+            let status =
+                ModHost::open_with(store(root)?, validate_tool_schema, None, &|| true)?.status();
             Ok(
                 serde_json::json!({"api":status["api"],"mods":status["mods"].as_array()
                 .into_iter().flatten().map(|item| serde_json::json!({
@@ -522,10 +522,14 @@ fn run(args: &[String]) -> io::Result<Value> {
             )
         }
         [command, root] if command == "events" => {
-            Ok(ModHost::open_validated(store(root)?, validate_tool_schema)?.author_inspection())
+            Ok(
+                ModHost::open_with(store(root)?, validate_tool_schema, None, &|| true)?
+                    .author_inspection(),
+            )
         }
         [command, root] if command == "declarations" => {
-            let status = ModHost::open_validated(store(root)?, validate_tool_schema)?.status();
+            let status =
+                ModHost::open_with(store(root)?, validate_tool_schema, None, &|| true)?.status();
             Ok(
                 serde_json::json!({"api":status["api"],"active_host":status["active_host_types"],
                 "installed_contracts":status["installed_contract_types"],
@@ -534,17 +538,18 @@ fn run(args: &[String]) -> io::Result<Value> {
         }
         [command, root, scenario, thread @ ..] if command == "test" && thread.len() <= 1 => {
             let scenario: Value = serde_json::from_slice(&std::fs::read(scenario)?)?;
-            let mut host = ModHost::open_in(
+            let mut host = ModHost::open_with(
                 store(root)?,
                 validate_tool_schema,
-                &std::env::current_dir()?,
+                Some(&std::env::current_dir()?),
+                &|| true,
             )?;
             let _thread = codex_omd::StateThread::enter(thread.first().cloned());
             host.offline_test(scenario)
         }
         [command, root, output] if command == "diagnostics" => {
-            let bundle =
-                ModHost::open_validated(store(root)?, validate_tool_schema)?.diagnostic_bundle();
+            let bundle = ModHost::open_with(store(root)?, validate_tool_schema, None, &|| true)?
+                .diagnostic_bundle();
             let output = PathBuf::from(output);
             std::fs::write(&output, serde_json::to_vec_pretty(&bundle)?)?;
             Ok(serde_json::json!({"bundle":output,"redacted":true}))
@@ -573,10 +578,11 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root, id, name, payload, thread @ ..]
             if command == "command" && thread.len() <= 1 =>
         {
-            let mut host = ModHost::open_in(
+            let mut host = ModHost::open_with(
                 store(root)?,
                 validate_tool_schema,
-                &std::env::current_dir()?,
+                Some(&std::env::current_dir()?),
+                &|| true,
             )?;
             let _thread = codex_omd::StateThread::enter(thread.first().cloned());
             host.invoke(

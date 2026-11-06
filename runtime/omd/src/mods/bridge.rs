@@ -184,7 +184,7 @@ fn authorize(loaded: &Loaded, call: &ModHostCall) -> Result<()> {
     if loaded
         .withheld
         .iter()
-        .any(|pattern| namespace_matches(pattern, &namespace))
+        .any(|pattern| glob(pattern, &namespace))
     {
         return Err(failure(format!("capability_withheld: {namespace}")));
     }
@@ -241,7 +241,7 @@ fn metadata(loaded: &Loaded) -> Result<(Value, String, [u8; 32])> {
         "api": MOD_API_VERSION,
         "assets": loaded.assets.as_ref(),
         "entrypoint": loaded.package.entrypoint,
-        "entrypoint_sha256": digest(loaded.source.as_bytes()),
+        "entrypoint_sha256": crate::sha256_hex(loaded.source.as_bytes()),
         "package": {"id": loaded.package.id, "version": loaded.package.version},
         "session_model": loaded.package.compatibility.required_features.iter().any(|feature| feature == "session_activation_v1"),
         "state_scope": loaded.package.state_scope,
@@ -307,7 +307,7 @@ pub(super) fn run(
     let mut request = Request {
         metadata,
         kept: *kept,
-        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
+        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload}),
     };
     request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
     let render = event == "intercept" && request["payload"]["surface"] == "render";
@@ -431,7 +431,7 @@ pub(super) fn run(
         }
         return Err(failure("registration_changed_during_callback"));
     }
-    if reply.host_call.is_some() || reply.calls != expected {
+    if reply.calls != expected {
         if let Some(key) = &warm {
             process::invalidate_warm(key);
         }

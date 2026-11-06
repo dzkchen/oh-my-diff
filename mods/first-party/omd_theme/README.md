@@ -71,6 +71,7 @@ Once anything else is on screen, the scene stays behind it, darkened:
 ### When it draws less
 
 - No scene: no frame timer runs.
+- When the terminal loses focus or has no input for five minutes, animation pauses until activity resumes. Focus detection requires terminal focus events.
 - Reduced motion (the system setting or `tui.animations = false`) or animation off: one still frame.
 - `NO_COLOR`, a 16-color terminal, fewer than 60 columns or inline mode (`--no-alt-screen`): no scene, and the
   usual welcome.
