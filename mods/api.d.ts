@@ -260,12 +260,12 @@ export type RenderExecCall = { call_id: string; kind: 'exec'; command: string; p
 /** One agent tool row with its arguments, status and output summary. `expanded` is true while the user has the row open or reads the full transcript; return the native row then. */
 export type RenderToolCall = { expanded: boolean } & (RenderExecCall
   | { call_id: string; kind: 'explore'; status: RenderToolStatus; duration_ms: number | null; calls: RenderExecCall[] }
-  | { call_id: string; kind: 'patch'; status: RenderToolStatus; duration_ms: null; file_count: number; added: number; removed: number; files: { path: string; change: 'add' | 'delete' | 'update'; added: number; removed: number }[]; error: string | null }
-  | { call_id: string; kind: 'web_search'; status: RenderToolStatus; duration_ms: null; action: 'search' | 'open_page' | 'find_in_page' | 'other'; query: string }
+  | { call_id: string; kind: 'patch'; status: RenderToolStatus; duration_ms: number | null; file_count: number; added: number; removed: number; files: { path: string; change: 'add' | 'delete' | 'update'; added: number; removed: number }[]; error: string | null }
+  | { call_id: string; kind: 'web_search'; status: RenderToolStatus; duration_ms: number | null; action: 'search' | 'open_page' | 'find_in_page' | 'other'; query: string }
   | { call_id: string; kind: 'agent'; tool: 'spawn_agent' | 'send_input' | 'resume_agent' | 'wait' | 'close_agent' | 'agent'; status: RenderToolStatus; duration_ms: null; agents: string[]; prompt: string }
   | { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
   | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
-  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: null; path: string | null; prompt: string | null });
+  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: number | null; path: string | null; prompt: string | null });
 export type RenderQuestion = { id: string; header: string; question: string; secret: boolean; options: string[] };
 export interface RenderProps {
   user_message: { text: string; images: number; spoken: boolean };
