@@ -412,7 +412,10 @@ def contract(prefix, action, key):
     if action in ("plan", "select") and not key:
         raise ValueError(f"contract {action} needs ID@VERSION; contract list shows them")
     arguments = [record["store"]] if action == "list" else [record["store"], str(Path.cwd()), *([key] if key else ["user"] if action == "clear" else [])]
-    return json.loads(support.output([tool, action, *arguments]))
+    result = subprocess.run([tool, action, *arguments], stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    if result.returncode:
+        raise ValueError((result.stderr or result.stdout).strip() or f"omd-contract {action} failed")
+    return json.loads(result.stdout)
 
 
 def check(record, bin_dir):
@@ -517,6 +520,13 @@ def status_summary(result):
     return "\n".join(lines)
 
 
+def activation_summary(result):
+    if result["activation"] == "direct":
+        return f"Direct mode: codex runs without mods. `omd-package activate {result['profile']}` brings them back."
+    active = sum(1 for package in result["packages"] if package["active"])
+    return f"{result['profile_label']} is active with {active} of {len(result['packages'])} mods on."
+
+
 def activate(prefix, bin_dir, selection):
     record = load(prefix)
     check(record, bin_dir)
@@ -540,6 +550,8 @@ def select_mod(prefix, bin_dir, identifier, enabled):
         current = invoke(manager, "selection-status", record["store"])
         matches = [item for item in current["selections"] if item.get("path") == str(source)]
         if len(matches) != 1 or matches[0].get("id") != identifier or not isinstance(matches[0].get("selected"), bool):
+            if any(item.get("id") == identifier for item in current["selections"]):
+                raise ValueError(f"{identifier} is no longer your profile's copy; use omd mods {'enable' if enabled else 'disable'} {identifier}")
             raise ValueError(f"managed mod selection is unavailable: {identifier}")
         return matches[0]
 
@@ -1206,9 +1218,11 @@ def main():
     activate_parser = commands.add_parser("activate", help="switch between OMD Core, OMD+ and upstream-style direct mode")
     activate_parser.add_argument("selection", choices=("platform", "full", "direct"),
                                  help="platform: OMD Core; full: OMD+; direct: upstream-style behavior")
+    activate_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
     mod_parser = commands.add_parser("mod", help="enable or disable one profile mod")
     mod_parser.add_argument("action", choices=("enable", "disable"))
     mod_parser.add_argument("identifier", choices=PACKAGES)
+    mod_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
     for name in ROUTES:
         route_parser = commands.add_parser(name, help=f"set up or launch the opt-in {name} route")
         route_parser.add_argument("--setup", action="store_true")
@@ -1259,8 +1273,14 @@ def main():
         result = rollback_mods(prefix, bin_dir)
     elif args.command == "activate":
         result = activate(prefix, bin_dir, args.selection)
+        if not args.json:
+            print(activation_summary(result))
+            return
     elif args.command == "mod":
         result = select_mod(prefix, bin_dir, args.identifier, args.action == "enable")
+        if not args.json:
+            print(f"{args.identifier} is {args.action}d.")
+            return
     elif args.command in ROUTES:
         result = route(prefix, bin_dir, args.command, args)
     elif args.command == "mini":
