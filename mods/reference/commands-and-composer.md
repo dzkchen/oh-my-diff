@@ -368,8 +368,9 @@ Handlers may set `key` to another character or to a key name valid in view `keyb
 
 ### Submitted drafts and `prompt_expanded`
 
-The `input` interceptors also receive the submitted draft's `revision`, `attachments` (`{kind, source}`) and
-placeholder `elements` (`{kind: 'paste' | 'mention' | 'skill' | 'image', start?, end?, name?, source}`).
+The `input` interceptors also receive the submitted draft's `revision`, `attachments` (`{kind, source}`, where `source`
+is a local path, `'inline'` for inline data or `'file'` for an uploaded audio file) and placeholder `elements`
+(`{kind: 'paste' | 'mention' | 'skill' | 'image', start?, end?, name?, source}`).
 
 After skills and mentions are expanded, the experimental `prompt_expanded` event (capability `middleware`) lists them by
 name, path and SHA-256 only (`{kind: 'skill' | 'mention' | 'paste' | 'image', …}`), never their content, and the
