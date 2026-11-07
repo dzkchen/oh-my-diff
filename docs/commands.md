@@ -86,7 +86,7 @@ can't make model requests or run processes. See
 
 ## `omd-package`
 
-Manages the install profile. It prints JSON, except `status` without `--json`.
+Manages the install profile. It prints JSON, except `status`, `activate` and `mod`, which print a short summary unless you pass `--json`.
 
 | Command | What it does |
 | --- | --- |

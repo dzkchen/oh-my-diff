@@ -4682,6 +4682,33 @@ fn the_agent_inventory_prunes_only_stale_snapshots_and_staging_files() {
 }
 
 #[test]
+fn a_new_thread_keeps_old_thread_store_data() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    let archived = fixture.lead.host.root.join("data/threads/archived/owner");
+    std::fs::create_dir_all(&archived).unwrap();
+    std::fs::write(archived.join("store.json"), "{}").unwrap();
+    for path in [
+        archived.join("store.json"),
+        archived.clone(),
+        archived.parent().unwrap().to_path_buf(),
+    ] {
+        std::fs::File::open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    fixture
+        .lead
+        .host
+        .open_session(ThreadId::new(), false)
+        .unwrap();
+    assert!(archived.join("store.json").exists());
+}
+
+#[test]
 fn the_agent_inventory_keeps_finished_parents_of_remaining_and_starting_agents() {
     let inventory = inventory::Inventory::default();
     let model = |parent: &str| json!({"origin": "model", "parent": {"thread_id": parent, "agent_id": null}});
