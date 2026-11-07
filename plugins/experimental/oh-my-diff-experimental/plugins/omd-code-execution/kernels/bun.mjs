@@ -17,7 +17,20 @@ async function worker() {
   const owned = () => current !== undefined && bridgeContext.getStore() === current;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   const writeSync = fs.writeSync;
-  fs.writeSync = (fd, data, ...rest) => (fd === 1 || fd === 2) && !owned() ? (typeof data === "string" ? Buffer.byteLength(data) : data.byteLength) : writeSync(fd, data, ...rest);
+  const stdioTarget = (target) => target === 1 || target === 2 || globalThis.Bun && (target === Bun.stdout || target === Bun.stderr);
+  const size = (data) => Array.isArray(data) ? data.reduce((total, part) => total + size(part), 0) : typeof data === "string" ? Buffer.byteLength(data) : data?.byteLength ?? 0;
+  for (const name of ["writeSync", "writevSync", "writeFileSync", "appendFileSync"]) {
+    const original = fs[name];
+    fs[name] = (fd, data, ...rest) => stdioTarget(fd) && !owned() ? size(data) : original(fd, data, ...rest);
+  }
+  for (const name of ["write", "writev", "writeFile", "appendFile"]) {
+    const original = fs[name];
+    fs[name] = (fd, data, ...rest) => {
+      if (!stdioTarget(fd) || owned()) return original(fd, data, ...rest);
+      const done = rest.at(-1);
+      if (typeof done === "function") queueMicrotask(() => name.endsWith("File") ? done(null) : done(null, size(data), data));
+    };
+  }
   const writeAll = (fd, text) => {
     for (let data = Buffer.from(text); data.length;) {
       try {
@@ -74,7 +87,11 @@ async function worker() {
     (typeof encoding === "function" ? encoding : callback)?.();
     return true;
   };
-  for (const name of ["log", "error", "warn", "info", "debug"]) console[name] = capture;
+  for (const name of Object.getOwnPropertyNames(console)) {
+    const original = console[name];
+    if (typeof original !== "function") continue;
+    console[name] = ["log", "error", "warn", "info", "debug"].includes(name) ? capture : (...args) => owned() ? original.apply(console, args) : undefined;
+  }
   process.stdout.write = process.stderr.write = captureWrite;
   const ffi = globalThis.Bun ? await import("bun:ffi") : null;
   const libc = ffi?.dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
@@ -128,6 +145,47 @@ fs.closeSync(reader);`;
       await Promise.race([ended, new Promise((resolve) => setTimeout(resolve, 5000))]);
     };
   };
+
+  const childProcess = require("node:child_process");
+  const inherited = (stdio) => stdio === "inherit" || stdio === 1 || stdio === 2 || stdio === process.stdout || stdio === process.stderr;
+  const children = [["spawn", true, () => ["pipe", "pipe", "pipe"], true], ["spawnSync", true, () => ["pipe", "pipe", "pipe"]],
+    ["fork", true, (settings) => settings.silent ? ["pipe", "pipe", "pipe", "ipc"] : [0, 1, 2, "ipc"], true],
+    ["execFileSync", true, () => ["pipe", "pipe", "pipe"]], ["execSync", false, () => ["pipe", "pipe", "inherit"]]];
+  for (const [name, listed, fallback, lasting] of children) {
+    const original = childProcess[name];
+    childProcess[name] = (...argv) => {
+      const at = listed && (Array.isArray(argv[1]) || argv[1] == null) ? 2 : 1;
+      const settings = { ...argv[at] };
+      const stdio = typeof settings.stdio === "string" ? [settings.stdio, settings.stdio, settings.stdio, ...name === "fork" ? ["ipc"] : []] : [...settings.stdio ?? fallback(settings)];
+      const inherits = [1, 2].filter((fd) => inherited(stdio[fd]));
+      if (!inherits.length || owned() && (libc || !lasting)) return original(...argv);
+      const forwarded = owned() ? inherits : [];
+      for (const fd of inherits) stdio[fd] = forwarded.length ? "pipe" : "ignore";
+      const next = [...argv];
+      if (at === 2) next[1] = argv[1] ?? [];
+      next[at] = { ...settings, stdio };
+      const started = original(...next);
+      for (const fd of forwarded) started.stdio[fd].on("data", (chunk) => { if (owned()) writeAll(1, chunk); });
+      return started;
+    };
+  }
+  if (globalThis.Bun) {
+    for (const name of ["spawn", "spawnSync"]) {
+      const original = Bun[name];
+      Bun[name] = (command, options) => {
+        if (owned()) return original(command, options);
+        const object = !Array.isArray(command) && typeof command === "object";
+        const settings = { ...object ? command : options };
+        const quiet = (value) => value === "inherit" || stdioTarget(value) ? "ignore" : value;
+        if (settings.stdio) settings.stdio = settings.stdio.map((value, fd) => fd === 1 || fd === 2 ? quiet(value) : value);
+        else Object.assign(settings, { stdout: quiet(settings.stdout), stderr: quiet(settings.stderr ?? "inherit") });
+        return object ? original(settings) : original(command, settings);
+      };
+    }
+    const write = Bun.write;
+    Bun.write = (destination, data, ...rest) => stdioTarget(destination) && !owned() ? Promise.resolve(size(data)) : write(destination, data, ...rest);
+    Bun.$ = new Proxy(Bun.$, { apply: (shell, self, args) => owned() ? Reflect.apply(shell, self, args) : Reflect.apply(shell, self, args).quiet() });
+  }
 
   const stray = (error) => { strays?.push(String(error)); };
   process.on("uncaughtException", stray);

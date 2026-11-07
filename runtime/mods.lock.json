@@ -181,10 +181,10 @@
         "index.ts": "665d79af2c07e6031d43544edac25f2389bcd8b53ee1c8c88b9584be8f834329",
         "mod.json": "076c6a16e1286a733723910d56b697caf87628ef64368c17de558903beb094d5",
         "setup.mjs": "f5000fdab138b690618fbacf2e1aa1f851df311179b284026156f23c8b67eecb",
-        "transport.mjs": "b4024d515cdfc14a82d93fe9627c0aca45d8e845c9f52e94bf9e402386be73f8"
+        "transport.mjs": "db0cfef98a3cfa42540b268bbb707f2ecf50194576fa6135e25168e31fac59ef"
       },
       "id": "omd_cursor",
-      "package_sha256": "445d781a393e8542e27620bb369901321b2b445491ac49f0fc7e4ee2b7e2efdc",
+      "package_sha256": "fde3a91843dcaf02aa156ac936105b50ed687b0e5c7595d132c8c8531a2f0c78",
       "source": "mods/first-party/omd_cursor",
       "version": "1.0.0"
     },

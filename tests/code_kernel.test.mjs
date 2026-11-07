@@ -168,16 +168,38 @@ for (const language of ['python', 'javascript']) {
       return JSON.parse(value.slice(RESULT.length));
     };
     await cell(python
-      ? 'import os, subprocess, sys, threading\nfrom concurrent.futures import ThreadPoolExecutor\nrelease = threading.Event()\ndone = threading.Event()\ndef old():\n    release.wait()\n    print("OLD CELL OUTPUT")\n    os.write(1, b"OLD RAW\\n")\n    sys.__stdout__.write("OLD DUNDER\\n")\n    done.set()\nthreading.Thread(target=old).start()\npool = ThreadPoolExecutor(1)\npool.submit(print, "first").result()\nshell = subprocess.Popen(["sh", "-c", "read line; echo OLD CHILD"], stdin=subprocess.PIPE)'
-      : 'const { spawn } = await import("node:child_process");\nglobalThis.shell = spawn("sh", ["-c", "read line; echo OLD CHILD; echo OLD RAW >&2"], { stdio: ["pipe", "inherit", "inherit"] });\nglobalThis.done = new Promise(resolve => { globalThis.release = resolve; }).then(() => new Promise(resolve => setTimeout(resolve, 10))).then(() => { console.log("OLD CELL OUTPUT"); fs.writeSync(1, "OLD WRITE\\n"); });');
+      ? 'import os, subprocess, sys, threading\nfrom concurrent.futures import ThreadPoolExecutor\nrelease = threading.Event()\ndone = threading.Event()\ndef old():\n    release.wait()\n    print("OLD CELL OUTPUT")\n    os.write(1, b"OLD RAW\\n")\n    sys.__stdout__.write("OLD DUNDER\\n")\n    subprocess.run(["echo", "OLD SPAWNED"])\n    os.system("echo OLD SYSTEM")\n    subprocess.run(["sh", "-c", "echo OLD DUNDER CHILD"], stdout=sys.__stdout__)\n    global mine\n    read, write = os.pipe()\n    os.waitpid(os.posix_spawnp("sh", ["sh", "-c", "echo mine"], os.environ, file_actions=[(os.POSIX_SPAWN_DUP2, write, 1)]), 0)\n    os.close(write)\n    mine = os.read(read, 100)\n    done.set()\nthreading.Thread(target=old).start()\nimport _thread\nraw = threading.Event()\n_thread.start_new_thread(lambda: (release.wait(), print("OLD RAW THREAD"), raw.set()), ())\npool = ThreadPoolExecutor(1)\npool.submit(print, "first").result()\nshell = subprocess.Popen(["sh", "-c", "read line; echo OLD CHILD"], stdin=subprocess.PIPE)'
+      : 'const { spawn } = await import("node:child_process");\nglobalThis.shell = spawn("sh", ["-c", "read line; echo OLD CHILD; echo OLD RAW >&2"], { stdio: ["pipe", "inherit", "inherit"] });\nglobalThis.done = new Promise(resolve => { globalThis.release = resolve; }).then(() => new Promise(resolve => setTimeout(resolve, 10))).then(async () => {\n  console.log("OLD CELL OUTPUT");\n  fs.writeSync(1, "OLD WRITE\\n");\n  (await import("node:fs")).writeSync(2, "OLD NAMED\\n");\n  const { execSync, spawn } = await import("node:child_process");\n  execSync("echo OLD SYNC", { stdio: "inherit" });\n  await new Promise(resolve => spawn("sh", ["-c", "echo OLD SPAWNED"], { stdio: "inherit" }).on("close", resolve));\n  if (globalThis.Bun) await Bun.spawn(["sh", "-c", "echo OLD BUN >&2"], { stdout: "inherit" }).exited;\n  console.dir("OLD DIR"); console.table(["OLD TABLE"]); console.trace("OLD TRACE");\n  fs.writeFileSync(1, "OLD FILE\\n"); await new Promise(resolve => fs.write(2, "OLD ASYNC\\n", resolve));\n  (await import("node:child_process")).spawnSync("sh", ["-c", "echo OLD CROSSED >&2"], { stdio: ["pipe", "pipe", 1] });\n  if (globalThis.Bun) { await Bun.write(Bun.stdout, "OLD BUN WRITE\\n"); await Bun.$`echo OLD SHELL`; Bun.spawnSync(["echo", "OLD FD"], { stdout: 1 }); }\n});');
     const result = await cell(python
-      ? 'release.set(); done.wait()\nshell.communicate(b"go\\n")\npool.submit(print, "POOL OUTPUT").result()\nprint("NEW CELL OUTPUT")'
+      ? 'release.set(); done.wait(); raw.wait()\nshell.communicate(b"go\\n")\npool.submit(print, "POOL OUTPUT").result()\nprint(mine)\nprint("NEW CELL OUTPUT")'
       : 'release(); await done;\nshell.stdin.end("go\\n"); await new Promise(resolve => shell.on("close", resolve));\nconsole.log("NEW CELL OUTPUT");');
-    const expected = python ? 'POOL OUTPUT\nNEW CELL OUTPUT\n' : 'NEW CELL OUTPUT\n';
-    if (!python && !process.env.OMD_TEST_BUN) assert.doesNotMatch(result.output, /OLD CELL OUTPUT/, 'Node has no per-cell fd redirect, so only in-process writes are attributed');
-    else assert.deepEqual(result, { ok: true, output: expected, bridge_failed: false });
+    const expected = python ? "POOL OUTPUT\nb'mine\\n'\nNEW CELL OUTPUT\n" : 'NEW CELL OUTPUT\n';
+    assert.deepEqual(result, { ok: true, output: expected, bridge_failed: false });
   });
 }
+
+test('python kernel keeps its standard streams usable inside a cell', { timeout: 30_000 }, async t => {
+  const script = new URL('../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/python.py', import.meta.url).pathname;
+  const child = spawn('python3', [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = once(child, 'exit');
+  const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  t.after(async () => {
+    child.kill();
+    await exited;
+  });
+  child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code: `import concurrent.futures, faulthandler, math, os, subprocess, sys
+print("fileno", sys.__stdout__.fileno(), sys.__stdout__.encoding)
+subprocess.run(["echo", "via dunder"], stdout=sys.__stdout__)
+faulthandler.enable(file=sys.__stderr__)
+read, write = os.pipe()
+os.waitpid(os.posix_spawnp("sh", ["sh", "-c", "echo mine"], os.environ, file_actions=[(os.POSIX_SPAWN_DUP2, write, 1)]), 0)
+os.close(write)
+print(os.read(read, 100))
+pools = getattr(concurrent.futures, "InterpreterPoolExecutor", concurrent.futures.ThreadPoolExecutor)
+print(pools(1).submit(math.sqrt, 16).result())` }) + '\n');
+  const { value } = await lines.next();
+  assert.deepEqual(JSON.parse(value.slice(RESULT.length)), { ok: true, output: "fileno 1 utf-8\nvia dunder\nb'mine\\n'\n4.0\n", bridge_failed: false });
+});
 
 test('javascript kernel survives a background child writing while the result frame is sent', { timeout: 30_000 }, async t => {
   const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });

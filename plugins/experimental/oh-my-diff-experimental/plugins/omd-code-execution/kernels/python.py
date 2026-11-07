@@ -4,8 +4,10 @@ import io
 import json
 import os
 import socket
+import subprocess
 import sys
 import threading
+import _thread
 
 
 class LimitedOutput(io.TextIOBase):
@@ -84,6 +86,8 @@ def start(self):
 
 
 def submit(self, function, /, *args, **kwargs):
+    if isinstance(self, getattr(concurrent.futures, "InterpreterPoolExecutor", ())):
+        return submit_work(self, function, *args, **kwargs)
     caller = owner()
 
     def run():
@@ -98,22 +102,103 @@ def submit(self, function, /, *args, **kwargs):
     return submit_work(self, run)
 
 
+def owning(function):
+    caller = owner()
+
+    def run(*args, **kwargs):
+        threading.current_thread()._omd_cell = caller
+        return function(*args, **kwargs)
+
+    return run
+
+
 threading.Thread.start = start
+for name in ("start_new_thread", "start_joinable_thread"):
+    if hasattr(_thread, name):
+        setattr(_thread, name, (lambda original: lambda function, *args, **kwargs: original(owning(function), *args, **kwargs))(getattr(_thread, name)))
 submit_work = concurrent.futures.ThreadPoolExecutor.submit
 concurrent.futures.ThreadPoolExecutor.submit = submit
 write = os.write
 
 
+def owned():
+    return cell["output"] is not None and owner() == cell["id"]
+
+
 def guarded(fd, data):
-    if fd in (1, 2) and (cell["output"] is None or owner() != cell["id"]):
+    if fd in (1, 2) and not owned():
         return len(data)
     return write(fd, data)
 
 
 os.write = guarded
+popen = subprocess.Popen.__init__
+
+
+def quiet_popen(self, *args, **kwargs):
+    if not owned():
+        for name in ("stdout", "stderr"):
+            target = kwargs.get(name)
+            if target is None or target in (1, 2, router) or getattr(target, "fileno", None) and target.fileno() in (1, 2):
+                kwargs[name] = subprocess.DEVNULL
+    popen(self, *args, **kwargs)
+
+
+subprocess.Popen.__init__ = quiet_popen
+system = os.system
+
+
+def quiet_system(command):
+    if owned():
+        return system(command)
+    code = subprocess.call(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return -code if code < 0 else code << 8
+
+
+os.system = quiet_system
+fork = os.fork
+
+
+def quiet_fork():
+    quiet = not owned()
+    pid = fork()
+    if pid == 0 and quiet:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+    return pid
+
+
+os.fork = quiet_fork
+
+
+def quiet_spawn(spawn):
+    def run(path, argv, env, *, file_actions=None, **kwargs):
+        if not owned():
+            file_actions = [(os.POSIX_SPAWN_DUP2, devnull, 1), (os.POSIX_SPAWN_DUP2, devnull, 2), *(file_actions or ())]
+        return spawn(path, argv, env, file_actions=file_actions, **kwargs)
+
+    return run
+
+
+os.posix_spawn = quiet_spawn(os.posix_spawn)
+os.posix_spawnp = quiet_spawn(os.posix_spawnp)
+
+
+class CellBytes:
+    def write(self, data):
+        return guarded(1, data)
+
+    def flush(self):
+        pass
 
 
 class CellOutput(io.TextIOBase):
+    encoding = "utf-8"
+    buffer = CellBytes()
+
+    def fileno(self):
+        return 1
+
     def write(self, value):
         output = cell["output"]
         if output is None or owner() != cell["id"]:

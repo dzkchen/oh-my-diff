@@ -278,15 +278,16 @@ test('Cursor settles each run against its own request and keeps baselines until 
   t.mock.method(globalThis, 'setTimeout', callback => { timers.push(callback); return { unref() {} }; });
   const router = new Router({ data }, 'fixture');
   router.refreshPlan = async () => {};
-  const run = (runId, cents) => ({ runId, usage: {}, ...cents === undefined ? {} : { cost: { rawCostCents: cents, chargedCents: cents } } });
-  let report = { runs: [run('r')] };
+  const tokens = inputTokens => ({ inputTokens, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 });
+  const run = (runId, input, cents) => ({ runId, usage: tokens(input), ...cents === undefined ? {} : { cost: { rawCostCents: cents, chargedCents: cents } } });
+  let report = { runs: [run('usage-1', 5)] };
   router.agents.set('a', { getUsage: async () => report });
   router.state.agents.a = { at: 1 };
-  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'r' });
+  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'run-a', usages: [tokens(5), tokens(7)] });
   await timers[0]();
   delete router.state.agents.a;
-  router.settle('a', 'auto', { thread: 't', request_id: 'B', run_id: 's' });
-  report = { runs: [run('r', 2.5), run('s', 1)], cost: { rawCostCents: 3.5, chargedCents: 3.5 } };
+  router.settle('a', 'auto', { thread: 't', request_id: 'B', run_id: 'run-b', usages: [tokens(3)] });
+  report = { runs: [run('usage-1', 5, 2), run('usage-2', 7, 0.5), run('usage-3', 3, 1)], cost: { rawCostCents: 3.5, chargedCents: 3.5 } };
   await timers[4]();
   assert.ok(router.agents.has('a'));
   await timers[1]();
@@ -295,7 +296,7 @@ test('Cursor settles each run against its own request and keeps baselines until 
   for (const cache of [router.agents, router.charged, router.seen]) assert.equal(cache.has('a'), false);
 });
 
-test('Cursor settles overlapping runs without ids or per-run entries as pending', async t => {
+test('Cursor leaves overlapping or unmatched settlements pending', async t => {
   const data = await mkdtemp(join(tmpdir(), 'omd-cursor-overlap-'));
   t.after(() => rm(data, { recursive: true, force: true }));
   const timers = [];
@@ -304,19 +305,50 @@ test('Cursor settles overlapping runs without ids or per-run entries as pending'
   router.refreshPlan = async () => {};
   let report = { runs: [], cost: { rawCostCents: 0, chargedCents: 0 } };
   router.agents.set('a', { getUsage: async () => report });
-  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'x' });
+  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'x', usages: [] });
   await timers[0]();
-  router.settle('a', 'auto', { thread: 't', request_id: 'B', run_id: 'y' });
+  router.settle('a', 'auto', { thread: 't', request_id: 'B', run_id: 'y', usages: [] });
   report = { runs: [], cost: { rawCostCents: 3, chargedCents: 3 } };
   for (const index of [4, 1, 2, 3, 5, 6, 7]) await timers[index]();
   const rows = (await readFile(join(data, 'usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(rows.map(row => [row.request_id, row.status]), [['A', 'pending'], ['B', 'pending']]);
-  const single = { runs: [{ runId: 'sdk-name', usage: {}, cost: { rawCostCents: 1, chargedCents: 1 } }] };
-  router.agents.set('b', { getUsage: async () => single });
-  router.settle('b', 'auto', { thread: 't', request_id: 'C', run_id: 'transport-name' });
+  const foreign = { runs: [{ runId: 'usage-9', usage: { inputTokens: 4, outputTokens: 1 }, cost: { rawCostCents: 1, chargedCents: 1 } }] };
+  router.agents.set('b', { getUsage: async () => foreign });
+  router.settle('b', 'auto', { thread: 't', request_id: 'C', run_id: 'run-c', usages: [{ inputTokens: 9, outputTokens: 1 }] });
+  for (const index of [8, 9, 10, 11]) await timers[index]();
+  const unmatched = (await readFile(join(data, 'usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse).at(-1);
+  assert.deepEqual([unmatched.request_id, unmatched.cost], ['C', null], 'another run\'s entry is not taken');
+});
+
+test('Cursor never swaps runs with equal token counts and falls back to the total only when it is unambiguous', async t => {
+  const data = await mkdtemp(join(tmpdir(), 'omd-cursor-equal-'));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  const timers = [];
+  t.mock.method(globalThis, 'setTimeout', callback => { timers.push(callback); return { unref() {} }; });
+  const router = new Router({ data }, 'fixture');
+  router.refreshPlan = async () => {};
+  const usage = { inputTokens: 5, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  const entry = (runId, cents) => ({ runId, usage, cost: { rawCostCents: cents, chargedCents: cents } });
+  let report = { runs: [entry('u1', 2)], cost: { rawCostCents: 2, chargedCents: 2 } };
+  router.agents.set('a', { getUsage: async () => report });
+  router.state.agents.a = { at: 1 };
+  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'run-a', usages: [usage] });
+  router.settle('a', 'auto', { thread: 't', request_id: 'B', run_id: 'run-b', usages: [usage] });
+  report = { runs: [entry('u1', 2), entry('u2', 1)], cost: { rawCostCents: 3, chargedCents: 3 } };
+  for (const index of [4, 0, 1, 5, 2, 6, 3, 7]) await timers[index]();
+  const rows = () => readFile(join(data, 'usage.jsonl'), 'utf8').then(text => text.trim().split('\n').map(JSON.parse));
+  assert.deepEqual((await rows()).map(row => [row.request_id, row.cost]), [['A', null], ['B', null]], 'equal counts across overlapping runs are ambiguous');
+  let partial = { runs: [{ runId: 'v1', usage: { inputTokens: 8 }, cost: { rawCostCents: 1, chargedCents: 1 } }], cost: { rawCostCents: 4, chargedCents: 4 } };
+  router.agents.set('b', { getUsage: async () => partial });
+  router.settle('b', 'auto', { thread: 't', request_id: 'C', run_id: 'run-c', usages: [{ inputTokens: 8 }, { inputTokens: 9 }] });
   await timers[8]();
-  const settled = (await readFile(join(data, 'usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse).at(-1);
-  assert.deepEqual([settled.request_id, settled.cost], ['C', { raw_cents: 1, charged_cents: 1 }], 'the one new run is the ending run');
+  assert.equal((await rows()).length, 2, 'a partial match waits');
+  for (const index of [9, 10, 11]) await timers[index]();
+  assert.deepEqual((await rows()).at(-1).cost, { raw_cents: 4, charged_cents: 4 }, 'an uncontested run falls back to the moved total at the last poll');
+  router.agents.set('a', { getUsage: async () => ({ runs: [], cost: { rawCostCents: 9, chargedCents: 9 } }) });
+  router.settle('a', 'auto', { thread: 't', request_id: 'D', run_id: 'run-d', usages: [] });
+  await timers[12]();
+  assert.equal((await rows()).length, 3, 'a total after a pending settlement on the agent is not attributed');
 });
 
 test('Cursor keeps a settlement pending while the agent total has not moved', async t => {
@@ -329,7 +361,7 @@ test('Cursor keeps a settlement pending while the agent total has not moved', as
   let report = { runs: [], cost: { rawCostCents: 1, chargedCents: 1 } };
   router.agents.set('a', { getUsage: async () => report });
   router.charged.set('a', { raw: 1, charged: 1 });
-  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'q' });
+  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'q', usages: [] });
   await timers[0]();
   await assert.rejects(readFile(join(data, 'usage.jsonl'), 'utf8'), { code: 'ENOENT' }, 'an unchanged total is not a zero cost');
   report = { runs: [], cost: { rawCostCents: 3, chargedCents: 2 } };
