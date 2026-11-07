@@ -70,8 +70,9 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
 
 - The object `connect` returns has `attach`, `update`, `detach`, `read`, `event`, `action` (serialized), `render`,
   `resource`, `recovery` and `request(method, params)`. Together they cover every `omd/*` and app-server method.
-- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches,
-  retains the in-memory `attachment.terminalToken`, replays the last update, resumes the threads it resumed
+- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches
+  with the last accepted or interrupted attach (a reattach the host refused is not carried over), retains the
+  in-memory `attachment.terminalToken`, replays the last update, resumes the threads it resumed
   through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`. Explicit detach clears
   terminal ownership. If a restarted host rejects the retained token, it attaches once without it and inherits
   shared defaults. Keep terminal tokens private and in memory. Clients with separate terminal owners share a mod's

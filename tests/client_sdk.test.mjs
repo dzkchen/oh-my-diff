@@ -39,7 +39,7 @@ async function until(find) {
   throw new Error('timed out');
 }
 
-function fakeHost({ padding = '', view = {}, overloadedResumes = 0, restartOwners = false } = {}) {
+function fakeHost({ padding = '', view = {}, overloadedResumes = 0, restartOwners = false, droppedRenderer } = {}) {
   const seen = [];
   const protocols = [];
   const sockets = new Set();
@@ -51,7 +51,7 @@ function fakeHost({ padding = '', view = {}, overloadedResumes = 0, restartOwner
     protocols.push(request.headers['sec-websocket-protocol']);
     socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${accept}`,
       ...(protocols.at(-1) ? ['Sec-WebSocket-Protocol: codex-app-server'] : []), '', ''].join('\r\n'));
-    const host = { epoch: String(epoch), token: 'token-0', used: 0, send: message => socket.write(encodeFrame(1, Buffer.from(JSON.stringify(message)), false)) };
+    const host = { epoch: String(epoch), token: 'token-0', used: 0, drop: () => socket.destroy(), send: message => socket.write(encodeFrame(1, Buffer.from(JSON.stringify(message)), false)) };
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
     socket.on('data', frameReader((opcode, payload) => {
@@ -64,6 +64,11 @@ function fakeHost({ padding = '', view = {}, overloadedResumes = 0, restartOwner
     seen.push({ epoch: host.epoch, ...message });
     const reply = result => host.send({ id: message.id, result });
     if (message.method === 'initialize') reply({ userAgent: 'fake' });
+    else if (message.method === 'omd/client/attach' && message.params.renderer?.kind === 'invalid') host.send({ id: message.id, error: { code: -32602, message: 'invalid params: renderer.kind' } });
+    else if (message.method === 'omd/client/attach' && droppedRenderer && message.params.renderer?.kind === droppedRenderer) {
+      droppedRenderer = undefined;
+      host.drop();
+    }
     else if (message.method === 'omd/client/attach') {
       const terminalToken = restartOwners ? `owner-${host.epoch}` : 'owner-retained';
       if (message.params.terminalToken && message.params.terminalToken !== terminalToken) {
@@ -161,6 +166,53 @@ test('unix client answers pings, reads large views and reconnects with attach, u
     assert.equal(host.seen.findLast(message => message.method === 'thread/resume').params.threadId, 'thread-1');
     await until(() => views.some(view => view.epoch === '2'));
     assert.equal(session.actionToken, 'token-0');
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a refused reattach leaves the last accepted parameters, owner token included, for reconnect', async () => {
+  const host = fakeHost({ restartOwners: true });
+  await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+  let reconnected;
+  const session = await connect({
+    url: `ws://127.0.0.1:${host.server.address().port}`, name: 'sdk-test', renderer,
+    onView() {}, onRoster() {}, onMirrored() {},
+    onReconnect: change => { reconnected = change; },
+  });
+  try {
+    await assert.rejects(session.attach({ terminalToken: 'owner-1', renderer: { ...renderer, kind: 'invalid' } }), { code: -32602 });
+    assert.deepEqual(session.attached.renderer, renderer);
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected || session.closed);
+    assert.equal(session.closed, false, 'the refused reattach must not poison the reconnect');
+    const attempts = host.seen.filter(message => message.epoch === '2' && message.method === 'omd/client/attach');
+    assert.deepEqual(attempts.map(message => [message.params.renderer, message.params.terminalToken]), [[renderer, 'owner-1'], [renderer, undefined]]);
+    assert.deepEqual(session.attached, { name: 'sdk-test', renderer, operations: [], terminalToken: 'owner-2' });
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a reattach cut off by a disconnect is replayed on reconnect', async () => {
+  const host = fakeHost({ droppedRenderer: 'gui' });
+  await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+  let reconnected;
+  const session = await connect({
+    url: `ws://127.0.0.1:${host.server.address().port}`, name: 'sdk-test', renderer,
+    onView() {}, onRoster() {}, onMirrored() {},
+    onReconnect: change => { reconnected = change; },
+  });
+  const gui = { ...renderer, kind: 'gui' };
+  try {
+    await assert.rejects(session.attach({ renderer: gui }), /client_disconnected/);
+    await until(() => reconnected || session.closed);
+    assert.equal(session.closed, false);
+    assert.deepEqual(host.seen.findLast(message => message.method === 'omd/client/attach').params.renderer, gui);
+    assert.deepEqual(session.attached.renderer, gui);
+    assert.equal(session.epoch, '2');
   } finally {
     session.close();
     host.server.close();

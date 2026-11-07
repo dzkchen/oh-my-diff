@@ -225,8 +225,7 @@ class Session {
           break;
         }
         if (this.attached) {
-          const attached = this.attached;
-          await fatal(() => this.attach(attached));
+          await fatal(() => this.attach(this.attached));
           if (Object.keys(this.updated).length) await tolerate(() => this.call('omd/client/update', this.updated), () => { this.updated = {}; });
         }
         for (const [thread, params] of this.resumed) await tolerate(() => this.call('thread/resume', params), () => this.resumed.delete(thread));
@@ -244,17 +243,24 @@ class Session {
   }
 
   async attach(params = {}) {
-    this.attached = { name: this.options.name, renderer: this.options.renderer, operations: this.options.operations ?? [], terminalToken: undefined, ...params };
+    const attached = { name: this.options.name, renderer: this.options.renderer, operations: this.options.operations ?? [], terminalToken: undefined, ...params };
+    let attachment;
     try {
-      this.attachment = await this.call('omd/client/attach', this.attached);
+      try {
+        attachment = await this.call('omd/client/attach', attached);
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'terminal_owner_unknown' || !attached.terminalToken || attached.terminalToken !== this.attachment?.terminalToken) throw error;
+        delete attached.terminalToken;
+        attachment = await this.call('omd/client/attach', attached);
+      }
     } catch (error) {
-      if (!(error instanceof Error) || error.message !== 'terminal_owner_unknown' || !this.attached.terminalToken || this.attached.terminalToken !== this.attachment?.terminalToken) throw error;
-      delete this.attached.terminalToken;
-      this.attachment = await this.call('omd/client/attach', this.attached);
+      if (!(error instanceof Error && Number.isInteger(error.code))) this.attached = attached;
+      throw error;
     }
-    this.attached.terminalToken = this.attachment.terminalToken;
-    this.epoch = this.attachment.epoch;
-    return this.attachment;
+    this.attached = { ...attached, terminalToken: attachment.terminalToken };
+    this.attachment = attachment;
+    this.epoch = attachment.epoch;
+    return attachment;
   }
 
   async update(params) {
