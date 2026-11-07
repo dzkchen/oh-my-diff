@@ -5,7 +5,7 @@ import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
-const identity = install_profile => ({ codex_version: '0.166.0', omd_version: '1.2.3', install_profile, mode: 'omd', mods: { installed: 9, enabled: 7, active: 6 } });
+const identity = install_profile => ({ codex_version: '0.167.0', omd_version: '1.2.3', install_profile, mode: 'omd', mods: { installed: 9, enabled: 7, active: 6 } });
 
 function render(payload, settings = {}) {
   const reply = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings, event: 'terminal', payload }, call => assert.fail(`unexpected host call ${call.operation}`));
@@ -20,7 +20,7 @@ test('a fresh session shows the mark with the version, profile and mod counts', 
   const [wide] = patch.sites.welcome.components;
   assert.equal(wide.id, 'omd_logo_mark');
   assert.match(text(wide), /oh my diff v1\.2\.3 · OMD Core/);
-  assert.match(text(wide), /Codex v0\.166\.0/);
+  assert.match(text(wide), /Codex v0\.167\.0/);
   assert.match(text(wide), /6 of 9 mods on/);
 });
 

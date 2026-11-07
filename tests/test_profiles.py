@@ -489,6 +489,27 @@ class ProfileModeTests(unittest.TestCase):
             subprocess.run(["sh", launcher], check=True)
             self.assertEqual(calls(), 1)
 
+    def test_plugins_creates_codex_home_before_the_first_codex_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            prefix, home = base / "root/releases/generation/prefix", base / "codex"
+            marketplace = prefix / "bundles/oh-my-diff"
+            (marketplace / ".agents/plugins").mkdir(parents=True)
+            (marketplace / ".agents/plugins/marketplace.json").write_text('{"name": "oh-my-diff"}')
+            record = {"plugin_bundle": {"marketplace": str(marketplace), "plugins": ["omd-anchored-edit"]},
+                      "shared_state": {"codex_home": str(home)}}
+
+            def run(arguments, **kwargs):
+                self.assertTrue(home.is_dir())
+                (home / "config.toml").write_text(f'[marketplaces.oh-my-diff]\nsource = "{arguments[-1]}"\n')
+
+            with (patch.object(profiles, "load", return_value=record),
+                  patch.object(profiles, "check", return_value=(base / "codex-bin", None)),
+                  patch.object(profiles.support, "run", side_effect=run)):
+                result = profiles.register_plugins(prefix, base / "bin")
+            self.assertEqual(result["plugins"], ["omd-anchored-edit"])
+            self.assertEqual(home.stat().st_mode & 0o777, 0o700)
+
     def test_uninstall_removes_plugins_added_from_this_installation(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()
@@ -886,7 +907,10 @@ enabled = true
                 code = profiles.mini(Path("/prefix"), base, ["--model", "m", "-s=danger-full-access", "-C", "/repo", "-c", "a=1",
                                                              "-i", "x.png", "--yolo", "--no-alt-screen", "fix it"])
                 selections["selections"][0]["effective"] = False
-                with self.assertRaisesRegex(ValueError, "needs its mod enabled"):
+                with self.assertRaisesRegex(ValueError, "needs its mod enabled: omd mods enable omd_mini$"):
+                    profiles.mini(Path("/prefix"), base, [])
+                selections["selections"] = []
+                with self.assertRaisesRegex(ValueError, "omd install omd_mini, then omd mods enable omd_mini$"):
                     profiles.mini(Path("/prefix"), base, [])
             runs = [line.split("|") for line in log.read_text().splitlines()]
             self.assertEqual(code, 3)
