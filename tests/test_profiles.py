@@ -780,6 +780,36 @@ enabled = true
             profiles.retire_packages("manager", store, "full", None)
         self.assertEqual(commands, [])
 
+    def test_an_upgrade_retrusts_store_copies_of_mods_outside_the_profile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            store, origin = base / "store", base / "origin"
+            for identifier, text in (("omd_inspector", "new"), ("omd_logo", "logo"), ("omd_btw", "btw")):
+                (origin / identifier).mkdir(parents=True)
+                (origin / identifier / "index.ts").write_text(text)
+            (store / "sources/omd_inspector").mkdir(parents=True)
+            (store / "sources/omd_inspector/index.ts").write_text("old")
+            packages = {identifier: {"package_sha256": identifier * 2, "capabilities": ["terminal"],
+                                     "files": {"index.ts": profiles.support.digest(origin / identifier / "index.ts")}}
+                        for identifier in ("omd_inspector", "omd_logo", "omd_btw")}
+            selections = [{"id": "omd_inspector", "path": str(store / "sources/omd_inspector"),
+                           "selected": False, "sha256": "stale"}]
+            commands = []
+
+            def invoke(_manager, command, _store, *arguments):
+                commands.append((command, *arguments))
+                return {"selections": selections} if command == "selection-status" else {}
+
+            with patch.object(profiles, "invoke", side_effect=invoke):
+                changed = profiles.refresh_kept_copies("manager", store, origin, packages, {"omd_logo": {}})
+            self.assertEqual(changed, ["omd_inspector"])
+            self.assertEqual((store / "sources/omd_inspector/index.ts").read_text(), "new")
+            self.assertFalse((store / "sources/omd_btw").exists())
+            trusted = [json.loads(arguments[0]) for command, *arguments in commands if command == "trust-all"]
+            self.assertEqual(trusted, [[{"path": str(store / "sources/omd_inspector"), "sha256": "omd_inspector" * 2,
+                                         "capabilities": ["terminal"]}]])
+            self.assertNotIn("enable", [command for command, *_ in commands])
+
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
                               "sha256": "a" * 64, "capabilities": ["exec"],
