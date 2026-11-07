@@ -773,7 +773,7 @@ impl ModStore {
         })
     }
 
-    fn write_staged(
+    pub(super) fn write_staged(
         &self,
         name: &str,
         bytes: &[u8],
@@ -1199,6 +1199,10 @@ impl ModStore {
             config.mods.retain(|m| m.path != path);
             trusted.insert(path.clone());
             config.mods.push(ModSelection {
+                configuration_epoch: config
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| failure("revision_overflow"))?,
                 path,
                 sha256: actual,
                 enabled: false,
@@ -1285,6 +1289,10 @@ impl ModStore {
         });
         let mut config = self.configuration()?;
         let mut revoked = Vec::new();
+        let epoch = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         for selection in &mut config.mods {
             if managed
                 .as_ref()
@@ -1295,7 +1303,8 @@ impl ModStore {
                 selection.enabled = false;
                 selection.capabilities.clear();
                 selection.secret_environment.clear();
-                selection.expires_at = None;
+                selection.expires_at = Some(0);
+                selection.configuration_epoch = epoch;
                 revoked.push(json!({"path": selection.path, "scope": selection.scope}));
             }
         }

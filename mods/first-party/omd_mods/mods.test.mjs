@@ -136,7 +136,7 @@ test('a route setting offers a helper model and saves the route the host added',
   const added = invoke('mod user:omd_advisor route:route', { packages: [advisor], ui_state: opened.ui,
     'routes.add': args => { assert.deepEqual(args, { mod: 'omd_advisor' }); return { route: 'plan-gpt-6-1-sol-omd_advisor' }; },
     'settings.write': args => { written = args; return {}; } });
-  assert.deepEqual(written, { id: 'omd_advisor', values: { route: 'plan-gpt-6-1-sol-omd_advisor' } });
+  assert.deepEqual(written, { id: 'omd_advisor', scope: 'user', values: { route: 'plan-gpt-6-1-sol-omd_advisor' } });
   invoke('mod user:omd_advisor route:route', { packages: [advisor], ui_state: opened.ui, 'routes.add': () => ({ status: 'declined' }) });
 });
 
@@ -166,7 +166,7 @@ test('Choose a model lists routes.models with their efforts, marks the lead mode
   invoke('mod user:omd_advisor pick:route:gpt-other:high', { packages: [advisor], ui_state: choosing.ui,
     'routes.add': args => { assert.deepEqual(args, { mod: 'omd_advisor', model: 'gpt-other', effort: 'high' }); return { route: 'plan-gpt-other-omd_advisor' }; },
     'settings.write': args => { written = args; return {}; } });
-  assert.deepEqual(written, { id: 'omd_advisor', values: { route: 'plan-gpt-other-omd_advisor' } });
+  assert.deepEqual(written, { id: 'omd_advisor', scope: 'user', values: { route: 'plan-gpt-other-omd_advisor' } });
   const refused = invoke('mod user:omd_advisor pick:route:gpt-other:high', { packages: [advisor], ui_state: choosing.ui,
     'routes.add': () => { throw new Error('routes_add_effort_unsupported'); } });
   assert.match(refused.panels[0].subtitle, /No helper model was added \(routes_add_effort_unsupported\)/);
@@ -210,4 +210,43 @@ test('an identity collision warning is shown before accepting trust', () => {
   assert.ok(result.value.display.includes(warning));
   const panel = invoke('panel user', { ui_state: result.ui });
   assert.ok(JSON.stringify(panel.panels).includes(warning));
+});
+
+test('terminal details expose inherited configuration and explicit reset and save actions', () => {
+  const item = mod('theme', { inherited_enabled: false, inherited_settings: {}, overrides: { enabled: true, settings: {} } });
+  const opened = invoke('theme', { packages: [item] });
+  assert.match(opened.panels[0].subtitle, /Saved default: off.*Terminal overrides active/s);
+  assert.ok(opened.panels[0].items.some(item => item.id === 'do:reset'));
+  assert.ok(opened.panels[0].items.some(item => item.id === 'do:save-defaults'));
+  for (const action of ['reset', 'save-defaults']) {
+    let request;
+    const previewed = invoke(`mod user:theme do:${action}`, { packages: [item], 'packages.preview': args => {
+      request = args;
+      return { action, id: 'theme', changes: {}, grants_added: [] };
+    } });
+    assert.equal(request.action, action);
+    assert.equal(request.scope, 'user');
+    assert.ok(!operations(previewed).includes('packages.apply'));
+    let applied;
+    invoke('apply', { packages: [item], ui_state: previewed.ui, 'packages.apply': args => {
+      applied = args;
+      return { status: 'applied', generation: 2 };
+    } });
+    assert.equal(applied.action, action);
+  }
+});
+
+test('settings writes retain the selected user or project copy', () => {
+  const packages = [
+    mod('fixture', { scope: 'user', settings: { mode: 'user' }, settings_schema: { properties: { mode: { type: 'string' } } } }),
+    mod('fixture', { scope: 'project', settings: { mode: 7 }, settings_schema: { properties: { mode: { type: 'number' } } } }),
+  ];
+  const written = [];
+  const answer = args => { written.push(args); return { settings: args.values }; };
+  invoke('mod user:fixture setting:mode chosen', { packages, 'settings.write': answer });
+  invoke('mod project:fixture setting:mode 42', { packages, 'settings.write': answer });
+  assert.deepEqual(written, [
+    { id: 'fixture', scope: 'user', values: { mode: 'chosen' } },
+    { id: 'fixture', scope: 'project', values: { mode: 42 } },
+  ]);
 });

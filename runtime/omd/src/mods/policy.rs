@@ -400,6 +400,7 @@ impl Managed {
     ) -> (Vec<ModSelection>, Vec<ModRejection>) {
         let (mut selections, mut pending) = (Vec::new(), Vec::new());
         let selection = |package: &ManagedPackage, deployed: &DeployedPackage| ModSelection {
+            configuration_epoch: 0,
             path: deployed.path.clone(),
             sha256: deployed.sha256.clone(),
             enabled: true,

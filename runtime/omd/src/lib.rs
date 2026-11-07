@@ -108,6 +108,7 @@ pub use mods::AUTHORITY_CAPABILITIES;
 pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
 pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 pub use mods::CODEX_CONFIG_UPDATE_PLAN;
+pub use mods::ConfigurationOverrides;
 pub use mods::FileStamp;
 pub use mods::MANAGED_POLICY_FILE;
 pub use mods::MANAGED_POLICY_KEY;
@@ -171,6 +172,7 @@ pub use mods::ModRegion;
 pub use mods::ModRenderSite;
 pub use mods::ModScreenAnchor;
 pub use mods::ModSelectOption;
+pub use mods::ModSelection;
 pub use mods::ModSidebarSide;
 pub use mods::ModSpacing;
 pub use mods::ModSpan;
@@ -224,7 +226,10 @@ pub use mods::persist_texts;
 pub use mods::read_only_call;
 pub use mods::render_shared;
 pub use mods::take_turned_off;
+pub use mods::terminal_configuration_owner;
 pub use mods::write_settings;
+pub use mods::write_settings_in;
+pub use mods::write_settings_shared;
 
 pub mod turn_evidence;
 

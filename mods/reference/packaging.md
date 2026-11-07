@@ -89,10 +89,14 @@ Apply the identical request with the preview's `confirmation` string.
 The higher-level `packages.preview`/`packages.apply` operations and `omd` CLI use:
 
 ```text
-{action, id?, source?, reference?, version?, index?, scope?, expected_generation?}
+{action, id?, source?, reference?, version?, index?, scope?, target?, expected_generation?}
 ```
 
-`action` is one of `install`, `update`, `remove`, `rollback`, `enable`, `disable` or `trust`. A request names a package
+`action` is one of `install`, `update`, `remove`, `rollback`, `enable`, `disable`, `trust`, `reset` or `save-defaults`.
+Experimental `target: "terminal" | "shared"` selects configuration ownership for enable/disable; terminal is the
+default in a terminal host. `reset` clears that terminal’s enablement and settings overrides. `save-defaults`
+explicitly persists its effective choices as shared defaults. Install, update, remove, rollback and trust remain
+shared. The shell CLI has no terminal context and changes shared defaults. A request names a package
 with `source` or with a `reference` (and optional `version`), never both. `scope` is `user` or `project`.
 `expected_generation` is described under
 [`packages.apply`, `packages.preview` and `packages.reload`](#packagesapply-packagespreview-and-packagesreload).
@@ -296,7 +300,9 @@ update it.
 - `blocked` is the quarantine reason or `null`.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
-- `packages.list` reports each mod's `settings` and `settings_schema`.
+- `packages.list` reports effective `enabled` and `settings`, plus `settings_schema`. Experimental
+  `inherited_enabled` and `inherited_settings` report current defaults before terminal overrides;
+  `overrides: {enabled?, settings}` reports the terminal’s explicit choices.
 - `required` marks a selection the installer keeps on. `/mods` and `/omd` don't turn it off, but `omd mods disable`
   does.
 

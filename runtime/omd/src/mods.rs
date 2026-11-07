@@ -2,7 +2,11 @@ mod author;
 mod bridge;
 mod chain;
 mod code_cache;
+mod configuration_overrides;
 mod operation_validation;
+pub use configuration_overrides::ConfigurationOverrides;
+pub use configuration_overrides::terminal_configuration_owner;
+pub use configuration_overrides::write_settings_shared;
 mod persisted;
 mod render;
 pub use chain::ModChain;
@@ -2585,6 +2589,18 @@ fn validate_stored_settings(
 }
 
 pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
+    write_settings_in(store, id, values, None)
+}
+
+pub fn write_settings_in(
+    store: &ModStore,
+    id: &str,
+    values: &Value,
+    scope: Option<&str>,
+) -> Result<Value> {
+    if scope.is_some_and(|scope| !matches!(scope, "user" | "project")) {
+        return Err(failure("configuration_scope_invalid"));
+    }
     let values = values
         .as_object()
         .ok_or_else(|| failure("settings_values_must_be_object"))?;
@@ -2593,7 +2609,13 @@ pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Valu
         .as_array()
         .into_iter()
         .flatten()
-        .find(|selection| selection["id"] == id && selection["effective"] == true)
+        .find(|selection| {
+            selection["id"] == id
+                && match scope {
+                    Some(scope) => selection["scope"] == scope && selection["error"].is_null(),
+                    None => selection["effective"] == true,
+                }
+        })
         .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
     let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
     if let Some(name) = values
@@ -2659,6 +2681,8 @@ fn identifier_list(values: &[String]) -> bool {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModSelection {
+    #[serde(default, skip_serializing_if = "zero_configuration_epoch")]
+    pub configuration_epoch: u64,
     pub path: PathBuf,
     pub sha256: String,
     pub enabled: bool,
@@ -2676,6 +2700,10 @@ pub struct ModSelection {
     /// Set by the installer: in-app mod screens keep the mod on, while `omd mods disable` still turns it off.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
+}
+
+fn zero_configuration_epoch(epoch: &u64) -> bool {
+    *epoch == 0
 }
 
 impl ModSelection {
@@ -3463,6 +3491,8 @@ pub struct ModHost {
     generation: u64,
     configuration_sha256: String,
     configuration_stamp: Option<ConfigurationStamp>,
+    configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
+    override_revision: Option<u64>,
     /// The configuration whose timed-out inspections were already retried once.
     inspect_retried: String,
     /// A pending retry and the leniency (`initial`) of the reload it repeats.
@@ -4040,6 +4070,7 @@ pub struct ModOpenOptions<'a> {
     pub tool_validator: fn(&Value) -> Result<()>,
     pub repository: Option<&'a Path>,
     pub active: &'a dyn Fn() -> bool,
+    pub configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
 }
 
 impl Default for ModOpenOptions<'_> {
@@ -4048,6 +4079,7 @@ impl Default for ModOpenOptions<'_> {
             tool_validator: |_| Ok(()),
             repository: None,
             active: &always_active,
+            configuration_overrides: Arc::default(),
         }
     }
 }
@@ -4094,6 +4126,7 @@ impl ModHost {
             tool_validator,
             repository,
             active,
+            configuration_overrides,
         } = options;
         let store = ModStore::open(root)?;
         let mut host = Self {
@@ -4101,6 +4134,8 @@ impl ModHost {
             generation: 0,
             configuration_sha256: String::new(),
             configuration_stamp: None,
+            configuration_overrides,
+            override_revision: None,
             inspect_retried: String::new(),
             inspect_retry: None,
             ui_configuration: None,
@@ -4375,6 +4410,8 @@ impl ModHost {
     }
 
     pub fn reload(&mut self) -> Result<bool> {
+        self.configuration_stamp = None;
+        self.override_revision = None;
         for loaded in self.loaded.values() {
             process::invalidate_session_owner(&self.session_owner(loaded), None);
         }
@@ -4417,8 +4454,22 @@ impl ModHost {
         self.inspect_retry = None;
     }
 
+    pub fn configuration_overrides(&self) -> Arc<Mutex<ConfigurationOverrides>> {
+        Arc::clone(&self.configuration_overrides)
+    }
+
+    fn current_overrides(&self) -> ConfigurationOverrides {
+        self.configuration_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
+        let overrides = self.current_overrides();
         !self.inspect_retry_due()
+            && overrides.sources_current()
+            && self.override_revision == Some(overrides.revision())
             && stamp.is_some()
             && *stamp == self.configuration_stamp
             && self
@@ -4452,6 +4503,10 @@ impl ModHost {
         if !active() {
             return Err(failure("callback_cancelled"));
         }
+        self.configuration_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain_sources()?;
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamps(&self.store.root);
         if self.current(&stamp) {
@@ -4472,7 +4527,8 @@ impl ModHost {
             Ok(deployment) => (deployment, None),
             Err(error) => (policy::ManagedDeployment::default(), Some(error)),
         };
-        let retrying = hash == self.configuration_sha256;
+        let retrying = hash == self.configuration_sha256
+            && self.override_revision == Some(self.current_overrides().revision());
         if retrying && !self.inspect_retry_due() {
             self.configuration_stamp = self.settled(stamp);
             return Ok(false);
@@ -4538,6 +4594,18 @@ impl ModHost {
         }
         let administered = selections.len();
         selections.extend(config.mods.iter().cloned());
+        let overrides = {
+            let mut owner = self
+                .configuration_overrides
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            owner.retain(&selections)?;
+            owner.retain_unblocked(&self.store)?;
+            owner.clone()
+        };
+        for selection in &mut selections {
+            selection.enabled = overrides.enabled(selection);
+        }
         self.managed = managed;
         self.policies = selections
             .iter()
@@ -4606,6 +4674,18 @@ impl ModHost {
             }
             let (settings_file, file_settings) = self.store.settings_file(&package, &selection);
             selection.settings.extend(file_settings);
+            match overrides.settings(&selection, &package, &selection.settings) {
+                Ok(settings) => selection.settings = settings,
+                Err(error) => {
+                    rejected.push(ModRejection {
+                        path: selection.path.clone(),
+                        id: Some(id),
+                        scope: selection.scope.clone(),
+                        reason: error.to_string(),
+                    });
+                    continue;
+                }
+            }
             // An unchanged trusted selection and adapter keep their inspection; another host's also needs the state it ran with.
             let unchanged = |previous: &&Loaded| {
                 previous.error.is_none()
@@ -4819,6 +4899,7 @@ impl ModHost {
             self.inspect_retry = None;
         }
         self.configuration_sha256 = hash;
+        self.override_revision = Some(overrides.revision());
         self.configuration_stamp = self.settled(stamp);
         let key = (self.store.root.clone(), self.project.clone());
         let mut inspected: BTreeMap<_, _> = self
@@ -5614,6 +5695,7 @@ impl ModHost {
             && *stamp == modified
             && *sha256 == self.configuration_sha256
             && *granted == grant
+            && self.override_revision == Some(self.current_overrides().revision())
         {
             return Ok(());
         }
@@ -5659,7 +5741,13 @@ impl ModHost {
             .get(&loaded.package.id)
             .unwrap_or(&loaded.selection);
         // An unchanged authority inventory cannot introduce a different precedence winner.
-        let unchanged = hash == self.configuration_sha256;
+        self.configuration_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain_unblocked(&self.store)?;
+        let overrides = self.current_overrides();
+        let unchanged = hash == self.configuration_sha256
+            && self.override_revision == Some(overrides.revision());
         if !unchanged {
             self.configuration_stamp = None;
         }
@@ -5681,6 +5769,9 @@ impl ModHost {
                 .filter(|selection| selection.path == loaded.selection.path)
                 .count();
             selections.retain(|selection| selection.path == loaded.selection.path);
+        }
+        for selection in &mut selections {
+            selection.enabled = overrides.enabled(selection);
         }
         let selected = Self::select(
             &selections,

@@ -18,6 +18,11 @@ pub(in crate::mods) enum Pending {
         paths: Vec<String>,
         include_ignored: bool,
     },
+    ThreadBroadcast {
+        thread: ThreadId,
+        event: &'static str,
+        payload: Value,
+    },
     Broadcast {
         event: &'static str,
         payload: Value,
@@ -162,7 +167,7 @@ pub(in crate::mods) fn lead_started(core: &Arc<Core>, lead: &Lead, forked: Optio
     ensure_delivery(core);
 }
 
-fn ensure_delivery(core: &Arc<Core>) {
+pub(super) fn ensure_delivery(core: &Arc<Core>) {
     let Ok(mut delivery) = core.expansion.delivery.lock() else {
         return;
     };
@@ -353,6 +358,15 @@ async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending
         }
         Pending::Broadcast { event, payload } => {
             core.event(event, payload, current).await;
+        }
+        Pending::ThreadBroadcast {
+            thread,
+            event,
+            payload,
+        } => {
+            if let Some(lead) = core.expansion.thread(thread) {
+                core.event(event, payload, Some(&lead)).await;
+            }
         }
         Pending::Timer {
             thread,

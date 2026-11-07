@@ -715,6 +715,10 @@ impl ModStore {
                     selection.scope == package.scope && id.as_deref() == Some(package.id.as_str())
                 });
             let next = ModSelection {
+                configuration_epoch: config
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| failure("revision_overflow"))?,
                 path: package.path.clone(),
                 sha256: package.integrity.clone(),
                 enabled: package.enabled,
@@ -902,12 +906,19 @@ impl ModStore {
         }
         store::next_revision(&mut lock.revision)?;
         let mut config = self.configuration()?;
+        let epoch = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         let selection = config
             .mods
             .iter_mut()
             .find(|selection| selection.path == path && selection.scope == scope)
             .ok_or_else(|| failure("package_selection_missing"))?;
         selection.enabled = false;
+        if block.is_some() {
+            selection.configuration_epoch = epoch;
+        }
         store::next_revision(&mut config.revision)?;
         match block {
             Some(reason) => self.commit_package_transaction(
@@ -1108,12 +1119,17 @@ impl ModStore {
         validate_locked_graph(&lock.packages)?;
         store::next_revision(&mut lock.revision)?;
         let mut config = self.configuration()?;
+        let epoch = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         let selection = config
             .mods
             .iter_mut()
             .find(|selection| selection.scope == previous.scope && selection.path == current_path)
             .ok_or_else(|| failure("package_selection_missing"))?;
         *selection = ModSelection {
+            configuration_epoch: epoch,
             path: previous.path,
             sha256: previous.integrity,
             enabled: previous.enabled,
@@ -1139,11 +1155,32 @@ impl ModStore {
         detail: Value,
         provenance: &[ModLockedPackage],
     ) -> Result<ModPackageLock> {
+        self.commit_configuration_transaction(
+            lock, config, lifecycle, event, detail, provenance, None,
+        )
+    }
+
+    pub(super) fn commit_configuration_transaction(
+        &self,
+        lock: ModPackageLock,
+        config: ModConfiguration,
+        lifecycle: &[(ModLockedPackage, &str)],
+        event: &str,
+        detail: Value,
+        provenance: &[ModLockedPackage],
+        settings: Option<(&str, &Value)>,
+    ) -> Result<ModPackageLock> {
         let old_lock = serde_json::to_value(self.read_package_lock()?)?;
         let old_config = serde_json::to_value(self.configuration()?)?;
+        let old_settings = settings
+            .map(|(name, _)| {
+                store::read(&self.root.join(name), 65_536)
+                    .map(|bytes| json!({"name":name,"bytes":bytes}))
+            })
+            .transpose()?;
         self.write(
             "package-transaction.json",
-            &json!({"old_lock":old_lock,"old_config":old_config}),
+            &json!({"old_lock":old_lock,"old_config":old_config,"old_settings":old_settings}),
         )?;
         let result: Result<ModPackageLock> = (|| {
             for (package, event) in lifecycle {
@@ -1175,6 +1212,9 @@ impl ModStore {
             );
             self.write_granting("mods.json", &serde_json::to_value(&config)?, &approved)?;
             self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
+            if let Some((name, value)) = settings {
+                self.write(name, value)?;
+            }
             std::fs::remove_file(self.root.join("package-transaction.json"))?;
             std::fs::File::open(&self.root)?.sync_all()?;
             Ok(lock)
@@ -1195,6 +1235,25 @@ impl ModStore {
             Err(error) => return Err(error),
         };
         let transaction: Value = serde_json::from_slice(&bytes)?;
+        if let Some(settings) = transaction
+            .get("old_settings")
+            .filter(|value| !value.is_null())
+        {
+            let name = settings["name"]
+                .as_str()
+                .ok_or_else(|| failure("package_transaction_invalid"))?;
+            let path = Path::new(name);
+            if path.components().count() != 2
+                || path.parent() != Some(Path::new("settings"))
+                || !SETTINGS_FILE_EXTENSIONS
+                    .iter()
+                    .any(|extension| path.extension().is_some_and(|value| value == *extension))
+            {
+                return Err(failure("package_transaction_invalid"));
+            }
+            let bytes: Vec<u8> = serde_json::from_value(settings["bytes"].clone())?;
+            self.write_staged(name, &bytes, || Ok(()))?;
+        }
         let restored = transaction["old_config"]["mods"]
             .as_array()
             .into_iter()
@@ -2627,7 +2686,7 @@ fn push_history(
     (history.len() > PACKAGE_HISTORY_LIMIT).then(|| history.remove(0))
 }
 
-fn validate_locked_graph(packages: &BTreeMap<String, ModLockedPackage>) -> Result<()> {
+pub(super) fn validate_locked_graph(packages: &BTreeMap<String, ModLockedPackage>) -> Result<()> {
     for package in packages.values() {
         for dependency in &package.dependencies {
             let resolved = packages
@@ -2737,6 +2796,7 @@ fn require_migration_handlers(plan: &ModPackagePlan, scope: &str) -> Result<()> 
         let (package, source, _, assets) = store::package_with_assets(&locked.path)?;
         let state_scope = package.state_scope.clone();
         let selection = ModSelection {
+            configuration_epoch: 0,
             path: locked.path.clone(),
             sha256: locked.integrity.clone(),
             enabled: false,

@@ -106,7 +106,7 @@ export default function activate(api: ModAPI) {
     const text = property.choices === 'routes' && rest.join(' ') === UNSET ? '' : rest.join(' ');
     const value: Json = property.type === 'boolean' ? text === 'true' : property.type === 'number' ? Number(text) : text;
     if (property.type === 'number' && (!text.trim() || !Number.isFinite(value))) return { ...state, notice: `${name} needs a number` };
-    const written = api.host.tryCall('settings.write', { id: item.id, values: { [name]: value } });
+    const written = api.host.tryCall('settings.write', { id: item.id, scope: item.scope, values: { [name]: value } });
     if (!written.ok) return refresh(state, `${name} was not saved (${written.error})`);
     store({ ...state, notice: `${labelOf(name, property)} saved` });
     return null;
@@ -164,6 +164,7 @@ export default function activate(api: ModAPI) {
       return { ...state, notice: `${friendly(target.id)} stays on because Oh My Diff needs it; turn it off from a shell with omd mods disable ${target.id}` };
     const request = { id: target.id, scope: target.scope };
     if (verb === 'toggle') return apply(state, { action: target.enabled ? 'disable' : 'enable', ...request }, `${target.enabled ? 'Turning off' : 'Turning on'} ${friendly(target.id)}`);
+    if (verb === 'reset' || verb === 'save-defaults') return review(state, { action: verb, ...request }, `${verb === 'reset' ? 'Reset to defaults' : 'Save as defaults'} ${friendly(target.id)}`, from);
     if (verb === 'enable' || verb === 'disable') return apply(state, { action: verb, ...request }, `${verb === 'enable' ? 'Turning on' : 'Turning off'} ${friendly(target.id)}`);
     if (REVIEWED.includes(verb)) return review(state, { action: verb as PackageRequest['action'], ...request }, `${verb} ${friendly(target.id)}`, from);
     return { ...state, notice: `Unknown action ${verb}` };
@@ -289,15 +290,17 @@ export default function activate(api: ModAPI) {
     return {
       title: title(item, state), action: { command: 'mods', args },
       subtitle: subtitle([`${status(item)} · ${item.version} · ${item.source === 'selection' ? 'local folder' : item.source}${item.compatible ? '' : ' · needs a newer Oh My Diff'}`, item.description,
+        `Saved default: ${item.inherited_enabled ? 'on' : 'off'} · ${item.overrides && (item.overrides.enabled !== undefined || Object.keys(item.overrides.settings).length) ? 'Terminal overrides active' : 'Using saved defaults'}`,
         item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}.`, item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), state.notice]),
       items: [
-        ...fixed ? [] : [entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled })],
+        ...fixed ? [] : [entry({ id: 'enabled', label: 'On in this terminal', kind: 'toggle', value: item.enabled })],
         ...properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
         ...properties(item).filter(([, property]) => property.choices === 'routes').slice(0, 8).flatMap(([name, property]) => [
           entry({ id: `choose:${name}`, kind: 'action', label: `Choose a model for ${labelOf(name, property)}`,
             description: 'Pick a ChatGPT model and effort on your plan; asks before changing anything' }),
           entry({ id: `route:${name}`, kind: 'action', label: `Add a helper model for ${labelOf(name, property)}`,
             description: `Uses the model you are chatting with on your ChatGPT plan; asks before changing anything${skips(item) ? `. ${friendly(item.id)} skips it while skip_same_model is on` : ''}` })]),
+        ...fixed ? [] : [entry({ id: 'do:reset', label: 'Reset to defaults', kind: 'action', description: 'Clear this terminal’s enablement and settings overrides' }), entry({ id: 'do:save-defaults', label: 'Save as defaults', kind: 'action', description: 'Save this terminal’s choices for other terminals and future launches' })],
         ...actions.map(([verb, label]) => entry({ id: `do:${verb}`, label, kind: 'action' })),
       ],
     };

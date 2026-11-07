@@ -53,7 +53,11 @@ pub(super) struct Caller<'a> {
 pub(super) fn event_allows(event: &str, operation: &str) -> bool {
     crate::generic_host::event_allows(event, operation)
         || super::expansion::event_allows(event)
-        || event == "command" && matches!(operation, "process.status" | "process.exchange")
+        || event == "command"
+            && matches!(
+                operation,
+                "process.status" | "process.exchange" | "settings.write" | "packages.reload"
+            )
         || event == "context"
             && (codex_omd::scoped_data::operation(operation)
                 || matches!(
@@ -810,6 +814,22 @@ mod tests {
         }
         for operation in ["process.start", "process.which", "process.stop"] {
             assert!(!event_allows("command", operation), "{operation}");
+        }
+    }
+
+    #[test]
+    fn terminal_configuration_mutations_are_admitted_only_during_commands() {
+        for operation in ["settings.write", "packages.reload"] {
+            assert!(event_allows("command", operation));
+            for event in [
+                "component_event",
+                "component_post",
+                "context",
+                "tool",
+                "terminal",
+            ] {
+                assert!(!event_allows(event, operation), "{event}: {operation}");
+            }
         }
     }
 

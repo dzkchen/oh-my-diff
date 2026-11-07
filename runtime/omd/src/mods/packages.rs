@@ -10,6 +10,97 @@ pub struct SettingsFile {
 }
 
 impl ModStore {
+    pub fn save_configuration(
+        &self,
+        path: &Path,
+        settings: BTreeMap<String, Value>,
+        enabled: bool,
+    ) -> Result<()> {
+        let _lock = self.lock()?;
+        self.recover_package_transaction()?;
+        let mut config = self.configuration()?;
+        let index = config
+            .mods
+            .iter()
+            .position(|item| item.path == path)
+            .ok_or_else(|| failure("package_not_trusted"))?;
+        let selection = &config.mods[index];
+        if selection.required || selection.scope == MANAGED_SCOPE || !selection.authority_current()
+        {
+            return Err(failure("configuration_override_forbidden"));
+        }
+        let (package, _, hash) = store::package(path)?;
+        if hash != selection.sha256 {
+            return Err(failure("source_changed"));
+        }
+        validate_settings(&package, &settings)?;
+        let (file, _) = self.settings_file(&package, selection);
+        if file.status == "invalid" {
+            return Err(failure("settings_file_invalid"));
+        }
+        let file_name = (file.status == "loaded").then(|| {
+            format!(
+                "settings/{}",
+                Path::new(&file.path).file_name().unwrap().to_string_lossy()
+            )
+        });
+        let file_settings = serde_json::to_value(&settings)?;
+        let settings_write = file_name.as_deref().map(|name| (name, &file_settings));
+        if enabled {
+            if package
+                .capabilities
+                .iter()
+                .any(|capability| !selection.capabilities.contains(capability))
+            {
+                return Err(failure("capability_denied"));
+            }
+            self.check_service_providers(&package, path)?;
+            store::refuse_second_copy(&config, path, &selection.scope, &package.id)?;
+        }
+        let mut lock = self.read_package_lock()?;
+        let installed = lock
+            .packages
+            .values()
+            .find(|item| item.path == path)
+            .map(|item| item.id.clone());
+        if let Some(id) = &installed {
+            let item = &lock.packages[id];
+            if item.integrity != hash || item.state_version != package.state_version {
+                return Err(failure("package_state_changed"));
+            }
+            if enabled && let Some(reason) = lock.blocked_reason(id, &item.version, &item.integrity)
+            {
+                return Err(failure(format!("package_blocked: {reason}")));
+            }
+            lock.packages.get_mut(id).unwrap().enabled = enabled;
+            package_manager::validate_locked_graph(&lock.packages)?;
+            lock.revision = lock
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| failure("revision_overflow"))?;
+        }
+        config.mods[index].settings = settings;
+        config.mods[index].enabled = enabled;
+        config.revision = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
+        if installed.is_some() || settings_write.is_some() {
+            self.commit_configuration_transaction(
+                lock,
+                config,
+                &[],
+                "save-defaults",
+                json!({"mod":package.id}),
+                &[],
+                settings_write,
+            )
+            .map(drop)
+        } else {
+            self.write("mods.json", &serde_json::to_value(config)?)
+        }
+    }
+
     pub fn settings_file(
         &self,
         package: &ModPackage,
