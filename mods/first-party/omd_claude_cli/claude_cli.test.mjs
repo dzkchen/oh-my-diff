@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { callback } from '../../../tests/mod_runner.mjs';
 import { CLI_MINIMUM, cliSupported, translateRequest, responseEvents } from './index.ts';
 import { publishable } from './setup.mjs';
-import { Capture, Relay, accountLogins, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withoutCliContext } from './transport.mjs';
+import { Capture, Relay, accountLogins, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withCachedHistory, withoutCliContext } from './transport.mjs';
 
 const CLI_VERSION = `${CLI_MINIMUM} (Claude Code)`;
 
@@ -222,6 +222,25 @@ test('the relay decodes compressed request bodies, and refuses bad ones without 
       assert.equal(await post(relay, Buffer.from(json)), 200, 'the admission is still unspent');
       assert.equal(seen.length, before + 1);
     } finally { relay.abort(); }
+    const shaped = await fresh();
+    try {
+      const hour = { type: 'ephemeral', ttl: '1h' };
+      const cli = { model, system: [{ type: 'text', text: 'billing' }, { type: 'text', text: 'sys', cache_control: hour }],
+        tools: [{ name: 'mcp__omd__shell', cache_control: hour }], messages: [
+          { role: 'user', content: [{ type: 'text', text: 'Run ls.' }] },
+          { role: 'system', content: '# Environment\nYou have been invoked in the following environment: ' },
+          { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'mcp__omd__shell', input: {} }] },
+          { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'a' },
+            { type: 'text', text: '<system-reminder>\nAs you answer the user\'s questions, you can use the following context:\n# userEmail\nx\n\nClaude Code attached this context automatically;\n</system-reminder>' }] },
+          { role: 'system', content: [{ type: 'text', text: 'Today\'s date is 2026-11-07.', cache_control: hour }] }] };
+      assert.equal(await post(shaped, Buffer.from(JSON.stringify(cli))), 200);
+      const sent = JSON.parse(seen.at(-1).body);
+      assert.equal(seen.at(-1).body.match(/cache_control/g).length, 4);
+      assert.deepEqual(sent.messages.map(message => message.role), ['user', 'assistant', 'user', 'system']);
+      assert.deepEqual(sent.messages[0].content[0].cache_control, hour);
+      assert.deepEqual(sent.messages[2].content, [{ type: 'tool_result', tool_use_id: 'call_1', content: 'a', cache_control: hour }]);
+      assert.equal(sent.messages[3].content[0].cache_control, undefined);
+    } finally { shaped.abort(); }
   } finally {
     upstream.closeAllConnections();
     await new Promise(resolve => upstream.close(resolve));
@@ -290,6 +309,37 @@ test('CLI-added environment and account context never reach the model', () => {
   assert.equal(body.messages[2].content[0].content, '/repo');
   assert.equal(body.messages[2].content[1].text, omd);
   assert.equal(JSON.stringify(body).includes('user@example.com'), false);
+});
+
+test('history breakpoints move from the trailing CLI date onto the last two user turns, so the next request reads this one\'s cache', () => {
+  const hour = { type: 'ephemeral', ttl: '1h' };
+  const turn = extra => ({ model, system: [{ type: 'text', text: 'billing' }, { type: 'text', text: 'sys', cache_control: hour }],
+    tools: [{ name: 'mcp__omd__shell', cache_control: hour }], messages: [
+      { role: 'user', content: 'Run ls.' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'mcp__omd__shell', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'a' }] },
+      ...extra,
+      { role: 'system', content: [{ type: 'text', text: 'Today\'s date is 2026-11-07.', cache_control: hour }] }] });
+  const first = withCachedHistory(turn([]));
+  const second = withCachedHistory(turn([{ role: 'assistant', content: [{ type: 'tool_use', id: 'call_2', name: 'mcp__omd__shell', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_2', content: 'b' }] }]));
+  const marked = body => body.messages.flatMap((message, index) => Array.isArray(message.content) && message.content.some(block => block.cache_control) ? [index] : []);
+  assert.deepEqual(marked(first), [0, 2]);
+  assert.deepEqual(marked(second), [2, 4]);
+  assert.deepEqual(first.messages[0].content, [{ type: 'text', text: 'Run ls.', cache_control: hour }]);
+  assert.equal(JSON.stringify(second.messages.slice(0, 3)).replaceAll(',"cache_control":{"type":"ephemeral","ttl":"1h"}', ''),
+    JSON.stringify(first.messages.slice(0, 3)).replaceAll(',"cache_control":{"type":"ephemeral","ttl":"1h"}', ''));
+  const opening = withCachedHistory({ ...turn([]), messages: [{ role: 'user', content: [{ type: 'text', text: 'Run ls.' }] }] });
+  assert.deepEqual(opening.messages[0].content[0].cache_control, hour);
+  const five = { type: 'ephemeral', ttl: '5m' };
+  const mixed = withCachedHistory({ ...turn([]), system: [{ type: 'text', text: 'sys', cache_control: five }], messages: [{ role: 'user', content: 'Run ls.' }] });
+  assert.deepEqual(mixed.messages[0].content[0].cache_control, five);
+  const nested = withCachedHistory({ ...turn([]), messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: [{ type: 'text', text: 'a', cache_control: five }] }] }] });
+  assert.deepEqual(nested.messages[0].content[0], { type: 'tool_result', tool_use_id: 'call_1', content: [{ type: 'text', text: 'a' }], cache_control: five });
+  const uncached = withCachedHistory({ model, messages: [{ role: 'user', content: 'hi' }] });
+  assert.deepEqual(uncached.messages, [{ role: 'user', content: 'hi' }]);
+  const crowded = withCachedHistory({ ...turn([]), tools: [hour, hour, hour].map(cache_control => ({ name: 'x', cache_control })) });
+  assert.deepEqual(marked(crowded), []);
 });
 
 test('large whitespace blocks and repeated reminder headers are stripped in linear time', () => {
@@ -400,13 +450,13 @@ test('each Claude account signs in and runs through its own config directory, an
   const account = (name, config_dir) => ({ name, billing: 'subscription', config_dir, models: [] });
   process.env.CLAUDE_CONFIG_DIR = '/inherited';
   try {
-    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; elif [ "$1" = "auth" ] && { [ -z "$CLAUDE_CONFIG_DIR" ] || [ "$CLAUDE_CONFIG_DIR" = /accounts/work ]; }; then echo '{"loggedIn":true,"apiProvider":"firstParty","authMethod":"claude.ai","subscriptionType":"max"}'; elif [ "$1" = "auth" ]; then echo '{"loggedIn":false}'; else echo "$CLAUDE_CONFIG_DIR" > "$(dirname "$0")/dir"; fi\n`);
+    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; elif [ "$1" = "auth" ] && { [ -z "$CLAUDE_CONFIG_DIR" ] || [ "$CLAUDE_CONFIG_DIR" = /accounts/work ]; }; then echo '{"loggedIn":true,"apiProvider":"firstParty","authMethod":"claude.ai","subscriptionType":"max"}'; elif [ "$1" = "auth" ]; then echo '{"loggedIn":false}'; else echo "$CLAUDE_CONFIG_DIR $CLAUDE_CODE_ENTRYPOINT" > "$(dirname "$0")/dir"; fi\n`);
     await chmod(fake, 0o700);
     const logins = accountLogins({ claude: fake, accounts: [account('default', null), account('work', '/accounts/work'), account('spare', '/accounts/spare')] });
     assert.deepEqual([...logins], [['default', { plan: 'max' }], ['work', { plan: 'max' }], ['spare', { error: 'claude_ai_subscription_login_required: run `/claude login spare`' }]]);
     assert.throws(() => accountLogins({ claude: fake, accounts: [account('spare', '/accounts/spare')] }), /run `\/claude login spare`/);
     await runClaude(prompt, entry, fake, new AbortController().signal, () => {}, { account: account('work', '/accounts/work') }).catch(() => {});
-    assert.equal((await readFile(join(root, 'dir'), 'utf8')).trim(), '/accounts/work');
+    assert.equal((await readFile(join(root, 'dir'), 'utf8')).trim(), '/accounts/work oh-my-diff');
     assert.match(upstreamFailure(401, {}, '', 'api', account('work', '/accounts/work')).message, /login api work/);
   } finally {
     delete process.env.CLAUDE_CONFIG_DIR;
