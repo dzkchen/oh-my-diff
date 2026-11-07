@@ -72180,10 +72180,10 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1d51d3f710a5f6b5232532bf28a0704632626c25
+index 0000000000000000000000000000000000000000..306fe3c67929e58d8e95d3f7b01a22fd32d4a33a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,862 @@
+@@ -0,0 +1,858 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -72707,10 +72707,6 @@ index 0000000000000000000000000000000000000000..1d51d3f710a5f6b5232532bf28a07046
 +            codex_omd::data_store::prune_thread_directories(&sessions, |name| {
 +                name == current || name.starts_with("ledger-")
 +            });
-+            codex_omd::data_store::prune_thread_directories(
-+                &self.root.join("data").join("threads"),
-+                |name| name == current,
-+            );
 +        }
 +        let task = Arc::new(ledger::open(
 +            &sessions,
@@ -86355,10 +86351,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5cd5da321b9cc0cd2de8ca33b1de2f011fefc523
+index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5f93435e2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5545 @@
+@@ -0,0 +1,5572 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -91040,6 +91036,33 @@ index 0000000000000000000000000000000000000000..5cd5da321b9cc0cd2de8ca33b1de2f01
 +    assert!(directory.path().join("role.toml").exists());
 +    assert!(!directory.path().join("stale.json").exists());
 +    assert!(!directory.path().join(staging).exists());
++}
++
++#[test]
++fn a_new_thread_keeps_old_thread_store_data() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
++    let archived = fixture.lead.host.root.join("data/threads/archived/owner");
++    std::fs::create_dir_all(&archived).unwrap();
++    std::fs::write(archived.join("store.json"), "{}").unwrap();
++    for path in [
++        archived.join("store.json"),
++        archived.clone(),
++        archived.parent().unwrap().to_path_buf(),
++    ] {
++        std::fs::File::open(path)
++            .unwrap()
++            .set_modified(old)
++            .unwrap();
++    }
++    fixture
++        .lead
++        .host
++        .open_session(ThreadId::new(), false)
++        .unwrap();
++    assert!(archived.join("store.json").exists());
 +}
 +
 +#[test]

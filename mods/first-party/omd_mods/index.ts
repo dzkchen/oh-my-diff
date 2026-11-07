@@ -134,7 +134,12 @@ export default function activate(api: ModAPI) {
     const info = api.host.tryCall('session.info', null);
     return { ...state, choosing: { from: key(item), name, models, lead: info.ok ? info.value.model : null }, notice: null };
   };
+  const locked = (item: PackageState, state: Saved) => item.effective ? null
+    : state.packages.some(other => other.id === item.id && other.effective) ? `Settings save to the ${item.scope === 'user' ? 'project' : 'user'} copy, which is on; change them there`
+      : 'Turn it on to change its settings';
   const act = (state: Saved, verb: string, argument: string, from = LIST, item?: PackageState): Saved | null => {
+    const refusal = item && ['set', 'route', 'choose', 'pick'].includes(verb) && locked(item, state);
+    if (refusal) return { ...state, notice: refusal };
     if (verb === 'cancel') return { ...state, review: null, choosing: null, notice: null };
     if (verb === 'apply') return state.review ? apply(state, state.review.request, state.review.label, state.review.generation) : { ...state, notice: 'Nothing to apply' };
     if (verb === 'set') return write(state, item, argument);
@@ -290,15 +295,16 @@ export default function activate(api: ModAPI) {
     if (state.review?.from === key(item)) return reviewing(title(item, state), state, args);
     if (state.choosing?.from === key(item)) return chooser(item, state, state.choosing);
     const fixed = kept(item) && item.enabled;
+    const editable = !locked(item, state);
     const actions = item.source !== 'selection' ? [['update', 'Update'], ['rollback', 'Roll back'], ...fixed ? [] : [['remove', 'Remove']]] : item.failed?.startsWith('source_changed') ? [['trust', 'Trust the edited source']] : [];
     return {
       title: title(item, state), action: { command: 'mods', args },
       subtitle: subtitle([`${status(item)} · ${item.version} · ${item.source === 'selection' ? 'local folder' : item.source}${item.compatible ? '' : ' · needs a newer Oh My Diff'}`, item.description,
-        item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}.`, item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), state.notice]),
+        item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}.`, item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), properties(item).length ? locked(item, state) : null, state.notice]),
       items: [
         ...fixed ? [] : [entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled })],
-        ...properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
-        ...properties(item).filter(([, property]) => property.choices === 'routes').slice(0, 8).flatMap(([name, property]) => [
+        ...!editable ? [] : properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
+        ...!editable ? [] : properties(item).filter(([, property]) => property.choices === 'routes').slice(0, 8).flatMap(([name, property]) => [
           entry({ id: `choose:${name}`, kind: 'action', label: `Choose a model for ${labelOf(name, property)}`,
             description: 'Pick a ChatGPT model and effort on your plan; asks before changing anything' }),
           entry({ id: `route:${name}`, kind: 'action', label: `Add a helper model for ${labelOf(name, property)}`,

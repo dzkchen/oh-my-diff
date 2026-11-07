@@ -5,7 +5,7 @@ type Snap = { commit: string; tree: string };
 type Change = { path: string; target: string | null; status: string };
 type Entry = {
   thread: string; turn: string; outcome: string; at: number; before: string; after: string; count: number; paths: string[];
-  undone: { at: number; before: string; after: string } | null;
+  undone: { at: number; before: string; after: string } | null; undoing?: string;
 };
 type State = { entries: Entry[]; pending: Record<string, { turn: string; before: string; at: number }>; error: string | null };
 type Outcome = { done: string; current: Snap; after: Snap } | { refused: string };
@@ -45,6 +45,11 @@ const listed = (paths: string[], total = paths.length) => `${paths.slice(0, SHOW
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 const clock = (at: number) => new Date(at).toISOString().slice(11, 16);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+const space = (r: Repo) => {
+  let hash = 0x811c9dc5;
+  for (const byte of encoder.encode(r.gitdir)) hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
+  return `${REFS}${hash.toString(16).padStart(8, '0')}/`;
+};
 
 export default function activate(api: ModAPI) {
   const load = (): State => ({ entries: [], pending: {}, error: null, ...api.state.get() as Partial<State> | null });
@@ -114,7 +119,7 @@ export default function activate(api: ModAPI) {
   };
   const pin = (r: Repo, commits: string[]) => {
     try {
-      git(r.top, ['update-ref', '--stdin'], { stdin: commits.map(commit => `update ${REFS}${commit} ${commit}\n`).join('') });
+      git(r.top, ['update-ref', '--stdin'], { stdin: commits.map(commit => `update ${space(r)}${commit} ${commit}\n`).join('') });
     } catch {
       return;
     }
@@ -122,13 +127,16 @@ export default function activate(api: ModAPI) {
   const keepRefs = (r: Repo, state: State) => {
     try {
       const wanted = new Set([
-        ...state.entries.flatMap(entry => [entry.before, entry.after, ...entry.undone ? [entry.undone.before, entry.undone.after] : []]),
+        ...state.entries.flatMap(entry => [entry.before, entry.after, ...entry.undone ? [entry.undone.before, entry.undone.after] : [], ...entry.undoing ? [entry.undoing] : []]),
         ...Object.values(state.pending).map(pending => pending.before),
       ]);
-      const present = git(r.top, ['for-each-ref', '--format=%(refname)', REFS]).split('\n').filter(Boolean);
+      const refs = space(r);
+      const listed = git(r.top, ['for-each-ref', '--format=%(refname)', REFS]).split('\n').filter(Boolean);
+      const present = listed.filter(ref => ref.startsWith(refs));
       const lines = [
-        ...present.filter(ref => !wanted.has(ref.slice(REFS.length))).map(ref => `delete ${ref}`),
-        ...[...wanted].filter(commit => !present.includes(REFS + commit)).map(commit => `update ${REFS}${commit} ${commit}`),
+        ...listed.filter(ref => !ref.slice(REFS.length).includes('/')).map(ref => `delete ${ref}`),
+        ...present.filter(ref => !wanted.has(ref.slice(refs.length))).map(ref => `delete ${ref}`),
+        ...[...wanted].filter(commit => !present.includes(refs + commit)).map(commit => `update ${refs}${commit} ${commit}`),
       ];
       for (const part of chunks(lines, 500)) git(r.top, ['update-ref', '--stdin'], { stdin: `${part.join('\n')}\n` });
     } catch {
@@ -182,7 +190,7 @@ export default function activate(api: ModAPI) {
   };
 
   // Idempotent: a path already back at target counts as done, and one at neither source nor target is a later edit.
-  const revert = (r: Repo, thread: string, target: string, source: string, refusal: string | null): Outcome => {
+  const revert = (r: Repo, thread: string, target: string, source: string, refusal: string | null, begin: (current: Snap, moved: Map<string, Change>) => void = () => {}): Outcome => {
     const moved = new Map(changes(r, target, source).map(change => [change.path, change]));
     if (!moved.size) return { refused: 'Nothing to change: that turn left no file changes.' };
     const current = snapshot(r, thread, 'omd checkpoint: before undo');
@@ -209,6 +217,7 @@ export default function activate(api: ModAPI) {
         return { refused: `Not done: ${path} is now a directory that also holds ${listed(foreign)}, which that turn didn't create. Putting the file back would delete them, so move them out first.` };
       }
     }
+    begin(current, moved);
     let deleted = 0;
     const failed: string[] = [];
     const present = added.filter(path => found[path] !== null);
@@ -311,8 +320,16 @@ export default function activate(api: ModAPI) {
     if (!entry) return { display: entries.length ? 'Every recorded turn is already undone. /redo brings the last one back.' : `No turn with file changes recorded in this repository yet.${state.error ? ` Last problem: ${state.error}` : ''}` };
     return apply(state,
       r => revert(r, entry.thread, entry.before, entry.after, words[0] === 'force' ? null
-        : 'Undoing would overwrite those edits. Run /undo force to undo anyway; the current files are saved first, so /redo brings them back.'),
-      outcome => { entry.undone = { at: Date.now(), before: outcome.current.commit, after: outcome.after.commit }; },
+        : 'Undoing would overwrite those edits. Run /undo force to undo anyway; the current files are saved first, so /redo brings them back.',
+      (current, moved) => {
+        if (!entry.undoing || changes(r, entry.undoing, current.commit).some(change => !moved.has(change.path))) entry.undoing = current.commit;
+        save(state);
+        keepRefs(r, state);
+      }),
+      outcome => {
+        entry.undone = { at: Date.now(), before: entry.undoing ?? outcome.current.commit, after: outcome.after.commit };
+        delete entry.undoing;
+      },
       done => `Undid the ${clock(entry.at)} UTC turn: ${done} /redo puts it back. Commits and branches are unchanged.`);
   }, { description: 'Undo the file changes of the last turn in this repository: /undo, /undo show, /undo force, /undo list', args_hint: '[force|show|list]' });
 
