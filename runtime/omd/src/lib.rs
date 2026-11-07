@@ -36,6 +36,18 @@ pub mod watch_filter;
 mod workspace;
 pub mod workspace_lease;
 
+pub fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
+    use sha2::Digest;
+    format!("{:x}", sha2::Sha256::digest(bytes))
+}
+
+pub fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 pub use admission::Admission;
 pub use admission::Attempt;
 pub use admission::Limits;
@@ -134,13 +146,16 @@ pub use mods::ModFsRoot;
 pub use mods::ModGrants;
 pub use mods::ModHost;
 pub use mods::ModHostCall;
+pub use mods::ModHostCallback;
 pub use mods::ModHttpAccess;
 pub use mods::ModIcons;
 pub use mods::ModInstallRequest;
+pub use mods::ModInvokeOptions;
 pub use mods::ModKeyAction;
 pub use mods::ModKeyContext;
 pub use mods::ModKeys;
 pub use mods::ModLayout;
+pub use mods::ModOpenOptions;
 pub use mods::ModOsAccess;
 pub use mods::ModOverlay;
 pub use mods::ModOverlayClip;
@@ -216,3 +231,5 @@ pub mod turn_evidence;
 pub mod plugin_component;
 
 mod session_policy;
+
+pub use mods::release_disposable_runners;

@@ -63,7 +63,7 @@ pub(super) async fn stored(
     }
     let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
     let text = expansion::CHAIN_CALL
-        .try_with(|chain| chain.clone())
+        .try_with(std::clone::Clone::clone)
         .ok()
         .filter(|chain| *chain == input.call_id)
         .and_then(|call_id| {
@@ -77,7 +77,7 @@ pub(super) async fn stored(
         .ok_or("tool_original_unavailable: only the call's own interceptor chain can read it")?;
     let reference = original(lead, caller.id, caller.source, &input.call_id, text.clone()).await?;
     Ok(
-        json!({"reference": reference, "sha256": codex_omd::resource_data::hash(text.as_bytes()),
+        json!({"reference": reference, "sha256": codex_omd::sha256_hex(text.as_bytes()),
         "bytes": text.len()}),
     )
 }

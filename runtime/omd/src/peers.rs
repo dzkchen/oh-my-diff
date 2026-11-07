@@ -140,16 +140,8 @@ fn drain<T>(
     Ok((taken, true))
 }
 
-fn identifier(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
-}
-
 fn sealed(seal: &dyn Seal, key: &str, body: Value) -> io::Result<Value> {
-    let tag = seal.seal(&broker::sha256(broker::canonical(&body).as_bytes()))?;
+    let tag = seal.seal(&crate::sha256_hex(broker::canonical(&body).as_bytes()))?;
     Ok(json!({key: body, "tag": tag}))
 }
 
@@ -162,14 +154,14 @@ fn opened(seal: &dyn Seal, key: &str, envelope: &Value) -> io::Result<Option<Val
         return Ok(None);
     };
     Ok(seal
-        .verify(&broker::sha256(broker::canonical(body).as_bytes()), tag)?
+        .verify(&crate::sha256_hex(broker::canonical(body).as_bytes()), tag)?
         .then(|| body.clone()))
 }
 
 impl Peers {
     /// Registers `session` (a lead thread) under `<store>/peers`; the held lock marks it live.
     pub fn open(store: &Path, session: &str, repository: &Path) -> io::Result<Self> {
-        if !identifier(session) {
+        if !crate::resource_data::dotted_token(session) {
             return Err(failure("peer_session_invalid"));
         }
         let root = store.join("peers");
@@ -263,7 +255,7 @@ impl Peers {
         correlation: Option<String>,
         ttl_ms: u64,
     ) -> io::Result<Value> {
-        if !identifier(to) || !identifier(package) {
+        if !crate::resource_data::dotted_token(to) || !crate::resource_data::dotted_token(package) {
             return Err(failure("peer_address_invalid"));
         }
         if !TTL_MS.contains(&ttl_ms) {
@@ -291,7 +283,7 @@ impl Peers {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_nanos());
-        let id = broker::sha256(
+        let id = crate::sha256_hex(
             format!(
                 "{}:{}:{nanos}:{}",
                 self.session,
@@ -368,7 +360,7 @@ impl Peers {
     ) -> io::Result<()> {
         let Some(sender) = message["from"]["session"]
             .as_str()
-            .filter(|session| identifier(session))
+            .filter(|session| crate::resource_data::dotted_token(session))
         else {
             return Ok(());
         };
@@ -406,13 +398,7 @@ impl Peers {
             .sent
             .lock()
             .map(|mut sent| {
-                let ids = sent
-                    .iter()
-                    .filter(|(_, entry)| entry.expires_at_ms + 5_000 < now)
-                    .map(|(id, _)| id.clone())
-                    .collect::<Vec<_>>();
-                ids.into_iter()
-                    .filter_map(|id| sent.remove(&id).map(|entry| (id, entry)))
+                sent.extract_if(.., |_, entry| entry.expires_at_ms + 5_000 < now)
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();

@@ -20,16 +20,10 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Op;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
-use sha2::Digest;
-use sha2::Sha256;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
-
-pub fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
 
 fn error(e: impl ToString) -> String {
     e.to_string()
@@ -275,7 +269,10 @@ pub(super) fn isolated(
     config.agent_max_depth = 0;
     config.agent_max_threads = Some(1);
     for feature in config.features.enabled_features() {
-        if !matches!(feature, Feature::ShellTool | Feature::UnifiedExec) {
+        if !matches!(
+            feature,
+            Feature::ShellTool | Feature::UnifiedExec | Feature::CodexHooks
+        ) {
             config.features.disable(feature).map_err(error)?;
         }
     }
@@ -562,7 +559,7 @@ mod tests {
         .unwrap()
         .output()
         .unwrap();
-        assert!(output.status.success(), "{:?}", output);
+        assert!(output.status.success(), "{output:?}");
         assert_eq!(output.stdout, b"sandbox-ok");
     }
 
@@ -596,7 +593,7 @@ mod tests {
         .unwrap()
         .output()
         .unwrap();
-        assert!(output.status.success(), "{:?}", output);
+        assert!(output.status.success(), "{output:?}");
         assert_eq!(output.stdout, b"sandbox-ok");
     }
 

@@ -312,3 +312,29 @@ test('Aurora flares when a turn ends and stirs while one runs with calm off, in 
   const ember = ready();
   assert.equal(frame({ ...ember, ended: NOW + 1000 }), frame(ember));
 });
+
+test('background and idle scenes stop timers and resume without resetting active work', () => {
+  for (const payload of [{ focused: false }, { focused: true, idle: true }]) {
+    const state = call({ event: 'turn_start', state: ready(), payload: null }).state;
+    const hidden = call({ event: 'focus', state, payload });
+    assert.equal(hidden.state.busy, true);
+    assert.deepEqual(tick(hidden.state, `f.${NOW}.-1.0.0.0.0`, NOW + 1000).calls, []);
+    const resumed = call({ event: 'focus', state: hidden.state, payload: { focused: true, idle: false }, virtual_time_ms: NOW + 2000 });
+    assert.equal(resumed.state.busy, true);
+    assert.equal(resumed.state.origin, state.origin);
+    assert.equal(resumed.of('events.publish').length, 1);
+    const wake = call({ event: 'channel', state: resumed.state, payload: { channel: 'omd_theme/wake', data: resumed.state.run } });
+    assert.equal(wake.of('events.schedule').length, 1);
+  }
+});
+
+test('a newly displayed thread recovers a previous inactive state from its terminal snapshot', () => {
+  const state = ready();
+  const hidden = call({ event: 'focus', state, payload: { focused: false } }).state;
+  const shown = draw(hidden, { active: true });
+  assert.equal(shown.state.inactive, false);
+  assert.equal(shown.of('events.publish').length, 1);
+  const background = draw(shown.state, { active: false });
+  assert.equal(background.state.inactive, true);
+  assert.deepEqual(tick(background.state, `f.${background.state.run}.-1.0.0.0.0`, NOW + 1000).calls, []);
+});

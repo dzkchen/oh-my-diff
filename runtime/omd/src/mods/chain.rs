@@ -758,7 +758,7 @@ use crate::model_request::bounded;
 fn recorded(surface: &str, value: &Value) -> Value {
     if surface == "model_send" {
         let bytes = serde_json::to_vec(value).unwrap_or_default();
-        return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
+        return json!({"sha256": crate::sha256_hex(&bytes), "bytes": bytes.len()});
     }
     if surface == "history_persist" {
         let texts = value["entries"]
@@ -768,7 +768,7 @@ fn recorded(surface: &str, value: &Value) -> Value {
             .map(|entry| &entry["text"])
             .collect::<Vec<_>>();
         let bytes = serde_json::to_vec(&texts).unwrap_or_default();
-        return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
+        return json!({"sha256": crate::sha256_hex(&bytes), "bytes": bytes.len()});
     }
     bounded(value)
 }
@@ -1506,7 +1506,7 @@ impl ModHost {
             .filter_map(|id| self.loaded.get(id)?.package.policy.as_ref())
             .flat_map(|policy| policy.namespaces.clone())
             .collect::<Vec<_>>();
-        let policy = crate::mods::digest(
+        let policy = crate::sha256_hex(
             &serde_json::to_vec(
                 &exempt
                     .iter()
@@ -1546,7 +1546,7 @@ impl ModHost {
                         "sha256": loaded.selection.sha256, "source": loaded.selection.path,
                         "scope": loaded.selection.scope, "capabilities": package.capabilities,
                         "dependencies": package.dependencies, "requires": package.requires,
-                        "services": package.services, "registrations": loaded.registrations,
+                        "services": package.services, "registrations": *loaded.registrations,
                         "source_use": loaded.source_use}, "reason": "load"});
                     let chain = intercept(
                         &mut Access::Held(self),
@@ -1629,9 +1629,9 @@ impl ModHost {
             if let Some(loaded) = self.loaded.remove(&id) {
                 self.order.retain(|item| *item != id);
                 self.rejected.push(ModRejection {
-                    path: loaded.selection.path,
+                    path: loaded.selection.path.clone(),
                     id: Some(id),
-                    scope: loaded.selection.scope,
+                    scope: loaded.selection.scope.clone(),
                     reason,
                 });
             }
@@ -1702,7 +1702,7 @@ impl ModHost {
             })
             .map(|(id, loaded)| json!([id, loaded.selection.sha256, loaded.selection.settings]))
             .collect::<Vec<_>>();
-        let fingerprint = crate::mods::digest(
+        let fingerprint = crate::sha256_hex(
             &serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
         );
         Some(SendPolicy {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::workspace_operations::WorkspaceAuthority;
+use codex_omd::ModInvokeOptions;
 use codex_omd::data_store::Origin;
 
 #[derive(Clone, Default)]
@@ -141,7 +142,7 @@ fn notify_contract(core: &Core, lead: &Lead, payload: Value) {
     tokio::task::spawn_blocking(move || {
         let _thread = codex_omd::StateThread::enter(Some(thread));
         if let Ok(mut runtime) = runtime.lock() {
-            let _ = runtime.event("contract", payload);
+            let _ = runtime.event("contract", payload, ModInvokeOptions::default());
         }
     });
 }
@@ -228,7 +229,7 @@ async fn submit_receipt(
     receipt.validate()?;
     let value = serde_json::to_value(&receipt).map_err(|e| e.to_string())?;
     let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
-    let name = format!("receipt-{}.json", execution::hash(&bytes));
+    let name = format!("receipt-{}.json", codex_omd::sha256_hex(&bytes));
     // Only an accepted receipt leaves evidence; a failed write withdraws it.
     let submitted = {
         let mut contract = lead

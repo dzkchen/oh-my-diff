@@ -188,7 +188,7 @@ pub fn response_allowed(method: &str, result: &Value) -> Result<(), String> {
                 && object
                     .get("permissions")
                     .and_then(Value::as_object)
-                    .is_some_and(|value| value.is_empty())
+                    .is_some_and(serde_json::Map::is_empty)
             {
                 Ok(())
             } else {

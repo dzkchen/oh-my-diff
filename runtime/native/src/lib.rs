@@ -160,6 +160,24 @@ pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
 ) -> Result<(), String> {
+    let result = install_active(registry, manager);
+    if let Err(error) = &result
+        && let Some(root) = std::env::var_os(codex_omd::MOD_STORE_ENV)
+        && let root = PathBuf::from(root)
+        && root.is_absolute()
+        && let Ok(root) = root.canonicalize()
+        && let Ok(repository) = std::env::current_dir().and_then(|path| path.canonicalize())
+        && !root.starts_with(repository)
+    {
+        let _ = inactive(&root, error.clone());
+    }
+    result
+}
+
+fn install_active(
+    registry: &mut ExtensionRegistryBuilder<Config>,
+    manager: Weak<ThreadManager>,
+) -> Result<(), String> {
     if !codex_omd::effective_mode()?.mod_host_enabled() {
         return Ok(());
     }
@@ -170,9 +188,7 @@ pub fn install(
     let repository = std::env::current_dir()
         .and_then(|path| path.canonicalize())
         .map_err(|error| error.to_string())?;
-    if !root.is_absolute() || root.canonicalize().map_err(|error| error.to_string())? != root {
-        return Err("the mod store must be canonical and outside the repository".into());
-    }
+    let root = canonical_store_root(&root)?;
     if codex_omd::app_routes::unscoped_directory(&repository) {
         return inactive(
             &root,
@@ -192,7 +208,7 @@ pub fn install(
     };
     accounting::set_credential_root(root.clone());
     let host = Arc::new(Host {
-        repository_identity: execution::hash(repository.as_os_str().as_encoded_bytes()),
+        repository_identity: codex_omd::sha256_hex(repository.as_os_str().as_encoded_bytes()),
         routes: std::sync::Mutex::new(RouteTable {
             stamp,
             config: Arc::new(config.clone()),
@@ -215,6 +231,13 @@ pub fn install(
             .is_some_and(|(owner, _)| owner == provider)
     });
     mods::install(registry, host).or_else(|error| inactive(&root, error))
+}
+
+fn canonical_store_root(root: &std::path::Path) -> Result<PathBuf, String> {
+    if !root.is_absolute() {
+        return Err("the mod store must be absolute and outside the repository".into());
+    }
+    root.canonicalize().map_err(|error| error.to_string())
 }
 
 fn inactive(root: &std::path::Path, error: String) -> Result<(), String> {
@@ -273,7 +296,7 @@ impl Host {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Host {
-            repository_identity: execution::hash(repository.as_os_str().as_encoded_bytes()),
+            repository_identity: codex_omd::sha256_hex(repository.as_os_str().as_encoded_bytes()),
             routes: std::sync::Mutex::new(RouteTable {
                 stamp: routes.stamp,
                 config: routes.config.clone(),
@@ -656,7 +679,7 @@ impl Session {
             }
             result => result.map_err(|e| e.to_string())?,
         }
-        Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
+        Ok(json!({"path": path, "sha256": codex_omd::sha256_hex(&bytes)}))
     }
 
     /// Holds the contract lock so concurrent writers anchor and store states in the same order.
@@ -673,11 +696,8 @@ impl Session {
             write_bytes(&self.contract_state, &bytes, Durability::Durable)
                 .map_err(|error| error.to_string())
                 .and_then(|()| {
-                    codex_omd::broker::anchor(
-                        &self.contract_state,
-                        &codex_omd::broker::sha256(&bytes),
-                    )
-                    .map_err(|error| error.to_string())
+                    codex_omd::broker::anchor(&self.contract_state, &codex_omd::sha256_hex(&bytes))
+                        .map_err(|error| error.to_string())
                 })
         };
         if let Err(error) = &result {
@@ -758,6 +778,60 @@ fn thread_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_store_root_normalizes_aliases_and_refuses_relative_paths() {
+        let store = tempfile::tempdir().unwrap();
+        let canonical = store.path().canonicalize().unwrap();
+        assert_eq!(
+            canonical_store_root(&canonical.join(".")).unwrap(),
+            canonical
+        );
+        assert!(canonical_store_root(std::path::Path::new("relative-store")).is_err());
+        let alternate_case = canonical.with_file_name(
+            canonical
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_uppercase(),
+        );
+        if alternate_case.exists() {
+            assert_eq!(canonical_store_root(&alternate_case).unwrap(), canonical);
+        }
+    }
+
+    #[test]
+    fn activation_failure_writes_status_before_returning() {
+        const CHILD: &str = "OMD_ACTIVATION_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let mut registry = ExtensionRegistryBuilder::default();
+            let error = install(&mut registry, Weak::new()).unwrap_err();
+            let root = PathBuf::from(std::env::var_os(codex_omd::MOD_STORE_ENV).unwrap());
+            let status: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("mod-status.json")).unwrap())
+                    .unwrap();
+            assert_eq!(status["activation_error"], error);
+            assert_eq!(status["mods"], serde_json::json!([]));
+            assert_eq!(status["rejected"], serde_json::json!([]));
+            return;
+        }
+        let store = tempfile::tempdir().unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::activation_failure_writes_status_before_returning",
+            ])
+            .env(CHILD, "1")
+            .env(codex_omd::MODE_ENV, "invalid-mode")
+            .env(codex_omd::MOD_STORE_ENV, store.path())
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+    }
 
     #[test]
     fn workspace_operation_guard_excludes_other_sessions_in_same_repository() {

@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
@@ -415,14 +417,7 @@ fn environment(
 }
 
 pub fn repository_key(repository: &Path) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(repository.as_os_str().as_encoded_bytes())
-    )
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::sha256_hex(repository.as_os_str().as_encoded_bytes())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -834,6 +829,97 @@ fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
     .then_some(path)
 }
 
+const EXEC_ARTIFACT_BLOCK_BYTES: usize = 64 * 1024;
+
+struct VerifiedOutput {
+    stamp: crate::FileStamp,
+    len: usize,
+    blocks: Vec<[u8; 32]>,
+}
+
+static VERIFIED_OUTPUTS: LazyLock<Mutex<BTreeMap<PathBuf, Arc<VerifiedOutput>>>> =
+    LazyLock::new(Default::default);
+
+fn remember_output(path: &Path, stamp: crate::FileStamp, bytes: &[u8]) -> Arc<VerifiedOutput> {
+    let verified = Arc::new(VerifiedOutput {
+        stamp,
+        len: bytes.len(),
+        blocks: bytes
+            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
+            .map(|block| Sha256::digest(block).into())
+            .collect(),
+    });
+    let mut outputs = VERIFIED_OUTPUTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if outputs.len() >= 1024 {
+        outputs.clear();
+    }
+    outputs.insert(path.to_path_buf(), verified.clone());
+    verified
+}
+
+/// An exec output artifact's block hashes, rehashed in full only when its file stamp changes.
+fn verified_output(
+    path: &Path,
+    file: &mut fs::File,
+    digest: &str,
+) -> Result<Arc<VerifiedOutput>, String> {
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let stamp = crate::file_stamp(&metadata);
+    if let Some(verified) = VERIFIED_OUTPUTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(path)
+        .filter(|verified| verified.stamp == stamp)
+    {
+        return Ok(verified.clone());
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(file)
+        .take((EXEC_ARTIFACT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > EXEC_ARTIFACT_BYTES
+        || crate::sha256_hex(&bytes) != digest
+        || std::str::from_utf8(&bytes).is_err()
+    {
+        return Err("exec_output_integrity_failed".into());
+    }
+    Ok(remember_output(path, stamp, &bytes))
+}
+
+fn verified_page(
+    file: &mut fs::File,
+    verified: &VerifiedOutput,
+    cursor: usize,
+    max: usize,
+) -> Result<Vec<u8>, String> {
+    let end = (cursor + max + 3).min(verified.len);
+    let first = cursor / EXEC_ARTIFACT_BLOCK_BYTES;
+    let start = first * EXEC_ARTIFACT_BLOCK_BYTES;
+    let span = (end.div_ceil(EXEC_ARTIFACT_BLOCK_BYTES) * EXEC_ARTIFACT_BLOCK_BYTES)
+        .min(verified.len)
+        .saturating_sub(start);
+    file.seek(SeekFrom::Start(start as u64))
+        .map_err(|error| error.to_string())?;
+    let mut window = Vec::with_capacity(span);
+    Read::by_ref(file)
+        .take(span as u64)
+        .read_to_end(&mut window)
+        .map_err(|error| error.to_string())?;
+    if window.len() != span
+        || window
+            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
+            .zip(&verified.blocks[first..])
+            .any(|(block, hash)| Sha256::digest(block)[..] != hash[..])
+    {
+        return Err("exec_output_integrity_failed".into());
+    }
+    window.truncate(end - start);
+    Ok(window.split_off(cursor - start))
+}
+
 /// A program's SHA-256, rehashed only when its file stamp changes.
 pub fn program_hash(path: &Path) -> Result<String, String> {
     static HASHES: LazyLock<Mutex<BTreeMap<PathBuf, (crate::FileStamp, String)>>> =
@@ -906,11 +992,7 @@ impl Host<'_> {
         let thread = caller.thread.unwrap_or("cli");
         if !crate::resource_data::token(caller.id)
             || !crate::resource_data::token(thread)
-            || caller.source_sha256.len() != 64
-            || !caller
-                .source_sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
+            || !crate::is_sha256_hex(&caller.source_sha256)
             || self
                 .data_root
                 .canonicalize()
@@ -945,7 +1027,7 @@ impl Host<'_> {
             .parent()
             .and_then(Path::parent)
             .ok_or("exec_output_directory_invalid")?;
-        let digest = sha256(bytes);
+        let digest = crate::sha256_hex(bytes);
         let path = directory.join(format!("{digest}.txt"));
         let lock = fs::OpenOptions::new()
             .read(true)
@@ -989,6 +1071,8 @@ impl Host<'_> {
             crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Ordered)
                 .map_err(|error| error.to_string())?;
         }
+        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+        remember_output(&path, crate::file_stamp(&metadata), bytes);
         Ok(json!({"reference": digest, "sha256": digest}))
     }
 
@@ -1004,10 +1088,7 @@ impl Host<'_> {
         }
         let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         let digest = &input.artifact.sha256;
-        if digest.len() != 64
-            || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-            || input.artifact.reference != *digest
-        {
+        if !crate::is_sha256_hex(&digest) || input.artifact.reference != *digest {
             return Err("exec_output_reference_invalid".into());
         }
         let directory = self.output_directory(caller)?;
@@ -1015,41 +1096,40 @@ impl Host<'_> {
         let mut file = fs::OpenOptions::new()
             .read(true)
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(path)
+            .open(&path)
             .map_err(|_| "exec_output_unavailable")?;
-        let mut bytes = Vec::new();
-        Read::by_ref(&mut file)
-            .take((EXEC_ARTIFACT_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        if bytes.len() > EXEC_ARTIFACT_BYTES || sha256(&bytes) != *digest {
-            return Err("exec_output_integrity_failed".into());
-        }
+        let verified = verified_output(&path, &mut file, digest)?;
         if !(self.active)() {
             return Err("host_operation_cancelled".into());
         }
-        let text = std::str::from_utf8(&bytes).map_err(|_| "exec_output_integrity_failed")?;
-        if input.cursor > bytes.len() || !text.is_char_boundary(input.cursor) {
+        let len = verified.len;
+        if input.cursor > len {
             return Err("exec_output_cursor_invalid".into());
         }
         let max = input
             .max_bytes
             .unwrap_or(EXEC_ARTIFACT_PAGE_BYTES)
             .clamp(1, EXEC_ARTIFACT_PAGE_BYTES);
-        let mut end = input.cursor.saturating_add(max).min(bytes.len());
-        while end > input.cursor && !text.is_char_boundary(end) {
+        let bytes = verified_page(&mut file, &verified, input.cursor, max)?;
+        let continuation = |byte: &u8| byte & 0xC0 == 0x80;
+        if bytes.first().is_some_and(continuation) {
+            return Err("exec_output_cursor_invalid".into());
+        }
+        let mut end = max.min(bytes.len());
+        while end > 0 && bytes.get(end).is_some_and(continuation) {
             end -= 1;
         }
-        if end == input.cursor && end < bytes.len() {
-            end += text[end..]
-                .chars()
-                .next()
-                .ok_or("exec_output_cursor_invalid")?
-                .len_utf8();
+        if end == 0 && !bytes.is_empty() {
+            end = 1 + bytes[1..]
+                .iter()
+                .take_while(|byte| continuation(byte))
+                .count();
         }
+        let text =
+            std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
+        let next = input.cursor + end;
         Ok(
-            json!({"text": &text[input.cursor..end], "cursor": if end < bytes.len() { Some(end) } else { None },
-            "bytes": bytes.len(), "sha256": digest}),
+            json!({"text": text, "cursor": (next < len).then_some(next), "bytes": len, "sha256": digest}),
         )
     }
 
@@ -1266,13 +1346,10 @@ impl Host<'_> {
         }
         if input.guards.len() > 4
             || !input.guards.is_empty() && !input.write
-            || input.guards.iter().any(|guard| {
-                guard.stdout_sha256.len() != 64
-                    || !guard
-                        .stdout_sha256
-                        .bytes()
-                        .all(|byte| byte.is_ascii_hexdigit())
-            })
+            || input
+                .guards
+                .iter()
+                .any(|guard| !crate::is_sha256_hex(&guard.stdout_sha256))
         {
             return Err("exec_guards_invalid".into());
         }
@@ -1395,7 +1472,7 @@ impl Host<'_> {
             return Err("exec_program_declined".into());
         }
         let cwd = match (input.cwd.as_deref(), unrestricted) {
-            (None | Some("") | Some("."), _) => repository.clone(),
+            (None | Some("") | Some("."), _) => repository,
             (Some(name), Some(_)) if Path::new(name).is_absolute() || relative(name) => repository
                 .join(name)
                 .canonicalize()
@@ -1629,7 +1706,7 @@ impl Host<'_> {
             "exit_code": status.and_then(|status| status.code()),
             "signal": signal,
             "stdout": String::from_utf8_lossy(visible_stdout),
-            "stdout_sha256": sha256(&stdout),
+            "stdout_sha256": crate::sha256_hex(&stdout),
             "stdout_bytes": stdout.len(),
             "output_artifact": output_artifact,
             "stderr": String::from_utf8_lossy(visible_stderr),
@@ -1660,7 +1737,7 @@ impl Host<'_> {
             let value = match snapshot.files.get(&name) {
                 Some(file) => json!({
                     "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
-                    "sha256": sha256(&file.bytes),
+                    "sha256": crate::sha256_hex(&file.bytes),
                 }),
                 None => Value::Null,
             };
@@ -1705,7 +1782,7 @@ impl Host<'_> {
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes)
                 .map_err(|error| error.to_string())?;
-            value["sha256"] = json!(sha256(&bytes));
+            value["sha256"] = json!(crate::sha256_hex(&bytes));
         }
         Ok(value)
     }
@@ -1863,7 +1940,7 @@ impl Host<'_> {
             "files": files.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
         });
         let bytes = serde_json::to_vec(&record)?;
-        let digest = sha256(&bytes);
+        let digest = crate::sha256_hex(&bytes);
         let mut count = 0;
         let mut total = 0;
         for entry in fs::read_dir(&directory)? {
@@ -1928,7 +2005,7 @@ impl Host<'_> {
             )?;
             let matches = match (expected, &current) {
                 (None, None) => true,
-                (Some(Fingerprint::Hash(hash)), Some(bytes)) => *hash == sha256(bytes),
+                (Some(Fingerprint::Hash(hash)), Some(bytes)) => *hash == crate::sha256_hex(bytes),
                 (Some(Fingerprint::Stat { size, mtime_ms }), Some(_)) => {
                     stat["size"] == json!(size) && stat["mtime_ms"] == json!(mtime_ms)
                 }
@@ -1954,12 +2031,7 @@ impl Host<'_> {
         }
         let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         if input.backup.reference != input.backup.sha256
-            || input.backup.sha256.len() != 64
-            || !input
-                .backup
-                .sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
+            || !crate::is_sha256_hex(&input.backup.sha256)
         {
             return Err("backup_reference_invalid".into());
         }
@@ -1967,7 +2039,7 @@ impl Host<'_> {
             .backup_directory(caller)?
             .join(format!("{}.json", input.backup.sha256));
         let bytes = fs::read(&path).map_err(|_| "backup_unavailable")?;
-        if sha256(&bytes) != input.backup.sha256 {
+        if crate::sha256_hex(&bytes) != input.backup.sha256 {
             return Err("backup_integrity_failed".into());
         }
         let record: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
@@ -2082,9 +2154,9 @@ mod program_hash_tests {
         let program = directory.path().join("program");
         fs::write(&program, "one").unwrap();
         let first = program_hash(&program).unwrap();
-        assert_eq!(first, sha256(b"one"));
+        assert_eq!(first, crate::sha256_hex(b"one"));
         assert_eq!(program_hash(&program).unwrap(), first);
         fs::write(&program, "three").unwrap();
-        assert_eq!(program_hash(&program).unwrap(), sha256(b"three"));
+        assert_eq!(program_hash(&program).unwrap(), crate::sha256_hex(b"three"));
     }
 }

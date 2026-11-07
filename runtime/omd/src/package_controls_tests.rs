@@ -258,19 +258,11 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
     apply(&store, &install.control).unwrap();
     let disable = preview(&store, json!({"action": "disable", "id": "author_mod"})).unwrap();
     apply(&store, &disable.control).unwrap();
-    let states = list(&store, None).unwrap()["packages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|package| {
-            (
-                package["scope"].clone(),
-                package["source"].clone(),
-                package["enabled"].clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert!(states.contains(&(json!("user"), json!("selection"), json!(false))));
+    let packages = list(&store, None).unwrap()["packages"].clone();
+    assert!(packages.as_array().unwrap().iter().any(|package| {
+        (&package["scope"], &package["source"], &package["enabled"])
+            == (&json!("user"), &json!("selection"), &json!(false))
+    }));
     let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
     apply(&store, &enable.control).unwrap();
 
@@ -304,7 +296,7 @@ fn listing_offers_host_routes_and_marks_required_selections() {
     let repository = root.join("repo");
     let grant = |name: &str, listed: &Path| {
         let path = root.join(format!("{name}.json"));
-        let hash = crate::resource_data::hash(listed.as_os_str().as_encoded_bytes());
+        let hash = crate::sha256_hex(listed.as_os_str().as_encoded_bytes());
         std::fs::write(&path, json!({"repositories": [hash]}).to_string()).unwrap();
         json!({"name": name, "roles": ["worker"], "mods": ["routed_mod"], "grant": {"path": path}})
     };

@@ -1,3 +1,4 @@
+use codex_omd::ModOpenOptions;
 use codex_omd::{ModHost, ModStore};
 use std::path::Path;
 
@@ -86,9 +87,12 @@ fn host_feature_examples_load_and_register_together() {
         store.enable(&copy, true).unwrap();
     }
     assert_eq!(covered.len(), HOST_FEATURES.len(), "{covered:?}");
-    let status = ModHost::open(root.join("store").canonicalize().unwrap())
-        .unwrap()
-        .status();
+    let status = ModHost::open(
+        root.join("store").canonicalize().unwrap(),
+        ModOpenOptions::default(),
+    )
+    .unwrap()
+    .status();
     for item in status["mods"].as_array().unwrap() {
         assert!(item["error"].is_null(), "{item}");
         let registered = [

@@ -146,18 +146,12 @@ impl Services {
     )]
     pub(super) async fn cleanup_stale(&self, generation: u64, owners: &BTreeMap<String, String>) {
         let mut records = self.records.lock().await;
-        let stale = {
-            let keys = records
-                .iter()
-                .filter(|(_, service)| {
-                    service.generation != generation || !owners.contains_key(&service.mod_id)
-                })
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>();
-            keys.into_iter()
-                .filter_map(|id| records.remove(&id))
-                .collect::<Vec<_>>()
-        };
+        let stale = records
+            .extract_if(.., |_, service| {
+                service.generation != generation || !owners.contains_key(&service.mod_id)
+            })
+            .map(|(_, service)| service)
+            .collect::<Vec<_>>();
         for service in stale {
             service.stop().await;
         }
@@ -167,13 +161,11 @@ impl Services {
     pub(super) async fn cleanup_owned(&self, mod_id: &str, generation: u64) {
         let owned = {
             let mut records = self.records.lock().await;
-            let keys = records
-                .iter()
-                .filter(|(_, agent)| agent.mod_id == mod_id && agent.generation == generation)
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>();
-            keys.into_iter()
-                .filter_map(|key| records.remove(&key))
+            records
+                .extract_if(.., |_, agent| {
+                    agent.mod_id == mod_id && agent.generation == generation
+                })
+                .map(|(_, agent)| agent)
                 .collect::<Vec<_>>()
         };
         for agent in owned {
@@ -285,7 +277,6 @@ impl Services {
                 codex_protocol::openai_models::TruncationPolicyConfig::tokens(10_000);
             info.supports_search_tool = true;
             info.multi_agent_version = Some(codex_protocol::protocol::MultiAgentVersion::V2);
-            info.used_fallback_model_metadata = false;
             models.push(info);
         }
         let records = self.records.lock().await;
@@ -434,7 +425,7 @@ impl Services {
                 return Err("service_code_roots_overlap".into());
             }
             let files = launch_snapshot::capture(root)?;
-            if launch_snapshot::digest(&files) != *expected {
+            if launch_snapshot::digest(&files)? != *expected {
                 return Err("service_source_changed".into());
             }
             source_bytes += files.files.values().map(Vec::len).sum::<usize>();
@@ -486,7 +477,7 @@ impl Services {
                     .map_err(|_| "service_source_unavailable")?
                     != *path
                 || bytes.len() > 4 * 1024 * 1024
-                || execution::hash(&bytes) != *expected
+                || codex_omd::sha256_hex(&bytes) != *expected
             {
                 return Err("service_source_changed".into());
             }
@@ -1010,8 +1001,8 @@ mod tests {
         assert_eq!(
             provider
                 .experimental_bearer_token
-                .map(|token| token.into_inner())
-                .as_deref(),
+                .as_deref()
+                .map(String::as_str),
             Some("local-secret")
         );
         assert!(!provider.requires_openai_auth && !provider.supports_websockets);
@@ -1043,6 +1034,7 @@ mod tests {
         let config =
             execution::isolated(&parent, &root, std::slice::from_ref(&endpoint), &[], false)
                 .unwrap();
+        assert!(config.features.enabled(codex_features::Feature::CodexHooks));
         let output = request_output(&config, vec!["/bin/sh".into(), "-c".into(),
             "value=$(cat \"$1\") || exit 10; if cat \"$2\"; then exit 11; fi; if printf bad > \"$1\"; then exit 12; fi; printf '{\"exit_code\":0,\"stdout\":\"%s\"}\\n' \"$value\"".into(),
             "check".into(), endpoint.display().to_string(), private.display().to_string()]).await.unwrap();

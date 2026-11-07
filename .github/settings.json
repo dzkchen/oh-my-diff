@@ -10,7 +10,12 @@
     {"name": "area: plugins", "color": "c5def5", "description": "Bundled plugins and skills"},
     {"name": "status: triage", "color": "fbca04", "description": "Needs a maintainer decision"},
     {"name": "status: accepted", "color": "0e8a16", "description": "Will be worked on"},
-    {"name": "status: blocked", "color": "b60205", "description": "Waiting on something external"}
+    {"name": "status: blocked", "color": "b60205", "description": "Waiting on something external"},
+    {"name": "status: needs-info", "color": "d4c5f9", "description": "Waiting for the reporter to answer"},
+    {"name": "status: needs-repro", "color": "bfdadc", "description": "No reliable reproduction yet"},
+    {"name": "status: upstream", "color": "d4c5f9", "description": "Belongs to upstream Codex or another tool"},
+    {"name": "resolution: duplicate", "color": "cfd3d7", "description": "Already reported"},
+    {"name": "resolution: wontfix", "color": "ffffff", "description": "Out of scope or working as intended"}
   ],
   "branch_protection": {
     "branch": "main",

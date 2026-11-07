@@ -1,3 +1,8 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::data_store::{DataStore, Origin, StoreProvenance};
 use codex_omd::scoped_data::{ScopedDataHost, ScopedDataHosts};
 use codex_omd::{ModHost, ModStore};
@@ -19,7 +24,7 @@ fn dispatch(
         "workspace.read" if readable => {
             let bytes = fs::read(repo.join("fact.txt"))?;
             Ok(
-                json!({"files":{"fact.txt":{"text":String::from_utf8(bytes.clone()).unwrap(),"sha256":codex_omd::resource_data::hash(&bytes)}}}),
+                json!({"files":{"fact.txt":{"text":String::from_utf8(bytes.clone()).unwrap(),"sha256":codex_omd::sha256_hex(&bytes)}}}),
             )
         }
         "workspace.read" => Err(std::io::Error::other("workspace_read_denied")),
@@ -71,7 +76,7 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         )
         .unwrap();
     store.enable(&component, true).unwrap();
-    let mut host = ModHost::open(store_path.clone()).unwrap();
+    let mut host = ModHost::open(store_path.clone(), ModOpenOptions::default()).unwrap();
     assert_eq!(host.commands().len(), 4, "{}", host.status());
     let mut data = ScopedDataHost::new(
         store_path.clone(),
@@ -83,7 +88,7 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         hash.to_owned(),
     )
     .unwrap();
-    let repository_key = codex_omd::resource_data::hash(repo.as_os_str().as_encoded_bytes());
+    let repository_key = codex_omd::sha256_hex(repo.as_os_str().as_encoded_bytes());
     let stored = DataStore {
         root: &store_path,
         repository_key: &repository_key,
@@ -98,72 +103,76 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     };
     let generation = host.generation();
     let retained = host
-        .invoke_with(
+        .invoke(
             "example_scoped_data",
             generation,
             "command",
             "retain",
             Value::Null,
-            || true,
-            |call| {
-                dispatch(
-                    &mut data,
-                    &stored,
-                    &repo,
-                    &call.operation,
-                    call.arguments,
-                    true,
-                )
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |call| {
+                    dispatch(
+                        &mut data,
+                        &stored,
+                        &repo,
+                        &call.operation,
+                        call.arguments,
+                        true,
+                    )
+                }),
+                ..ModInvokeOptions::default()
             },
         )
         .unwrap();
     assert_eq!(retained["revision"], 1);
     let frozen = host
-        .invoke_with(
+        .invoke(
             "example_scoped_data",
             generation,
             "command",
             "freeze",
             Value::Null,
-            || true,
-            |call| {
-                dispatch(
-                    &mut data,
-                    &stored,
-                    &repo,
-                    &call.operation,
-                    call.arguments,
-                    true,
-                )
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |call| {
+                    dispatch(
+                        &mut data,
+                        &stored,
+                        &repo,
+                        &call.operation,
+                        call.arguments,
+                        true,
+                    )
+                }),
+                ..ModInvokeOptions::default()
             },
         )
         .unwrap();
     assert_eq!(frozen["sha256"].as_str().unwrap().len(), 64);
     let context = host
-        .invoke_with(
+        .invoke(
             "example_scoped_data",
             generation,
             "context",
             "",
             json!({}),
-            || true,
-            |call| {
-                dispatch(
-                    &mut data,
-                    &stored,
-                    &repo,
-                    &call.operation,
-                    call.arguments,
-                    true,
-                )
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |call| {
+                    dispatch(
+                        &mut data,
+                        &stored,
+                        &repo,
+                        &call.operation,
+                        call.arguments,
+                        true,
+                    )
+                }),
+                ..ModInvokeOptions::default()
             },
         )
         .unwrap();
     assert!(context["text"].as_str().unwrap().contains("A scoped fact."));
-    let snapshot = json!({"reference":codex_omd::resource_data::hash(b"snapshot"),"sha256":codex_omd::resource_data::hash(b"snapshot")});
-    let worker = host.invoke_with(
-        "example_scoped_data", generation, "tool", "worker", json!({}), || true,
-        |call| match call.operation.as_str() {
+    let snapshot = json!({"reference":codex_omd::sha256_hex(b"snapshot"),"sha256":codex_omd::sha256_hex(b"snapshot")});
+    let worker = host.invoke("example_scoped_data", generation, "tool", "worker", json!({}), ModInvokeOptions { host: ModHostCallback::Own(&mut |call| match call.operation.as_str() {
             "workspace.snapshot" => Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]})),
             "routes.list" => Ok(json!([{"name":"reviewer","roles":["worker"],"available":true}])),
             "agents.spawn" => {
@@ -174,36 +183,37 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
             "agents.wait" => {
                 assert_eq!(call.arguments["consume"], true);
                 Ok(json!({"status":"completed","text":"A scoped fact.","consumed":true,
-                    "evidence":{"reference":"native-thread:fixture-worker","sha256":codex_omd::resource_data::hash(b"A scoped fact.")}}))
+                    "evidence":{"reference":"native-thread:fixture-worker","sha256":codex_omd::sha256_hex(b"A scoped fact.")}}))
             }
             _ => dispatch(&mut data, &stored, &repo, &call.operation, call.arguments, true),
-        },
-    ).unwrap();
+        }), ..ModInvokeOptions::default() }).unwrap();
     assert_eq!(worker["worker"]["status"], "completed");
     let mut denied_calls = Vec::new();
-    let denied = host.invoke_with(
+    let denied = host.invoke(
         "example_scoped_data",
         generation,
         "command",
         "retain",
         Value::Null,
-        || true,
-        |call| {
-            denied_calls.push(call.operation.clone());
-            dispatch(
-                &mut data,
-                &stored,
-                &repo,
-                &call.operation,
-                call.arguments,
-                false,
-            )
+        ModInvokeOptions {
+            host: ModHostCallback::Own(&mut |call| {
+                denied_calls.push(call.operation.clone());
+                dispatch(
+                    &mut data,
+                    &stored,
+                    &repo,
+                    &call.operation,
+                    call.arguments,
+                    false,
+                )
+            }),
+            ..ModInvokeOptions::default()
         },
     );
     assert!(denied.is_err());
     assert_eq!(denied_calls, ["workspace.read"]);
     drop(host);
-    let mut resumed = ModHost::open(store_path.clone()).unwrap();
+    let mut resumed = ModHost::open(store_path.clone(), ModOpenOptions::default()).unwrap();
     let mut data = ScopedDataHost::new(
         store_path.clone(),
         repo.clone(),
@@ -215,22 +225,24 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     )
     .unwrap();
     let context = resumed
-        .invoke_with(
+        .invoke(
             "example_scoped_data",
             resumed.generation(),
             "context",
             "",
             json!({}),
-            || true,
-            |call| {
-                dispatch(
-                    &mut data,
-                    &stored,
-                    &repo,
-                    &call.operation,
-                    call.arguments,
-                    true,
-                )
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |call| {
+                    dispatch(
+                        &mut data,
+                        &stored,
+                        &repo,
+                        &call.operation,
+                        call.arguments,
+                        true,
+                    )
+                }),
+                ..ModInvokeOptions::default()
             },
         )
         .unwrap();
@@ -293,7 +305,7 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         .unwrap_err();
     assert_eq!(error.to_string(), "data_source_not_selected");
     hosts
-        .call(owner, hash, "sessions.list", listing.clone(), || true)
+        .call(owner, hash, "sessions.list", listing, || true)
         .unwrap();
     let mut changed_selection = ScopedDataHost::new(
         store_path.clone(),

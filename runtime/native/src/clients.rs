@@ -490,7 +490,7 @@ pub fn action(
         Origin::UserCommand,
         move |runtime, host, active| {
             let host = std::cell::RefCell::new(host);
-            let call = |caller: &str, request: ModHostCall| {
+            let mut call = |caller: &str, request: ModHostCall| {
                 let mut host = host.borrow_mut();
                 (*host)(caller, request)
             };
@@ -514,9 +514,11 @@ pub fn action(
                         "command",
                         &registration.name,
                         Value::String(args),
-                        active,
-                        call,
-                        |_| {},
+                        codex_omd::ModInvokeOptions {
+                            active,
+                            host: codex_omd::ModHostCallback::Scoped(&mut call),
+                            ..codex_omd::ModInvokeOptions::default()
+                        },
                     )
                     .map(|value| json!({"result": value}))
                 },
@@ -569,7 +571,7 @@ pub fn render(client: &str, slot: &str, props: Value) -> Result<Value, String> {
     let _thread =
         codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
     let input = json!({"component": slot, "id": format!("client:{slot}"), "surface": "inline",
-        "viewport": {"columns": 80, "rows": 24}, "lifecycle": "final", "owner": null, "props": props.clone()});
+        "viewport": {"columns": 80, "rows": 24}, "lifecycle": "final", "owner": null, "props": props});
     let chain = codex_omd::render_shared(&core.runtime, input, || true)
         .map_err(|error| error.to_string())?;
     Ok(
@@ -724,7 +726,7 @@ pub(super) fn reloaded(core: &Core) {
         }
         None => {
             if let Ok(mut runtime) = core.runtime.lock() {
-                runtime.turn_boundary();
+                runtime.turn_boundary(&|| true);
             }
         }
     }
