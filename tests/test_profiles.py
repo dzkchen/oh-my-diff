@@ -489,6 +489,15 @@ class ProfileModeTests(unittest.TestCase):
             subprocess.run(["sh", launcher], check=True)
             self.assertEqual(calls(), 1)
 
+    def test_author_launcher_explains_a_missing_node(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            launcher = Path(temporary) / "omd-mod-author"
+            launcher.write_text(profiles.author_launcher_text(None, Path(temporary) / "cli.mjs"))
+            result = subprocess.run(["/bin/sh", launcher], capture_output=True, text=True, env={"PATH": temporary})
+            self.assertEqual(result.returncode, 127)
+            self.assertEqual(result.stderr, "omd-mod-author needs Node.js 22.18 or later on PATH\n")
+        self.assertTrue(profiles.author_launcher_text("/opt/node", "/cli.mjs").endswith('exec /opt/node /cli.mjs "$@"\n'))
+
     def test_plugins_creates_codex_home_before_the_first_codex_run(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()
