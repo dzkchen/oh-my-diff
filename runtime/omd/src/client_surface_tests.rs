@@ -767,6 +767,7 @@ fn admitted_terminal_user_keeps_remote_authority_boundaries() {
             "packages.apply",
             json!({"action":"reset","id":"m","target":"terminal"}),
         ),
+        ("packages.apply", json!({"action":"save-defaults","id":"m"})),
     ] {
         assert!(
             submit(
@@ -792,6 +793,7 @@ fn admitted_terminal_user_keeps_remote_authority_boundaries() {
             "packages.apply",
             json!({"action":"disable","id":"m","target":"shared"}),
         ),
+        ("packages.apply", json!({"action":"disable","id":"m"})),
         ("credentials.request", json!({})),
         ("terminal.copy", json!({"text":"secret"})),
     ] {

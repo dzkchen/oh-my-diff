@@ -16,7 +16,7 @@ pub struct PackageControl {
     confirmation: Option<String>,
     selection: Option<Selection>,
     generation: u64,
-    pub(crate) owner_revision: Option<(usize, u64, Value)>,
+    pub(crate) owner_revision: Option<(u64, u64, Value)>,
 }
 
 impl PackageControl {
