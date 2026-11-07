@@ -181,10 +181,10 @@
         "index.ts": "665d79af2c07e6031d43544edac25f2389bcd8b53ee1c8c88b9584be8f834329",
         "mod.json": "076c6a16e1286a733723910d56b697caf87628ef64368c17de558903beb094d5",
         "setup.mjs": "f5000fdab138b690618fbacf2e1aa1f851df311179b284026156f23c8b67eecb",
-        "transport.mjs": "f3ef04dd3c525b2eca3c79caaff1f97b630e18a92ee235dc6c837880820c0b52"
+        "transport.mjs": "db0cfef98a3cfa42540b268bbb707f2ecf50194576fa6135e25168e31fac59ef"
       },
       "id": "omd_cursor",
-      "package_sha256": "8fa0cc954a247f2123a2e02282475529f98c78c60af152220e5bd2b54d3d611c",
+      "package_sha256": "fde3a91843dcaf02aa156ac936105b50ed687b0e5c7595d132c8c8531a2f0c78",
       "source": "mods/first-party/omd_cursor",
       "version": "1.0.0"
     },
@@ -770,11 +770,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "cea81f52415c26fc63ffa6ffb6f56b3d6756e54e33492f4cae7508af69dc0bb3",
+        "index.ts": "cc00430710e42a1993d292be7b79e1f02a8274e2c94c8d8aabd02044c4c81d9d",
         "mod.json": "ab827b7d76b5290d1e9f3e67f2b65a0b5cfeb063e6682f0f6db1be4c869d9ec6"
       },
       "id": "omd_subagent_router",
-      "package_sha256": "9d33def4c6d561e014e784a405e376365fe73ff13751a49f65fce5c5a057af2c",
+      "package_sha256": "7ec823479373cafa80fc3fb073cb9e3017674f96d1550c1b985544543701b55f",
       "source": "mods/first-party/omd_subagent_router",
       "version": "1.0.0"
     },

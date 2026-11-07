@@ -204,3 +204,26 @@ fn commands_resolve_by_owner_or_unique_bare_name() {
     assert_eq!(owner("open"), None);
     assert_eq!(owner("alpha:missing"), None);
 }
+
+#[test]
+fn queued_posts_reach_only_their_thread_and_live_instance() {
+    let (origin, other) = (ThreadId::new(), ThreadId::new());
+    let detached = Arc::new(AtomicBool::new(false));
+    let post = |name: &str, thread, revoked: &Arc<AtomicBool>| Post {
+        owner: name.into(),
+        payload: Value::Null,
+        thread: Some(thread),
+        revoked: revoked.clone(),
+    };
+    POSTS.lock().unwrap().extend([
+        post("moved", other, &Arc::default()),
+        post("detached", origin, &detached),
+        post("live", origin, &Arc::default()),
+    ]);
+    detached.store(true, Ordering::Release);
+    assert_eq!(
+        next_post(origin).map(|post| post.owner),
+        Some("live".into())
+    );
+    assert!(next_post(origin).is_none());
+}

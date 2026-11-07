@@ -11,6 +11,7 @@ const PREFIX = 'omd_cursor_';
 const DISPATCH = 'omd_call';
 const OUTPUTS = ['function_call_output', 'custom_tool_call_output', 'tool_search_output'];
 const SETTLE_MS = [0, 15_000, 60_000, 300_000];
+const TOKENS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'];
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -158,6 +159,7 @@ class Turn {
     this.text = '';
     this.pending = null;
     this.reported = null;
+    this.usages = [];
     this.timer = null;
   }
   push(event) {
@@ -221,6 +223,7 @@ export class Router {
     this.charged = new Map();
     this.seen = new Map();
     this.settling = new Map();
+    this.tainted = new Map();
     this.notices = new Map();
     this.plan = null;
     this.planAt = 0;
@@ -254,6 +257,7 @@ export class Router {
       this.agents.delete(agentId);
       this.seen.delete(agentId);
       this.charged.delete(agentId);
+      this.tainted.delete(agentId);
     }
   }
   async agent(messages, thread, model, orphaned) {
@@ -304,7 +308,10 @@ export class Router {
         onDelta: ({ update }) => {
           if (update?.type === 'text-delta' && update.text) turn.push({ kind: 'text', delta: update.text });
           else if (update?.type === 'thinking-delta' && update.text) turn.push({ kind: 'reasoning', delta: update.text });
-          else if (update?.type === 'turn-ended' && update.usage) turn.pending = add(turn.pending, update.usage);
+          else if (update?.type === 'turn-ended' && update.usage) {
+            turn.pending = add(turn.pending, update.usage);
+            turn.usages.push(update.usage);
+          }
         } });
     } catch (error) {
       await this.finish(key, turn, false);
@@ -364,7 +371,7 @@ export class Router {
       delete this.state.agents[turn.agentId];
     }
     this.state.agents = Object.fromEntries(Object.entries(this.state.agents).sort((a, b) => b[1].at - a[1].at).slice(0, 200));
-    this.settle(turn.agentId, turn.model, { thread: turn.thread, request_id: turn.requestId ?? null });
+    if (turn.run?.id) this.settle(turn.agentId, turn.model, { thread: turn.thread, request_id: turn.requestId ?? null, run_id: turn.run.id, usages: turn.usages });
     this.releaseInactive();
     const temporary = `${this.statePath}.${turn.agentId}.${Date.now()}`;
     await writeFile(temporary, JSON.stringify(this.state));
@@ -389,35 +396,56 @@ export class Router {
     }
     await appendFile(join(this.route.data, 'usage.jsonl'), `${JSON.stringify({ at: Date.now(), kind: 'plan', account: this.account.name, ...this.plan })}\n`).catch(() => {});
   }
-  // Cursor settles billed cost some time after a run ends. The run's new usage entries are settled once all are priced (or at the last poll) against the OMD request that ended the run, and a charge is announced on the next response.
+  // Local agents key usage entries by a usage UUID the SDK never exposes, so a run claims the new entries matching its turns' token counts, unless an overlapping or unsettled run shares those counts. Otherwise a moved agent total counts while no settlement overlapped and none before stayed pending: at once without entries, at the last poll with them.
   settle(agentId, model, target) {
     const agent = this.agents.get(agentId);
     const seen = this.seen.get(agentId) ?? new Set();
     this.seen.set(agentId, seen);
-    this.settling.set(agentId, (this.settling.get(agentId) ?? 0) + 1);
+    const open = this.settling.get(agentId) ?? new Set();
+    this.settling.set(agentId, open.add(target));
     const total = (rows, key) => rows.reduce((sum, run) => sum + (run.cost?.[key] ?? 0), 0);
+    const counts = usage => TOKENS.map(key => usage?.[key] ?? 0).join();
     let done = false;
     let running = 0;
+    let contested = false;
     SETTLE_MS.forEach((delay, index) => setTimeout(async () => {
       if (done) return;
       running++;
       try {
         if (index === 0) await this.refreshPlan();
         if (done) return;
-        if (index === SETTLE_MS.length - 1) done = true;
+        const last = index === SETTLE_MS.length - 1;
+        if (last) done = true;
         const report = await agent.getUsage();
-        const fresh = (report?.runs ?? []).filter(run => !seen.has(run.runId));
-        const priced = fresh.length ? fresh.every(run => plain(run.cost)) : plain(report?.cost);
-        if (!priced && index < SETTLE_MS.length - 1) return;
-        done = true;
-        for (const run of fresh) seen.add(run.runId);
+        contested ||= open.size > 1;
+        const shared = new Set([...open].filter(other => other !== target).flatMap(other => other.usages.map(counts)).concat([...this.tainted.get(agentId) ?? []]));
+        const runs = report?.runs ?? [];
+        const fresh = [];
+        for (const usage of target.usages) {
+          const match = !shared.has(counts(usage)) && runs.find(run => !seen.has(run.runId) && !fresh.includes(run) && counts(run.usage) === counts(usage));
+          if (match) fresh.push(match);
+        }
+        const matched = fresh.length > 0 && fresh.length === target.usages.length;
         const before = this.charged.get(agentId) ?? { raw: 0, charged: 0 };
-        const cost = !priced ? null : fresh.length ? { raw_cents: total(fresh, 'rawCostCents'), charged_cents: total(fresh, 'chargedCents') }
-          : { raw_cents: Math.max(0, report.cost.rawCostCents - before.raw), charged_cents: Math.max(0, report.cost.chargedCents - before.charged) };
-        if (plain(report?.cost)) this.charged.set(agentId, { raw: report.cost.rawCostCents, charged: report.cost.chargedCents });
+        const moved = plain(report?.cost) && (report.cost.rawCostCents !== before.raw || report.cost.chargedCents !== before.charged);
+        const byRuns = matched && fresh.every(run => plain(run.cost));
+        const byTotal = !matched && (!runs.length || last) && moved && !contested && !this.tainted.has(agentId);
+        const priced = byRuns || byTotal;
+        if (!priced && !last) return;
+        done = true;
+        if (byRuns) for (const run of fresh) seen.add(run.runId);
+        if (!priced) this.tainted.set(agentId, new Set([...this.tainted.get(agentId) ?? [], ...target.usages.map(counts), '']));
+        const cost = byRuns ? { raw_cents: total(fresh, 'rawCostCents'), charged_cents: total(fresh, 'chargedCents') }
+          : byTotal ? { raw_cents: Math.max(0, report.cost.rawCostCents - before.raw), charged_cents: Math.max(0, report.cost.chargedCents - before.charged) } : null;
+        if (byTotal) {
+          for (const run of runs) seen.add(run.runId);
+          this.charged.set(agentId, { raw: report.cost.rawCostCents, charged: report.cost.chargedCents });
+        } else if (byRuns && plain(report?.cost) && open.size === 1) {
+          this.charged.set(agentId, { raw: report.cost.rawCostCents, charged: report.cost.chargedCents });
+        }
         await appendFile(join(this.route.data, 'usage.jsonl'), `${JSON.stringify({ at: Date.now(), kind: 'settlement', source: 'cursor_sdk.getUsage',
-          agent_id: agentId, model, thread: target.thread, request_id: target.request_id,
-          usage: fresh.length ? fresh.reduce((sum, run) => add(sum, run.usage), null) : report?.usage ?? null,
+          agent_id: agentId, run_id: target.run_id, model, thread: target.thread, request_id: target.request_id,
+          usage: byRuns ? fresh.reduce((sum, run) => add(sum, run.usage), null) : report?.usage ?? null,
           cost, status: cost ? 'settled' : 'pending' })}\n`);
         if (cost?.charged_cents > 0) {
           this.notices.set(target.thread, `Cursor charged ${cost.charged_cents.toFixed(2)}¢ beyond included usage for a run on agent ${agentId} (raw ${cost.raw_cents.toFixed(2)}¢); see /cursor usage.`);
@@ -425,9 +453,8 @@ export class Router {
       } catch {} finally {
         running--;
         if (done && !running) {
-          const pending = this.settling.get(agentId) - 1;
-          if (pending) this.settling.set(agentId, pending);
-          else this.settling.delete(agentId);
+          open.delete(target);
+          if (!open.size) this.settling.delete(agentId);
           this.releaseInactive();
         }
       }
