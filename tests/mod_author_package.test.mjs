@@ -6,6 +6,32 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { invoke, state, text } from '../mods/author/testing.mjs';
 
+test('author check enforces the host entrypoint and aggregate package limits without TypeScript', { skip: !process.env.OMD_MOD_BIN && 'needs OMD_MOD_BIN' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-limits-'));
+  const api = JSON.parse(readFileSync(new URL('../mods/package.json', import.meta.url))).version;
+  const manifest = { schema: 1, id: 'limits', version: '1.0.0', api, state_version: 1, capabilities: ['commands'], assets: ['a.json', 'b.json', 'c.json'] };
+  const author = () => spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, 'check', root], { encoding: 'utf8' });
+  try {
+    writeFileSync(join(root, 'mod.json'), JSON.stringify(manifest));
+    writeFileSync(join(root, 'index.ts'), "export default api => api.command('hello', () => 'hi');\n");
+    for (const asset of manifest.assets) writeFileSync(join(root, asset), JSON.stringify('x'.repeat(400_000)));
+    const aggregate = author();
+    assert.notEqual(aggregate.status, 0, aggregate.stderr);
+    assert.match(aggregate.stderr, /package_text_input_limit/);
+    writeFileSync(join(root, 'mod.json'), JSON.stringify({ ...manifest, assets: [] }));
+    writeFileSync(join(root, 'index.ts'), `export default () => {};\n${' '.repeat(524_288)}`);
+    const entrypoint = author();
+    assert.notEqual(entrypoint.status, 0, entrypoint.stderr);
+    assert.match(entrypoint.stderr, /file_limit/);
+    writeFileSync(join(root, 'index.ts'), 'export default () => {};\n');
+    const valid = author();
+    assert.equal(valid.status, 0, valid.stderr);
+    assert.match(valid.stderr, /check: ok/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('author packaging preserves custom entrypoints, assets and lifecycle scripts and inspects the output', () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-package-'));
   try {
@@ -210,6 +236,35 @@ test('watch refuses to move a shared dependency from project to user scope', { s
     assert.match(watched.stderr, /package_scope_conflict: dependency is installed in project scope/);
     assert.deepEqual(engine('package-lock', store), before);
     assert.equal(readFileSync(join(store, 'mods.json'), 'utf8'), selections);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('watch picks up a manifest asset created after the reload that named it failed', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-watch-new-'));
+  const project = join(root, 'project');
+  const store = join(root, 'store');
+  const cli = new URL('../mods/author/cli.mjs', import.meta.url);
+  const driver = `import fs, { readFileSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+let changed;
+fs.watch = (_directory, _options, listener) => (changed = listener, { close() {} });
+syncBuiltinESMExports();
+const [project, store] = process.argv.slice(1);
+const { watchProject } = await import(${JSON.stringify(cli.href)});
+const event = filename => (changed('change', filename), new Promise(resolve => setTimeout(resolve, 300)));
+watchProject(project, store, false);
+writeFileSync(project + '/mod.json', JSON.stringify({ ...JSON.parse(readFileSync(project + '/mod.json', 'utf8')), assets: ['extra.json'] }));
+await event('mod.json');
+writeFileSync(project + '/extra.json', '{}');
+await event('extra.json');
+process.exit(0);`;
+  try {
+    assert.equal(spawnSync(process.execPath, ['--no-warnings', cli.pathname, 'create', project, 'fixture'], { cwd: root }).status, 0);
+    assert.equal(spawnSync(process.env.OMD_MOD_BIN, ['init', store]).status, 0);
+    const watched = spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', driver, project, store], { cwd: root, encoding: 'utf8' });
+    assert.equal(watched.status, 0, watched.stderr);
+    assert.match(watched.stderr, /"reload_failed"/);
+    assert.equal(watched.stdout.match(/"reloaded"/g)?.length, 2, watched.stdout + watched.stderr);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

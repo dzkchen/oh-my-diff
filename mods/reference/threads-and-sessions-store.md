@@ -75,6 +75,8 @@ const { turns, recording } = api.host.call('turns.activity', { last: 1 });
 
 ## `sessions.list`
 
+Recorded-session access rechecks the effective managed, project or user selection and its current grants on every call.
+
 `sessions.list {since?, until?, cursor?, limit?}` pages this repository's recorded sessions that allow memory (Codex
 memory mode `enabled`). It returns `{sessions, cursor, revision, scan_truncated, unavailable, projection}`; each
 session has `session_id`, `task_id`, `parent_id`, `timestamp`, `revision`, `handle`, `history_mode`,

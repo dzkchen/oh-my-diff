@@ -107,7 +107,7 @@ With `retry_after_limit` on, a task that fails for a rate limit, on a provider w
 within 6 hours and at least 90% used (Claude, ChatGPT), is held for a restart. Its failure doesn't reach the lead,
 and `status` reports it `waiting` with the restart time. About 30 s after the reset it starts again as a new task with
 the same brief, route and model, and that task's result reaches the lead like any other, from the new task's handle, and `status <original>` links the two. A restart that fails isn't
-restarted again. If the route is gone or skipped by then, the original failure reaches the lead, and `status` says why. `cancel` stops a pending restart, and so does turning the setting off. The mod keeps the brief
+restarted again. If the route is gone or skipped by then, or its name now points at another provider, account or billing, the original failure reaches the lead, and `status` says why. `cancel` stops a pending restart, and so does turning the setting off. The mod keeps the brief
 (up to 8,000 bytes) only while this setting is on. It never moves the task to another route or provider.
 
 ## Settings

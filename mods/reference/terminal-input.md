@@ -133,7 +133,7 @@ selected binding and Esc clears the search or closes the overlay.
 
 - `action`: `enter`, `leave`, `move`, `down`, `up`, `drag`, or `scroll_up` and `scroll_down` for the mouse wheel;
 - `button`: `left`, `right`, `middle`, or null for motion and the wheel;
-- `column`/`row` relative to the component's first cell (a nested box counts its title and children);
+- `column`/`row` as signed 32-bit integers relative to the component's first cell (a nested box counts its title and children);
 - `half` (0 or 1, the half-cell row) on terminals that report pixel positions (Kitty, Ghostty and WezTerm), else
   null.
 
@@ -293,5 +293,6 @@ by `columns` and `rows`, or as last rendered. The default is 80 columns and 0 ro
 says when the next tick is due. The client sends key and pointer events through `omd/client/event`.
 
 Their posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
-host operations as `component_event` hooks, for terminal and client posts alike. Detaching unmounts the client's
-instances.
+host operations as `component_event` hooks, for terminal and client posts alike. A post is delivered only while the
+thread it was posted in is still current and its instance is still mounted. Detaching unmounts the client's instances
+and drops their undelivered posts.

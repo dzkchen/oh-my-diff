@@ -19,28 +19,11 @@ async fn original(
     call_id: &str,
     text: Arc<str>,
 ) -> Result<Value, String> {
-    let scope = lead.session.data.0.clone();
-    let initialized = scope.lock().map_err(|_| "data_scope_poisoned")?.is_some();
-    let authority = match initialized {
-        true => None,
-        false => Some(crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?),
-    };
-    let (root, thread) = (lead.host.root.clone(), lead.thread.to_string());
+    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
+    let mut hosts = operations::data_hosts(lead, authority);
     let (owner, source) = (owner.to_owned(), source.to_owned());
     let label = format!("tool_output:{call_id}");
     tokio::task::spawn_blocking(move || {
-        let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
-        if scope.is_none() {
-            let authority = authority.ok_or("data_scope_unavailable")?;
-            *scope = Some(codex_omd::scoped_data::ScopedDataHosts::new(
-                root,
-                authority.repository,
-                authority.session_root,
-                authority.session_database,
-                thread,
-            ));
-        }
-        let hosts = scope.as_mut().ok_or("data_scope_unavailable")?;
         let reference = hosts
             .text_evidence(&owner, &source, &label, &text)
             .map_err(|error| error.to_string())?;

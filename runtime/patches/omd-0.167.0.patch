@@ -68086,10 +68086,10 @@ index 0000000000000000000000000000000000000000..d7fc0b4bd8eb3d9cf13c65351b828bb6
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e1553be618a
+index 0000000000000000000000000000000000000000..34545be32b51921d380feae285e36380ae24e2f9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,907 @@
+@@ -0,0 +1,930 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -68274,8 +68274,13 @@ index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e15
 +const POINTER_BUTTONS: &[&str] = &["left", "right", "middle"];
 +
 +fn pointer(pointer: &Value) -> Option<Value> {
-+    (pointer["column"].is_u64()
-+        && pointer["row"].is_u64()
++    let coordinate = |axis: &str| {
++        pointer[axis]
++            .as_i64()
++            .is_some_and(|value| i32::try_from(value).is_ok())
++    };
++    (coordinate("column")
++        && coordinate("row")
 +        && pointer["action"]
 +            .as_str()
 +            .is_some_and(|action| POINTER_ACTIONS.contains(&action))
@@ -68369,8 +68374,15 @@ index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e15
 +        current
 +    });
 +}
-+/// Undelivered `component_post` payloads by owner, the latest per client instance.
-+static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
++struct Post {
++    owner: String,
++    payload: Value,
++    thread: Option<ThreadId>,
++    revoked: Arc<AtomicBool>,
++}
++
++/// Undelivered `component_post` payloads, the latest per client instance.
++static POSTS: Mutex<Vec<Post>> = Mutex::new(Vec::new());
 +static POSTING: Coalesce = Coalesce::new();
 +
 +/// Defaults to 80 columns and rows 0 (the auto height a terminal node without `height` gets) when no size was given or rendered.
@@ -68417,8 +68429,8 @@ index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e15
 +        );
 +        (owner, module.to_owned(), props.clone(), size, revoked)
 +    };
-+    let _thread =
-+        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
++    let thread = core.expansion.current().map(|lead| lead.thread);
++    let _thread = codex_omd::StateThread::enter(thread.map(|thread| thread.to_string()));
 +    let frame = json!({"instance": instance(client, component), "client": client,
 +        "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
 +        "columns": columns, "rows": rows, "events": events});
@@ -68433,34 +68445,45 @@ index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e15
 +        let payload = json!({"component": component, "module": module, "client": client,
 +            "data": post["data"]});
 +        if let Ok(mut posts) = POSTS.lock() {
-+            posts.retain(|(queued, queued_payload)| {
-+                *queued != owner
-+                    || queued_payload["component"] != payload["component"]
-+                    || queued_payload["client"] != payload["client"]
++            posts.retain(|queued| {
++                queued.owner != owner
++                    || queued.payload["component"] != payload["component"]
++                    || queued.payload["client"] != payload["client"]
 +            });
-+            posts.push((owner, payload));
++            posts.push(Post {
++                owner,
++                payload,
++                thread,
++                revoked,
++            });
 +        }
 +        POSTING.request(deliver_posts);
 +    }
 +    Ok(step)
 +}
 +
++fn next_post(thread: ThreadId) -> Option<Post> {
++    let mut posts = POSTS.lock().ok()?;
++    while !posts.is_empty() {
++        let post = posts.remove(0);
++        if !post.revoked.load(Ordering::Acquire) && post.thread == Some(thread) {
++            return Some(post);
++        }
++    }
++    None
++}
++
 +fn deliver_posts() {
-+    while let Some((owner, payload)) = POSTS
-+        .lock()
-+        .ok()
-+        .and_then(|mut posts| (!posts.is_empty()).then(|| posts.remove(0)))
++    let Ok(core) = core() else {
++        return;
++    };
++    while let Ok(lead) = session(&core)
++        && let Some(Post { owner, payload, .. }) = next_post(lead.thread)
 +    {
-+        let Ok(core) = core() else {
-+            return;
-+        };
 +        let registered = core
 +            .runtime
 +            .lock()
 +            .is_ok_and(|runtime| runtime.registered(&owner, "component_post"));
-+        let Ok(lead) = session(&core) else {
-+            return;
-+        };
 +        if registered {
 +            let lead = Lead {
 +                permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
@@ -68999,10 +69022,10 @@ index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e15
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/clients_tests.rs b/codex-rs/ext/omd/src/clients_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e08580a2f529dc481aba70fd1a61b6366b00fa3e
+index 0000000000000000000000000000000000000000..780fa3499aa557fa66c57cb4e6202e92e582ef1c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients_tests.rs
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,268 @@
 +use super::*;
 +
 +fn snapshot() -> ModViewSnapshot {
@@ -69116,6 +69139,45 @@ index 0000000000000000000000000000000000000000..e08580a2f529dc481aba70fd1a61b636
 +}
 +
 +#[test]
++fn captured_pointer_drag_and_release_keep_signed_component_coordinates() {
++    for (action, column, row) in [("down", 2, 1), ("drag", -3, -1), ("up", -3, -1)] {
++        let event = json!({"kind": "pointer", "pointer": {
++            "column": column, "row": row, "action": action, "button": "left"
++        }});
++        let payload = Value::Object(event_payload(&event).unwrap());
++        assert_eq!(
++            codex_omd::component_events(&payload),
++            vec![json!({
++                "kind": "pointer", "column": column, "row": row, "half": null,
++                "action": action, "button": "left"
++            })]
++        );
++    }
++    for action in ["drag", "up"] {
++        for (column, row) in [(-1, -3), (0, i32::MIN), (i32::MIN, i32::MAX), (i32::MAX, 0)] {
++            let event = json!({"kind": "pointer", "pointer": {
++                "column": column, "row": row, "half": 1, "action": action, "button": "left"
++            }});
++            assert_eq!(event_payload(&event).unwrap()["pointer"], event["pointer"]);
++        }
++        for coordinate in [
++            json!(i64::from(i32::MIN) - 1),
++            json!(i64::from(i32::MAX) + 1),
++            json!(u64::MAX),
++            json!(0.5),
++        ] {
++            for axis in ["column", "row"] {
++                let mut event = json!({"kind": "pointer", "pointer": {
++                    "column": 0, "row": 0, "action": action, "button": "left"
++                }});
++                event["pointer"][axis] = coordinate.clone();
++                assert!(event_payload(&event).is_err(), "{event}");
++            }
++        }
++    }
++}
++
++#[test]
 +fn client_events_need_a_known_kind_its_fields_and_a_bounded_size() {
 +    for event in [
 +        json!({"kind": "change", "value": "x"}),
@@ -69208,6 +69270,29 @@ index 0000000000000000000000000000000000000000..e08580a2f529dc481aba70fd1a61b636
 +    assert_eq!(owner("beta:open"), Some("beta".into()));
 +    assert_eq!(owner("open"), None);
 +    assert_eq!(owner("alpha:missing"), None);
++}
++
++#[test]
++fn queued_posts_reach_only_their_thread_and_live_instance() {
++    let (origin, other) = (ThreadId::new(), ThreadId::new());
++    let detached = Arc::new(AtomicBool::new(false));
++    let post = |name: &str, thread, revoked: &Arc<AtomicBool>| Post {
++        owner: name.into(),
++        payload: Value::Null,
++        thread: Some(thread),
++        revoked: revoked.clone(),
++    };
++    POSTS.lock().unwrap().extend([
++        post("moved", other, &Arc::default()),
++        post("detached", origin, &detached),
++        post("live", origin, &Arc::default()),
++    ]);
++    detached.store(true, Ordering::Release);
++    assert_eq!(
++        next_post(origin).map(|post| post.owner),
++        Some("live".into())
++    );
++    assert!(next_post(origin).is_none());
 +}
 diff --git a/codex-rs/ext/omd/src/config.rs b/codex-rs/ext/omd/src/config.rs
 new file mode 100644
@@ -72180,10 +72265,10 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..306fe3c67929e58d8e95d3f7b01a22fd32d4a33a
+index 0000000000000000000000000000000000000000..622281990211652205d1d5e724010b080af294e6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,858 @@
+@@ -0,0 +1,856 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -72278,7 +72363,6 @@ index 0000000000000000000000000000000000000000..306fe3c67929e58d8e95d3f7b01a22fd
 +    contract_state: PathBuf,
 +    processes: Arc<managed_process::ManagedProcesses>,
 +    power: Arc<codex_omd::power::Leases>,
-+    data: mods::DataScope,
 +    access: mods::AccessState,
 +}
 +
@@ -72740,7 +72824,6 @@ index 0000000000000000000000000000000000000000..306fe3c67929e58d8e95d3f7b01a22fd
 +            )),
 +            processes: Arc::new(managed_process::ManagedProcesses::default()),
 +            power: Arc::default(),
-+            data: mods::DataScope::default(),
 +            access: mods::AccessState::default(),
 +            evidence,
 +        }))
@@ -75740,10 +75823,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d90be25eec26c219a9448b10fb31b44f212e79db
+index 0000000000000000000000000000000000000000..9e292dc291d64b164fd0ae6bbfccbe56e7d188e4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2689 @@
+@@ -0,0 +1,2688 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -75791,7 +75874,6 @@ index 0000000000000000000000000000000000000000..d90be25eec26c219a9448b10fb31b44f
 +
 +pub(crate) use access::AccessState;
 +pub(crate) use expansion::take_route_selection;
-+pub(crate) use operations::DataScope;
 +
 +type Reply = std::sync::mpsc::SyncSender<std::io::Result<Value>>;
 +type Facts = BTreeMap<String, (String, Option<ModGrants>)>;
@@ -85810,10 +85892,10 @@ index 0000000000000000000000000000000000000000..e2243fb9a5ed959a704a0275bc2144b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fea5b094a2e515bf4291677a5b095170e93a4804
+index 0000000000000000000000000000000000000000..dc7efc1a17bd3e6b02757b47e4ff8edc1e430c0f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
-@@ -0,0 +1,323 @@
+@@ -0,0 +1,306 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_extension_api::ToolOutputInput;
@@ -85835,28 +85917,11 @@ index 0000000000000000000000000000000000000000..fea5b094a2e515bf4291677a5b095170
 +    call_id: &str,
 +    text: Arc<str>,
 +) -> Result<Value, String> {
-+    let scope = lead.session.data.0.clone();
-+    let initialized = scope.lock().map_err(|_| "data_scope_poisoned")?.is_some();
-+    let authority = match initialized {
-+        true => None,
-+        false => Some(crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?),
-+    };
-+    let (root, thread) = (lead.host.root.clone(), lead.thread.to_string());
++    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
++    let mut hosts = operations::data_hosts(lead, authority);
 +    let (owner, source) = (owner.to_owned(), source.to_owned());
 +    let label = format!("tool_output:{call_id}");
 +    tokio::task::spawn_blocking(move || {
-+        let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
-+        if scope.is_none() {
-+            let authority = authority.ok_or("data_scope_unavailable")?;
-+            *scope = Some(codex_omd::scoped_data::ScopedDataHosts::new(
-+                root,
-+                authority.repository,
-+                authority.session_root,
-+                authority.session_database,
-+                thread,
-+            ));
-+        }
-+        let hosts = scope.as_mut().ok_or("data_scope_unavailable")?;
 +        let reference = hosts
 +            .text_evidence(&owner, &source, &label, &text)
 +            .map_err(|error| error.to_string())?;
@@ -86351,10 +86416,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5f93435e2
+index 0000000000000000000000000000000000000000..12f0072859d9b197cd947c05d6cd70416f2282dd
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5572 @@
+@@ -0,0 +1,5693 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -86486,13 +86551,6 @@ index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5
 +    };
 +    let thread = ThreadId::new();
 +    let session = host.open_session(thread, false).unwrap();
-+    *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
-+        root,
-+        repository,
-+        None,
-+        None,
-+        thread.to_string(),
-+    ));
 +    let lead = Lead {
 +        host,
 +        session,
@@ -87428,8 +87486,14 @@ index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5
 +        .grants("budget")
 +        .unwrap()
 +        .source_sha256;
-+    let mut scope = fixture.lead.session.data.0.lock().unwrap();
-+    let hosts = scope.as_mut().unwrap();
++    let mut hosts = operations::data_hosts(
++        &fixture.lead,
++        crate::workspace_operations::WorkspaceAuthority::for_platform(
++            &fixture.lead.host.repository,
++            PermissionProfile::default(),
++        )
++        .unwrap(),
++    );
 +    let reference = hosts
 +        .text_evidence("budget", &source, "probe", "hello world")
 +        .unwrap();
@@ -87492,7 +87556,7 @@ index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5
 +
 +#[tokio::test(flavor = "multi_thread")]
 +async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
-+    let Some(fixture) = fixture(&[
++    let Some(mut fixture) = fixture(&[
 +        Package {
 +            id: "retry",
 +            capabilities: &["interception", "store"],
@@ -87508,8 +87572,8 @@ index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5
 +    ]) else {
 +        return;
 +    };
-+    *fixture.lead.session.contract.lock().unwrap() =
-+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    let _manager = attach_thread(&mut fixture).await;
++    fixture.core.expansion.thread_started(&fixture.lead);
 +    let mods = mods(&fixture.core);
 +    let (session_store, thread_store, turn_store) = (
 +        ExtensionData::new("session".to_owned()),
@@ -87737,7 +87801,7 @@ index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5
 +
 +#[tokio::test(flavor = "multi_thread")]
 +async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
-+    let Some(fixture) = fixture(&[Package {
++    let Some(mut fixture) = fixture(&[Package {
 +        id: "keeper",
 +        capabilities: &["interception", "store"],
 +        manifest: Value::Null,
@@ -87745,8 +87809,7 @@ index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5
 +    }]) else {
 +        return;
 +    };
-+    *fixture.lead.session.contract.lock().unwrap() =
-+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    let _manager = attach_thread(&mut fixture).await;
 +    let mods = mods(&fixture.core);
 +    let (session_store, thread_store, turn_store) = (
 +        ExtensionData::new("session".to_owned()),
@@ -87827,8 +87890,10 @@ index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5
 +        .source_sha256;
 +    let (mut paged, mut cursor, mut pages) = (String::new(), 0, 0);
 +    {
-+        let mut scope = fixture.lead.session.data.0.lock().unwrap();
-+        let hosts = scope.as_mut().unwrap();
++        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(&fixture.lead)
++            .await
++            .unwrap();
++        let mut hosts = operations::data_hosts(&fixture.lead, authority);
 +        loop {
 +            let page = hosts
 +                .call(
@@ -87873,6 +87938,127 @@ index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5
 +        answered.starts_with("tool_original_unavailable"),
 +        "{answered}"
 +    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn shared_parent_child_sessions_bind_data_and_tool_output_to_each_thread() {
++    let mut fixture = fixture(&[Package {
++        id: "keeper",
++        capabilities: &["interception", "store"],
++        manifest: Value::Null,
++        source: "export default function () {}\n",
++    }])
++    .unwrap();
++    let manager = attach_thread(&mut fixture).await;
++    let config = manager
++        .get_thread(fixture.lead.thread)
++        .await
++        .unwrap()
++        .config()
++        .await;
++    let started = manager
++        .start_thread(codex_core::StartThreadOptions::new((*config).clone()))
++        .await
++        .unwrap();
++    let parent = fixture.lead.clone();
++    let child = Lead {
++        thread: started.thread_id,
++        depth: 1,
++        ..parent.clone()
++    };
++    let cancelled = Arc::new(AtomicBool::new(false));
++    for first_child in [false, true] {
++        let session = parent.host.open_session(ThreadId::new(), false).unwrap();
++        *session.contract.lock().unwrap() =
++            crate::contract::SessionContract::resolve(&parent.host, &[]);
++        let parent = Lead {
++            session: session.clone(),
++            ..parent.clone()
++        };
++        let child = Lead {
++            session,
++            ..child.clone()
++        };
++        let order = if first_child {
++            [&child, &parent]
++        } else {
++            [&parent, &child]
++        };
++        for lead in order {
++            for operation in ["evidence.write", "tools.original"] {
++                let grants = fixture
++                    .core
++                    .runtime
++                    .lock()
++                    .unwrap()
++                    .grants("keeper")
++                    .unwrap();
++                let source = grants.source_sha256.clone();
++                let caller = Caller {
++                    id: "keeper",
++                    source: &source,
++                    grants: Some(grants),
++                    generation: fixture.core.runtime.lock().unwrap().generation(),
++                    origin: Origin::Event,
++                    record_changes: false,
++                };
++                let call_id = format!("call-{}-{operation}", lead.thread);
++                fixture.core.expansion.originals.lock().unwrap().insert(
++                    (lead.thread.to_string(), call_id.clone()),
++                    Arc::from("scoped output"),
++                );
++                let arguments = if operation == "evidence.write" {
++                    json!({"media_type": "text/plain", "content": "scoped output"})
++                } else {
++                    json!({"call_id": call_id})
++                };
++                let result = CHAIN_CALL
++                    .scope(
++                        call_id,
++                        operations::dispatch(
++                            &fixture.core,
++                            lead,
++                            caller,
++                            None,
++                            ModHostCall {
++                                operation: operation.into(),
++                                arguments,
++                            },
++                            &cancelled,
++                        ),
++                    )
++                    .await
++                    .unwrap();
++                let reference = if operation == "tools.original" {
++                    result["reference"].clone()
++                } else {
++                    result
++                };
++                for reader in [&parent, &child] {
++                    let authority =
++                        crate::workspace_operations::WorkspaceAuthority::for_lead(reader)
++                            .await
++                            .unwrap();
++                    let mut data = codex_omd::scoped_data::ScopedDataHost::new(
++                        reader.host.root.clone(),
++                        authority.repository,
++                        authority.session_root,
++                        authority.session_database,
++                        "keeper".into(),
++                        reader.thread.to_string(),
++                        source.clone(),
++                    )
++                    .unwrap();
++                    let page = data.call("evidence.read", json!({"reference": reference}), || true);
++                    if reader.thread == lead.thread {
++                        assert!(page.unwrap().to_string().contains("scoped output"));
++                    } else {
++                        assert_eq!(page.unwrap_err().to_string(), "resource_scope_mismatch");
++                    }
++                }
++            }
++        }
++    }
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -93094,51 +93280,46 @@ index 0000000000000000000000000000000000000000..ac3eef4f0eaf7b0adc3629c4338e3952
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd366c2eb2c95d2adcf0fc8a07959d9ec756f93f
+index 0000000000000000000000000000000000000000..27a97ea62e88e1503386b05b6c7401f944cfa366
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,888 @@
+@@ -0,0 +1,879 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::ModInvokeOptions;
 +use codex_omd::data_store::Origin;
 +
-+#[derive(Clone, Default)]
-+pub(crate) struct DataScope(pub(super) Arc<Mutex<Option<codex_omd::scoped_data::ScopedDataHosts>>>);
++pub(super) fn data_hosts(
++    lead: &Lead,
++    authority: WorkspaceAuthority,
++) -> codex_omd::scoped_data::ScopedDataHosts {
++    codex_omd::scoped_data::ScopedDataHosts::new(
++        lead.host.root.clone(),
++        authority.repository,
++        authority.session_root,
++        authority.session_database,
++        lead.thread.to_string(),
++    )
++}
 +
-+impl DataScope {
-+    async fn call(
-+        &self,
-+        lead: &Lead,
-+        authority: WorkspaceAuthority,
-+        caller: &Caller<'_>,
-+        request: ModHostCall,
-+        cancelled: Arc<AtomicBool>,
-+    ) -> Result<Value, String> {
-+        let root = lead.host.root.clone();
-+        let scope = self.0.clone();
-+        let thread = lead.thread.to_string();
-+        let (id, source) = (caller.id.to_owned(), caller.source.to_owned());
-+        tokio::task::spawn_blocking(move || {
-+            let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
-+            scope
-+                .get_or_insert_with(|| {
-+                    codex_omd::scoped_data::ScopedDataHosts::new(
-+                        root,
-+                        authority.repository.clone(),
-+                        authority.session_root.clone(),
-+                        authority.session_database.clone(),
-+                        thread,
-+                    )
-+                })
-+                .call(&id, &source, &request.operation, request.arguments, || {
-+                    !cancelled.load(Ordering::Acquire)
-+                })
-+                .map_err(|error| error.to_string())
-+        })
-+        .await
-+        .map_err(|error| error.to_string())?
-+    }
++pub(super) async fn data_call(
++    lead: &Lead,
++    authority: WorkspaceAuthority,
++    caller: &Caller<'_>,
++    request: ModHostCall,
++    cancelled: Arc<AtomicBool>,
++) -> Result<Value, String> {
++    let mut hosts = data_hosts(lead, authority);
++    let (id, source) = (caller.id.to_owned(), caller.source.to_owned());
++    tokio::task::spawn_blocking(move || {
++        hosts
++            .call(&id, &source, &request.operation, request.arguments, || {
++                !cancelled.load(Ordering::Acquire)
++            })
++            .map_err(|error| error.to_string())
++    })
++    .await
++    .map_err(|error| error.to_string())?
 +}
 +
 +pub(super) struct Caller<'a> {
@@ -93546,11 +93727,7 @@ index 0000000000000000000000000000000000000000..cd366c2eb2c95d2adcf0fc8a07959d9e
 +    }
 +    if codex_omd::scoped_data::operation(&operation) {
 +        let authority = authority(lead, call).await?;
-+        return lead
-+            .session
-+            .data
-+            .call(lead, authority, &caller, request, cancelled.clone())
-+            .await;
++        return data_call(lead, authority, &caller, request, cancelled.clone()).await;
 +    }
 +    if operation == "workspace.request_rename" {
 +        if call.is_none() {
@@ -139297,10 +139474,10 @@ index 0000000000000000000000000000000000000000..42a6f21f76db858a7e18f132a9ad4189
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..13a36d018eb73e11fc381f9fb6dd6c8cb75f3962
+index 0000000000000000000000000000000000000000..8d20e057baac2aa800013aa75779d746a272fd38
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1538 @@
+@@ -0,0 +1,1586 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -140210,6 +140387,54 @@ index 0000000000000000000000000000000000000000..13a36d018eb73e11fc381f9fb6dd6c8c
 +        let configuration = self.configuration()?;
 +        let lock = self.package_lock()?;
 +        self.selection_status_inspected_in(project, &configuration, &lock, None)
++    }
++
++    pub(crate) fn data_selection(
++        &self,
++        project: &Path,
++        owner: &str,
++        source_sha256: &str,
++    ) -> Result<(u64, ModSelection)> {
++        let managed = self.managed()?;
++        let configuration = match self.configuration() {
++            Ok(configuration) => configuration,
++            Err(_) if managed.is_some() => ModConfiguration {
++                schema: 1,
++                revision: 0,
++                node: None,
++                mods: Vec::new(),
++            },
++            Err(error) => return Err(error),
++        };
++        let brokered = brokered_grants(&self.root)?;
++        let mut selections = match &managed {
++            Some(managed) => {
++                managed
++                    .selections(
++                        &self.managed_deployment()?,
++                        &self.managed_user(),
++                        Some(project),
++                    )
++                    .0
++            }
++            None => Vec::new(),
++        };
++        let administered = selections.len();
++        selections.extend(configuration.mods);
++        let selection = super::ModHost::select(
++            &selections,
++            administered,
++            true,
++            brokered.as_ref().map(|(_, grants)| grants),
++            managed.as_ref().map(|managed| &managed.policy),
++            &mut Vec::new(),
++            |path| verified_package(path).map(|(package, sha256)| (package, String::new(), sha256)),
++        )?
++        .remove(owner)
++        .map(|(selection, _, _)| selection)
++        .filter(|selection| selection.sha256 == source_sha256 && selection.authority_current())
++        .ok_or_else(|| failure("data_source_not_selected"))?;
++        Ok((configuration.revision, selection))
 +    }
 +
 +    pub(crate) fn selection_status_inspected_in(
@@ -148528,10 +148753,10 @@ index 0000000000000000000000000000000000000000..a9fc82862657f889b02ecae5b154e55a
 +}
 diff --git a/codex-rs/omd/src/scoped_data.rs b/codex-rs/omd/src/scoped_data.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..25e11141befa3a262ad76edae8ecf2fcb671c1eb
+index 0000000000000000000000000000000000000000..ebfe172e8f3cc30e724e940b1b8e56eff89e56c0
 --- /dev/null
 +++ b/codex-rs/omd/src/scoped_data.rs
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,245 @@
 +use crate::resource_data::{ResourceBinding, ResourceStore};
 +use crate::sessions::SessionIndex;
 +use serde_json::Value;
@@ -148539,7 +148764,12 @@ index 0000000000000000000000000000000000000000..25e11141befa3a262ad76edae8ecf2fc
 +use std::io;
 +use std::path::PathBuf;
 +
++#[cfg(test)]
++#[path = "scoped_data_tests.rs"]
++mod tests;
++
 +pub struct ScopedDataHost {
++    store: crate::ModStore,
 +    pub root: PathBuf,
 +    pub repository: PathBuf,
 +    pub session_root: Option<PathBuf>,
@@ -148564,35 +148794,69 @@ index 0000000000000000000000000000000000000000..25e11141befa3a262ad76edae8ecf2fc
 +        thread: String,
 +        source_sha256: String,
 +    ) -> io::Result<Self> {
++        Self::with_store(
++            crate::ModStore::open(root)?,
++            repository,
++            session_root,
++            session_database,
++            owner,
++            thread,
++            source_sha256,
++        )
++    }
++
++    fn with_store(
++        store: crate::ModStore,
++        repository: PathBuf,
++        session_root: Option<PathBuf>,
++        session_database: Option<PathBuf>,
++        owner: String,
++        thread: String,
++        source_sha256: String,
++    ) -> io::Result<Self> {
++        let root = store.root().to_path_buf();
 +        if repository.canonicalize()? != repository
 +            || root.canonicalize()? != root
 +            || root.starts_with(&repository)
 +        {
 +            return Err(io::Error::other("data_scope_invalid"));
 +        }
-+        let configuration = crate::ModStore::open(root.clone())?.configuration()?;
-+        if !configuration
-+            .mods
-+            .iter()
-+            .any(|selection| selection.enabled && selection.sha256 == source_sha256)
-+        {
-+            return Err(io::Error::other("data_source_not_selected"));
-+        }
++        let (generation, _) = store.data_selection(&repository, &owner, &source_sha256)?;
 +        let binding = ResourceBinding {
 +            repository: crate::sha256_hex(repository.as_os_str().as_encoded_bytes()),
 +            owner,
 +            thread,
-+            generation: configuration.revision,
++            generation,
 +            source_sha256,
 +        };
 +        binding.validate()?;
 +        Ok(Self {
++            store,
 +            root,
 +            repository,
 +            session_root,
 +            session_database,
 +            binding,
 +        })
++    }
++
++    fn authorize(&mut self, name: &str) -> io::Result<crate::mods::ModSelection> {
++        let (generation, selection) = self.store.data_selection(
++            &self.repository,
++            &self.binding.owner,
++            &self.binding.source_sha256,
++        )?;
++        let required = crate::ModHostCall {
++            operation: name.into(),
++            arguments: Value::Null,
++        }
++        .capability()
++        .map_err(|error| io::Error::other(error.to_string()))?;
++        if !selection.capabilities.iter().any(|cap| cap == required) {
++            return Err(io::Error::other("data_selection_changed_or_revoked"));
++        }
++        self.binding.generation = generation;
++        Ok(selection)
 +    }
 +
 +    pub fn call(
@@ -148604,22 +148868,7 @@ index 0000000000000000000000000000000000000000..25e11141befa3a262ad76edae8ecf2fc
 +        if !active() {
 +            return Err(io::Error::other("data_operation_cancelled"));
 +        }
-+        let configuration = crate::ModStore::open(self.root.clone())?.configuration()?;
-+        let selection = configuration
-+            .mods
-+            .iter()
-+            .find(|selection| selection.enabled && selection.sha256 == self.binding.source_sha256)
-+            .ok_or_else(|| io::Error::other("data_source_not_selected"))?;
-+        let required = crate::ModHostCall {
-+            operation: name.into(),
-+            arguments: Value::Null,
-+        }
-+        .capability()
-+        .map_err(|error| io::Error::other(error.to_string()))?;
-+        if !selection.capabilities.iter().any(|cap| cap == required) {
-+            return Err(io::Error::other("data_selection_changed_or_revoked"));
-+        }
-+        self.binding.generation = configuration.revision;
++        let selection = self.authorize(name)?;
 +        if name == "evidence.read" {
 +            #[derive(serde::Deserialize)]
 +            #[serde(deny_unknown_fields)]
@@ -148726,9 +148975,9 @@ index 0000000000000000000000000000000000000000..25e11141befa3a262ad76edae8ecf2fc
 +        label: &str,
 +        text: &str,
 +    ) -> io::Result<crate::resource_data::ResourceRef> {
-+        self.host(owner, source_sha256)?
-+            .resources()
-+            .text_evidence(label, text)
++        let host = self.host(owner, source_sha256)?;
++        host.authorize("evidence.write")?;
++        host.resources().text_evidence(label, text)
 +    }
 +
 +    fn host(&mut self, owner: &str, source_sha256: &str) -> io::Result<&mut ScopedDataHost> {
@@ -148752,6 +149001,243 @@ index 0000000000000000000000000000000000000000..25e11141befa3a262ad76edae8ecf2fc
 +            )?),
 +        })
 +    }
++}
+diff --git a/codex-rs/omd/src/scoped_data_tests.rs b/codex-rs/omd/src/scoped_data_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..0ea4780f5399469f335407e9080d1ca2ebf8858e
+--- /dev/null
++++ b/codex-rs/omd/src/scoped_data_tests.rs
+@@ -0,0 +1,231 @@
++use super::*;
++use serde_json::json;
++use std::fs;
++use std::os::unix::fs::MetadataExt;
++
++#[test]
++fn managed_data_selection_supports_evidence_and_sessions_and_rechecks_revocation() {
++    let temp = tempfile::tempdir().unwrap();
++    let base = temp.path().canonicalize().unwrap();
++    let (repo, package, sessions) = (
++        base.join("repo"),
++        base.join("package"),
++        base.join("sessions"),
++    );
++    for path in [&repo, &package, &sessions] {
++        fs::create_dir(path).unwrap();
++    }
++    fs::write(
++        package.join("mod.json"),
++        json!({
++            "schema": 1, "id": "managed_data", "version": "1.0.0", "api": crate::MOD_API_VERSION,
++            "state_version": 1, "capabilities": ["store", "sessions", "sessions_tools"],
++            "license": "MIT", "provenance": {"maintainer": "Fixture", "source": "fixture"}
++        })
++        .to_string(),
++    )
++    .unwrap();
++    fs::write(package.join("index.ts"), "export default function () {}\n").unwrap();
++    let source = crate::ModStore::inspect_package(&package).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    let policy = base.join("policy.json");
++    let selected = json!({"schema": 1, "packages": [{
++        "id": "managed_data", "source": package, "sha256": source,
++        "capabilities": ["store", "sessions", "sessions_tools"]
++    }]});
++    fs::write(&policy, selected.to_string()).unwrap();
++    let mut store = crate::ModStore::create(base.join("store")).unwrap();
++    store.set_managed_policy(policy.clone(), fs::metadata(&base).unwrap().uid(), "alice");
++    store.package_sync(false).unwrap();
++    assert!(store.configuration().unwrap().mods.is_empty());
++    let rows = [
++        json!({"type": "session_meta", "payload": {"id": "session-a", "cwd": repo, "timestamp": "2026-11-07T12:00:00Z", "memory_mode": "enabled"}}),
++        json!({"type": "turn_context", "payload": {"turn_id": "turn-a", "cwd": repo}}),
++        json!({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "visible message"}]}}),
++    ];
++    fs::write(
++        sessions.join("a.jsonl"),
++        rows.iter()
++            .map(|row| format!("{row}\n"))
++            .collect::<String>(),
++    )
++    .unwrap();
++    let mut host = ScopedDataHost::with_store(
++        store,
++        repo,
++        Some(sessions),
++        None,
++        "managed_data".into(),
++        "thread-a".into(),
++        source,
++    )
++    .unwrap();
++    let evidence = host
++        .call(
++            "evidence.write",
++            json!({"media_type": "text/plain", "content": "managed evidence"}),
++            || true,
++        )
++        .unwrap();
++    assert!(
++        host.call("evidence.read", json!({"reference": evidence}), || true)
++            .unwrap()
++            .to_string()
++            .contains("managed evidence")
++    );
++    let listed = host.call("sessions.list", json!({}), || true).unwrap();
++    let summary = &listed["sessions"][0];
++    assert_eq!(summary["session_id"], "session-a");
++    let read = json!({"session_id": "session-a", "revision": summary["revision"], "handle": summary["handle"]});
++    assert!(
++        host.call("sessions.read", read.clone(), || true)
++            .unwrap()
++            .to_string()
++            .contains("visible message")
++    );
++    let unrelated = base.join("unrelated");
++    fs::create_dir(&unrelated).unwrap();
++    fs::write(
++        unrelated.join("mod.json"),
++        json!({
++            "schema": 1, "id": "unrelated", "version": "1.0.0", "api": crate::MOD_API_VERSION,
++            "state_version": 1, "capabilities": ["store"]
++        })
++        .to_string(),
++    )
++    .unwrap();
++    fs::write(
++        unrelated.join("index.ts"),
++        "export default function () {}\n",
++    )
++    .unwrap();
++    let unrelated_source = crate::ModStore::inspect_package(&unrelated).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    host.store
++        .trust(
++            unrelated.clone(),
++            &unrelated_source,
++            vec!["store".into()],
++            "user",
++        )
++        .unwrap();
++    host.store.enable(&unrelated, true).unwrap();
++    fs::write(unrelated.join("index.ts"), "export default () => null;\n").unwrap();
++    host.call("sessions.list", json!({}), || true).unwrap();
++    let configuration = fs::read(host.root.join("mods.json")).unwrap();
++    fs::write(host.root.join("mods.json"), "broken").unwrap();
++    host.call("sessions.list", json!({}), || true).unwrap();
++    fs::write(host.root.join("mods.json"), configuration).unwrap();
++    fs::write(&policy, json!({"schema": 1, "packages": []}).to_string()).unwrap();
++    for (operation, arguments) in [
++        ("evidence.read", json!({"reference": evidence})),
++        (
++            "evidence.write",
++            json!({"media_type": "text/plain", "content": "revoked"}),
++        ),
++        ("sessions.list", json!({})),
++        ("sessions.read", read),
++    ] {
++        assert_eq!(
++            host.call(operation, arguments, || true)
++                .unwrap_err()
++                .to_string(),
++            "data_source_not_selected"
++        );
++    }
++    fs::write(&policy, selected.to_string()).unwrap();
++    host.call("sessions.list", json!({}), || true).unwrap();
++    let deployed = host
++        .store
++        .data_selection(
++            &host.repository,
++            "managed_data",
++            &host.binding.source_sha256,
++        )
++        .unwrap()
++        .1
++        .path;
++    fs::write(deployed.join("index.ts"), "export default () => null;\n").unwrap();
++    assert_eq!(
++        host.call("sessions.list", json!({}), || true)
++            .unwrap_err()
++            .to_string(),
++        "data_source_not_selected"
++    );
++}
++
++#[test]
++fn user_data_selection_ignores_unrelated_packages_that_fail_inspection() {
++    let temp = tempfile::tempdir().unwrap();
++    let base = temp.path().canonicalize().unwrap();
++    let repo = base.join("repo");
++    fs::create_dir(&repo).unwrap();
++    let store = crate::ModStore::create(base.join("store")).unwrap();
++    let mut sources = Vec::new();
++    for id in ["owner", "unrelated"] {
++        let package = base.join(id);
++        fs::create_dir(&package).unwrap();
++        fs::write(
++            package.join("mod.json"),
++            json!({
++                "schema": 1, "id": id, "version": "1.0.0", "api": crate::MOD_API_VERSION,
++                "state_version": 1, "capabilities": ["store"]
++            })
++            .to_string(),
++        )
++        .unwrap();
++        fs::write(package.join("index.ts"), "export default function () {}\n").unwrap();
++        let source = crate::ModStore::inspect_package(&package).unwrap()["sha256"]
++            .as_str()
++            .unwrap()
++            .to_owned();
++        store
++            .trust(package.clone(), &source, vec!["store".into()], "user")
++            .unwrap();
++        store.enable(&package, true).unwrap();
++        sources.push((package, source));
++    }
++    fs::write(
++        sources[1].0.join("index.ts"),
++        "export default () => null;\n",
++    )
++    .unwrap();
++    let mut host = ScopedDataHost::with_store(
++        store,
++        repo,
++        None,
++        None,
++        "owner".into(),
++        "thread-a".into(),
++        sources[0].1.clone(),
++    )
++    .unwrap();
++    let evidence = host
++        .call(
++            "evidence.write",
++            json!({"media_type": "text/plain", "content": "kept"}),
++            || true,
++        )
++        .unwrap();
++    assert!(
++        host.call("evidence.read", json!({"reference": evidence}), || true)
++            .unwrap()
++            .to_string()
++            .contains("kept")
++    );
++    fs::write(
++        sources[0].0.join("index.ts"),
++        "export default () => null;\n",
++    )
++    .unwrap();
++    assert_eq!(
++        host.call("evidence.read", json!({"reference": evidence}), || true)
++            .unwrap_err()
++            .to_string(),
++        "data_source_not_selected"
++    );
 +}
 diff --git a/codex-rs/omd/src/session_policy.rs b/codex-rs/omd/src/session_policy.rs
 new file mode 100644
@@ -179255,10 +179741,10 @@ index 0000000000000000000000000000000000000000..f47a1f7d22b0b32a0fc2d07ca235e22a
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991f7e8b5e2
+index 0000000000000000000000000000000000000000..bfe0cb188c69a619184b9b6548802729f1460187
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_module.rs
-@@ -0,0 +1,457 @@
+@@ -0,0 +1,466 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -179307,6 +179793,7 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +    id: String,
 +    generation: u64,
 +    owner: String,
++    thread: Option<String>,
 +    payload: Value,
 +}
 +
@@ -179537,12 +180024,14 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +    generation: u64,
 +    owner: String,
 +    module: String,
++    thread: Option<String>,
 +    frame: Value,
 +    events: Vec<Value>,
 +}
 +
 +fn next_job() -> Result<Job, Option<Duration>> {
 +    let now = Instant::now();
++    let thread = crate::mod_surface::current_thread();
 +    instances(|instances| {
 +        let mut wait: Option<Duration> = None;
 +        let mut ready = None;
@@ -179585,6 +180074,7 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +            generation: instance.generation,
 +            owner: instance.owner.clone(),
 +            module: instance.module.clone(),
++            thread,
 +            frame,
 +            events,
 +        })
@@ -179656,6 +180146,7 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +                id: job.id.clone(),
 +                generation: job.generation,
 +                owner: job.owner.clone(),
++                thread: job.thread.clone(),
 +                payload: json!({"component": job.id, "module": job.module, "data": post["data"]}),
 +            })
 +        }
@@ -179688,17 +180179,21 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +                    };
 +                    match next {
 +                        Some(post) => {
-+                            if instances(|instances| post.current(instances)) {
++                            if crate::mod_surface::current_thread() == post.thread
++                                && instances(|instances| post.current(instances))
++                            {
 +                                let id = post.id;
 +                                let generation = post.generation;
++                                let thread = post.thread;
 +                                crate::mod_runtime::invoke_event_guarded(
 +                                    &post.owner,
 +                                    "component_post",
 +                                    post.payload,
 +                                    Arc::new(move || {
-+                                        instances(|instances| {
-+                                            current_generation(instances, &id, generation)
-+                                        })
++                                        crate::mod_surface::current_thread() == thread
++                                            && instances(|instances| {
++                                                current_generation(instances, &id, generation)
++                                            })
 +                                    }),
 +                                );
 +                            }
@@ -179718,10 +180213,10 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_module_tests.rs b/codex-rs/tui/src/mod_module_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76ca6a682ab
+index 0000000000000000000000000000000000000000..9820041eae6ca2979442d46dba2cdac2cd69f335
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_module_tests.rs
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,90 @@
 +use super::*;
 +use std::sync::Arc;
 +use std::sync::mpsc;
@@ -179740,6 +180235,7 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +        generation: instance.generation,
 +        owner: instance.owner.clone(),
 +        module: instance.module.clone(),
++        thread: None,
 +        frame: Value::Null,
 +        events: std::mem::take(&mut instance.events),
 +    }

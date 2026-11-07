@@ -79,6 +79,10 @@ evidence.read {reference, cursor?, max_bytes?} → {reference, text, cursor, byt
 `evidence.write` stores content-addressed evidence and returns a `ResourceRef` `{reference, sha256}`. The `base64`
 form is binary evidence (`binary_evidence_v1`).
 
+Evidence is bound to the mod, source digest, configuration generation, repository and current thread, including
+original tool output. Parent and child threads have separate bindings even when they share a host session.
+Each operation rechecks the effective managed, project or user selection and its current grants.
+
 | Media type | Size |
 | --- | --- |
 | `image/png`, `image/jpeg` | At most 8 MiB |

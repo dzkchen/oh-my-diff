@@ -214,6 +214,7 @@ function checkSyntax(directory) {
 
 function checkProject(directory) {
   checkSyntax(directory);
+  engineJson(['inspect', directory]);
   if (!existsSync(join(directory, 'node_modules/.bin/tsc'))) {
     process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
     return;
@@ -340,9 +341,11 @@ function costProject(directory, args) {
   }
 }
 
-function watchProject(directory, store, once) {
+export function watchProject(directory, store, once) {
   let files = new Set(['mod.json']);
   const reload = () => {
+    const manifest = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
+    files = new Set(['mod.json', manifest.entrypoint ?? 'index.ts', ...(manifest.assets ?? []), ...Object.values(manifest.lifecycle ?? {}), ...jsxSources(directory)]);
     checkSyntax(directory);
     const inspected = engineJson(['inspect', directory]);
     const locked = engineJson(['package-lock', store]).packages;
@@ -359,8 +362,6 @@ function watchProject(directory, store, once) {
     } else {
       trustPackage(store, directory);
     }
-    files = new Set(['mod.json', inspected.manifest.entrypoint ?? 'index.ts', ...(inspected.manifest.assets ?? []), ...Object.values(inspected.manifest.lifecycle ?? {})]);
-    for (const source of jsxSources(directory)) files.add(source);
     const result = engineJson(['reload', store]);
     copyDeclarations(store, directory);
     process.stdout.write(`${JSON.stringify({ reloaded: directory, sha256: inspected.sha256, result })}\n`);

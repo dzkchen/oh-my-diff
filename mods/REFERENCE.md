@@ -738,13 +738,13 @@ These changes ship in OMD 1.3.0.
   `/dev/tty` (git credentials, ssh passphrases, `sudo`) fails instead of drawing over the TUI and waiting. Pass input
   through `stdin` or the program's non-interactive flags. Runs with `sandbox: "none"` also receive `SSH_AUTH_SOCK`, so
   programs under an `os` grant can sign in through the user's SSH agent.
-### Package trust digest framing
+
+#### Package trust digest framing
 
 Package digests now prefix each manifest, path and file-content record with its eight-byte big-endian length.
 Existing trust digests change: inspect and re-trust folder mods, and reinstall curated packages from the new release.
 Do not copy old grants to a new digest. Same-ID mods share storage and owned credential authority; project scope takes precedence.
 Package previews report `identity_warning` when the ID is installed in another scope.
-
 
 ## Authoring
 
@@ -767,7 +767,7 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author create DIR [ID]` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
-| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
+| `pnpm check` | Host package inspection and syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
 | `pnpm test` | Runs the offline scenarios, the type check and the TypeScript tests (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs `debug.test.json`, which expects an error, and exits 0 with the error's mapped source location |
@@ -778,6 +778,10 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE [OUTPUT]` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
 | `omd-mod-author explain DENIAL` | Cause, safe remedy, and the authority boundary for a denial |
+
+`pnpm check` requires `omd-mod` (or `OMD_MOD_BIN`) for the same package inspection used by the host. This enforces
+the 512 KiB limit per entrypoint, asset or lifecycle file and the 1 MiB combined entrypoint/UTF-8 asset limit,
+including when TypeScript is absent.
 
 `pnpm test` runs, in order:
 
@@ -1068,7 +1072,8 @@ While a mod is written, `omd-mod-author watch DIR STORE` (or `pnpm watch STORE`)
 3. Queues a reload of that store's host and refreshes `.omd/`.
 
 Saving an entry point, asset or lifecycle file reloads again after 100 ms, and reports a half-written file instead of
-stopping. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
+stopping. Files named in `mod.json` are watched as soon as it is saved, so a new asset that doesn't exist yet reloads
+once you create it. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
 and also disables or resets a mod.
 
 **Because `watch` approves what it watches, point it only at a scratch store** (`omd-mod init STORE`) that contains
@@ -3889,6 +3894,10 @@ evidence.read {reference, cursor?, max_bytes?} → {reference, text, cursor, byt
 `evidence.write` stores content-addressed evidence and returns a `ResourceRef` `{reference, sha256}`. The `base64`
 form is binary evidence (`binary_evidence_v1`).
 
+Evidence is bound to the mod, source digest, configuration generation, repository and current thread, including
+original tool output. Parent and child threads have separate bindings even when they share a host session.
+Each operation rechecks the effective managed, project or user selection and its current grants.
+
 | Media type | Size |
 | --- | --- |
 | `image/png`, `image/jpeg` | At most 8 MiB |
@@ -4447,7 +4456,7 @@ Full-screen transcript cells can repaint when background state changes. Inline s
 rows; a mod can show its latest asynchronous result through an `above_composer` terminal site when
 `event.presentation?.surface === "inline"`. Closed sessions do not deliver assistant completion callbacks.
 
-### Timers (`timers_v1`)
+#### Timers (`timers_v1`)
 
 `events.schedule {key, delay_ms, data?}` (`timers_v1`) delivers one `timer` event `{key, data?}` to the calling mod after
 `delay_ms`, which is 16 ms to 24 h.
@@ -5435,6 +5444,8 @@ const { turns, recording } = api.host.call('turns.activity', { last: 1 });
 ```
 
 ### `sessions.list`
+
+Recorded-session access rechecks the effective managed, project or user selection and its current grants on every call.
 
 `sessions.list {since?, until?, cursor?, limit?}` pages this repository's recorded sessions that allow memory (Codex
 memory mode `enabled`). It returns `{sessions, cursor, revision, scan_truncated, unavailable, projection}`; each
@@ -7236,7 +7247,7 @@ selected binding and Esc clears the search or closes the overlay.
 
 - `action`: `enter`, `leave`, `move`, `down`, `up`, `drag`, or `scroll_up` and `scroll_down` for the mouse wheel;
 - `button`: `left`, `right`, `middle`, or null for motion and the wheel;
-- `column`/`row` relative to the component's first cell (a nested box counts its title and children);
+- `column`/`row` as signed 32-bit integers relative to the component's first cell (a nested box counts its title and children);
 - `half` (0 or 1, the half-cell row) on terminals that report pixel positions (Kitty, Ghostty and WezTerm), else
   null.
 
@@ -7396,8 +7407,9 @@ by `columns` and `rows`, or as last rendered. The default is 80 columns and 0 ro
 says when the next tick is due. The client sends key and pointer events through `omd/client/event`.
 
 Their posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
-host operations as `component_event` hooks, for terminal and client posts alike. Detaching unmounts the client's
-instances.
+host operations as `component_event` hooks, for terminal and client posts alike. A post is delivered only while the
+thread it was posted in is still current and its instance is still mounted. Detaching unmounts the client's instances
+and drops their undelivered posts.
 
 ## Graphics
 
@@ -8566,6 +8578,9 @@ omd/client/event {epoch, component, event}
 - `{kind: 'scroll', offset}`
 - `{kind: 'key', key, text?}`
 - `{kind: 'focus'}`
+
+Pointer `column` and `row` are signed 32-bit cell coordinates relative to the component. Captured `drag` and
+`up` events may carry negative positions after moving above or left of its bounds.
 
 Behavior:
 
