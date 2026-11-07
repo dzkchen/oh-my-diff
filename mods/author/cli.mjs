@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createRequire, stripTypeScriptTypes } from 'node:module';
 
+const emitWarning = process.emitWarning;
+process.emitWarning = (warning, ...rest) => String(warning).includes('stripTypeScriptTypes') ? undefined : emitWarning.call(process, warning, ...rest);
+
 const sdkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Installed generations are pruned after updates, so projects depend on the SDK through the installer's current link.
 const stableSdkRoot = (() => {
@@ -222,10 +225,10 @@ function checkProject(directory) {
   const parsed = ts.getParsedCommandLineOfConfigFile(join(directory, 'tsconfig.json'), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: diagnostic => fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')) });
   const generated = new Set(sources.map(source => resolve(directory, source.slice(0, -1))));
   const files = [...new Set([...parsed.fileNames.map(file => resolve(file)).filter(file => !generated.has(file)), ...sources.map(source => resolve(directory, source))])];
-  const jsxConfig = join(directory, 'tsconfig.omd-jsx.json');
-  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }));
+  const jsxConfig = join(directory, `tsconfig.omd-jsx-${process.pid}-${Date.now().toString(36)}.json`);
+  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }), { flag: 'wx' });
   try {
-    command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.omd-jsx.json'], { cwd: directory });
+    command('pnpm', ['exec', 'tsc', '-p', basename(jsxConfig)], { cwd: directory });
   } finally {
     rmSync(jsxConfig, { force: true });
   }
@@ -386,7 +389,8 @@ async function main() {
   if (['--help', '-h', 'help'].includes(action)) return void process.stdout.write(USAGE);
   const directory = resolve(rawDirectory);
   switch (action) {
-    case 'create': return createProject(directory, nameOrStore || basename(directory).replaceAll('-', '_'));
+    case 'create': return createProject(directory, nameOrStore || basename(directory).replaceAll('-', '_'))
+      .then(() => void process.stderr.write(`created ${directory}; next: cd ${directory} && pnpm test\n`));
     case 'example': return copyExample(directory, nameOrStore).then(() => lock(directory));
     case 'examples': return copyExamples(directory);
     case 'check':

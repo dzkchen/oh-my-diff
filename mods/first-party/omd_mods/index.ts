@@ -55,10 +55,12 @@ export default function activate(api: ModAPI) {
   const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => ACRONYMS.has(word) ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1)).join(' ') || id;
   const properties = (item: Pick<PackageState, 'settings_schema'>) => Object.entries(((item.settings_schema as { properties?: Record<string, Property> } | null)?.properties) ?? {});
   const matches = (argument: string) => (item: Pick<PackageState, 'id' | 'scope' | 'installed'>) => item.installed && (key(item) === argument || item.id === argument);
+  const ambiguous = (packages: Pick<PackageState, 'id' | 'scope' | 'installed'>[], argument: string) =>
+    packages.filter(matches(argument)).length > 1 ? `${argument} is installed for you and for this project; use user:${argument} or project:${argument}` : null;
   const describe = (argument: string): PackageState | null => {
     if (!argument) return null;
     const listed = api.host.tryCall('packages.list', null);
-    return listed.ok ? listed.value.packages.find(matches(argument)) ?? null : null;
+    return listed.ok && !ambiguous(listed.value.packages, argument) ? listed.value.packages.find(matches(argument)) ?? null : null;
   };
   const refresh = (state: Saved, notice: string | null): Saved => {
     const listed = api.host.tryCall('packages.list', { fields: [...FIELDS] });
@@ -132,7 +134,12 @@ export default function activate(api: ModAPI) {
     const info = api.host.tryCall('session.info', null);
     return { ...state, choosing: { from: key(item), name, models, lead: info.ok ? info.value.model : null }, notice: null };
   };
+  const locked = (item: PackageState, state: Saved) => item.effective ? null
+    : state.packages.some(other => other.id === item.id && other.effective) ? `Settings save to the ${item.scope === 'user' ? 'project' : 'user'} copy, which is on; change them there`
+      : 'Turn it on to change its settings';
   const act = (state: Saved, verb: string, argument: string, from = LIST, item?: PackageState): Saved | null => {
+    const refusal = item && ['set', 'route', 'choose', 'pick'].includes(verb) && locked(item, state);
+    if (refusal) return { ...state, notice: refusal };
     if (verb === 'cancel') return { ...state, review: null, choosing: null, notice: null };
     if (verb === 'apply') return state.review ? apply(state, state.review.request, state.review.label, state.review.generation) : { ...state, notice: 'Nothing to apply' };
     if (verb === 'set') return write(state, item, argument);
@@ -143,7 +150,8 @@ export default function activate(api: ModAPI) {
       const effort = rest.pop() ?? '';
       return add(state, item, name, { model: rest.join(':'), effort });
     }
-    if (verb === 'scope') return argument === 'user' || argument === 'project' ? { ...state, scope: argument } : state;
+    if (verb === 'scope') return argument === 'user' || argument === 'project' ? { ...state, scope: argument }
+      : { ...state, notice: 'Enter /mods scope user or /mods scope project' };
     if (verb === 'directory') return search(state);
     if (verb === 'get') {
       const entry = state.catalog.find(item => item.id === argument);
@@ -158,6 +166,8 @@ export default function activate(api: ModAPI) {
       const result = api.host.tryCall('packages.reload', null);
       return refresh(state, !result.ok ? `Reload failed: ${result.error}` : `Every mod reloads from your next message${result.value.failed.length ? `; failing now: ${result.value.failed.map(friendly).join(', ')}` : ''}`);
     }
+    const unclear = ambiguous(state.packages, argument);
+    if (unclear) return { ...state, notice: unclear };
     const target = find(state, argument);
     if (!target) return { ...state, notice: `No installed mod ${argument || 'selected'}` };
     if (kept(target) && (verb === 'disable' || verb === 'remove' || (verb === 'toggle' && target.enabled)))
@@ -286,16 +296,17 @@ export default function activate(api: ModAPI) {
     if (state.review?.from === key(item)) return reviewing(title(item, state), state, args);
     if (state.choosing?.from === key(item)) return chooser(item, state, state.choosing);
     const fixed = kept(item) && item.enabled;
+    const editable = !locked(item, state);
     const actions = item.source !== 'selection' ? [['update', 'Update'], ['rollback', 'Roll back'], ...fixed ? [] : [['remove', 'Remove']]] : item.failed?.startsWith('source_changed') ? [['trust', 'Trust the edited source']] : [];
     return {
       title: title(item, state), action: { command: 'mods', args },
       subtitle: subtitle([`${status(item)} · ${item.version} · ${item.source === 'selection' ? 'local folder' : item.source}${item.compatible ? '' : ' · needs a newer Oh My Diff'}`, item.description,
         `Saved default: ${item.inherited_enabled ? 'on' : 'off'} · ${item.overrides && (item.overrides.enabled !== undefined || Object.keys(item.overrides.settings).length) ? 'Terminal overrides active' : 'Using saved defaults'}`,
-        item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}.`, item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), state.notice]),
+        item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}.`, item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), properties(item).length ? locked(item, state) : null, state.notice]),
       items: [
         ...fixed ? [] : [entry({ id: 'enabled', label: 'On in this terminal', kind: 'toggle', value: item.enabled })],
-        ...properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
-        ...properties(item).filter(([, property]) => property.choices === 'routes').slice(0, 8).flatMap(([name, property]) => [
+        ...!editable ? [] : properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
+        ...!editable ? [] : properties(item).filter(([, property]) => property.choices === 'routes').slice(0, 8).flatMap(([name, property]) => [
           entry({ id: `choose:${name}`, kind: 'action', label: `Choose a model for ${labelOf(name, property)}`,
             description: 'Pick a ChatGPT model and effort on your plan; asks before changing anything' }),
           entry({ id: `route:${name}`, kind: 'action', label: `Add a helper model for ${labelOf(name, property)}`,
@@ -349,6 +360,8 @@ export default function activate(api: ModAPI) {
     }
     const target = describe(verb === 'mod' ? rest[0] ?? '' : rest.length ? '' : verb);
     if (verb === 'mod') {
+      const unclear = !target && ambiguous(state.packages, rest[0] ?? '');
+      if (unclear) return { display: unclear };
       if (!target) return show(gone(rest[0] ?? '', store({ ...state, notice: current.notice })));
       const [, , item, text] = words(raw, 3);
       const id = key(target);
@@ -363,9 +376,12 @@ export default function activate(api: ModAPI) {
       return next && presenting(target, next);
     }
     if (target) return presenting(target, { ...state, review: null, choosing: null, notice: null });
+    const unclear = !rest.length && ambiguous(state.packages, verb);
+    if (unclear) return { display: unclear };
     const next = act(state, verb, rest.join(' ')) ?? saved();
     store(next);
-    const fallback = verb === 'cancel' ? state.review || state.choosing ? 'Cancelled' : 'Nothing to cancel' : 'No change';
+    const fallback = verb === 'cancel' ? state.review || state.choosing ? 'Cancelled' : 'Nothing to cancel'
+      : verb === 'scope' ? `Installs go to ${next.scope === 'project' ? 'this project' : 'your user store'}` : 'No change';
     return { display: [next.notice, next.review && `${reviewText(next.review)}\nRun /mods apply or /mods cancel`].filter(Boolean).join('\n') || fallback };
   }, { description: 'Browse and install mods, turn them on or off and change their settings' });
 

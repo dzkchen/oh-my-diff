@@ -650,7 +650,7 @@ The registry marks these entries experimental in Mod API `1.0.0`:
 | Capabilities | `approve.override`, `autonomous`, `fs.external`, `history_write`, `mcp`, `peers`, `power`, `unix_sockets` |
 | Events | `config_change`, `contract`, `elicitation_result`, `focus`, `host_operation`, `instructions_loaded`, `migrate`, `mods_changed`, `peer_message`, `peer_receipt`, `prompt`, `prompt_expanded`, `session`, `tool_batch_end`, `tool_exposure`, `turn_queue`, `view`, `worktree` |
 | Interceptors | `agent_offers`, `agent_spawn`, `compaction`, `component_change`, `composer_key`, `elicitation`, `mention`, `peer_receive`, `peer_send`, `turn_stop` |
-| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access`, `workspace.unwatch` |
+| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access` |
 | Components | `raster` |
 | Render sites | `composer_hint`, `notice`, `session_mode`, `tool_result`, `turn_duration`, `user_message` |
 | View fields | `background`, `footer`, `foreground`, `header`, `key_contexts`, `panels`, `placeholder`, `surface_styles`, `underlay` |
@@ -696,6 +696,7 @@ These frozen entries have experimental fields:
 | `operations:session.info` | `process_id`, `omd_version` | none |
 | `operations:sidecars.status` | `started_at_ms` | none |
 | `operations:terminal.panel` | `group`, `keywords`, `detail`, `query`, `selected`, `close_args` | `terminal_panel_navigation_v1` |
+| `operations:workspace.unwatch` | `key` | `workspace_watch_key_v1` |
 | `operations:workspace.watch` | `key`, `git` | `workspace_watch_key_v1`, `workspace_watch_git_v1` |
 | `components:code` | `start` | `terminal_code_highlight_v1` |
 | `view_fields:keybindings` | `region`, `help` | `terminal_focus_v1` |
@@ -2037,7 +2038,7 @@ it needs and its registry status. An operation marked experimental may change in
 | `workspace.snapshot` | `fs.read` | frozen |
 | `workspace.stat` | `fs.read`; `fs.external` for `root` | frozen |
 | `workspace.transaction` | `fs.write`; `fs.external` for `root` | frozen |
-| `workspace.unwatch` | `fs.read` | experimental |
+| `workspace.unwatch` | `fs.read` | frozen; experimental fields: `key` |
 | `workspace.watch` | `fs.read` | frozen; experimental fields: `key`, `git` |
 
 ## Authority grants
@@ -3785,7 +3786,7 @@ A `key` lets a mod find and replace one of its watches instead of adding another
 - Calling again from the same thread with the same arguments keeps the watch.
 - Other arguments or another thread replace it without counting against the limit. Changes it already queued are
   still delivered.
-- `workspace.unwatch {key}` (experimental) stops it. `workspace.unwatch {watch_id}` stops one of the mod's watches.
+- `workspace.unwatch {key}` stops it. `workspace.unwatch {watch_id}` stops one of the mod's watches.
 
 ##### Git metadata
 

@@ -66,6 +66,16 @@ test('only commands in command position count, and a piped run is judged by its 
   assert.match(stop(piped).value.continue, /The last check failed:\n1 failed, 3 passed/);
 });
 
+test('a zero exit from a check joined by ||, ; or a newline proves nothing, but its failure still counts', () => {
+  const edited = () => feed(patch('*** Update File: a.py'));
+  for (const cmd of ['test -f missing && pytest || echo skipped', 'pytest; echo done', 'pytest\necho done']) assert.equal(stop(run('tool_output', '', shell(cmd, exited(0)), edited()).state).stopped, false, cmd);
+  assert.match(stop(run('tool_output', '', shell('pytest; false', exited(1, 'FAILED t.py::x')), edited()).state).value.continue, /The last check failed:\nFAILED t\.py::x/);
+  assert.equal(stop(run('tool_output', '', shell('pytest -k "a;b"\n', exited(0)), edited()).state).stopped, true);
+  const started = run('tool_output', '', shell('pytest; echo x', 'Process running with session ID 7\nOutput:\n'), edited()).state;
+  const failed = run('tool_output', '', { call_id: 'w', tool: 'write_stdin', arguments: { session_id: 7, chars: '' }, success: true, text: exited(1, 'FAILED t.py::y'), tail: null, bytes: 9 }, started).state;
+  assert.match(stop(failed).value.continue, /The last check failed:\nFAILED t\.py::y/);
+});
+
 test('a backgrounded check settles through write_stdin, and a later edit voids a pass', () => {
   const started = feed(patch('*** Update File: lib.rs'), shell('cargo test', 'Process running with session ID 7\nOutput:\n'));
   const done = run('tool_output', '', { call_id: 'w', tool: 'write_stdin', arguments: { session_id: 7, chars: '' }, success: true, text: exited(0, 'ok'), tail: null, bytes: 9 }, started).state;
