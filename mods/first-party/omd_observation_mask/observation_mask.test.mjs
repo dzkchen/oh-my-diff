@@ -120,7 +120,7 @@ test('subagent requests are left alone and other prompt-prefix changes are count
 
 const NOW = 1_800_000_000_000;
 const minute = 60_000;
-const session = { thread_id: 't', root: '/repo', cwd: '/repo', model: 'm', provider: 'claude', route: 'r', codex_version: '0.166.0', turns_started: 1 };
+const session = { thread_id: 't', root: '/repo', cwd: '/repo', model: 'm', provider: 'claude', route: 'r', codex_version: '0.167.0', turns_started: 1 };
 const cached = (patch = {}) => ({ request_id: 'req', scope: { kind: 'main', thread_id: 't', agent_id: null }, synthetic: null,
   status: 'completed', provider: 'claude', route: 'r', credential: 'profile', requested_model: 'm', served_model: 'm',
   usage: { omd_cache_ttl_seconds: 300 }, cache: { read_tokens: 50000, write_tokens: 0 }, cost: { basis: 'provider' },

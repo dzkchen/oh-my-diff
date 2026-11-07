@@ -834,6 +834,97 @@ fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
     .then_some(path)
 }
 
+const EXEC_ARTIFACT_BLOCK_BYTES: usize = 64 * 1024;
+
+struct VerifiedOutput {
+    stamp: crate::FileStamp,
+    len: usize,
+    blocks: Vec<[u8; 32]>,
+}
+
+static VERIFIED_OUTPUTS: LazyLock<Mutex<BTreeMap<PathBuf, Arc<VerifiedOutput>>>> =
+    LazyLock::new(Default::default);
+
+fn remember_output(path: &Path, stamp: crate::FileStamp, bytes: &[u8]) -> Arc<VerifiedOutput> {
+    let verified = Arc::new(VerifiedOutput {
+        stamp,
+        len: bytes.len(),
+        blocks: bytes
+            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
+            .map(|block| Sha256::digest(block).into())
+            .collect(),
+    });
+    let mut outputs = VERIFIED_OUTPUTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if outputs.len() >= 1024 {
+        outputs.clear();
+    }
+    outputs.insert(path.to_path_buf(), verified.clone());
+    verified
+}
+
+/// An exec output artifact's block hashes, rehashed in full only when its file stamp changes.
+fn verified_output(
+    path: &Path,
+    file: &mut fs::File,
+    digest: &str,
+) -> Result<Arc<VerifiedOutput>, String> {
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let stamp = crate::file_stamp(&metadata);
+    if let Some(verified) = VERIFIED_OUTPUTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(path)
+        .filter(|verified| verified.stamp == stamp)
+    {
+        return Ok(verified.clone());
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(file)
+        .take((EXEC_ARTIFACT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > EXEC_ARTIFACT_BYTES
+        || crate::sha256_hex(&bytes) != digest
+        || std::str::from_utf8(&bytes).is_err()
+    {
+        return Err("exec_output_integrity_failed".into());
+    }
+    Ok(remember_output(path, stamp, &bytes))
+}
+
+fn verified_page(
+    file: &mut fs::File,
+    verified: &VerifiedOutput,
+    cursor: usize,
+    max: usize,
+) -> Result<Vec<u8>, String> {
+    let end = (cursor + max + 3).min(verified.len);
+    let first = cursor / EXEC_ARTIFACT_BLOCK_BYTES;
+    let start = first * EXEC_ARTIFACT_BLOCK_BYTES;
+    let span = (end.div_ceil(EXEC_ARTIFACT_BLOCK_BYTES) * EXEC_ARTIFACT_BLOCK_BYTES)
+        .min(verified.len)
+        .saturating_sub(start);
+    file.seek(SeekFrom::Start(start as u64))
+        .map_err(|error| error.to_string())?;
+    let mut window = Vec::with_capacity(span);
+    Read::by_ref(file)
+        .take(span as u64)
+        .read_to_end(&mut window)
+        .map_err(|error| error.to_string())?;
+    if window.len() != span
+        || window
+            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
+            .zip(&verified.blocks[first..])
+            .any(|(block, hash)| Sha256::digest(block)[..] != hash[..])
+    {
+        return Err("exec_output_integrity_failed".into());
+    }
+    window.truncate(end - start);
+    Ok(window.split_off(cursor - start))
+}
+
 /// A program's SHA-256, rehashed only when its file stamp changes.
 pub fn program_hash(path: &Path) -> Result<String, String> {
     static HASHES: LazyLock<Mutex<BTreeMap<PathBuf, (crate::FileStamp, String)>>> =
@@ -868,43 +959,6 @@ pub fn program_hash(path: &Path) -> Result<String, String> {
     }
     hashes.insert(path.to_path_buf(), (stamp, digest.clone()));
     Ok(digest)
-}
-
-/// A stored output's length once its size, digest and UTF-8 are verified, rechecked only when its file stamp changes.
-fn verified_output(path: &Path, file: &mut fs::File, digest: &str) -> Result<usize, String> {
-    static VERIFIED: LazyLock<Mutex<BTreeMap<PathBuf, crate::FileStamp>>> =
-        LazyLock::new(Default::default);
-    let metadata = file.metadata().map_err(|error| error.to_string())?;
-    let len = metadata.len() as usize;
-    if len > EXEC_ARTIFACT_BYTES {
-        return Err("exec_output_integrity_failed".into());
-    }
-    let stamp = crate::file_stamp(&metadata);
-    if VERIFIED
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(path)
-        .is_some_and(|known| *known == stamp)
-    {
-        return Ok(len);
-    }
-    let mut bytes = Vec::with_capacity(len);
-    Read::by_ref(file)
-        .take((EXEC_ARTIFACT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    if bytes.len() != len
-        || crate::sha256_hex(&bytes) != digest
-        || std::str::from_utf8(&bytes).is_err()
-    {
-        return Err("exec_output_integrity_failed".into());
-    }
-    let mut verified = VERIFIED.lock().unwrap_or_else(PoisonError::into_inner);
-    if verified.len() >= 1024 {
-        verified.clear();
-    }
-    verified.insert(path.to_path_buf(), stamp);
-    Ok(len)
 }
 
 fn stored_outputs(owner: &Path) -> Result<Vec<(std::time::SystemTime, PathBuf, u64)>, String> {
@@ -1022,6 +1076,8 @@ impl Host<'_> {
             crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Ordered)
                 .map_err(|error| error.to_string())?;
         }
+        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+        remember_output(&path, crate::file_stamp(&metadata), bytes);
         Ok(json!({"reference": digest, "sha256": digest}))
     }
 
@@ -1047,10 +1103,11 @@ impl Host<'_> {
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
             .open(&path)
             .map_err(|_| "exec_output_unavailable")?;
-        let len = verified_output(&path, &mut file, digest)?;
+        let verified = verified_output(&path, &mut file, digest)?;
         if !(self.active)() {
             return Err("host_operation_cancelled".into());
         }
+        let len = verified.len;
         if input.cursor > len {
             return Err("exec_output_cursor_invalid".into());
         }
@@ -1058,33 +1115,26 @@ impl Host<'_> {
             .max_bytes
             .unwrap_or(EXEC_ARTIFACT_PAGE_BYTES)
             .clamp(1, EXEC_ARTIFACT_PAGE_BYTES);
-        let mut window = Vec::with_capacity(max + 4);
-        file.seek(SeekFrom::Start(input.cursor as u64))
-            .map_err(|error| error.to_string())?;
-        Read::by_ref(&mut file)
-            .take((max + 4) as u64)
-            .read_to_end(&mut window)
-            .map_err(|error| error.to_string())?;
-        let continuation = |index: usize| window.get(index).is_some_and(|byte| byte & 0xc0 == 0x80);
-        if continuation(0) {
+        let bytes = verified_page(&mut file, &verified, input.cursor, max)?;
+        let continuation = |byte: &u8| byte & 0xC0 == 0x80;
+        if bytes.first().is_some_and(continuation) {
             return Err("exec_output_cursor_invalid".into());
         }
-        let mut end = max.min(window.len());
-        while end > 0 && continuation(end) {
+        let mut end = max.min(bytes.len());
+        while end > 0 && bytes.get(end).is_some_and(continuation) {
             end -= 1;
         }
-        if end == 0 && !window.is_empty() {
-            end = 1;
-            while continuation(end) {
-                end += 1;
-            }
+        if end == 0 && !bytes.is_empty() {
+            end = 1 + bytes[1..]
+                .iter()
+                .take_while(|byte| continuation(byte))
+                .count();
         }
         let text =
-            std::str::from_utf8(&window[..end]).map_err(|_| "exec_output_integrity_failed")?;
+            std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
         let next = input.cursor + end;
         Ok(
-            json!({"text": text, "cursor": if next < len { Some(next) } else { None },
-            "bytes": len, "sha256": digest}),
+            json!({"text": text, "cursor": (next < len).then_some(next), "bytes": len, "sha256": digest}),
         )
     }
 
@@ -1427,7 +1477,7 @@ impl Host<'_> {
             return Err("exec_program_declined".into());
         }
         let cwd = match (input.cwd.as_deref(), unrestricted) {
-            (None | Some("") | Some("."), _) => repository.clone(),
+            (None | Some("") | Some("."), _) => repository,
             (Some(name), Some(_)) if Path::new(name).is_absolute() || relative(name) => repository
                 .join(name)
                 .canonicalize()

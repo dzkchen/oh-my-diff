@@ -398,13 +398,7 @@ impl Peers {
             .sent
             .lock()
             .map(|mut sent| {
-                let ids = sent
-                    .iter()
-                    .filter(|(_, entry)| entry.expires_at_ms + 5_000 < now)
-                    .map(|(id, _)| id.clone())
-                    .collect::<Vec<_>>();
-                ids.into_iter()
-                    .filter_map(|id| sent.remove(&id).map(|entry| (id, entry)))
+                sent.extract_if(.., |_, entry| entry.expires_at_ms + 5_000 < now)
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();

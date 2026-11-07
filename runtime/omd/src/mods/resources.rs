@@ -151,23 +151,25 @@ impl ModHost {
             }));
         }
         let (owner, reader) = &providers[0];
-        let value = self.invoke_scoped(
+        let value = self.invoke(
             owner,
             self.generation,
             "virtual_read",
             namespace,
             arguments,
-            &active,
-            |caller, call| {
-                if !matches!(
-                    call.operation.as_str(),
-                    "workspace.read" | "sidecars.invoke"
-                ) {
-                    return Err(failure("virtual_read_authority_denied"));
-                }
-                host(caller, call)
+            ModInvokeOptions {
+                active: &active,
+                host: ModHostCallback::Scoped(&mut |caller, call| {
+                    if !matches!(
+                        call.operation.as_str(),
+                        "workspace.read" | "sidecars.invoke"
+                    ) {
+                        return Err(failure("virtual_read_authority_denied"));
+                    }
+                    host(caller, call)
+                }),
+                ..ModInvokeOptions::default()
             },
-            |_| {},
         )?;
         if !active() {
             return Err(failure("virtual_read_cancelled"));
@@ -248,11 +250,20 @@ impl ModHost {
         payload: Value,
         active: impl Fn() -> bool,
         mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
-        progress: impl FnMut(String),
+        mut progress: impl FnMut(String),
     ) -> Result<Value> {
         if !owner.is_empty() {
-            return self.invoke_scoped(
-                owner, generation, "tool", name, payload, active, &mut host, progress,
+            return self.invoke(
+                owner,
+                generation,
+                "tool",
+                name,
+                payload,
+                ModInvokeOptions {
+                    active: &active,
+                    host: ModHostCallback::Scoped(&mut host),
+                    progress: Some(&mut progress),
+                },
             );
         }
         if name != "read"

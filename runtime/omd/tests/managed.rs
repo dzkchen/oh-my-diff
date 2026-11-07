@@ -1,6 +1,10 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::MOD_API_VERSION;
 use codex_omd::ModHost;
 use codex_omd::ModInstallRequest;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModPackageGrant;
 use codex_omd::ModPackageSource;
 use codex_omd::ModPackageTrust;
@@ -113,6 +117,7 @@ impl Admin {
                 .join(format!("store-{user}"))
                 .canonicalize()
                 .unwrap(),
+            ModOpenOptions::default(),
         )
         .unwrap();
         host.set_managed_policy(self.policy.clone(), self.owner, user)
@@ -122,7 +127,10 @@ impl Admin {
 }
 
 fn trust(store: &ModStore, path: &Path, sha256: &str, capabilities: &[&str], scope: &str) {
-    let capabilities = capabilities.iter().map(|c| c.to_string()).collect();
+    let capabilities = capabilities
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     store
         .trust(path.to_path_buf(), sha256, capabilities, scope)
         .unwrap();
@@ -335,12 +343,7 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
     assert_eq!(active(&host), ["guard@1.0.0"]);
     assert!(rejection(&host, "plain").starts_with("managed_sideload_denied"));
     let refused = store
-        .trust(
-            plain.clone(),
-            &plain_sha,
-            vec!["interception".into()],
-            "user",
-        )
+        .trust(plain, &plain_sha, vec!["interception".into()], "user")
         .unwrap_err()
         .to_string();
     assert!(refused.starts_with("managed_sideload_denied"), "{refused}");
@@ -372,8 +375,15 @@ fn an_unreadable_deployment_record_keeps_loaded_user_mods_running() {
     let mut host = admin.host("alice");
     let generation = host.generation();
     assert_eq!(
-        host.invoke("hello", generation, "command", "hello", Value::Null)
-            .unwrap(),
+        host.invoke(
+            "hello",
+            generation,
+            "command",
+            "hello",
+            Value::Null,
+            ModInvokeOptions::default()
+        )
+        .unwrap(),
         json!("hi")
     );
 }
@@ -403,7 +413,7 @@ fn selection_status_and_activation_agree_on_precedence_and_changed_sources() {
     }
     std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
     std::fs::write(edited.join("index.ts"), format!("{COMMAND};")).unwrap();
-    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
+    let host = ModHost::open(admin.root.join("store-alice"), ModOpenOptions::default()).unwrap();
     let status = host.status();
     let code = |reason: &Value| {
         reason
@@ -464,9 +474,8 @@ fn selection_status_and_activation_agree_on_precedence_and_changed_sources() {
             .map(|(path, (effective, _))| (path, effective))
             .collect::<Vec<_>>()
     );
-    assert_eq!(rows[edited.to_str().unwrap()].1, "source_changed");
-    assert_eq!(activation[edited.to_str().unwrap()].1, "untrusted_source");
     for (path, reason) in [
+        (&edited, "source_changed"),
         (&first, "mod_conflict"),
         (&second, "mod_conflict"),
         (&user, "shadowed_by_project_scope"),
@@ -545,7 +554,8 @@ fn tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads
     admin.write_policy(policy);
     let cached = store.managed_deployment().unwrap().packages[0].path.clone();
     std::fs::write(cached.join("index.ts"), TRANSFORM).unwrap();
-    let mut host = ModHost::open(admin.root.join("store-alice")).unwrap();
+    let mut host =
+        ModHost::open(admin.root.join("store-alice"), ModOpenOptions::default()).unwrap();
     host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
         .unwrap();
     let stale = host.status()["rejected"]
@@ -577,7 +587,7 @@ fn user_selections_cannot_claim_the_managed_scope_or_a_tier() {
         }
     }
     std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
-    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
+    let host = ModHost::open(admin.root.join("store-alice"), ModOpenOptions::default()).unwrap();
     assert!(active(&host).is_empty());
     let status = host.status();
     for path in [&spoof, &tiered] {
@@ -980,7 +990,7 @@ fn managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cle
     let host = admin.host("alice");
     assert!(active(&host).contains(&"guard@1.0.0".to_owned()));
     assert!(rejection(&host, "guard").starts_with("managed_pending_sync"));
-    admin.write_policy(policy.clone());
+    admin.write_policy(policy);
     let fresh = admin.store("carol");
     let offline = fresh.package_sync(true).unwrap();
     assert_eq!(

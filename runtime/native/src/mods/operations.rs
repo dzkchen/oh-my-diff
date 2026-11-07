@@ -1,5 +1,6 @@
 use super::*;
 use crate::workspace_operations::WorkspaceAuthority;
+use codex_omd::ModInvokeOptions;
 use codex_omd::data_store::Origin;
 
 #[derive(Clone, Default)]
@@ -145,7 +146,7 @@ fn notify_contract(core: &Core, lead: &Lead, payload: Value) {
     tokio::task::spawn_blocking(move || {
         let _thread = codex_omd::StateThread::enter(Some(thread));
         if let Ok(mut runtime) = runtime.lock() {
-            let _ = runtime.event("contract", payload);
+            let _ = runtime.event("contract", payload, ModInvokeOptions::default());
         }
     });
 }

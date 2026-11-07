@@ -524,3 +524,17 @@ test('an initial task waits for a selected contract and an invalid one stops the
   invoke('', {}, selected.host, { event: 'turn_start', settings });
   assert.equal(selected.state.get('task').value.status, 'active');
 });
+
+test('self_verify under the solo contract submits a lead receipt for the exact candidate and records the verdict evidence', () => {
+  const run = fixture({}, 'solo_evidence');
+  begin(run.host);
+  const result = invoke('self_verify', { kind: 'self_review', candidate_sha256: candidate, review: verdict }, run.host).value;
+  const acceptance = run.state.get('task').value.acceptance.sha256;
+  assert.equal(result.outcome, 'pass');
+  assert.equal(run.receipts.length, 1);
+  assert.deepEqual([run.receipts[0].kind, run.receipts[0].candidate_sha256, run.receipts[0].acceptance_sha256, run.receipts[0].outcome, run.receipts[0].producer.kind],
+    ['self_review', candidate, acceptance, 'pass', 'lead']);
+  assert.equal(run.receipts[0].evidence.sha256, digest(verdict));
+  const decision = run.state.get('task').value.decisions.at(-1);
+  assert.deepEqual([decision.operation, decision.candidate, decision.outcome, run.state.get('task').value.status], ['self_review', candidate, 'pass', 'active']);
+});

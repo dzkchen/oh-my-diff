@@ -200,10 +200,9 @@ Attached recovery reads report this terminal’s effective values, inherited def
   `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with
   `client_surface_operation_unavailable`.
 - `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them.
-- When a mod's source changes after trust, its last trusted code keeps running. The mod reports
-  `source_changed: ...`, and `reload_error` is `untrusted_source: ...`. The new source loads after `omd-mod trust`
-  and a reload. Administered content that no longer matches its pin reports `managed_content_stale: ...` instead and
-  loads after `omd-mod package-sync`.
+- When a mod's source changes after trust, its last trusted code keeps running. The mod and `reload_error` both
+  report `source_changed: ...`. The new source loads after `omd-mod trust` and a reload. Administered content that
+  no longer matches its pin reports `managed_content_stale: ...` instead and loads after `omd-mod package-sync`.
 
 ## Host notifications and server requests
 

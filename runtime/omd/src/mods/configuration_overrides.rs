@@ -758,9 +758,11 @@ pub fn write_settings_shared(
                 "config_change",
                 "",
                 payload.clone(),
-                active,
-                &mut host,
-                |_| {},
+                super::ModInvokeOptions {
+                    active,
+                    host: super::ModHostCallback::Scoped(&mut host),
+                    ..super::ModInvokeOptions::default()
+                },
             );
         }
     }

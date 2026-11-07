@@ -433,13 +433,13 @@ pub(super) fn detached(
     state: Value,
 ) -> Loaded {
     Loaded {
-        package,
+        package: Arc::new(package),
         source: source.into(),
         assets: Arc::new(store::asset_map(assets)),
         request_metadata: Arc::new(OnceLock::new()),
         session_key: None,
         code_cache: None,
-        selection,
+        selection: Arc::new(selection),
         adapter: None,
         state,
         state_revision: 0,
@@ -449,8 +449,8 @@ pub(super) fn detached(
         ui_revision: 0,
         ui_clears: 0,
         command_view: None,
-        registrations: Registrations::default(),
-        source_use: ModSourceUse::default(),
+        registrations: Registered::default(),
+        source_use: Arc::default(),
         unused_grants: Vec::new(),
         unused_environment: Vec::new(),
         withheld: Vec::new(),
@@ -464,26 +464,19 @@ pub(super) fn detached(
     }
 }
 
-pub(super) fn migration_registrations(loaded: &Loaded) -> Result<Registrations> {
+pub(super) fn migration_registrations(loaded: &Loaded) -> Result<Registered> {
     let inspected = ModHost::run(loaded, "inspect", "", Value::Null, &|| true)?;
-    ModHost::validate_registrations(&loaded.package, &inspected.registrations)?;
-    if inspected.state != loaded.state
-        || !inspected
-            .registrations
-            .events
-            .iter()
-            .any(|e| e == "migrate")
-    {
+    let registrations = inspected
+        .registrations
+        .ok_or_else(|| failure("registrations_missing"))?;
+    ModHost::validate_registrations(&loaded.package, &registrations)?;
+    if inspected.state != loaded.state || !registrations.events.iter().any(|e| e == "migrate") {
         return Err(failure("explicit_migration_handler_required"));
     }
-    Ok(inspected.registrations)
+    Registered::new(registrations)
 }
 
 fn run_migration(loaded: &Loaded, from: u64, active: &dyn Fn() -> bool) -> Result<Value> {
     let to = loaded.package.state_version;
-    let reply = ModHost::run(loaded, "migrate", "", json!({"from":from,"to":to}), active)?;
-    if reply.registrations != loaded.registrations {
-        return Err(failure("migration_changed_registration"));
-    }
-    Ok(reply.state)
+    Ok(ModHost::run(loaded, "migrate", "", json!({"from":from,"to":to}), active)?.state)
 }

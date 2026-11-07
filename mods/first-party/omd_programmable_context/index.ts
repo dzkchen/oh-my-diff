@@ -171,7 +171,7 @@ const owned = (mirror: Mirror, thread: string) => mirror.thread === thread;
 function render(mirror: Mirror, thread: string) {
   const own = owned(mirror, thread);
   return [`Programmable context (omd_programmable_context), session harness v${own ? mirror.version : 0}. It is supplemental and lower priority than user, project and system instructions.`,
-    `In a code-mode python kernel cell, run exec(tool("${TOOL}_python_api", {})["source"]) once, then use rlm.load, rlm.keep, rlm.vars, rlm.restore, rlm.spawn, rlm.map, rlm.complete, rlm.harness and rlm.refine. If the kernel or these tools are unavailable, continue with ordinary tools.`,
+    `Use it only when a task needs a large intermediate result to outlive compaction or a kernel restart, or needs child agents; otherwise ignore it and these tools. Then, in a code-mode python kernel cell, run exec(tool("${TOOL}_python_api", {})["source"]) once and use rlm.load, rlm.keep, rlm.vars, rlm.restore, rlm.spawn, rlm.map, rlm.complete, rlm.harness and rlm.refine.`,
     ...describe(merged(mirror.base, own ? mirror.sections : empty()))].join('\n');
 }
 
@@ -250,7 +250,7 @@ export default function activate(api: ModAPI) {
     return api.host.call('workspace.read', { paths: value.paths });
   });
 
-  tool({ name: 'keep', description: 'Persist a named context variable (up to 32 KiB) with its sources for this session, so it survives kernel restarts and compaction.', parameters: schema({ name: { type: 'string' }, value: { type: 'string' }, sources: { type: 'array', items: { type: 'string' }, maxItems: 8 } }, ['name', 'value']) }, async value => {
+  tool({ name: 'keep', description: 'Persist a named context variable (up to 32 KiB) with its sources for this session, so it survives kernel restarts and compaction. Only for a result you will restore later; never to record progress or notes.', parameters: schema({ name: { type: 'string' }, value: { type: 'string' }, sources: { type: 'array', items: { type: 'string' }, maxItems: 8 } }, ['name', 'value']) }, async value => {
     const sources = Array.isArray(value.sources) ? [...new Set(value.sources)] : value.sources ?? [];
     if (typeof value.name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,47}$/.test(value.name) || typeof value.value !== 'string' || value.value.length > 32_768
       || !strings(sources, 8, SOURCE_CHARS)) throw new Error(`keep_invalid: identifier name, string value up to 32 KiB and up to 8 distinct sources of up to ${SOURCE_CHARS} characters`);

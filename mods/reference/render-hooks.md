@@ -60,7 +60,7 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 ## `tool_call` props
 
 Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
-`interrupted`), `duration_ms` (null without a recorded start and completion, such as a patch row drawn live) and
+`interrupted`), `duration_ms` (null without a recorded start and completion) and
 `expanded`, and per kind:
 
 | `kind` | Props |
@@ -73,6 +73,10 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 | `mcp` | `server`, `tool`, `arguments`, `output_lines` |
 | `dynamic` | `tool`, `arguments`, `output_lines` |
 | `image` | `tool`, `path`, `prompt` |
+
+Patch rows are inserted on completion. Declined patches show an informational notice, matching restored
+history; they do not produce a `tool_call` render target. Patch `duration_ms` is a number when timing is recorded,
+otherwise null.
 
 Group and file limits:
 

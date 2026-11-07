@@ -66,8 +66,7 @@ fn record(name: &str, wall: u128, used: u64) {
             .map_or(0, |time| time.as_nanos());
         let _ = writeln!(
             file,
-            "{{\"stage\":\"{}\",\"wall_ns\":{},\"cpu_ns\":{},\"at_ns\":{}}}",
-            name, wall, used, at
+            "{{\"stage\":\"{name}\",\"wall_ns\":{wall},\"cpu_ns\":{used},\"at_ns\":{at}}}"
         );
     }
 }

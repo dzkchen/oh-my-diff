@@ -73,6 +73,8 @@ Python, then chart it in Bun".
 - Each cell gets a fresh token that expires when the cell ends, so background work from an older cell can't use a
   later cell's tool access.
 - Session shutdown stops the worker processes.
+- Update the kernel drivers and OMD together. Since 0.3.0 each cell's result marker carries that cell's token, so a
+  driver and host from different releases can't finish a cell.
 
 ## More
 

@@ -79,6 +79,10 @@ While other OMD sessions are open, the update waits for your next `codex` start.
 kept. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
 update anyway.
 
+When an OMD+ release moves a mod it came with to experimental, the update turns that mod off once and leaves it
+installed. Turn it back on in `/mods` if you want it; later updates leave it as you set it. Mods you installed
+yourself are never turned off.
+
 Between releases, OMD can publish fixes to the mods it ships on their own. These updates keep your OMD version and
 leave each mod on or off as it was. `omd update` installs them when no newer release is out, `/update` offers them, and
 automatic updates download them in the background. Like releases, they install when no other OMD session is open. A version pin turns them off. `omd update rollback` undoes the last

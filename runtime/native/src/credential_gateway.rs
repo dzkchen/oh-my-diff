@@ -246,7 +246,7 @@ async fn forward(
     let target = parts
         .uri
         .path_and_query()
-        .map(|value| value.as_str())
+        .map(http::uri::PathAndQuery::as_str)
         .unwrap_or("/");
     let mut path = target.trim_start_matches('/').splitn(3, '/');
     let key = path.next().unwrap_or_default();

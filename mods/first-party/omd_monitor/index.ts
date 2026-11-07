@@ -385,9 +385,15 @@ export default function activate(api: ModAPI) {
 
   const rearm = (restarted: boolean) => {
     const s = load();
-    if (!active(s).length) return;
+    if (!s.mons.length) return;
     const thread = api.session().thread_id;
-    for (const m of active(s)) m.thread = thread;
+    const owned = s.mons.filter(m => m.thread === thread);
+    if (owned.length !== s.mons.length) {
+      s.mons = owned;
+      delete s.due;
+      persist(s);
+    }
+    if (!active(s).length) return;
     const fires: Mon[] = [];
     for (const m of active(s)) if (m.deadline <= Date.now()) finish(m, 'timeout', 'the deadline passed while OMD was not running', fires);
     reconcile(s.mons, restarted, fires);
