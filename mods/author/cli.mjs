@@ -225,10 +225,10 @@ function checkProject(directory) {
   const parsed = ts.getParsedCommandLineOfConfigFile(join(directory, 'tsconfig.json'), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: diagnostic => fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')) });
   const generated = new Set(sources.map(source => resolve(directory, source.slice(0, -1))));
   const files = [...new Set([...parsed.fileNames.map(file => resolve(file)).filter(file => !generated.has(file)), ...sources.map(source => resolve(directory, source))])];
-  const jsxConfig = join(directory, 'tsconfig.omd-jsx.json');
-  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }));
+  const jsxConfig = join(directory, `tsconfig.omd-jsx-${process.pid}-${Date.now().toString(36)}.json`);
+  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }), { flag: 'wx' });
   try {
-    command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.omd-jsx.json'], { cwd: directory });
+    command('pnpm', ['exec', 'tsc', '-p', basename(jsxConfig)], { cwd: directory });
   } finally {
     rmSync(jsxConfig, { force: true });
   }

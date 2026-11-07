@@ -74,6 +74,19 @@ test('a mod panel skips settings it cannot address, tells same-named mods apart 
   assert.match(removed.panels[0].subtitle, /no longer installed/);
 });
 
+test('a shadowed or off copy shows no settings and never writes them, since the host saves to the copy that is on', () => {
+  const packages = [{ ...logo, effective: false }, { ...logo, scope: 'project' }];
+  const shadowed = invoke('mod user:omd_logo', { packages });
+  assert.ok(!shadowed.panels[0].items.some(item => item.id.startsWith('setting:')));
+  assert.match(shadowed.panels[0].subtitle, /Settings save to the project copy, which is on/);
+  const typed = invoke('mod user:omd_logo setting:size small', { packages, ui_state: shadowed.ui });
+  assert.ok(!operations(typed).includes('settings.write'));
+  assert.match(typed.panels[0].subtitle, /change them there/);
+  const off = invoke('mod user:omd_logo', { packages: [{ ...logo, enabled: false, effective: false }] });
+  assert.match(off.panels[0].subtitle, /Turn it on to change its settings/);
+  assert.ok(invoke('mod project:omd_logo', { packages }).panels[0].items.some(item => item.id === 'setting:size'));
+});
+
 test('the mods mod cannot turn itself off or remove itself', () => {
   const packages = [logo, mod('omd_mods')];
   const opened = invoke('', { packages });

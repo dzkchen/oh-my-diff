@@ -4,7 +4,7 @@ import { cpSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, ch
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { invoke, state } from '../mods/author/testing.mjs';
+import { invoke, state, text } from '../mods/author/testing.mjs';
 
 test('author packaging preserves custom entrypoints, assets and lifecycle scripts and inspects the output', () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-package-'));
@@ -242,6 +242,13 @@ test('author help and errors print without a stack', () => {
     assert.equal(failed.status, 1);
     assert.equal(failed.stderr, 'invalid_mod_id: BAD-ID!\n');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('text() reads document lines and diff content', () => {
+  assert.equal(text([
+    { type: 'document', id: 'd', label: 'd', lines: [[{ text: 'one' }, { text: ' two' }], [{ text: 'three' }]] },
+    { type: 'diff', id: 'u', label: 'u', unified: '@@ -1 +1 @@\n-a\n+b' },
+  ]), 'one two\nthree\n@@ -1 +1 @@\n-a\n+b');
 });
 
 test('thread ids map on every step helper', () => {
