@@ -14,7 +14,7 @@ host. The support policy, platforms and terminals are in [Support](../../docs/su
 
 Only the current API loads.
 
-The `host` object in [compatibility.json](compatibility.json) describes `main`: Codex 0.166.0 with the host crate
+The `host` object in [compatibility.json](compatibility.json) describes `main`: Codex 0.167.0 with the host crate
 version `1.4.2` from `runtime/omd/Cargo.toml`, a development version, not a published support claim.
 The supported-version table stops at the latest stable release, `1.4.0`.
 
@@ -96,7 +96,7 @@ When a mod changes `state_version`, its saved state must be migrated before it r
 
 ## Tested and not tested
 
-OMD is tested on Apple Silicon macOS with Codex 0.166.0, the OMD+ and OMD Core install profiles, and the bundled
+OMD is tested on Apple Silicon macOS with Codex 0.167.0, the OMD+ and OMD Core install profiles, and the bundled
 plugins.
 
 Linux and Intel macOS are unsupported, and the installer refuses them.
