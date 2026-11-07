@@ -780,6 +780,20 @@ enabled = true
             profiles.retire_packages("manager", store, "full", None)
         self.assertEqual(commands, [])
 
+    def test_activation_and_mod_selection_report_in_one_line(self):
+        packages = [{"id": "omd_logo", "active": True}, {"id": "omd_theme", "active": False}]
+        self.assertEqual(profiles.activation_summary({"activation": "full", "profile": "full", "profile_label": "OMD+",
+                                                      "packages": packages}), "OMD+ is active with 1 of 2 mods on.")
+        self.assertIn("omd-package activate full", profiles.activation_summary(
+            {"activation": "direct", "profile": "full", "profile_label": "OMD+", "packages": packages}))
+        record = {"packages": {"omd_theme": {}}, "store": "/store"}
+        moved = {"selections": [{"id": "omd_theme", "path": "/store/package-cache/omd_theme/abc", "selected": True}]}
+        with patch.object(profiles, "load", return_value=record), \
+                patch.object(profiles, "check", return_value=(None, "manager")), \
+                patch.object(profiles, "invoke", return_value=moved):
+            with self.assertRaisesRegex(ValueError, "use omd mods enable omd_theme$"):
+                profiles.select_mod(Path("/prefix"), Path("/bin"), "omd_theme", True)
+
     def test_an_upgrade_retrusts_store_copies_of_mods_outside_the_profile(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()
