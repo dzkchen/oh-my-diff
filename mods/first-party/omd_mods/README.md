@@ -35,7 +35,8 @@ omd mods disable omd_mods
 The panel's tabs:
 
 - All lists your mods as switches, grouped into Needs attention, On, Off and Available, with counts.
-- Settings opens one mod's own panel.
+- Settings opens one mod's own panel. Settings change only on the copy that is on: a user or project copy shadowed by
+  the other, or one that is off, shows why instead of its settings.
 - Directory installs from a source or updates.
 
 For example, `/mods enable omd_frecency` turns on `omd_frecency` without opening the panel, after you approve

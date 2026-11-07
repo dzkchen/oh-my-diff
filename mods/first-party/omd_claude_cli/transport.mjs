@@ -101,6 +101,38 @@ export function withoutCliContext(body) {
   return body;
 }
 
+// Each request is a fresh CLI that marks no history or only a trailing date message, which the next request never repeats; cache through the last two user turns instead.
+export function withCachedHistory(body) {
+  if (!Array.isArray(body.messages)) return body;
+  const blocks = message => Array.isArray(message.content) ? message.content : [];
+  const fixed = (body.tools ?? []).concat(Array.isArray(body.system) ? body.system : []).filter(block => block?.cache_control);
+  let marker = null;
+  const unmark = block => {
+    if (!block || typeof block !== 'object') return;
+    if (block.cache_control) {
+      marker ??= block.cache_control;
+      delete block.cache_control;
+    }
+    if (Array.isArray(block.content)) block.content.forEach(unmark);
+  };
+  for (const message of body.messages) blocks(message).forEach(unmark);
+  marker ??= fixed.at(-1)?.cache_control;
+  if (!marker) return body;
+  let used = fixed.length + (body.cache_control ? 1 : 0);
+  for (const message of body.messages) if (typeof message.content === 'string') message.content = [{ type: 'text', text: message.content }];
+  const users = body.messages.flatMap((message, index) => message.role === 'user' ? [index] : []);
+  const last = users.at(-1);
+  const previous = users.findLast(index => index < last && body.messages.slice(index + 1, last).some(message => message.role === 'assistant'));
+  for (const index of [last, previous]) {
+    if (index === undefined || used >= 4) continue;
+    const block = blocks(body.messages[index]).at(-1);
+    if (!block) continue;
+    block.cache_control = { ...marker };
+    used++;
+  }
+  return body;
+}
+
 async function bodyOf(request) {
   const encoding = String(request.headers['content-encoding'] ?? 'identity').trim().toLowerCase();
   if (encoding !== 'identity' && !DECODERS[encoding]) throw new BodyError(415, 'unsupported_content_encoding');
@@ -354,7 +386,7 @@ export class Relay {
         this.sockets.add(upstream);
         upstream.on('timeout', () => upstream.destroy(new Error('upstream_timeout')));
         upstream.on('error', reject);
-        upstream.end(JSON.stringify(withoutCliContext(body)));
+        upstream.end(JSON.stringify(withCachedHistory(withoutCliContext(body))));
       });
     } catch (error) {
       if (error instanceof BodyError) {
@@ -431,7 +463,7 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
       '--settings', join(root, 'settings.json'), '--mcp-config', JSON.stringify(mcp)];
     const env = cliEnv({ HOME: home, USER: username, LOGNAME: username, TMPDIR: root, ...accountEnv(account),
       ANTHROPIC_BASE_URL: relay.url,
-      ENABLE_TOOL_SEARCH: 'false', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      CLAUDE_CODE_ENTRYPOINT: 'oh-my-diff', ENABLE_TOOL_SEARCH: 'false', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       CLAUDE_CODE_MAX_RETRIES: '0', DISABLE_AUTO_COMPACT: '1', DISABLE_COMPACT: '1',
       CLAUDE_CODE_TOTAL_TOKENS_REMINDER: 'off' });
     delete env.OMD_CLAUDE_LOCAL_TOKEN;
