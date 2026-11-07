@@ -153,6 +153,14 @@ def sync_sources(manager, store, origin, packages):
     return changed
 
 
+def refresh_kept_copies(manager, store, origin, packages, installed):
+    kept = {identifier: {"sha256": package["package_sha256"], "files": package["files"],
+                         "capabilities": package["capabilities"]}
+            for identifier, package in packages.items()
+            if identifier not in installed and (store / "sources" / identifier).is_dir()}
+    return sync_sources(manager, store, origin, kept)
+
+
 def keep_bundled_copies(manager, store):
     selected = [item for item in invoke(manager, "selection-status", store)["selections"] if item["selected"]]
     for item in selected:
@@ -635,7 +643,7 @@ def route(prefix, bin_dir, name, args):
         raise ValueError(f"activate OMD+ before using the {name} route")
     selections = invoke(record["manager"]["installed_path"], "selection-status", record["store"])["selections"]
     if not any(item.get("id") == identifier and item.get("effective") and not item.get("error") for item in selections):
-        raise ValueError(f"the {name} route needs its mod enabled: omd mods enable {identifier}")
+        raise ValueError(f"the {name} route needs its mod enabled: {enable_hint(selections, identifier)}")
     host = Path(record["store"]) / "host.json"
     written = {route["model"] for route in (json.loads(host.read_text()).get("routes", []) if host.is_file() else [])
                if route.get("provider") == identifier and isinstance(route.get("data"), dict)}
@@ -667,6 +675,11 @@ def session_options(codex):
     return kept
 
 
+def enable_hint(selections, identifier):
+    enable = f"omd mods enable {identifier}"
+    return enable if any(item.get("id") == identifier for item in selections) else f"omd install {identifier}, then {enable}"
+
+
 def mini(prefix, bin_dir, codex):
     record = load(prefix)
     check(record, bin_dir)
@@ -674,7 +687,7 @@ def mini(prefix, bin_dir, codex):
         raise ValueError("activate OMD Core or OMD+ before using omd mini")
     selections = invoke(record["manager"]["installed_path"], "selection-status", record["store"])["selections"]
     if not any(item.get("id") == "omd_mini" and item.get("effective") and not item.get("error") for item in selections):
-        raise ValueError("omd mini needs its mod enabled: omd mods enable omd_mini")
+        raise ValueError(f"omd mini needs its mod enabled: {enable_hint(selections, 'omd_mini')}")
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         raise ValueError("omd mini needs a terminal; use `codex exec` for piped or scripted runs")
     launch, run, mode, options = os.urandom(8).hex(), 0, "mini", session_options(codex)
@@ -866,6 +879,7 @@ def install(args):
         sync_sources(installed_manager, store, prefix / "sources", installed)
         keep_bundled_copies(installed_manager, store)
         retired = retire_packages(installed_manager, store, args.profile, previous)
+        refresh_kept_copies(installed_manager, store, prefix / "sources", packages, installed)
         if revoked:
             invoke(installed_manager, "trust-all", store, json.dumps([
                 {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],
@@ -980,9 +994,10 @@ def register_plugins(prefix, bin_dir):
         return entry.get("source") if isinstance(entry, dict) else None
 
     if configured() != str(source):
+        home.mkdir(mode=0o700, parents=True, exist_ok=True)
         if configured() is not None:
-            subprocess.run([binary, "plugin", "marketplace", "remove", name], check=True, capture_output=True, env=env)
-        subprocess.run([binary, "plugin", "marketplace", "add", source], check=True, capture_output=True, env=env)
+            support.run([binary, "plugin", "marketplace", "remove", name], env=env)
+        support.run([binary, "plugin", "marketplace", "add", source], env=env)
         text = config.read_text()
         written = f"source = {json.dumps(str(support.resolved(source)))}"
         if text.count(written) != 1:

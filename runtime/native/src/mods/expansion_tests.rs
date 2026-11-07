@@ -923,6 +923,7 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1171,6 +1172,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1399,6 +1401,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1582,6 +1585,7 @@ async fn replacement_over_the_core_limit_is_dropped_with_a_diagnostic() {
     };
     static BIG: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("big"));
     mods.intercept_tool(ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -3956,6 +3960,7 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
             arguments: arguments.to_owned(),
         }));
         ToolStartInput {
+            serving_assessment: None,
             session_store: &session_store,
             thread_store: &thread_store,
             turn_store: &turn_store,
@@ -4578,6 +4583,7 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
                 arguments: r#"{"message":"go"}"#.to_owned(),
             };
             mods.intercept_tool(ToolStartInput {
+                serving_assessment: None,
                 session_store,
                 thread_store: &store,
                 turn_store: &ExtensionData::new("turn".to_owned()),
