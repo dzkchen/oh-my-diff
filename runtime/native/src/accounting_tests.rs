@@ -798,6 +798,42 @@ fn completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transport
 }
 
 #[test]
+fn a_paused_cost_snapshot_never_replaces_a_newer_one() {
+    let (root, accounts, task, mut request, body) = setup();
+    let path = root.path().join("evidence").join("task-cost.json");
+    let (staged, paused) = std::sync::mpsc::channel();
+    let (finished, resume) = std::sync::mpsc::channel::<()>();
+    *BEFORE_COST_REPLACE.lock().unwrap() = Some((
+        path.clone(),
+        Box::new({
+            let path = path.clone();
+            move || {
+                staged.send(()).unwrap();
+                if cost_write_lock(&path).try_lock().is_ok() {
+                    let _ = resume.recv();
+                }
+            }
+        }),
+    ));
+    let stale = std::thread::spawn({
+        let account = account(&task, root.path(), "worker");
+        move || write_cost_capture(&account, Durability::Volatile).unwrap()
+    });
+    paused.recv().unwrap();
+    let _attempt = accounts.before_send(&mut request, Some(&body)).unwrap();
+    write_cost_capture(&account(&task, root.path(), "worker"), Durability::Volatile).unwrap();
+    let _ = finished.send(());
+    stale.join().unwrap();
+    assert!(!COST_WRITES.lock().unwrap().contains_key(&path));
+    let persisted: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        persisted["attempts"].as_array().map(Vec::len),
+        Some(task.cost_capture().unwrap().attempts.len())
+    );
+    assert_eq!(task.cost_capture().unwrap().attempts.len(), 1);
+}
+
+#[test]
 fn observe_only_accounts_record_usage_without_admission() {
     let (root, accounts, task, mut request, _body) = setup();
     let mut lead = account(&task, root.path(), "lead");
@@ -968,7 +1004,7 @@ fn paid_preset_grants_bind_repository_route_and_current_bytes() {
     let path = root.path().join("paid.json");
     let grant = json!({"schema":1,"paid_api_key":true,"revocable":true,"repository":"repo-a","provider":"provider-a","model":"model-a","responses_url":"https://example.invalid/responses"});
     std::fs::write(&path, grant.to_string()).unwrap();
-    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
+    let sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
     let allowed = || {
         worker_authorized(
             &path,
@@ -1014,7 +1050,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     let path = root.path().join("subscription.json");
     let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repository":"fixture","provider":"openai","model":"fixture-model","responses_url":SUBSCRIPTION_RESPONSES_URL});
     std::fs::write(&path, grant.to_string()).unwrap();
-    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
+    let sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
     assert!(worker_authorized(
         &path,
         &sha,
@@ -1106,7 +1142,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     let mut mixed = grant.clone();
     mixed["paid_api_key"] = true.into();
     std::fs::write(&path, mixed.to_string()).unwrap();
-    let mixed_sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
+    let mixed_sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
     assert!(!worker_authorized(
         &path,
         &mixed_sha,

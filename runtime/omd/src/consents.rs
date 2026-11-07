@@ -21,7 +21,7 @@ pub struct Consent {
 }
 
 pub fn digest(text: &str, attachments: &[ResourceRef]) -> String {
-    crate::sha256_hex(&serde_json::to_vec(&(text, attachments)).unwrap_or_default())
+    crate::sha256_hex(serde_json::to_vec(&(text, attachments)).unwrap_or_default())
 }
 
 fn with<T>(

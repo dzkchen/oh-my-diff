@@ -197,10 +197,10 @@ export default function activate(api: ModAPI) {
     const answer = api.host.tryCall('terminal.prompt', { kind: 'text', title, message });
     return answer.ok && answer.value.status === 'accepted' ? String(answer.value.value ?? '').trim() : '';
   };
-  const setup = (argv: string[], stdin?: string): { stdout: string } | { error: string } => {
+  const setup = (argv: string[], stdin?: string, timeout = 60_000): { stdout: string } | { error: string } => {
     const { mod } = saved();
     if (!mod) return { error: 'the installed mod was not found; send a message in this thread, then try again.' };
-    const run = api.host.tryCall('exec.run', { program: 'node', argv: [`${mod}/setup.mjs`, ...argv], ...stdin === undefined ? {} : { stdin }, sandbox: 'none', timeout_ms: 60_000 });
+    const run = api.host.tryCall('exec.run', { program: 'node', argv: [`${mod}/setup.mjs`, ...argv], ...stdin === undefined ? {} : { stdin }, sandbox: 'none', timeout_ms: timeout });
     if (!run.ok) return { error: run.error.startsWith('exec_program_unavailable') ? NODE_MISSING : run.error };
     return run.value.exit_code === 0 ? { stdout: run.value.stdout } : { error: run.value.stderr.trim() };
   };
@@ -301,13 +301,25 @@ export default function activate(api: ModAPI) {
     try { adopted = (JSON.parse(run.stdout) as { profiles?: unknown }).profiles; } catch { adopted = null; }
     return Array.isArray(adopted) ? adopt(adopted as Profile[], done) : 'Profiles unchanged: setup returned unreadable output.';
   };
+  const accountOf = (profile: Profile): Account => ({ name: profile.name, provider: PROVIDER, model: profile.name, effort: profile.effort ?? 'medium',
+    billing: profile.paid ? 'explicit_paid_api_grant' : 'included_subscription', available: true, profile });
+  const keep = (profiles: Profile[], accounts: Account[], current: string | null) => {
+    const kept = accounts.filter(account => !account.profile);
+    store({ accounts: [...profiles.map(profile => {
+      const known = accounts.find(account => account.profile && account.name === profile.name);
+      return known ? { ...accountOf(profile), available: known.available } : accountOf(profile);
+    }), ...kept],
+    current: profiles.some(profile => profile.name === current) || kept.some(account => account.name === current) ? current : null });
+  };
+  const reread = () => {
+    const run = setup(['routes'], undefined, 5_000);
+    if ('error' in run) return;
+    try { keep(JSON.parse(run.stdout) as Profile[], saved().accounts, saved().current); } catch { return; }
+  };
   const adopt = (profiles: Profile[], done: string) => {
     const { accounts, current } = saved();
     const restart = update<number>('changed', () => Date.now()) === null ? ' Other sessions use it after they restart.' : '';
-    const kept = accounts.filter(account => !account.profile);
-    store({ accounts: [...profiles.map(profile => ({ name: profile.name, provider: PROVIDER, model: profile.name, effort: profile.effort ?? 'medium',
-      billing: profile.paid ? 'explicit_paid_api_grant' : 'included_subscription', available: true, profile })), ...kept],
-    current: profiles.some(profile => profile.name === current) || kept.some(account => account.name === current) ? current : null });
+    keep(profiles, accounts, current);
     api.host.tryCall('events.publish', { channel: 'added', data: {} });
     return done && `${done}${restart}`;
   };
@@ -495,7 +507,7 @@ export default function activate(api: ModAPI) {
 
   api.command('profile', value => {
     const [op = '', label = '', extra = '', url = ''] = String(value ?? '').trim().split(/\s+/);
-    if (['', 'panel', 'list', 'use', 'next'].includes(op)) refresh();
+    if (['', 'panel', 'list', 'use', 'next'].includes(op)) reread();
     const { accounts, current, pending, notice } = saved();
     const named = (name: string) => accounts.find(item => item.name === name);
     if (!op) return panel();

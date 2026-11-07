@@ -945,9 +945,9 @@ impl ModStore {
             .ok_or_else(|| failure("package_not_installed"))?;
         let (manifest, _, integrity) = store::package(&package.path)?;
         if integrity != package.integrity || manifest.id != package.id {
-            return Err(failure(
-                "source_changed: inspect and preview the new package",
-            ));
+            return Err(failure(format!(
+                "source_changed: {id}: review it again with omd mods update {id}"
+            )));
         }
         if package.state_version != manifest.state_version {
             return Err(failure(
@@ -968,14 +968,18 @@ impl ModStore {
             .find(|selection| selection.path == path && selection.scope == scope)
             .ok_or_else(|| failure("package_selection_missing"))?;
         if selection.sha256 != integrity {
-            return Err(failure("source_changed: inspect and trust the new digest"));
+            return Err(failure(format!(
+                "source_changed: {id}: review it again with omd mods update {id}"
+            )));
         }
         if manifest
             .capabilities
             .iter()
             .any(|capability| !selection.capabilities.contains(capability))
         {
-            return Err(failure("capability_denied"));
+            return Err(failure(format!(
+                "capability_denied: {id}: approve it again with omd mods update {id}"
+            )));
         }
         super::validate_stored_settings(&manifest, &selection.settings)?;
         selection.enabled = true;
@@ -1592,7 +1596,7 @@ impl ModStore {
             },
             exec_environment: package.exec_environment.clone(),
             settings_schema_sha256: crate::sha256_hex(
-                &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
+                serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
             ),
             lifecycle: declared_lifecycle,
             scope: request.scope.clone(),

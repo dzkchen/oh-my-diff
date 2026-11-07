@@ -409,6 +409,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_welcome_hidden_v1",
     "routes_add_self_v1",
     "routes_add_model_v1",
+    "package_needs_approval_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -1041,8 +1042,8 @@ fn selection_verdict(
             )
         } else {
             format!(
-                "source_changed: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
-                package.id
+                "source_changed: {} changed after it was trusted; review it in /omd or run omd mods update {}",
+                package.id, package.id
             )
         }));
     }
@@ -2325,8 +2326,9 @@ impl ModPackage {
         }
         if self.lifecycle.len() > 3
             || self.lifecycle.iter().any(|(event, path)| {
-                !["install", "update", "uninstall"].contains(&event.as_str())
-                    || !(path.ends_with(".ts") && relative_path(path, 128))
+                !(["install", "update", "uninstall"].contains(&event.as_str())
+                    && path.ends_with(".ts")
+                    && relative_path(path, 128))
             })
         {
             return Err(failure("invalid_lifecycle_scripts"));
@@ -4645,8 +4647,8 @@ impl ModHost {
                 let verified = store::verified(&selection.path)?;
                 if verified.sha256 != selection.sha256 {
                     return Err(failure(format!(
-                        "source_changed: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
-                        package.id
+                        "source_changed: {} changed after it was trusted; review it in /omd or run omd mods update {}",
+                        package.id, package.id
                     )));
                 }
                 Ok(store::asset_map(verified.assets.clone()))

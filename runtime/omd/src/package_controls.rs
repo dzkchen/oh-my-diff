@@ -418,6 +418,7 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                 "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
                 "pending": (runtime.is_some() && wanted != running.is_some()).then_some("reload"),
                 "failed": failed,
+                "needs_approval": !enabled && failed.is_some_and(|failed| failed.starts_with("capability_denied")),
                 "api": api,
                 "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == api),
                 "grants": selection["capabilities"],
@@ -513,7 +514,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                 Some(version) if !version.is_empty() => source.with_version(version)?,
                 _ => source,
             };
-            let (request, plan) = requested(store, source, index, arguments.scope.clone())?;
+            let (request, plan) = requested(store, source, index, arguments.scope.clone(), false)?;
             (plan.root.clone(), Some(request), Some(plan), None, None)
         }
         "update" => {
@@ -532,11 +533,20 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                         _ => None,
                     })
             });
+            let revoked = package
+                .capabilities
+                .iter()
+                .any(|capability| !package.trust.capabilities.contains(capability));
             let (request, plan) = requested(
                 store,
-                package.source.updatable(),
+                if revoked {
+                    package.source.clone()
+                } else {
+                    package.source.updatable()
+                },
                 index,
                 package.scope.clone(),
+                revoked,
             )
             .map_err(|error| failure(format!("package_update_unavailable: {error}")))?;
             (package.id, Some(request), Some(plan), None, None)
@@ -573,15 +583,18 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                 .into_iter()
                 .filter(|name| crate::host::secret_like(name))
                 .collect();
+            let capabilities: Vec<String> =
+                serde_json::from_value(inspected["manifest"]["capabilities"].clone())?;
             if sha256 == current.sha256
                 && secret_environment
                     .iter()
                     .all(|name| current.secret_environment.contains(name))
+                && capabilities
+                    .iter()
+                    .all(|capability| current.capabilities.contains(capability))
             {
                 return Err(failure("package_source_unchanged"));
             }
-            let capabilities: Vec<String> =
-                serde_json::from_value(inspected["manifest"]["capabilities"].clone())?;
             let added = capabilities
                 .iter()
                 .filter(|capability| !current.capabilities.contains(capability))
@@ -724,10 +737,11 @@ fn requested(
     source: ModPackageSource,
     index: Option<PathBuf>,
     scope: String,
+    offline: bool,
 ) -> io::Result<(ModInstallRequest, crate::ModPackagePlan)> {
     let mut request = ModInstallRequest {
         action: None,
-        offline: matches!(source, ModPackageSource::Local { .. }),
+        offline: offline || matches!(source, ModPackageSource::Local { .. }),
         source,
         index,
         scope,

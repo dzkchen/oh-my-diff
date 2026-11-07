@@ -63,6 +63,8 @@ It has no settings.
 ## Needs and limits
 
 - Turning a mod on asks for approval and lists any new permissions.
+- A mod whose permissions were revoked, or that asks for new ones, shows as needs approval. Review it from a shell
+  with `omd mods update ID`.
 - Choose a model reads the ChatGPT model list (`routes.models`, under `packages`) and the conversation's model
   (`session.info`, under `inventory`).
 - Every install is reviewed and starts off.

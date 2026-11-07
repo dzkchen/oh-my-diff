@@ -185,6 +185,21 @@ test('Choose a model lists routes.models with their efforts, marks the lead mode
   assert.ok(!operations(unsigned).includes('app.request'));
 });
 
+test('a mod that needs approval again says so and names the command that reviews it', () => {
+  const revoked = mod('omd_preview', { enabled: false, effective: false, needs_approval: true, failed: 'capability_denied: omd_preview: approve it again with omd mods update omd_preview' });
+  const item = invoke('', { packages: [revoked] }).panels[0].items.find(item => item.id === 'user:omd_preview');
+  assert.equal(item.group, 'Needs attention');
+  assert.match(item.description, /^needs approval/);
+  assert.match(item.detail, /^needs approval · every project · .* · Review it from a shell with omd mods update omd_preview$/);
+  const subtitle = invoke('omd_preview', { packages: [revoked] }).panels[0].subtitle;
+  assert.match(subtitle, /^needs approval · 1\.0\.0/);
+  assert.match(subtitle, /Review it from a shell with omd mods update omd_preview\./);
+  assert.doesNotMatch(subtitle, /--yes|Why it failed/);
+  const project = mod('omd_preview', { scope: 'project', enabled: false, effective: false, needs_approval: true, failed: 'capability_denied' });
+  const scoped = invoke('', { packages: [project] }).panels[0].items.find(item => item.id === 'project:omd_preview');
+  assert.match(scoped.detail, /omd mods update omd_preview --scope project$/);
+});
+
 test('the list groups mods by state, searches their commands and reopens where it was closed', () => {
   const packages = [logo, mod('omd_usage', { enabled: false, effective: false }), mod('omd_preview', { failed: 'activation failed' })];
   const index = () => ({ packages: [{ id: 'omd_frecency', description: 'Ranks files', latest: '1.0.0', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });

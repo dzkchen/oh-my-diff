@@ -519,6 +519,60 @@ class ProfileModeTests(unittest.TestCase):
             self.assertEqual(result["plugins"], ["omd-anchored-edit"])
             self.assertEqual(home.stat().st_mode & 0o777, 0o700)
 
+    def test_plugin_mod_reviews_the_added_plugins_component_through_omd_and_grants_nothing_itself(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            marketplace, home = base / "bundle", base / "codex"
+            (marketplace / ".agents/plugins").mkdir(parents=True)
+            (marketplace / ".agents/plugins/marketplace.json").write_text('{"name": "oh-my-diff"}')
+            component = home / "plugins/cache/oh-my-diff/omd-anchored-edit/1.2.0/mod"
+            component.mkdir(parents=True)
+            (component / "mod.json").write_text('{"id": "omd_anchored_edit"}')
+            record = {"plugin_bundle": {"marketplace": str(marketplace)}, "shared_state": {"codex_home": str(home)},
+                      "tools": {"omd": {"installed_path": "/omd"}}, "store": "/store"}
+            listed = {"installed": [{"pluginId": "other@oh-my-diff", "version": "9"},
+                                    {"pluginId": "omd-anchored-edit@oh-my-diff", "version": "1.2.0"}]}
+            manager, ran = [], []
+
+            def run(arguments, **kwargs):
+                ran.append((arguments, kwargs))
+                if arguments[1] == "install" and declined:
+                    raise RuntimeError("command failed (2)")
+
+            for declined in (False, True):
+                manager.clear()
+                ran.clear()
+                with (patch.object(profiles, "load", return_value=record),
+                      patch.object(profiles, "check", return_value=("/codex", "/omd-mod")),
+                      patch.object(profiles.support, "output", return_value=json.dumps(listed)) as output,
+                      patch.object(profiles, "invoke", side_effect=lambda *arguments: manager.append(arguments) or {"component": str(component)}),
+                      patch.object(profiles.support, "run", side_effect=run)):
+                    if declined:
+                        with self.assertRaisesRegex(RuntimeError, "failed"):
+                            profiles.plugin_mod(Path("/prefix"), Path("/bin"), "enable", "omd-anchored-edit")
+                    else:
+                        profiles.plugin_mod(Path("/prefix"), Path("/bin"), "enable", "omd-anchored-edit")
+                self.assertEqual(output.call_args.args[0], ["/codex", "plugin", "list", "--json", "--marketplace", "oh-my-diff"])
+                self.assertEqual(output.call_args.kwargs["env"]["CODEX_HOME"], str(home))
+                self.assertEqual(manager, [("/omd-mod", "plugin-component", component.parent)])
+                expected = [["/omd", "install", str(component), "--store", "/store"]]
+                if not declined:
+                    expected.append(["/omd", "mods", "enable", "omd_anchored_edit", "--store", "/store"])
+                self.assertEqual([arguments for arguments, _ in ran], expected)
+                self.assertTrue(all(kwargs == {"capture": False} for _, kwargs in ran))
+            with (patch.object(profiles, "load", return_value=record), patch.object(profiles, "check", return_value=("/codex", "/omd-mod")),
+                  patch.object(profiles.support, "output", return_value='{"installed": []}')):
+                with self.assertRaisesRegex(ValueError, "codex plugin add omd-anchored-edit@oh-my-diff-experimental"):
+                    profiles.plugin_mod(Path("/prefix"), Path("/bin"), "enable", "omd-anchored-edit@oh-my-diff-experimental")
+
+    def test_status_summary_shows_off_and_quarantined_profile_mods(self):
+        package = {"error": None, "active": False, "enabled_in_store": False, "installed": True, "quarantined": None}
+        result = {"product": "p", "profile_label": "OMD+", "activation": "full", "mod_api": "1", "store": "/store",
+                  "packages": [{**package, "id": "omd_logo"}, {**package, "id": "omd_theme", "quarantined": "testing"},
+                               {**package, "id": "omd_mini", "installed": False}]}
+        self.assertEqual(profiles.status_summary(result).splitlines()[2:5],
+                         ["  omd_logo: off", "  omd_theme: quarantined: testing", "  omd_mini: missing"])
+
     def test_uninstall_removes_plugins_added_from_this_installation(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()

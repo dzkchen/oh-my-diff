@@ -1,8 +1,20 @@
 # omd_privacy
 
-Replaces secrets, and personal data you choose, with random placeholders such as
-`[REDACTED:github_token:q7xk2m9fhd4w]` in everything sent to the model. It can also ask before a shell command
-reads a sensitive file when you set `paths` to `ask`. It's off by default in OMD+. OMD Core doesn't include it.
+Pattern-based text redaction. It replaces text that matches its secret rules, and personal data you choose, with
+random placeholders such as `[REDACTED:github_token:q7xk2m9fhd4w]` in the text of requests sent to the model. It can
+also ask before a shell command reads a sensitive file when you set `paths` to `ask`. It's off by default in OMD+. OMD
+Core doesn't include it.
+
+It does not cover:
+
+- Web search, which sends your recent messages and its queries unscanned.
+- Your screen, transcript, resume data and logs, which keep the original secrets.
+- Images, audio and files, unless `unscanned` is `deny`.
+- Provider-side tools, other mods' network calls and processes you already allowed.
+- Secrets its rules don't match, such as ones with no known prefix, split or encoded values and unquoted word-only
+  passwords.
+
+[Needs and limits](#needs-and-limits) has the details.
 
 ## Turn it on
 

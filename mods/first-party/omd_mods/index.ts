@@ -2,7 +2,7 @@ import type { Json, ModAPI, PackageCatalogEntry, PackageRequest, PackageState, T
 
 type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; warning?: string; from: string; generation: number };
 type Scope = 'user' | 'project';
-const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'required', 'effective', 'pending', 'failed', 'blocked', 'compatible', 'conflicts'] as const;
+const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'required', 'effective', 'pending', 'failed', 'needs_approval', 'blocked', 'compatible', 'conflicts'] as const;
 type Listed = Pick<PackageState, typeof FIELDS[number]>;
 type Choice = { model: string; label: string; efforts: string[]; effort: string; window: number };
 type Choosing = { from: string; name: string; models: Choice[]; lead: string | null };
@@ -52,6 +52,7 @@ export default function activate(api: ModAPI) {
   const visible = (value: string, limit = 400) => [...value.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, ' ')].slice(0, limit).join('');
   const clip = (value: string, bytes: number) => { const text = visible(value, bytes); return text.slice(0, encoder.encodeInto(text, new Uint8Array(bytes)).read); };
   const key = (item: Pick<PackageState, 'id' | 'scope'>) => `${item.scope}:${item.id}`;
+  const scoped = (item: Pick<PackageState, 'scope'>) => item.scope === 'project' ? ' --scope project' : '';
   const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => ACRONYMS.has(word) ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1)).join(' ') || id;
   const properties = (item: Pick<PackageState, 'settings_schema'>) => Object.entries(((item.settings_schema as { properties?: Record<string, Property> } | null)?.properties) ?? {});
   const matches = (argument: string) => (item: Pick<PackageState, 'id' | 'scope' | 'installed'>) => item.installed && (key(item) === argument || item.id === argument);
@@ -200,7 +201,7 @@ export default function activate(api: ModAPI) {
     return owned;
   };
   const status = (item: Listed) =>
-    !item.installed ? 'removed' : item.blocked ? 'quarantined' : item.failed ? 'failed' : item.pending ? item.effective ? 'stopping' : 'starting'
+    !item.installed ? 'removed' : item.blocked ? 'quarantined' : item.needs_approval ? 'needs approval' : item.failed ? 'failed' : item.pending ? item.effective ? 'stopping' : 'starting'
       : item.effective ? 'on' : item.enabled ? 'shadowed' : 'off';
   const subtitle = (lines: (string | null | undefined | false)[]) => clip(lines.filter(Boolean).join('\n'), 2000);
   const entry = (item: TerminalPanelItem): TerminalPanelItem => ({ ...item, label: clip(item.label, 128), description: item.description ? clip(item.description, 256) : undefined });
@@ -223,7 +224,7 @@ export default function activate(api: ModAPI) {
         description: [fixed ? 'always on' : extra, item.scope === 'project' ? 'this project' : null, item.description].filter(Boolean).join(' · '),
         keywords: clip([item.id, ...names].join(' '), 256),
         detail: clip([`${word} · ${item.scope === 'project' ? 'this project' : 'every project'}`, names.length ? `Commands: ${names.join(' ')}` : 'No commands',
-          item.failed && `Why it failed: ${brief(item.failed)}`, item.blocked && `Quarantined: ${item.blocked}`, !item.compatible && 'Needs a newer Oh My Diff',
+          item.needs_approval ? `Review it from a shell with omd mods update ${item.id}${scoped(item)}` : item.failed && `Why it failed: ${brief(item.failed)}`, item.blocked && `Quarantined: ${item.blocked}`, !item.compatible && 'Needs a newer Oh My Diff',
           ...item.conflicts.map(conflict => `Conflict: ${conflict}`)].filter(Boolean).join(' · '), 512) });
     });
     const settings = shown.map(item => entry({ id: `open:${key(item)}`, tab: 'settings', label: `${friendly(item.id)} ›`, kind: 'action', description: item.description ?? undefined }));
@@ -294,7 +295,8 @@ export default function activate(api: ModAPI) {
     return {
       title: title(item, state), action: { command: 'mods', args },
       subtitle: subtitle([`${status(item)} · ${item.version} · ${item.source === 'selection' ? 'local folder' : item.source}${item.compatible ? '' : ' · needs a newer Oh My Diff'}`, item.description,
-        item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}.`, item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), state.notice]),
+        item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}${scoped(item)}.`,
+        item.needs_approval ? `Review it from a shell with omd mods update ${item.id}${scoped(item)}.` : item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), state.notice]),
       items: [
         ...fixed ? [] : [entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled })],
         ...properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
@@ -386,7 +388,7 @@ export default function activate(api: ModAPI) {
     const counts = mods ? `${mods.active} of ${mods.installed} mods on${mods.failed ? `, ${mods.failed} failed` : ''}` : 'Mods are loading';
     const lines = identity?.install_profile === 'platform_only'
       ? ['Oh My Diff Core: the mod host without built-in task features', `${counts}. /mods turns mods on, /omd fixes a broken one.`, 'Write your own with omd-mod-author create DIR ID.']
-      : ['Oh My Diff', `${counts}. /mods turns more on, /omd fixes a broken one.`];
+      : ['Oh My Diff', `${counts}. /mods turns more on, /omd fixes a broken one.`, 'Auto-continue (off) answers unattended prompts: omd mods enable omd_auto_continue'];
     return lines.map((text, index) => ({ type: 'text', id: `omd_mods_welcome_${index}`, label: 'Getting started', text: wrap(text), tone: index ? 'muted' : 'normal' }));
   };
   api.on('terminal', (input): TerminalPatch | null => {

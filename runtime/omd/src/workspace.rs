@@ -489,7 +489,7 @@ impl WorkspaceIndex {
                 let hash = match cached.get(&name) {
                     Some((seen, hash)) if *seen == stamp => hash.clone(),
                     // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
-                    _ if metadata.nlink() != 1 => crate::sha256_hex(&identity(&metadata)),
+                    _ if metadata.nlink() != 1 => crate::sha256_hex(identity(&metadata)),
                     _ => {
                         let (content, _) = read_version(repository, &name, max_bytes)?
                             .ok_or_else(|| invalid("workspace file disappeared during index"))?;

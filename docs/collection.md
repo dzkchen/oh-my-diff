@@ -19,7 +19,6 @@ The status words on this page:
 | [`omd_logo`](../mods/first-party/omd_logo/README.md) | OMD Core, OMD+ | The OMD logo in the session header |
 | [`omd_tool_lines`](../mods/first-party/omd_tool_lines/README.md) | OMD+ | Groups adjacent shell commands and shortens other tool calls; open a row for the full output |
 | [`omd_statusline`](../mods/first-party/omd_statusline/README.md) | OMD+ | A configurable status line; `/statusline` edits it |
-| [`omd_auto_continue`](../mods/first-party/omd_auto_continue/README.md) | OMD+ | When an approval or a question gets no answer within the wait you set (two minutes by default), declines the approval or answers the question so the turn continues |
 
 ## Off by default
 
@@ -27,8 +26,9 @@ All of these come with OMD+ only.
 
 | Mod | What it does | What it needs |
 | --- | --- | --- |
+| [`omd_auto_continue`](../mods/first-party/omd_auto_continue/README.md) | When an approval or a question gets no answer within the wait you set (two minutes by default), declines the approval or answers the question so the turn continues; `omd mods enable omd_auto_continue` | |
 | [`omd_frecency`](../mods/first-party/omd_frecency/README.md) | Ranks `@` file mentions by fuzzy match and how often you use them | |
-| [`omd_privacy`](../mods/first-party/omd_privacy/README.md) | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
+| [`omd_privacy`](../mods/first-party/omd_privacy/README.md) | Redacts text matching its secret and personal-data rules in requests to the model, not web search, transcripts or logs; `/privacy` | |
 | [`omd_usage`](../mods/first-party/omd_usage/README.md) | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
 | [`omd_tool_absorb`](../mods/first-party/omd_tool_absorb/README.md) | When the model repeats a read in one response, runs it once. In [code mode](../mods/reference/glossary.md#sessions-and-models), also reuses unchanged file reads; `/absorb` | |
 | [`omd_tool_fix`](../mods/first-party/omd_tool_fix/README.md) | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |

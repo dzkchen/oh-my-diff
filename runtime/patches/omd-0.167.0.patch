@@ -45762,7 +45762,7 @@ index d08632d79e9cc7a22d061adfaffe8db0ebf6f1cd..3e4ec4041ea370e2276f97f8b32229a8
              .as_ref()
              .and_then(|info| info.model_context_window)
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 9e6baf141297a482fc8e4c212bea3e7514a043b9..d9fdd5aad1ca374f575e095ed0f79d3064683802 100644
+index 9e6baf141297a482fc8e4c212bea3e7514a043b9..3b0512955a850418187ca50224a3fac968a3339a 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 @@ -4,6 +4,7 @@
@@ -45804,7 +45804,7 @@ index 9e6baf141297a482fc8e4c212bea3e7514a043b9..d9fdd5aad1ca374f575e095ed0f79d30
 -        self.set_status_line(content);
 +        let mut prefix = Vec::new();
 +        for part in summary
-+            .map(|status| status.bold())
++            .map(ratatui::prelude::Stylize::bold)
 +            .into_iter()
 +            .chain(mod_segments.into_iter().map(Span::from))
 +        {
@@ -63718,10 +63718,10 @@ index 0000000000000000000000000000000000000000..53bc90f4dce5591639f907585ea4bab0
 +workspace = true
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..faa5d4317c52b6ac14339ffcced3b1262e904f9a
+index 0000000000000000000000000000000000000000..cf3451a0e9159dba782a07c1deee91913412d6e6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2366 @@
+@@ -0,0 +1,2409 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -63800,10 +63800,53 @@ index 0000000000000000000000000000000000000000..faa5d4317c52b6ac14339ffcced3b126
 +    Ok(())
 +}
 +
++static COST_WRITES: Mutex<BTreeMap<std::path::PathBuf, Arc<Mutex<()>>>> =
++    Mutex::new(BTreeMap::new());
++
++fn cost_write_lock(path: &std::path::Path) -> Arc<Mutex<()>> {
++    COST_WRITES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .entry(path.to_path_buf())
++        .or_default()
++        .clone()
++}
++
++#[cfg(test)]
++type CostReplaceHook = (std::path::PathBuf, Box<dyn FnOnce() + Send>);
++
++#[cfg(test)]
++pub(crate) static BEFORE_COST_REPLACE: Mutex<Option<CostReplaceHook>> = Mutex::new(None);
++
 +fn write_cost_capture(account: &Account, durability: Durability) -> Result<(), TransportError> {
++    let writing = cost_write_lock(&account.cost_capture);
++    let guard = writing.lock();
++    let result = write_cost_snapshot(account, durability);
++    drop(guard);
++    let mut locks = COST_WRITES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if Arc::strong_count(&writing) == 2 {
++        locks.remove(&account.cost_capture);
++    }
++    result
++}
++
++fn write_cost_snapshot(account: &Account, durability: Durability) -> Result<(), TransportError> {
 +    let bytes =
 +        serde_json::to_vec(&account.task.cost_capture().map_err(denied)?).map_err(denied)?;
-+    codex_omd::fsio::write_bytes(&account.cost_capture, &bytes, durability).map_err(denied)
++    codex_omd::fsio::write_bytes_before(&account.cost_capture, &bytes, durability, || {
++        #[cfg(test)]
++        if let Some((_, hook)) = BEFORE_COST_REPLACE
++            .lock()
++            .ok()
++            .and_then(|mut hook| hook.take_if(|(path, _)| *path == account.cost_capture))
++        {
++            hook();
++        }
++        Ok(())
++    })
++    .map_err(denied)
 +}
 +
 +pub(crate) fn billing(rates: Option<&Rates>) -> &'static str {
@@ -66090,10 +66133,10 @@ index 0000000000000000000000000000000000000000..faa5d4317c52b6ac14339ffcced3b126
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb30777fa96
+index 0000000000000000000000000000000000000000..fc8a3c9c5c54ebd019bb6fdc211b845acac120e7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1376 @@
+@@ -0,0 +1,1412 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -66894,6 +66937,42 @@ index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb3
 +}
 +
 +#[test]
++fn a_paused_cost_snapshot_never_replaces_a_newer_one() {
++    let (root, accounts, task, mut request, body) = setup();
++    let path = root.path().join("evidence").join("task-cost.json");
++    let (staged, paused) = std::sync::mpsc::channel();
++    let (finished, resume) = std::sync::mpsc::channel::<()>();
++    *BEFORE_COST_REPLACE.lock().unwrap() = Some((
++        path.clone(),
++        Box::new({
++            let path = path.clone();
++            move || {
++                staged.send(()).unwrap();
++                if cost_write_lock(&path).try_lock().is_ok() {
++                    let _ = resume.recv();
++                }
++            }
++        }),
++    ));
++    let stale = std::thread::spawn({
++        let account = account(&task, root.path(), "worker");
++        move || write_cost_capture(&account, Durability::Volatile).unwrap()
++    });
++    paused.recv().unwrap();
++    let _attempt = accounts.before_send(&mut request, Some(&body)).unwrap();
++    write_cost_capture(&account(&task, root.path(), "worker"), Durability::Volatile).unwrap();
++    let _ = finished.send(());
++    stale.join().unwrap();
++    assert!(!COST_WRITES.lock().unwrap().contains_key(&path));
++    let persisted: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
++    assert_eq!(
++        persisted["attempts"].as_array().map(Vec::len),
++        Some(task.cost_capture().unwrap().attempts.len())
++    );
++    assert_eq!(task.cost_capture().unwrap().attempts.len(), 1);
++}
++
++#[test]
 +fn observe_only_accounts_record_usage_without_admission() {
 +    let (root, accounts, task, mut request, _body) = setup();
 +    let mut lead = account(&task, root.path(), "lead");
@@ -67064,7 +67143,7 @@ index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb3
 +    let path = root.path().join("paid.json");
 +    let grant = json!({"schema":1,"paid_api_key":true,"revocable":true,"repository":"repo-a","provider":"provider-a","model":"model-a","responses_url":"https://example.invalid/responses"});
 +    std::fs::write(&path, grant.to_string()).unwrap();
-+    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
++    let sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
 +    let allowed = || {
 +        worker_authorized(
 +            &path,
@@ -67110,7 +67189,7 @@ index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb3
 +    let path = root.path().join("subscription.json");
 +    let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repository":"fixture","provider":"openai","model":"fixture-model","responses_url":SUBSCRIPTION_RESPONSES_URL});
 +    std::fs::write(&path, grant.to_string()).unwrap();
-+    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
++    let sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
 +    assert!(worker_authorized(
 +        &path,
 +        &sha,
@@ -67202,7 +67281,7 @@ index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb3
 +    let mut mixed = grant.clone();
 +    mixed["paid_api_key"] = true.into();
 +    std::fs::write(&path, mixed.to_string()).unwrap();
-+    let mixed_sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
++    let mixed_sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
 +    assert!(!worker_authorized(
 +        &path,
 +        &mixed_sha,
@@ -67472,10 +67551,10 @@ index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb3
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d7fc0b4bd8eb3d9cf13c65351b828bb689407abe
+index 0000000000000000000000000000000000000000..371555c73dc29a4fc2a5d6b7fd2a5399ce182047
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,608 @@
+@@ -0,0 +1,607 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -68074,10 +68153,9 @@ index 0000000000000000000000000000000000000000..d7fc0b4bd8eb3d9cf13c65351b828bb6
 +
 +fn main() {
 +    match run(&std::env::args().skip(1).collect::<Vec<_>>()) {
-+        Ok(value) => println!(
-+            "{}",
-+            serde_json::to_string_pretty(&value).unwrap_or_default()
-+        ),
++        Ok(value) => {
++            codex_omd::print_output(&serde_json::to_string_pretty(&value).unwrap_or_default())
++        }
 +        Err(error) => {
 +            eprintln!("{error}");
 +            std::process::exit(1);
@@ -73048,7 +73126,7 @@ index 0000000000000000000000000000000000000000..1d51d3f710a5f6b5232532bf28a07046
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..33a30b6cf54ef34484de7b022399a951d10883d5
+index 0000000000000000000000000000000000000000..b1bbadcfd2c64d5f91847f3a19b5c08e21e3ace9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
 @@ -0,0 +1,2538 @@
@@ -75154,7 +75232,7 @@ index 0000000000000000000000000000000000000000..33a30b6cf54ef34484de7b022399a951
 +            blit: None,
 +        };
 +        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
-+        let sha256 = codex_omd::sha256_hex(&fs::read(&sh).unwrap());
++        let sha256 = codex_omd::sha256_hex(fs::read(&sh).unwrap());
 +        let pidfile = repository.join("child.pid");
 +        let start = |owner: ProcessOwner<'_>, session: &str| {
 +            processes.call(
@@ -86355,10 +86433,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5cd5da321b9cc0cd2de8ca33b1de2f011fefc523
+index 0000000000000000000000000000000000000000..0764315b59598d8a771c1f167da9cd70694db449
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5545 @@
+@@ -0,0 +1,5587 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -91043,6 +91121,48 @@ index 0000000000000000000000000000000000000000..5cd5da321b9cc0cd2de8ca33b1de2f01
 +}
 +
 +#[test]
++fn sibling_agent_callbacks_never_persist_an_older_inventory_snapshot() {
++    let directory = tempfile::tempdir().unwrap();
++    let inventory = Arc::new(inventory::Inventory::default());
++    inventory.persist_to(directory.path().to_path_buf());
++    let model = json!({"origin": "model", "parent": {"thread_id": "root", "agent_id": null}});
++    inventory.start("child", model.clone());
++    inventory.start("other", model);
++    let (staged, paused) = std::sync::mpsc::channel();
++    let (finished, resume) = std::sync::mpsc::channel::<()>();
++    *inventory::BEFORE_INVENTORY_REPLACE.lock().unwrap() = Some((
++        directory.path().to_path_buf(),
++        Box::new({
++            let inventory = inventory.clone();
++            move || {
++                staged.send(()).unwrap();
++                if inventory.persisting.try_lock().is_ok() {
++                    let _ = resume.recv();
++                }
++            }
++        }),
++    ));
++    let describing = std::thread::spawn({
++        let inventory = inventory.clone();
++        move || inventory.describe("other", "provider", "model", None)
++    });
++    paused.recv().unwrap();
++    let ending = std::thread::spawn(move || {
++        inventory.end("child", "completed", None);
++        let _ = finished.send(());
++    });
++    describing.join().unwrap();
++    ending.join().unwrap();
++    let persisted: Vec<Value> =
++        serde_json::from_slice(&std::fs::read(directory.path().join("root.json")).unwrap())
++            .unwrap();
++    let child = persisted
++        .iter()
++        .find(|record| record["thread_id"] == "child");
++    assert_eq!(child.unwrap()["status"], "completed");
++}
++
++#[test]
 +fn the_agent_inventory_keeps_finished_parents_of_remaining_and_starting_agents() {
 +    let inventory = inventory::Inventory::default();
 +    let model = |parent: &str| json!({"origin": "model", "parent": {"thread_id": parent, "agent_id": null}});
@@ -92178,10 +92298,10 @@ index 0000000000000000000000000000000000000000..8886768d2b8815c61999264e73dab6cd
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b81d65abff83f742dc782215af14fa10d6b064b3
+index 0000000000000000000000000000000000000000..042055df1dcd9ff44bd30b02b1206cb6c046a4a8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,383 @@
+@@ -0,0 +1,404 @@
 +use super::*;
 +use codex_omd::ModInvokeOptions;
 +use codex_omd::peers::now_ms;
@@ -92206,7 +92326,14 @@ index 0000000000000000000000000000000000000000..b81d65abff83f742dc782215af14fa10
 +    /// Root, call id and reservation time (`None` while guarded).
 +    reserved: Mutex<Vec<(String, String, Option<u64>)>>,
 +    directory: std::sync::OnceLock<std::path::PathBuf>,
++    pub(super) persisting: Mutex<()>,
 +}
++
++#[cfg(test)]
++type InventoryReplaceHook = (std::path::PathBuf, Box<dyn FnOnce() + Send>);
++
++#[cfg(test)]
++pub(super) static BEFORE_INVENTORY_REPLACE: Mutex<Option<InventoryReplaceHook>> = Mutex::new(None);
 +
 +fn root_of<'a>(records: &'a BTreeMap<String, Value>, thread: &'a str) -> &'a str {
 +    let mut root = thread;
@@ -92245,6 +92372,7 @@ index 0000000000000000000000000000000000000000..b81d65abff83f742dc782215af14fa10
 +    }
 +
 +    pub(super) fn forget_session(&self, thread: &str) {
++        let _persisting = self.persisting.lock();
 +        if let Ok(mut records) = self.records.lock() {
 +            let session = records
 +                .keys()
@@ -92296,10 +92424,21 @@ index 0000000000000000000000000000000000000000..b81d65abff83f742dc782215af14fa10
 +        if let Ok(bytes) = serde_json::to_vec(&agents)
 +            && std::fs::create_dir_all(directory).is_ok()
 +        {
-+            let _ = codex_omd::fsio::write_bytes(
++            let _ = codex_omd::fsio::write_bytes_before(
 +                &directory.join(format!("{root}.json")),
 +                &bytes,
 +                codex_omd::fsio::Durability::Volatile,
++                || {
++                    #[cfg(test)]
++                    if let Some((_, hook)) = BEFORE_INVENTORY_REPLACE
++                        .lock()
++                        .ok()
++                        .and_then(|mut hook| hook.take_if(|(path, _)| path == directory))
++                    {
++                        hook();
++                    }
++                    Ok(())
++                },
 +            );
 +        }
 +    }
@@ -92314,6 +92453,7 @@ index 0000000000000000000000000000000000000000..b81d65abff83f742dc782215af14fa10
 +        if let (Some(record), Some(fields)) = (record.as_object_mut(), fields.as_object()) {
 +            record.extend(fields.clone());
 +        }
++        let _persisting = self.persisting.lock();
 +        if let Ok(mut records) = self.records.lock() {
 +            let parents = records
 +                .values()
@@ -92341,6 +92481,7 @@ index 0000000000000000000000000000000000000000..b81d65abff83f742dc782215af14fa10
 +    }
 +
 +    fn update(&self, thread: &str, change: impl FnOnce(&mut Value)) -> Option<Value> {
++        let _persisting = self.persisting.lock();
 +        let mut records = self.records.lock().ok()?;
 +        let record = records.get_mut(thread)?;
 +        change(record);
@@ -108115,10 +108256,10 @@ index 0000000000000000000000000000000000000000..d361e339551a49833754c303be875e6a
 +}
 diff --git a/codex-rs/omd/src/bin/omd-contract.rs b/codex-rs/omd/src/bin/omd-contract.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b6b05710ff01abb9a557e0d8b2d407278cd723a3
+index 0000000000000000000000000000000000000000..878c788cf065e6d8e935f76a4c0fb733de4651bb
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-contract.rs
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,99 @@
 +use codex_omd::ContractSelection;
 +use codex_omd::contract_cli::describe;
 +use codex_omd::contract_cli::documents;
@@ -108209,10 +108350,9 @@ index 0000000000000000000000000000000000000000..b6b05710ff01abb9a557e0d8b2d40727
 +
 +fn main() {
 +    match run(&std::env::args().skip(1).collect::<Vec<_>>()) {
-+        Ok(value) => println!(
-+            "{}",
-+            serde_json::to_string_pretty(&value).unwrap_or_default()
-+        ),
++        Ok(value) => {
++            codex_omd::print_output(&serde_json::to_string_pretty(&value).unwrap_or_default())
++        }
 +        Err(error) => {
 +            eprintln!("{error}");
 +            std::process::exit(1);
@@ -108221,10 +108361,10 @@ index 0000000000000000000000000000000000000000..b6b05710ff01abb9a557e0d8b2d40727
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725ffede55ec
+index 0000000000000000000000000000000000000000..dc128e1d7c640be2df1ab98929838367fa6523d1
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,756 @@
+@@ -0,0 +1,880 @@
 +use codex_omd::ModHostCallback;
 +use codex_omd::ModInvokeOptions;
 +use codex_omd::ModOpenOptions;
@@ -108463,25 +108603,43 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +                .into_iter()
 +                .flatten()
 +                .map(|package| {
++                    let id = package["id"].as_str().unwrap_or("?");
++                    let flags = flags(package["scope"].as_str().unwrap_or("user"));
++                    let failed = package["failed"].as_str();
++                    let (state, note) = if let Some(reason) = package["blocked"].as_str() {
++                        (
++                            "quarantined",
++                            format!(": {reason}; `omd mods unblock {id}{flags}` lifts it"),
++                        )
++                    } else if package["needs_approval"] == true {
++                        (
++                            "needs approval",
++                            format!(": review it with `omd mods update {id}{flags}`"),
++                        )
++                    } else {
++                        (
++                            if package["enabled"] == true {
++                                "on"
++                            } else {
++                                "off"
++                            },
++                            failed
++                                .map(|failed| format!(" failed: {failed}"))
++                                .or_else(|| {
++                                    last_session(package).map(|failed| {
++                                        format!(" failed in the last session: {failed}")
++                                    })
++                                })
++                                .unwrap_or_default(),
++                        )
++                    };
 +                    format!(
-+                        "{} {} {} {}{}{}",
-+                        package["id"].as_str().unwrap_or("?"),
++                        "{id} {} {} {state}{}{note}",
 +                        package["version"].as_str().unwrap_or("-"),
 +                        package["scope"].as_str().unwrap_or("-"),
-+                        if package["enabled"] == true {
-+                            "on"
-+                        } else {
-+                            "off"
-+                        },
 +                        package["source"]
 +                            .as_str()
 +                            .map_or(String::new(), |source| format!(" ({source})")),
-+                        package["failed"]
-+                            .as_str()
-+                            .map(|failed| format!(" failed: {failed}"))
-+                            .or_else(|| last_session(package)
-+                                .map(|failed| format!(" failed in the last session: {failed}")))
-+                            .unwrap_or_default()
 +                    )
 +                })
 +                .collect::<Vec<_>>();
@@ -108552,13 +108710,40 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +        "revoke" => {
 +            let id = first()?;
 +            store.revoke(&id)?;
++            let flags = flags(&scope);
 +            done(format!(
-+                "Revoked {id}: it is off and its grant is dropped. Install or trust it again to restore it."
++                "Revoked {id}: it is off and its grant is dropped. `omd mods update {id}{flags}` approves it again."
 +            ))
 +        }
 +        "install" | "inspect" | "enable" | "disable" | "update" | "remove" | "rollback" => {
 +            let target = first()?;
-+            let mut arguments = json!({"action": if action == "inspect" { "install" } else { action }, "scope": scope});
++            let locked_scope = store.package_lock().ok().and_then(|lock| {
++                lock.packages
++                    .get(&target)
++                    .map(|package| package.scope.clone())
++            });
++            let reviewed = action == "update" && locked_scope.as_deref() != Some(scope.as_str());
++            if reviewed
++                && let Some(other) = &locked_scope
++                && !store.selection_status()?["selections"]
++                    .as_array()
++                    .into_iter()
++                    .flatten()
++                    .any(|item| {
++                        item["id"] == target.as_str()
++                            && item["scope"] == scope.as_str()
++                            && item["packaged"] != true
++                    })
++            {
++                return Err(io::Error::other(format!(
++                    "package_not_installed: {target} is installed at scope {other}; pass --scope {other}"
++                )));
++            }
++            let mut arguments = json!({"action": match action {
++                "inspect" => "install",
++                _ if reviewed => "trust",
++                _ => action,
++            }, "scope": scope});
 +            if matches!(action, "install" | "inspect") {
 +                arguments["reference"] = json!(folder_reference(&target)?);
 +                arguments["version"] = json!(version);
@@ -108585,13 +108770,15 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +            let scope = preview.control.scope().unwrap_or(&scope);
 +            let flags = flags(scope);
 +            done(match action {
-+                "install" => format!(
-+                    "Installed {id} ({scope}). It is off: run `omd mods enable {id}{flags}` to turn it on."
-+                ),
-+                "update" => {
++                "install" | "update" => {
++                    let done = if action == "install" {
++                        format!("Installed {id} ({scope}).")
++                    } else {
++                        format!("Updated {id}.")
++                    };
 +                    match package_controls::list(&store, None) {
 +                        Ok(listed)
-+                            if listed["packages"].as_array().into_iter().flatten().any(
++                            if !listed["packages"].as_array().into_iter().flatten().any(
 +                                |package| {
 +                                    package["id"] == id.as_str()
 +                                        && package["scope"] == scope
@@ -108599,12 +108786,11 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +                                },
 +                            ) =>
 +                        {
-+                            format!("Updated {id}.")
++                            format!(
++                                "{done} It is off: run `omd mods enable {id}{flags}` to turn it on."
++                            )
 +                        }
-+                        Ok(_) => format!(
-+                            "Updated {id}. It is off: run `omd mods enable {id}{flags}` to turn it on."
-+                        ),
-+                        Err(_) => format!("Updated {id}."),
++                        _ => done,
 +                    }
 +                }
 +                "remove" => format!("Removed {id}. Its cache, state and local sources are kept."),
@@ -108679,9 +108865,18 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +        {
 +            lines.push(format!("  authority: {}", text(exposure)));
 +        }
++        for (key, value) in package["authority"]["to"].as_object().into_iter().flatten() {
++            if key != "exposure"
++                && !value.is_null()
++                && value.as_object().is_none_or(|fields| !fields.is_empty())
++            {
++                lines.push(format!("  {}: {}", key.replace('_', " "), text(value)));
++            }
++        }
 +        for (label, key) in [
 +            ("dependencies", "dependencies"),
 +            ("install scripts", "lifecycle"),
++            ("exec environment", "exec_environment"),
 +            ("secret environment", "secret_environment"),
 +        ] {
 +            if package[key]["to"]
@@ -108720,6 +108915,20 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +            text(&changes["version"]["to"])
 +        ));
 +    }
++    for (label, key) in [
++        ("source sha256", "sha256"),
++        ("exec environment", "exec_environment"),
++        ("secret environment", "secret_environment"),
++        ("codex config", "codex_config"),
++    ] {
++        if !changes[key].is_null()
++            && changes[key]
++                .as_array()
++                .is_none_or(|values| !values.is_empty())
++        {
++            lines.push(format!("  {label}: {}", text(&changes[key])));
++        }
++    }
 +    if let Some(warning) = preview["identity_warning"].as_str() {
 +        lines.push(format!("  WARNING: {warning}"));
 +    }
@@ -108745,11 +108954,34 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 +}
 +
++const HELP: &str = "Usage:
++  omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH]
++  omd mods list | catalog [QUERY] | inspect REFERENCE | events | reset-lock
++  omd mods enable|disable|update|remove|rollback|revoke|unblock ID [FLAGS]
++  omd mods quarantine ID REASON [FLAGS]
++  omd mods sync [--offline|--rollback] [FLAGS]
++      Manage mod packages. REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION],
++      git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH). FLAGS are those of omd install.
++  omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user]
++      Export or reset one mod's namespaced store without running mod code.
++  omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS]
++      Run a command an enabled mod exports. Model requests and process execution are unavailable here.
++  omd update, omd uninstall [--purge]
++      Update or remove OMD itself.
++  omd --version
++      The OMD, Codex and mod API versions.";
++
 +fn run(args: Vec<String>) -> io::Result<Value> {
-+    if args.is_empty() || args[0] == "--help" {
-+        return Ok(
-+            json!({"usage":format!("omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS] | omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user] | {MODS_USAGE}"),"commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here. `omd store` exports or resets one mod's namespaced store without running mod code. `omd install` and `omd mods` manage mod packages; `omd update` updates OMD itself."}),
-+        );
++    if args.is_empty() || matches!(args[0].as_str(), "help" | "-h" | "--help") {
++        return Ok(json!({"display": HELP}));
++    }
++    if args[0] == "--version" || args[0] == "-V" {
++        return Ok(json!({"display": format!(
++            "oh-my-diff {} (Codex {}, mod API {})",
++            codex_omd::OMD_HOST_RELEASE,
++            codex_omd::CODEX_HOST_RELEASE,
++            codex_omd::MOD_API_VERSION
++        )}));
 +    }
 +    if args[0] == "store" {
 +        return store(&args[1..]);
@@ -108785,7 +109017,12 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +            _ => payload.push(argument.clone()),
 +        }
 +    }
-+    let repository = repository.ok_or_else(|| io::Error::other("explicit_repository_required"))?;
++    let unknown = || {
++        io::Error::other(format!(
++            "unknown command: {command} (`omd help` lists the commands; a mod's command needs --repo PATH)"
++        ))
++    };
++    let repository = repository.ok_or_else(unknown)?;
 +    let root = store_root(store)?;
 +    let home = home
 +        .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
@@ -108797,12 +109034,11 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +        .into_iter()
 +        .filter(|(_, export)| export.cli.as_deref() == Some(command))
 +        .collect();
-+    if exports.len() != 1 {
-+        return Err(io::Error::other(if exports.is_empty() {
-+            "plugin_command_unavailable"
-+        } else {
-+            "plugin_command_collision"
-+        }));
++    if exports.is_empty() {
++        return Err(unknown());
++    }
++    if exports.len() > 1 {
++        return Err(io::Error::other("plugin_command_collision"));
 +    }
 +    let (owner, export) = &exports[0];
 +    let sources: BTreeMap<String, String> = runtime
@@ -108892,20 +109128,16 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +    match run(std::env::args().skip(1).collect()) {
 +        Ok(value) => {
 +            if let Some(display) = value.get("display").and_then(Value::as_str) {
-+                println!(
-+                    "{}",
-+                    display
++                codex_omd::print_output(
++                    &display
 +                        .chars()
-+                        .filter(
-+                            |character| !character.is_control() || matches!(character, '\n' | '\t')
-+                        )
-+                        .collect::<String>()
++                        .filter(|character| {
++                            !character.is_control() || matches!(character, '\n' | '\t')
++                        })
++                        .collect::<String>(),
 +                );
 +            } else {
-+                println!(
-+                    "{}",
-+                    serde_json::to_string_pretty(&value).unwrap_or_default()
-+                );
++                codex_omd::print_output(&serde_json::to_string_pretty(&value).unwrap_or_default());
 +            }
 +        }
 +        Err(error) => {
@@ -108929,6 +109161,38 @@ index 0000000000000000000000000000000000000000..6a90919ec967ba4bb895c61da35e725f
 +        assert_eq!(shell_quote("/Users/me/My Store"), "'/Users/me/My Store'");
 +        assert_eq!(shell_quote("/tmp/it's"), "'/tmp/it'\\''s'");
 +        assert_eq!(shell_quote(""), "''");
++    }
++
++    #[test]
++    fn version_help_and_unknown_commands_need_no_repository() {
++        let version = format!(
++            "oh-my-diff {} (Codex {}, mod API {})",
++            codex_omd::OMD_HOST_RELEASE,
++            codex_omd::CODEX_HOST_RELEASE,
++            codex_omd::MOD_API_VERSION
++        );
++        for flag in ["--version", "-V"] {
++            assert_eq!(run(vec![flag.into()]).unwrap()["display"], version);
++        }
++        for flag in ["help", "-h", "--help"] {
++            assert!(
++                run(vec![flag.into()]).unwrap()["display"]
++                    .as_str()
++                    .unwrap()
++                    .contains("\n  omd COMMAND --repo PATH")
++            );
++        }
++        let unknown = "unknown command: bogus (`omd help` lists the commands; a mod's command needs --repo PATH)";
++        assert_eq!(run(vec!["bogus".into()]).unwrap_err().to_string(), unknown);
++        let temp = tempfile::tempdir().unwrap();
++        let store = temp.path().join("store");
++        codex_omd::ModStore::create(store.clone()).unwrap();
++        let arguments = ["bogus", "--store", store.to_str().unwrap(), "--repo"]
++            .map(str::to_owned)
++            .into_iter()
++            .chain([temp.path().to_str().unwrap().to_owned()])
++            .collect();
++        assert_eq!(run(arguments).unwrap_err().to_string(), unknown);
 +    }
 +
 +    #[test]
@@ -109686,7 +109950,7 @@ index 0000000000000000000000000000000000000000..2b58603604ac99369de86f3a32d443e9
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ec2670eb19ff6780a6979efc24e6ab5ee950a1ec
+index 0000000000000000000000000000000000000000..0499190a3d520db16a26b5238f4048ce7212bdbf
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
 @@ -0,0 +1,1010 @@
@@ -110037,7 +110301,7 @@ index 0000000000000000000000000000000000000000..ec2670eb19ff6780a6979efc24e6ab5e
 +
 +fn digest_text(arguments: &Value, key: &str) -> io::Result<String> {
 +    let value = text(arguments, key)?;
-+    if !crate::is_sha256_hex(&value) {
++    if !crate::is_sha256_hex(value) {
 +        return Err(failure("authority_request_invalid"));
 +    }
 +    Ok(value.to_owned())
@@ -113891,7 +114155,7 @@ index 0000000000000000000000000000000000000000..e27047eb10e974034486697ff8acc189
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e8e49f7978ac8d772cb93ea2db4d7b79919b8534
+index 0000000000000000000000000000000000000000..ae85d18f19626d8e5899ce39a3dc18e9e6ebf998
 --- /dev/null
 +++ b/codex-rs/omd/src/consents.rs
 @@ -0,0 +1,158 @@
@@ -113918,7 +114182,7 @@ index 0000000000000000000000000000000000000000..e8e49f7978ac8d772cb93ea2db4d7b79
 +}
 +
 +pub fn digest(text: &str, attachments: &[ResourceRef]) -> String {
-+    crate::sha256_hex(&serde_json::to_vec(&(text, attachments)).unwrap_or_default())
++    crate::sha256_hex(serde_json::to_vec(&(text, attachments)).unwrap_or_default())
 +}
 +
 +fn with<T>(
@@ -115684,7 +115948,7 @@ index 0000000000000000000000000000000000000000..64d28ee59f68767cd2d3b8ac869a0401
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2f2903ea8e50bc03b3c3ad4192ddab9afb3e6eea
+index 0000000000000000000000000000000000000000..5cccb61a26e63bf73f48d2b963085e6fdc53401b
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
 @@ -0,0 +1,515 @@
@@ -116030,7 +116294,7 @@ index 0000000000000000000000000000000000000000..2f2903ea8e50bc03b3c3ad4192ddab9a
 +            _ => return Err(failure("store_scope_invalid")),
 +        };
 +        if !crate::resource_data::token(self.owner)
-+            || !(scope != "repository" || crate::is_sha256_hex(&self.repository_key))
++            || !(scope != "repository" || crate::is_sha256_hex(self.repository_key))
 +            || self.root.canonicalize()? != self.root
 +        {
 +            return Err(failure("store_root_invalid"));
@@ -117311,7 +117575,7 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fe1ddb69af706983c62066b7641d6b89d1e6f605
+index 0000000000000000000000000000000000000000..ec68f05e8189492017ed652daac5a7345d524bbe
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
 @@ -0,0 +1,2162 @@
@@ -118309,7 +118573,7 @@ index 0000000000000000000000000000000000000000..fe1ddb69af706983c62066b7641d6b89
 +        let thread = caller.thread.unwrap_or("cli");
 +        if !crate::resource_data::token(caller.id)
 +            || !crate::resource_data::token(thread)
-+            || !crate::is_sha256_hex(&caller.source_sha256)
++            || !crate::is_sha256_hex(caller.source_sha256)
 +            || self
 +                .data_root
 +                .canonicalize()
@@ -118405,7 +118669,7 @@ index 0000000000000000000000000000000000000000..fe1ddb69af706983c62066b7641d6b89
 +        }
 +        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
 +        let digest = &input.artifact.sha256;
-+        if !crate::is_sha256_hex(&digest) || input.artifact.reference != *digest {
++        if !crate::is_sha256_hex(digest) || input.artifact.reference != *digest {
 +            return Err("exec_output_reference_invalid".into());
 +        }
 +        let directory = self.output_directory(caller)?;
@@ -119612,10 +119876,10 @@ index 0000000000000000000000000000000000000000..b8856c41e743275aa86b95065af45100
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b51b8ffc664aa446b247ea5745858c16a56ee486
+index 0000000000000000000000000000000000000000..0266a6b6a4724aa32709b43dbc128046ed809631
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,247 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -119726,6 +119990,7 @@ index 0000000000000000000000000000000000000000..b51b8ffc664aa446b247ea5745858c16
 +pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
 +pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 +pub use mods::CODEX_CONFIG_UPDATE_PLAN;
++pub use mods::CODEX_HOST_RELEASE;
 +pub use mods::FileStamp;
 +pub use mods::MANAGED_POLICY_FILE;
 +pub use mods::MANAGED_POLICY_KEY;
@@ -119851,6 +120116,17 @@ index 0000000000000000000000000000000000000000..b51b8ffc664aa446b247ea5745858c16
 +mod session_policy;
 +
 +pub use mods::release_disposable_runners;
++
++/// Prints one CLI result; a closed reader ends the output quietly.
++pub fn print_output(text: &str) {
++    use std::io::Write;
++    if let Err(error) = writeln!(std::io::stdout().lock(), "{text}")
++        && error.kind() != std::io::ErrorKind::BrokenPipe
++    {
++        eprintln!("{error}");
++        std::process::exit(1);
++    }
++}
 diff --git a/codex-rs/omd/src/mod_limits.rs b/codex-rs/omd/src/mod_limits.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..203f1b2d4bf2c1f9a9f4601737ad6335d4e32c05
@@ -121498,10 +121774,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9ddf08f54d197306354ab70a183149ef9fce5704
+index 0000000000000000000000000000000000000000..48366c5d65c82113593828461877661f9541a032
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7256 @@
+@@ -0,0 +1,7258 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -121913,6 +122189,7 @@ index 0000000000000000000000000000000000000000..9ddf08f54d197306354ab70a183149ef
 +    "terminal_welcome_hidden_v1",
 +    "routes_add_self_v1",
 +    "routes_add_model_v1",
++    "package_needs_approval_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -122545,8 +122822,8 @@ index 0000000000000000000000000000000000000000..9ddf08f54d197306354ab70a183149ef
 +            )
 +        } else {
 +            format!(
-+                "source_changed: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
-+                package.id
++                "source_changed: {} changed after it was trusted; review it in /omd or run omd mods update {}",
++                package.id, package.id
 +            )
 +        }));
 +    }
@@ -123829,8 +124106,9 @@ index 0000000000000000000000000000000000000000..9ddf08f54d197306354ab70a183149ef
 +        }
 +        if self.lifecycle.len() > 3
 +            || self.lifecycle.iter().any(|(event, path)| {
-+                !["install", "update", "uninstall"].contains(&event.as_str())
-+                    || !(path.ends_with(".ts") && relative_path(path, 128))
++                !(["install", "update", "uninstall"].contains(&event.as_str())
++                    && path.ends_with(".ts")
++                    && relative_path(path, 128))
 +            })
 +        {
 +            return Err(failure("invalid_lifecycle_scripts"));
@@ -126149,8 +126427,8 @@ index 0000000000000000000000000000000000000000..9ddf08f54d197306354ab70a183149ef
 +                let verified = store::verified(&selection.path)?;
 +                if verified.sha256 != selection.sha256 {
 +                    return Err(failure(format!(
-+                        "source_changed: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
-+                        package.id
++                        "source_changed: {} changed after it was trusted; review it in /omd or run omd mods update {}",
++                        package.id, package.id
 +                    )));
 +                }
 +                Ok(store::asset_map(verified.assets.clone()))
@@ -128760,10 +129038,10 @@ index 0000000000000000000000000000000000000000..9ddf08f54d197306354ab70a183149ef
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2667262aca6d98091e1004dc9a377568a074bd27
+index 0000000000000000000000000000000000000000..5ba618bb30c359c90eca7f2e17e8d8677b5c0ede
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1134 @@
+@@ -0,0 +1,1156 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -129037,10 +129315,11 @@ index 0000000000000000000000000000000000000000..2667262aca6d98091e1004dc9a377568
 +    }
 +
 +    pub fn capability_explanation(code: &str) -> Value {
++        let unknown;
 +        let (cause, fix) = if code.starts_with("capability_denied") {
 +            (
 +                "The package requested authority that the manifest or explicit trust grant does not include.",
-+                "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant.",
++                "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant; a revoked mod is approved again with omd mods update ID.",
 +            )
 +        } else if code.starts_with("undeclared_operation_use") {
 +            (
@@ -129077,10 +129356,31 @@ index 0000000000000000000000000000000000000000..2667262aca6d98091e1004dc9a377568
 +                "The callback ran without an active native task capable of servicing that host operation.",
 +                "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
 +            )
-+        } else {
++        } else if code.starts_with("package_blocked") {
 +            (
-+                "The host denied or could not classify the requested authority.",
-+                "Use omd-mod report and omd-mod events, then compare the literal operation, manifest declaration and user-approved grant.",
++                "The installed version was quarantined with omd mods quarantine, so it cannot be enabled, reinstalled or rolled back to.",
++                "If the reason no longer applies, run omd mods unblock ID, then omd mods enable ID.",
++            )
++        } else if code.starts_with("source_changed") {
++            (
++                "The package's files no longer match the digest the user trusted.",
++                "Review the change and approve it again in /omd or with omd mods update ID.",
++            )
++        } else if code.starts_with("package_not_trusted") {
++            (
++                "The store has no trusted selection for that mod or folder.",
++                "Install it with omd install REFERENCE, or trust a folder with omd-mod trust STORE PACKAGE SHA256 CAPABILITIES_CSV.",
++            )
++        } else if code.starts_with("managed_by_policy") {
++            (
++                "Administrator policy requires this mod, so it cannot be turned off locally.",
++                "Run omd-mod policy explain STORE to see the policy, then ask your administrator to change it.",
++            )
++        } else {
++            unknown = format!("OMD has no explanation for {code}; its cause is unknown.");
++            (
++                unknown.as_str(),
++                "Run omd-mod report STORE and omd-mod events STORE to see which mod or host step raised it.",
 +            )
 +        };
 +        json!({"code":code,"cause":cause,"fix":fix,
@@ -130450,7 +130750,7 @@ index 0000000000000000000000000000000000000000..6b16774ad442768d8c02b8af07471f1a
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cfdbf2f5c01522a81be8a046266cae02c55e845a
+index 0000000000000000000000000000000000000000..c3a3306d3f8076cb6ffce1f02a97473b80ec8fc5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
 @@ -0,0 +1,1966 @@
@@ -131963,7 +132263,7 @@ index 0000000000000000000000000000000000000000..cfdbf2f5c01522a81be8a046266cae02
 +            .flat_map(|policy| policy.namespaces.clone())
 +            .collect::<Vec<_>>();
 +        let policy = crate::sha256_hex(
-+            &serde_json::to_vec(
++            serde_json::to_vec(
 +                &exempt
 +                    .iter()
 +                    .filter_map(|id| {
@@ -132159,7 +132459,7 @@ index 0000000000000000000000000000000000000000..cfdbf2f5c01522a81be8a046266cae02
 +            .map(|(id, loaded)| json!([id, loaded.selection.sha256, loaded.selection.settings]))
 +            .collect::<Vec<_>>();
 +        let fingerprint = crate::sha256_hex(
-+            &serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
++            serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
 +        );
 +        Some(SendPolicy {
 +            required: required == Some(true) || !self.policies.is_empty(),
@@ -132670,7 +132970,7 @@ index 0000000000000000000000000000000000000000..29ab066f7019bc8216ab009616d6fb11
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..c225ef0b2f8b06ab7b8827c19077738a6e683d5c
+index 0000000000000000000000000000000000000000..18aa285eabc01aa83a7282f08fd49e2485fe209a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,225 @@
@@ -132784,7 +133084,7 @@ index 0000000000000000000000000000000000000000..c225ef0b2f8b06ab7b8827c19077738a
 +    "prompts.status": {"arguments":{"$ref":"#/$defs/67"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
 +    "prompts.revoke": {"arguments":{"$ref":"#/$defs/67"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
 +    "builtins.invoke": {"arguments":{"type":"object","properties":{"action":{"type":"string","format":"dotted-string"}},"required":["action"]},"result":{"type":"object","properties":{"invoked":{"type":"boolean"}},"required":["invoked"]}},
-+    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"required"},{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"required":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","required","effective","pending","failed","api","compatible","grants","conflicts","settings_schema","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
++    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"required"},{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"needs_approval"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"required":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"needs_approval":{"type":"boolean"},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","required","effective","pending","failed","needs_approval","api","compatible","grants","conflicts","settings_schema","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
 +    "packages.index": {"arguments":{"type":"object","properties":{"index":{"type":"string"},"query":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"}},"required":[]},"result":{"type":"object","properties":{"index":{"type":"string"},"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"latest":{"type":"string"},"description":{"type":"string"},"support":{"anyOf":[{"type":"null"},{"type":"string"}]},"versions":{"type":"array","items":{"type":"object","properties":{"version":{"type":"string"},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["version","blocked"]}},"installed":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["id","latest","description","support","versions","installed"]}},"total":{"type":"number"},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["index","packages","total","cursor"]}},
 +    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/74"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}},"identity_warning":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["action","id","changes","grants_added"]}},
 +    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/74"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
@@ -133198,10 +133498,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..918dc6b35aa1ba1cd4f61098d6ac3612495c8dd9
+index 0000000000000000000000000000000000000000..cde030b2f90b3c6d9c1c49b0a78461828bcef9d1
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2879 @@
+@@ -0,0 +1,2883 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -134149,9 +134449,9 @@ index 0000000000000000000000000000000000000000..918dc6b35aa1ba1cd4f61098d6ac3612
 +            .ok_or_else(|| failure("package_not_installed"))?;
 +        let (manifest, _, integrity) = store::package(&package.path)?;
 +        if integrity != package.integrity || manifest.id != package.id {
-+            return Err(failure(
-+                "source_changed: inspect and preview the new package",
-+            ));
++            return Err(failure(format!(
++                "source_changed: {id}: review it again with omd mods update {id}"
++            )));
 +        }
 +        if package.state_version != manifest.state_version {
 +            return Err(failure(
@@ -134172,14 +134472,18 @@ index 0000000000000000000000000000000000000000..918dc6b35aa1ba1cd4f61098d6ac3612
 +            .find(|selection| selection.path == path && selection.scope == scope)
 +            .ok_or_else(|| failure("package_selection_missing"))?;
 +        if selection.sha256 != integrity {
-+            return Err(failure("source_changed: inspect and trust the new digest"));
++            return Err(failure(format!(
++                "source_changed: {id}: review it again with omd mods update {id}"
++            )));
 +        }
 +        if manifest
 +            .capabilities
 +            .iter()
 +            .any(|capability| !selection.capabilities.contains(capability))
 +        {
-+            return Err(failure("capability_denied"));
++            return Err(failure(format!(
++                "capability_denied: {id}: approve it again with omd mods update {id}"
++            )));
 +        }
 +        super::validate_stored_settings(&manifest, &selection.settings)?;
 +        selection.enabled = true;
@@ -134796,7 +135100,7 @@ index 0000000000000000000000000000000000000000..918dc6b35aa1ba1cd4f61098d6ac3612
 +            },
 +            exec_environment: package.exec_environment.clone(),
 +            settings_schema_sha256: crate::sha256_hex(
-+                &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
++                serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
 +            ),
 +            lifecycle: declared_lifecycle,
 +            scope: request.scope.clone(),
@@ -136083,10 +136387,10 @@ index 0000000000000000000000000000000000000000..918dc6b35aa1ba1cd4f61098d6ac3612
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9def0bc4f0d70e743809d5d3254ceb609c258a36
+index 0000000000000000000000000000000000000000..fba2fc3b0e68255b805b7ac9e31654adc1f4ec46
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,391 @@
+@@ -0,0 +1,394 @@
 +use super::*;
 +
 +pub const SETTINGS_FILE_EXTENSIONS: [&str; 3] = ["json", "yaml", "yml"];
@@ -136194,7 +136498,10 @@ index 0000000000000000000000000000000000000000..9def0bc4f0d70e743809d5d3254ceb60
 +            .ok_or_else(|| failure("package_not_trusted"))?;
 +        let (package, _, hash) = store::package(path)?;
 +        if hash != selection.sha256 {
-+            return Err(failure("source_changed: inspect and trust the new digest"));
++            return Err(failure(format!(
++                "source_changed: {}: review it again with omd mods update {}",
++                package.id, package.id
++            )));
 +        }
 +        let mut settings = declared_settings(package.settings_schema.as_ref(), &selection.settings);
 +        change(&mut settings);
@@ -139274,10 +139581,10 @@ index 0000000000000000000000000000000000000000..42a6f21f76db858a7e18f132a9ad4189
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..13a36d018eb73e11fc381f9fb6dd6c8cb75f3962
+index 0000000000000000000000000000000000000000..803975c519569ea21cc7a4dc9a10d687eccb14e4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1538 @@
+@@ -0,0 +1,1544 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -140626,14 +140933,20 @@ index 0000000000000000000000000000000000000000..13a36d018eb73e11fc381f9fb6dd6c8c
 +            let selection = &config.mods[index];
 +            let (manifest, _, hash) = package(path)?;
 +            if hash != selection.sha256 {
-+                return Err(failure("source_changed: inspect and trust the new digest"));
++                return Err(failure(format!(
++                    "source_changed: {}: review it again with omd mods update {}",
++                    manifest.id, manifest.id
++                )));
 +            }
 +            if manifest
 +                .capabilities
 +                .iter()
 +                .any(|capability| !selection.capabilities.contains(capability))
 +            {
-+                return Err(failure("capability_denied: trust the package again"));
++                return Err(failure(format!(
++                    "capability_denied: {}: approve it again with omd mods update {}",
++                    manifest.id, manifest.id
++                )));
 +            }
 +            self.check_service_providers(&manifest, path)?;
 +            refuse_second_copy(&config, path, &selection.scope, &manifest.id)?;
@@ -143781,10 +144094,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b5fb4b4bdda8a22e01b7fce707494094b3756e3a
+index 0000000000000000000000000000000000000000..1460a1bc24fc3e0d4635539e38319a3acc8230e4
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,814 @@
+@@ -0,0 +1,828 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -144205,6 +144518,7 @@ index 0000000000000000000000000000000000000000..b5fb4b4bdda8a22e01b7fce707494094
 +                "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
 +                "pending": (runtime.is_some() && wanted != running.is_some()).then_some("reload"),
 +                "failed": failed,
++                "needs_approval": !enabled && failed.is_some_and(|failed| failed.starts_with("capability_denied")),
 +                "api": api,
 +                "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == api),
 +                "grants": selection["capabilities"],
@@ -144300,7 +144614,7 @@ index 0000000000000000000000000000000000000000..b5fb4b4bdda8a22e01b7fce707494094
 +                Some(version) if !version.is_empty() => source.with_version(version)?,
 +                _ => source,
 +            };
-+            let (request, plan) = requested(store, source, index, arguments.scope.clone())?;
++            let (request, plan) = requested(store, source, index, arguments.scope.clone(), false)?;
 +            (plan.root.clone(), Some(request), Some(plan), None, None)
 +        }
 +        "update" => {
@@ -144319,11 +144633,20 @@ index 0000000000000000000000000000000000000000..b5fb4b4bdda8a22e01b7fce707494094
 +                        _ => None,
 +                    })
 +            });
++            let revoked = package
++                .capabilities
++                .iter()
++                .any(|capability| !package.trust.capabilities.contains(capability));
 +            let (request, plan) = requested(
 +                store,
-+                package.source.updatable(),
++                if revoked {
++                    package.source.clone()
++                } else {
++                    package.source.updatable()
++                },
 +                index,
 +                package.scope.clone(),
++                revoked,
 +            )
 +            .map_err(|error| failure(format!("package_update_unavailable: {error}")))?;
 +            (package.id, Some(request), Some(plan), None, None)
@@ -144360,15 +144683,18 @@ index 0000000000000000000000000000000000000000..b5fb4b4bdda8a22e01b7fce707494094
 +                .into_iter()
 +                .filter(|name| crate::host::secret_like(name))
 +                .collect();
++            let capabilities: Vec<String> =
++                serde_json::from_value(inspected["manifest"]["capabilities"].clone())?;
 +            if sha256 == current.sha256
 +                && secret_environment
 +                    .iter()
 +                    .all(|name| current.secret_environment.contains(name))
++                && capabilities
++                    .iter()
++                    .all(|capability| current.capabilities.contains(capability))
 +            {
 +                return Err(failure("package_source_unchanged"));
 +            }
-+            let capabilities: Vec<String> =
-+                serde_json::from_value(inspected["manifest"]["capabilities"].clone())?;
 +            let added = capabilities
 +                .iter()
 +                .filter(|capability| !current.capabilities.contains(capability))
@@ -144511,10 +144837,11 @@ index 0000000000000000000000000000000000000000..b5fb4b4bdda8a22e01b7fce707494094
 +    source: ModPackageSource,
 +    index: Option<PathBuf>,
 +    scope: String,
++    offline: bool,
 +) -> io::Result<(ModInstallRequest, crate::ModPackagePlan)> {
 +    let mut request = ModInstallRequest {
 +        action: None,
-+        offline: matches!(source, ModPackageSource::Local { .. }),
++        offline: offline || matches!(source, ModPackageSource::Local { .. }),
 +        source,
 +        index,
 +        scope,
@@ -150579,7 +150906,7 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9baf9422dd0d240b609b777337eda1ee2ee10d16
+index 0000000000000000000000000000000000000000..ff88503acf7b9c5fa3cdef29265922b17574312b
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
 @@ -0,0 +1,1600 @@
@@ -151074,7 +151401,7 @@ index 0000000000000000000000000000000000000000..9baf9422dd0d240b609b777337eda1ee
 +                let hash = match cached.get(&name) {
 +                    Some((seen, hash)) if *seen == stamp => hash.clone(),
 +                    // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
-+                    _ if metadata.nlink() != 1 => crate::sha256_hex(&identity(&metadata)),
++                    _ if metadata.nlink() != 1 => crate::sha256_hex(identity(&metadata)),
 +                    _ => {
 +                        let (content, _) = read_version(repository, &name, max_bytes)?
 +                            .ok_or_else(|| invalid("workspace file disappeared during index"))?;
@@ -152991,10 +153318,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4fffb7d917caf64cf503731b150474d01cc135e1
+index 0000000000000000000000000000000000000000..293a2fecd8bf57ca7b46675b8a34897b16c8551f
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2423 @@
+@@ -0,0 +1,2422 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::BuiltinControls;
@@ -153385,8 +153712,7 @@ index 0000000000000000000000000000000000000000..4fffb7d917caf64cf503731b150474d0
 +            "exec.output_page",
 +            json!({"artifact":artifact,"cursor":1})
 +        )
-+        .unwrap_err()
-+        .to_string(),
++        .unwrap_err(),
 +        "exec_output_cursor_invalid"
 +    );
 +    let path = data
@@ -154022,7 +154348,7 @@ index 0000000000000000000000000000000000000000..4fffb7d917caf64cf503731b150474d0
 +        .unwrap();
 +    assert_eq!(
 +        stat["files"]["README.md"]["sha256"],
-+        codex_omd::sha256_hex(&std::fs::read(repository.join("README.md")).unwrap())
++        codex_omd::sha256_hex(std::fs::read(repository.join("README.md")).unwrap())
 +    );
 +    for path in ["link.md", "outside/file"] {
 +        assert!(
@@ -157087,10 +157413,10 @@ index 0000000000000000000000000000000000000000..d3d97536c2d50ac4a3c31275ecda9d52
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0c9f4b2dea207ef449ff83bf0e656bb33250575a
+index 0000000000000000000000000000000000000000..4da52f529567072756788fb4c226b65e58095e18
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5910 @@
+@@ -0,0 +1,5945 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -163001,12 +163327,47 @@ index 0000000000000000000000000000000000000000..0c9f4b2dea207ef449ff83bf0e656bb3
 +    );
 +    ui.release_thread_activations("jobs-thread");
 +}
++
++#[test]
++fn denial_explanations_name_the_fix_and_admit_unknown_codes() {
++    let unknown = ModHost::capability_explanation("made_up_failure: detail");
++    let cause = unknown["cause"].as_str().unwrap();
++    assert!(
++        cause.contains("made_up_failure: detail") && !cause.contains("authority"),
++        "{unknown}"
++    );
++    assert!(
++        unknown["fix"]
++            .as_str()
++            .unwrap()
++            .contains("omd-mod report STORE"),
++        "{unknown}"
++    );
++    for (code, command) in [
++        ("package_blocked: fixture: testing", "omd mods unblock ID"),
++        (
++            "source_changed: inspect and trust the new digest",
++            "omd mods update ID",
++        ),
++        ("package_not_trusted", "omd install REFERENCE"),
++        (
++            "managed_by_policy: administrator policy requires this mod",
++            "omd-mod policy explain STORE",
++        ),
++    ] {
++        let explained = ModHost::capability_explanation(code);
++        assert!(
++            explained["fix"].as_str().unwrap().contains(command),
++            "{explained}"
++        );
++    }
++}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..389e32bc744121ad7628f7abb63522748a8da0bf
+index 0000000000000000000000000000000000000000..b667708a5a9907d82931d06f4698a8ce01583a1f
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,1684 @@
+@@ -0,0 +1,1940 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
@@ -164691,6 +165052,262 @@ index 0000000000000000000000000000000000000000..389e32bc744121ad7628f7abb6352274
 +    assert!(written.get("node").is_none(), "{written}");
 +    assert_eq!(written["mods"][0]["enabled"], true);
 +}
++
++#[test]
++fn mods_list_names_quarantined_and_revoked_mods_and_the_command_that_restores_them() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
++    let store = store(&temp);
++    install(&store, request(&package, &["commands"]));
++    store.package_enable("fixture").unwrap();
++    let omd = |arguments: &[&str]| {
++        let output = Command::new(env!("CARGO_BIN_EXE_omd"))
++            .arg("mods")
++            .args(arguments)
++            .env(codex_omd::MOD_STORE_ENV, root.join("store"))
++            .output()
++            .unwrap();
++        String::from_utf8_lossy(&output.stdout).into_owned()
++            + &String::from_utf8_lossy(&output.stderr)
++    };
++
++    omd(&["quarantine", "fixture", "testing"]);
++    let listed = omd(&["list"]);
++    assert!(
++        listed.contains(
++            "fixture 1.0.0 user quarantined (local): testing; `omd mods unblock fixture` lifts it"
++        ),
++        "{listed}"
++    );
++
++    omd(&["unblock", "fixture"]);
++    let revoked = omd(&["revoke", "fixture"]);
++    assert!(
++        revoked.contains("`omd mods update fixture` approves it again"),
++        "{revoked}"
++    );
++    let listed = omd(&["list"]);
++    assert!(
++        listed.contains(
++            "fixture 1.0.0 user needs approval (local): review it with `omd mods update fixture`"
++        ),
++        "{listed}"
++    );
++    let needs_approval = || {
++        codex_omd::package_controls::list(&store, None).unwrap()["packages"][0]["needs_approval"]
++            .clone()
++    };
++    assert_eq!(needs_approval(), true);
++    let refused = omd(&["enable", "fixture", "--yes"]);
++    assert!(
++        refused.contains("omd mods update fixture") && !refused.contains("--yes"),
++        "{refused}"
++    );
++    omd(&["update", "fixture", "--yes"]);
++    let enabled = omd(&["enable", "fixture", "--yes"]);
++    assert!(enabled.contains("fixture is enabled."), "{enabled}");
++    assert_eq!(needs_approval(), false);
++}
++
++#[test]
++fn mods_update_reviews_a_trusted_copy_again_after_its_source_changes_or_is_revoked() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
++    let store = store(&temp);
++    let sha256 = ModStore::inspect_package(&package).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    store
++        .trust(package.clone(), &sha256, vec!["commands".into()], "user")
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    let omd = |arguments: &[&str]| {
++        let output = Command::new(env!("CARGO_BIN_EXE_omd"))
++            .arg("mods")
++            .args(arguments)
++            .env(codex_omd::MOD_STORE_ENV, root.join("store"))
++            .output()
++            .unwrap();
++        String::from_utf8_lossy(&output.stdout).into_owned()
++            + &String::from_utf8_lossy(&output.stderr)
++    };
++
++    std::fs::write(package.join("main.ts"), "export default () => { }\n").unwrap();
++    let listed = omd(&["list"]);
++    assert!(
++        listed.contains("source_changed: fixture changed after it was trusted; review it in /omd or run omd mods update fixture\n"),
++        "{listed}"
++    );
++    store.enable(&package, false).unwrap();
++    let refused = store.enable(&package, true).unwrap_err().to_string();
++    assert!(
++        refused.contains("omd mods update fixture") && !refused.contains("--yes"),
++        "{refused}"
++    );
++    let updated = omd(&["update", "fixture", "--yes"]);
++    assert!(updated.contains("Updated fixture."), "{updated}");
++    store.enable(&package, true).unwrap();
++    assert!(omd(&["list"]).contains("fixture 1.0.0 user on (selection)\n"));
++
++    omd(&["revoke", "fixture"]);
++    let refused = store.enable(&package, true).unwrap_err().to_string();
++    assert!(
++        refused.contains("omd mods update fixture") && !refused.contains("--yes"),
++        "{refused}"
++    );
++    omd(&["update", "fixture", "--yes"]);
++    store.enable(&package, true).unwrap();
++}
++
++fn omd_cli(store: &Path, arguments: &[&str]) -> String {
++    let output = Command::new(env!("CARGO_BIN_EXE_omd"))
++        .arg("mods")
++        .args(arguments)
++        .env(codex_omd::MOD_STORE_ENV, store)
++        .output()
++        .unwrap();
++    String::from_utf8_lossy(&output.stdout).into_owned() + &String::from_utf8_lossy(&output.stderr)
++}
++
++#[test]
++fn reviewing_a_trusted_copy_shows_a_newly_requested_secret_and_respects_the_scope() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "fixture", "1.0.0", &["exec"], json!([]));
++    let store = store(&temp);
++    let sha256 = ModStore::inspect_package(&package).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    store
++        .trust(package.clone(), &sha256, vec!["exec".into()], "user")
++        .unwrap();
++    edit_manifest(&package, |manifest| {
++        manifest["exec_environment"] = json!(["GITHUB_TOKEN"]);
++    });
++    let summary = omd_cli(&root.join("store"), &["update", "fixture"]);
++    assert!(
++        summary.contains("trust fixture") && summary.contains("secret environment: GITHUB_TOKEN"),
++        "{summary}"
++    );
++
++    let other = root.join("packaged");
++    std::fs::create_dir(&other).unwrap();
++    let packaged = mod_package(&other, "fixture", "1.0.0", &["exec"], json!([]));
++    install(&store, request(&packaged, &["exec"]));
++    let summary = omd_cli(
++        &root.join("store"),
++        &["update", "fixture", "--scope", "project"],
++    );
++    assert!(!summary.contains("update fixture"), "{summary}");
++}
++
++#[test]
++fn approving_a_revoked_npm_package_again_keeps_its_pinned_version_offline() {
++    let temp = TempDir::new().unwrap();
++    let store = store(&temp);
++    let (origin, routes) = registry();
++    publish(
++        &origin,
++        &routes,
++        &[("1.0.0", npm_archive("1.0.0", &["commands"]))],
++    );
++    install(&store, npm_request(&origin, "1.0.0", &["commands"]));
++    publish(
++        &origin,
++        &routes,
++        &[
++            ("1.0.0", npm_archive("1.0.0", &["commands"])),
++            ("1.1.0", npm_archive("1.1.0", &["commands"])),
++        ],
++    );
++    store.revoke("npm_mod").unwrap();
++    routes.lock().unwrap().clear();
++    let preview = codex_omd::package_controls::preview(
++        &store,
++        json!({"action": "update", "id": "npm_mod", "scope": "user"}),
++    )
++    .unwrap();
++    assert_eq!(
++        preview.public["changes"]["packages"][0]["version"]["to"], "1.0.0",
++        "{}",
++        preview.public
++    );
++}
++
++#[test]
++fn reinstalling_an_enabled_folder_mod_does_not_say_it_is_off() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
++    let store = root.join("store");
++    ModStore::create(store.clone()).unwrap();
++    let folder = package.to_str().unwrap();
++    let installed = omd_cli_install(&store, folder);
++    assert!(installed.contains("It is off"), "{installed}");
++    omd_cli(&store, &["enable", "fixture", "--yes"]);
++    let reinstalled = omd_cli_install(&store, folder);
++    assert!(
++        reinstalled.contains("Installed fixture (user).") && !reinstalled.contains("It is off"),
++        "{reinstalled}"
++    );
++    assert!(omd_cli(&store, &["list"]).contains("fixture 1.0.0 user on"));
++}
++
++fn omd_cli_install(store: &Path, folder: &str) -> String {
++    let output = Command::new(env!("CARGO_BIN_EXE_omd"))
++        .args(["install", folder, "--yes"])
++        .env(codex_omd::MOD_STORE_ENV, store)
++        .output()
++        .unwrap();
++    String::from_utf8_lossy(&output.stdout).into_owned() + &String::from_utf8_lossy(&output.stderr)
++}
++
++#[test]
++fn install_previews_name_os_access_codex_config_and_exec_environment() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "fixture", "1.0.0", &["exec", "os"], json!([]));
++    edit_manifest(&package, |manifest| {
++        manifest["os_access"] = json!({"programs": ["/bin/echo"]});
++        manifest["exec_environment"] = json!(["FIXTURE_VALUE"]);
++        manifest["codex_config"] = json!({"tools.update_plan.enabled": true});
++        manifest["compatibility"] = json!({"required_features": ["codex_config_v1"]});
++    });
++    let store = root.join("store");
++    ModStore::create(store.clone()).unwrap();
++    let summary = omd_cli(&store, &["inspect", package.to_str().unwrap()]);
++    for expected in [
++        "os access: {\"programs\":[\"/bin/echo\"],\"network\":false}",
++        "codex config: {\"tools.update_plan.enabled\":true}",
++        "exec environment: FIXTURE_VALUE",
++    ] {
++        assert!(summary.contains(expected), "{expected}\n{summary}");
++    }
++}
++
++#[test]
++fn updating_a_mod_installed_at_another_scope_names_that_scope() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
++    let store = store(&temp);
++    install(
++        &store,
++        ModInstallRequest {
++            scope: "project".into(),
++            ..request(&package, &["commands"])
++        },
++    );
++    let refused = omd_cli(&root.join("store"), &["update", "fixture"]);
++    assert!(
++        refused.contains("fixture is installed at scope project; pass --scope project"),
++        "{refused}"
++    );
++}
 diff --git a/codex-rs/omd/tests/review_bridge.rs b/codex-rs/omd/tests/review_bridge.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..de7d5d46e9bfacf2569937f1c8accd66cd25005a
@@ -165619,14 +166236,35 @@ index 0000000000000000000000000000000000000000..58b1818480f913d66ed823f55c70d534
 +}
 diff --git a/codex-rs/omd/tests/standalone_service.rs b/codex-rs/omd/tests/standalone_service.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c327276c9070dd34a9652cd81c6665cf4dd67f08
+index 0000000000000000000000000000000000000000..388d4e5417d33c9a66f23ac6a3e087dd94084ab7
 --- /dev/null
 +++ b/codex-rs/omd/tests/standalone_service.rs
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,85 @@
 +use codex_omd::{MOD_API_VERSION, ModStore};
 +use serde_json::{Value, json};
 +use std::fs;
 +use std::process::Command;
++
++#[test]
++fn omd_exits_quietly_when_its_reader_is_gone() {
++    let (reader, writer) = std::io::pipe().unwrap();
++    drop(reader);
++    let output = Command::new(env!("CARGO_BIN_EXE_omd"))
++        .arg("--help")
++        .stdout(writer)
++        .output()
++        .unwrap();
++    assert!(
++        output.status.success(),
++        "{}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    assert!(
++        output.stderr.is_empty(),
++        "{}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++}
 +
 +#[test]
 +fn standalone_service_uses_provider_scoped_host_access() {
@@ -174721,7 +175359,7 @@ index 0000000000000000000000000000000000000000..d09c2e94aba8325cfa392be009e2d4fe
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..598e3654c119a745c433295575c1a14d7c3ae181
+index 0000000000000000000000000000000000000000..7ae393a6d1a7ccad454f23623a7e455b3664b15f
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
 @@ -0,0 +1,679 @@
@@ -174939,7 +175577,7 @@ index 0000000000000000000000000000000000000000..598e3654c119a745c433295575c1a14d
 +        let revision = composer.mod_draft_sync();
 +        let attachments = composer
 +            .local_images()
-+            .into_iter()
++            .iter()
 +            .map(|image| {
 +                let owner = composer
 +                    .mod_draft_owner(&image.path)
@@ -186207,10 +186845,10 @@ index 0000000000000000000000000000000000000000..f3cb933c9196ab134e6dcad4ba239274
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7a781a3b6463dde13c5f3ca822e7e09289fe6d76
+index 0000000000000000000000000000000000000000..2c2ee6d688f3168a56b870e88c33416e7ed86354
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,795 @@
+@@ -0,0 +1,791 @@
 +use super::*;
 +use codex_omd::ModOpenOptions;
 +use pretty_assertions::assert_eq;
@@ -186325,20 +186963,16 @@ index 0000000000000000000000000000000000000000..7a781a3b6463dde13c5f3ca822e7e092
 +    let busy = runtime.lock().unwrap();
 +    let active = Arc::new(AtomicBool::new(true));
 +    let worker_active = active.clone();
-+    let worker_repository = repository.clone();
 +    let (entered, waiting) = std::sync::mpsc::channel();
 +    let (finished, completion) = std::sync::mpsc::channel();
 +    let worker = std::thread::spawn(move || {
-+        prepare_startup_active(&worker_repository, "new", &|| {
++        prepare_startup_active(&repository, "new", &|| {
 +            let current = worker_active.load(Ordering::SeqCst);
 +            let _ = entered.send(());
 +            current
 +        });
 +        finished
-+            .send(crate::mod_ui::startup_context_matches(
-+                &worker_repository,
-+                "new",
-+            ))
++            .send(crate::mod_ui::startup_context_matches(&repository, "new"))
 +            .unwrap();
 +    });
 +    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -187008,10 +187642,10 @@ index 0000000000000000000000000000000000000000..7a781a3b6463dde13c5f3ca822e7e092
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..24ff0da1f959fb6569f0d9217b277cb2fced3f99
+index 0000000000000000000000000000000000000000..27c2223abc4452faef94174b0769fee690686b92
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1214 @@
+@@ -0,0 +1,1215 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -187790,11 +188424,7 @@ index 0000000000000000000000000000000000000000..24ff0da1f959fb6569f0d9217b277cb2
 +                if let Some(pointer) = payload["pointer"].as_object_mut() {
 +                    pointer.remove("fraction");
 +                }
-+                if let Some(owner) = owner.or_else(|| {
-+                    payload["component"]
-+                        .as_str()
-+                        .and_then(crate::mod_ui::component_owner)
-+                }) {
++                if let Some(owner) = owner {
 +                    crate::mod_runtime::invoke_event(
 +                        &owner,
 +                        "component_event",
@@ -187803,8 +188433,13 @@ index 0000000000000000000000000000000000000000..24ff0da1f959fb6569f0d9217b277cb2
 +                }
 +            })
 +        });
++        let owner = owner.or_else(|| {
++            payload["component"]
++                .as_str()
++                .and_then(crate::mod_ui::component_owner)
++        });
 +        if let Some(pending) = close_motion(&payload) {
-+            queue.push((None, pending));
++            queue.push((owner.clone(), pending));
 +        }
 +        let marker = (payload["kind"] == "motion")
 +            .then(|| payload["component"].as_str().map(str::to_owned))
@@ -188228,7 +188863,7 @@ index 0000000000000000000000000000000000000000..24ff0da1f959fb6569f0d9217b277cb2
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab2ae0a59482efeb20b82a75aa0601b1f60299ac
+index 0000000000000000000000000000000000000000..826c762f6828813e60f0a54f41ed081e491eb057
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
 @@ -0,0 +1,1224 @@
@@ -189361,7 +189996,7 @@ index 0000000000000000000000000000000000000000..ab2ae0a59482efeb20b82a75aa0601b1
 +    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
 +}
 +
-+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++#[tokio::test]
 +#[serial_test::serial]
 +async fn app_requests_are_served_while_the_event_loop_awaits_a_lifecycle_request() {
 +    struct Restore(Option<State>);

@@ -64,7 +64,8 @@ test('rapid resizing preserves animation time and the frozen frame during a turn
   const state = ready();
   const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 266);
   const busy = call({ event: 'turn_start', state: first.state, payload: null }).state;
-  let resized = busy;
+  const frozen = tick(busy, `f.${NOW}.2.0.0.0.0`, NOW + 300).state;
+  let resized = frozen;
   for (const columns of [140, 80, 160]) resized = draw(resized, { columns }).state;
   assert.equal(resized.run, NOW + 3);
   assert.equal(resized.origin, NOW);
