@@ -155,18 +155,33 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                 let poisoned = || std::io::Error::other("mod runtime poisoned");
                 let facts = facts(&*runtime.lock().map_err(|_| poisoned())?);
                 let active = || !flag.load(Ordering::Acquire);
-                let host =
+                let mut host =
                     |caller: &str, request| forward(&requests, &facts, caller, request, &active);
-                let progress =
+                let mut progress =
                     |update: String| views.progress(&host_info, &progress_label, &update);
                 if id.is_empty() {
-                    return runtime
-                        .lock()
-                        .map_err(|_| poisoned())?
-                        .invoke_tool(&id, generation, &name, payload, active, host, progress);
+                    return runtime.lock().map_err(|_| poisoned())?.invoke_tool(
+                        &id,
+                        generation,
+                        &name,
+                        payload,
+                        active,
+                        &mut host,
+                        &mut progress,
+                    );
                 }
                 codex_omd::invoke_shared(
-                    &runtime, &id, generation, "tool", &name, payload, active, host, progress,
+                    &runtime,
+                    &id,
+                    generation,
+                    "tool",
+                    &name,
+                    payload,
+                    codex_omd::ModInvokeOptions {
+                        active: &active,
+                        host: codex_omd::ModHostCallback::Scoped(&mut host),
+                        progress: Some(&mut progress),
+                    },
                 )
             });
             let mut ordinal = 0u32;

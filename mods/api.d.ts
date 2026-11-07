@@ -127,7 +127,7 @@ export type PeerSender = { session: string; repository: string; package: string;
 export type PeerReceipt = { id: string; status: 'queued' | 'delivered' | 'refused' | 'failed' | 'expired' | 'closed'; reason?: string | null; at_ms?: number; by?: { session: string; package: string | null }; correlation?: string | null; to?: PeerAddress };
 export type TurnQueueEntry = { key: string; priority: 'high' | 'normal' | 'low'; event: string; queued_at_ms: number; deadline_ms: number | null };
 export type AgentFailure = { category: 'transport' | 'rate_limit' | 'authorization' | 'sandbox' | 'allowance' | 'invalid_request' | 'unknown'; code: Json; message: string };
-export type AgentResult = { status: 'running' } | { status: 'failed'; error: string; failure?: AgentFailure | null } | { status: 'completed'; text: string; consumed: boolean; evidence: ResourceRef; candidate_sha256?: string; changed_paths?: string[] };
+export type AgentResult = { status: 'running' } | { status: 'failed'; error: string; failure?: AgentFailure | null; delivered?: true | 'pending' } | { status: 'completed'; text: string; consumed: boolean; evidence: ResourceRef; candidate_sha256?: string; changed_paths?: string[]; delivered?: true | 'pending' };
 
 export type Letter = 'a'|'b'|'c'|'d'|'e'|'f'|'g'|'h'|'i'|'j'|'k'|'l'|'m'|'n'|'o'|'p'|'q'|'r'|'s'|'t'|'u'|'v'|'w'|'x'|'y'|'z';
 export type FunctionKey = 'F2'|'F3'|'F4'|'F5'|'F6'|'F7'|'F8'|'F9'|'F10'|'F11'|'F12';
@@ -260,12 +260,12 @@ export type RenderExecCall = { call_id: string; kind: 'exec'; command: string; p
 /** One agent tool row with its arguments, status and output summary. `expanded` is true while the user has the row open or reads the full transcript; return the native row then. */
 export type RenderToolCall = { expanded: boolean } & (RenderExecCall
   | { call_id: string; kind: 'explore'; status: RenderToolStatus; duration_ms: number | null; calls: RenderExecCall[] }
-  | { call_id: string; kind: 'patch'; status: RenderToolStatus; duration_ms: null; file_count: number; added: number; removed: number; files: { path: string; change: 'add' | 'delete' | 'update'; added: number; removed: number }[]; error: string | null }
-  | { call_id: string; kind: 'web_search'; status: RenderToolStatus; duration_ms: null; action: 'search' | 'open_page' | 'find_in_page' | 'other'; query: string }
+  | { call_id: string; kind: 'patch'; status: RenderToolStatus; duration_ms: number | null; file_count: number; added: number; removed: number; files: { path: string; change: 'add' | 'delete' | 'update'; added: number; removed: number }[]; error: string | null }
+  | { call_id: string; kind: 'web_search'; status: RenderToolStatus; duration_ms: number | null; action: 'search' | 'open_page' | 'find_in_page' | 'other'; query: string }
   | { call_id: string; kind: 'agent'; tool: 'spawn_agent' | 'send_input' | 'resume_agent' | 'wait' | 'close_agent' | 'agent'; status: RenderToolStatus; duration_ms: null; agents: string[]; prompt: string }
   | { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
   | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
-  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: null; path: string | null; prompt: string | null });
+  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: number | null; path: string | null; prompt: string | null });
 export type RenderQuestion = { id: string; header: string; question: string; secret: boolean; options: string[] };
 export interface RenderProps {
   user_message: { text: string; images: number; spoken: boolean };
@@ -412,10 +412,10 @@ export interface HostOperations {
   'contract.status': { arguments: null; result: ContractStatus };
   'contract.restrict': { arguments: { operations?: string[]; scoped?: ContractRestriction[]; reason: string }; result: { restrictions: string[]; scoped_restrictions: ContractRestriction[] } };
   'contract.select': { arguments: { contract: string }; result: { selected: Json; applies: 'next_session' } | Declined };
-  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] }; model?: string }; result: Agent };
+  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] }; model?: string; hold_failure?: boolean }; result: Agent };
   'agents.message': { arguments: { handle: string; message: string }; result: { delivered: boolean } };
-  'agents.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };
-  'agents.result': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
+  'agents.cancel': { arguments: { handle: string; deliver?: boolean }; result: { cancelled: boolean; delivered: boolean | 'pending' } };
+  'agents.result': { arguments: { handle: string; consume?: boolean; claim?: boolean }; result: AgentResult };
   'agents.wait': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
   'agents.list': { arguments: null; result: { handle: string; finished: boolean; consumed: boolean }[] };
   'agents.inventory': { arguments: null; result: { agents: AgentRecord[] } };

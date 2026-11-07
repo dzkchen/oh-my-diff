@@ -21,13 +21,8 @@
     "lifecycle",
     "events",
     "threads",
-    "inventory",
-    "autonomous"
+    "inventory"
   ],
-  "autonomy": {
-    "max_queued": 4,
-    "max_turns": 20
-  },
   "subscriptions": {
     "app": [
       "account/rateLimits/updated"
@@ -37,7 +32,6 @@
     "required_features": [
       "agent_lifecycle_v1",
       "app_v1",
-      "autonomous_turns_v1",
       "codex_config_v1",
       "events_v1",
       "lifecycle_events_v1",

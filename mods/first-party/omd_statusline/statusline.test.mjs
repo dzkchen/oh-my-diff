@@ -16,7 +16,7 @@ const GIT = '/repo/.git/worktrees/line\n/repo/.git\n/work/line\n@@\ngit@github.c
 
 const host = (overrides = {}) => ({ operation, arguments: args }) => {
   if (operation in overrides) return overrides[operation](args);
-  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.166.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
+  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.167.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
   if (operation === 'app.request' && args.method === 'config/read') return { config: { model_reasoning_effort: 'high', model_context_window: 272_000 } };
   if (operation === 'app.request' && args.method === 'account/read') return { account: null, requiresOpenaiAuth: true };
   if (operation === 'app.request' && args.method === 'model/list') return { data: [], nextCursor: null };
@@ -145,4 +145,30 @@ test('usage resets are refreshed while idle and empty snapshots clear old limits
   assert.equal(after.limits[0].used, 0);
   const empty = call({ event: 'timer', payload: { key: 'time:limits' }, state: after }, host({ 'app.request': () => ({ rateLimits: {} }) })).state;
   assert.deepEqual(empty.limits, []);
+});
+
+test('turn_end forgets tools still marked running and schedules a refresh', () => {
+  const state = { ...started(), tools: { 'exec-1': NOW - 5_000, 'exec-2': NOW - 1_000 } };
+  const ended = call({ event: 'turn_end', payload: { turn_id: 't1' }, state });
+  assert.deepEqual(ended.state.tools, {});
+  assert.ok(ended.calls.some(item => item.operation === 'events.schedule' && item.arguments.key === 'time:refresh_soon'));
+});
+
+test('a pending settings apply outlives one turn_end and is dropped by the next', () => {
+  const state = { ...started(), pending: { from: ['{}'], to: { preset: 'custom' }, turns: 0 } };
+  const first = call({ event: 'turn_end', payload: { turn_id: 't1' }, state }).state;
+  assert.deepEqual(first.pending, { from: ['{}'], to: { preset: 'custom' }, turns: 1 });
+  assert.equal(call({ event: 'turn_end', payload: { turn_id: 't2' }, state: first }).state.pending, null);
+});
+
+test('compaction_end counts compacted and replaced outcomes only and stamps when the context last changed', () => {
+  const end = (state, outcome, at = NOW) => call({ event: 'compaction_end', payload: { turn_id: 't1', trigger: 'auto', outcome }, state, virtual_time_ms: at }).state;
+  const compacted = end(started(), 'compacted');
+  assert.deepEqual([compacted.context.compactions, compacted.context.compacted], [1, NOW]);
+  const replaced = end(compacted, 'replaced', NOW + 60_000);
+  assert.deepEqual([replaced.context.compactions, replaced.context.compacted], [2, NOW + 60_000]);
+  for (const outcome of ['skipped', 'deferred', 'failed']) {
+    const ignored = end(replaced, outcome, NOW + 120_000);
+    assert.deepEqual([ignored.context.compactions, ignored.context.compacted], [2, NOW + 60_000], outcome);
+  }
 });

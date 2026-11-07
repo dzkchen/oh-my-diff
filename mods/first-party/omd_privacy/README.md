@@ -1,8 +1,8 @@
 # omd_privacy
 
 Replaces secrets, and personal data you choose, with random placeholders such as
-`[REDACTED:github_token:q7xk2m9fhd4w]` in everything sent to the model, and asks before a shell command reads a
-sensitive file. It's off by default in OMD+. OMD Core doesn't include it.
+`[REDACTED:github_token:q7xk2m9fhd4w]` in everything sent to the model. It can also ask before a shell command
+reads a sensitive file when you set `paths` to `ask`. It's off by default in OMD+. OMD Core doesn't include it.
 
 ## Turn it on
 
@@ -31,7 +31,7 @@ Change settings in `/mods`.
 | `secrets` | all 13 secret rules | Secret rules to apply (list below) |
 | `pii` | `[]` | Personal data rules: `email`, `phone`, `ipv4`, `ipv6`, `card`, `us_ssn` |
 | `scopes` | `prompt`, `context`, `tools`, `replies` | Text to scan: your prompts, instructions and context, tool calls and output, earlier replies |
-| `paths` | `ask` | When a shell command names a sensitive path: `ask`, `deny` or `off` |
+| `paths` | `off` | When a shell command names a sensitive path: `ask`, `deny` or `off`. Secrets in its output are redacted either way |
 | `sensitive_paths` | 21 patterns (list below) | Path patterns that count as sensitive |
 | `exempt` | `path:.env.example`, `path:.env.sample`, `path:.env.template`, `path:*.pub` | Domains and paths exempted from checks: `domain:NAME` or `path:PATTERN` |
 | `unscanned` | `allow` | `deny` refuses requests that carry images, audio or files, which are never scanned |
@@ -53,7 +53,10 @@ The default `sensitive_paths`: `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.p
   and processes you already allowed are out of reach.
 - The path check reads command text only. It misses paths built at run time. Globs and brace lists that could name a
   sensitive path ask first. The catch-all patterns `*` and `.*` are the exception, so neither `ls -la .*` nor `cat .*`
-  asks.
+  asks. In inline interpreter code (`python -c`, `node -e`) and in heredoc bodies fed to an interpreter, `cat >` or
+  `tee` only quoted strings count, so `open('.env')` asks and `config.key` doesn't. A heredoc piped or fed to a shell
+  or `ssh`, and code or an unquoted heredoc holding a `$(…)` or backtick substitution, is checked like any command. Input to a running session that is too large to check is treated as naming
+  a sensitive path.
 - Web search isn't scanned. It sends your recent messages and its queries as they are.
 - While the mod is on, Realtime calls are refused (`request_policy_unsupported_transport`).
 - If the mod fails or times out, every other request is refused, but web search still goes out unscanned. To send

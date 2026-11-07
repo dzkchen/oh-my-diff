@@ -1,22 +1,26 @@
 use serde_json::Value;
 use std::sync::LazyLock;
 
-static SCHEMAS: LazyLock<Value> = LazyLock::new(|| {
+static SCHEMAS: LazyLock<Result<Value, String>> = LazyLock::new(|| {
     let schemas: Value = serde_json::from_str(include_str!("operation_schema.json"))
-        .expect("generated operation schemas");
+        .map_err(|error| format!("operation_schemas_invalid: {error}"))?;
     for operation in schemas["operations"]
         .as_object()
-        .expect("operations")
+        .ok_or("operation_schemas_invalid: operations")?
         .values()
     {
         for field in ["arguments", "result"] {
-            supported(&operation[field], &schemas).expect("supported operation schema");
+            supported(&operation[field], &schemas)?;
         }
     }
-    for definition in schemas["$defs"].as_object().expect("definitions").values() {
-        supported(definition, &schemas).expect("supported schema definition");
+    for definition in schemas["$defs"]
+        .as_object()
+        .ok_or("operation_schemas_invalid: definitions")?
+        .values()
+    {
+        supported(definition, &schemas)?;
     }
-    schemas
+    Ok(schemas)
 });
 
 fn supported(schema: &Value, document: &Value) -> Result<(), String> {
@@ -60,8 +64,9 @@ fn supported(schema: &Value, document: &Value) -> Result<(), String> {
 fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
     let invalid = |reason: &str| Err(format!("{path}: {reason}"));
     if let Some(reference) = schema["$ref"].as_str() {
+        let schemas = SCHEMAS.as_ref().map_err(Clone::clone)?;
         return check(
-            &SCHEMAS["$defs"][&reference["#/$defs/".len()..]],
+            &schemas["$defs"][&reference["#/$defs/".len()..]],
             value,
             path,
         );
@@ -150,7 +155,8 @@ fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
 }
 
 pub(super) fn validate(operation: &str, field: &str, value: &Value) -> Result<(), String> {
-    let schema = SCHEMAS["operations"]
+    let schemas = SCHEMAS.as_ref().map_err(Clone::clone)?;
+    let schema = schemas["operations"]
         .get(operation)
         .and_then(|entry| entry.get(field))
         .ok_or_else(|| format!("offline_unknown_host_operation: {operation}"))?;
@@ -183,20 +189,21 @@ mod tests {
 
     #[test]
     fn generated_schema_covers_every_host_operation() {
+        let schemas = SCHEMAS.as_ref().unwrap();
         for operation in super::super::MOD_HOST_OPERATIONS {
             assert!(
-                SCHEMAS["operations"][*operation]["arguments"].is_object()
-                    || SCHEMAS["operations"][*operation]["arguments"].is_boolean(),
+                schemas["operations"][*operation]["arguments"].is_object()
+                    || schemas["operations"][*operation]["arguments"].is_boolean(),
                 "{operation}"
             );
             assert!(
-                SCHEMAS["operations"][*operation]["result"].is_object()
-                    || SCHEMAS["operations"][*operation]["result"].is_boolean(),
+                schemas["operations"][*operation]["result"].is_object()
+                    || schemas["operations"][*operation]["result"].is_boolean(),
                 "{operation}"
             );
         }
         assert_eq!(
-            SCHEMAS["operations"].as_object().unwrap().len(),
+            schemas["operations"].as_object().unwrap().len(),
             super::super::MOD_HOST_OPERATIONS.len()
         );
     }

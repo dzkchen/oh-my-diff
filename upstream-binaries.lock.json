@@ -1,5 +1,8 @@
 {
   "rust-v0.166.0": {
     "codex-aarch64-apple-darwin.tar.gz": "c48824462fc57681eafb0925d97b11b589010475613904f570b42fea53e240d5"
+  },
+  "rust-v0.167.0": {
+    "codex-aarch64-apple-darwin.tar.gz": "4b22a2a971be2791c3e31f912f3e77a88ebd64a65812a7289ccba65dd6425fe9"
   }
 }

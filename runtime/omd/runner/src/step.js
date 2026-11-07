@@ -4,5 +4,5 @@ globalThis.__step = async line => {
   if (omd.request.session_activation) return globalThis.__dispatch();
   const value = await (omd.request.event === 'component' ? omd.component : omd.intercept)(omd.request.payload) ?? null;
   if (omd.calls.length < omd.request.receipts.length) throw new Error('host_call_replay_diverged');
-  return JSON.stringify({ registrations: omd.registrations, state: omd.state(), ...omd.ui(), value, calls: omd.calls, updates: omd.updates });
+  return JSON.stringify({ registrations: omd.echo(), state: omd.state(), ...omd.ui(), value, calls: omd.calls, updates: omd.updates });
 };

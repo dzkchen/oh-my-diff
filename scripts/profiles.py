@@ -153,12 +153,32 @@ def sync_sources(manager, store, origin, packages):
     return changed
 
 
+def refresh_kept_copies(manager, store, origin, packages, installed):
+    kept = {identifier: {"sha256": package["package_sha256"], "files": package["files"],
+                         "capabilities": package["capabilities"]}
+            for identifier, package in packages.items()
+            if identifier not in installed and (store / "sources" / identifier).is_dir()}
+    return sync_sources(manager, store, origin, kept)
+
+
 def keep_bundled_copies(manager, store):
     selected = [item for item in invoke(manager, "selection-status", store)["selections"] if item["selected"]]
     for item in selected:
         if item["packaged"] and any(other["path"] == str(store / "sources" / item["id"]) and other["scope"] == item["scope"]
                                     for other in selected):
             invoke(manager, "package-disable", store, item["id"])
+
+
+def retire_packages(manager, store, profile, previous):
+    retired = set(PACKAGES) - set(profile_packages("full")) - set(ROUTES.values())
+    if previous and profile != "full":
+        return set(previous.get("retired", ()))
+    newly = retired - set(previous.get("retired", ())) if previous else set()
+    if newly:
+        for item in invoke(manager, "selection-status", store)["selections"]:
+            if item["selected"] and item["id"] in newly and item["path"] == str(store / "sources" / item["id"]):
+                invoke(manager, "disable", store, item["path"])
+    return retired
 
 
 def reconcile(prefix, bin_dir):
@@ -400,7 +420,10 @@ def contract(prefix, action, key):
     if action in ("plan", "select") and not key:
         raise ValueError(f"contract {action} needs ID@VERSION; contract list shows them")
     arguments = [record["store"]] if action == "list" else [record["store"], str(Path.cwd()), *([key] if key else ["user"] if action == "clear" else [])]
-    return json.loads(support.output([tool, action, *arguments]))
+    result = subprocess.run([tool, action, *arguments], stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    if result.returncode:
+        raise ValueError((result.stderr or result.stdout).strip() or f"omd-contract {action} failed")
+    return json.loads(result.stdout)
 
 
 def check(record, bin_dir):
@@ -505,6 +528,13 @@ def status_summary(result):
     return "\n".join(lines)
 
 
+def activation_summary(result):
+    if result["activation"] == "direct":
+        return f"Direct mode: codex runs without mods. `omd-package activate {result['profile']}` brings them back."
+    active = sum(1 for package in result["packages"] if package["active"])
+    return f"{result['profile_label']} is active with {active} of {len(result['packages'])} mods on."
+
+
 def activate(prefix, bin_dir, selection):
     record = load(prefix)
     check(record, bin_dir)
@@ -528,6 +558,8 @@ def select_mod(prefix, bin_dir, identifier, enabled):
         current = invoke(manager, "selection-status", record["store"])
         matches = [item for item in current["selections"] if item.get("path") == str(source)]
         if len(matches) != 1 or matches[0].get("id") != identifier or not isinstance(matches[0].get("selected"), bool):
+            if any(item.get("id") == identifier for item in current["selections"]):
+                raise ValueError(f"{identifier} is no longer your profile's copy; use omd mods {'enable' if enabled else 'disable'} {identifier}")
             raise ValueError(f"managed mod selection is unavailable: {identifier}")
         return matches[0]
 
@@ -611,7 +643,7 @@ def route(prefix, bin_dir, name, args):
         raise ValueError(f"activate OMD+ before using the {name} route")
     selections = invoke(record["manager"]["installed_path"], "selection-status", record["store"])["selections"]
     if not any(item.get("id") == identifier and item.get("effective") and not item.get("error") for item in selections):
-        raise ValueError(f"the {name} route needs its mod enabled: omd mods enable {identifier}")
+        raise ValueError(f"the {name} route needs its mod enabled: {enable_hint(selections, identifier)}")
     host = Path(record["store"]) / "host.json"
     written = {route["model"] for route in (json.loads(host.read_text()).get("routes", []) if host.is_file() else [])
                if route.get("provider") == identifier and isinstance(route.get("data"), dict)}
@@ -643,6 +675,19 @@ def session_options(codex):
     return kept
 
 
+def author_launcher_text(node, cli):
+    if node:
+        return f"#!/bin/sh\nexec {shlex.quote(str(node))} {shlex.quote(str(cli))} \"$@\"\n"
+    return ("#!/bin/sh\ncommand -v node >/dev/null 2>&1 || "
+            "{ echo 'omd-mod-author needs Node.js 22.18 or later on PATH' >&2; exit 127; }\n"
+            f"exec node {shlex.quote(str(cli))} \"$@\"\n")
+
+
+def enable_hint(selections, identifier):
+    enable = f"omd mods enable {identifier}"
+    return enable if any(item.get("id") == identifier for item in selections) else f"omd install {identifier}, then {enable}"
+
+
 def mini(prefix, bin_dir, codex):
     record = load(prefix)
     check(record, bin_dir)
@@ -650,7 +695,7 @@ def mini(prefix, bin_dir, codex):
         raise ValueError("activate OMD Core or OMD+ before using omd mini")
     selections = invoke(record["manager"]["installed_path"], "selection-status", record["store"])["selections"]
     if not any(item.get("id") == "omd_mini" and item.get("effective") and not item.get("error") for item in selections):
-        raise ValueError("omd mini needs its mod enabled: omd mods enable omd_mini")
+        raise ValueError(f"omd mini needs its mod enabled: {enable_hint(selections, 'omd_mini')}")
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         raise ValueError("omd mini needs a terminal; use `codex exec` for piped or scripted runs")
     launch, run, mode, options = os.urandom(8).hex(), 0, "mini", session_options(codex)
@@ -841,6 +886,8 @@ def install(args):
             invoke(installed_manager, "enable", store, target)
         sync_sources(installed_manager, store, prefix / "sources", installed)
         keep_bundled_copies(installed_manager, store)
+        retired = retire_packages(installed_manager, store, args.profile, previous)
+        refresh_kept_copies(installed_manager, store, prefix / "sources", packages, installed)
         if revoked:
             invoke(installed_manager, "trust-all", store, json.dumps([
                 {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],
@@ -878,7 +925,7 @@ def install(args):
                   "runtime_patch_sha256": patch_lock["patch"]["sha256"],
                   "shared_state": {"codex_home": str(home), "codex_sqlite_home": str(sqlite),
                                    "policy": "inherited unchanged; never removed by uninstall"},
-                  "activation": {"selection": args.profile}}
+                  "activation": {"selection": args.profile}, "retired": sorted(retired)}
         if managed:
             record["update"] = {"root": str(prefix.parents[2]), "installer": str(management_root / "install.sh"),
                                 "python": sys.executable}
@@ -892,9 +939,7 @@ def install(args):
         made_launchers.append(launcher)
         record["activation"]["sha256"] = support.digest(launcher)
         author_launcher = bin_dir / "omd-mod-author"
-        support.atomic_text(author_launcher,
-                            f"#!/bin/sh\nexec {shlex.quote(str(node or 'node'))} {shlex.quote(str(author_cli))} \"$@\"\n",
-                            0o755)
+        support.atomic_text(author_launcher, author_launcher_text(node, author_cli), 0o755)
         made_launchers.append(author_launcher)
         record["author"]["launcher_sha256"] = support.digest(author_launcher)
         control_launcher = bin_dir / "omd-package"
@@ -955,9 +1000,10 @@ def register_plugins(prefix, bin_dir):
         return entry.get("source") if isinstance(entry, dict) else None
 
     if configured() != str(source):
+        home.mkdir(mode=0o700, parents=True, exist_ok=True)
         if configured() is not None:
-            subprocess.run([binary, "plugin", "marketplace", "remove", name], check=True, capture_output=True, env=env)
-        subprocess.run([binary, "plugin", "marketplace", "add", source], check=True, capture_output=True, env=env)
+            support.run([binary, "plugin", "marketplace", "remove", name], env=env)
+        support.run([binary, "plugin", "marketplace", "add", source], env=env)
         text = config.read_text()
         written = f"source = {json.dumps(str(support.resolved(source)))}"
         if text.count(written) != 1:
@@ -1193,9 +1239,11 @@ def main():
     activate_parser = commands.add_parser("activate", help="switch between OMD Core, OMD+ and upstream-style direct mode")
     activate_parser.add_argument("selection", choices=("platform", "full", "direct"),
                                  help="platform: OMD Core; full: OMD+; direct: upstream-style behavior")
+    activate_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
     mod_parser = commands.add_parser("mod", help="enable or disable one profile mod")
     mod_parser.add_argument("action", choices=("enable", "disable"))
     mod_parser.add_argument("identifier", choices=PACKAGES)
+    mod_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
     for name in ROUTES:
         route_parser = commands.add_parser(name, help=f"set up or launch the opt-in {name} route")
         route_parser.add_argument("--setup", action="store_true")
@@ -1246,8 +1294,14 @@ def main():
         result = rollback_mods(prefix, bin_dir)
     elif args.command == "activate":
         result = activate(prefix, bin_dir, args.selection)
+        if not args.json:
+            print(activation_summary(result))
+            return
     elif args.command == "mod":
         result = select_mod(prefix, bin_dir, args.identifier, args.action == "enable")
+        if not args.json:
+            print(f"{args.identifier} is {args.action}d.")
+            return
     elif args.command in ROUTES:
         result = route(prefix, bin_dir, args.command, args)
     elif args.command == "mini":

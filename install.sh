@@ -25,6 +25,7 @@ fi
 exec "$OMD_PYTHON" -I - "$@" <<'PY'
 import argparse
 import codecs
+import contextlib
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import functools
@@ -65,7 +66,7 @@ CADENCES = {"daily": 86_400, "weekly": 604_800}
 POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "prerelease", "nightly"), "cadence": ("daily", "weekly")}
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
-UPSTREAM_MINOR = "0.166"
+UPSTREAM_MINOR = "0.167"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
 NOTICE_BYTES = 4096
@@ -823,6 +824,8 @@ def finish_uninstall(root, purge):
             leftover.unlink()
     journal.unlink(missing_ok=True)
     (root / "update").rmdir()
+    with contextlib.suppress(OSError):
+        (root / "releases").rmdir()
     return {"uninstalled": True, "purged_stores" if purge else "preserved_stores": str(root / "stores"),
             "preserved_administrator_policy": [str(path) for path in
                 (BROKER_POLICY, BROKER_POLICY.with_name("policy.json.previous")) if path.exists() or path.is_symlink()],
@@ -1520,14 +1523,18 @@ def launch(args, root, current):
     print(f"Oh My Diff {ready} is installed.", file=sys.stderr)
 
 
+def latest_summary(status):
+    found = status["available"]
+    return (f"{found['version']} is available: run omd update" if found else
+            f"first-party mod updates are available ({', '.join(status['mods']['changed'])}): run omd update" if status["mods"] else
+            f"the last check failed: {status['error']}" if status["error"] else
+            "up to date" if status["checked_at"] else "not checked yet")
+
+
 def update_summary(status):
     rules = status["policy"]
     checks = f"{rules['cadence']} checks" if rules["checks"] == "on" else "update checks off"
-    found = status["available"]
-    latest = (f"{found['version']} is available: run omd update" if found else
-              f"first-party mod updates are available ({', '.join(status['mods']['changed'])}): run omd update" if status["mods"] else
-              f"the last check failed: {status['error']}" if status["error"] else
-              "up to date" if status["checked_at"] else "not checked yet")
+    latest = latest_summary(status)
     pinned = f", pinned to {rules['pin']}" if rules["pin"] else ""
     pulled = (f". {status['withdrawn']['version']} was withdrawn" + (f"; run {status['withdrawn']['run']}" if status["withdrawn"]["run"] else "")
               if status["withdrawn"] else "")
@@ -1535,10 +1542,17 @@ def update_summary(status):
             f"{checks}{pinned}: {latest}{pulled}")
 
 
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        if sys.argv[1:2] == ["update"]:
+            fail(f"omd update: {message}")
+        super().error(message)
+
+
 def main():
     if sys.version_info < (3, 12):
         fail("Python 3.12 or newer is required for verified archive extraction")
-    parser = argparse.ArgumentParser(
+    parser = Parser(
         prog="install.sh",
         description="Install, update and roll back Oh My Diff on Apple Silicon macOS",
         epilog="omd update [now|status|check|enable|disable|rollback], omd update checks on|off, "
@@ -1597,6 +1611,8 @@ def main():
             print(json.dumps(result, indent=2))
             if args.action == "status":
                 print(update_summary(result), file=sys.stderr)
+            elif args.action == "check":
+                print(f"Oh My Diff {result['installed']}: {latest_summary(result)}", file=sys.stderr)
         elif args.command == "install":
             install(args, root, current)
         elif args.command == "status":
@@ -1609,6 +1625,9 @@ def main():
             rollback(args, root, args.bin_dir, current)
         else:
             uninstall(args, root, args.bin_dir, current)
+    if args.command == "uninstall" and [path.name for path in root.iterdir()] == [".install.lock"]:
+        (root / ".install.lock").unlink()
+        root.rmdir()
 
 
 if __name__ == "__main__":

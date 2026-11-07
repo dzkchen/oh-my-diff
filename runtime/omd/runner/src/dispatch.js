@@ -1,4 +1,4 @@
-const { api, handlers, tools, commands, serviceHandlers, virtualReaders, completers, registrations, request } = globalThis.__omd;
+const { api, handlers, tools, commands, serviceHandlers, virtualReaders, completers, echo, request } = globalThis.__omd;
 if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
 const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
 await globalThis.__activate(activation);
@@ -18,7 +18,7 @@ if (request.event !== 'inspect') {
   await globalThis.__omd.flushSubscriptions();
 }
 if (globalThis.__omd.calls.length < (request.receipts ?? []).length) throw new Error('host_call_replay_diverged');
-return JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
+return JSON.stringify({ registrations: echo(), state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
   calls: globalThis.__omd.calls, updates: globalThis.__omd.updates });
 
 };

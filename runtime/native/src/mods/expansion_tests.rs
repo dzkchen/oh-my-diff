@@ -2,6 +2,9 @@ use super::*;
 use crate::mods::DISPATCHER_TEST;
 use codex_extension_api::ToolLifecycleContributor as _;
 use codex_extension_api::ToolOutputContributor;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModStore;
 use std::path::Path;
 
@@ -94,11 +97,15 @@ fn fixture_with_registry(
     let core = if let Some(registry) = registry {
         initialize(registry, host.clone()).unwrap().core.clone()
     } else {
-        let runtime = ModHost::open(root.clone()).unwrap();
+        let runtime = ModHost::open(root.clone(), ModOpenOptions::default()).unwrap();
         let environment = runtime.environment();
         let runtime = Arc::new(Mutex::new(runtime));
-        let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-        let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+        let input_runtime = Arc::new(Mutex::new(
+            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
+        ));
+        let persist_runtime = Arc::new(Mutex::new(
+            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
+        ));
         let persist_required = persist_runtime.lock().unwrap().required_surfaces();
         let views = Arc::new(view::Views::new());
         Arc::new_cyclic(|core| Core {
@@ -847,14 +854,18 @@ fn command(core: &Core, id: &str, name: &str) -> Value {
     let mut runtime = core.runtime.lock().unwrap();
     let generation = runtime.generation();
     runtime
-        .invoke_with(
+        .invoke(
             id,
             generation,
             "command",
             name,
             Value::Null,
-            || true,
-            |_| Err(std::io::Error::other("unexpected_host_call")),
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |_| {
+                    Err(std::io::Error::other("unexpected_host_call"))
+                }),
+                ..ModInvokeOptions::default()
+            },
         )
         .unwrap()
 }
@@ -912,6 +923,7 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1160,6 +1172,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1388,6 +1401,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1571,6 +1585,7 @@ async fn replacement_over_the_core_limit_is_dropped_with_a_diagnostic() {
     };
     static BIG: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("big"));
     mods.intercept_tool(ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -2142,7 +2157,7 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
     let mods = mods(&fixture.core);
     let thread_store = ExtensionData::new("thread".to_owned());
     assert_eq!(mods.adjust_tool_specs(&thread_store, &[]), None);
-    thread_store.insert(fixture.lead.clone());
+    thread_store.insert(fixture.lead);
     let view = |name: &str| ToolSpecView {
         name: name.to_owned(),
         description: String::new(),
@@ -2889,32 +2904,37 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
             let state = fixture.core.host.root.join("state-writer.json");
             let before = std::fs::read(&state).ok();
             let active = std::cell::Cell::new(true);
-            let result = runtime.invoke_with(
+            let result = runtime.invoke(
                 "writer",
                 generation,
                 "command",
                 "run",
                 Value::Null,
-                || active.get(),
-                |_| {
-                    match change {
-                        "disable" => store.enable(&path, false)?,
-                        "revoke" => {
-                            let config = fixture.core.host.root.join("mods.json");
-                            let mut value: Value =
-                                serde_json::from_slice(&std::fs::read(&config)?)?;
-                            value["mods"][0]["capabilities"] = json!(["commands", "store"]);
-                            std::fs::write(config, serde_json::to_vec(&value)?)?;
+                ModInvokeOptions {
+                    active: &|| active.get(),
+                    host: ModHostCallback::Own(&mut |_| {
+                        match change {
+                            "disable" => store.enable(&path, false)?,
+                            "revoke" => {
+                                let config = fixture.core.host.root.join("mods.json");
+                                let mut value: Value =
+                                    serde_json::from_slice(&std::fs::read(&config)?)?;
+                                value["mods"][0]["capabilities"] = json!(["commands", "store"]);
+                                std::fs::write(config, serde_json::to_vec(&value)?)?;
+                            }
+                            "replace" => {
+                                std::fs::write(path.join("index.ts"), "export default () => {}")?;
+                                std::thread::sleep(std::time::Duration::from_millis(2100));
+                            }
+                            "broken" => {
+                                std::fs::write(fixture.core.host.root.join("mods.json"), "{")?
+                            }
+                            "cancel" => active.set(false),
+                            _ => unreachable!(),
                         }
-                        "replace" => {
-                            std::fs::write(path.join("index.ts"), "export default () => {}")?;
-                            std::thread::sleep(std::time::Duration::from_millis(2100));
-                        }
-                        "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
-                        "cancel" => active.set(false),
-                        _ => unreachable!(),
-                    }
-                    Ok(Value::Null)
+                        Ok(Value::Null)
+                    }),
+                    ..ModInvokeOptions::default()
                 },
             );
             assert!(result.is_err(), "{lane} {change}");
@@ -2922,14 +2942,16 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
             if change == "broken" {
                 assert!(runtime.refresh(&|| true).is_err());
             }
-            let next = runtime.invoke_with(
+            let next = runtime.invoke(
                 "writer",
                 generation,
                 "command",
                 "run",
                 Value::Null,
-                || true,
-                |_| Ok(Value::Null),
+                ModInvokeOptions {
+                    host: ModHostCallback::Own(&mut |_| Ok(Value::Null)),
+                    ..ModInvokeOptions::default()
+                },
             );
             assert_eq!(
                 next.is_ok(),
@@ -3457,9 +3479,12 @@ async fn dynamic_tools_are_defined_invoked_and_removed_by_their_mod() {
         "tool",
         "search",
         json!({"q": "x"}),
-        || true,
-        |_, _| Err(std::io::Error::other("unexpected_host_call")),
-        |_| {},
+        codex_omd::ModInvokeOptions {
+            host: codex_omd::ModHostCallback::Scoped(&mut |_, _| {
+                Err(std::io::Error::other("unexpected_host_call"))
+            }),
+            ..codex_omd::ModInvokeOptions::default()
+        },
     )
     .unwrap();
     assert_eq!(value, json!({"called": "search", "arguments": {"q": "x"}}));
@@ -3935,6 +3960,7 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
             arguments: arguments.to_owned(),
         }));
         ToolStartInput {
+            serving_assessment: None,
             session_store: &session_store,
             thread_store: &thread_store,
             turn_store: &turn_store,
@@ -4557,6 +4583,7 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
                 arguments: r#"{"message":"go"}"#.to_owned(),
             };
             mods.intercept_tool(ToolStartInput {
+                serving_assessment: None,
                 session_store,
                 thread_store: &store,
                 turn_store: &ExtensionData::new("turn".to_owned()),

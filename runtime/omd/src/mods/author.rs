@@ -156,75 +156,76 @@ impl OfflineHost {
         let intrinsic = !self.replies.contains_key(&call.operation)
             && (matches!(call.operation.as_str(), "events.schedule" | "events.cancel")
                 || call.operation == "environment.read" && self.environment.is_some());
-        let response = if intrinsic {
-            None
-        } else {
-            let replies = self.replies.entry(call.operation.clone()).or_default();
-            while replies.front().is_some_and(|reply| {
-                reply["optional"] == true
-                    && reply
-                        .get("arguments")
-                        .is_some_and(|expected| expected != &call.arguments)
-            }) {
-                replies.pop_front();
-            }
-            let Some(response) = replies.front() else {
-                let reason = format!(
-                    "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
-                    call.operation
-                );
-                self.violations.push(reason.clone());
-                return Err(failure(reason));
-            };
-            if response
-                .get("arguments")
-                .is_some_and(|expected| expected != &call.arguments)
-            {
-                let reason = format!(
-                    "offline_mock_arguments_mismatch: {}: expected {}, got {}",
-                    call.operation, response["arguments"], call.arguments
-                );
-                self.violations.push(reason.clone());
-                return Err(failure(reason));
-            }
-            replies.pop_front()
+        if intrinsic {
+            operation_validation::validate(&call.operation, "arguments", &call.arguments)
+                .map_err(failure)?;
+            return self.intrinsic(caller, &call);
+        }
+        let replies = self.replies.entry(call.operation.clone()).or_default();
+        while replies.front().is_some_and(|reply| {
+            reply["optional"] == true
+                && reply
+                    .get("arguments")
+                    .is_some_and(|expected| expected != &call.arguments)
+        }) {
+            replies.pop_front();
+        }
+        let Some(response) = replies.pop_front() else {
+            let reason = format!(
+                "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
+                call.operation
+            );
+            self.violations.push(reason.clone());
+            return Err(failure(reason));
         };
-        if !response
-            .as_ref()
-            .is_some_and(|reply| reply["unsafe"]["arguments"] == true)
+        if let Some(expected) = response.get("arguments")
+            && expected != &call.arguments
         {
+            let reason = format!(
+                "offline_mock_arguments_mismatch: {}: expected {expected}, got {}",
+                call.operation, call.arguments
+            );
+            replies.push_front(response);
+            self.violations.push(reason.clone());
+            return Err(failure(reason));
+        }
+        if response["unsafe"]["arguments"] != true {
             operation_validation::validate(&call.operation, "arguments", &call.arguments)
                 .map_err(failure)?;
         }
+        if let Some(error) = response.get("error").and_then(Value::as_str) {
+            return Err(failure(error));
+        }
+        Ok(response["result"].clone())
+    }
+
+    fn intrinsic(&mut self, caller: &str, call: &ModHostCall) -> Result<Value> {
         let key = call.arguments["key"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        if intrinsic
-            && call.operation == "environment.read"
-            && let Some(environment) = &self.environment
-        {
-            let names = call.arguments["names"]
-                .as_array()
-                .filter(|names| (1..=16).contains(&names.len()))
-                .ok_or_else(|| failure("environment_names_invalid"))?;
-            let values = names
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|name| {
-                    let value = environment.get(name);
-                    let entry = if crate::host::secret_like(name) {
-                        json!({"set": value.is_some()})
-                    } else {
-                        json!({"set": value.is_some(), "value": value})
-                    };
-                    (name.to_owned(), entry)
-                })
-                .collect::<serde_json::Map<_, _>>();
-            return Ok(json!({"values": values}));
-        }
-        match (intrinsic, call.operation.as_str()) {
-            (true, "events.schedule") => {
+        match (call.operation.as_str(), &self.environment) {
+            ("environment.read", Some(environment)) => {
+                let names = call.arguments["names"]
+                    .as_array()
+                    .filter(|names| (1..=16).contains(&names.len()))
+                    .ok_or_else(|| failure("environment_names_invalid"))?;
+                let values = names
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|name| {
+                        let value = environment.get(name);
+                        let entry = if crate::host::secret_like(name) {
+                            json!({"set": value.is_some()})
+                        } else {
+                            json!({"set": value.is_some(), "value": value})
+                        };
+                        (name.to_owned(), entry)
+                    })
+                    .collect::<serde_json::Map<_, _>>();
+                Ok(json!({"values": values}))
+            }
+            ("events.schedule", _) => {
                 let delay = call.arguments["delay_ms"]
                     .as_u64()
                     .filter(|delay| (16..=86_400_000).contains(delay))
@@ -237,22 +238,16 @@ impl OfflineHost {
                     (self.timer_thread(caller), caller.to_owned(), key.clone()),
                     (deadline, call.arguments.get("data").cloned()),
                 );
-                return Ok(json!({"key": key, "delay_ms": delay}));
+                Ok(json!({"key": key, "delay_ms": delay}))
             }
-            (true, "events.cancel") => {
+            _ => {
                 let cancelled = self
                     .timers
                     .remove(&(self.timer_thread(caller), caller.to_owned(), key))
                     .is_some();
-                return Ok(json!({"cancelled": cancelled}));
+                Ok(json!({"cancelled": cancelled}))
             }
-            _ => {}
         }
-        let response = response.expect("mocked operation reply");
-        if let Some(error) = response.get("error").and_then(Value::as_str) {
-            return Err(failure(error));
-        }
-        Ok(response["result"].clone())
     }
 }
 
@@ -380,7 +375,7 @@ impl ModHost {
                 .loaded
                 .get(id)
                 .ok_or_else(|| failure(format!("offline_tier_unknown_mod: {id}")))?;
-            tiers.insert(id.clone(), (tier, loaded.selection.clone()));
+            tiers.insert(id.clone(), (tier, (*loaded.selection).clone()));
         }
         self.tier_selections = tiers
             .iter()
@@ -395,8 +390,9 @@ impl ModHost {
                 .get_mut(&id)
                 .filter(|loaded| loaded.selection.scope == MANAGED_SCOPE)
             {
-                loaded.selection.scope = selection.scope;
-                loaded.selection.tier = selection.tier;
+                let current = Arc::make_mut(&mut loaded.selection);
+                current.scope = selection.scope;
+                current.tier = selection.tier;
             }
         }
         self.virtual_time_ms = None;
@@ -426,8 +422,9 @@ impl ModHost {
         for (index, step) in steps.iter().enumerate() {
             for (id, (tier, _)) in tiers {
                 if let Some(loaded) = self.loaded.get_mut(id) {
-                    loaded.selection.scope = MANAGED_SCOPE.to_owned();
-                    loaded.selection.tier = Some(*tier);
+                    let selection = Arc::make_mut(&mut loaded.selection);
+                    selection.scope = MANAGED_SCOPE.to_owned();
+                    selection.tier = Some(*tier);
                 }
             }
             let kind = step
@@ -527,15 +524,19 @@ impl ModHost {
                     if let Some(data) = data {
                         payload["data"] = data;
                     }
-                    let value = self.invoke_scoped(
+                    let value = self.invoke(
                         &owner,
                         self.generation,
                         "timer",
                         "",
                         payload,
-                        || active,
-                        |caller, call| host.call(caller, call),
-                        |_| {},
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     );
                     fired.push(match value {
                         Ok(_) => json!({"mod": owner, "key": key, "at_ms": due}),
@@ -708,15 +709,19 @@ impl ModHost {
                 let mut values = Vec::new();
                 for id in ids {
                     let generation = self.generation;
-                    let value = self.invoke_scoped(
+                    let value = self.invoke(
                         &id,
                         generation,
                         event,
                         "",
                         payload.clone(),
-                        || active,
-                        |caller, call| host.call(caller, call),
-                        |_| {},
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     )?;
                     values.push(json!({"mod":id,"value":value}));
                 }
@@ -726,15 +731,17 @@ impl ModHost {
                 let id = required_string(step, "mod")?;
                 let event = required_string(step, "event")?;
                 let name = required_string(step, "name")?;
-                self.invoke_scoped(
+                self.invoke(
                     id,
                     self.generation,
                     event,
                     name,
                     payload,
-                    || active,
-                    |caller, call| host.call(caller, call),
-                    |_| {},
+                    ModInvokeOptions {
+                        active: &|| active,
+                        host: ModHostCallback::Scoped(&mut |caller, call| host.call(caller, call)),
+                        ..ModInvokeOptions::default()
+                    },
                 )
             }
             "component" => {
@@ -751,21 +758,19 @@ impl ModHost {
                     "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
                     "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
                     "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
-                let result = self.invoke_scoped(
-                    id,
-                    self.generation,
-                    "component",
-                    module,
-                    frame,
-                    || active,
-                    |_, call| {
-                        Err(failure(format!(
-                            "host_operation_unavailable: {} is not available to component modules",
-                            call.operation
-                        )))
-                    },
-                    |_| {},
-                )?;
+                let mut host = |_: &str, call: ModHostCall| {
+                    Err(failure(format!(
+                        "host_operation_unavailable: {} is not available to component modules",
+                        call.operation
+                    )))
+                };
+                let options = ModInvokeOptions {
+                    active: &|| active,
+                    host: ModHostCallback::Scoped(&mut host),
+                    ..ModInvokeOptions::default()
+                };
+                let result =
+                    self.invoke(id, self.generation, "component", module, frame, options)?;
                 render::checked_tree(&result)?;
                 Ok(result)
             }
@@ -777,15 +782,17 @@ impl ModHost {
                         .entry("clients")
                         .or_insert_with(|| json!(host.clients));
                 }
-                let view = self.invoke_scoped(
+                let view = self.invoke(
                     id,
                     self.generation,
                     "terminal",
                     "",
                     payload,
-                    || active,
-                    |caller, call| host.call(caller, call),
-                    |_| {},
+                    ModInvokeOptions {
+                        active: &|| active,
+                        host: ModHostCallback::Scoped(&mut |caller, call| host.call(caller, call)),
+                        ..ModInvokeOptions::default()
+                    },
                 )?;
                 ModViewPatch::parse(view.clone())?;
                 let parsed = ModView::parse(view.clone())?;
@@ -834,15 +841,19 @@ impl ModHost {
                         Some(_) => return Err(failure("offline_client_not_attached")),
                         None => event["origin"] = json!("user"),
                     }
-                    let result = self.invoke_scoped(
+                    let result = self.invoke(
                         id,
                         self.generation,
                         "component_event",
                         "",
                         event.clone(),
-                        || active,
-                        |caller, call| host.call(caller, call),
-                        |_| {},
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     )?;
                     return Ok(json!({"event": event, "result": result}));
                 }
@@ -870,15 +881,19 @@ impl ModHost {
                 if let Some(command) = action.get("command").and_then(Value::as_str) {
                     let (owner, name) = command.split_once(':').unwrap_or((id, command));
                     let args = action.get("args").cloned().unwrap_or_else(|| json!(""));
-                    let result = self.invoke_scoped(
+                    let result = self.invoke(
                         owner,
                         self.generation,
                         "command",
                         name,
                         args,
-                        || active,
-                        |caller, call| host.call(caller, call),
-                        |_| {},
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     )?;
                     Ok(json!({"action":action,"result":result}))
                 } else {

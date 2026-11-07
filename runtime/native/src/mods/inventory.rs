@@ -1,4 +1,5 @@
 use super::*;
+use codex_omd::ModInvokeOptions;
 use codex_omd::peers::now_ms;
 use std::collections::BTreeSet;
 
@@ -365,7 +366,7 @@ pub(super) fn notify(
             for (runtime, thread, payload) in receiver {
                 let _thread = codex_omd::StateThread::enter(thread);
                 if let Ok(mut runtime) = runtime.lock() {
-                    let _ = runtime.event("agent", payload);
+                    let _ = runtime.event("agent", payload, ModInvokeOptions::default());
                 }
             }
         });

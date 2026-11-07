@@ -1,5 +1,6 @@
 use super::*;
 use codex_core::CodexThread;
+use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::turn_input::TurnInputRequest;
 use codex_protocol::user_input::UserInput;
@@ -190,6 +191,126 @@ fn integration_receipt(
 #[cfg(test)]
 mod history_tests {
     use super::*;
+
+    #[test]
+    fn mailbox_skips_results_a_waiter_returned_and_holds_failures_until_release() {
+        let mailbox = |hold_failure| Mailbox {
+            manager: Weak::new(),
+            parent: ThreadId::new(),
+            child: ThreadId::new(),
+            name: "worker".into(),
+            hold_failure,
+            state: Mutex::new(Mail::Open),
+        };
+        let done = || AgentStatus::Completed(Some("done".into()));
+        let failed = || AgentStatus::Errored("rate limited".into());
+
+        let plain = mailbox(false);
+        assert_eq!(plain.finished(done()), Some(done()));
+        let waited = mailbox(false);
+        waited.waiting();
+        assert_eq!(waited.finished(done()), None);
+        assert_eq!(waited.waited(true), None);
+        let timed_out = mailbox(false);
+        timed_out.waiting();
+        assert_eq!(timed_out.waited(false), None);
+        assert_eq!(timed_out.finished(done()), Some(done()));
+        let abandoned = mailbox(false);
+        abandoned.waiting();
+        assert_eq!(abandoned.finished(done()), None);
+        assert_eq!(abandoned.waited(false), Some(done()));
+
+        let held = mailbox(true);
+        assert_eq!(held.finished(done()), Some(done()));
+        let held = mailbox(true);
+        assert_eq!(held.finished(failed()), None);
+        assert_eq!(held.release(true), Some(failed()));
+        assert_eq!(held.release(true), None);
+        let dropped = mailbox(true);
+        assert_eq!(dropped.finished(failed()), None);
+        assert_eq!(dropped.release(false), None);
+
+        let shared = mailbox(false);
+        shared.waiting();
+        shared.waiting();
+        assert_eq!(shared.waited(false), None);
+        assert_eq!(shared.finished(done()), None);
+        assert_eq!(shared.waited(false), Some(done()));
+        let shared = mailbox(false);
+        shared.waiting();
+        shared.waiting();
+        assert_eq!(shared.waited(false), None);
+        assert_eq!(shared.finished(done()), None);
+        assert_eq!(shared.waited(true), None);
+        assert_eq!(shared.release(true), None);
+
+        let returned = mailbox(true);
+        returned.waiting();
+        assert_eq!(returned.finished(failed()), None);
+        assert_eq!(returned.waited(true), None);
+        assert_eq!(returned.release(true), Some(failed()));
+        let raced = mailbox(true);
+        raced.waiting();
+        assert_eq!(raced.waited(true), None);
+        assert_eq!(raced.finished(failed()), None);
+        assert_eq!(raced.release(true), Some(failed()));
+        let raced = mailbox(false);
+        raced.waiting();
+        assert_eq!(raced.waited(true), None);
+        assert_eq!(raced.finished(done()), None);
+
+        let polled = mailbox(false);
+        polled.claim();
+        assert_eq!(polled.finished(done()), None);
+        let polled = mailbox(true);
+        polled.claim();
+        assert_eq!(polled.finished(failed()), None);
+        assert_eq!(polled.release(true), Some(failed()));
+    }
+
+    #[tokio::test]
+    async fn delivered_is_pending_while_sending_and_set_only_by_a_send() {
+        let mailbox = |hold_failure| Mailbox {
+            manager: Weak::new(),
+            parent: ThreadId::new(),
+            child: ThreadId::new(),
+            name: "worker".into(),
+            hold_failure,
+            state: Mutex::new(Mail::Open),
+        };
+        let done = || AgentStatus::Completed(Some("done".into()));
+
+        let released = mailbox(false);
+        assert_eq!(released.finished(done()), Some(done()));
+        assert_eq!(released.delivered(), Some(json!("pending")));
+        released.claim();
+        assert_eq!(released.delivered(), Some(json!("pending")));
+        assert!(!released.send(Some(done())).await);
+        assert_eq!(
+            released.delivered(),
+            None,
+            "a failed send is not a delivery"
+        );
+
+        let claimed = mailbox(false);
+        claimed.claim();
+        assert_eq!(claimed.finished(done()), None);
+        assert_eq!(claimed.delivered(), None);
+
+        let held = mailbox(true);
+        assert_eq!(held.finished(AgentStatus::Errored("failed".into())), None);
+        assert_eq!(held.delivered(), None);
+        assert!(held.release(true).is_some());
+        assert_eq!(held.delivered(), Some(json!("pending")));
+
+        let abandoned = Arc::new(mailbox(false));
+        drop(Waiter::new(abandoned.clone()));
+        assert_eq!(
+            abandoned.finished(done()),
+            Some(done()),
+            "a dropped waiter releases its count"
+        );
+    }
 
     #[tokio::test]
     async fn waiting_does_not_hold_the_slot_lock() {
@@ -483,28 +604,30 @@ impl Notifier {
                 "agent_end",
                 "",
                 payload,
-                || lead.session.task.check_active().is_ok(),
-                |caller, call| {
-                    let (source, grants) = ownership.get(caller).cloned().unwrap_or_default();
-                    handle
-                        .block_on(operations::dispatch(
-                            &core,
-                            &lead,
-                            operations::Caller {
-                                id: caller,
-                                source: &source,
-                                grants,
-                                generation,
-                                origin: codex_omd::data_store::Origin::Event,
-                                record_changes: true,
-                            },
-                            None,
-                            call,
-                            &cancelled,
-                        ))
-                        .map_err(std::io::Error::other)
+                codex_omd::ModInvokeOptions {
+                    active: &|| lead.session.task.check_active().is_ok(),
+                    host: codex_omd::ModHostCallback::Scoped(&mut |caller, call| {
+                        let (source, grants) = ownership.get(caller).cloned().unwrap_or_default();
+                        handle
+                            .block_on(operations::dispatch(
+                                &core,
+                                &lead,
+                                operations::Caller {
+                                    id: caller,
+                                    source: &source,
+                                    grants,
+                                    generation,
+                                    origin: codex_omd::data_store::Origin::Event,
+                                    record_changes: true,
+                                },
+                                None,
+                                call,
+                                &cancelled,
+                            ))
+                            .map_err(std::io::Error::other)
+                    }),
+                    ..codex_omd::ModInvokeOptions::default()
                 },
-                |_| {},
             ) {
                 notifier.views.diagnostic(
                     &notifier.host,
@@ -544,6 +667,208 @@ struct Agent {
     candidate: Option<(String, Vec<String>)>,
     evidence: Option<String>,
     resolution: Option<ResolutionBinding>,
+    mailbox: Arc<Mailbox>,
+}
+
+enum Mail {
+    Open,
+    Waiting {
+        waiters: usize,
+        status: Option<AgentStatus>,
+        claimed: bool,
+    },
+    Held(AgentStatus),
+    Sending,
+    Delivered,
+    Done,
+}
+
+struct Mailbox {
+    manager: Weak<ThreadManager>,
+    parent: ThreadId,
+    child: ThreadId,
+    name: String,
+    hold_failure: bool,
+    state: Mutex<Mail>,
+}
+
+struct Waiter(Option<Arc<Mailbox>>);
+
+impl Waiter {
+    fn new(mailbox: Arc<Mailbox>) -> Self {
+        mailbox.waiting();
+        Self(Some(mailbox))
+    }
+
+    async fn done(mut self, claimed: bool) {
+        if let Some(mailbox) = self.0.take() {
+            mailbox.send(mailbox.waited(claimed)).await;
+        }
+    }
+}
+
+impl Drop for Waiter {
+    fn drop(&mut self) {
+        if let Some(mailbox) = self.0.take()
+            && let Some(status) = mailbox.waited(false)
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            runtime.spawn(async move { mailbox.send(Some(status)).await });
+        }
+    }
+}
+
+impl Mailbox {
+    fn settle(&self, state: &mut Mail, status: AgentStatus) -> Option<AgentStatus> {
+        if self.hold_failure && matches!(status, AgentStatus::Errored(_)) {
+            *state = Mail::Held(status);
+            return None;
+        }
+        Some(status)
+    }
+
+    fn resolve(
+        &self,
+        state: &mut Mail,
+        waiters: usize,
+        status: Option<AgentStatus>,
+        claimed: bool,
+    ) -> Option<AgentStatus> {
+        match status {
+            Some(status) if claimed => {
+                *state = Mail::Done;
+                self.settle(state, status);
+                None
+            }
+            Some(status) if waiters == 0 => self.settle(state, status),
+            None if waiters == 0 && !claimed => {
+                *state = Mail::Open;
+                None
+            }
+            status => {
+                *state = Mail::Waiting {
+                    waiters,
+                    status,
+                    claimed,
+                };
+                None
+            }
+        }
+    }
+
+    fn update(
+        &self,
+        next: impl FnOnce(&Self, &mut Mail, Mail) -> Option<AgentStatus>,
+    ) -> Option<AgentStatus> {
+        let mut state = self.state.lock().ok()?;
+        let current = std::mem::replace(&mut *state, Mail::Done);
+        let released = next(self, &mut state, current);
+        if released.is_some() {
+            *state = Mail::Sending;
+        }
+        released
+    }
+
+    async fn send(&self, status: Option<AgentStatus>) -> bool {
+        let Some(status) = status else {
+            return false;
+        };
+        let sent = match self.manager.upgrade() {
+            Some(manager) => manager
+                .deliver_subagent_result(self.parent, self.child, &self.name, status)
+                .await
+                .unwrap_or(false),
+            None => false,
+        };
+        if let Ok(mut state) = self.state.lock()
+            && matches!(*state, Mail::Sending)
+        {
+            *state = if sent { Mail::Delivered } else { Mail::Done };
+        }
+        sent
+    }
+
+    fn delivered(&self) -> Option<Value> {
+        match *self.state.lock().ok()? {
+            Mail::Sending => Some(json!("pending")),
+            Mail::Delivered => Some(json!(true)),
+            _ => None,
+        }
+    }
+
+    fn finished(&self, status: AgentStatus) -> Option<AgentStatus> {
+        self.update(|mailbox, state, current| match current {
+            Mail::Open => mailbox.settle(state, status),
+            Mail::Waiting {
+                waiters, claimed, ..
+            } => mailbox.resolve(state, waiters, Some(status), claimed),
+            other => {
+                *state = other;
+                None
+            }
+        })
+    }
+
+    fn waiting(&self) {
+        self.update(|_, state, current| {
+            *state = match current {
+                Mail::Open => Mail::Waiting {
+                    waiters: 1,
+                    status: None,
+                    claimed: false,
+                },
+                Mail::Waiting {
+                    waiters,
+                    status,
+                    claimed,
+                } => Mail::Waiting {
+                    waiters: waiters + 1,
+                    status,
+                    claimed,
+                },
+                other => other,
+            };
+            None
+        });
+    }
+
+    fn waited(&self, claimed: bool) -> Option<AgentStatus> {
+        self.update(|mailbox, state, current| match current {
+            Mail::Waiting {
+                waiters,
+                status,
+                claimed: earlier,
+            } => mailbox.resolve(state, waiters.saturating_sub(1), status, earlier || claimed),
+            other => {
+                *state = other;
+                None
+            }
+        })
+    }
+
+    fn claim(&self) {
+        self.update(|mailbox, state, current| match current {
+            Mail::Open => mailbox.resolve(state, 0, None, true),
+            Mail::Waiting {
+                waiters, status, ..
+            } => mailbox.resolve(state, waiters, status, true),
+            other => {
+                *state = other;
+                None
+            }
+        });
+    }
+
+    fn release(&self, deliver: bool) -> Option<AgentStatus> {
+        self.update(|_, state, current| match current {
+            Mail::Held(status) if deliver => Some(status),
+            Mail::Held(_) => None,
+            other => {
+                *state = other;
+                None
+            }
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -786,6 +1111,8 @@ struct Spawn {
     parent_history: bool,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    hold_failure: bool,
 }
 
 #[derive(Deserialize)]
@@ -847,6 +1174,10 @@ struct Handle {
     message: Option<String>,
     #[serde(default)]
     consume: bool,
+    #[serde(default)]
+    claim: bool,
+    #[serde(default)]
+    deliver: bool,
     #[serde(default)]
     acceptance_sha256: Option<String>,
 }
@@ -1593,6 +1924,22 @@ impl Agents {
         }
         match request.operation.as_str() {
             "agents.cancel" => {
+                let released = agent
+                    .mailbox
+                    .send(agent.mailbox.release(handle.deliver))
+                    .await;
+                let mailbox = agent.mailbox.clone();
+                let _ = tokio::time::timeout(Duration::from_secs(5), async {
+                    while mailbox.delivered() == Some(json!("pending")) {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                })
+                .await;
+                let delivered = if released {
+                    json!(true)
+                } else {
+                    mailbox.delivered().unwrap_or(json!(false))
+                };
                 agent.shutdown().await;
                 if let Some(thread) = handle
                     .handle
@@ -1606,7 +1953,7 @@ impl Agents {
                     inventory::notify(&self.notifier.runtime, &core.inventory, "end", record);
                 }
                 self.remove(&handle.handle, &slot).await;
-                Ok(json!({"cancelled":true}))
+                Ok(json!({"cancelled":true,"delivered":delivered}))
             }
             "agents.message" => {
                 if agent.finished() {
@@ -1633,10 +1980,14 @@ impl Agents {
                         .map_err(|e| e.to_string())?
                         .0
                         .min(Duration::from_secs(30));
+                    let waiter = Waiter::new(agent.mailbox.clone());
                     drop(agent);
                     tokio::select! {
                         _ = tokio::time::timeout(deadline, wait_finished(&slot, Agent::finished)) => (),
-                        () = until_cancelled(cancelled) => return Err("callback_cancelled".into()),
+                        () = until_cancelled(cancelled) => {
+                            waiter.done(false).await;
+                            return Err("callback_cancelled".into());
+                        }
                     }
                     agent = slot.lock().await;
                     if let Some(job) = agent.job.take_if(|job| job.is_finished())
@@ -1645,16 +1996,25 @@ impl Agents {
                         *agent.result.lock().map_err(|_| "agent_result_poisoned")? =
                             Some(Err(error.to_string()));
                     }
+                    let finished = agent
+                        .result
+                        .lock()
+                        .map_err(|_| "agent_result_poisoned")?
+                        .is_some();
+                    waiter.done(finished).await;
                 }
                 let result = agent
                     .result
                     .lock()
                     .map_err(|_| "agent_result_poisoned")?
                     .clone();
-                match result {
-                    None => Ok(json!({"status":"running"})),
-                    Some(Err(error)) => Ok(json!({"status":"failed","error":error,
-                        "failure":agent.failure.lock().map_err(|_| "agent_failure_poisoned")?.clone()})),
+                if handle.claim && result.is_some() {
+                    agent.mailbox.claim();
+                }
+                let mut value = match result {
+                    None => json!({"status":"running"}),
+                    Some(Err(error)) => json!({"status":"failed","error":error,
+                        "failure":agent.failure.lock().map_err(|_| "agent_failure_poisoned")?.clone()}),
                     Some(Ok(text)) => {
                         if handle.consume && !agent.consumed {
                             lead.session
@@ -1684,9 +2044,15 @@ impl Agents {
                             value["candidate_sha256"] = json!(sha256);
                             value["changed_paths"] = json!(paths);
                         }
-                        Ok(value)
+                        value
                     }
+                };
+                if value["status"] != "running"
+                    && let Some(delivered) = agent.mailbox.delivered()
+                {
+                    value["delivered"] = delivered;
                 }
+                Ok(value)
             }
             _ => Err("unsupported_agent_operation".into()),
         }
@@ -2468,6 +2834,17 @@ impl Agents {
         let generation = caller.generation;
         let handle = id.clone();
         let end_lead = lead.clone();
+        let mailbox = Arc::new(Mailbox {
+            manager: host.manager.clone(),
+            parent: lead.thread,
+            child: thread_id,
+            name: id
+                .to_ascii_lowercase()
+                .replace(|c: char| !c.is_ascii_alphanumeric(), "_"),
+            hold_failure: request.hold_failure,
+            state: Mutex::new(Mail::Open),
+        });
+        let delivery = mailbox.clone();
         let mut turn = TurnInputRequest::user_input(
             shape
                 .context
@@ -2580,9 +2957,16 @@ impl Agents {
                     inventory::notify(&notifier.runtime, &core.inventory, "end", record);
                 }
             }
+            let status = match &completed {
+                Ok(text) => AgentStatus::Completed(Some(text.clone())),
+                Err(error) if error == "native_agent_interrupted" => AgentStatus::Interrupted,
+                Err(error) => AgentStatus::Errored(error.clone()),
+            };
+            let release = delivery.finished(status);
             if let Ok(mut output) = output.lock() {
                 *output = Some(completed);
             }
+            delivery.send(release).await;
             notifier.agent_end(owning_mod, generation, payload, end_lead);
         });
         self.records.lock().await.insert(
@@ -2605,6 +2989,7 @@ impl Agents {
                     .map(|reference| (reference.sha256.clone(), Vec::new())),
                 evidence,
                 resolution: resolution.map(|(binding, _)| binding),
+                mailbox,
             })),
         );
         admission.transferred = true;

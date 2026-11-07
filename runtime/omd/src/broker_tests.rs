@@ -419,5 +419,7 @@ fn concurrent_private_writes_to_one_path_all_succeed() {
             std::thread::spawn(move || (0..50).all(|_| write_json(&path, &json!(writer)).is_ok()))
         })
         .collect();
-    assert!(writers.into_iter().all(|writer| writer.join().unwrap()));
+    for writer in writers {
+        assert!(writer.join().unwrap());
+    }
 }
