@@ -364,7 +364,7 @@ export class Router {
       delete this.state.agents[turn.agentId];
     }
     this.state.agents = Object.fromEntries(Object.entries(this.state.agents).sort((a, b) => b[1].at - a[1].at).slice(0, 200));
-    this.settle(turn.agentId, turn.model, { thread: turn.thread, request_id: turn.requestId ?? null });
+    if (turn.run?.id) this.settle(turn.agentId, turn.model, { thread: turn.thread, request_id: turn.requestId ?? null, run_id: turn.run.id });
     this.releaseInactive();
     const temporary = `${this.statePath}.${turn.agentId}.${Date.now()}`;
     await writeFile(temporary, JSON.stringify(this.state));
@@ -389,7 +389,7 @@ export class Router {
     }
     await appendFile(join(this.route.data, 'usage.jsonl'), `${JSON.stringify({ at: Date.now(), kind: 'plan', account: this.account.name, ...this.plan })}\n`).catch(() => {});
   }
-  // Cursor settles billed cost some time after a run ends. The run's new usage entries are settled once all are priced (or at the last poll) against the OMD request that ended the run, and a charge is announced on the next response.
+  // Cursor prices a run some time after it ends. A settlement takes the run with its id, else the one new run, else a moved agent total, the last two only while no other settlement overlaps it; anything else stays pending after the last poll.
   settle(agentId, model, target) {
     const agent = this.agents.get(agentId);
     const seen = this.seen.get(agentId) ?? new Set();
@@ -398,6 +398,7 @@ export class Router {
     const total = (rows, key) => rows.reduce((sum, run) => sum + (run.cost?.[key] ?? 0), 0);
     let done = false;
     let running = 0;
+    let contested = false;
     SETTLE_MS.forEach((delay, index) => setTimeout(async () => {
       if (done) return;
       running++;
@@ -406,17 +407,22 @@ export class Router {
         if (done) return;
         if (index === SETTLE_MS.length - 1) done = true;
         const report = await agent.getUsage();
-        const fresh = (report?.runs ?? []).filter(run => !seen.has(run.runId));
-        const priced = fresh.length ? fresh.every(run => plain(run.cost)) : plain(report?.cost);
+        contested ||= this.settling.get(agentId) > 1;
+        const runs = report?.runs ?? [];
+        const unseen = runs.filter(run => !seen.has(run.runId));
+        const named = unseen.filter(run => run.runId === target.run_id);
+        const fresh = named.length || contested || unseen.length !== 1 ? named : unseen;
+        const before = this.charged.get(agentId) ?? { raw: 0, charged: 0 };
+        const moved = plain(report?.cost) && (report.cost.rawCostCents !== before.raw || report.cost.chargedCents !== before.charged);
+        const priced = fresh.length ? fresh.every(run => plain(run.cost)) : !runs.length && moved && !contested;
         if (!priced && index < SETTLE_MS.length - 1) return;
         done = true;
         for (const run of fresh) seen.add(run.runId);
-        const before = this.charged.get(agentId) ?? { raw: 0, charged: 0 };
         const cost = !priced ? null : fresh.length ? { raw_cents: total(fresh, 'rawCostCents'), charged_cents: total(fresh, 'chargedCents') }
           : { raw_cents: Math.max(0, report.cost.rawCostCents - before.raw), charged_cents: Math.max(0, report.cost.chargedCents - before.charged) };
-        if (plain(report?.cost)) this.charged.set(agentId, { raw: report.cost.rawCostCents, charged: report.cost.chargedCents });
+        if (priced && plain(report?.cost)) this.charged.set(agentId, { raw: report.cost.rawCostCents, charged: report.cost.chargedCents });
         await appendFile(join(this.route.data, 'usage.jsonl'), `${JSON.stringify({ at: Date.now(), kind: 'settlement', source: 'cursor_sdk.getUsage',
-          agent_id: agentId, model, thread: target.thread, request_id: target.request_id,
+          agent_id: agentId, run_id: target.run_id, model, thread: target.thread, request_id: target.request_id,
           usage: fresh.length ? fresh.reduce((sum, run) => add(sum, run.usage), null) : report?.usage ?? null,
           cost, status: cost ? 'settled' : 'pending' })}\n`);
         if (cost?.charged_cents > 0) {

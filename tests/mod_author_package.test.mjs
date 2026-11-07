@@ -213,6 +213,35 @@ test('watch refuses to move a shared dependency from project to user scope', { s
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('watch picks up a manifest asset created after the reload that named it failed', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-watch-new-'));
+  const project = join(root, 'project');
+  const store = join(root, 'store');
+  const cli = new URL('../mods/author/cli.mjs', import.meta.url);
+  const driver = `import fs, { readFileSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+let changed;
+fs.watch = (_directory, _options, listener) => (changed = listener, { close() {} });
+syncBuiltinESMExports();
+const [project, store] = process.argv.slice(1);
+const { watchProject } = await import(${JSON.stringify(cli.href)});
+const event = filename => (changed('change', filename), new Promise(resolve => setTimeout(resolve, 300)));
+watchProject(project, store, false);
+writeFileSync(project + '/mod.json', JSON.stringify({ ...JSON.parse(readFileSync(project + '/mod.json', 'utf8')), assets: ['extra.json'] }));
+await event('mod.json');
+writeFileSync(project + '/extra.json', '{}');
+await event('extra.json');
+process.exit(0);`;
+  try {
+    assert.equal(spawnSync(process.execPath, ['--no-warnings', cli.pathname, 'create', project, 'fixture'], { cwd: root }).status, 0);
+    assert.equal(spawnSync(process.env.OMD_MOD_BIN, ['init', store]).status, 0);
+    const watched = spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', driver, project, store], { cwd: root, encoding: 'utf8' });
+    assert.equal(watched.status, 0, watched.stderr);
+    assert.match(watched.stderr, /"reload_failed"/);
+    assert.equal(watched.stdout.match(/"reloaded"/g)?.length, 2, watched.stdout + watched.stderr);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('cost measures a package alone in a scratch store', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-cost-'));
   try {

@@ -68086,10 +68086,10 @@ index 0000000000000000000000000000000000000000..d7fc0b4bd8eb3d9cf13c65351b828bb6
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e1553be618a
+index 0000000000000000000000000000000000000000..6d922a1c3b49c29bfeebdfc73a6694ee8bd90c40
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,907 @@
+@@ -0,0 +1,925 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -68369,8 +68369,15 @@ index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e15
 +        current
 +    });
 +}
-+/// Undelivered `component_post` payloads by owner, the latest per client instance.
-+static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
++struct Post {
++    owner: String,
++    payload: Value,
++    thread: Option<ThreadId>,
++    revoked: Arc<AtomicBool>,
++}
++
++/// Undelivered `component_post` payloads, the latest per client instance.
++static POSTS: Mutex<Vec<Post>> = Mutex::new(Vec::new());
 +static POSTING: Coalesce = Coalesce::new();
 +
 +/// Defaults to 80 columns and rows 0 (the auto height a terminal node without `height` gets) when no size was given or rendered.
@@ -68417,8 +68424,8 @@ index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e15
 +        );
 +        (owner, module.to_owned(), props.clone(), size, revoked)
 +    };
-+    let _thread =
-+        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
++    let thread = core.expansion.current().map(|lead| lead.thread);
++    let _thread = codex_omd::StateThread::enter(thread.map(|thread| thread.to_string()));
 +    let frame = json!({"instance": instance(client, component), "client": client,
 +        "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
 +        "columns": columns, "rows": rows, "events": events});
@@ -68433,34 +68440,45 @@ index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e15
 +        let payload = json!({"component": component, "module": module, "client": client,
 +            "data": post["data"]});
 +        if let Ok(mut posts) = POSTS.lock() {
-+            posts.retain(|(queued, queued_payload)| {
-+                *queued != owner
-+                    || queued_payload["component"] != payload["component"]
-+                    || queued_payload["client"] != payload["client"]
++            posts.retain(|queued| {
++                queued.owner != owner
++                    || queued.payload["component"] != payload["component"]
++                    || queued.payload["client"] != payload["client"]
 +            });
-+            posts.push((owner, payload));
++            posts.push(Post {
++                owner,
++                payload,
++                thread,
++                revoked,
++            });
 +        }
 +        POSTING.request(deliver_posts);
 +    }
 +    Ok(step)
 +}
 +
++fn next_post(thread: ThreadId) -> Option<Post> {
++    let mut posts = POSTS.lock().ok()?;
++    while !posts.is_empty() {
++        let post = posts.remove(0);
++        if !post.revoked.load(Ordering::Acquire) && post.thread == Some(thread) {
++            return Some(post);
++        }
++    }
++    None
++}
++
 +fn deliver_posts() {
-+    while let Some((owner, payload)) = POSTS
-+        .lock()
-+        .ok()
-+        .and_then(|mut posts| (!posts.is_empty()).then(|| posts.remove(0)))
++    let Ok(core) = core() else {
++        return;
++    };
++    while let Ok(lead) = session(&core)
++        && let Some(Post { owner, payload, .. }) = next_post(lead.thread)
 +    {
-+        let Ok(core) = core() else {
-+            return;
-+        };
 +        let registered = core
 +            .runtime
 +            .lock()
 +            .is_ok_and(|runtime| runtime.registered(&owner, "component_post"));
-+        let Ok(lead) = session(&core) else {
-+            return;
-+        };
 +        if registered {
 +            let lead = Lead {
 +                permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
@@ -68999,10 +69017,10 @@ index 0000000000000000000000000000000000000000..30e1505dd6a0e14e3fdc6b4b32936e15
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/clients_tests.rs b/codex-rs/ext/omd/src/clients_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e08580a2f529dc481aba70fd1a61b6366b00fa3e
+index 0000000000000000000000000000000000000000..7d8708a58c001476d3a0e7a71365665f7388f42f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients_tests.rs
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,226 @@
 +use super::*;
 +
 +fn snapshot() -> ModViewSnapshot {
@@ -69208,6 +69226,26 @@ index 0000000000000000000000000000000000000000..e08580a2f529dc481aba70fd1a61b636
 +    assert_eq!(owner("beta:open"), Some("beta".into()));
 +    assert_eq!(owner("open"), None);
 +    assert_eq!(owner("alpha:missing"), None);
++}
++
++#[test]
++fn queued_posts_reach_only_their_thread_and_live_instance() {
++    let (origin, other) = (ThreadId::new(), ThreadId::new());
++    let detached = Arc::new(AtomicBool::new(false));
++    let post = |name: &str, thread, revoked: &Arc<AtomicBool>| Post {
++        owner: name.into(),
++        payload: Value::Null,
++        thread: Some(thread),
++        revoked: revoked.clone(),
++    };
++    POSTS.lock().unwrap().extend([
++        post("moved", other, &Arc::default()),
++        post("detached", origin, &detached),
++        post("live", origin, &Arc::default()),
++    ]);
++    detached.store(true, Ordering::Release);
++    assert_eq!(next_post(origin).map(|post| post.owner), Some("live".into()));
++    assert!(next_post(origin).is_none());
 +}
 diff --git a/codex-rs/ext/omd/src/config.rs b/codex-rs/ext/omd/src/config.rs
 new file mode 100644
@@ -179232,10 +179270,10 @@ index 0000000000000000000000000000000000000000..f47a1f7d22b0b32a0fc2d07ca235e22a
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991f7e8b5e2
+index 0000000000000000000000000000000000000000..bfe0cb188c69a619184b9b6548802729f1460187
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_module.rs
-@@ -0,0 +1,457 @@
+@@ -0,0 +1,466 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -179284,6 +179322,7 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +    id: String,
 +    generation: u64,
 +    owner: String,
++    thread: Option<String>,
 +    payload: Value,
 +}
 +
@@ -179514,12 +179553,14 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +    generation: u64,
 +    owner: String,
 +    module: String,
++    thread: Option<String>,
 +    frame: Value,
 +    events: Vec<Value>,
 +}
 +
 +fn next_job() -> Result<Job, Option<Duration>> {
 +    let now = Instant::now();
++    let thread = crate::mod_surface::current_thread();
 +    instances(|instances| {
 +        let mut wait: Option<Duration> = None;
 +        let mut ready = None;
@@ -179562,6 +179603,7 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +            generation: instance.generation,
 +            owner: instance.owner.clone(),
 +            module: instance.module.clone(),
++            thread,
 +            frame,
 +            events,
 +        })
@@ -179633,6 +179675,7 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +                id: job.id.clone(),
 +                generation: job.generation,
 +                owner: job.owner.clone(),
++                thread: job.thread.clone(),
 +                payload: json!({"component": job.id, "module": job.module, "data": post["data"]}),
 +            })
 +        }
@@ -179665,17 +179708,21 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +                    };
 +                    match next {
 +                        Some(post) => {
-+                            if instances(|instances| post.current(instances)) {
++                            if crate::mod_surface::current_thread() == post.thread
++                                && instances(|instances| post.current(instances))
++                            {
 +                                let id = post.id;
 +                                let generation = post.generation;
++                                let thread = post.thread;
 +                                crate::mod_runtime::invoke_event_guarded(
 +                                    &post.owner,
 +                                    "component_post",
 +                                    post.payload,
 +                                    Arc::new(move || {
-+                                        instances(|instances| {
-+                                            current_generation(instances, &id, generation)
-+                                        })
++                                        crate::mod_surface::current_thread() == thread
++                                            && instances(|instances| {
++                                                current_generation(instances, &id, generation)
++                                            })
 +                                    }),
 +                                );
 +                            }
@@ -179695,10 +179742,10 @@ index 0000000000000000000000000000000000000000..0d0cc3533d2adf7951385a69a7bc1991
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_module_tests.rs b/codex-rs/tui/src/mod_module_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76ca6a682ab
+index 0000000000000000000000000000000000000000..9820041eae6ca2979442d46dba2cdac2cd69f335
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_module_tests.rs
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,90 @@
 +use super::*;
 +use std::sync::Arc;
 +use std::sync::mpsc;
@@ -179717,6 +179764,7 @@ index 0000000000000000000000000000000000000000..6fcbc58e569730183ee7a88fde9ff76c
 +        generation: instance.generation,
 +        owner: instance.owner.clone(),
 +        module: instance.module.clone(),
++        thread: None,
 +        frame: Value::Null,
 +        events: std::mem::take(&mut instance.events),
 +    }

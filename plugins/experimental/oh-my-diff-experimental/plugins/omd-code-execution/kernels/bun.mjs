@@ -13,11 +13,15 @@ async function worker() {
   let bridgeFailed = false;
   let outputBytes = 0;
   let strays;
+  let current;
+  const owned = () => current !== undefined && bridgeContext.getStore() === current;
   const pause = new Int32Array(new SharedArrayBuffer(4));
+  const writeSync = fs.writeSync;
+  fs.writeSync = (fd, data, ...rest) => (fd === 1 || fd === 2) && !owned() ? (typeof data === "string" ? Buffer.byteLength(data) : data.byteLength) : writeSync(fd, data, ...rest);
   const writeAll = (fd, text) => {
     for (let data = Buffer.from(text); data.length;) {
       try {
-        data = data.subarray(fs.writeSync(fd, data));
+        data = data.subarray(writeSync(fd, data));
       } catch (error) {
         if (error.code !== "EAGAIN") throw error;
         Atomics.wait(pause, 0, 0, 1);
@@ -58,6 +62,7 @@ async function worker() {
   };
 
   const record = (text) => {
+    if (!owned()) return;
     const size = Buffer.byteLength(text);
     if (outputBytes + size > 65536) throw new Error("kernel output limit exceeded");
     outputBytes += size;
@@ -69,13 +74,67 @@ async function worker() {
     (typeof encoding === "function" ? encoding : callback)?.();
     return true;
   };
-  const hooks = [...["log", "error", "warn", "info", "debug"].map((name) => [console, name, capture]), [process.stdout, "write", captureWrite], [process.stderr, "write", captureWrite]];
+  for (const name of ["log", "error", "warn", "info", "debug"]) console[name] = capture;
+  process.stdout.write = process.stderr.write = captureWrite;
+  const ffi = globalThis.Bun ? await import("bun:ffi") : null;
+  const libc = ffi?.dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
+    pipe: { args: [ffi.FFIType.ptr], returns: ffi.FFIType.i32 },
+    dup: { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
+    dup2: { args: [ffi.FFIType.i32, ffi.FFIType.i32], returns: ffi.FFIType.i32 },
+  }).symbols;
+  const out = libc ? libc.dup(1) : 1;
+  const quiet = libc ? fs.openSync("/dev/null", "w") : -1;
+  const marker = Buffer.from((await import("node:crypto")).randomBytes(16).toString("hex"));
+  const { Worker } = await import("node:worker_threads");
+  const drainer = `const { workerData: { reader, out, marker }, parentPort } = require("node:worker_threads");
+const fs = require("node:fs");
+const tag = Buffer.from(marker);
+const chunk = Buffer.alloc(65536);
+const pause = new Int32Array(new SharedArrayBuffer(4));
+let held = Buffer.alloc(0);
+let sent = 0;
+let done = false;
+for (;;) {
+  let size;
+  try { size = fs.readSync(reader, chunk); } catch (error) { if (error.code === "EAGAIN") { Atomics.wait(pause, 0, 0, 1); continue; } break; }
+  if (!size) break;
+  if (done) continue;
+  held = Buffer.concat([held, chunk.subarray(0, size)]);
+  const at = held.indexOf(tag);
+  const cut = at >= 0 ? at : Math.max(held.length - tag.length + 1, 0);
+  for (let data = held.subarray(0, Math.min(cut, Math.max(65537 - sent, 0))); data.length;) {
+    try { const written = fs.writeSync(out, data); sent += written; data = data.subarray(written); } catch (error) { if (error.code !== "EAGAIN") throw error; Atomics.wait(pause, 0, 0, 1); }
+  }
+  held = held.subarray(cut);
+  if (at >= 0) { done = true; held = Buffer.alloc(0); parentPort.postMessage("ended"); }
+}
+fs.closeSync(reader);`;
+  // Under Bun each cell's fd 1 and 2 are its own pipe, so children and raw writes outliving the cell write nowhere.
+  const redirect = () => {
+    if (!libc) return async () => {};
+    const fds = new Int32Array(2);
+    if (libc.pipe(ffi.ptr(fds)) !== 0) throw new Error("kernel output pipe failed");
+    const [reader, writer] = fds;
+    libc.dup2(writer, 1);
+    libc.dup2(writer, 2);
+    const drain = new Worker(drainer, { eval: true, workerData: { reader, out, marker: marker.toString() } });
+    drain.unref();
+    const ended = new Promise((resolve) => { drain.once("message", resolve); drain.once("exit", resolve); });
+    return async () => {
+      libc.dup2(quiet, 1);
+      libc.dup2(quiet, 2);
+      writeAll(writer, marker);
+      fs.closeSync(writer);
+      await Promise.race([ended, new Promise((resolve) => setTimeout(resolve, 5000))]);
+    };
+  };
 
   const stray = (error) => { strays?.push(String(error)); };
   process.on("uncaughtException", stray);
   process.on("unhandledRejection", stray);
 
   for await (const line of readline.createInterface({ input: process.stdin })) {
+    const settle = redirect();
     outputBytes = 0;
     bridgeFailed = false;
     strays = [];
@@ -85,23 +144,20 @@ async function worker() {
       const request = JSON.parse(line);
       if (request.shutdown === true) process.exit(0);
       bridge = { port: request.port, token: request.token, active: true };
-      const prior = hooks.map(([target, name]) => target[name]);
-      for (const [target, name, replacement] of hooks) target[name] = replacement;
-      try {
-        const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-        await bridgeContext.run(bridge, () => new AsyncFunction(request.code)());
-        response = strays.length ? { ok: false, error: strays[0], bridge_failed: bridgeFailed } : { ok: true, bridge_failed: bridgeFailed };
-      } finally {
-        hooks.forEach(([target, name], index) => { target[name] = prior[index]; });
-      }
+      current = bridge;
+      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+      await bridgeContext.run(bridge, () => new AsyncFunction(request.code)());
+      response = strays.length ? { ok: false, error: strays[0], bridge_failed: bridgeFailed } : { ok: true, bridge_failed: bridgeFailed };
     } catch (error) {
       response = { ok: false, error: String(error), bridge_failed: bridgeFailed };
     } finally {
       if (bridge) bridge.active = false;
+      current = undefined;
       strays = undefined;
     }
+    await settle();
     writeAll(3, frame + JSON.stringify(response) + "\n");
-    writeAll(1, frame + "\n");
+    writeAll(out, frame + "\n");
   }
 }
 

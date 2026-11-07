@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.0.patch",
-    "sha256": "093608cb00b78a5e35d872df88dd4372349b10e178d51c8b6ebc038baf9c8184"
+    "sha256": "76904f1a4c03d33a2e3faa7543f9ed0bbfbc6f98b99fe619e1de978489604ac6"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1107,11 +1107,11 @@
     },
     "codex-rs/ext/omd/src/clients.rs": {
       "before": null,
-      "after": "2bac726009639935c5ebf9998035a2caac4ae1242169afcb23871e4fac1bfb34"
+      "after": "6959b1805b85eefa0605856b065e81a53ded8160f1fd72cc10394d88a728624e"
     },
     "codex-rs/ext/omd/src/clients_tests.rs": {
       "before": null,
-      "after": "fb6c60d108039f1bd7cad6fba015538ac4a76de444e37bfdf045feeadb3afea0"
+      "after": "a7c1e48ea214ae9c12638bb98cb64c8930d8aaacb62db463bf9014fa9ea38d00"
     },
     "codex-rs/ext/omd/src/config.rs": {
       "before": null,
@@ -2751,11 +2751,11 @@
     },
     "codex-rs/tui/src/mod_module.rs": {
       "before": null,
-      "after": "736eab45d1aab9ba4df9c9c3f348e6beb14f526cdaaca265cc1d8bc89cf74270"
+      "after": "ba32c98abaa98c41730192b0e2b9f3ae38d2cdf8dbc8c44678ee6757aff00b2f"
     },
     "codex-rs/tui/src/mod_module_tests.rs": {
       "before": null,
-      "after": "232bce595f055eba0174d45fc632a899ceb5af80187fb2f85877cea21c9338b1"
+      "after": "9c98f4fec74ff9b264da62006167c829789242fe8ddd26c27941a023d9261d05"
     },
     "codex-rs/tui/src/mod_pty.rs": {
       "before": null,

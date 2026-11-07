@@ -271,32 +271,74 @@ const text = events => events.filter(event => event.type === 'response.output_te
 const items = (events, type) => events.filter(event => event.type === 'response.output_item.done' && event.item.type === type).map(event => event.item);
 const output = (item, value) => ({ type: 'function_call_output', call_id: item.call_id, output: value });
 
-test('Cursor retains billing baselines until every settlement finishes', async t => {
+test('Cursor settles each run against its own request and keeps baselines until every settlement finishes', async t => {
   const data = await mkdtemp(join(tmpdir(), 'omd-cursor-settlement-'));
   t.after(() => rm(data, { recursive: true, force: true }));
   const timers = [];
   t.mock.method(globalThis, 'setTimeout', callback => { timers.push(callback); return { unref() {} }; });
   const router = new Router({ data }, 'fixture');
   router.refreshPlan = async () => {};
-  let report = { runs: [{ runId: 'r', usage: {} }] };
+  const run = (runId, cents) => ({ runId, usage: {}, ...cents === undefined ? {} : { cost: { rawCostCents: cents, chargedCents: cents } } });
+  let report = { runs: [run('r')] };
   router.agents.set('a', { getUsage: async () => report });
   router.state.agents.a = { at: 1 };
-  router.settle('a', 'auto', { thread: 't', request_id: 'A' });
+  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'r' });
   await timers[0]();
   delete router.state.agents.a;
-  router.settle('a', 'auto', { thread: 't', request_id: 'B' });
-  report = { runs: [{ runId: 'r', usage: {}, cost: { rawCostCents: 2.5, chargedCents: 2.5 } }],
-    cost: { rawCostCents: 2.5, chargedCents: 2.5 } };
+  router.settle('a', 'auto', { thread: 't', request_id: 'B', run_id: 's' });
+  report = { runs: [run('r', 2.5), run('s', 1)], cost: { rawCostCents: 3.5, chargedCents: 3.5 } };
   await timers[4]();
   assert.ok(router.agents.has('a'));
-  assert.ok(router.charged.has('a'));
   await timers[1]();
   const rows = (await readFile(join(data, 'usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
-  assert.equal(rows.reduce((sum, row) => sum + (row.cost?.charged_cents ?? 0), 0), 2.5);
+  assert.deepEqual(rows.map(row => [row.request_id, row.cost?.charged_cents]), [['B', 1], ['A', 2.5]]);
   for (const cache of [router.agents, router.charged, router.seen]) assert.equal(cache.has('a'), false);
 });
 
-test('Cursor settles and releases an agent when starting its run fails', async t => {
+test('Cursor settles overlapping runs without ids or per-run entries as pending', async t => {
+  const data = await mkdtemp(join(tmpdir(), 'omd-cursor-overlap-'));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  const timers = [];
+  t.mock.method(globalThis, 'setTimeout', callback => { timers.push(callback); return { unref() {} }; });
+  const router = new Router({ data }, 'fixture');
+  router.refreshPlan = async () => {};
+  let report = { runs: [], cost: { rawCostCents: 0, chargedCents: 0 } };
+  router.agents.set('a', { getUsage: async () => report });
+  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'x' });
+  await timers[0]();
+  router.settle('a', 'auto', { thread: 't', request_id: 'B', run_id: 'y' });
+  report = { runs: [], cost: { rawCostCents: 3, chargedCents: 3 } };
+  for (const index of [4, 1, 2, 3, 5, 6, 7]) await timers[index]();
+  const rows = (await readFile(join(data, 'usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(rows.map(row => [row.request_id, row.status]), [['A', 'pending'], ['B', 'pending']]);
+  const single = { runs: [{ runId: 'sdk-name', usage: {}, cost: { rawCostCents: 1, chargedCents: 1 } }] };
+  router.agents.set('b', { getUsage: async () => single });
+  router.settle('b', 'auto', { thread: 't', request_id: 'C', run_id: 'transport-name' });
+  await timers[8]();
+  const settled = (await readFile(join(data, 'usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse).at(-1);
+  assert.deepEqual([settled.request_id, settled.cost], ['C', { raw_cents: 1, charged_cents: 1 }], 'the one new run is the ending run');
+});
+
+test('Cursor keeps a settlement pending while the agent total has not moved', async t => {
+  const data = await mkdtemp(join(tmpdir(), 'omd-cursor-unmoved-'));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  const timers = [];
+  t.mock.method(globalThis, 'setTimeout', callback => { timers.push(callback); return { unref() {} }; });
+  const router = new Router({ data }, 'fixture');
+  router.refreshPlan = async () => {};
+  let report = { runs: [], cost: { rawCostCents: 1, chargedCents: 1 } };
+  router.agents.set('a', { getUsage: async () => report });
+  router.charged.set('a', { raw: 1, charged: 1 });
+  router.settle('a', 'auto', { thread: 't', request_id: 'A', run_id: 'q' });
+  await timers[0]();
+  await assert.rejects(readFile(join(data, 'usage.jsonl'), 'utf8'), { code: 'ENOENT' }, 'an unchanged total is not a zero cost');
+  report = { runs: [], cost: { rawCostCents: 3, chargedCents: 2 } };
+  await timers[1]();
+  const [row] = (await readFile(join(data, 'usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(row.cost, { raw_cents: 2, charged_cents: 1 });
+});
+
+test('Cursor releases an agent when starting its run fails', async t => {
   const data = await mkdtemp(join(tmpdir(), 'omd-cursor-send-failure-'));
   t.after(() => rm(data, { recursive: true, force: true }));
   const timers = [];
@@ -310,8 +352,7 @@ test('Cursor settles and releases an agent when starting its run fails', async t
   router.agent = async messages => ({ agent, input: messages, fresh: true });
   await assert.rejects(router.start({ input: [user('hello')] }, { id: 'auto', slug: model }, 't'), /send_failed/);
   assert.equal(router.turns.size, 0);
-  assert.ok(timers.length);
-  await timers[0]();
+  assert.equal(timers.length, 0, 'a run that never started has nothing to settle');
   for (const cache of [router.agents, router.charged, router.seen]) assert.equal(cache.has(agent.agentId), false);
 });
 
@@ -422,7 +463,7 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
   assert.equal(text(await restarted.call([...base, user('CHARGE'), assistant('Answer.'), user('again'), assistant('Answer.'), user('after restart')], { thread: 'a', request: 'req-9' })), 'Answer.');
   assert.equal((await calls()).filter(row => row.op === 'resume').length, 1);
   await new Promise(resolve => setTimeout(resolve, 300));
-  assert.deepEqual(pendingSettlements(await readFile(join(root, 'data/usage.jsonl'), 'utf8'), 'a', ['req-0', 'req-7']), [{ request_id: 'req-9', microusd: 0, source: 'cursor_sdk.getUsage' }]);
+  assert.deepEqual(pendingSettlements(await readFile(join(root, 'data/usage.jsonl'), 'utf8'), 'a', ['req-0', 'req-7']), [], 'a run whose cost has not moved the total stays unsettled');
   const lost = { type: 'function_call', call_id: 'omd_cursor_000000000000000000000000', name: 'exec_command', arguments: '{"cmd":"ls"}' };
   assert.equal(text(await restarted.call([user('list'), lost, output(lost, 'a.txt')], { thread: 'c' })), 'Answer.');
   assert.match((await calls()).filter(row => row.op === 'send').at(-1).text, /## User\nlist\n\[called exec_command \{"cmd":"ls"\}\]\n\[result a\.txt\]/);

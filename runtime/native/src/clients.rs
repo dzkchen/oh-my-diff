@@ -277,8 +277,15 @@ pub(super) fn reconcile(views: &view::Views, snapshot: &ModViewSnapshot) {
         current
     });
 }
-/// Undelivered `component_post` payloads by owner, the latest per client instance.
-static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
+struct Post {
+    owner: String,
+    payload: Value,
+    thread: Option<ThreadId>,
+    revoked: Arc<AtomicBool>,
+}
+
+/// Undelivered `component_post` payloads, the latest per client instance.
+static POSTS: Mutex<Vec<Post>> = Mutex::new(Vec::new());
 static POSTING: Coalesce = Coalesce::new();
 
 /// Defaults to 80 columns and rows 0 (the auto height a terminal node without `height` gets) when no size was given or rendered.
@@ -325,8 +332,8 @@ fn module_step(
         );
         (owner, module.to_owned(), props.clone(), size, revoked)
     };
-    let _thread =
-        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
+    let thread = core.expansion.current().map(|lead| lead.thread);
+    let _thread = codex_omd::StateThread::enter(thread.map(|thread| thread.to_string()));
     let frame = json!({"instance": instance(client, component), "client": client,
         "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
         "columns": columns, "rows": rows, "events": events});
@@ -341,34 +348,45 @@ fn module_step(
         let payload = json!({"component": component, "module": module, "client": client,
             "data": post["data"]});
         if let Ok(mut posts) = POSTS.lock() {
-            posts.retain(|(queued, queued_payload)| {
-                *queued != owner
-                    || queued_payload["component"] != payload["component"]
-                    || queued_payload["client"] != payload["client"]
+            posts.retain(|queued| {
+                queued.owner != owner
+                    || queued.payload["component"] != payload["component"]
+                    || queued.payload["client"] != payload["client"]
             });
-            posts.push((owner, payload));
+            posts.push(Post {
+                owner,
+                payload,
+                thread,
+                revoked,
+            });
         }
         POSTING.request(deliver_posts);
     }
     Ok(step)
 }
 
+fn next_post(thread: ThreadId) -> Option<Post> {
+    let mut posts = POSTS.lock().ok()?;
+    while !posts.is_empty() {
+        let post = posts.remove(0);
+        if !post.revoked.load(Ordering::Acquire) && post.thread == Some(thread) {
+            return Some(post);
+        }
+    }
+    None
+}
+
 fn deliver_posts() {
-    while let Some((owner, payload)) = POSTS
-        .lock()
-        .ok()
-        .and_then(|mut posts| (!posts.is_empty()).then(|| posts.remove(0)))
+    let Ok(core) = core() else {
+        return;
+    };
+    while let Ok(lead) = session(&core)
+        && let Some(Post { owner, payload, .. }) = next_post(lead.thread)
     {
-        let Ok(core) = core() else {
-            return;
-        };
         let registered = core
             .runtime
             .lock()
             .is_ok_and(|runtime| runtime.registered(&owner, "component_post"));
-        let Ok(lead) = session(&core) else {
-            return;
-        };
         if registered {
             let lead = Lead {
                 permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),

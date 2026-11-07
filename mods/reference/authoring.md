@@ -320,7 +320,8 @@ While a mod is written, `omd-mod-author watch DIR STORE` (or `pnpm watch STORE`)
 3. Queues a reload of that store's host and refreshes `.omd/`.
 
 Saving an entry point, asset or lifecycle file reloads again after 100 ms, and reports a half-written file instead of
-stopping. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
+stopping. Files named in `mod.json` are watched as soon as it is saved, so a new asset that doesn't exist yet reloads
+once you create it. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
 and also disables or resets a mod.
 
 **Because `watch` approves what it watches, point it only at a scratch store** (`omd-mod init STORE`) that contains

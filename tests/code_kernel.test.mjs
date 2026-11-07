@@ -150,6 +150,35 @@ for (const language of ['python', 'javascript']) {
   });
 }
 
+for (const language of ['python', 'javascript']) {
+  test(`${language} kernel discards output an older cell writes during a later one`, { timeout: 30_000 }, async t => {
+    const python = language === 'python';
+    const script = new URL(`../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
+    const child = spawn(python ? 'python3' : process.env.OMD_TEST_BUN ?? process.execPath, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const exited = once(child, 'exit');
+    const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    t.after(async () => {
+      child.kill();
+      await exited;
+    });
+    const cell = async code => {
+      child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code }) + '\n');
+      const { value } = await lines.next();
+      assert.ok(value.startsWith(RESULT), value.slice(0, 200));
+      return JSON.parse(value.slice(RESULT.length));
+    };
+    await cell(python
+      ? 'import os, subprocess, sys, threading\nfrom concurrent.futures import ThreadPoolExecutor\nrelease = threading.Event()\ndone = threading.Event()\ndef old():\n    release.wait()\n    print("OLD CELL OUTPUT")\n    os.write(1, b"OLD RAW\\n")\n    sys.__stdout__.write("OLD DUNDER\\n")\n    done.set()\nthreading.Thread(target=old).start()\npool = ThreadPoolExecutor(1)\npool.submit(print, "first").result()\nshell = subprocess.Popen(["sh", "-c", "read line; echo OLD CHILD"], stdin=subprocess.PIPE)'
+      : 'const { spawn } = await import("node:child_process");\nglobalThis.shell = spawn("sh", ["-c", "read line; echo OLD CHILD; echo OLD RAW >&2"], { stdio: ["pipe", "inherit", "inherit"] });\nglobalThis.done = new Promise(resolve => { globalThis.release = resolve; }).then(() => new Promise(resolve => setTimeout(resolve, 10))).then(() => { console.log("OLD CELL OUTPUT"); fs.writeSync(1, "OLD WRITE\\n"); });');
+    const result = await cell(python
+      ? 'release.set(); done.wait()\nshell.communicate(b"go\\n")\npool.submit(print, "POOL OUTPUT").result()\nprint("NEW CELL OUTPUT")'
+      : 'release(); await done;\nshell.stdin.end("go\\n"); await new Promise(resolve => shell.on("close", resolve));\nconsole.log("NEW CELL OUTPUT");');
+    const expected = python ? 'POOL OUTPUT\nNEW CELL OUTPUT\n' : 'NEW CELL OUTPUT\n';
+    if (!python && !process.env.OMD_TEST_BUN) assert.doesNotMatch(result.output, /OLD CELL OUTPUT/, 'Node has no per-cell fd redirect, so only in-process writes are attributed');
+    else assert.deepEqual(result, { ok: true, output: expected, bridge_failed: false });
+  });
+}
+
 test('javascript kernel survives a background child writing while the result frame is sent', { timeout: 30_000 }, async t => {
   const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/experimental/oh-my-diff-experimental/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = once(child, 'exit');
@@ -224,10 +253,10 @@ for (const language of ['python', 'javascript']) {
       }
       return;
     }
-    await cell('globalThis.timer = setInterval(() => console.log("x".repeat(40000)), 10);');
-    const flooded = await cell('await new Promise(resolve => setTimeout(resolve, 300));');
+    const flooded = await cell('globalThis.timer = setInterval(() => console.log("x".repeat(40000)), 10);\nawait new Promise(resolve => setTimeout(resolve, 300));');
     assert.equal(flooded.ok, false);
     assert.match(flooded.error, /output limit exceeded/);
+    assert.deepEqual(await cell('await new Promise(resolve => setTimeout(resolve, 300));'), { ok: true, output: '', bridge_failed: false }, 'an older cell\'s timer writes nowhere');
     await cell('clearInterval(timer);');
     await alive();
     await cell('setTimeout(() => Promise.reject(new Error("stray")), 20);\nsetTimeout(() => { throw new Error("thrown"); }, 20);');
