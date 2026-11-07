@@ -829,8 +829,8 @@ class UpdateSelection(unittest.TestCase):
             holder.close()
             waiter.close()
             waited.join(5)
-        self.assertEqual(sorted(path.name for path in self.root.iterdir()), [".install.lock", "bin", "releases", "stores"])
-        self.assertEqual(list((self.root / "releases").iterdir()), [])
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), [".install.lock", "bin", "stores"])
+        self.assertFalse((self.root / "releases").exists())
         self.assertTrue((self.root / "stores/platform/mods.json").is_file())
 
     def test_uninstall_removes_catalog_and_purge_removes_stores_without_touching_codex(self):
@@ -867,6 +867,7 @@ class UpdateSelection(unittest.TestCase):
                 self.assertTrue(result["uninstalled"])
                 self.assertFalse((root / "catalog").exists())
                 self.assertFalse((root / "objects").exists())
+                self.assertFalse((root / "releases").exists())
                 self.assertEqual((root / "stores/full/credentials.json").exists(), not purge)
                 self.assertIn("purged_stores" if purge else "preserved_stores", result)
                 if not purge:
@@ -874,6 +875,15 @@ class UpdateSelection(unittest.TestCase):
                 self.assertEqual((codex / "config.toml").read_text(), "user settings")
                 self.assertEqual((root / "personal.txt").read_text(), "user file")
                 self.assertEqual(calls, ["purge-accounts", "uninstall"] if purge else ["uninstall"])
+
+    def test_update_reports_check_results_and_bad_actions_in_one_line(self):
+        status = {"installed": "0.1.0", "available": None, "mods": None, "error": None, "checked_at": 1}
+        self.assertEqual(self.module.latest_summary(status), "up to date")
+        self.assertEqual(self.module.latest_summary(status | {"available": {"version": "0.2.0"}}),
+                         "0.2.0 is available: run omd update")
+        with patch.object(self.module.sys, "argv", ["install.sh", "update", "bogus"]), \
+                self.assertRaisesRegex(ValueError, "^omd update: argument action: invalid choice: 'bogus'"):
+            self.module.Parser(prog="install.sh").error("argument action: invalid choice: 'bogus'")
 
     def test_uninstall_cleanup_failure_is_reported_and_the_purge_journal_resumes(self):
         bin_dir = self.root / "bin"
@@ -1049,8 +1059,8 @@ class UpdateSelection(unittest.TestCase):
                         patch("builtins.print", side_effect=printed.append):
                     self.module.main()
                 self.assertTrue(json.loads(printed[0])["uninstalled"])
-                self.assertEqual(sorted(path.name for path in root.iterdir()), [".install.lock", "bin", "releases", "stores"])
-                self.assertEqual(list((root / "releases").iterdir()), [])
+                self.assertEqual(sorted(path.name for path in root.iterdir()), [".install.lock", "bin", "stores"])
+                self.assertFalse((root / "releases").exists())
                 self.assertEqual((root / "stores/platform/mods.json").read_text(), "{}")
                 self.assertEqual(sorted(path.name for path in bin_dir.iterdir()), ["codex", "omd-mod"])
                 self.assertEqual((bin_dir / "codex").read_text(), "upstream codex")
