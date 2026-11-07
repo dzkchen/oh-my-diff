@@ -877,7 +877,10 @@ enabled = true
                 code = profiles.mini(Path("/prefix"), base, ["--model", "m", "-s=danger-full-access", "-C", "/repo", "-c", "a=1",
                                                              "-i", "x.png", "--yolo", "--no-alt-screen", "fix it"])
                 selections["selections"][0]["effective"] = False
-                with self.assertRaisesRegex(ValueError, "needs its mod enabled"):
+                with self.assertRaisesRegex(ValueError, "needs its mod enabled: omd mods enable omd_mini$"):
+                    profiles.mini(Path("/prefix"), base, [])
+                selections["selections"] = []
+                with self.assertRaisesRegex(ValueError, "omd install omd_mini, then omd mods enable omd_mini$"):
                     profiles.mini(Path("/prefix"), base, [])
             runs = [line.split("|") for line in log.read_text().splitlines()]
             self.assertEqual(code, 3)
