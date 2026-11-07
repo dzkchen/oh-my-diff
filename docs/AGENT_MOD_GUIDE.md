@@ -4,7 +4,7 @@ Use this guide to build an Oh My Diff (OMD) mod for a user, test it offline and 
 It's for coding agents and gives the rules, the order of work, where to look things up and the mistakes agents make
 most. The steps themselves are in the [mod author guides](#guides-to-follow).
 
-Everything here is for mod API `1.0.0` on Codex `0.166.0`, Apple Silicon macOS. Only that API version loads, so check
+Everything here is for mod API `1.0.0` on Codex `0.167.0`, Apple Silicon macOS. Only that API version loads, so check
 `api` in a mod's `mod.json` before you reuse older code. Tool versions are in [Support](support.md).
 
 ## Rules

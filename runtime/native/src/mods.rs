@@ -1180,9 +1180,12 @@ fn submission_context(items: &[Value]) -> (Vec<Value>, Vec<Value>) {
             }
             Some("image") => attachments.push(json!({"kind": "image", "source": "inline"})),
             Some(kind @ ("audio" | "local_audio")) => {
-                attachments.push(
-                    json!({"kind": kind, "source": item.get("path").unwrap_or(&json!("inline"))}),
-                );
+                let source = match (item.get("path"), item.get("file_id")) {
+                    (Some(path), _) => path.clone(),
+                    (None, Some(_)) => json!("file"),
+                    (None, None) => json!("inline"),
+                };
+                attachments.push(json!({"kind": kind, "source": source}));
             }
             _ => {}
         }
@@ -2634,6 +2637,33 @@ impl Drop for Cancellation {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Release);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn audio_attachments_report_their_source() {
+    use codex_protocol::models::AudioReference;
+    use codex_protocol::user_input::UserInput;
+    let items = [
+        UserInput::Audio {
+            audio: AudioReference::File {
+                file_id: "file-1".into(),
+            },
+        },
+        UserInput::Audio {
+            audio: AudioReference::Inline {
+                audio_url: "data:audio/wav;base64,AA==".into(),
+            },
+        },
+    ]
+    .map(|item| serde_json::to_value(item).unwrap_or_default());
+    assert_eq!(
+        submission_context(&items).0,
+        vec![
+            json!({"kind": "audio", "source": "file"}),
+            json!({"kind": "audio", "source": "inline"}),
+        ]
+    );
 }
 
 #[cfg(test)]
