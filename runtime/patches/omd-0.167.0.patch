@@ -86351,10 +86351,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3d7e4a33629eefd88881a941e688c302c8f09147
+index 0000000000000000000000000000000000000000..f40268db25b32ae20942a68a4e7dcab5f93435e2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5561 @@
+@@ -0,0 +1,5572 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -91047,10 +91047,21 @@ index 0000000000000000000000000000000000000000..3d7e4a33629eefd88881a941e688c302
 +    let archived = fixture.lead.host.root.join("data/threads/archived/owner");
 +    std::fs::create_dir_all(&archived).unwrap();
 +    std::fs::write(archived.join("store.json"), "{}").unwrap();
-+    for path in [archived.join("store.json"), archived.clone(), archived.parent().unwrap().to_path_buf()] {
-+        std::fs::File::open(path).unwrap().set_modified(old).unwrap();
++    for path in [
++        archived.join("store.json"),
++        archived.clone(),
++        archived.parent().unwrap().to_path_buf(),
++    ] {
++        std::fs::File::open(path)
++            .unwrap()
++            .set_modified(old)
++            .unwrap();
 +    }
-+    fixture.lead.host.open_session(ThreadId::new(), false).unwrap();
++    fixture
++        .lead
++        .host
++        .open_session(ThreadId::new(), false)
++        .unwrap();
 +    assert!(archived.join("store.json").exists());
 +}
 +

@@ -4690,10 +4690,21 @@ fn a_new_thread_keeps_old_thread_store_data() {
     let archived = fixture.lead.host.root.join("data/threads/archived/owner");
     std::fs::create_dir_all(&archived).unwrap();
     std::fs::write(archived.join("store.json"), "{}").unwrap();
-    for path in [archived.join("store.json"), archived.clone(), archived.parent().unwrap().to_path_buf()] {
-        std::fs::File::open(path).unwrap().set_modified(old).unwrap();
+    for path in [
+        archived.join("store.json"),
+        archived.clone(),
+        archived.parent().unwrap().to_path_buf(),
+    ] {
+        std::fs::File::open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
     }
-    fixture.lead.host.open_session(ThreadId::new(), false).unwrap();
+    fixture
+        .lead
+        .host
+        .open_session(ThreadId::new(), false)
+        .unwrap();
     assert!(archived.join("store.json").exists());
 }
 
