@@ -221,6 +221,9 @@ fn queued_posts_reach_only_their_thread_and_live_instance() {
         post("live", origin, &Arc::default()),
     ]);
     detached.store(true, Ordering::Release);
-    assert_eq!(next_post(origin).map(|post| post.owner), Some("live".into()));
+    assert_eq!(
+        next_post(origin).map(|post| post.owner),
+        Some("live".into())
+    );
     assert!(next_post(origin).is_none());
 }

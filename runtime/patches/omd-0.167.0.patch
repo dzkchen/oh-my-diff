@@ -69017,10 +69017,10 @@ index 0000000000000000000000000000000000000000..6d922a1c3b49c29bfeebdfc73a6694ee
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/clients_tests.rs b/codex-rs/ext/omd/src/clients_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7d8708a58c001476d3a0e7a71365665f7388f42f
+index 0000000000000000000000000000000000000000..7ad0ab7628327388a709c80185c1390e9a581c49
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients_tests.rs
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,229 @@
 +use super::*;
 +
 +fn snapshot() -> ModViewSnapshot {
@@ -69244,7 +69244,10 @@ index 0000000000000000000000000000000000000000..7d8708a58c001476d3a0e7a71365665f
 +        post("live", origin, &Arc::default()),
 +    ]);
 +    detached.store(true, Ordering::Release);
-+    assert_eq!(next_post(origin).map(|post| post.owner), Some("live".into()));
++    assert_eq!(
++        next_post(origin).map(|post| post.owner),
++        Some("live".into())
++    );
 +    assert!(next_post(origin).is_none());
 +}
 diff --git a/codex-rs/ext/omd/src/config.rs b/codex-rs/ext/omd/src/config.rs
