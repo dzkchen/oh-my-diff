@@ -766,16 +766,15 @@
         "lifecycle",
         "events",
         "threads",
-        "inventory",
-        "autonomous"
+        "inventory"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "ce262e18a1b871fd2b572de3b8db56c78db0af0d3fab91e6df4ad709d9223fbd",
-        "mod.json": "295815d8bce90596b8dbbd2f56c5da81339700594d483a09b3f5c77372aaf930"
+        "index.ts": "cea81f52415c26fc63ffa6ffb6f56b3d6756e54e33492f4cae7508af69dc0bb3",
+        "mod.json": "ab827b7d76b5290d1e9f3e67f2b65a0b5cfeb063e6682f0f6db1be4c869d9ec6"
       },
       "id": "omd_subagent_router",
-      "package_sha256": "7183c9b5107290e6b59ad960fbded71f8d8c25016e3e7835ee373d863ab9f5ff",
+      "package_sha256": "9d33def4c6d561e014e784a405e376365fe73ff13751a49f65fce5c5a057af2c",
       "source": "mods/first-party/omd_subagent_router",
       "version": "1.0.0"
     },
@@ -850,11 +849,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "c973efd176dfd7d82faf646cdddec372ea1912e9f6a3ed02838f31dac34d33e9",
+        "index.ts": "68ef4cc1f65795cfaf239e622c91a38c7f24a2e9bfeb953c0cc4fcde307fcdff",
         "mod.json": "66a3c55a976dc1d905049d074687105bde3d7eb178e8cbaa5e06bbb0a69d3d9e"
       },
       "id": "omd_tool_lines",
-      "package_sha256": "1d449b51d57c92927d1a9e6321187302b3003886b6284184683af35ab89c47a7",
+      "package_sha256": "8ba8a2b92557e2629df22c66cab153effe3a06ecc2cc2b68fd30b5628e70e6c6",
       "source": "mods/first-party/omd_tool_lines",
       "version": "1.0.1"
     },
