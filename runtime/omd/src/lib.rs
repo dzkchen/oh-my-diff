@@ -108,6 +108,7 @@ pub use mods::AUTHORITY_CAPABILITIES;
 pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
 pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 pub use mods::CODEX_CONFIG_UPDATE_PLAN;
+pub use mods::CODEX_HOST_RELEASE;
 pub use mods::FileStamp;
 pub use mods::MANAGED_POLICY_FILE;
 pub use mods::MANAGED_POLICY_KEY;

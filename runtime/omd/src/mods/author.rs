@@ -271,53 +271,17 @@ impl ModHost {
     }
 
     pub fn capability_explanation(code: &str) -> Value {
-        let (cause, fix) = if code.starts_with("capability_denied") {
+        let known = EXPLANATIONS
+            .iter()
+            .find(|(prefix, _, _)| code.starts_with(prefix));
+        let (cause, fix) = known.map_or(
             (
-                "The package requested authority that the manifest or explicit trust grant does not include.",
-                "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant.",
-            )
-        } else if code.starts_with("undeclared_operation_use") {
-            (
-                "Source analysis found a literal host operation whose capability is not declared.",
-                "Add the operation's documented capability or remove the call; rerun check before asking for trust.",
-            )
-        } else if code.starts_with("undeclared_service_use") {
-            (
-                "Source analysis found a service call without a matching manifest import.",
-                "Declare the service name and compatible version under services.imports or remove the call.",
-            )
-        } else if code.starts_with("undeclared_environment_use") {
-            (
-                "Source analysis found environment access outside the manifest declaration.",
-                "Remove the access or declare an admitted environment feature; network, filesystem, process and DOM access are intentionally unavailable.",
-            )
-        } else if code.starts_with("state_capability_denied") {
-            (
-                "The callback changed persistent state without the state capability.",
-                "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
-            )
-        } else if code.starts_with("state_thread_unavailable") {
-            (
-                "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
-                "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
-            )
-        } else if code.starts_with("repository_provenance_mismatch") {
-            (
-                "A Git install requires mod.json provenance.source to name the repository it is installed from.",
-                "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
-            )
-        } else if code.starts_with("host_operation_unavailable") {
-            (
-                "The callback ran without an active native task capable of servicing that host operation.",
-                "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
-            )
-        } else {
-            (
-                "The host denied or could not classify the requested authority.",
-                "Use omd-mod report and omd-mod events, then compare the literal operation, manifest declaration and user-approved grant.",
-            )
-        };
-        json!({"code":code,"cause":cause,"fix":fix,
+                "OMD has no explanation for this code.",
+                "Check the code for typos; `omd-mod report STORE` and `omd-mod events STORE` show what the host denied and why.",
+            ),
+            |(_, cause, fix)| (*cause, *fix),
+        );
+        json!({"code":code,"known":known.is_some(),"cause":cause,"fix":fix,
             "guarantee":"Author tooling can explain a denial but cannot grant authority, change trust, or bypass host enforcement."})
     }
 
@@ -1053,6 +1017,104 @@ fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]
             }
         }
         _ => {}
+    }
+}
+
+const EXPLANATIONS: &[(&str, &str, &str)] = &[
+    (
+        "capability_denied",
+        "The package requested authority that the manifest or explicit trust grant does not include.",
+        "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant.",
+    ),
+    (
+        "undeclared_operation_use",
+        "Source analysis found a literal host operation whose capability is not declared.",
+        "Add the operation's documented capability or remove the call; rerun check before asking for trust.",
+    ),
+    (
+        "undeclared_service_use",
+        "Source analysis found a service call without a matching manifest import.",
+        "Declare the service name and compatible version under services.imports or remove the call.",
+    ),
+    (
+        "undeclared_environment_use",
+        "Source analysis found environment access outside the manifest declaration.",
+        "Remove the access or declare an admitted environment feature; network, filesystem, process and DOM access are intentionally unavailable.",
+    ),
+    (
+        "state_capability_denied",
+        "The callback changed persistent state without the state capability.",
+        "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
+    ),
+    (
+        "state_thread_unavailable",
+        "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
+        "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
+    ),
+    (
+        "repository_provenance_mismatch",
+        "A Git install requires mod.json provenance.source to name the repository it is installed from.",
+        "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
+    ),
+    (
+        "host_operation_unavailable",
+        "The callback ran without an active native task capable of servicing that host operation.",
+        "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
+    ),
+    (
+        "package_blocked",
+        "The mod is quarantined: `omd mods quarantine` blocked its installed version.",
+        "`omd mods list` shows the reason, and `omd mods unblock ID` lifts the block.",
+    ),
+    (
+        "package_not_installed",
+        "No installed mod has this id in the chosen scope.",
+        "`omd mods list` shows installed mods and their scopes, and `omd install ID` installs one.",
+    ),
+    (
+        "package_approval_required",
+        "Installing or turning on the mod needs your approval, and the command ran without a terminal to ask in.",
+        "Review it with `omd mods inspect REFERENCE`, then run the command again with --yes or in a terminal.",
+    ),
+    (
+        "package_rollback_unavailable",
+        "The mod has no earlier version to go back to.",
+        "Install a specific version with `omd install ID --version V`.",
+    ),
+    (
+        "source_changed",
+        "The mod's files changed after they were trusted, so the trust no longer covers them.",
+        "`omd mods update ID` reviews a changed folder mod, and `omd install ID` reinstalls a catalog mod.",
+    ),
+    (
+        "explicit_repository_required",
+        "The command works on one repository's data or runs a mod's shell command, and no repository was given.",
+        "Pass --repo PATH. For `omd store` data that isn't tied to a repository, pass --scope user.",
+    ),
+    (
+        "explicit_mod_store_required",
+        "No mod store was given and OMD_MOD_STORE is not set.",
+        "Pass --store PATH, or use the installed omd launcher, which sets OMD_MOD_STORE.",
+    ),
+];
+
+#[cfg(test)]
+mod explanation_tests {
+    use super::*;
+
+    #[test]
+    fn explain_answers_cli_codes_and_admits_unknown_ones() {
+        let blocked = ModHost::capability_explanation("package_blocked: m: testing");
+        assert_eq!(blocked["known"], true);
+        assert!(
+            blocked["fix"]
+                .as_str()
+                .unwrap()
+                .contains("omd mods unblock")
+        );
+        let unknown = ModHost::capability_explanation("nonsense_code");
+        assert_eq!(unknown["known"], false);
+        assert_eq!(unknown["cause"], "OMD has no explanation for this code.");
     }
 }
 

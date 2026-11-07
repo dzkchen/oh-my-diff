@@ -161,6 +161,16 @@ const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope us
 
 const APPROVAL_REQUIRED: &str = "package_approval_required";
 
+const HELP: &str = "usage:
+  omd install|mods ...       {MODS_USAGE}
+  omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user]
+  omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS]
+  omd --version
+
+`omd install` and `omd mods` manage mod packages, and `omd update` updates OMD itself.
+`omd store` exports or resets one mod's stored data without running the mod.
+`omd COMMAND` runs a shell command that an enabled mod exports; these commands can't make model requests or run processes.";
+
 fn mods(action: &str, args: &[String]) -> io::Result<Value> {
     use codex_omd::package_controls;
     let usage = || io::Error::other(MODS_USAGE);
@@ -249,9 +259,7 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                         package["source"]
                             .as_str()
                             .map_or(String::new(), |source| format!(" ({source})")),
-                        package["failed"]
-                            .as_str()
-                            .map(|failed| format!(" failed: {failed}"))
+                        row_state(package)
                             .or_else(|| last_session(package)
                                 .map(|failed| format!(" failed in the last session: {failed}")))
                             .unwrap_or_default()
@@ -326,7 +334,7 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             let id = first()?;
             store.revoke(&id)?;
             done(format!(
-                "Revoked {id}: it is off and its grant is dropped. Install or trust it again to restore it."
+                "Revoked {id}: it is off and its grant is dropped. `omd install {id}` reviews and trusts it again."
             ))
         }
         "install" | "inspect" | "enable" | "disable" | "update" | "remove" | "rollback" => {
@@ -338,7 +346,28 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             } else {
                 arguments["id"] = json!(target);
             }
-            let preview = package_controls::preview(&store, arguments)?;
+            let preview = package_controls::preview(&store, arguments).map_err(|error| {
+                let text = error.to_string();
+                let hint = match action {
+                    "enable" if text.starts_with("capability_denied") => format!(
+                        "; its grant was revoked or no longer covers it: `omd install {target}` reviews and trusts it again"
+                    ),
+                    "enable" if text.starts_with("source_changed") => format!(
+                        "; `omd mods update {target}` reviews a changed folder mod, and `omd install {target}` reinstalls any other"
+                    ),
+                    "rollback" if text == "package_rollback_unavailable" => {
+                        format!(": {target} has no earlier version to go back to")
+                    }
+                    _ if text == "package_unavailable" => {
+                        format!(": {target} is not in the catalog; `omd mods catalog` lists what is")
+                    }
+                    _ if text == "package_version_unavailable" => format!(
+                        ": that version of {target} is not available; `omd mods catalog {target}` shows the latest"
+                    ),
+                    _ => return error,
+                };
+                io::Error::other(text + &hint)
+            })?;
             let summary = describe(&preview.public);
             if action == "inspect" {
                 return Ok(json!({"display": summary, "preview": preview.public}));
@@ -389,6 +418,23 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
     }
 }
 
+fn row_state(package: &Value) -> Option<String> {
+    let id = package["id"].as_str().unwrap_or("?");
+    if let Some(reason) = package["blocked"].as_str() {
+        return Some(format!(
+            " quarantined: {reason}; `omd mods unblock {id}` lifts it"
+        ));
+    }
+    let failed = package["failed"].as_str()?;
+    Some(
+        if package["enabled"] != true && failed.starts_with("capability_denied") {
+            format!(" revoked: `omd install {id}` trusts it again")
+        } else {
+            format!(" failed: {failed}")
+        },
+    )
+}
+
 fn folder_reference(reference: &str) -> io::Result<String> {
     let path = if let Some(rest) = reference.strip_prefix("~/") {
         PathBuf::from(std::env::var_os("HOME").ok_or_else(|| io::Error::other("home_unavailable"))?)
@@ -398,7 +444,13 @@ fn folder_reference(reference: &str) -> io::Result<String> {
     } else {
         return Ok(reference.to_owned());
     };
-    Ok(path.canonicalize()?.display().to_string())
+    let resolved = path.canonicalize().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("package_folder_unavailable: {reference}: {error}"),
+        )
+    })?;
+    Ok(resolved.display().to_string())
 }
 
 fn describe(preview: &Value) -> String {
@@ -521,8 +573,16 @@ fn confirm(summary: &str) -> io::Result<bool> {
 fn run(args: Vec<String>) -> io::Result<Value> {
     if args.is_empty() || args[0] == "--help" {
         return Ok(
-            json!({"usage":format!("omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS] | omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user] | {MODS_USAGE}"),"commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here. `omd store` exports or resets one mod's namespaced store without running mod code. `omd install` and `omd mods` manage mod packages; `omd update` updates OMD itself."}),
+            json!({"display": HELP.replace("{MODS_USAGE}", MODS_USAGE.trim_start_matches("usage: "))}),
         );
+    }
+    if matches!(args[0].as_str(), "--version" | "-V") {
+        return Ok(json!({"display": format!(
+            "oh-my-diff {} (Codex {}, mod API {})",
+            env!("CARGO_PKG_VERSION"),
+            codex_omd::CODEX_HOST_RELEASE,
+            codex_omd::MOD_API_VERSION
+        )}));
     }
     if args[0] == "store" {
         return store(&args[1..]);
@@ -558,7 +618,11 @@ fn run(args: Vec<String>) -> io::Result<Value> {
             _ => payload.push(argument.clone()),
         }
     }
-    let repository = repository.ok_or_else(|| io::Error::other("explicit_repository_required"))?;
+    let repository = repository.ok_or_else(|| {
+        io::Error::other(format!(
+            "explicit_repository_required: `{command}` is not an omd command, and a mod's shell command needs --repo PATH; `omd help --all` lists the commands"
+        ))
+    })?;
     let root = store_root(store)?;
     let home = home
         .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
@@ -702,6 +766,53 @@ mod tests {
         assert_eq!(shell_quote("/Users/me/My Store"), "'/Users/me/My Store'");
         assert_eq!(shell_quote("/tmp/it's"), "'/tmp/it'\\''s'");
         assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn version_help_and_unknown_commands_explain_themselves() {
+        let version = run(vec!["--version".into()]).unwrap();
+        assert_eq!(
+            version["display"],
+            format!(
+                "oh-my-diff {} (Codex {}, mod API {})",
+                env!("CARGO_PKG_VERSION"),
+                codex_omd::CODEX_HOST_RELEASE,
+                codex_omd::MOD_API_VERSION
+            )
+        );
+        assert_eq!(run(vec!["-V".into()]).unwrap(), version);
+        let help = run(vec!["--help".into()]).unwrap();
+        assert!(help["display"].as_str().unwrap().contains("omd --version"));
+        let error = run(vec!["bogus".into()]).unwrap_err().to_string();
+        assert!(
+            error.starts_with("explicit_repository_required: `bogus` is not an omd command"),
+            "{error}"
+        );
+        let missing = folder_reference("./definitely-missing-folder")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing.starts_with("package_folder_unavailable: ./definitely-missing-folder: "),
+            "{missing}"
+        );
+    }
+
+    #[test]
+    fn list_rows_name_quarantine_and_revocation() {
+        let row = |package: Value| row_state(&package);
+        assert_eq!(
+            row(json!({"id":"m","enabled":false,"blocked":"testing","failed":null})).unwrap(),
+            " quarantined: testing; `omd mods unblock m` lifts it"
+        );
+        assert_eq!(
+            row(json!({"id":"m","enabled":false,"failed":"capability_denied: m"})).unwrap(),
+            " revoked: `omd install m` trusts it again"
+        );
+        assert_eq!(
+            row(json!({"id":"m","enabled":true,"failed":"source_changed: x"})).unwrap(),
+            " failed: source_changed: x"
+        );
+        assert_eq!(row(json!({"id":"m","enabled":true,"failed":null})), None);
     }
 
     #[test]
