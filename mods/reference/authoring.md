@@ -19,7 +19,7 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author create DIR [ID]` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
-| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
+| `pnpm check` | Host package inspection and syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
 | `pnpm test` | Runs the offline scenarios, the type check and the TypeScript tests (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs `debug.test.json`, which expects an error, and exits 0 with the error's mapped source location |
@@ -30,6 +30,10 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE [OUTPUT]` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
 | `omd-mod-author explain DENIAL` | Cause, safe remedy, and the authority boundary for a denial |
+
+`pnpm check` requires `omd-mod` (or `OMD_MOD_BIN`) for the same package inspection used by the host. This enforces
+the 512 KiB limit per entrypoint, asset or lifecycle file and the 1 MiB combined entrypoint/UTF-8 asset limit,
+including when TypeScript is absent.
 
 `pnpm test` runs, in order:
 

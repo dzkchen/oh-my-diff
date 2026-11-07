@@ -1,7 +1,7 @@
 import type { CommandResult, Json, KeyContext, ModAPI, TerminalPatch } from '../../api.d.ts';
 import { AUTH, COMMITS, DIFF, DOING, OPERATIONS, READ, REJECTED, ROWS, cut, mention, operationOf, parseBranches, parseCommits, parseStash, parseStatus, quote, size, splitPatch, summary } from './git.ts';
 import type { Change } from './git.ts';
-import { PANELS, SIGNIN, SITE, area, draw, rows, selected } from './view.ts';
+import { LINE_BYTES, PANELS, SIGNIN, SITE, area, draw, rows, selected } from './view.ts';
 import type { Hunk, Repo } from './view.ts';
 
 type State = { placed: boolean; repo: Repo | null; watch?: string };
@@ -110,27 +110,28 @@ export default function activate(api: ModAPI) {
   const loadHunks = (r: Repo, path: string) => {
     const sides = [patches(r, path, false), patches(r, path, true)];
     const list: Hunk[] = [];
-    const text: string[] = [];
+    r.main = clip(sides.flatMap(side => side.parts).join(''));
     let line = 0;
+    let offset = 0;
     sides.forEach((side, index) => side.parts.forEach(part => {
-      list.push({ staged: index === 1, header: part.split('\n')[0], line });
-      text.push(part);
+      const displayed = `${r.main}\n`.slice(offset, offset + part.length) === part && part.split('\n').every(line => cut(line, LINE_BYTES) === cut(line, Infinity));
+      list.push({ staged: index === 1, header: part.split('\n')[0], line, patch: displayed ? side.head + part : null });
       line += part.split('\n').length - 1;
+      offset += part.length;
     }));
     r.hunks = { path, list };
     r.hunk = Math.min(r.hunk, Math.max(0, list.length - 1));
-    r.main = clip(text.join(''));
     return {
       binary: sides.some(side => side.binary),
       notice: sides.some(side => side.truncated) ? 'The diff is too large: the last hunks are left out' : null,
     };
   };
   const patchOf = (r: Repo, hunk: Hunk) => {
-    if (!r.hunks) return null;
+    if (!r.hunks || !hunk.patch) return null;
     const side = patches(r, r.hunks.path, hunk.staged);
     const index = r.hunks.list.filter(item => item.staged === hunk.staged).indexOf(hunk);
     const part = side.parts[index];
-    return part?.split('\n')[0] === hunk.header ? side.head + part : null;
+    return part && side.head + part === hunk.patch ? hunk.patch : null;
   };
   const view = (r: Repo) => {
     const at = selected(r);

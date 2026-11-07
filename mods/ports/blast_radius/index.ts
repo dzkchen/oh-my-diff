@@ -35,6 +35,12 @@ const MIGRATE_LABELS: Record<string, string> = { alembic: 'alembic upgrade', rai
 
 const tokenize = (text: string) => Array.from(text.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g), m => m[1] ?? m[2] ?? m[3]);
 
+const operands = (args: string[]) => {
+  const end = args.indexOf('--');
+  const options = end < 0 ? args : args.slice(0, end);
+  return [...options.filter(a => !a.startsWith('-') || a === '-'), ...(end < 0 ? [] : args.slice(end + 1))];
+};
+
 const joinDir = (dir: string | null, arg: string | undefined) =>
   arg === undefined || arg === '~' || arg.startsWith('/') || arg.startsWith('~/') ? arg ?? '~' : dir ? `${dir}/${arg}` : arg;
 
@@ -71,10 +77,12 @@ function segment(text: string, dir: string | null, pushed: (string | null)[]): R
   }
   if (cmd === 'popd') return { cd: pushed.length ? pushed.pop() as string | null : '-' };
   if (cmd === 'rm' || cmd.endsWith('/rm')) {
-    const flags = args.filter(a => a.startsWith('-'));
+    const end = args.indexOf('--');
+    const options = end < 0 ? args : args.slice(0, end);
+    const flags = options.filter(a => a.startsWith('-') && a !== '-');
     const short = (letter: string) => flags.some(f => /^-[^-]/.test(f) && f.includes(letter));
     if (flags.includes('--recursive') || short('r') || short('R') || flags.includes('--force') || short('f')) {
-      return { kind: 'rm', label: `rm ${flags.join(' ')}`.trim(), args: args.filter(a => !a.startsWith('-') || a === '-'), dir };
+      return { kind: 'rm', label: `rm ${flags.join(' ')}`.trim(), args: operands(args), dir };
     }
   }
   if (cmd === 'git') {
@@ -207,8 +215,9 @@ export default function activate(api: ModAPI) {
   };
 
   const measurePush = (args: string[], cwd: string | undefined): Report => {
-    const positional = args.filter(a => !a.startsWith('-'));
+    const positional = operands(args);
     const remote = positional[0] ?? 'origin';
+    if (remote.startsWith('-')) throw new Error(`${remote} cannot be inspected as a remote`);
     const spec = (positional[1] ?? '').replace(/^\+/, '');
     let [source, branch = spec] = spec.includes(':') ? spec.split(':') : [spec, spec];
     branch = branch.replace(/^refs\/heads\//, '');

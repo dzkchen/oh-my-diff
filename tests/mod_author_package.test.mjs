@@ -6,6 +6,32 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { invoke, state } from '../mods/author/testing.mjs';
 
+test('author check enforces the host entrypoint and aggregate package limits without TypeScript', { skip: !process.env.OMD_MOD_BIN && 'needs OMD_MOD_BIN' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-limits-'));
+  const api = JSON.parse(readFileSync(new URL('../mods/package.json', import.meta.url))).version;
+  const manifest = { schema: 1, id: 'limits', version: '1.0.0', api, state_version: 1, capabilities: ['commands'], assets: ['a.json', 'b.json', 'c.json'] };
+  const author = () => spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, 'check', root], { encoding: 'utf8' });
+  try {
+    writeFileSync(join(root, 'mod.json'), JSON.stringify(manifest));
+    writeFileSync(join(root, 'index.ts'), "export default api => api.command('hello', () => 'hi');\n");
+    for (const asset of manifest.assets) writeFileSync(join(root, asset), JSON.stringify('x'.repeat(400_000)));
+    const aggregate = author();
+    assert.notEqual(aggregate.status, 0, aggregate.stderr);
+    assert.match(aggregate.stderr, /package_text_input_limit/);
+    writeFileSync(join(root, 'mod.json'), JSON.stringify({ ...manifest, assets: [] }));
+    writeFileSync(join(root, 'index.ts'), `export default () => {};\n${' '.repeat(524_288)}`);
+    const entrypoint = author();
+    assert.notEqual(entrypoint.status, 0, entrypoint.stderr);
+    assert.match(entrypoint.stderr, /file_limit/);
+    writeFileSync(join(root, 'index.ts'), 'export default () => {};\n');
+    const valid = author();
+    assert.equal(valid.status, 0, valid.stderr);
+    assert.match(valid.stderr, /check: ok/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('author packaging preserves custom entrypoints, assets and lifecycle scripts and inspects the output', () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-package-'));
   try {

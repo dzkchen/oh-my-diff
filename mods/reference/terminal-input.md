@@ -133,7 +133,7 @@ selected binding and Esc clears the search or closes the overlay.
 
 - `action`: `enter`, `leave`, `move`, `down`, `up`, `drag`, or `scroll_up` and `scroll_down` for the mouse wheel;
 - `button`: `left`, `right`, `middle`, or null for motion and the wheel;
-- `column`/`row` relative to the component's first cell (a nested box counts its title and children);
+- `column`/`row` as signed 32-bit integers relative to the component's first cell (a nested box counts its title and children);
 - `half` (0 or 1, the half-cell row) on terminals that report pixel positions (Kitty, Ghostty and WezTerm), else
   null.
 
