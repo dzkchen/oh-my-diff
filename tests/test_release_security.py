@@ -52,7 +52,7 @@ class ReleaseReviewFixes(unittest.TestCase):
                     self.fail('extracted an unverified archive')
             with mock.patch.object(ci.support, 'output', side_effect=output):
                 with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
-                    ci.upstream_codex('rust-v0.166.0', directory)
+                    ci.upstream_codex('rust-v0.167.0', directory)
 
     def test_dry_run_with_a_key_stays_unsigned(self):
         from tests.test_pr_ci import HostedJobs

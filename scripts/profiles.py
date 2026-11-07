@@ -974,9 +974,10 @@ def register_plugins(prefix, bin_dir):
         return entry.get("source") if isinstance(entry, dict) else None
 
     if configured() != str(source):
+        home.mkdir(mode=0o700, parents=True, exist_ok=True)
         if configured() is not None:
-            subprocess.run([binary, "plugin", "marketplace", "remove", name], check=True, capture_output=True, env=env)
-        subprocess.run([binary, "plugin", "marketplace", "add", source], check=True, capture_output=True, env=env)
+            support.run([binary, "plugin", "marketplace", "remove", name], env=env)
+        support.run([binary, "plugin", "marketplace", "add", source], env=env)
         text = config.read_text()
         written = f"source = {json.dumps(str(support.resolved(source)))}"
         if text.count(written) != 1:
