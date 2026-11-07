@@ -62,6 +62,8 @@ Change settings in `/mods`.
 - Plan usage shows no charge. Anthropic bills Console usage, and each request's cost (the CLI's list-price figure)
   counts against your OMD budget and allowance alerts.
 - A request for a model other than the selected one is refused.
+- Requests reach Anthropic labelled `oh-my-diff` instead of as headless CLI traffic, and each one is set up to reuse the
+  previous request's prompt cache (Anthropic caches only prompts above a minimum length).
 - Each request starts a fresh CLI process, adding a fraction of a second. A CLI that has not finished 30 minutes after
   starting (for example one that never sends its request) is stopped with its child processes and the request fails
   with `claude_upstream_incomplete`. Retry it, and if it repeats, check `/claude` or update the CLI.
