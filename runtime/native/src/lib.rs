@@ -92,7 +92,6 @@ pub(crate) struct Session {
     contract_state: PathBuf,
     processes: Arc<managed_process::ManagedProcesses>,
     power: Arc<codex_omd::power::Leases>,
-    data: mods::DataScope,
     access: mods::AccessState,
 }
 
@@ -521,10 +520,6 @@ impl Host {
             codex_omd::data_store::prune_thread_directories(&sessions, |name| {
                 name == current || name.starts_with("ledger-")
             });
-            codex_omd::data_store::prune_thread_directories(
-                &self.root.join("data").join("threads"),
-                |name| name == current,
-            );
         }
         let task = Arc::new(ledger::open(
             &sessions,
@@ -558,7 +553,6 @@ impl Host {
             )),
             processes: Arc::new(managed_process::ManagedProcesses::default()),
             power: Arc::default(),
-            data: mods::DataScope::default(),
             access: mods::AccessState::default(),
             evidence,
         }))

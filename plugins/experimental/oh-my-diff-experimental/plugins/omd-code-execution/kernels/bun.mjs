@@ -13,11 +13,28 @@ async function worker() {
   let bridgeFailed = false;
   let outputBytes = 0;
   let strays;
+  let current;
+  const owned = () => current !== undefined && bridgeContext.getStore() === current;
   const pause = new Int32Array(new SharedArrayBuffer(4));
+  const writeSync = fs.writeSync;
+  const stdioTarget = (target) => target === 1 || target === 2 || globalThis.Bun && (target === Bun.stdout || target === Bun.stderr);
+  const size = (data) => Array.isArray(data) ? data.reduce((total, part) => total + size(part), 0) : typeof data === "string" ? Buffer.byteLength(data) : data?.byteLength ?? 0;
+  for (const name of ["writeSync", "writevSync", "writeFileSync", "appendFileSync"]) {
+    const original = fs[name];
+    fs[name] = (fd, data, ...rest) => stdioTarget(fd) && !owned() ? size(data) : original(fd, data, ...rest);
+  }
+  for (const name of ["write", "writev", "writeFile", "appendFile"]) {
+    const original = fs[name];
+    fs[name] = (fd, data, ...rest) => {
+      if (!stdioTarget(fd) || owned()) return original(fd, data, ...rest);
+      const done = rest.at(-1);
+      if (typeof done === "function") queueMicrotask(() => name.endsWith("File") ? done(null) : done(null, size(data), data));
+    };
+  }
   const writeAll = (fd, text) => {
     for (let data = Buffer.from(text); data.length;) {
       try {
-        data = data.subarray(fs.writeSync(fd, data));
+        data = data.subarray(writeSync(fd, data));
       } catch (error) {
         if (error.code !== "EAGAIN") throw error;
         Atomics.wait(pause, 0, 0, 1);
@@ -58,6 +75,7 @@ async function worker() {
   };
 
   const record = (text) => {
+    if (!owned()) return;
     const size = Buffer.byteLength(text);
     if (outputBytes + size > 65536) throw new Error("kernel output limit exceeded");
     outputBytes += size;
@@ -69,13 +87,112 @@ async function worker() {
     (typeof encoding === "function" ? encoding : callback)?.();
     return true;
   };
-  const hooks = [...["log", "error", "warn", "info", "debug"].map((name) => [console, name, capture]), [process.stdout, "write", captureWrite], [process.stderr, "write", captureWrite]];
+  for (const name of Object.getOwnPropertyNames(console)) {
+    const original = console[name];
+    if (typeof original !== "function") continue;
+    console[name] = ["log", "error", "warn", "info", "debug"].includes(name) ? capture : (...args) => owned() ? original.apply(console, args) : undefined;
+  }
+  process.stdout.write = process.stderr.write = captureWrite;
+  const ffi = globalThis.Bun ? await import("bun:ffi") : null;
+  const libc = ffi?.dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
+    pipe: { args: [ffi.FFIType.ptr], returns: ffi.FFIType.i32 },
+    dup: { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
+    dup2: { args: [ffi.FFIType.i32, ffi.FFIType.i32], returns: ffi.FFIType.i32 },
+  }).symbols;
+  const out = libc ? libc.dup(1) : 1;
+  const quiet = libc ? fs.openSync("/dev/null", "w") : -1;
+  const marker = Buffer.from((await import("node:crypto")).randomBytes(16).toString("hex"));
+  const { Worker } = await import("node:worker_threads");
+  const drainer = `const { workerData: { reader, out, marker }, parentPort } = require("node:worker_threads");
+const fs = require("node:fs");
+const tag = Buffer.from(marker);
+const chunk = Buffer.alloc(65536);
+const pause = new Int32Array(new SharedArrayBuffer(4));
+let held = Buffer.alloc(0);
+let sent = 0;
+let done = false;
+for (;;) {
+  let size;
+  try { size = fs.readSync(reader, chunk); } catch (error) { if (error.code === "EAGAIN") { Atomics.wait(pause, 0, 0, 1); continue; } break; }
+  if (!size) break;
+  if (done) continue;
+  held = Buffer.concat([held, chunk.subarray(0, size)]);
+  const at = held.indexOf(tag);
+  const cut = at >= 0 ? at : Math.max(held.length - tag.length + 1, 0);
+  for (let data = held.subarray(0, Math.min(cut, Math.max(65537 - sent, 0))); data.length;) {
+    try { const written = fs.writeSync(out, data); sent += written; data = data.subarray(written); } catch (error) { if (error.code !== "EAGAIN") throw error; Atomics.wait(pause, 0, 0, 1); }
+  }
+  held = held.subarray(cut);
+  if (at >= 0) { done = true; held = Buffer.alloc(0); parentPort.postMessage("ended"); }
+}
+fs.closeSync(reader);`;
+  // Under Bun each cell's fd 1 and 2 are its own pipe, so children and raw writes outliving the cell write nowhere.
+  const redirect = () => {
+    if (!libc) return async () => {};
+    const fds = new Int32Array(2);
+    if (libc.pipe(ffi.ptr(fds)) !== 0) throw new Error("kernel output pipe failed");
+    const [reader, writer] = fds;
+    libc.dup2(writer, 1);
+    libc.dup2(writer, 2);
+    const drain = new Worker(drainer, { eval: true, workerData: { reader, out, marker: marker.toString() } });
+    drain.unref();
+    const ended = new Promise((resolve) => { drain.once("message", resolve); drain.once("exit", resolve); });
+    return async () => {
+      libc.dup2(quiet, 1);
+      libc.dup2(quiet, 2);
+      writeAll(writer, marker);
+      fs.closeSync(writer);
+      await Promise.race([ended, new Promise((resolve) => setTimeout(resolve, 5000))]);
+    };
+  };
+
+  const childProcess = require("node:child_process");
+  const inherited = (stdio) => stdio === "inherit" || stdio === 1 || stdio === 2 || stdio === process.stdout || stdio === process.stderr;
+  const children = [["spawn", true, () => ["pipe", "pipe", "pipe"], true], ["spawnSync", true, () => ["pipe", "pipe", "pipe"]],
+    ["fork", true, (settings) => settings.silent ? ["pipe", "pipe", "pipe", "ipc"] : [0, 1, 2, "ipc"], true],
+    ["execFileSync", true, () => ["pipe", "pipe", "pipe"]], ["execSync", false, () => ["pipe", "pipe", "inherit"]]];
+  for (const [name, listed, fallback, lasting] of children) {
+    const original = childProcess[name];
+    childProcess[name] = (...argv) => {
+      const at = listed && (Array.isArray(argv[1]) || argv[1] == null) ? 2 : 1;
+      const settings = { ...argv[at] };
+      const stdio = typeof settings.stdio === "string" ? [settings.stdio, settings.stdio, settings.stdio, ...name === "fork" ? ["ipc"] : []] : [...settings.stdio ?? fallback(settings)];
+      const inherits = [1, 2].filter((fd) => inherited(stdio[fd]));
+      if (!inherits.length || owned() && (libc || !lasting)) return original(...argv);
+      const forwarded = owned() ? inherits : [];
+      for (const fd of inherits) stdio[fd] = forwarded.length ? "pipe" : "ignore";
+      const next = [...argv];
+      if (at === 2) next[1] = argv[1] ?? [];
+      next[at] = { ...settings, stdio };
+      const started = original(...next);
+      for (const fd of forwarded) started.stdio[fd].on("data", (chunk) => { if (owned()) writeAll(1, chunk); });
+      return started;
+    };
+  }
+  if (globalThis.Bun) {
+    for (const name of ["spawn", "spawnSync"]) {
+      const original = Bun[name];
+      Bun[name] = (command, options) => {
+        if (owned()) return original(command, options);
+        const object = !Array.isArray(command) && typeof command === "object";
+        const settings = { ...object ? command : options };
+        const quiet = (value) => value === "inherit" || stdioTarget(value) ? "ignore" : value;
+        if (settings.stdio) settings.stdio = settings.stdio.map((value, fd) => fd === 1 || fd === 2 ? quiet(value) : value);
+        else Object.assign(settings, { stdout: quiet(settings.stdout), stderr: quiet(settings.stderr ?? "inherit") });
+        return object ? original(settings) : original(command, settings);
+      };
+    }
+    const write = Bun.write;
+    Bun.write = (destination, data, ...rest) => stdioTarget(destination) && !owned() ? Promise.resolve(size(data)) : write(destination, data, ...rest);
+    Bun.$ = new Proxy(Bun.$, { apply: (shell, self, args) => owned() ? Reflect.apply(shell, self, args) : Reflect.apply(shell, self, args).quiet() });
+  }
 
   const stray = (error) => { strays?.push(String(error)); };
   process.on("uncaughtException", stray);
   process.on("unhandledRejection", stray);
 
   for await (const line of readline.createInterface({ input: process.stdin })) {
+    const settle = redirect();
     outputBytes = 0;
     bridgeFailed = false;
     strays = [];
@@ -85,23 +202,20 @@ async function worker() {
       const request = JSON.parse(line);
       if (request.shutdown === true) process.exit(0);
       bridge = { port: request.port, token: request.token, active: true };
-      const prior = hooks.map(([target, name]) => target[name]);
-      for (const [target, name, replacement] of hooks) target[name] = replacement;
-      try {
-        const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-        await bridgeContext.run(bridge, () => new AsyncFunction(request.code)());
-        response = strays.length ? { ok: false, error: strays[0], bridge_failed: bridgeFailed } : { ok: true, bridge_failed: bridgeFailed };
-      } finally {
-        hooks.forEach(([target, name], index) => { target[name] = prior[index]; });
-      }
+      current = bridge;
+      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+      await bridgeContext.run(bridge, () => new AsyncFunction(request.code)());
+      response = strays.length ? { ok: false, error: strays[0], bridge_failed: bridgeFailed } : { ok: true, bridge_failed: bridgeFailed };
     } catch (error) {
       response = { ok: false, error: String(error), bridge_failed: bridgeFailed };
     } finally {
       if (bridge) bridge.active = false;
+      current = undefined;
       strays = undefined;
     }
+    await settle();
     writeAll(3, frame + JSON.stringify(response) + "\n");
-    writeAll(1, frame + "\n");
+    writeAll(out, frame + "\n");
   }
 }
 

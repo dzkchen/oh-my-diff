@@ -129,13 +129,6 @@ fn fixture_with_registry(
     };
     let thread = ThreadId::new();
     let session = host.open_session(thread, false).unwrap();
-    *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
-        root,
-        repository,
-        None,
-        None,
-        thread.to_string(),
-    ));
     let lead = Lead {
         host,
         session,
@@ -1071,8 +1064,14 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         .grants("budget")
         .unwrap()
         .source_sha256;
-    let mut scope = fixture.lead.session.data.0.lock().unwrap();
-    let hosts = scope.as_mut().unwrap();
+    let mut hosts = operations::data_hosts(
+        &fixture.lead,
+        crate::workspace_operations::WorkspaceAuthority::for_platform(
+            &fixture.lead.host.repository,
+            PermissionProfile::default(),
+        )
+        .unwrap(),
+    );
     let reference = hosts
         .text_evidence("budget", &source, "probe", "hello world")
         .unwrap();
@@ -1135,7 +1134,7 @@ impl codex_extension_api::ToolInvoker for RecordingInvoker {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
-    let Some(fixture) = fixture(&[
+    let Some(mut fixture) = fixture(&[
         Package {
             id: "retry",
             capabilities: &["interception", "store"],
@@ -1151,8 +1150,8 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     ]) else {
         return;
     };
-    *fixture.lead.session.contract.lock().unwrap() =
-        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let _manager = attach_thread(&mut fixture).await;
+    fixture.core.expansion.thread_started(&fixture.lead);
     let mods = mods(&fixture.core);
     let (session_store, thread_store, turn_store) = (
         ExtensionData::new("session".to_owned()),
@@ -1380,7 +1379,7 @@ async fn tool_output_without_owner_is_not_offered() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
-    let Some(fixture) = fixture(&[Package {
+    let Some(mut fixture) = fixture(&[Package {
         id: "keeper",
         capabilities: &["interception", "store"],
         manifest: Value::Null,
@@ -1388,8 +1387,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     }]) else {
         return;
     };
-    *fixture.lead.session.contract.lock().unwrap() =
-        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let _manager = attach_thread(&mut fixture).await;
     let mods = mods(&fixture.core);
     let (session_store, thread_store, turn_store) = (
         ExtensionData::new("session".to_owned()),
@@ -1470,8 +1468,10 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         .source_sha256;
     let (mut paged, mut cursor, mut pages) = (String::new(), 0, 0);
     {
-        let mut scope = fixture.lead.session.data.0.lock().unwrap();
-        let hosts = scope.as_mut().unwrap();
+        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(&fixture.lead)
+            .await
+            .unwrap();
+        let mut hosts = operations::data_hosts(&fixture.lead, authority);
         loop {
             let page = hosts
                 .call(
@@ -1516,6 +1516,127 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         answered.starts_with("tool_original_unavailable"),
         "{answered}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shared_parent_child_sessions_bind_data_and_tool_output_to_each_thread() {
+    let mut fixture = fixture(&[Package {
+        id: "keeper",
+        capabilities: &["interception", "store"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }])
+    .unwrap();
+    let manager = attach_thread(&mut fixture).await;
+    let config = manager
+        .get_thread(fixture.lead.thread)
+        .await
+        .unwrap()
+        .config()
+        .await;
+    let started = manager
+        .start_thread(codex_core::StartThreadOptions::new((*config).clone()))
+        .await
+        .unwrap();
+    let parent = fixture.lead.clone();
+    let child = Lead {
+        thread: started.thread_id,
+        depth: 1,
+        ..parent.clone()
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    for first_child in [false, true] {
+        let session = parent.host.open_session(ThreadId::new(), false).unwrap();
+        *session.contract.lock().unwrap() =
+            crate::contract::SessionContract::resolve(&parent.host, &[]);
+        let parent = Lead {
+            session: session.clone(),
+            ..parent.clone()
+        };
+        let child = Lead {
+            session,
+            ..child.clone()
+        };
+        let order = if first_child {
+            [&child, &parent]
+        } else {
+            [&parent, &child]
+        };
+        for lead in order {
+            for operation in ["evidence.write", "tools.original"] {
+                let grants = fixture
+                    .core
+                    .runtime
+                    .lock()
+                    .unwrap()
+                    .grants("keeper")
+                    .unwrap();
+                let source = grants.source_sha256.clone();
+                let caller = Caller {
+                    id: "keeper",
+                    source: &source,
+                    grants: Some(grants),
+                    generation: fixture.core.runtime.lock().unwrap().generation(),
+                    origin: Origin::Event,
+                    record_changes: false,
+                };
+                let call_id = format!("call-{}-{operation}", lead.thread);
+                fixture.core.expansion.originals.lock().unwrap().insert(
+                    (lead.thread.to_string(), call_id.clone()),
+                    Arc::from("scoped output"),
+                );
+                let arguments = if operation == "evidence.write" {
+                    json!({"media_type": "text/plain", "content": "scoped output"})
+                } else {
+                    json!({"call_id": call_id})
+                };
+                let result = CHAIN_CALL
+                    .scope(
+                        call_id,
+                        operations::dispatch(
+                            &fixture.core,
+                            lead,
+                            caller,
+                            None,
+                            ModHostCall {
+                                operation: operation.into(),
+                                arguments,
+                            },
+                            &cancelled,
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                let reference = if operation == "tools.original" {
+                    result["reference"].clone()
+                } else {
+                    result
+                };
+                for reader in [&parent, &child] {
+                    let authority =
+                        crate::workspace_operations::WorkspaceAuthority::for_lead(reader)
+                            .await
+                            .unwrap();
+                    let mut data = codex_omd::scoped_data::ScopedDataHost::new(
+                        reader.host.root.clone(),
+                        authority.repository,
+                        authority.session_root,
+                        authority.session_database,
+                        "keeper".into(),
+                        reader.thread.to_string(),
+                        source.clone(),
+                    )
+                    .unwrap();
+                    let page = data.call("evidence.read", json!({"reference": reference}), || true);
+                    if reader.thread == lead.thread {
+                        assert!(page.unwrap().to_string().contains("scoped output"));
+                    } else {
+                        assert_eq!(page.unwrap_err().to_string(), "resource_scope_mismatch");
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4679,6 +4800,33 @@ fn the_agent_inventory_prunes_only_stale_snapshots_and_staging_files() {
     assert!(directory.path().join("role.toml").exists());
     assert!(!directory.path().join("stale.json").exists());
     assert!(!directory.path().join(staging).exists());
+}
+
+#[test]
+fn a_new_thread_keeps_old_thread_store_data() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    let archived = fixture.lead.host.root.join("data/threads/archived/owner");
+    std::fs::create_dir_all(&archived).unwrap();
+    std::fs::write(archived.join("store.json"), "{}").unwrap();
+    for path in [
+        archived.join("store.json"),
+        archived.clone(),
+        archived.parent().unwrap().to_path_buf(),
+    ] {
+        std::fs::File::open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    fixture
+        .lead
+        .host
+        .open_session(ThreadId::new(), false)
+        .unwrap();
+    assert!(archived.join("store.json").exists());
 }
 
 #[test]

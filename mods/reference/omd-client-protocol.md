@@ -83,6 +83,9 @@ omd/client/event {epoch, component, event}
 - `{kind: 'key', key, text?}`
 - `{kind: 'focus'}`
 
+Pointer `column` and `row` are signed 32-bit cell coordinates relative to the component. Captured `drag` and
+`up` events may carry negative positions after moving above or left of its bounds.
+
 Behavior:
 
 - `{delivered}` is answered in the order the connection sent its events and actions.

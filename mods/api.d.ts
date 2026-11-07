@@ -289,6 +289,7 @@ export type RenderEvent<C extends RenderComponent = RenderComponent> = C extends
 } : never;
 export type RenderTree = { tree: TerminalComponent[] };
 export type ComponentKey = { kind: 'key'; key: string | null; text: string | null };
+/** Component-relative signed 32-bit coordinates; captured drag and release positions may be negative. */
 export type ComponentPointer = { kind: 'pointer'; column: number; row: number; half?: 0 | 1 | null;
   action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
 /** The region a component module draws: its width in cells, its height in rows (the node's `height`, 0 when it has none), the props of its `module` node, and `post`, which hands the mod's `component_post` hooks at most one value per frame. */
@@ -394,6 +395,7 @@ export interface HostOperations {
   'store.list': { arguments: { prefix?: string; cursor?: string; limit?: number; scope?: StoreScope }; result: { keys: { key: string; revision: number; bytes: number; provenance: StoreProvenance }[]; cursor: string | null; generation: number } };
   'store.export': { arguments: { scope?: StoreScope; cursor?: string }; result: { schema: 1; owner: string; scope: StoreScope; generation: number; entries: Record<string, { value: Json; revision: number; provenance: StoreProvenance }>; cursor: string | null } };
   'store.reset': { arguments: { expected_generation: number; scope?: StoreScope }; result: { generation: number } };
+  /** Evidence is bound to the current thread, repository, mod source and configuration generation under the effective selection. */
   'evidence.write': { arguments: { media_type: 'application/json' | 'text/plain'; content: Json; label?: string } | { media_type: 'image/png' | 'image/jpeg' | 'image/svg+xml' | 'application/octet-stream'; base64: string; label?: string }; result: ResourceRef };
   'evidence.read': { arguments: { reference: ResourceRef; cursor?: number; max_bytes?: number }; result: { reference: ResourceRef; text: string; cursor: number | null; bytes: number } };
   'sessions.list': { arguments: { since?: string; until?: string; cursor?: string; limit?: number }; result: { sessions: SessionSummary[]; cursor: string | null; revision: string; scan_truncated: boolean; unavailable: number; projection: string } };

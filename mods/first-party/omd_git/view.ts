@@ -2,7 +2,7 @@ import type { TerminalClient, TerminalComponent, TerminalSpan, TerminalTone } fr
 import { DOING, ago, cut, headline, size } from './git.ts';
 import type { Branch, Change, Commit, Head, Operation, Stash } from './git.ts';
 
-export type Hunk = { staged: boolean; header: string; line: number };
+export type Hunk = { staged: boolean; header: string; line: number; patch: string | null };
 export type Repo = {
   dir: string; top: string; gitdir: string; error: string | null; notice: string | null;
   panel: number; sel: number[]; head: Head; op: Operation | null; files: Change[]; more?: boolean; branches: Branch[]; commits: Commit[]; stash: Stash[];
@@ -34,7 +34,7 @@ const NOTICE_ROWS = 1;
 const MAX_ROWS = 100;
 const WINDOW = 80;
 const SIGNIN_ROWS = 10;
-const LINE_BYTES = 200;
+export const LINE_BYTES = 200;
 const TITLE_BYTES = 120;
 const BUDGET = 56_000;
 const DOCKED = 84;

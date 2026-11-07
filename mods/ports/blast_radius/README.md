@@ -44,6 +44,8 @@ A `cd`, `pushd`, `popd` or `( subshell )` earlier in the line, or a `git -C` opt
 `sudo`, `env`, `time`, `nice` and `VAR=value` are looked through. Only the first risky part of a compound command is
 measured.
 
+For `rm`, `--` ends option parsing: later names such as `-cache` are included in the measured deletion targets.
+
 ## Settings
 
 It has no settings.

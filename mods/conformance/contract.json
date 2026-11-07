@@ -262,7 +262,7 @@
     "operations:workspace.snapshot": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('workspace.snapshot'"},"decision":"tool.workspace"},
     "operations:workspace.stat": {"status":"frozen","consumer":{"path":"mods/first-party/omd_advisor/index.ts","snippet":"api.host.tryCall('workspace.stat'"},"decision":"tool.workspace"},
     "operations:workspace.transaction": {"status":"frozen","consumer":{"path":"mods/examples/workspace/index.ts","snippet":"api.host.call('workspace.transaction'"},"decision":"tool.workspace"},
-    "operations:workspace.unwatch": {"status":"experimental","reason":"Used by omd_preview to stop its keyed file watch; experimental in 1.0.0."},
+    "operations:workspace.unwatch": {"status":"frozen","experimental_fields":["key"],"reason":"Unwatch by `key` follows the watch `key` (workspace_watch_key_v1), added after 1.0.0.","consumer":{"path":"mods/first-party/omd_preview/index.ts","snippet":"api.host.tryCall('workspace.unwatch'"},"decision":"context.events"},
     "operations:workspace.watch": {"status":"frozen","experimental_fields":["key","git"],"reason":"Watch `key` (workspace_watch_key_v1) and `git` (workspace_watch_git_v1) were added after 1.0.0.","consumer":{"path":"mods/examples/watch_notify/index.ts","snippet":"api.host.call('workspace.watch'"},"decision":"context.events"},
     "components:box": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'box'"},"decision":"terminal.box_model"},
     "components:button": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'button'"},"decision":"terminal.controls"},

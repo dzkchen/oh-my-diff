@@ -72,9 +72,9 @@ def managed_recovery(base, profile, store, env, command, mode):
     assert deployed and deployed["tier"] == "append"
     refused = subprocess.run([str(manager), "disable", str(store), deployed["path"]], capture_output=True, text=True)
     assert refused.returncode and "managed_by_policy" in refused.stderr + refused.stdout
-    command(profile, "mod", "disable", "omd_logo")
+    command(profile, "mod", "disable", "omd_logo", "--json")
     assert managed(), "mod-only recovery keeps the managed package"
-    command(profile, "mod", "enable", "omd_logo")
+    command(profile, "mod", "enable", "omd_logo", "--json")
     if mode == "broker":
         call([manager, "policy", "rollback"], env)
         assert call([manager, "policy", "show"], env) is None
@@ -165,9 +165,9 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         call([manager, "disable", platform_store, broken], env)
         call([manager, "reload", platform_store], env)
         assert command("platform", "status", "--json")["other_active_mods"] == []
-        command("platform", "activate", "direct")
+        command("platform", "activate", "direct", "--json")
         assert command("platform", "status", "--json")["host_mode"] == "upstream_direct"
-        command("platform", "activate", "platform")
+        command("platform", "activate", "platform", "--json")
         assert call([base / "platform-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert platform_store.is_dir()
         observations["platform"] = {"first_party_defaults": ["omd_logo", "omd_mods", "omd_update"], "user_mod_tool": offline["steps"][0]["value"],
@@ -235,7 +235,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
             assert any(item.get("name") == identifier for item in listed["installed"])
             call([base / "full-bin/codex", "plugin", "remove", f"{identifier}@oh-my-diff"], env, False)
         assert call([base / "full-bin/codex", "plugin", "list", "--json"], env)["installed"] == []
-        disabled = command("full", "mod", "disable", "omd_statusline")
+        disabled = command("full", "mod", "disable", "omd_statusline", "--json")
         assert not next(item for item in disabled["packages"] if item["id"] == "omd_statusline")["enabled_in_store"]
         side_by_side = command("full-upgrade", *(install + ["--attach-store"]))
         assert not next(item for item in side_by_side["packages"] if item["id"] == "omd_statusline")["enabled_in_store"]
@@ -243,9 +243,9 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert (base / "full-bin/codex").is_file()
         assert not next(item for item in command("full", "status", "--json")["packages"]
                         if item["id"] == "omd_statusline")["enabled_in_store"]
-        activated = command("full", "activate", "full")
+        activated = command("full", "activate", "full", "--json")
         assert activated["host_mode"] == "omd"
-        direct = command("full", "activate", "direct")
+        direct = command("full", "activate", "direct", "--json")
         assert not any(item["loaded_by_profile"] for item in direct["packages"])
         assert "oh-my-diff" in tomllib.loads((home / "config.toml").read_text()).get("marketplaces", {})
         note = base / "full-prefix/personal-note.txt"
@@ -262,7 +262,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
         assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == sorted(set(expected_defaults()) - {"omd_statusline"})
-        enabled = command("full", "mod", "enable", "omd_statusline")
+        enabled = command("full", "mod", "enable", "omd_statusline", "--json")
         assert next(item for item in enabled["packages"] if item["id"] == "omd_statusline")["loaded_by_profile"]
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         observations["full"] = {"installed_mods": [item["id"] for item in full["packages"]],

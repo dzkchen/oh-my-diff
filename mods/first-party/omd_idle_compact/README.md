@@ -88,6 +88,8 @@ omd-mod settings "$STORE" "$STORE/sources/omd_idle_compact" '{"cache_ttl_minutes
 - Approvals and questions from subagents (helper agents the main agent starts for part of a task) don't count as
   the thread waiting on you.
 - Codex's own compactions (automatic or `/compact`) disarm the timer until the next response.
+- A mod has 16 timers across every thread in one Oh My Diff process. When other threads hold them all, a toast says
+  idle compaction is off for this thread, and it arms again at a later response once a timer frees up.
 
 ## More
 

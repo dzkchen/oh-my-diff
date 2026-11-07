@@ -921,6 +921,54 @@ impl ModStore {
         self.selection_status_inspected_in(project, &configuration, &lock, None)
     }
 
+    pub(crate) fn data_selection(
+        &self,
+        project: &Path,
+        owner: &str,
+        source_sha256: &str,
+    ) -> Result<(u64, ModSelection)> {
+        let managed = self.managed()?;
+        let configuration = match self.configuration() {
+            Ok(configuration) => configuration,
+            Err(_) if managed.is_some() => ModConfiguration {
+                schema: 1,
+                revision: 0,
+                node: None,
+                mods: Vec::new(),
+            },
+            Err(error) => return Err(error),
+        };
+        let brokered = brokered_grants(&self.root)?;
+        let mut selections = match &managed {
+            Some(managed) => {
+                managed
+                    .selections(
+                        &self.managed_deployment()?,
+                        &self.managed_user(),
+                        Some(project),
+                    )
+                    .0
+            }
+            None => Vec::new(),
+        };
+        let administered = selections.len();
+        selections.extend(configuration.mods);
+        let selection = super::ModHost::select(
+            &selections,
+            administered,
+            true,
+            brokered.as_ref().map(|(_, grants)| grants),
+            managed.as_ref().map(|managed| &managed.policy),
+            &mut Vec::new(),
+            |path| verified_package(path).map(|(package, sha256)| (package, String::new(), sha256)),
+        )?
+        .remove(owner)
+        .map(|(selection, _, _)| selection)
+        .filter(|selection| selection.sha256 == source_sha256 && selection.authority_current())
+        .ok_or_else(|| failure("data_source_not_selected"))?;
+        Ok((configuration.revision, selection))
+    }
+
     pub(crate) fn selection_status_inspected_in(
         &self,
         project: Option<&Path>,

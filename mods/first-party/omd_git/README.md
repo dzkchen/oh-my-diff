@@ -126,6 +126,8 @@ It has no settings.
 - The first 200 changed files and branches and the last 100 commits are listed. The main view keeps about 28 KB or
   1,000 lines, and each line is cut at 200 bytes.
 - Each session keeps its own selection and view, for the repository of its working directory.
+- Hunk actions use the exact displayed patch. If it changes, including while confirming discard, refresh and review
+  it again. Hunks clipped by the display limits cannot be staged, discarded or attached from that preview.
 
 ## More
 
