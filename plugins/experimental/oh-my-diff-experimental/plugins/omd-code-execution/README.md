@@ -61,7 +61,8 @@ Python, then chart it in Bun".
 - Python keeps module globals across cells. Bun keeps `globalThis` across cells.
 - A Python or Bun worker (the kernel process that runs the cells) can call only the tools available in the cell that
   started it.
-- Cell output is captured in the order it was written. Anything written after the cell ends is discarded.
+- Cell output is captured in the order it was written. Anything written after the cell ends is discarded, including
+  output from a cell's threads, timers or child processes that runs during a later cell.
 
 ## Needs and limits
 

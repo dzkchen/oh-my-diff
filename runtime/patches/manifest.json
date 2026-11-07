@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.0.patch",
-    "sha256": "0f28e9a3e70f84ea5566c2217e16a330da6cfdfaa154e32a69ea9fffd031bd9f"
+    "sha256": "ef966c90fed2089ec8f56ea8a23d6294084e419c0e0f247bb8f5f64f18a928b1"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1107,11 +1107,11 @@
     },
     "codex-rs/ext/omd/src/clients.rs": {
       "before": null,
-      "after": "589f504d81b72f9b22376b42ff98636fb92ce067435b94abf929163a94d1e3a4"
+      "after": "6e586aa669f325c70cb12c9f59f9b03129c81178f5079fce8b334dc07b5e2f2c"
     },
     "codex-rs/ext/omd/src/clients_tests.rs": {
       "before": null,
-      "after": "f0638aeab09f9cecc39c434391c5502234616b062ce67042ccd9d5ffeead43fb"
+      "after": "44f0b79e21e3e6c9583b1b275172bd69ee4dab11aa1a29f0f78d2de51cd0a013"
     },
     "codex-rs/ext/omd/src/config.rs": {
       "before": null,
@@ -1147,7 +1147,7 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "34e84cfe69f8784c931de9d6991cbeda4c992292684f16baae0e4071a68760f0"
+      "after": "5673a14efe9be30e59ac08427924ae8c44352d4ebec39165c989dd8af261651c"
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
@@ -1215,7 +1215,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "602d631872c1f3cc25b873677c9300c1ca51808f7cc4f68ac9f5535f51ffb7fa"
+      "after": "26de6318f18154e228ce8c32c863e7a8e916302f55cdf2c45d7b718a36a64692"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -2755,11 +2755,11 @@
     },
     "codex-rs/tui/src/mod_module.rs": {
       "before": null,
-      "after": "736eab45d1aab9ba4df9c9c3f348e6beb14f526cdaaca265cc1d8bc89cf74270"
+      "after": "ba32c98abaa98c41730192b0e2b9f3ae38d2cdf8dbc8c44678ee6757aff00b2f"
     },
     "codex-rs/tui/src/mod_module_tests.rs": {
       "before": null,
-      "after": "232bce595f055eba0174d45fc632a899ceb5af80187fb2f85877cea21c9338b1"
+      "after": "9c98f4fec74ff9b264da62006167c829789242fe8ddd26c27941a023d9261d05"
     },
     "codex-rs/tui/src/mod_pty.rs": {
       "before": null,

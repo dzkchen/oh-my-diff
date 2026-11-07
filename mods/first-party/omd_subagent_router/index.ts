@@ -6,7 +6,7 @@ type Directives = Partial<Record<Role | 'all', Choice>>;
 type Named = { model: string; displayName: string; hidden?: boolean };
 type Model = Named & { hidden: boolean; modelProvider?: string | null; supportedReasoningEfforts: { reasoningEffort: ReasoningEffort }[] };
 type Outcome = { status: string; text?: string; error?: string; failure?: AgentFailure | null; candidate_sha256?: string; changed_paths?: string[] };
-type Task = { role: string; route: string; provider: string; model: string; isolation: 'shared' | 'worktree'; request_id?: string;
+type Task = { role: string; route: string; provider: string; billing: RouteInfo['billing']; credential: string | null; model: string; isolation: 'shared' | 'worktree'; request_id?: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled'; text?: string; error?: string; paths?: string[]; candidate?: string; held?: boolean; at: number;
   brief?: string; retry_at?: number; retry_of?: string };
 type State = Directives & { tasks?: Record<string, Task> };
@@ -253,7 +253,10 @@ export default function activate(api: ModAPI) {
       const route = available.find(item => item.name === task.route);
       const failure = seen.failed?.[task.provider];
       const cleared = failure && failure.at < task.retry_at! - RETRY_GRACE_MS ? { ...seen, failed: { ...seen.failed, [task.provider]: { ...failure, at: 0 } } } : seen;
-      const reason = !retrying ? 'retry_after_limit is off' : route ? skip(route, models, cleared, task.isolation === 'worktree') : 'its route is gone';
+      const moved = route && (route.provider !== task.provider || route.billing !== task.billing || route.credential !== task.credential);
+      const reason = !retrying ? 'retry_after_limit is off' : !route ? 'its route is gone'
+        : moved ? `route ${task.route} now uses a different provider, account or billing; start the task again to run it there`
+        : skip(route, models, cleared, task.isolation === 'worktree');
       const launched = route && !reason ? launch({ role: task.role, route: task.route, provider: task.provider, model: task.model, isolation: task.isolation, retry_of: handle }, route, task.brief ?? '') : null;
       const restarted = typeof launched === 'string';
       const cancelled = api.host.tryCall('agents.cancel', { handle, deliver: !restarted });
@@ -332,14 +335,14 @@ export default function activate(api: ModAPI) {
     return skipped.length ? { ...reported, skipped } : reported;
   };
 
-  const launch = (base: Omit<Task, 'status' | 'at'>, route: RouteInfo, prompt: string): string | { status: 'refused'; error: string } => {
+  const launch = (base: Omit<Task, 'status' | 'at' | 'billing' | 'credential'>, route: RouteInfo, prompt: string): string | { status: 'refused'; error: string } => {
     const worktree = base.isolation === 'worktree';
     const spawned = api.host.tryCall('agents.spawn', { role: base.role, route: route.name, prompt, workspace: worktree ? 'isolated_worktree' : 'read_only', ...base.brief ? { hold_failure: true } : {},
       ...base.model === route.model ? {} : { model: base.model }, ...!worktree && !route.tools.length ? { tools: route.billing === 'provider_billed' ? [...READ_TOOLS, 'web_search'] : READ_TOOLS } : {} });
     if (!spawned.ok) return { status: 'refused', error: spawned.error };
     const handle = spawned.value.handle;
     const state = current();
-    const tasks = { ...state.tasks, [handle]: { ...base, status: 'running', at: Date.now() } as Task };
+    const tasks = { ...state.tasks, [handle]: { ...base, billing: route.billing, credential: route.credential, status: 'running', at: Date.now() } as Task };
     const evictable = Object.keys(tasks).filter(name => tasks[name].status !== 'running' && !tasks[name].held && !tasks[name].retry_at)
       .sort((a, b) => tasks[a].at - tasks[b].at);
     for (const old of evictable) if (Object.keys(tasks).length > KEEP_TASKS) delete tasks[old];

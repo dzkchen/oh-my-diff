@@ -226,10 +226,10 @@ function checkProject(directory) {
   const parsed = ts.getParsedCommandLineOfConfigFile(join(directory, 'tsconfig.json'), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: diagnostic => fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')) });
   const generated = new Set(sources.map(source => resolve(directory, source.slice(0, -1))));
   const files = [...new Set([...parsed.fileNames.map(file => resolve(file)).filter(file => !generated.has(file)), ...sources.map(source => resolve(directory, source))])];
-  const jsxConfig = join(directory, 'tsconfig.omd-jsx.json');
-  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }));
+  const jsxConfig = join(directory, `tsconfig.omd-jsx-${process.pid}-${Date.now().toString(36)}.json`);
+  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }), { flag: 'wx' });
   try {
-    command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.omd-jsx.json'], { cwd: directory });
+    command('pnpm', ['exec', 'tsc', '-p', basename(jsxConfig)], { cwd: directory });
   } finally {
     rmSync(jsxConfig, { force: true });
   }
@@ -341,9 +341,11 @@ function costProject(directory, args) {
   }
 }
 
-function watchProject(directory, store, once) {
+export function watchProject(directory, store, once) {
   let files = new Set(['mod.json']);
   const reload = () => {
+    const manifest = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
+    files = new Set(['mod.json', manifest.entrypoint ?? 'index.ts', ...(manifest.assets ?? []), ...Object.values(manifest.lifecycle ?? {}), ...jsxSources(directory)]);
     checkSyntax(directory);
     const inspected = engineJson(['inspect', directory]);
     const locked = engineJson(['package-lock', store]).packages;
@@ -360,8 +362,6 @@ function watchProject(directory, store, once) {
     } else {
       trustPackage(store, directory);
     }
-    files = new Set(['mod.json', inspected.manifest.entrypoint ?? 'index.ts', ...(inspected.manifest.assets ?? []), ...Object.values(inspected.manifest.lifecycle ?? {})]);
-    for (const source of jsxSources(directory)) files.add(source);
     const result = engineJson(['reload', store]);
     copyDeclarations(store, directory);
     process.stdout.write(`${JSON.stringify({ reloaded: directory, sha256: inspected.sha256, result })}\n`);

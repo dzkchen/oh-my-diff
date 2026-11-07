@@ -40,7 +40,8 @@ after later turns, as long as the files it touches haven't changed since.
   running after 3 hours (for example after a crash) no longer blocks it.
 - If the turn replaced a file with a directory and that directory now holds anything else, even ignored files, it
   refuses even with `force`, because putting the file back would delete them.
-- If an undo stops partway (a permission or Git error), run `/undo` again: files already put back count as done.
+- If an undo stops partway (a permission or Git error), run `/undo` again: files already put back count as done, and
+  `/redo` still brings back the files as they were before the first attempt.
 - Untracked files count: a file you had but never committed is put back too, and so do tracked files that
   `.gitignore` would otherwise skip.
 
@@ -49,8 +50,8 @@ after later turns, as long as the files it touches haven't changed since.
 - At the start and end of each turn it stores the work tree as a Git commit, using its own index file in `.git`
   (`omd-checkpoint-THREAD.index`), so your staged changes are untouched.
 - It keeps the last 10 turns that changed files, in one history per checkout shared by every Codex session there. Each
-  is kept alive by a ref under `refs/omd/checkpoints/`, and older ones are removed. Once removed, `git gc` can delete
-  their data.
+  is kept alive by a ref under `refs/omd/checkpoints/<checkout>/`, one namespace per checkout so linked worktrees
+  keep each other's refs, and older ones are removed. Once removed, `git gc` can delete their data.
 - The history lives in `.git/omd/state/omd_checkpoint.json`.
 
 ## Needs and limits

@@ -520,10 +520,6 @@ impl Host {
             codex_omd::data_store::prune_thread_directories(&sessions, |name| {
                 name == current || name.starts_with("ledger-")
             });
-            codex_omd::data_store::prune_thread_directories(
-                &self.root.join("data").join("threads"),
-                |name| name == current,
-            );
         }
         let task = Arc::new(ledger::open(
             &sessions,

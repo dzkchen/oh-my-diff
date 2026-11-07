@@ -293,5 +293,6 @@ by `columns` and `rows`, or as last rendered. The default is 80 columns and 0 ro
 says when the next tick is due. The client sends key and pointer events through `omd/client/event`.
 
 Their posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
-host operations as `component_event` hooks, for terminal and client posts alike. Detaching unmounts the client's
-instances.
+host operations as `component_event` hooks, for terminal and client posts alike. A post is delivered only while the
+thread it was posted in is still current and its instance is still mounted. Detaching unmounts the client's instances
+and drops their undelivered posts.
