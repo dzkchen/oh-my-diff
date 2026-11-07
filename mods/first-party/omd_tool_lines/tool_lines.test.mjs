@@ -44,3 +44,9 @@ test('search groups pluralize their name and distinguish interrupted commands', 
   assert.match(text(result), /2 searches.*1 interrupted/);
   assert.doesNotMatch(text(result), /failed|\bok\b/);
 });
+
+test('viewed images keep the native clickable link while generated images are summarized', () => {
+  const image = tool => ({ kind: 'image', call_id: 'img', tool, path: '/tmp/a.png', prompt: 'a cat', status: 'completed' });
+  assert.deepEqual(render(image('view_image')).value.result.tree, [{ type: 'native' }]);
+  assert.match(text(render(image('image_generation'))), /Generate image/);
+});

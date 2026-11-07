@@ -16,7 +16,7 @@ const GIT = '/repo/.git/worktrees/line\n/repo/.git\n/work/line\n@@\ngit@github.c
 
 const host = (overrides = {}) => ({ operation, arguments: args }) => {
   if (operation in overrides) return overrides[operation](args);
-  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.166.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
+  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.167.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
   if (operation === 'app.request' && args.method === 'config/read') return { config: { model_reasoning_effort: 'high', model_context_window: 272_000 } };
   if (operation === 'app.request' && args.method === 'account/read') return { account: null, requiresOpenaiAuth: true };
   if (operation === 'app.request' && args.method === 'model/list') return { data: [], nextCursor: null };
