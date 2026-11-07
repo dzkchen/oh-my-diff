@@ -64,6 +64,7 @@ function fakeHost({ padding = '', view = {}, overloadedResumes = 0 } = {}) {
     seen.push({ epoch: host.epoch, ...message });
     const reply = result => host.send({ id: message.id, result });
     if (message.method === 'initialize') reply({ userAgent: 'fake' });
+    else if (message.method === 'omd/client/attach' && message.params.renderer?.kind === 'invalid') host.send({ id: message.id, error: { code: -32602, message: 'invalid params: renderer.kind' } });
     else if (message.method === 'omd/client/attach') {
       reply({ clientId: `client-${host.epoch}`, protocol: 'omd-client/1', epoch: host.epoch, roster: [], features: [], delegable: [] });
       host.send({ method: 'omd/view/updated', params: { epoch: host.epoch, revision: 1, snapshot: { view, padding }, actionToken: host.token } });
@@ -155,6 +156,29 @@ test('unix client answers pings, reads large views and reconnects with attach, u
     assert.equal(host.seen.findLast(message => message.method === 'thread/resume').params.threadId, 'thread-1');
     await until(() => views.some(view => view.epoch === '2'));
     assert.equal(session.actionToken, 'token-0');
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a refused reattach leaves the last accepted parameters for reconnect', async () => {
+  const host = fakeHost();
+  await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+  let reconnected;
+  const session = await connect({
+    url: `ws://127.0.0.1:${host.server.address().port}`, name: 'sdk-test', renderer,
+    onView() {}, onRoster() {}, onMirrored() {},
+    onReconnect: change => { reconnected = change; },
+  });
+  try {
+    await assert.rejects(session.attach({ renderer: { ...renderer, kind: 'invalid' } }), { code: -32602 });
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected || session.closed);
+    assert.equal(session.closed, false, 'the refused reattach must not poison the reconnect');
+    assert.ok(reconnected);
+    const attaches = host.seen.filter(message => message.method === 'omd/client/attach');
+    assert.deepEqual(attaches.at(-1).params.renderer, renderer);
   } finally {
     session.close();
     host.server.close();
