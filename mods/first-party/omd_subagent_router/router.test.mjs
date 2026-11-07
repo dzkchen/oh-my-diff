@@ -401,3 +401,32 @@ test('with retry_after_limit, a task stopped by a usage limit restarts once at t
   const idle = fire('timer', '', { key: 'retry' }, { state: ended.state, settings });
   assert.deepEqual([idle.of('routes.list').length, idle.of('agents.spawn').length], [0, 0], 'an early retry timer only re-arms');
 });
+
+test('delegate_task start claims early results and does not repeat mailbox delivery', () => {
+  for (const mode of ['wait', 'async']) for (const delivered of [true, 'pending']) {
+    const answer = { 'agents.wait': () => ({ status: 'completed', text: 'All clear', consumed: false, delivered }),
+      'agents.result': () => ({ status: 'completed', text: 'All clear', consumed: false, delivered }) };
+    const started = delegate({ action: 'start', task: 'Review', mode }, { answer });
+    assert.equal(started.value.result, undefined);
+    assert.equal(started.value.text, 'Its result was already delivered to this thread.');
+    assert.deepEqual(started.of(mode === 'wait' ? 'agents.wait' : 'agents.result')[0], mode === 'wait' ? { handle: 'h1' } : { handle: 'h1', claim: true });
+  }
+  for (const mode of ['wait', 'async']) {
+    const answer = { 'agents.wait': () => ({ status: 'failed', error: 'failed', delivered: true }),
+      'agents.result': () => ({ status: 'failed', error: 'failed', delivered: true }) };
+    const started = delegate({ action: 'start', task: 'Review', mode }, { answer });
+    assert.equal(started.value.error, undefined);
+    assert.equal(started.value.text, 'Its result was already delivered to this thread.');
+  }
+  const worktree = delegate({ action: 'start', task: 'Fix', mode: 'wait', isolation: 'worktree' }, { answer: {
+    'agents.wait': () => ({ status: 'completed', text: 'done', consumed: false, delivered: true }),
+    'agents.result': () => ({ status: 'completed', text: 'done', consumed: true, candidate_sha256: 'abc', changed_paths: ['file'] }),
+  } });
+  assert.equal(worktree.value.result, undefined);
+  assert.deepEqual(worktree.value.changed_paths, ['file']);
+  assert.equal(worktree.value.candidate_sha256, 'abc');
+  assert.match(worktree.value.note, /integrate/);
+  const failed = delegate({ action: 'start', task: 'Review', mode: 'async' }, { settings: { retry_after_limit: true },
+    answer: { 'agents.result': () => ({ status: 'failed', error: 'failed' }) } });
+  assert.deepEqual(failed.of('agents.cancel'), [{ handle: 'h1', deliver: false }]);
+});

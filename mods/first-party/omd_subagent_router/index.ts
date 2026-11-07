@@ -320,14 +320,15 @@ export default function activate(api: ModAPI) {
     if (typeof launched !== 'string') return launched;
     const handle = launched;
     if (skipped.length) fallback(`${skipped.join('; ')}, so this ${role} task runs on ${picked.route.name}`);
-    if (input.mode === 'wait') {
-      const waited = api.host.tryCall('agents.wait', { handle });
-      if (waited.ok) settle(handle, waited.value, false);
-    } else {
-      const early = api.host.tryCall('agents.result', { handle });
-      if (early.ok) settle(handle, early.value);
-    }
+    const early = input.mode === 'wait'
+      ? api.host.tryCall('agents.wait', { handle })
+      : api.host.tryCall('agents.result', { handle, claim: true });
+    if (early.ok) settle(handle, early.value, false);
     const reported = report(handle) as Record<string, Json>;
+    if (early.ok && 'delivered' in early.value && early.value.delivered !== undefined) {
+      const { result: _result, error: _error, ...shown } = reported;
+      return { ...shown, text: DELIVERED, ...skipped.length ? { skipped } : {} };
+    }
     return skipped.length ? { ...reported, skipped } : reported;
   };
 

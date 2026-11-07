@@ -770,11 +770,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "2a942dfa995161542757d0958087d2a961bda16e77903050b0a818aaf9a4e439",
+        "index.ts": "cea81f52415c26fc63ffa6ffb6f56b3d6756e54e33492f4cae7508af69dc0bb3",
         "mod.json": "ab827b7d76b5290d1e9f3e67f2b65a0b5cfeb063e6682f0f6db1be4c869d9ec6"
       },
       "id": "omd_subagent_router",
-      "package_sha256": "9d05e9d7f17b26e7bbfa6e75af0e4b4843528bff5da20be0bbfb04b50f30fbea",
+      "package_sha256": "9d33def4c6d561e014e784a405e376365fe73ff13751a49f65fce5c5a057af2c",
       "source": "mods/first-party/omd_subagent_router",
       "version": "1.0.0"
     },
