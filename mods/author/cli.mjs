@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createRequire, stripTypeScriptTypes } from 'node:module';
 
+const emitWarning = process.emitWarning;
+process.emitWarning = (warning, ...rest) => String(warning).includes('stripTypeScriptTypes') ? undefined : emitWarning.call(process, warning, ...rest);
+
 const sdkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Installed generations are pruned after updates, so projects depend on the SDK through the installer's current link.
 const stableSdkRoot = (() => {
@@ -386,7 +389,8 @@ async function main() {
   if (['--help', '-h', 'help'].includes(action)) return void process.stdout.write(USAGE);
   const directory = resolve(rawDirectory);
   switch (action) {
-    case 'create': return createProject(directory, nameOrStore || basename(directory).replaceAll('-', '_'));
+    case 'create': return createProject(directory, nameOrStore || basename(directory).replaceAll('-', '_'))
+      .then(() => void process.stderr.write(`created ${directory}; next: cd ${directory} && pnpm test\n`));
     case 'example': return copyExample(directory, nameOrStore).then(() => lock(directory));
     case 'examples': return copyExamples(directory);
     case 'check':

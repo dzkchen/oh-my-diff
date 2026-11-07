@@ -72,6 +72,7 @@ jobs:
     timeout-minutes: 120
     env:
       CARGO_INCREMENTAL: '0'
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       CARGO_BUILD_JOBS: '3'
       CARGO_PROFILE_TEST_DEBUG: '0'
       OMD_WORK_ROOT: /Users/runner/omd
