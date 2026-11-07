@@ -244,10 +244,12 @@ class Session {
   }
 
   async attach(params = {}) {
-    this.attached = { name: this.options.name, renderer: this.options.renderer, operations: this.options.operations ?? [], ...params };
-    this.attachment = await this.call('omd/client/attach', this.attached);
-    this.epoch = this.attachment.epoch;
-    return this.attachment;
+    const attached = { name: this.options.name, renderer: this.options.renderer, operations: this.options.operations ?? [], ...params };
+    const attachment = await this.call('omd/client/attach', attached);
+    this.attached = attached;
+    this.attachment = attachment;
+    this.epoch = attachment.epoch;
+    return attachment;
   }
 
   async update(params) {
