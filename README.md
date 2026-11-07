@@ -27,6 +27,10 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Codex starts with the OMD logo over a fire, /theme switches to a jellyfish scene, /mods lists the mods, a force-push is blocked by a mod, and a /standup command from the same mod writes a standup from git log" width="100%">
+</p>
+
 You still run `codex`, with your settings, sign-in and sessions, and you can go back to plain Codex at any time with
 nothing to migrate. OMD is in beta and runs only on Apple Silicon macOS.
 
@@ -36,6 +40,22 @@ A mod is a small TypeScript program. It can add a slash command, give the model 
 draw a status line, panel or dialog, or react when the agent runs a tool. Before a mod runs, OMD shows its source,
 license and the permissions it asks for, and you can turn any mod off at any time.
 
+The mod in the demo blocks force-pushes and adds `/standup`:
+
+```ts
+import type { ModAPI } from '@oh-my-diff/mod-api';
+
+export default function activate(api: ModAPI) {
+  api.intercept('tool', { match: { tool: 'exec_command', arguments: { cmd: /\bgit\s+push\b.*\s(--force|-f)\b/ } } },
+    () => ({ deny: 'Force-pushing is off in this repo. Push to a new branch instead.' }));
+
+  api.command('standup', () => ({ submit: 'From git log since yesterday, write my standup as three short bullets.' }),
+    { description: 'Ask the agent for a standup from recent commits' });
+}
+```
+
+The full mod, with its `mod.json`, is in [`mods/examples/repo_rules`](mods/examples/repo_rules).
+
 [How OMD works](docs/how-omd-works.md) · [Trust and permissions](docs/trust-and-permissions.md) ·
 [Write your first mod](docs/mod-authors/first-mod.md)
 
@@ -43,6 +63,7 @@ license and the permissions it asks for, and you can turn any mod off at any tim
 
 OMD+ comes with these, among others:
 
+- **[Themes](mods/first-party/omd_theme/README.md)**: animated scenes behind the conversation, picked with `/theme`.
 - **[Grouped tool lines](mods/first-party/omd_tool_lines/README.md)**: adjacent shell commands collapse into one row; open it for the full output.
 - **[Status line](mods/first-party/omd_statusline/README.md)**: configurable, edited with `/statusline`.
 - **[Auto-continue](mods/first-party/omd_auto_continue/README.md)**: an unanswered approval or question no longer stalls the turn.
