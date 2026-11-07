@@ -39,6 +39,17 @@ test('declining denies the call with the measured summary and never reaches the 
   assert.equal(typeof chain.result.deny, 'string');
 });
 
+test('rm preserves dash-prefixed operands after option termination', { skip }, () => {
+  const { prompt, execs, chain } = guard('rm -rf -- -cache --force -', {
+    'exec.run': [root, exec('3 24 3\n./-cache/a\n./--force\n./-\n')],
+    'terminal.prompt': [declined],
+  });
+  assert.deepEqual(execs[1]?.argv.slice(-4), ['blast-radius', '-cache', '--force', '-']);
+  assert.match(prompt.message, /Paths: -cache --force -/);
+  assert.doesNotMatch(prompt.message, /no paths/);
+  assertShortCircuit(chain, 'blast_radius');
+});
+
 test('a prompt that cannot be asked denies', { skip }, () => {
   const { chain } = guard('git clean -fd', { 'exec.run': [root, exec('')], 'terminal.prompt': [{ error: 'client_surface_unavailable' }] });
   assertShortCircuit(chain, 'blast_radius');
@@ -58,5 +69,11 @@ test('a refspec source cannot become a git option', { skip }, () => {
   const { prompt, execs } = guard('git push origin +--output=x:main', { 'exec.run': [root], 'terminal.prompt': [declined] });
   assert.ok(execs.every(call => !call.argv.some(word => word.startsWith('--output'))), JSON.stringify(execs));
   assert.ok(prompt);
+});
+
+test('force-push operands after -- are preserved instead of previewing another remote', { skip }, () => {
+  const { prompt, execs } = guard('git push --force -- -backup main', { 'exec.run': [root], 'terminal.prompt': [declined] });
+  assert.match(prompt.message, /-backup cannot be inspected as a remote/);
+  assert.deepEqual(execs.map(call => call.program), ['pwd']);
 });
 

@@ -214,6 +214,7 @@ function checkSyntax(directory) {
 
 function checkProject(directory) {
   checkSyntax(directory);
+  engineJson(['inspect', directory]);
   if (!existsSync(join(directory, 'node_modules/.bin/tsc'))) {
     process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
     return;

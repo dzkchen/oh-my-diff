@@ -45,7 +45,6 @@ use std::sync::atomic::Ordering;
 
 pub(crate) use access::AccessState;
 pub(crate) use expansion::take_route_selection;
-pub(crate) use operations::DataScope;
 
 type Reply = std::sync::mpsc::SyncSender<std::io::Result<Value>>;
 type Facts = BTreeMap<String, (String, Option<ModGrants>)>;

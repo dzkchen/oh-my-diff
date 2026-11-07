@@ -289,12 +289,12 @@
       "extension_type": "mod",
       "files": {
         "git.ts": "1b5bea96a307beb81c63a57280165ae75f9f632a6afc83f31037f5ff363bc6ca",
-        "index.ts": "7f7b21d114325771537ad7318b5b20843fe31345ee8d50daeaf7b5071ef061ac",
+        "index.ts": "616040b164071e606b9beeef6145338ad4287f4fef40f75e772645a7b65279fa",
         "mod.json": "dcaf1a1e0a7391a6c1ffc2e7bdb333710dda2d2b27db31f6b4fac2714b4ac16b",
-        "view.ts": "1ee1c4a7f1c26a8af4983053703b12306bd57f7e5163abd7c1b6a54ca9f7e95c"
+        "view.ts": "cf9b83d4fa29e6cfcfc87b65ca0eff88ccdb5f87f14fc164fc1e5fb9054ad378"
       },
       "id": "omd_git",
-      "package_sha256": "fa9f6cd60b0824cc006b553394434a4363580700729a3c35333913fdc0f8c133",
+      "package_sha256": "24411ba444bdfa7d00bd5363f3c37ef4e5b2c0bd061e6cb56b8b59b661e91aea",
       "source": "mods/first-party/omd_git",
       "version": "1.0.0"
     },

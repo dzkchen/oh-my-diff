@@ -182,8 +182,13 @@ const POINTER_ACTIONS: &[&str] = &[
 const POINTER_BUTTONS: &[&str] = &["left", "right", "middle"];
 
 fn pointer(pointer: &Value) -> Option<Value> {
-    (pointer["column"].is_u64()
-        && pointer["row"].is_u64()
+    let coordinate = |axis: &str| {
+        pointer[axis]
+            .as_i64()
+            .is_some_and(|value| i32::try_from(value).is_ok())
+    };
+    (coordinate("column")
+        && coordinate("row")
         && pointer["action"]
             .as_str()
             .is_some_and(|action| POINTER_ACTIONS.contains(&action))
