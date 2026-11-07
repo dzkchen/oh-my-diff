@@ -55,10 +55,12 @@ export default function activate(api: ModAPI) {
   const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => ACRONYMS.has(word) ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1)).join(' ') || id;
   const properties = (item: Pick<PackageState, 'settings_schema'>) => Object.entries(((item.settings_schema as { properties?: Record<string, Property> } | null)?.properties) ?? {});
   const matches = (argument: string) => (item: Pick<PackageState, 'id' | 'scope' | 'installed'>) => item.installed && (key(item) === argument || item.id === argument);
+  const ambiguous = (packages: Pick<PackageState, 'id' | 'scope' | 'installed'>[], argument: string) =>
+    packages.filter(matches(argument)).length > 1 ? `${argument} is installed for you and for this project; use user:${argument} or project:${argument}` : null;
   const describe = (argument: string): PackageState | null => {
     if (!argument) return null;
     const listed = api.host.tryCall('packages.list', null);
-    return listed.ok ? listed.value.packages.find(matches(argument)) ?? null : null;
+    return listed.ok && !ambiguous(listed.value.packages, argument) ? listed.value.packages.find(matches(argument)) ?? null : null;
   };
   const refresh = (state: Saved, notice: string | null): Saved => {
     const listed = api.host.tryCall('packages.list', { fields: [...FIELDS] });
@@ -143,7 +145,8 @@ export default function activate(api: ModAPI) {
       const effort = rest.pop() ?? '';
       return add(state, item, name, { model: rest.join(':'), effort });
     }
-    if (verb === 'scope') return argument === 'user' || argument === 'project' ? { ...state, scope: argument } : state;
+    if (verb === 'scope') return argument === 'user' || argument === 'project' ? { ...state, scope: argument }
+      : { ...state, notice: 'Enter /mods scope user or /mods scope project' };
     if (verb === 'directory') return search(state);
     if (verb === 'get') {
       const entry = state.catalog.find(item => item.id === argument);
@@ -158,6 +161,8 @@ export default function activate(api: ModAPI) {
       const result = api.host.tryCall('packages.reload', null);
       return refresh(state, !result.ok ? `Reload failed: ${result.error}` : `Every mod reloads from your next message${result.value.failed.length ? `; failing now: ${result.value.failed.map(friendly).join(', ')}` : ''}`);
     }
+    const unclear = ambiguous(state.packages, argument);
+    if (unclear) return { ...state, notice: unclear };
     const target = find(state, argument);
     if (!target) return { ...state, notice: `No installed mod ${argument || 'selected'}` };
     if (kept(target) && (verb === 'disable' || verb === 'remove' || (verb === 'toggle' && target.enabled)))
@@ -346,6 +351,8 @@ export default function activate(api: ModAPI) {
     }
     const target = describe(verb === 'mod' ? rest[0] ?? '' : rest.length ? '' : verb);
     if (verb === 'mod') {
+      const unclear = !target && ambiguous(state.packages, rest[0] ?? '');
+      if (unclear) return { display: unclear };
       if (!target) return show(gone(rest[0] ?? '', store({ ...state, notice: current.notice })));
       const [, , item, text] = words(raw, 3);
       const id = key(target);
@@ -360,9 +367,12 @@ export default function activate(api: ModAPI) {
       return next && presenting(target, next);
     }
     if (target) return presenting(target, { ...state, review: null, choosing: null, notice: null });
+    const unclear = !rest.length && ambiguous(state.packages, verb);
+    if (unclear) return { display: unclear };
     const next = act(state, verb, rest.join(' ')) ?? saved();
     store(next);
-    const fallback = verb === 'cancel' ? state.review || state.choosing ? 'Cancelled' : 'Nothing to cancel' : 'No change';
+    const fallback = verb === 'cancel' ? state.review || state.choosing ? 'Cancelled' : 'Nothing to cancel'
+      : verb === 'scope' ? `Installs go to ${next.scope === 'project' ? 'this project' : 'your user store'}` : 'No change';
     return { display: [next.notice, next.review && `${reviewText(next.review)}\nRun /mods apply or /mods cancel`].filter(Boolean).join('\n') || fallback };
   }, { description: 'Browse and install mods, turn them on or off and change their settings' });
 
