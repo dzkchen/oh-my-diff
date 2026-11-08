@@ -72,8 +72,9 @@ not mean unlimited usage or free cached input. See
 | `cache_ttl_minutes` | `auto` | Estimated idle interval in minutes: `auto`, `5`, `10`, `30`, `60`, `120` or `720` (12 hours). This does not configure the provider's cache. |
 | `min_tokens` | `100000` | Smaller contexts are never compacted. |
 
-Change settings in `/mods`, or from a shell with `omd-mod`, the low-level tool that works on a mod store directly. The
-shell form replaces the mod's saved settings:
+Change settings in `/mods`, which changes one setting at a time, or from a shell with `omd-mod`, the low-level tool
+that works on a mod store directly. The shell form replaces all of the mod's saved settings, so any setting you leave
+out goes back to its default:
 
 ```sh
 STORE=~/.local/share/oh-my-diff/stores/full

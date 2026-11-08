@@ -23,7 +23,7 @@
         "items": [
           "Shell commands: adjacent agent shell commands collapse into one expandable summary with running and failure counts",
           "Theme: switching themes no longer flashes, scene transitions are shorter, and prompts and menus stay opaque over the scene",
-          "OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact and omd_preview move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default",
+          "OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact, omd_preview, omd_plan_panel and omd_plan_removal move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default",
           "Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace",
           "Monitors: watch several sources together, check pull-request completion, and run the next action when a watch settles",
           "Continue: cache-aware observation masking preserves recent context while reducing repeated tool output in a continued conversation",

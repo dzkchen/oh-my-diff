@@ -15,6 +15,11 @@ follow its fix.
 | `Python could not verify GitHub's certificate` | Python from python.org has no CA certificates until you install them | Run `Install Certificates.command` in its `/Applications/Python 3.x` folder, or use Homebrew's Python, then rerun. |
 | `No terminal is available` | The installer can't ask which profile you want | Add `--profile full` or `--profile platform`. |
 
+## Check the install
+
+`omd doctor` runs `codex doctor`, then checks OMD itself and names one fix for each problem it finds. Add `--json`
+for scripts.
+
 ## `codex` still starts plain Codex
 
 If the installer printed `codex on your PATH is ..., not OMD's` or `OMD isn't on your PATH`, you answered `n` to its
@@ -85,8 +90,8 @@ omd-mod package-enable STORE ID        # turn a mod you installed back on; its d
 Include the output of these commands in a [bug report](https://github.com/dzkchen/oh-my-diff/issues/new/choose):
 
 ```sh
+omd doctor
 omd update status
-omd-package status
 ```
 
 Report security problems [privately](../SECURITY.md), not in a public issue.

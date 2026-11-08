@@ -129,6 +129,13 @@ file.
   `enum`, `default`, `title`, `description` and `choices: "routes"`, which only a `string` property without `enum`
   may have. `integer`, `minimum` and similar keys are refused.
 - If `activate` registers the same command, handler, timer or component name twice, it fails with `conflict: NAME`.
+- `console.log` runs but its output goes nowhere. Return the value as `display` and read it in `pnpm run run`, or
+  show it with `terminal.notice`; see
+  [logging from a mod](../mods/reference/authoring.md#logging-from-a-mod).
+- `pnpm test` runs only `mod.test.json` (plus `*.test.ts`/`*.test.mjs`) and refuses other `*.test.json` files, so
+  keep every scenario in `mod.test.json`.
+- `pnpm watch STORE --once` exits non-zero with `activation_failed` when the mod fails to load, so don't read
+  "reloaded" output alone as success.
 - The scaffold's `debug.test.json` calls `/hello`. Delete it once you replace that command, or `pnpm debug` fails.
 - `expect` in `mod.test.json` is deep equality of the whole value. Test interceptors in a `*.test.ts` file, because
   their results include source line numbers.

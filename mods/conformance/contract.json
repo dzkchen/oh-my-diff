@@ -824,7 +824,7 @@
       "replace": null,
       "timing": "outside native tasks, from the CLI, the `/` popup or a keybinding",
       "ownership": "host: the submission path, queueing and command precedence",
-      "limits": "16 per mod; namespaced `/<id>:<name>` always exists, a bare alias only when unique; submitted text uses the native path with no shell escape; host operations that need a task fail with `host_operation_unavailable`",
+      "limits": "32 per mod; namespaced `/<id>:<name>` always exists, a bare alias only when unique; submitted text uses the native path with no shell escape; host operations that need a task fail with `host_operation_unavailable`",
       "native": "plugins contribute prompt-style slash commands, not code-backed commands with structured results",
       "covers": {
         "capabilities": [

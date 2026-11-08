@@ -1,7 +1,7 @@
 # Included mods
 
-Every first-party mod and port, which install profile installs it, and whether it starts on. To turn a mod on or
-off, see [Manage mods](manage-mods.md).
+Every first-party mod and port, which install profile installs it, and whether it starts on. Install, turn on or
+off and change a mod's settings in `/mods`; [Manage mods](manage-mods.md) covers the shell commands too.
 
 The status words on this page:
 
@@ -27,21 +27,21 @@ All of these come with OMD+ only.
 
 | Mod | What it does | What it needs |
 | --- | --- | --- |
-| [`omd_frecency`](../mods/first-party/omd_frecency/README.md) | Ranks `@` file mentions by fuzzy match and how often you use them | |
+| [`omd_frecency`](../mods/first-party/omd_frecency/README.md) | Ranks `@` file mentions by fuzzy match and how often you use them; keeps that usage per repository ([reset it](../mods/first-party/omd_frecency/README.md#its-data)) | |
 | [`omd_privacy`](../mods/first-party/omd_privacy/README.md) | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
 | [`omd_usage`](../mods/first-party/omd_usage/README.md) | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
 | [`omd_tool_absorb`](../mods/first-party/omd_tool_absorb/README.md) | When the model repeats a read in one response, runs it once. In [code mode](../mods/reference/glossary.md#sessions-and-models), also reuses unchanged file reads; `/absorb` | |
 | [`omd_tool_fix`](../mods/first-party/omd_tool_fix/README.md) | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 | [`omd_theme`](../mods/first-party/omd_theme/README.md) | Living scenes drawn in character tiles behind the conversation, with opaque prompts and menus; `/theme` picks a scene and prints terminal background steps | |
-| [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in, and `/monitor allow owner/repo` |
+| [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Lets the agent watch a background command, file change or GitHub pull request, run or deployment and sends it one message when that finishes, fails or times out, so the agent doesn't poll; `/monitor` lists and cancels monitors | The `autonomous` and `os` grants; GitHub monitors need `gh`, logged in |
 | [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs in automatic batches or on `/continue` after estimated cache expiry; `/continue --compact` forces a batch; paged recall and `/mask` | Can't be on with `omd_programmable_context` |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 
 ## Experimental
 
-These haven't been tested fully yet, so no install profile installs them. Install one with `omd install ID`, then turn it
-on with `omd mods enable ID`. [Support](support.md#versions) lists the Node versions.
+These haven't been tested fully yet, so no install profile installs them. Install one from Available in `/mods`, then
+turn it on there (from a shell: `omd install ID`, then `omd mods enable ID`). [Support](support.md#versions) lists the Node versions.
 
 | Mod | What it does | What it needs |
 | --- | --- | --- |
@@ -84,8 +84,8 @@ measurement. The other mods in this table weren't measured.
 
 ## Ports
 
-No install profile installs these. Install one with `omd install ID`, then turn it on with `omd mods enable ID`. Their
-READMEs are in [`mods/ports`](../mods/ports).
+No install profile installs these. Install one from Available in `/mods`, then turn it on there (from a shell:
+`omd install ID`, then `omd mods enable ID`). Their READMEs are in [`mods/ports`](../mods/ports).
 
 | Mod | What it does |
 | --- | --- |

@@ -76,6 +76,7 @@ set.
 | `omd update channel stable\|prerelease\|nightly` | Which releases to follow |
 | `omd update pin VERSION\|none` | Stay on one version, or stop pinning |
 | `omd uninstall [--purge]` | Remove OMD; `--purge` also removes OMD mod data and saved sign-ins; Codex data stays |
+| `omd doctor [--json]` | Run `codex doctor`, then check OMD: which `codex` runs first on `PATH`, the launcher and profile, the mod store, the folder, the mod runner, the authority broker and updates. Each problem names its fix |
 | `omd mini` | Start Codex in the [scrollback-first interface](../mods/first-party/omd_mini/README.md) (experimental: `omd install omd_mini`, then turn it on) |
 
 ### Shell commands from mods
@@ -86,12 +87,12 @@ can't make model requests or run processes. See
 
 ## `omd-package`
 
-Manages the install profile. It prints JSON, except `status`, `activate` and `mod`, which print a short summary unless you pass `--json`.
+Manages the install profile. It prints JSON, except `status`, `activate`, `mod` and `doctor`, which print text unless you pass `--json`.
 
 | Command | What it does |
 | --- | --- |
 | `omd-package status [--json]` | The install profile and its mods |
-| `omd-package activate full\|platform\|direct` | Switch to OMD+ or OMD Core, or to `direct`, the recovery state that runs plain Codex behavior with no mods |
+| `omd-package activate full\|platform\|direct` | `direct` is the recovery state that runs plain Codex behavior with no mods; naming the installed profile turns its mods back on. To switch between OMD+ and OMD Core, rerun the install command with `--profile` |
 | `omd-package mod enable\|disable ID` | Turn a mod your profile installed on or off for every terminal, without asking. It changes the trusted selection, reloads the mods and restores the previous state if the mod fails to load |
 | `omd-package profiles [--setup] [--model NAME]` | Install and set up the experimental `omd_profiles` mod (`--setup`) or start a session on an account profile; `--help` lists the other flags |
 | `omd-package mini` | The same as `omd mini` |
@@ -102,7 +103,9 @@ Manages the install profile. It prints JSON, except `status`, `activate` and `mo
 | `omd-package policy install\|rollback\|remove\|explain [FILE]` | Manage the administrator policy file (needs `sudo`) |
 | `omd-package uninstall [--keep-broker] [--purge]` | Remove this installation; `--purge` also removes its mod store (use `omd uninstall --purge` for managed installs) |
 
-The installer uses `omd-package install` and `omd-package reconcile`; you don't run them yourself.
+The installer uses `omd-package install` and `omd-package reconcile`; you don't run them yourself. After
+`/omd` resets `mods.json`, the next `codex` start runs `reconcile`, which restores your mod choices from
+`mods.json.corrupt` or, if that can't be read, turns on the profile's default mods.
 
 ## `omd-mod`
 

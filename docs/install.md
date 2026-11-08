@@ -59,7 +59,7 @@ To check it worked, run:
 omd update status
 ```
 
-It prints details of your install as JSON, then a summary line like this one:
+It prints one summary line like this one (`--json` prints the details as JSON instead):
 
 ```text
 Oh My Diff VERSION (OMD+), stable channel, daily checks: not checked yet
@@ -84,7 +84,9 @@ omd update enable     # install updates automatically
 ```
 
 While other OMD sessions are open, the update waits for your next `codex` start. Mods, settings and sign-in are
-kept. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
+kept. When it finishes, `omd update` and the next `codex` start name any mod the release retired, any mod that is
+now on by default but stays off for you, and any permission a first-party mod gained; `/update` shows them too.
+`omd update`, `omd uninstall` and the installer's `status` print text; add `--json` for JSON. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
 update anyway.
 
 When an OMD+ release moves a mod it came with to experimental, the update turns that mod off once and leaves it
@@ -101,7 +103,9 @@ To change how updates work, such as the release channel, the check cadence or a 
 
 ## Switch install profile
 
-Rerun the install command with the other `--profile`. Each install profile keeps its own mod choices.
+Rerun the install command with the other `--profile`. Each install profile keeps its own mod choices. A profile you
+install for the first time starts with your update settings (checks, cadence, channel, pin and automatic updates).
+`omd-package activate` doesn't switch profiles; it only turns the installed profile's mods back on after `direct`.
 
 `direct` isn't an install profile. It's a recovery state in which `codex` behaves as plain Codex with no mods. If a
 mod breaks `codex`, switch to it with `omd-package`, the tool that manages your install profile and the mods it came

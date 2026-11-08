@@ -46,8 +46,8 @@ OMD+ comes with these, among others:
 - **[Grouped tool lines](mods/first-party/omd_tool_lines/README.md)**: adjacent shell commands collapse into one row; open it for the full output.
 - **[Status line](mods/first-party/omd_statusline/README.md)**: configurable, edited with `/statusline`.
 - **[Auto-continue](mods/first-party/omd_auto_continue/README.md)**: an unanswered approval or question no longer stalls the turn.
-- **[Privacy](mods/first-party/omd_privacy/README.md)**: hides secrets and chosen personal data from what's sent to the model.
-- **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request.
+- **[Privacy](mods/first-party/omd_privacy/README.md)**: hides secrets and chosen personal data from what's sent to the model (off; turn on in `/mods`).
+- **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request (off; turn on in `/mods`).
 
 Experimental mods add other providers, a workspace dock, `/undo` and language-server feedback. The
 [included mods](docs/collection.md) page lists every one and says which are on by default and which are experimental.

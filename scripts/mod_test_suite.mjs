@@ -23,7 +23,7 @@ export function discover(root) {
   const suites = {
     python: candidates.filter(path => !(path in optional) && /^tests\/test_[^/]+\.py$/.test(path)),
     cargo: candidates.filter(path => !(path in optional) && /^runtime\/(omd|native)\/(src\/(?:.*_tests|(?:.*\/)?tests)\.rs|tests\/[^/]+\.rs)$/.test(path)),
-    scenarios: candidates.filter(path => !(path in optional) && /^mods\/(examples|first-party)\/[^/]+\/mod\.test\.json$/.test(path)),
+    scenarios: candidates.filter(path => !(path in optional) && /^mods\/(examples|first-party|ports)\/[^/]+\/mod\.test\.json$/.test(path)),
   };
   const classified = new Set([...tests, ...Object.values(suites).flat(), ...Object.keys(optional)]);
   const unclassified = candidates.filter(path => !classified.has(path));
