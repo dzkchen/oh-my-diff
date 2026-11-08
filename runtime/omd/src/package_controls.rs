@@ -271,9 +271,11 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     Ok(listed)
 }
 
-static CONNECTED: OnceLock<fn(Option<&str>, &str, &str) -> bool> = OnceLock::new();
+type ConnectedModels = fn(Option<&str>, &str, &str) -> bool;
 
-pub fn set_connected_models(connected: fn(Option<&str>, &str, &str) -> bool) {
+static CONNECTED: OnceLock<ConnectedModels> = OnceLock::new();
+
+pub fn set_connected_models(connected: ConnectedModels) {
     let _ = CONNECTED.set(connected);
 }
 

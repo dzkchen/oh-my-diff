@@ -528,17 +528,13 @@ fn republish(core: &Core) {
     }
 }
 
-pub(super) fn shared_native_tasks() -> Option<(
-    Arc<Mutex<BTreeMap<String, TurnRecord>>>,
-    Arc<Mutex<BTreeMap<String, Config>>>,
-)> {
+pub(super) fn shared_native_tasks() -> Option<(SharedTurns, SharedProviderSwitches)> {
     core()
         .ok()
         .map(|core| (core.turns.clone(), core.provider_switches.clone()))
 }
 
-pub(super) fn shared_native_sessions()
--> Option<Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>> {
+pub(super) fn shared_native_sessions() -> Option<SharedSessions> {
     Some(core().ok()?.sessions.clone())
 }
 
