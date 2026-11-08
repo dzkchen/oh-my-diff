@@ -5,7 +5,7 @@ export type Renderer = {
 export type Viewport = { width: number; height: number; unit: string };
 export type RosterEntry = { id: string; name: string; renderer: Renderer; viewport: Viewport | null; focused: boolean; attachedMs: number };
 /** `epoch` is an opaque string, empty until the host publishes its first view; a different one means the host restarted. */
-export type Attachment = { clientId: string; protocol: 'omd-client/1'; epoch: string; roster: RosterEntry[]; features: string[]; delegable: string[] };
+export type Attachment = { terminalToken: string; clientId: string; protocol: 'omd-client/1'; epoch: string; roster: RosterEntry[]; features: string[]; delegable: string[] };
 /** `snapshot` is the host's full `ModViewSnapshot` (`view`, `component_owners`, `layout_owner`, `progress`, `activity`, ...), null before the first publish. */
 export type ViewUpdate = { epoch: string; revision: number; snapshot: { view: Record<string, unknown>; component_owners?: Record<string, string>; layout_owner?: string; [key: string]: unknown } | null; actionToken: string };
 export type SurfaceCall = { caller: string; operation: string; arguments: unknown; confirm?: string };
@@ -43,7 +43,7 @@ export interface Session {
   readonly epoch: string | null;
   readonly revision: number | null;
   readonly actionToken: string | null;
-  attach(params?: { name?: string; renderer?: Renderer; operations?: string[] }): Promise<Attachment>;
+  attach(params?: { name?: string; renderer?: Renderer; operations?: string[]; terminalToken?: string }): Promise<Attachment>;
   update(params: { renderer?: Renderer; viewport?: Viewport; focus?: boolean }): Promise<unknown>;
   detach(): Promise<unknown>;
   read(): Promise<ViewUpdate>;

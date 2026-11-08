@@ -34,12 +34,18 @@ Each request below is a method a client sends to the host.
 ### `omd/client/attach`
 
 ```text
-omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('svg'|'png'|'jpeg'|'cells'|'text')[], pointer: 'pixel'|'cell'|'half_cell'|'none', reducedMotion, cellPx?}, operations}
-// → {clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}, then omd/view/updated
+omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('svg'|'png'|'jpeg'|'cells'|'text')[], pointer: 'pixel'|'cell'|'half_cell'|'none', reducedMotion, cellPx?}, operations, terminalToken?}
+// → {terminalToken, clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}, then omd/view/updated
 ```
 
 - The result's `roster` already lists the new client, and `omd/roster/updated` reports later changes.
 - Attaching again on the connection replaces its entry.
+- `terminalToken` is an opaque capability for this terminal's in-memory settings and enablement. Keep it in
+  memory and send it when reattaching after a disconnect. Another client without it gets a separate owner,
+  including on the same conversation. Do not log, persist or share the token.
+- Connections that never attach have no reconnect capability; their terminal overrides are released on disconnect.
+- Explicit detach invalidates the token and drops its terminal overrides. A server restart also invalidates it;
+  `terminal_owner_unknown` means attach without it to start from shared defaults.
 - Attach also succeeds while mods are inactive or failed to start (empty `epoch`, null `snapshot`), so the recovery
   calls stay reachable.
 
@@ -143,6 +149,38 @@ omd/resource/read {reference}
 
 `data` is base64. Only references in the current view can be read.
 
+### `omd/configuration`
+
+This experimental method targets the authenticated connection's terminal owner. It does not accept an owner
+ID or another client's token in the request. Unknown actions and extra fields fail.
+
+```text
+omd/configuration {action: 'read'}
+// → {packages, generation, reload_error}
+omd/configuration {action: 'write', id, scope?: 'user'|'project', values, target?: 'terminal'|'shared', reset?: string[]}
+// → {settings}
+omd/configuration {action: 'package', request: {action: 'enable'|'disable'|'reset'|'save-defaults', id, scope: 'user'|'project', target?: 'terminal'|'shared', expected_generation?}}
+// → {status: 'applied', generation}
+omd/configuration {action: 'catalog'}
+// → {status, view, packages, builtins}
+omd/configuration {action: 'command', command, args}
+// → {status: 'completed', result, snapshot, catalog}
+```
+
+`read` returns the effective package list, including inherited values and terminal overrides. `write` follows
+[`settings.write`](settings.md#settingswrite): it saves for every terminal unless `target` is `terminal`, and optional
+`scope: "user" | "project"` picks an installed copy. `package` supports only the four configuration actions above;
+install, update, remove, rollback and trust keep their existing shared lifecycle and confirmation paths. `reset`
+clears this terminal's choices and `save-defaults` saves them for every terminal. Clients must present shared changes
+and confirmation choices to their user before requesting them.
+
+`catalog` supplies the backend runtime status, latest `ModViewSnapshot` (or null before publication), and effective
+package listing; `builtins` describes its effective builtin controls. `command` resolves an available mod command and invokes it as the owning terminal's user; it
+requires a selected conversation and retains capability, source, policy and turn-state checks. Its `result` is
+the command outcome, `snapshot` the resulting view, and `catalog` the updated runtime status. It grants no
+additional permissions to tool or event callbacks. Delegated panels and prompts go only to that terminal's
+attached clients. View row actions should continue to use token-bound `omd/action`.
+
 ### `omd/recovery/read` and `omd/recovery/apply`
 
 ```text
@@ -153,8 +191,10 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
 `omd/recovery/read` returns the host-owned `/omd` recovery state, and `omd/recovery/apply` returns the result:
 
 ```text
-{mods: [{id, path, scope, enabled, packaged, failing, error}], resettable, store_error, activation_error, reload_error}
+{mods: [{id, path, scope, enabled, inherited_enabled, settings, inherited_settings, overrides, packaged, failing, error}], resettable, store_error, activation_error, reload_error}
 ```
+
+Attached recovery reads report this terminal’s effective values, inherited defaults and local overrides. Attached reload refreshes that terminal’s runtime; package-store reload remains shared.
 
 - `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails
   with `recovery_unavailable_during_turn` while the lead thread's turn runs. It needs no attached client: `/omd`'s
@@ -206,7 +246,8 @@ runs it like Space/Enter in the terminal: `command` interceptors, then the comma
 
 ## Ordering, epochs and reconnecting
 
-State is per connection. A disconnect removes the roster entry and at once fails that client's pending surface
+Roster and action tokens are per connection. Terminal configuration belongs to the retained terminal owner.
+A disconnect removes the roster entry and at once fails that client's pending surface
 calls with `client_surface_closed` (an attach on a closing connection gets `client_surface_closed: the connection
 is closing`).
 
@@ -215,7 +256,7 @@ is closing`).
 - `revision` grows within an `epoch`.
 - A new `epoch` means the host restarted and invalidates everything the client stored.
 
-Reconnecting is `initialize`, attach (a full snapshot, never deltas), then `thread/resume` per thread, which
+Reconnecting is `initialize`, attach with the retained `terminalToken` (a full snapshot, never deltas), then `thread/resume` per thread, which
 replays pending approvals. `thread/resume` also joins a loaded thread before its first turn.
 
 - Approvals stay upstream server requests broadcast to subscribed connections (first answer wins,

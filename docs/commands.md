@@ -93,7 +93,7 @@ Manages the install profile. It prints JSON, except `status`, `activate` and `mo
 | --- | --- |
 | `omd-package status [--json]` | The install profile and its mods |
 | `omd-package activate full\|platform\|direct` | Switch to OMD+ or OMD Core, or to `direct`, the recovery state that runs plain Codex behavior with no mods |
-| `omd-package mod enable\|disable ID` | Turn a mod your profile installed on or off, without asking. It changes the trusted selection, reloads the mods and restores the previous state if the mod fails to load |
+| `omd-package mod enable\|disable ID` | Turn a mod your profile installed on or off for every terminal, without asking. It changes the trusted selection, reloads the mods and restores the previous state if the mod fails to load |
 | `omd-package profiles [--setup] [--model NAME]` | Install and set up the experimental `omd_profiles` mod (`--setup`) or start a session on an account profile; `--help` lists the other flags |
 | `omd-package mini` | The same as `omd mini` |
 | `omd-package contract list\|status\|plan\|select\|clear [ID@VERSION]` | List, show or select the workflow contract for this repository |

@@ -120,6 +120,8 @@ impl TurnInputContributor for Mods {
         _turn_store: &'a ExtensionData,
     ) -> ExtensionFuture<'a, Vec<Box<dyn ContextualUserFragment + Send>>> {
         Box::pin(async move {
+            let selected = super::clients::for_store(_turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let Some(lead) = thread_store.get::<Lead>() else {
                 return Vec::new();
             };
@@ -134,7 +136,7 @@ impl TurnInputContributor for Mods {
             let (user_input, repository, runtime) = (
                 input.user_input,
                 authority.repository.clone(),
-                self.input_runtime.clone(),
+                this.input_runtime.clone(),
             );
             let Ok(Some((names, required))) = tokio::task::spawn_blocking(move || {
                 let names = mentioned(&user_input, &repository);
@@ -153,7 +155,7 @@ impl TurnInputContributor for Mods {
             let mut paths: Vec<String> = Vec::new();
             for name in names {
                 let path = match required {
-                    Some(required) => self.mention(&lead, required, name, &cancelled).await,
+                    Some(required) => this.mention(&lead, required, name, &cancelled).await,
                     None => Some(name),
                 };
                 if let Some(path) = path.filter(|path| !paths.contains(path)) {
