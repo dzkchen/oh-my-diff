@@ -320,8 +320,7 @@ def update_acceptance(archive, version):
                       "--asset-sha256", latest["sha256"], "--upstream", previous, script=base / "previous-install.sh")
             installed(latest["version"])
             installer("install", "--profile", "full", "--asset-url", f"https://localhost:{server.server_port}/{archive.name}",
-                      "--asset-sha256", support.digest(archive), "--upstream", previous, script=base / "previous-install.sh",
-                      env=environment | {"SSL_CERT_FILE": str(cert)})
+                      "--asset-sha256", support.digest(archive), env=environment | {"SSL_CERT_FILE": str(cert)})
             installed(version)
             if not (base / "managed/update/notice.json").is_file():
                 raise ValueError("the update wrote no update/notice.json")

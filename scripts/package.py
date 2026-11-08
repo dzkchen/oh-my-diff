@@ -144,7 +144,6 @@ def main():
     source_group.add_argument("--payload", type=Path, help=argparse.SUPPRESS)
     install.add_argument("--sha256")
     install.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
-    install.add_argument("--upstream", type=Path, help=argparse.SUPPRESS)
     install.add_argument("--profile", choices=("platform", "full"), required=True, help="platform: OMD Core; full: OMD+")
     install.add_argument("--prefix", type=Path, required=True)
     install.add_argument("--bin-dir", type=Path, required=True)

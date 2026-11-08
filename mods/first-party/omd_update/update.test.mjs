@@ -70,11 +70,3 @@ test('a blocked release is not reported as the newest one', () => {
   assert.ok(!blocked.includes('omd_update_current'));
   assert.ok(ids({ installed: '1.0.0', checked_at: 1 }).includes('omd_update_current'));
 });
-
-test('an update blocked by the old Codex requirement points to the install command', () => {
-  const dialog = info => run('terminal', {}, { ...run('start', {}, null, { info }).state, open: true }).value.sites.dialog.components[1].children;
-  const old = dialog({ installed: '1.4.2', checked_at: 1, blocked: { version: '1.5.0', reasons: ['upstream Codex 0.167.x is required; found codex-cli 0.166.0'] } });
-  assert.match(old.find(item => item.id === 'omd_update_reinstall_command').text, /install\.sh \| sh$/);
-  const target = dialog({ installed: '1.4.2', checked_at: 1, blocked: { version: '1.5.0', reasons: ['built for x86_64-apple-darwin'] } });
-  assert.ok(!target.some(item => item.id === 'omd_update_reinstall'));
-});

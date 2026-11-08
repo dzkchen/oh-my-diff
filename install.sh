@@ -148,10 +148,9 @@ def broker_deployed():
 
 
 def package(generation, *arguments):
-    found = os.pathsep.join(filter(None, (os.environ.get("PATH"), str(generation / "prefix/artifacts"))))
     return run([sys.executable, "-m", "scripts.profiles", "--prefix", generation / "prefix",
                 "--bin-dir", generation / "bin", *arguments],
-               cwd=generation / "prefix/management", env=os.environ | {"PATH": found, "PYTHONDONTWRITEBYTECODE": "1"})
+               cwd=generation / "prefix/management", env=os.environ | {"PYTHONDONTWRITEBYTECODE": "1"})
 
 
 def repin(active, other):
