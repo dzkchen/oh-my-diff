@@ -208,6 +208,7 @@ pub use mods::owned_command;
 pub use mods::persist_texts;
 pub use mods::read_only_call;
 pub use mods::render_shared;
+pub use mods::terminal_shared;
 pub use mods::take_turned_off;
 pub use mods::write_settings;
 

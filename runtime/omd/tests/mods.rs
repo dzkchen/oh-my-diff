@@ -128,6 +128,240 @@ fn host(temp: &TempDir) -> ModHost {
     ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap()
 }
 
+#[test]
+fn terminal_shared_releases_host_and_rechecks_cached_state() {
+    for state in ["state", "uiState"] {
+        for cached in [false, true] {
+            let source = format!(
+                "export default api => {{ api.command('write', value => {{ api.{state}.set(value); return value; }}); api.on('terminal', () => ({{greeting:String(api.{state}.get() ?? 0)}})); }}"
+            );
+            let (temp, _, _) = fixture(&source, &["terminal", "commands", "store"]);
+            let runtime = std::sync::Mutex::new(host(&temp));
+            {
+                let mut host = runtime.lock().unwrap();
+                let generation = host.generation();
+                host.invoke("fixture", generation, "command", "write", json!(0))
+                    .unwrap();
+            }
+            if cached {
+                assert_eq!(
+                    runtime
+                        .lock()
+                        .unwrap()
+                        .terminal_view(json!({}), || true)
+                        .view
+                        .greeting
+                        .as_deref(),
+                    Some("0")
+                );
+            }
+            let changed = AtomicUsize::new(0);
+            let active = || {
+                if let Ok(mut host) = runtime.try_lock()
+                    && changed.fetch_add(1, Ordering::SeqCst) == 0
+                {
+                    let generation = host.generation();
+                    host.invoke("fixture", generation, "command", "write", json!(1))
+                        .unwrap();
+                }
+                true
+            };
+            let mut accepted = None;
+            codex_omd::terminal_shared(&runtime, json!({}), active, |view, _| {
+                accepted = Some(view)
+            })
+            .unwrap();
+            assert!(changed.load(Ordering::SeqCst) > 0, "host stayed locked");
+            assert_eq!(
+                accepted.unwrap().view.greeting.as_deref(),
+                Some("1"),
+                "{state}, cached={cached}"
+            );
+            let mut host = runtime.lock().unwrap();
+            let generation = host.generation();
+            host.invoke("fixture", generation, "command", "write", json!(0))
+                .unwrap();
+            assert_eq!(
+                host.terminal_view(json!({}), || true)
+                    .view
+                    .greeting
+                    .as_deref(),
+                Some("0"),
+                "state returned to zero: {state}, cached={cached}"
+            );
+        }
+    }
+}
+
+#[test]
+fn terminal_shared_rejects_obsolete_work_before_publication() {
+    for change in ["render", "reload", "cancel"] {
+        let (temp, store, path) = fixture(
+            "export default api => api.on('terminal', input => ({greeting:String(input.value)}));",
+            &["terminal"],
+        );
+        let runtime = std::sync::Mutex::new(host(&temp));
+        let changed = AtomicUsize::new(0);
+        let active = || {
+            if let Ok(mut host) = runtime.try_lock()
+                && changed.fetch_add(1, Ordering::SeqCst) == 0
+            {
+                match change {
+                    "render" => assert_eq!(
+                        host.terminal_view(json!({"value":"new"}), || true)
+                            .view
+                            .greeting
+                            .as_deref(),
+                        Some("new")
+                    ),
+                    "reload" => {
+                        store.enable(&path, false).unwrap();
+                        host.reload().unwrap();
+                    }
+                    _ => (),
+                }
+            }
+            change != "cancel" || changed.load(Ordering::SeqCst) == 0
+        };
+        let mut accepted = false;
+        let result =
+            codex_omd::terminal_shared(&runtime, json!({"value":"old"}), active, |_, _| {
+                accepted = true
+            });
+        assert!(changed.load(Ordering::SeqCst) > 0, "host stayed locked");
+        assert!(result.is_err(), "{change}");
+        assert!(!accepted, "obsolete {change} was published");
+    }
+}
+
+#[test]
+fn terminal_shared_command_previews_supersede_pending_renders() {
+    for patch in [json!({"title":"New"}), Value::Null] {
+        let (temp, _, _) = fixture(
+            "export default api => { api.command('view', patch => ({terminal:patch})); api.on('terminal', () => ({title:'Old'})); };",
+            &["terminal", "commands"],
+        );
+        let runtime = std::sync::Mutex::new(host(&temp));
+        let changed = AtomicUsize::new(0);
+        let active = || {
+            if let Ok(mut host) = runtime.try_lock()
+                && changed.fetch_add(1, Ordering::SeqCst) == 0
+            {
+                let generation = host.generation();
+                let value = host
+                    .invoke("fixture", generation, "command", "view", patch.clone())
+                    .unwrap();
+                host.command_view("fixture", generation, value["terminal"].clone(), &json!({}))
+                    .unwrap();
+            }
+            true
+        };
+        let mut accepted = false;
+        assert!(
+            codex_omd::terminal_shared(&runtime, json!({}), active, |_, _| accepted = true)
+                .is_err()
+        );
+        assert!(!accepted);
+    }
+}
+
+#[test]
+fn terminal_shared_retries_only_the_conflicting_participant() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let first = package(
+        &root,
+        "first",
+        "export default api => api.on('terminal', () => { api.state.set(Number(api.state.get() ?? 0)+1); return {status:[String(api.state.get())]}; });",
+        &["terminal", "store"],
+    );
+    let second = package(
+        &root,
+        "second",
+        "export default api => { api.command('write', () => {api.state.set(10); return null;}); api.on('terminal', () => {const before = Number(api.state.get() ?? 0); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200); api.state.set(before+1); return {title:String(before+1)};}); };",
+        &["terminal", "store", "commands"],
+    );
+    trust(&store, &first, &["terminal", "store"]);
+    trust(&store, &second, &["terminal", "store", "commands"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let changed = AtomicUsize::new(0);
+    let active = || {
+        if let Ok(mut host) = runtime.try_lock()
+            && host.state("first") == Some(&json!(1))
+            && changed.fetch_add(1, Ordering::SeqCst) == 0
+        {
+            let generation = host.generation();
+            host.invoke("second", generation, "command", "write", Value::Null)
+                .unwrap();
+        }
+        true
+    };
+    let mut accepted = None;
+    codex_omd::terminal_shared(&runtime, json!({}), active, |view, _| accepted = Some(view))
+        .unwrap();
+    assert!(changed.load(Ordering::SeqCst) > 0);
+    assert_eq!(runtime.lock().unwrap().state("first"), Some(&json!(1)));
+    assert_eq!(accepted.unwrap().view.title.as_deref(), Some("11"));
+}
+
+#[test]
+fn terminal_shared_does_not_share_the_retained_command_context() {
+    let (temp, store, path) = fixture(
+        "let calls = 0; export default api => {api.command('count', () => ++calls); api.on('terminal', () => {Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); return {greeting:String(calls)};});};",
+        &["terminal", "commands"],
+    );
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    manifest["compatibility"] = json!({"required_features":["session_activation_v1"]});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &["terminal", "commands"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let _thread = codex_omd::StateThread::enter(Some("terminal-session".into()));
+    {
+        let mut host = runtime.lock().unwrap();
+        let generation = host.generation();
+        assert_eq!(
+            host.invoke("fixture", generation, "command", "count", Value::Null)
+                .unwrap(),
+            json!(1)
+        );
+    }
+    let changed = AtomicUsize::new(0);
+    let active = || {
+        if let Ok(mut host) = runtime.try_lock()
+            && changed.fetch_add(1, Ordering::SeqCst) == 1
+        {
+            let generation = host.generation();
+            assert_eq!(
+                host.invoke("fixture", generation, "command", "count", Value::Null)
+                    .unwrap(),
+                json!(2)
+            );
+        }
+        true
+    };
+    let mut accepted = None;
+    codex_omd::terminal_shared(
+        &runtime,
+        json!({"ledger":{"thread_id":"terminal-session"}}),
+        active,
+        |view, _| accepted = Some(view),
+    )
+    .unwrap();
+    assert!(changed.load(Ordering::SeqCst) >= 2);
+    assert_eq!(accepted.unwrap().view.greeting.as_deref(), Some("0"));
+    let mut host = runtime.lock().unwrap();
+    let generation = host.generation();
+    assert_eq!(
+        host.invoke("fixture", generation, "command", "count", Value::Null)
+            .unwrap(),
+        json!(3)
+    );
+}
+
 const COUNTER: &str = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
 
 #[test]

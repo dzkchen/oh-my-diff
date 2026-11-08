@@ -34721,7 +34721,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d4aeacd88 100644
+index fbc109028f90d89d03a0467e11f6fafa9fc27c77..8f0f7419c8fb99e7f97e166a34802cd42c6862d6 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -34840,7 +34840,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
              tui.clipboard.advance(tui.frame_requester());
          }
          Ok(AppRunControl::Continue)
-@@ -1250,7 +1294,109 @@ impl App {
+@@ -1250,7 +1294,110 @@ impl App {
          Ok(())
      }
 
@@ -34857,6 +34857,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
 +            self.current_displayed_thread_id()
 +                .map(|thread| thread.to_string()),
 +        );
++        self.chat_widget.run_held_mod_commands();
 +        let (depth, view_id) = self.chat_widget.mod_view_state();
 +        crate::mod_surface::view_state(depth, view_id, self.overlay.is_some());
 +        self.sync_mod_keymap();
@@ -34950,7 +34951,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1269,33 +1415,56 @@ impl App {
+@@ -1269,33 +1416,56 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -35014,7 +35015,7 @@ index fbc109028f90d89d03a0467e11f6fafa9fc27c77..fbfa6499fe1abfdaa6f2a8720ac4978d
              Ok(rendered_area)
          })
      }
-@@ -1305,6 +1474,7 @@ impl App {
+@@ -1305,6 +1475,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -36837,10 +36838,141 @@ index 075a6256623bf8b6c86274f91eb4ba0e0e120db2..7f522f25483308ee218affc5940ab6a5
      let mut app = crate::app::test_support::make_test_app().await;
      let config = serde_json::from_value(serde_json::json!({
 diff --git a/codex-rs/tui/src/app/owned_transcript_tests.rs b/codex-rs/tui/src/app/owned_transcript_tests.rs
-index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3c5f6db27 100644
+index c3ec487f6d67f545c5504a109b525f7137fad7c3..51806947618b3a7df05b19b69e6104fd0144c5cb 100644
 --- a/codex-rs/tui/src/app/owned_transcript_tests.rs
 +++ b/codex-rs/tui/src/app/owned_transcript_tests.rs
-@@ -34,6 +34,10 @@ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
+@@ -23,6 +23,130 @@ use crossterm::event::MouseEventKind::Up;
+ use pretty_assertions::assert_eq;
+ use ratatui::buffer::Buffer;
+
++#[cfg(target_os = "macos")]
++#[tokio::test]
++#[serial_test::serial]
++async fn queued_mod_command_dispatches_after_surface_attachment() -> Result<()> {
++    use codex_omd::client_surface::CallLifetime;
++    use codex_omd::client_surface::SurfaceCall;
++    use codex_omd::client_surface::Validity;
++    use serde_json::json;
++
++    if std::env::var_os("OMD_SURFACE_READINESS_TEST_CHILD").is_none() {
++        let name = concat!(
++            module_path!(),
++            "::queued_mod_command_dispatches_after_surface_attachment"
++        );
++        let (_, name) = name.split_once("::").expect("test module path");
++        let output = std::process::Command::new(std::env::current_exe()?)
++            .args(["--exact", name, "--nocapture"])
++            .env("OMD_SURFACE_READINESS_TEST_CHILD", "1")
++            .output()?;
++        assert!(
++            output.status.success(),
++            "{}\n{}",
++            String::from_utf8_lossy(&output.stdout),
++            String::from_utf8_lossy(&output.stderr)
++        );
++        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
++        return Ok(());
++    }
++    let directory = tempfile::tempdir()?;
++    let root = directory.path().canonicalize()?;
++    let package = root.join("package");
++    std::fs::create_dir(&package)?;
++    std::fs::write(
++        package.join("mod.json"),
++        serde_json::to_vec(&json!({
++            "schema": 1, "id": "ready_fixture", "version": "1.0.0",
++            "api": codex_omd::MOD_API_VERSION, "state_version": 1,
++            "capabilities": ["commands", "terminal"], "hook_budget_ms": 2000
++        }))?,
++    )?;
++    std::fs::write(
++        package.join("index.ts"),
++        "export default api => { api.command('probe', () => { api.host.call('terminal.panel', {title:'Ready',items:[]}); return {display:'ready'}; }); };",
++    )?;
++    let store = codex_omd::ModStore::create(root.join("store"))?;
++    let inspected = codex_omd::ModStore::inspect_package(&package)?;
++    store.trust(
++        package.clone(),
++        inspected["sha256"].as_str().expect("source digest"),
++        vec!["commands".into(), "terminal".into()],
++        "user",
++    )?;
++    store.enable(&package, true)?;
++    let runtime = codex_omd::ModHost::open(root.join("store"))?;
++    std::fs::write(
++        root.join("store/mod-status.json"),
++        serde_json::to_vec(&runtime.status())?,
++    )?;
++    drop(runtime);
++    let _environment = crate::omd::tests::omd_environment(&root.join("store"));
++    let _host = crate::mod_runtime::test_fresh_host();
++    let (mut app, mut events, _operations) = make_test_app_with_channels().await;
++    crate::mod_surface::attach(&app.app_event_tx, Some("previous".into()));
++    let (reply, _answer) = std::sync::mpsc::sync_channel(1);
++    let mut previous = SurfaceCall {
++        validity: Validity(Arc::new(|| true)),
++        caller: codex_omd::broker::HOST_CALLER.into(),
++        operation: "terminal.panel".into(),
++        arguments: json!({}),
++        context: codex_omd::app_routes::InvocationContext::User,
++        remote: false,
++        thread: Some("previous".into()),
++        authority: None,
++        confirm: None,
++        reply,
++        lifetime: CallLifetime::default(),
++        depth: 0,
++    };
++    crate::mod_surface::bind_test_call(&mut previous);
++    app.chat_widget.run_mod_command(
++        crate::mod_runtime::ModSlashCommand {
++            invocation: "probe".into(),
++            description: String::new(),
++            args_hint: None,
++            immediate: false,
++            target: crate::mod_runtime::ModSlashTarget {
++                id: "ready_fixture".into(),
++                command: "probe".into(),
++            },
++            namespaced: false,
++        },
++        String::new(),
++    );
++    let thread = ThreadId::new();
++    attach_thread_at(&mut app, thread, AbsolutePathBuf::try_from(root)?);
++    app.sync_mod_ui();
++    assert!(crate::mod_surface::validate_call(&previous).is_err());
++    tokio::time::timeout(Duration::from_secs(30), async {
++        let mut presented = false;
++        loop {
++            match events.recv().await.expect("app event") {
++                AppEvent::ModSurfaceCall(call, _) => {
++                    assert_eq!(call.thread, Some(thread.to_string()));
++                    assert!(crate::mod_surface::validate_call(&call).is_ok());
++                    call.reply.send(Ok(json!({"shown": true}))).unwrap();
++                    presented = true;
++                }
++                AppEvent::ModCommandFinished { token, result, .. } => {
++                    assert!(presented);
++                    assert_eq!(token.context.thread_id, Some(thread));
++                    assert_eq!(
++                        result.expect("command result").outcome.display.as_deref(),
++                        Some("ready")
++                    );
++                    break;
++                }
++                _ => {}
++            }
++        }
++    })
++    .await?;
++    Ok(())
++}
++
+ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
+     Arc::new(UserHistoryCell {
+         presentation: Default::default(),
+@@ -34,6 +158,10 @@ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
  }
 
  pub(in crate::app) fn attach_thread(app: &mut App, thread_id: ThreadId) {
@@ -36851,7 +36983,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
      app.chat_widget.handle_thread_session(ThreadSessionState {
          daybreak_enabled: false,
          windows_sandbox_host: crate::app::WindowsSandboxHost::Local,
-@@ -48,7 +52,7 @@ pub(in crate::app) fn attach_thread(app: &mut App, thread_id: ThreadId) {
+@@ -48,7 +176,7 @@ pub(in crate::app) fn attach_thread(app: &mut App, thread_id: ThreadId) {
          approvals_reviewer: ApprovalsReviewer::User,
          permission_profile: PermissionProfile::read_only(),
          active_permission_profile: None,
@@ -36860,7 +36992,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
          runtime_workspace_roots: Vec::new(),
          instruction_source_paths: Vec::new(),
          reasoning_effort: None,
-@@ -75,6 +79,7 @@ pub(in crate::app) fn buffer_text(buffer: &Buffer) -> String {
+@@ -75,6 +203,7 @@ pub(in crate::app) fn buffer_text(buffer: &Buffer) -> String {
  }
 
  #[tokio::test]
@@ -36868,7 +37000,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn external_writer_escape_returns_to_command_center_without_editing() -> Result<()> {
      for (detailed, scrolled, offline) in [
          (false, false, false),
-@@ -150,6 +155,7 @@ async fn external_writer_escape_returns_to_command_center_without_editing() -> R
+@@ -150,6 +279,7 @@ async fn external_writer_escape_returns_to_command_center_without_editing() -> R
  }
 
  #[tokio::test]
@@ -36876,7 +37008,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn list_spacing_completion_preserves_the_scrolled_reader() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.transcript_cells = vec![Arc::new(history_cell::AgentMessageCell::new(
-@@ -197,6 +203,7 @@ async fn list_spacing_completion_preserves_the_scrolled_reader() -> Result<()> {
+@@ -197,6 +327,7 @@ async fn list_spacing_completion_preserves_the_scrolled_reader() -> Result<()> {
  }
 
  #[tokio::test]
@@ -36884,7 +37016,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn older_page_loading_uses_the_status_row_without_moving_content_or_cursor() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -262,6 +269,7 @@ async fn older_page_loading_uses_the_status_row_without_moving_content_or_cursor
+@@ -262,6 +393,7 @@ async fn older_page_loading_uses_the_status_row_without_moving_content_or_cursor
  }
 
  #[tokio::test]
@@ -36892,7 +37024,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn recap_spacing_belongs_to_the_transcript_tail() -> Result<()> {
      let mut snapshots = Vec::new();
      for (width, height, next_action) in [
-@@ -325,6 +333,7 @@ async fn recap_spacing_belongs_to_the_transcript_tail() -> Result<()> {
+@@ -325,6 +457,7 @@ async fn recap_spacing_belongs_to_the_transcript_tail() -> Result<()> {
  }
 
  #[tokio::test]
@@ -36900,7 +37032,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -419,6 +428,7 @@ async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
+@@ -419,6 +552,7 @@ async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
  }
 
  #[tokio::test]
@@ -36908,7 +37040,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn owned_drag_stops_when_focus_or_input_ownership_is_lost() -> Result<()> {
      use crossterm::event::MouseButton;
      use crossterm::event::MouseEvent;
-@@ -500,6 +510,7 @@ async fn owned_drag_stops_when_focus_or_input_ownership_is_lost() -> Result<()>
+@@ -500,6 +634,7 @@ async fn owned_drag_stops_when_focus_or_input_ownership_is_lost() -> Result<()>
  }
 
  #[tokio::test]
@@ -36916,7 +37048,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -553,6 +564,7 @@ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
+@@ -553,6 +688,7 @@ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
  }
 
  #[tokio::test]
@@ -36924,7 +37056,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn owned_transcript_keeps_text_out_of_the_pet_columns() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.transcript_cells = vec![Arc::new(crate::history_cell::PlainHistoryCell::new(vec![
-@@ -583,6 +595,7 @@ async fn owned_transcript_keeps_text_out_of_the_pet_columns() -> Result<()> {
+@@ -583,6 +719,7 @@ async fn owned_transcript_keeps_text_out_of_the_pet_columns() -> Result<()> {
  }
 
  #[tokio::test]
@@ -36932,7 +37064,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn owned_details_escape_interrupts_work_without_starting_backtrack() -> Result<()> {
      let (mut app, mut events, _operations) = make_test_app_with_channels().await;
      let thread_id = ThreadId::new();
-@@ -635,6 +648,7 @@ async fn owned_details_escape_interrupts_work_without_starting_backtrack() -> Re
+@@ -635,6 +772,7 @@ async fn owned_details_escape_interrupts_work_without_starting_backtrack() -> Re
  }
 
  #[tokio::test]
@@ -36940,7 +37072,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn owned_backtrack_keys_edit_the_selected_prompt_and_restore_compact_view() -> Result<()> {
      let (mut app, mut events, _operations) = make_test_app_with_channels().await;
      let thread_id = ThreadId::new();
-@@ -695,6 +709,7 @@ async fn owned_backtrack_keys_edit_the_selected_prompt_and_restore_compact_view(
+@@ -695,6 +833,7 @@ async fn owned_backtrack_keys_edit_the_selected_prompt_and_restore_compact_view(
  }
 
  #[tokio::test]
@@ -36948,7 +37080,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn cancelling_owned_backtrack_returns_arrow_keys_to_the_composer() -> Result<()> {
      for input in [
          vec![TuiEvent::Paste("abc".to_string())],
-@@ -762,6 +777,7 @@ async fn cancelling_owned_backtrack_returns_arrow_keys_to_the_composer() -> Resu
+@@ -762,6 +901,7 @@ async fn cancelling_owned_backtrack_returns_arrow_keys_to_the_composer() -> Resu
  }
 
  #[tokio::test]
@@ -36956,7 +37088,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn owned_search_and_selection_consume_input_before_composer_and_backtrack() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -868,6 +884,7 @@ async fn owned_search_and_selection_consume_input_before_composer_and_backtrack(
+@@ -868,6 +1008,7 @@ async fn owned_search_and_selection_consume_input_before_composer_and_backtrack(
  }
 
  #[tokio::test]
@@ -36964,7 +37096,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn keyboard_select_mode_preserves_the_draft_and_absorbs_enter_repeat() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -941,6 +958,7 @@ async fn keyboard_select_mode_preserves_the_draft_and_absorbs_enter_repeat() ->
+@@ -941,6 +1082,7 @@ async fn keyboard_select_mode_preserves_the_draft_and_absorbs_enter_repeat() ->
  }
 
  #[tokio::test]
@@ -36972,7 +37104,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn inline_select_mode_routes_find_and_returns_to_the_preserved_draft() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -1000,6 +1018,7 @@ async fn inline_select_mode_routes_find_and_returns_to_the_preserved_draft() ->
+@@ -1000,6 +1142,7 @@ async fn inline_select_mode_routes_find_and_returns_to_the_preserved_draft() ->
  }
 
  #[tokio::test]
@@ -36980,7 +37112,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn inline_transcript_search_draws_and_escape_precedes_backtrack() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -1052,6 +1071,7 @@ async fn inline_transcript_search_draws_and_escape_precedes_backtrack() -> Resul
+@@ -1052,6 +1195,7 @@ async fn inline_transcript_search_draws_and_escape_precedes_backtrack() -> Resul
  }
 
  #[tokio::test]
@@ -36988,7 +37120,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.transcript_cells = vec![user_cell("alpha beta")];
-@@ -1160,6 +1180,7 @@ async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result
+@@ -1160,6 +1304,7 @@ async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result
  }
 
  #[tokio::test]
@@ -36996,7 +37128,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn offline_find_closes_before_the_next_ctrl_c_quits() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.chat_widget
-@@ -1212,6 +1233,7 @@ async fn offline_find_closes_before_the_next_ctrl_c_quits() -> Result<()> {
+@@ -1212,6 +1357,7 @@ async fn offline_find_closes_before_the_next_ctrl_c_quits() -> Result<()> {
  }
 
  #[tokio::test]
@@ -37004,7 +37136,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn offline_backtrack_keeps_the_preview_and_draft_without_reverting() -> Result<()> {
      for owned in [true, false] {
          let (mut app, mut events, _operations) = make_test_app_with_channels().await;
-@@ -1304,6 +1326,7 @@ async fn offline_backtrack_keeps_the_preview_and_draft_without_reverting() -> Re
+@@ -1304,6 +1450,7 @@ async fn offline_backtrack_keeps_the_preview_and_draft_without_reverting() -> Re
  }
 
  #[tokio::test]
@@ -37012,7 +37144,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -1419,6 +1442,7 @@ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer
+@@ -1419,6 +1566,7 @@ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer
  }
 
  #[tokio::test]
@@ -37020,7 +37152,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn double_escape_browses_prompts_without_reverting_and_explains_editing() -> Result<()> {
      let (mut app, mut events, _operations) = make_test_app_with_channels().await;
      app.keymap = RuntimeKeymap::from_config(&toml::from_str(
-@@ -1490,6 +1514,7 @@ async fn double_escape_browses_prompts_without_reverting_and_explains_editing()
+@@ -1490,6 +1638,7 @@ async fn double_escape_browses_prompts_without_reverting_and_explains_editing()
  mod browsing;
 
  #[tokio::test]
@@ -37028,7 +37160,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn find_refreshes_live_details_before_searching_the_first_query() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      crate::chatwidget::tests::helpers::set_active_cell(
-@@ -1566,6 +1591,7 @@ fn row_containing(tui: &tui::Tui, text: &str) -> u16 {
+@@ -1566,6 +1715,7 @@ fn row_containing(tui: &tui::Tui, text: &str) -> u16 {
  }
 
  #[tokio::test]
@@ -37036,7 +37168,7 @@ index c3ec487f6d67f545c5504a109b525f7137fad7c3..4a3aab57320fd36d28f46c8dde31b1a3
  async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.copy_on_select = CopyOnSelect::Never;
-@@ -2004,3 +2030,182 @@ async fn footer_selection_defers_warning_clicks_and_preserves_the_draft() -> Res
+@@ -2004,3 +2154,182 @@ async fn footer_selection_defers_warning_clicks_and_preserves_the_draft() -> Res
      tui.set_owned_screen(/*owned*/ false)?;
      Ok(())
  }
@@ -43691,7 +43823,7 @@ index 4b7d512f4954853f42f610a0dac44989d1b85edf..b457c6913b7bd4a5d81ce4212882a093
              agent_message_started: false,
          });
 diff --git a/codex-rs/tui/src/chatwidget/session_flow.rs b/codex-rs/tui/src/chatwidget/session_flow.rs
-index a1ff412d4d50995912ed5b96cf02fcf1bee24ff5..fde7af5e688dc05df05015d52a5abffa590d358d 100644
+index a1ff412d4d50995912ed5b96cf02fcf1bee24ff5..25172063d03d4e796cd68e3ab22e19c89ae28ca4 100644
 --- a/codex-rs/tui/src/chatwidget/session_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/session_flow.rs
 @@ -135,7 +135,13 @@ impl ChatWidget {
@@ -43709,14 +43841,6 @@ index a1ff412d4d50995912ed5b96cf02fcf1bee24ff5..fde7af5e688dc05df05015d52a5abffa
          self.set_daybreak_enabled(self.daybreak_enabled);
          if connector_scope_changed {
              self.invalidate_connector_scope();
-@@ -266,6 +272,7 @@ impl ChatWidget {
-         {
-             self.maybe_send_next_queued_input();
-         }
-+        self.run_held_mod_commands();
-         if display == SessionConfiguredDisplay::Normal
-             && let Some(forked_from_id) = forked_from_id
-         {
 diff --git a/codex-rs/tui/src/chatwidget/settings.rs b/codex-rs/tui/src/chatwidget/settings.rs
 index 432fa653e8213ad598a103665f645d9e58af0a9d..525ce949e9b0815dae73249cf43bf10582bd7879 100644
 --- a/codex-rs/tui/src/chatwidget/settings.rs
@@ -44318,7 +44442,7 @@ index 42f292b52b0af893e7b1621b7e164b2db1b4fbbe..45fbbd15e9d828501d2de340b758878c
 
  #[path = "tests/questions_tests.rs"]
 diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..3b17f6a8b72efd04208d76d297b06cc733a7f061 100644
+index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..37551f39753ddcc9f7e1668f8f3f5f89bae942f8 100644
 --- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
 @@ -8,6 +8,270 @@ use pretty_assertions::assert_eq;
@@ -44592,12 +44716,13 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..3b17f6a8b72efd04208d76d297b06cc7
  fn thread_settings_for_test(
      model: &str,
      thread_id: ThreadId,
-@@ -70,6 +334,38 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
+@@ -70,6 +334,41 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
      }
  }
 
 +#[tokio::test]
-+async fn mod_command_before_the_session_thread_runs_with_its_id() {
++#[serial_test::serial]
++async fn mod_command_before_session_waits_for_explicit_dispatch() {
 +    let (mut chat, mut events, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
 +    let command = crate::mod_runtime::ModSlashCommand {
 +        invocation: "probe".to_string(),
@@ -44615,6 +44740,8 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..3b17f6a8b72efd04208d76d297b06cc7
 +
 +    let thread_id = ThreadId::new();
 +    chat.handle_thread_session(configured_thread_session(thread_id));
++    assert_eq!(chat.held_mod_commands.len(), 1);
++    chat.run_held_mod_commands();
 +    assert!(chat.held_mod_commands.is_empty());
 +    let token = tokio::time::timeout(std::time::Duration::from_secs(10), async {
 +        loop {
@@ -44631,7 +44758,7 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..3b17f6a8b72efd04208d76d297b06cc7
  #[tokio::test]
  async fn session_header_uses_catalog_display_name_without_changing_model() {
      let slug = "us.openai.gpt-5.6-luna";
-@@ -188,7 +484,6 @@ fn start_safety_buffering_test_turn(
+@@ -188,7 +487,6 @@ fn start_safety_buffering_test_turn(
      chat.submit_user_message(UserMessage::from("Explain the request"));
      let turn = next_submit_op(op_rx);
      assert_matches!(&turn, Op::UserTurn { .. });
@@ -44639,7 +44766,7 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..3b17f6a8b72efd04208d76d297b06cc7
      chat.handle_server_notification(
          ServerNotification::TurnStarted(TurnStartedNotification {
              thread_id: thread_id.to_string(),
-@@ -206,6 +501,12 @@ fn start_safety_buffering_test_turn(
+@@ -206,6 +504,12 @@ fn start_safety_buffering_test_turn(
          }),
          /*replay_kind*/ None,
      );
@@ -44652,7 +44779,7 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..3b17f6a8b72efd04208d76d297b06cc7
      (thread_id, turn_id, turn)
  }
 
-@@ -253,6 +554,52 @@ fn open_safety_buffering_retry_confirmation(
+@@ -253,6 +557,52 @@ fn open_safety_buffering_retry_confirmation(
      assert!(render_bottom_popup(chat, /*width*/ 80).contains("Stop this attempt and retry?"));
  }
 
@@ -44705,7 +44832,7 @@ index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..3b17f6a8b72efd04208d76d297b06cc7
  #[tokio::test]
  async fn safety_buffering_offers_one_retry_with_app_wording() {
      let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-@@ -1883,7 +2230,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
+@@ -1883,7 +2233,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
      assert_eq!(chat.status_state.current_status.header, "Working");
      assert_eq!(chat.status_state.current_status.details, None);
      assert!(chat.status_state.retry_status_header.is_none());
@@ -95837,12 +95964,18 @@ index 0000000000000000000000000000000000000000..1be17343954a7f675b6043f83ef4bdf5
 +}
 diff --git a/codex-rs/omd/runner/src/bootstrap.js b/codex-rs/omd/runner/src/bootstrap.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..d5ae7cd9faa40145f8b1f623d86736e779cbbede
+index 0000000000000000000000000000000000000000..b958608d87d2f672a4ba5cc3193762e66dba1e86
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/bootstrap.js
-@@ -0,0 +1,918 @@
+@@ -0,0 +1,925 @@
 +const request = JSON.parse(globalThis.__request);
++const entrySource = globalThis.__source;
++const assetText = globalThis.__assets;
 +delete globalThis.__request;
++delete globalThis.__source;
++delete globalThis.__assets;
++let parsedAssets;
++const packageAssets = () => parsedAssets ??= (Object.hasOwn(request, 'assets') ? request.assets : JSON.parse(assetText)) ?? {};
 +request.hook_budget_ms ??= 1000;
 +let now = request.virtual_time_ms;
 +let clockRead = false;
@@ -96072,7 +96205,8 @@ index 0000000000000000000000000000000000000000..d5ae7cd9faa40145f8b1f623d86736e7
 +}
 +function hostReply(operation, arguments_) {
 +  if (activating) throw new Error('host_call_during_registration');
-+  const call = structuredCloneFallback({ operation, arguments: arguments_ });
++  const text = JSON.stringify({ operation, arguments: arguments_ });
++  const call = JSON.parse(text);
 +  const index = calls.length;
 +  calls.push(call);
 +  if (index < receipts.length) {
@@ -96081,7 +96215,7 @@ index 0000000000000000000000000000000000000000..d5ae7cd9faa40145f8b1f623d86736e7
 +    if (receipt.error) return { ok: false, error: receipt.error };
 +    return { ok: true, value: structuredCloneFallback(receipt.value) };
 +  }
-+  const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
++  const receipt = JSON.parse(exchange(`{"call":${text},"updates":${JSON.stringify(updates)}}`));
 +  return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
 +}
 +function hostCall(operation, arguments_ = null) {
@@ -96459,9 +96593,9 @@ index 0000000000000000000000000000000000000000..d5ae7cd9faa40145f8b1f623d86736e7
 +  fieldPolicies: Object.freeze(structuredCloneFallback(request.field_policies ?? {})),
 +  host: Object.freeze({ call: hostCall, tryCall: hostTryCall }),
 +  assets: Object.freeze({ read(name) {
-+    if (name === request.entrypoint) return { text: request.source, sha256: request.entrypoint_sha256 };
-+    if (typeof name !== 'string' || !Object.hasOwn(request.assets ?? {}, name)) throw new Error('package_asset_unavailable');
-+    return structuredCloneFallback(request.assets[name]);
++    if (name === request.entrypoint) return { text: entrySource, sha256: request.entrypoint_sha256 };
++    if (typeof name !== 'string' || !Object.hasOwn(packageAssets(), name)) throw new Error('package_asset_unavailable');
++    return structuredCloneFallback(packageAssets()[name]);
 +  } }),
 +  services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
 +  settings: Object.freeze(structuredCloneFallback(request.settings)),
@@ -96489,7 +96623,7 @@ index 0000000000000000000000000000000000000000..d5ae7cd9faa40145f8b1f623d86736e7
 +    if (typeof handler !== 'function') throw new Error('handler_required: ' + pattern);
 +    const known = ['match', 'required', 'before', 'after'];
 +    for (const key of Object.keys(options ?? {})) if (!known.includes(key)) throw new Error('unsupported_interceptor_option: ' + key);
-+    const files = [request.filename, ...Object.keys(request.assets ?? {}).map(name => base + name)];
++    const files = [request.filename, ...Object.keys(packageAssets()).map(name => base + name)];
 +    const frame = String(new Error().stack).split(String.fromCharCode(10)).find(line => files.some(file => line.includes(file + ':'))) ?? '';
 +    const file = files.find(file => frame.includes(file + ':')) ?? '';
 +    const at = frame.slice(frame.lastIndexOf(file) + base.length).split(')')[0];
@@ -98891,10 +99025,10 @@ index 0000000000000000000000000000000000000000..242e537429d8b8d65014001817e0a5c3
 +globalThis.__result = await globalThis.__dispatch();
 diff --git a/codex-rs/omd/runner/src/main.rs b/codex-rs/omd/runner/src/main.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8241ca7ed651f34da50bceabbc9f5cb5e3102d4e
+index 0000000000000000000000000000000000000000..0bd97a10129f76740c6e3c7a962608afc52a85cb
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/main.rs
-@@ -0,0 +1,1114 @@
+@@ -0,0 +1,1120 @@
 +mod crypto;
 +
 +use serde_json::Map;
@@ -99875,6 +100009,10 @@ index 0000000000000000000000000000000000000000..8241ca7ed651f34da50bceabbc9f5cb5
 +    let bootstrap = v8::Local::new(scope, &prepared.bootstrap);
 +    let line = string(scope, line);
 +    set(scope, global, "__request", line.into());
++    let source = string(scope, request["source"].as_str().unwrap_or_default());
++    set(scope, global, "__source", source.into());
++    let assets = string(scope, &request["assets"].to_string());
++    set(scope, global, "__assets", assets.into());
 +    if request["environment"]
 +        .as_array()
 +        .is_some_and(|names| names.iter().any(|name| name == "crypto"))
@@ -99973,7 +100111,9 @@ index 0000000000000000000000000000000000000000..8241ca7ed651f34da50bceabbc9f5cb5
 +            for name in names.iter().filter_map(Value::as_str) {
 +                if let Some(value) = fields.get(name) {
 +                    request[name] = value.clone();
-+                    text += &format!(",{}:{value}", Value::from(name));
++                    if !matches!(name, "source" | "assets") {
++                        text += &format!(",{}:{value}", Value::from(name));
++                    }
 +                }
 +            }
 +            line = format!("{}{text}}}", &line[..line.len() - 1]);
@@ -116177,10 +116317,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fe9ba54b8bfa46658bd9c645eeeadae8929caaa7
+index 0000000000000000000000000000000000000000..294d3c07dc66d795958fc109a750dfaf266e0b24
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,219 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -116391,6 +116531,7 @@ index 0000000000000000000000000000000000000000..fe9ba54b8bfa46658bd9c645eeeadae8
 +pub use mods::persist_texts;
 +pub use mods::read_only_call;
 +pub use mods::render_shared;
++pub use mods::terminal_shared;
 +pub use mods::take_turned_off;
 +pub use mods::write_settings;
 +
@@ -118046,10 +118187,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1fbb2db664
+index 0000000000000000000000000000000000000000..f0efadca04666a5efca437f8bb97c21f1d69dadc
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7154 @@
+@@ -0,0 +1,7337 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -121388,6 +121529,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +    checkout: Option<PathBuf>,
 +    valid_views: BTreeMap<String, Value>,
 +    renders: BTreeMap<String, (String, Value, Option<Instant>)>,
++    terminal_revision: u64,
 +    clock_reads: BTreeSet<String>,
 +    ui_mods: Option<Vec<String>>,
 +    rendered: HashMap<String, render::Rendered>,
@@ -121455,6 +121597,185 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            Access::Shared(runtime) | Access::Bounded(runtime, _) => Access::Bounded(runtime, wait),
 +        }
 +    }
++}
++
++pub fn terminal_shared(
++    runtime: &Mutex<ModHost>,
++    payload: Value,
++    active: impl Fn() -> bool,
++    publish: impl FnOnce(ModTerminalView, &str),
++) -> Result<()> {
++    let thread = state_thread(&payload);
++    let payload = TerminalPayload::new(payload);
++    let (generation, revision, mut results, mut pending) = {
++        let mut host = runtime
++            .lock()
++            .map_err(|_| failure("mod_runtime_poisoned"))?;
++        if !active() {
++            return Err(failure("terminal_view_stale"));
++        }
++        host.terminal_revision = host.terminal_revision.wrapping_add(1);
++        let generation = host.generation;
++        let revision = host.terminal_revision;
++        let mut results = Vec::new();
++        let mut pending = Vec::new();
++        for id in host.event_ids("terminal") {
++            if thread.is_none()
++                && host
++                    .loaded
++                    .get(&id)
++                    .is_some_and(|loaded| loaded.package.state_scope == "thread")
++            {
++                continue;
++            }
++            let own = payload.own(&id);
++            let stamp = host.terminal_state_key(&id, thread.as_deref());
++            let key = stamp
++                .as_ref()
++                .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
++            let cached = key.as_ref().and_then(|key| {
++                host.renders
++                    .get(&id)
++                    .filter(|(cached, _, clock)| {
++                        cached == key
++                            && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
++                    })
++                    .map(|(_, value, _)| value.clone())
++            });
++            if cached.is_none() {
++                pending.push((
++                    results.len(),
++                    host.begin(&id, generation, &active, thread.as_deref()),
++                    own,
++                ));
++            }
++            results.push((id, cached.map(Ok), key, stamp));
++        }
++        (generation, revision, results, pending)
++    };
++    for attempt in 0..2 {
++        let replies = concurrently(pending, &active, |(index, mut begun, own), active| {
++            let mut input_stamp = results[index].3.clone();
++            for retry in 0..2 {
++                let reply = begun.and_then(|mut invocation| {
++                    if invocation.migrate {
++                        invocation.loaded.state = packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
++                    }
++                    let reply = registered_call(&invocation.loaded, &invocation.dynamic, "terminal", "").and_then(|()| bridge::run(
++                        &invocation.loaded, "terminal", "", payload.payload(own.clone()), &[], active,
++                        &mut |call| Err(failure(match call.operation.as_str() {
++                            "time.sleep" => "host_operation_unavailable: time.sleep is not available during terminal",
++                            _ => "host_operation_unavailable: requires a native task",
++                        })), &mut |_| {}, Some(invocation.virtual_time_ms.unwrap_or_else(crate::peers::now_ms)), &InvocationScope::default(),
++                    ));
++                    Ok((invocation, reply))
++                });
++                let mut host = match runtime.lock() {
++                    Ok(host) => host,
++                    Err(_) => return (index, Err(failure("mod_runtime_poisoned")), None, None),
++                };
++                let id = &results[index].0;
++                if !active() || host.generation != generation || host.terminal_revision != revision
++                {
++                    return (
++                        index,
++                        Err(failure("terminal_view_stale")),
++                        input_stamp,
++                        None,
++                    );
++                }
++                if host.terminal_state_key(id, thread.as_deref()) != input_stamp {
++                    if retry == 1 {
++                        return (
++                            index,
++                            Err(failure("terminal_state_changed")),
++                            input_stamp.clone(),
++                            input_stamp,
++                        );
++                    }
++                    begun = host.begin(id, generation, active, thread.as_deref());
++                    input_stamp = host.terminal_state_key(id, thread.as_deref());
++                    continue;
++                }
++                let result = match reply {
++                    Ok((invocation, reply)) => {
++                        host.finish(id, generation, "terminal", "", invocation, reply, active)
++                    }
++                    Err(error) => Err(error),
++                };
++                if retry == 0
++                    && result
++                        .as_ref()
++                        .is_err_and(|error| error.to_string().starts_with("state_conflict"))
++                {
++                    begun = host.begin(id, generation, active, thread.as_deref());
++                    input_stamp = host.terminal_state_key(id, thread.as_deref());
++                    continue;
++                }
++                let stamp = host.terminal_state_key(id, thread.as_deref());
++                return (index, result, input_stamp, stamp);
++            }
++            unreachable!()
++        });
++        for (index, value, input_stamp, stamp) in replies {
++            results[index].1 = Some(value);
++            results[index].2 = input_stamp
++                .map(|stamp| format!("{stamp}:{}", payload.key(&payload.own(&results[index].0))));
++            results[index].3 = stamp;
++        }
++        let mut host = runtime
++            .lock()
++            .map_err(|_| failure("mod_runtime_poisoned"))?;
++        if !active() || host.generation != generation || host.terminal_revision != revision {
++            return Err(failure("terminal_view_stale"));
++        }
++        let changed = results
++            .iter()
++            .enumerate()
++            .filter_map(|(index, (id, _, _, stamp))| {
++                (host.terminal_state_key(id, thread.as_deref()) != *stamp).then_some(index)
++            })
++            .collect::<Vec<_>>();
++        if !changed.is_empty() {
++            if attempt == 1 {
++                return Err(failure("terminal_state_changed"));
++            }
++            pending = changed
++                .into_iter()
++                .map(|index| {
++                    let id = &results[index].0;
++                    let own = payload.own(id);
++                    let begun = host.begin(id, generation, &active, thread.as_deref());
++                    let stamp = host.terminal_state_key(&results[index].0, thread.as_deref());
++                    results[index].2 = stamp
++                        .as_ref()
++                        .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
++                    results[index].3 = stamp;
++                    (index, begun, own)
++                })
++                .collect();
++            continue;
++        }
++        let mut accepted = Vec::new();
++        for (id, value, key, _) in results {
++            let result = value.unwrap_or_else(|| Err(failure("callback_cancelled")));
++            match (&result, key) {
++                (Ok(value), Some(key)) => {
++                    let clock = host.clock_reads.contains(&id).then(Instant::now);
++                    host.renders.insert(id.clone(), (key, value.clone(), clock));
++                }
++                _ => {
++                    host.renders.remove(&id);
++                }
++            }
++            accepted.push((id, result));
++        }
++        let origin = payload.shared["event"].as_str().unwrap_or_default();
++        let view = host.compose_terminal(accepted, origin, None);
++        publish(view, host.configuration_sha256());
++        return Ok(());
++    }
++    Err(failure("terminal_state_changed"))
 +}
 +
 +type NextFn<'n> = dyn FnMut(
@@ -122034,6 +122355,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +            checkout: None,
 +            valid_views: BTreeMap::new(),
 +            renders: BTreeMap::new(),
++            terminal_revision: 0,
 +            clock_reads: BTreeSet::new(),
 +            ui_mods: mod_ui_allowlist().map(<[String]>::to_vec),
 +            rendered: HashMap::new(),
@@ -124309,6 +124631,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +    }
 +
 +    pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
++        self.terminal_revision = self.terminal_revision.wrapping_add(1);
 +        let thread = state_thread(&payload);
 +        let payload = TerminalPayload::new(payload);
 +        let generation = self.generation;
@@ -124436,6 +124759,7 @@ index 0000000000000000000000000000000000000000..a4ea5890f5c5cda97e448ea8b492ea1f
 +        {
 +            return Err(failure("terminal_owner_unavailable"));
 +        }
++        self.terminal_revision = self.terminal_revision.wrapping_add(1);
 +        let stamp = self.terminal_state_key(id, state_thread(payload).as_deref());
 +        let accepted = self
 +            .loaded
@@ -126324,10 +126648,10 @@ index 0000000000000000000000000000000000000000..74d5f0674bf4d8203c26c883be94e4bb
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223114553a3
+index 0000000000000000000000000000000000000000..21114ed397a2516846dd282e3c33cecd4a2c0eb7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,530 @@
+@@ -0,0 +1,546 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -126803,6 +127127,22 @@ index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223
 +    Ok(())
 +}
 +
++fn encoded_len(value: &Value) -> Result<usize> {
++    struct Count(usize);
++    impl std::io::Write for Count {
++        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
++            self.0 += bytes.len();
++            Ok(bytes.len())
++        }
++        fn flush(&mut self) -> std::io::Result<()> {
++            Ok(())
++        }
++    }
++    let mut count = Count(0);
++    serde_json::to_writer(&mut count, value)?;
++    Ok(count.0)
++}
++
 +fn receipt_for(
 +    call: &ModHostCall,
 +    result: Result<Value>,
@@ -126818,14 +127158,14 @@ index 0000000000000000000000000000000000000000..505f2203ae47870e8540e782201e8223
 +            json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
 +        }
 +    };
-+    let bytes = serde_json::to_vec(&receipt)?.len();
++    let bytes = encoded_len(&receipt)?;
 +    let room = scope
 +        .receipt_room()
 +        .min(HOST_RECEIPT_BYTES.saturating_sub(receipts_bytes));
 +    if bytes > room {
 +        let receipt = json!({"call": call, "error": format!(
 +        "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")});
-+        let bytes = serde_json::to_vec(&receipt)?.len();
++        let bytes = encoded_len(&receipt)?;
 +        return Ok((receipt, bytes));
 +    }
 +    Ok((receipt, bytes))
@@ -153296,10 +153636,10 @@ index 0000000000000000000000000000000000000000..fef4f0b6bcc366c94b6de91d18c2d561
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549320469b9
+index 0000000000000000000000000000000000000000..7b3566d5f646e96668bc2b417d38bed9f150f088
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5441 @@
+@@ -0,0 +1,5675 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -153428,6 +153768,240 @@ index 0000000000000000000000000000000000000000..b822d487889688bc8884057c4396a549
 +
 +fn host(temp: &TempDir) -> ModHost {
 +    ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap()
++}
++
++#[test]
++fn terminal_shared_releases_host_and_rechecks_cached_state() {
++    for state in ["state", "uiState"] {
++        for cached in [false, true] {
++            let source = format!(
++                "export default api => {{ api.command('write', value => {{ api.{state}.set(value); return value; }}); api.on('terminal', () => ({{greeting:String(api.{state}.get() ?? 0)}})); }}"
++            );
++            let (temp, _, _) = fixture(&source, &["terminal", "commands", "store"]);
++            let runtime = std::sync::Mutex::new(host(&temp));
++            {
++                let mut host = runtime.lock().unwrap();
++                let generation = host.generation();
++                host.invoke("fixture", generation, "command", "write", json!(0))
++                    .unwrap();
++            }
++            if cached {
++                assert_eq!(
++                    runtime
++                        .lock()
++                        .unwrap()
++                        .terminal_view(json!({}), || true)
++                        .view
++                        .greeting
++                        .as_deref(),
++                    Some("0")
++                );
++            }
++            let changed = AtomicUsize::new(0);
++            let active = || {
++                if let Ok(mut host) = runtime.try_lock()
++                    && changed.fetch_add(1, Ordering::SeqCst) == 0
++                {
++                    let generation = host.generation();
++                    host.invoke("fixture", generation, "command", "write", json!(1))
++                        .unwrap();
++                }
++                true
++            };
++            let mut accepted = None;
++            codex_omd::terminal_shared(&runtime, json!({}), active, |view, _| {
++                accepted = Some(view)
++            })
++            .unwrap();
++            assert!(changed.load(Ordering::SeqCst) > 0, "host stayed locked");
++            assert_eq!(
++                accepted.unwrap().view.greeting.as_deref(),
++                Some("1"),
++                "{state}, cached={cached}"
++            );
++            let mut host = runtime.lock().unwrap();
++            let generation = host.generation();
++            host.invoke("fixture", generation, "command", "write", json!(0))
++                .unwrap();
++            assert_eq!(
++                host.terminal_view(json!({}), || true)
++                    .view
++                    .greeting
++                    .as_deref(),
++                Some("0"),
++                "state returned to zero: {state}, cached={cached}"
++            );
++        }
++    }
++}
++
++#[test]
++fn terminal_shared_rejects_obsolete_work_before_publication() {
++    for change in ["render", "reload", "cancel"] {
++        let (temp, store, path) = fixture(
++            "export default api => api.on('terminal', input => ({greeting:String(input.value)}));",
++            &["terminal"],
++        );
++        let runtime = std::sync::Mutex::new(host(&temp));
++        let changed = AtomicUsize::new(0);
++        let active = || {
++            if let Ok(mut host) = runtime.try_lock()
++                && changed.fetch_add(1, Ordering::SeqCst) == 0
++            {
++                match change {
++                    "render" => assert_eq!(
++                        host.terminal_view(json!({"value":"new"}), || true)
++                            .view
++                            .greeting
++                            .as_deref(),
++                        Some("new")
++                    ),
++                    "reload" => {
++                        store.enable(&path, false).unwrap();
++                        host.reload().unwrap();
++                    }
++                    _ => (),
++                }
++            }
++            change != "cancel" || changed.load(Ordering::SeqCst) == 0
++        };
++        let mut accepted = false;
++        let result =
++            codex_omd::terminal_shared(&runtime, json!({"value":"old"}), active, |_, _| {
++                accepted = true
++            });
++        assert!(changed.load(Ordering::SeqCst) > 0, "host stayed locked");
++        assert!(result.is_err(), "{change}");
++        assert!(!accepted, "obsolete {change} was published");
++    }
++}
++
++#[test]
++fn terminal_shared_command_previews_supersede_pending_renders() {
++    for patch in [json!({"title":"New"}), Value::Null] {
++        let (temp, _, _) = fixture(
++            "export default api => { api.command('view', patch => ({terminal:patch})); api.on('terminal', () => ({title:'Old'})); };",
++            &["terminal", "commands"],
++        );
++        let runtime = std::sync::Mutex::new(host(&temp));
++        let changed = AtomicUsize::new(0);
++        let active = || {
++            if let Ok(mut host) = runtime.try_lock()
++                && changed.fetch_add(1, Ordering::SeqCst) == 0
++            {
++                let generation = host.generation();
++                let value = host
++                    .invoke("fixture", generation, "command", "view", patch.clone())
++                    .unwrap();
++                host.command_view("fixture", generation, value["terminal"].clone(), &json!({}))
++                    .unwrap();
++            }
++            true
++        };
++        let mut accepted = false;
++        assert!(
++            codex_omd::terminal_shared(&runtime, json!({}), active, |_, _| accepted = true)
++                .is_err()
++        );
++        assert!(!accepted);
++    }
++}
++
++#[test]
++fn terminal_shared_retries_only_the_conflicting_participant() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
++    let first = package(
++        &root,
++        "first",
++        "export default api => api.on('terminal', () => { api.state.set(Number(api.state.get() ?? 0)+1); return {status:[String(api.state.get())]}; });",
++        &["terminal", "store"],
++    );
++    let second = package(
++        &root,
++        "second",
++        "export default api => { api.command('write', () => {api.state.set(10); return null;}); api.on('terminal', () => {const before = Number(api.state.get() ?? 0); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200); api.state.set(before+1); return {title:String(before+1)};}); };",
++        &["terminal", "store", "commands"],
++    );
++    trust(&store, &first, &["terminal", "store"]);
++    trust(&store, &second, &["terminal", "store", "commands"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let changed = AtomicUsize::new(0);
++    let active = || {
++        if let Ok(mut host) = runtime.try_lock()
++            && host.state("first") == Some(&json!(1))
++            && changed.fetch_add(1, Ordering::SeqCst) == 0
++        {
++            let generation = host.generation();
++            host.invoke("second", generation, "command", "write", Value::Null)
++                .unwrap();
++        }
++        true
++    };
++    let mut accepted = None;
++    codex_omd::terminal_shared(&runtime, json!({}), active, |view, _| accepted = Some(view))
++        .unwrap();
++    assert!(changed.load(Ordering::SeqCst) > 0);
++    assert_eq!(runtime.lock().unwrap().state("first"), Some(&json!(1)));
++    assert_eq!(accepted.unwrap().view.title.as_deref(), Some("11"));
++}
++
++#[test]
++fn terminal_shared_does_not_share_the_retained_command_context() {
++    let (temp, store, path) = fixture(
++        "let calls = 0; export default api => {api.command('count', () => ++calls); api.on('terminal', () => {Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); return {greeting:String(calls)};});};",
++        &["terminal", "commands"],
++    );
++    let manifest_path = path.join("mod.json");
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["state_scope"] = json!("thread");
++    manifest["compatibility"] = json!({"required_features":["session_activation_v1"]});
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    trust(&store, &path, &["terminal", "commands"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let _thread = codex_omd::StateThread::enter(Some("terminal-session".into()));
++    {
++        let mut host = runtime.lock().unwrap();
++        let generation = host.generation();
++        assert_eq!(
++            host.invoke("fixture", generation, "command", "count", Value::Null)
++                .unwrap(),
++            json!(1)
++        );
++    }
++    let changed = AtomicUsize::new(0);
++    let active = || {
++        if let Ok(mut host) = runtime.try_lock()
++            && changed.fetch_add(1, Ordering::SeqCst) == 1
++        {
++            let generation = host.generation();
++            assert_eq!(
++                host.invoke("fixture", generation, "command", "count", Value::Null)
++                    .unwrap(),
++                json!(2)
++            );
++        }
++        true
++    };
++    let mut accepted = None;
++    codex_omd::terminal_shared(
++        &runtime,
++        json!({"ledger":{"thread_id":"terminal-session"}}),
++        active,
++        |view, _| accepted = Some(view),
++    )
++    .unwrap();
++    assert!(changed.load(Ordering::SeqCst) >= 2);
++    assert_eq!(accepted.unwrap().view.greeting.as_deref(), Some("0"));
++    let mut host = runtime.lock().unwrap();
++    let generation = host.generation();
++    assert_eq!(
++        host.invoke("fixture", generation, "command", "count", Value::Null)
++            .unwrap(),
++        json!(3)
++    );
 +}
 +
 +const COUNTER: &str = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
@@ -169026,7 +169600,7 @@ index 0000000000000000000000000000000000000000..f58dbf131fc5cff28c9379679733a1b5
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel.rs b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ec9b00130b9eafb934bea97c3ace050cbf317cb3
+index 0000000000000000000000000000000000000000..3421a820f83fde077d9b33dd87d5dc12767be9ba
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 @@ -0,0 +1,889 @@
@@ -169146,7 +169720,7 @@ index 0000000000000000000000000000000000000000..ec9b00130b9eafb934bea97c3ace050c
 +
 +impl ModPanelRequest {
 +    pub(crate) fn parse(caller: &str, arguments: &Value) -> Result<Self, String> {
-+        let mut request: Self = serde_json::from_value(arguments.clone())
++        let mut request = <Self as serde::Deserialize>::deserialize(arguments)
 +            .map_err(|error| format!("terminal_panel_invalid: {error}"))?;
 +        request.title = line(&request.title, 128, false)?;
 +        request.subtitle = request
@@ -170412,10 +170986,10 @@ index 0000000000000000000000000000000000000000..d09c2e94aba8325cfa392be009e2d4fe
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..598e3654c119a745c433295575c1a14d7c3ae181
+index 0000000000000000000000000000000000000000..e82a4a88b46a74a5469ed8e0e654b296808aecce
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,679 @@
+@@ -0,0 +1,681 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -170513,6 +171087,7 @@ index 0000000000000000000000000000000000000000..598e3654c119a745c433295575c1a14d
 +        let tx = self.app_event_tx.clone();
 +        let running = self.turn_lifecycle.agent_turn_running;
 +        std::thread::spawn(move || {
++            let batch = crate::mod_runtime::RunningCommand::enter();
 +            for (command, args) in commands {
 +                let result = crate::mod_runtime::run_command(
 +                    &command.invocation,
@@ -170531,6 +171106,7 @@ index 0000000000000000000000000000000000000000..598e3654c119a745c433295575c1a14d
 +                    quiet,
 +                });
 +            }
++            drop(batch);
 +            if crate::mod_runtime::reloaded() && refresh_panels {
 +                tx.send(AppEvent::ModPanelsReloaded);
 +            }
@@ -178746,10 +179322,10 @@ index 0000000000000000000000000000000000000000..c774f3c1004e1d4b2bb580a75ecf37c5
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e233f4362
+index 0000000000000000000000000000000000000000..e22a05f9f1151e0ba1cc54876d16be09cd48f870
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,716 @@
+@@ -0,0 +1,863 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -178910,14 +179486,28 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +    }
 +}
 +
++struct Job {
++    key: u64,
++    instance: (String, String),
++    input: Value,
++    cleared: u64,
++    background: bool,
++}
++
 +#[derive(Default)]
 +struct Engine {
 +    done: HashMap<u64, Option<Rendered>>,
 +    latest: HashMap<(String, String), Option<Rendered>>,
-+    pending: VecDeque<(u64, (String, String), Value, u64)>,
++    asked: HashMap<(String, String), (u64, Value, u64)>,
++    asks: u64,
++    frame_from: u64,
++    drawn_from: u64,
++    pending: VecDeque<Job>,
 +    running: bool,
 +    revision: Option<(u64, u64)>,
 +    cleared: u64,
++    #[cfg(test)]
++    changes: usize,
 +}
 +
 +impl Engine {
@@ -178940,10 +179530,42 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +        }
 +        self.latest.insert(instance, rendered.clone()).flatten() != rendered
 +    }
++
++    fn ask(&mut self, key: u64, instance: &(String, String), input: &Value) {
++        if self.asked.len() >= DONE_LIMIT {
++            self.asked.clear();
++        }
++        self.asks += 1;
++        self.asked
++            .insert(instance.clone(), (key, input.clone(), self.asks));
++    }
++
++    fn reasked(&mut self, key: u64, instance: &(String, String)) {
++        self.asks += 1;
++        if let Some(asked) = self.asked.get_mut(instance).filter(|asked| asked.0 == key) {
++            asked.2 = self.asks;
++        }
++    }
++
++    fn queue(&mut self, job: Job) -> bool {
++        self.pending
++            .retain(|queued| queued.instance != job.instance);
++        if self.pending.len() >= PENDING_LIMIT {
++            self.pending.pop_front();
++        }
++        self.pending.push_back(job);
++        let start = !self.running;
++        self.running = true;
++        start
++    }
 +}
 +
 +static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 +static HOOKED: AtomicBool = AtomicBool::new(false);
++#[cfg(test)]
++thread_local! {
++    static TEST_HOOKED: Cell<bool> = const { Cell::new(false) };
++}
 +static FULLSCREEN: AtomicBool = AtomicBool::new(false);
 +static COLUMNS: AtomicU16 = AtomicU16::new(0);
 +static ROWS: AtomicU16 = AtomicU16::new(0);
@@ -179039,6 +179661,16 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +    FULLSCREEN.store(fullscreen, Ordering::Relaxed);
 +    COLUMNS.store(columns, Ordering::Relaxed);
 +    ROWS.store(rows, Ordering::Relaxed);
++    frame_started();
++}
++
++fn frame_started() {
++    engine(|engine| {
++        engine.drawn_from = engine.frame_from;
++        engine.frame_from = engine.asks;
++        let drawn_from = engine.drawn_from;
++        engine.asked.retain(|_, (_, _, ask)| *ask > drawn_from);
++    });
 +}
 +
 +/// Screen columns, for hooked components laid out before their final width is known.
@@ -179050,6 +179682,10 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +}
 +
 +pub(crate) fn enabled() -> bool {
++    #[cfg(test)]
++    if TEST_HOOKED.with(Cell::get) {
++        return true;
++    }
 +    HOOKED.load(Ordering::Relaxed)
 +}
 +
@@ -179105,6 +179741,69 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +    });
 +}
 +
++/// State only hooks read may change under an identical view, so the instances asked since the previous frame began are asked again off-frame.
++pub(crate) fn reask() {
++    if !enabled() {
++        return;
++    }
++    let start = engine(|engine| {
++        let cleared = engine.cleared;
++        let mut recent = engine.asked.iter().collect::<Vec<_>>();
++        recent.sort_unstable_by_key(|(_, (_, _, ask))| std::cmp::Reverse(*ask));
++        recent.truncate(PENDING_LIMIT);
++        let jobs = recent
++            .into_iter()
++            .rev()
++            .map(|(instance, (key, input, _))| Job {
++                key: *key,
++                instance: instance.clone(),
++                input: input.clone(),
++                cleared,
++                background: true,
++            })
++            .collect::<Vec<_>>();
++        jobs.into_iter()
++            .fold(false, |start, job| engine.queue(job) || start)
++    });
++    if start {
++        std::thread::spawn(work);
++    }
++}
++
++/// Cells asked for another context never draw again.
++pub(crate) fn clear_asked() {
++    engine(|engine| engine.asked.clear());
++}
++
++/// Lets a test drive a fresh render engine with its own frames, restoring the previous ones after.
++#[cfg(test)]
++pub(crate) fn test_engine(frames: crate::tui::FrameRequester) -> impl Drop {
++    struct Restore(bool, Option<Engine>, Option<crate::tui::FrameRequester>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            TEST_HOOKED.set(self.0);
++            *ENGINE.locked() = self.1.take();
++            *FRAMES.locked() = self.2.take();
++        }
++    }
++    Restore(
++        TEST_HOOKED.replace(true),
++        ENGINE.locked().take(),
++        FRAMES.locked().replace(frames),
++    )
++}
++
++#[cfg(test)]
++pub(crate) fn test_idle() -> bool {
++    engine(|engine| !engine.running && engine.pending.is_empty())
++}
++
++/// How many hook answers changed in the test engine, each of which asked for a frame.
++#[cfg(test)]
++pub(crate) fn test_changes() -> usize {
++    engine(|engine| engine.changes)
++}
++
 +/// Inline scrollback is written once, so renders inside this scope answer before returning.
 +pub(crate) struct Wait(bool);
 +
@@ -179156,19 +179855,39 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +
 +fn work() {
 +    loop {
-+        let Some((key, instance, input, cleared)) = engine(|engine| {
++        let Some(job) = engine(|engine| {
 +            let job = engine.pending.pop_front();
 +            engine.running = job.is_some();
 +            job
 +        }) else {
 +            return;
 +        };
-+        let retained = input["lifecycle"] == "final";
-+        let Some(rendered) = run(input) else {
-+            schedule_frame(RETRY);
++        let retained = job.input["lifecycle"] == "final";
++        let Some(rendered) = run(job.input.clone()) else {
++            if job.background {
++                std::thread::sleep(RETRY);
++                engine(|engine| {
++                    if !engine
++                        .pending
++                        .iter()
++                        .any(|queued| queued.instance == job.instance)
++                    {
++                        engine.pending.push_back(job);
++                    }
++                });
++            } else {
++                schedule_frame(RETRY);
++            }
 +            continue;
 +        };
-+        let changed = engine(|engine| engine.remember(key, instance, rendered, cleared));
++        let changed = engine(|engine| {
++            let changed = engine.remember(job.key, job.instance, rendered, job.cleared);
++            #[cfg(test)]
++            {
++                engine.changes += usize::from(changed);
++            }
++            changed
++        });
 +        if changed {
 +            if retained {
 +                EPOCH.fetch_add(1, Ordering::Relaxed);
@@ -179185,7 +179904,7 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +}
 +
 +pub(crate) fn resolve_state(target: &RenderTarget, width: u16) -> Option<Option<Rendered>> {
-+    if !HOOKED.load(Ordering::Relaxed) {
++    if !enabled() {
 +        return Some(None);
 +    }
 +    let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -179200,16 +179919,23 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +        .hash(&mut hasher);
 +    digest(&target.props, &mut hasher);
 +    let key = hasher.finish();
-+    if let Some(done) = engine(|engine| engine.done.get(&key).cloned()) {
-+        return Some(done);
-+    }
-+    let input = input(target, width);
 +    let instance_id = match (target.component, target.props["message_id"].as_str()) {
 +        ("assistant_message", Some(message)) => format!("{}:{message}", target.id),
 +        _ => target.id.clone(),
 +    };
 +    let instance = (target.component.to_owned(), instance_id);
-+    if WAITING.with(Cell::get) {
++    let waiting = WAITING.with(Cell::get);
++    if let Some(done) = engine(|engine| {
++        let done = engine.done.get(&key).cloned();
++        if done.is_some() && !waiting {
++            engine.reasked(key, &instance);
++        }
++        done
++    }) {
++        return Some(done);
++    }
++    let input = input(target, width);
++    if waiting {
 +        let cleared = engine(|engine| engine.cleared);
 +        let Some(rendered) = run(input) else {
 +            return engine(|engine| engine.latest.get(&instance).cloned());
@@ -179220,18 +179946,15 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +        return Some(rendered);
 +    }
 +    let (start, stale) = engine(|engine| {
-+        engine
-+            .pending
-+            .retain(|(_, queued, _, _)| *queued != instance);
-+        if engine.pending.len() >= PENDING_LIMIT {
-+            engine.pending.pop_front();
-+        }
++        engine.ask(key, &instance, &input);
 +        let cleared = engine.cleared;
-+        engine
-+            .pending
-+            .push_back((key, instance.clone(), input, cleared));
-+        let start = !engine.running;
-+        engine.running = true;
++        let start = engine.queue(Job {
++            key,
++            instance: instance.clone(),
++            input,
++            cleared,
++            background: false,
++        });
 +        (start, engine.latest.get(&instance).cloned())
 +    });
 +    if start {
@@ -179468,10 +180191,10 @@ index 0000000000000000000000000000000000000000..db700d45a51da72437f47059b2dcb77e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b0e4d4b3a
+index 0000000000000000000000000000000000000000..408853b934ddb9a50260141868a23a36682d9984
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,263 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -179664,7 +180387,10 @@ index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b
 +    assert!(resolve_state(&second, 80).is_none());
 +    let (first_instance, second_instance) = engine(|engine| {
 +        assert_eq!(engine.pending.len(), 2);
-+        (engine.pending[0].1.clone(), engine.pending[1].1.clone())
++        (
++            engine.pending[0].instance.clone(),
++            engine.pending[1].instance.clone(),
++        )
 +    });
 +    assert_ne!(first_instance, second_instance);
 +    engine(|engine| {
@@ -179699,12 +180425,45 @@ index 0000000000000000000000000000000000000000..2da0d5fa5c7c1e06647f85434f72128b
 +        "first"
 +    );
 +}
++
++#[test]
++#[serial_test::serial]
++fn reasks_cover_only_cells_asked_since_the_previous_frame_began() {
++    let _engine = test_engine(crate::tui::FrameRequester::test_dummy());
++    engine(|engine| engine.running = true);
++    let target = |id: &str| RenderTarget::new("tool_call", id, false, json!({"kind":"exec"}));
++    let reasked = || {
++        engine(|engine| engine.pending.clear());
++        reask();
++        engine(|engine| {
++            let mut queued = engine
++                .pending
++                .iter()
++                .map(|job| job.instance.1.clone())
++                .collect::<Vec<_>>();
++            queued.sort();
++            queued
++        })
++    };
++    {
++        let _wait = Wait::enter();
++        resolve_state(&target("scrollback"), 80);
++    }
++    resolve_state(&target("scrolled"), 80);
++    frame_started();
++    resolve_state(&target("drawn"), 80);
++    frame_started();
++    resolve_state(&target("drawing"), 80);
++    assert_eq!(reasked(), ["drawing", "drawn"]);
++    clear_asked();
++    assert!(reasked().is_empty());
++}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd7274b642c6
+index 0000000000000000000000000000000000000000..9333f2852d7b5242da5c37da14143a1f28b57d4c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1775 @@
+@@ -0,0 +1,1871 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -179718,7 +180477,10 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +use std::path::PathBuf;
 +use std::str::FromStr;
 +use std::sync::Arc;
++use std::sync::Condvar;
 +use std::sync::Mutex;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
 +use std::time::Duration;
 +use std::time::Instant;
 +
@@ -179774,6 +180536,59 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    epoch: 0,
 +    sequence: 0,
 +});
++
++static COMMANDS_RUNNING: Mutex<usize> = Mutex::new(0);
++static COMMANDS_SETTLED: Condvar = Condvar::new();
++static RERENDER_DEFERRED: AtomicBool = AtomicBool::new(false);
++const COMMAND_RENDER_DEFERRAL: Duration = Duration::from_millis(250);
++
++pub(crate) struct RunningCommand;
++
++impl RunningCommand {
++    pub(crate) fn enter() -> Self {
++        *COMMANDS_RUNNING.locked() += 1;
++        Self
++    }
++}
++
++impl Drop for RunningCommand {
++    fn drop(&mut self) {
++        let mut running = COMMANDS_RUNNING.locked();
++        *running = running.saturating_sub(1);
++        if *running == 0 {
++            COMMANDS_SETTLED.notify_all();
++        }
++    }
++}
++
++/// A view render requested while a command runs is coalesced until the command settles or a bound passes, so the two never compete for runners.
++fn defer_while_command_runs() -> bool {
++    if *COMMANDS_RUNNING.locked() == 0 {
++        return false;
++    }
++    if !RERENDER_DEFERRED.swap(true, Ordering::AcqRel) {
++        std::thread::spawn(|| {
++            let deadline = Instant::now() + COMMAND_RENDER_DEFERRAL;
++            let mut running = COMMANDS_RUNNING.locked();
++            while *running > 0 {
++                let left = deadline.saturating_duration_since(Instant::now());
++                if left.is_zero() {
++                    break;
++                }
++                running = match COMMANDS_SETTLED.wait_timeout(running, left) {
++                    Ok((running, _)) => running,
++                    Err(poisoned) => poisoned.into_inner().0,
++                };
++            }
++            drop(running);
++            RERENDER_DEFERRED.store(false, Ordering::Release);
++            if let Some(context) = active_context() {
++                render_for(context, &|| true);
++            }
++        });
++    }
++    true
++}
 +
 +impl ActiveContext {
 +    fn synchronize(&mut self, context: ModContext) -> bool {
@@ -179902,8 +180717,10 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    impl Drop for Restore {
 +        fn drop(&mut self) {
 +            *HOST.lock().unwrap() = self.0.take();
++            KNOWN_INTERCEPTS.locked().clear();
 +        }
 +    }
++    KNOWN_INTERCEPTS.locked().clear();
 +    Restore(HOST.lock().unwrap().take())
 +}
 +
@@ -180427,14 +181244,6 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    .map_err(std::io::Error::other)
 +}
 +
-+fn preview(
-+    runtime: &mut ModHost,
-+    paths: &crate::omd::ModPaths,
-+    context: &ModContext,
-+) -> Option<ModViewSnapshot> {
-+    preview_with(runtime, paths, context, None, &|| true)
-+}
-+
 +fn preview_with(
 +    runtime: &mut ModHost,
 +    paths: &crate::omd::ModPaths,
@@ -180482,25 +181291,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +pub(crate) fn refresh_command(invocation: ModInvocation) {
 +    let _thread =
 +        codex_omd::StateThread::enter(invocation.context.thread_id.map(|id| id.to_string()));
-+    let active = || current(&invocation);
-+    if !active() {
-+        return;
-+    }
-+    let Some(paths) = crate::omd::mod_paths_for(&invocation.context.repository) else {
-+        return;
-+    };
-+    let Ok(runtime) = shared_host_active(&active) else {
-+        return;
-+    };
-+    let snapshot = try_lock_until(&runtime, active).and_then(|mut runtime| {
-+        preview_with(&mut runtime, &paths, &invocation.context, None, &active)
-+    });
-+    if active()
-+        && let Some(snapshot) = snapshot
-+    {
-+        crate::mod_ui::preview(snapshot);
-+        codex_omd::client_surface::redraw();
-+    }
++    rerender_for(invocation.context.clone(), &|| current(&invocation));
 +}
 +
 +/// Opens and activates the shared host while the rest of startup runs, so `prepare_startup` finds it ready.
@@ -180755,42 +181546,106 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +        },
 +        |_| {},
 +    );
-+    let snapshot = {
++    let context = {
 +        let mut runtime = runtime.locked();
 +        reload(&mut runtime);
 +        let changed = runtime.state(id) != before.0.as_ref()
 +            || runtime.configuration_sha256() != before.1
 +            || runtime.ui_revision(id) != before.2;
-+        active_context()
-+            .filter(|_| changed && (scope.active)())
-+            .and_then(|context| {
-+                preview_with(&mut runtime, &paths, &context, None, scope.active.as_ref())
-+            })
++        active_context().filter(|_| changed && (scope.active)())
 +    };
-+    if (scope.active)()
-+        && let Some(snapshot) = snapshot
-+    {
-+        crate::mod_ui::preview(snapshot);
-+        codex_omd::client_surface::redraw();
++    if let Some(context) = context {
++        rerender_for(context, scope.active.as_ref());
 +    }
 +    Some(result.map_err(|error| error.to_string()))
 +}
 +
-+pub(crate) fn rerender() {
-+    let Some(paths) = crate::omd::mod_paths() else {
-+        return;
-+    };
-+    let Ok(runtime) = shared_host() else {
-+        return;
-+    };
-+    let snapshot = {
-+        let mut runtime = runtime.locked();
-+        active_context().and_then(|context| preview(&mut runtime, &paths, &context))
-+    };
-+    if let Some(snapshot) = snapshot {
-+        crate::mod_ui::preview(snapshot);
-+        codex_omd::client_surface::redraw();
++fn publish_for_context(invocation: &ModInvocation, publish: impl FnOnce()) -> bool {
++    let active = ACTIVE_CONTEXT.locked();
++    if !active.current(invocation) {
++        return false;
 +    }
++    publish();
++    true
++}
++
++pub(crate) fn rerender() {
++    if let Some(context) = active_context() {
++        rerender_for(context, &|| true);
++    }
++}
++
++fn rerender_for(context: ModContext, allowed: &dyn Fn() -> bool) {
++    if allowed() && !defer_while_command_runs() {
++        render_for(context, allowed);
++    }
++}
++
++fn render_for(context: ModContext, allowed: &dyn Fn() -> bool) {
++    if !allowed() {
++        return;
++    }
++    let invocation = {
++        let mut active = ACTIVE_CONTEXT.locked();
++        if active.context.as_ref() != Some(&context) {
++            return;
++        }
++        active.join(context.clone())
++    };
++    static REQUEST: Mutex<u64> = Mutex::new(0);
++    let request = {
++        let mut current = REQUEST.locked();
++        *current = current.wrapping_add(1);
++        *current
++    };
++    let active = || *REQUEST.locked() == request && current(&invocation) && allowed();
++    let Some(paths) = crate::omd::mod_paths_for(&context.repository) else {
++        return;
++    };
++    let Ok(runtime) = shared_host_active(&active) else {
++        return;
++    };
++    let Some(mut snapshot) = crate::omd::view_snapshot(&paths.store.join("mod-view.json")) else {
++        return;
++    };
++    snapshot.rendered_ms = codex_omd::peers::now_ms();
++    snapshot.input["client"] = crate::mod_client::value();
++    snapshot.input["ledger"] = serde_json::json!({
++        "thread_id": context.thread_id.map(|id| id.to_string()),
++        "cwd": context.repository,
++    });
++    {
++        let mut runtime = runtime.locked();
++        reload_active(&mut runtime, &active);
++    }
++    let input = snapshot.input.clone();
++    let _ = codex_omd::terminal_shared(&runtime, input, &active, |terminal, configuration| {
++        let current = REQUEST.locked();
++        if *current != request || !allowed() {
++            return;
++        }
++        publish_for_context(&invocation, || {
++            snapshot.input["pty_scope"] = serde_json::json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": configuration});
++            snapshot.revision = snapshot.revision.saturating_add(1);
++            snapshot.view = terminal.view;
++            snapshot.conflicts = terminal.conflicts;
++            snapshot.contributors = terminal.contributors;
++            snapshot.component_owners = terminal.component_owners;
++            snapshot.layout_owner = terminal.layout_owner;
++            snapshot.diagnostics = snapshot.native_diagnostics.clone();
++            for diagnostic in terminal.diagnostics {
++                if !snapshot.diagnostics.contains(&diagnostic) {
++                    snapshot.diagnostics.push(diagnostic);
++                }
++            }
++            snapshot.diagnostics.truncate(16);
++            if crate::mod_ui::preview(snapshot) {
++                codex_omd::client_surface::redraw();
++            } else {
++                crate::mod_render::reask();
++            }
++        });
++    });
 +}
 +
 +pub(crate) fn invoke_replacement(
@@ -181239,18 +182094,17 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +        return Err("callback_cancelled".to_owned());
 +    }
 +    let outcome = ModCommandOutcome::parse(&value).map_err(|e| e.to_string())?;
-+    let preview = preview_with(
-+        &mut runtime.locked(),
-+        &paths,
-+        &invocation.context,
-+        outcome
-+            .terminal
-+            .clone()
-+            .map(|patch| (id.as_str(), generation, patch)),
-+        &active,
-+    );
++    let preview = outcome.terminal.clone().and_then(|patch| {
++        preview_with(
++            &mut runtime.locked(),
++            &paths,
++            &invocation.context,
++            Some((id.as_str(), generation, patch)),
++            &active,
++        )
++    });
 +    Ok(ModCommandResult {
-+        refresh: outcome.terminal.as_ref().map(|_| invocation.clone()),
++        refresh: Some(invocation.clone()),
 +        value,
 +        outcome,
 +        preview,
@@ -181386,6 +182240,7 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +    invocation: &ModInvocation,
 +    mut builtin: impl FnMut(String) -> Result<Value, String>,
 +) -> Result<ModCommandResult, String> {
++    let _running = RunningCommand::enter();
 +    if active_turn && !immediate && target.is_some() {
 +        return Err(format!("command_unavailable_during_turn: /{command}"));
 +    }
@@ -181482,12 +182337,139 @@ index 0000000000000000000000000000000000000000..9bdd054f3d49a92c9947f119732bdd72
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb0f7e8fd0
+index 0000000000000000000000000000000000000000..165cd327807abdffce957f7cfc92ae16b7573fe3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,784 @@
+@@ -0,0 +1,1177 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
++
++#[test]
++#[serial_test::serial]
++fn terminal_publication_excludes_context_transition_and_invalidation() {
++    struct Restore(Option<ActiveContext>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            *ACTIVE_CONTEXT.locked() = self.0.take().unwrap();
++        }
++    }
++    let _restore = Restore(Some(std::mem::take(&mut *ACTIVE_CONTEXT.locked())));
++    let root = tempfile::tempdir().unwrap();
++    let context = ModContext {
++        thread_id: Some(ThreadId::new()),
++        repository: root.path().to_path_buf(),
++        policy: FileSystemSandboxPolicy::unrestricted(),
++    };
++    ACTIVE_CONTEXT.locked().synchronize(context.clone());
++    let invocation = ACTIVE_CONTEXT.locked().join(context.clone());
++    let mut next = context.clone();
++    next.thread_id = Some(ThreadId::new());
++    let actions = Mutex::new(Vec::new());
++    let (ready, started) = std::sync::mpsc::channel();
++    let (release, released) = std::sync::mpsc::channel();
++    let (changing, attempted) = std::sync::mpsc::channel();
++    let blocked = std::thread::scope(|scope| {
++        let actions = &actions;
++        let invocation = &invocation;
++        let publisher = scope.spawn(move || {
++            assert!(publish_for_context(&invocation, || {
++                ready.send(()).unwrap();
++                released.recv().unwrap();
++                actions.locked().push("old preview");
++            }));
++        });
++        started.recv_timeout(Duration::from_secs(5)).unwrap();
++        let blocked = ACTIVE_CONTEXT.try_lock().is_err();
++        let updater = scope.spawn(move || {
++            changing.send(()).unwrap();
++            ACTIVE_CONTEXT.locked().synchronize(next);
++            actions.locked().push("new context");
++            actions.locked().push("invalidation");
++        });
++        attempted.recv_timeout(Duration::from_secs(5)).unwrap();
++        release.send(()).unwrap();
++        publisher.join().unwrap();
++        updater.join().unwrap();
++        blocked
++    });
++    assert!(blocked);
++    assert_eq!(
++        *actions.locked(),
++        ["old preview", "new context", "invalidation"]
++    );
++    assert!(!publish_for_context(&invocation, || panic!(
++        "stale publication"
++    )));
++    ACTIVE_CONTEXT.locked().synchronize(context.clone());
++    let previous = ACTIVE_CONTEXT.locked().join(context.clone());
++    ACTIVE_CONTEXT.locked().begin(context);
++    assert!(!publish_for_context(&previous, || panic!(
++        "superseded publication"
++    )));
++}
++
++#[test]
++#[serial_test::serial]
++fn mod_command_result_defers_terminal_callbacks_but_keeps_inline_preview() {
++    struct Restore(Option<ActiveContext>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            let mut active = ACTIVE_CONTEXT.locked();
++            *active = self.0.take().unwrap();
++            sync_pty_context(&active);
++        }
++    }
++    let _restore = Restore(Some(std::mem::take(&mut *ACTIVE_CONTEXT.locked())));
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let data = root.join("store");
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
++    let _environment = crate::omd::tests::omd_environment(&data);
++    let _host = test_fresh_host();
++    let package = root.join("fixture");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::json!({"schema":1,"id":"fixture","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["terminal","commands","store"]}).to_string()).unwrap();
++    std::fs::write(package.join("index.ts"), "export default api => { api.command('ready', () => ({display:'Ready'})); api.command('inline', () => ({terminal:{title:'Inline'}})); api.on('terminal', () => {api.state.set(Number(api.state.get() ?? 0)+1); return {title:'Rendered'};}); };").unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    store
++        .trust(
++            package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["terminal".into(), "commands".into(), "store".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    let context = ModContext {
++        thread_id: Some(ThreadId::new()),
++        repository: root,
++        policy: FileSystemSandboxPolicy::unrestricted(),
++    };
++    let snapshot = ModViewSnapshot {
++        input: serde_json::json!({"event":"idle","ledger":{"thread_id":context.thread_id.unwrap().to_string()}}),
++        ..Default::default()
++    };
++    std::fs::write(
++        data.join("mod-view.json"),
++        serde_json::to_vec(&snapshot).unwrap(),
++    )
++    .unwrap();
++    let invocation = begin(context.clone());
++    let result = run(&mod_target("fixture", "ready"), "", &invocation).unwrap();
++    assert_eq!(result.outcome.display.as_deref(), Some("Ready"));
++    assert!(result.preview.is_none());
++    assert!(result.refresh.is_some());
++    let runtime = shared_host().unwrap();
++    assert_eq!(runtime.locked().state("fixture"), Some(&Value::Null));
++    let invocation = begin(context);
++    let result = run(&mod_target("fixture", "inline"), "", &invocation).unwrap();
++    assert_eq!(
++        result.preview.unwrap().view.title.as_deref(),
++        Some("Inline")
++    );
++    assert!(result.refresh.is_some());
++    assert_eq!(runtime.locked().state("fixture"), Some(&Value::Null));
++}
 +
 +fn mod_target(id: &str, command: &str) -> ModSlashTarget {
 +    ModSlashTarget {
@@ -182079,8 +183061,8 @@ index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb
 +                "user",
 +            )
 +            .unwrap();
-+        let environment = crate::omd::tests::omd_environment(&store_path);
 +        store.enable(&package, true).unwrap();
++        let environment = crate::omd::tests::omd_environment(&store_path);
 +        let runtime = shared_host().unwrap();
 +        runtime.lock().unwrap().reload().unwrap();
 +        Self {
@@ -182091,16 +183073,29 @@ index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb
 +        }
 +    }
 +
-+    fn hold(&self, held: std::time::Duration) -> std::thread::JoinHandle<()> {
++    fn hold(&self, held: std::time::Duration) -> Holder {
 +        let runtime = self.runtime.clone();
 +        let (locked, wait) = std::sync::mpsc::channel();
-+        let holder = std::thread::spawn(move || {
++        let (release, released) = std::sync::mpsc::channel::<()>();
++        let thread = std::thread::spawn(move || {
 +            let _held = runtime.lock().unwrap();
 +            locked.send(()).unwrap();
-+            std::thread::sleep(held);
++            let _ = released.recv_timeout(held);
 +        });
 +        wait.recv().unwrap();
-+        holder
++        Holder { release, thread }
++    }
++}
++
++struct Holder {
++    release: std::sync::mpsc::Sender<()>,
++    thread: std::thread::JoinHandle<()>,
++}
++
++impl Holder {
++    fn join(self) -> std::thread::Result<()> {
++        drop(self.release);
++        self.thread.join()
 +    }
 +}
 +
@@ -182200,9 +183195,21 @@ index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb
 +        "export default api => api.intercept('composer_edit', {required: true}, (e, next) => next(e));",
 +        &["composer"],
 +    );
++    wait_until("the required interceptor never registered", || {
++        let mut runtime = fixture.runtime.lock().unwrap();
++        let registered = runtime.intercepts("composer_edit") == Some(true);
++        if !registered {
++            let _ = runtime.reload();
++        }
++        registered
++    });
 +    let edit = serde_json::json!({"kind": "fill", "text": "recalled"});
 +    let _ = composer_edit("history", "user", 0, edit.clone());
-+    let holder = fixture.hold(std::time::Duration::from_millis(400));
++    assert_eq!(
++        KNOWN_INTERCEPTS.locked().get("composer_edit"),
++        Some(&Some(true))
++    );
++    let holder = fixture.hold(std::time::Duration::from_secs(10));
 +    let filled = composer_edit("history", "user", 0, edit.clone());
 +    let pasted = composer_edit("paste", "user", 0, edit);
 +    holder.join().unwrap();
@@ -182269,6 +183276,247 @@ index 0000000000000000000000000000000000000000..7e952da2d6c823975b2d54f4c39b7efb
 +    assert!(intercepts("command"));
 +    assert!(started.elapsed() < std::time::Duration::from_millis(50));
 +    holder.join().unwrap();
++}
++
++#[test]
++#[serial_test::serial]
++fn renders_requested_during_a_command_coalesce_until_it_settles() {
++    struct Restore(Option<ActiveContext>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            *ACTIVE_CONTEXT.locked() = self.0.take().unwrap();
++        }
++    }
++    let _restore = Restore(Some(std::mem::take(&mut *ACTIVE_CONTEXT.locked())));
++    let running = RunningCommand::enter();
++    assert!(defer_while_command_runs());
++    assert!(RERENDER_DEFERRED.load(Ordering::Acquire));
++    assert!(defer_while_command_runs());
++    drop(running);
++    let deadline = Instant::now() + Duration::from_secs(5);
++    while RERENDER_DEFERRED.load(Ordering::Acquire) {
++        assert!(Instant::now() < deadline);
++        std::thread::sleep(Duration::from_millis(1));
++    }
++}
++
++#[test]
++#[serial_test::serial]
++fn a_long_command_defers_renders_only_for_the_bound() {
++    struct Restore(Option<ActiveContext>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            *ACTIVE_CONTEXT.locked() = self.0.take().unwrap();
++        }
++    }
++    let _restore = Restore(Some(std::mem::take(&mut *ACTIVE_CONTEXT.locked())));
++    while RERENDER_DEFERRED.load(Ordering::Acquire) {
++        std::thread::sleep(Duration::from_millis(1));
++    }
++    let _running = RunningCommand::enter();
++    let started = Instant::now();
++    assert!(defer_while_command_runs());
++    while RERENDER_DEFERRED.load(Ordering::Acquire) {
++        assert!(started.elapsed() < Duration::from_secs(5));
++        std::thread::sleep(Duration::from_millis(1));
++    }
++    assert!(started.elapsed() >= COMMAND_RENDER_DEFERRAL);
++}
++
++fn settled(redraws: &std::sync::atomic::AtomicUsize) -> usize {
++    let deadline = Instant::now() + Duration::from_secs(10);
++    loop {
++        let before = redraws.load(Ordering::SeqCst);
++        std::thread::sleep(Duration::from_millis(300));
++        if redraws.load(Ordering::SeqCst) == before {
++            return before;
++        }
++        assert!(Instant::now() < deadline, "redraws never settled");
++    }
++}
++
++fn republish(context: &ModContext) {
++    let before = crate::mod_ui::shared_snapshot();
++    wait_until("the view was never republished", || {
++        render_for(context.clone(), &|| true);
++        !Arc::ptr_eq(&before, &crate::mod_ui::shared_snapshot())
++    });
++}
++
++#[test]
++#[serial_test::serial]
++fn an_identical_republish_does_not_redraw() {
++    struct Restore(Option<ActiveContext>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            *ACTIVE_CONTEXT.locked() = self.0.take().unwrap();
++        }
++    }
++    let _restore = Restore(Some(std::mem::take(&mut *ACTIVE_CONTEXT.locked())));
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let data = root.join("store");
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
++    let _environment = crate::omd::tests::omd_environment(&data);
++    let _host = test_fresh_host();
++    let package = root.join("steady");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::json!({"schema":1,"id":"steady","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["terminal"]}).to_string()).unwrap();
++    std::fs::write(
++        package.join("index.ts"),
++        "export default api => api.on('terminal', () => ({title: 'Steady'}));",
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    store
++        .trust(
++            package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["terminal".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    let context = ModContext {
++        thread_id: Some(ThreadId::new()),
++        repository: root,
++        policy: FileSystemSandboxPolicy::unrestricted(),
++    };
++    ACTIVE_CONTEXT.locked().synchronize(context.clone());
++    let publish = |native: &str| {
++        let snapshot = ModViewSnapshot {
++            input: serde_json::json!({"event":"idle"}),
++            native_diagnostics: vec![native.to_owned()],
++            ..Default::default()
++        };
++        std::fs::write(
++            data.join("mod-view.json"),
++            serde_json::to_vec(&snapshot).unwrap(),
++        )
++        .unwrap();
++    };
++    crate::mod_ui::preview(ModViewSnapshot::default());
++    let redraws = Arc::new(std::sync::atomic::AtomicUsize::new(0));
++    let counted = redraws.clone();
++    let _observer = codex_omd::client_surface::register_observer(Arc::new(move |observed| {
++        if matches!(observed, codex_omd::client_surface::Observed::Redraw) {
++            counted.fetch_add(1, Ordering::SeqCst);
++        }
++    }));
++    publish("first");
++    let before = settled(&redraws);
++    republish(&context);
++    assert!(settled(&redraws) > before);
++    let first = crate::mod_ui::shared_snapshot();
++    assert_eq!(first.view.title.as_deref(), Some("Steady"));
++    let before = settled(&redraws);
++    republish(&context);
++    assert_eq!(settled(&redraws), before);
++    let second = crate::mod_ui::shared_snapshot();
++    assert!(second.rendered_ms >= first.rendered_ms);
++    publish("second evidence");
++    republish(&context);
++    assert!(settled(&redraws) > before);
++    crate::mod_ui::preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn an_identical_republish_after_a_state_change_asks_hooks_again_without_a_redraw() {
++    struct Restore(Option<ActiveContext>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            *ACTIVE_CONTEXT.locked() = self.0.take().unwrap();
++        }
++    }
++    let _restore = Restore(Some(std::mem::take(&mut *ACTIVE_CONTEXT.locked())));
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let data = root.join("store");
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
++    let _environment = crate::omd::tests::omd_environment(&data);
++    let _host = test_fresh_host();
++    let package = root.join("hooked");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::json!({"schema":1,"id":"hooked","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["terminal","store"]}).to_string()).unwrap();
++    std::fs::write(
++        package.join("index.ts"),
++        "export default api => { api.on('view', () => { api.state.set(Number(api.state.get() ?? 0) + 1); }); api.on('terminal', () => ({title: 'Steady'})); api.intercept('render', {match: {component: 'tool_call'}}, () => ({tree: [{type: 'text', id: 'seen', label: 'Seen', text: 'seen ' + (api.state.get() ?? 0)}]})); };",
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    store
++        .trust(
++            package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["terminal".into(), "store".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    let context = ModContext {
++        thread_id: Some(ThreadId::new()),
++        repository: root,
++        policy: FileSystemSandboxPolicy::unrestricted(),
++    };
++    ACTIVE_CONTEXT.locked().synchronize(context.clone());
++    std::fs::write(
++        data.join("mod-view.json"),
++        serde_json::to_vec(&ModViewSnapshot {
++            input: serde_json::json!({"event":"idle"}),
++            ..Default::default()
++        })
++        .unwrap(),
++    )
++    .unwrap();
++    crate::mod_ui::preview(ModViewSnapshot::default());
++    let (frames, mut requests) = crate::tui::FrameRequester::test_channel();
++    let engine = crate::mod_render::test_engine(frames);
++    republish(&context);
++    let target = crate::mod_render::RenderTarget::new(
++        "tool_call",
++        "probe",
++        false,
++        serde_json::json!({"kind":"exec"}),
++    );
++    let seen = |count: u64| {
++        crate::mod_render::resolve(&target, 80).is_some_and(|rendered| {
++            serde_json::to_string(&rendered.tree)
++                .unwrap()
++                .contains(&format!("seen {count}"))
++        })
++    };
++    wait_until("the hook never answered", || seen(0));
++    wait_until("the hook kept working", crate::mod_render::test_idle);
++    while requests.try_recv().is_ok() {}
++    let redraws = Arc::new(std::sync::atomic::AtomicUsize::new(0));
++    let counted = redraws.clone();
++    let _observer = codex_omd::client_surface::register_observer(Arc::new(move |observed| {
++        if matches!(observed, codex_omd::client_surface::Observed::Redraw) {
++            counted.fetch_add(1, Ordering::SeqCst);
++        }
++    }));
++    let before = settled(&redraws);
++    assert!(
++        invoke_event("hooked", "view", serde_json::json!({}))
++            .unwrap()
++            .is_ok()
++    );
++    republish(&context);
++    let requests = std::sync::Mutex::new(requests);
++    wait_until("the changed hook answer never asked for a frame", || {
++        requests.locked().try_recv().is_ok()
++    });
++    wait_until("the hook kept working", crate::mod_render::test_idle);
++    assert!(seen(1));
++    assert_eq!(settled(&redraws), before);
++    let changes = crate::mod_render::test_changes();
++    republish(&context);
++    wait_until("the hook kept working", crate::mod_render::test_idle);
++    assert_eq!(crate::mod_render::test_changes(), changes);
++    assert_eq!(settled(&redraws), before);
++    drop(engine);
++    crate::mod_ui::preview(ModViewSnapshot::default());
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
@@ -184710,10 +185958,10 @@ index 0000000000000000000000000000000000000000..2e9fee3cfd2a68dc0231a554407322fb
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3a93eab32
+index 0000000000000000000000000000000000000000..2501d79b2b6c79fd53459dc6cfb0e85fd2641236
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5939 @@
+@@ -0,0 +1,5976 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -186157,6 +187405,7 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +
 +pub(crate) fn invalidate_context() {
 +    crate::mod_render::clear_tool_notices();
++    crate::mod_render::clear_asked();
 +    let (_, snapshot) = crate::omd::mod_snapshot();
 +    let context = crate::mod_runtime::active_context();
 +    let published_matches = matches_context(&snapshot, context.as_ref());
@@ -186190,12 +187439,47 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +    *INTERACTION.locked() = Interaction::default();
 +}
 +
-+pub(crate) fn preview(snapshot: ModViewSnapshot) {
++fn same_display(shown: &ModViewSnapshot, incoming: &ModViewSnapshot) -> bool {
++    let ModViewSnapshot {
++        epoch,
++        revision: _,
++        rendered_ms: _,
++        view,
++        contributors,
++        conflicts,
++        component_owners,
++        layout_owner,
++        input,
++        progress,
++        activity,
++        diagnostics,
++        native_diagnostics,
++        errors,
++    } = incoming;
++    shown.epoch == *epoch
++        && shown.view == *view
++        && shown.contributors == *contributors
++        && shown.conflicts == *conflicts
++        && shown.component_owners == *component_owners
++        && shown.layout_owner == *layout_owner
++        && shown.progress == *progress
++        && shown.activity == *activity
++        && shown.diagnostics == *diagnostics
++        && shown.native_diagnostics == *native_diagnostics
++        && shown.errors == *errors
++        && shown.input == *input
++}
++
++/// Returns whether the drawn content or its input changed; the cache always takes the new revision and render time.
++pub(crate) fn preview(snapshot: ModViewSnapshot) -> bool {
 +    crate::mod_render::forget();
 +    sync_interaction(&snapshot.view);
 +    let mut cache = CACHE
 +        .write()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let changed = cache
++        .as_ref()
++        .is_none_or(|cache| !cache.terminal || !same_display(&cache.snapshot, &snapshot));
 +    let seen = cache.as_ref().and_then(|cache| cache.seen);
 +    *cache = Some(Cache {
 +        colors: colors(&snapshot),
@@ -186206,6 +187490,7 @@ index 0000000000000000000000000000000000000000..936410fc5b5c7595677ef3bb48c209a3
 +        preview: true,
 +        startup_repository: None,
 +    });
++    changed
 +}
 +
 +pub(crate) fn startup_context_matches(repository: &std::path::Path, phase: &str) -> bool {

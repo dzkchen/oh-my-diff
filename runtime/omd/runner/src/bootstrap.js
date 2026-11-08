@@ -1,5 +1,11 @@
 const request = JSON.parse(globalThis.__request);
+const entrySource = globalThis.__source;
+const assetText = globalThis.__assets;
 delete globalThis.__request;
+delete globalThis.__source;
+delete globalThis.__assets;
+let parsedAssets;
+const packageAssets = () => parsedAssets ??= (Object.hasOwn(request, 'assets') ? request.assets : JSON.parse(assetText)) ?? {};
 request.hook_budget_ms ??= 1000;
 let now = request.virtual_time_ms;
 let clockRead = false;
@@ -229,7 +235,8 @@ function hostTryCall(operation, arguments_ = null) {
 }
 function hostReply(operation, arguments_) {
   if (activating) throw new Error('host_call_during_registration');
-  const call = structuredCloneFallback({ operation, arguments: arguments_ });
+  const text = JSON.stringify({ operation, arguments: arguments_ });
+  const call = JSON.parse(text);
   const index = calls.length;
   calls.push(call);
   if (index < receipts.length) {
@@ -238,7 +245,7 @@ function hostReply(operation, arguments_) {
     if (receipt.error) return { ok: false, error: receipt.error };
     return { ok: true, value: structuredCloneFallback(receipt.value) };
   }
-  const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
+  const receipt = JSON.parse(exchange(`{"call":${text},"updates":${JSON.stringify(updates)}}`));
   return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
 }
 function hostCall(operation, arguments_ = null) {
@@ -616,9 +623,9 @@ const api = Object.freeze({
   fieldPolicies: Object.freeze(structuredCloneFallback(request.field_policies ?? {})),
   host: Object.freeze({ call: hostCall, tryCall: hostTryCall }),
   assets: Object.freeze({ read(name) {
-    if (name === request.entrypoint) return { text: request.source, sha256: request.entrypoint_sha256 };
-    if (typeof name !== 'string' || !Object.hasOwn(request.assets ?? {}, name)) throw new Error('package_asset_unavailable');
-    return structuredCloneFallback(request.assets[name]);
+    if (name === request.entrypoint) return { text: entrySource, sha256: request.entrypoint_sha256 };
+    if (typeof name !== 'string' || !Object.hasOwn(packageAssets(), name)) throw new Error('package_asset_unavailable');
+    return structuredCloneFallback(packageAssets()[name]);
   } }),
   services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
@@ -646,7 +653,7 @@ const api = Object.freeze({
     if (typeof handler !== 'function') throw new Error('handler_required: ' + pattern);
     const known = ['match', 'required', 'before', 'after'];
     for (const key of Object.keys(options ?? {})) if (!known.includes(key)) throw new Error('unsupported_interceptor_option: ' + key);
-    const files = [request.filename, ...Object.keys(request.assets ?? {}).map(name => base + name)];
+    const files = [request.filename, ...Object.keys(packageAssets()).map(name => base + name)];
     const frame = String(new Error().stack).split(String.fromCharCode(10)).find(line => files.some(file => line.includes(file + ':'))) ?? '';
     const file = files.find(file => frame.includes(file + ':')) ?? '';
     const at = frame.slice(frame.lastIndexOf(file) + base.length).split(')')[0];

@@ -473,6 +473,22 @@ fn fit_history(request: &mut Request) -> Result<()> {
     Ok(())
 }
 
+fn encoded_len(value: &Value) -> Result<usize> {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    serde_json::to_writer(&mut count, value)?;
+    Ok(count.0)
+}
+
 fn receipt_for(
     call: &ModHostCall,
     result: Result<Value>,
@@ -488,14 +504,14 @@ fn receipt_for(
             json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
         }
     };
-    let bytes = serde_json::to_vec(&receipt)?.len();
+    let bytes = encoded_len(&receipt)?;
     let room = scope
         .receipt_room()
         .min(HOST_RECEIPT_BYTES.saturating_sub(receipts_bytes));
     if bytes > room {
         let receipt = json!({"call": call, "error": format!(
         "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")});
-        let bytes = serde_json::to_vec(&receipt)?.len();
+        let bytes = encoded_len(&receipt)?;
         return Ok((receipt, bytes));
     }
     Ok((receipt, bytes))

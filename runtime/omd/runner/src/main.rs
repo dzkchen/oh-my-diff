@@ -978,6 +978,10 @@ fn run(
     let bootstrap = v8::Local::new(scope, &prepared.bootstrap);
     let line = string(scope, line);
     set(scope, global, "__request", line.into());
+    let source = string(scope, request["source"].as_str().unwrap_or_default());
+    set(scope, global, "__source", source.into());
+    let assets = string(scope, &request["assets"].to_string());
+    set(scope, global, "__assets", assets.into());
     if request["environment"]
         .as_array()
         .is_some_and(|names| names.iter().any(|name| name == "crypto"))
@@ -1076,7 +1080,9 @@ fn main() {
             for name in names.iter().filter_map(Value::as_str) {
                 if let Some(value) = fields.get(name) {
                     request[name] = value.clone();
-                    text += &format!(",{}:{value}", Value::from(name));
+                    if !matches!(name, "source" | "assets") {
+                        text += &format!(",{}:{value}", Value::from(name));
+                    }
                 }
             }
             line = format!("{}{text}}}", &line[..line.len() - 1]);
