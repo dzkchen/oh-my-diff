@@ -263,7 +263,7 @@ class Session {
         attachment = await this.call('omd/client/attach', attached);
       }
     } catch (error) {
-      if (!(error instanceof Error && Number.isInteger(error.code))) this.attached = attached;
+      if (!(error instanceof Error && 'code' in error && Number.isInteger(error.code))) this.attached = attached;
       throw error;
     }
     this.attached = { ...attached, terminalToken: attachment.terminalToken };
