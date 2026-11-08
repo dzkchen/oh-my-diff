@@ -988,6 +988,9 @@ impl ModStore {
         {
             return Err(failure("capability_denied"));
         }
+        if !selection.authority_current() {
+            return Err(failure("grant_expired: trust the package again"));
+        }
         super::validate_stored_settings(&manifest, &selection.settings)?;
         selection.enabled = true;
         store::refuse_second_copy(&config, &path, &scope, &manifest.id, &|selection| {
@@ -1653,7 +1656,7 @@ impl ModStore {
             },
             exec_environment: package.exec_environment.clone(),
             settings_schema_sha256: crate::sha256_hex(
-                &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
+                serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
             ),
             lifecycle: declared_lifecycle,
             scope: request.scope.clone(),

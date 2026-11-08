@@ -82,7 +82,7 @@ fn fixture_with_registry(
     let root = base.join("store").canonicalize().unwrap();
     let host = Arc::new(Host {
         root: root.clone(),
-        repository: repository.clone(),
+        repository,
         repository_identity: "fixture".into(),
         config: config::HostConfig::default(),
         routes: Mutex::new(crate::RouteTable {
@@ -104,7 +104,7 @@ fn fixture_with_registry(
             ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
         ));
         let persist_runtime = Arc::new(Mutex::new(
-            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
+            ModHost::open(root, ModOpenOptions::default()).unwrap(),
         ));
         let persist_required = persist_runtime.lock().unwrap().required_surfaces();
         let views = Arc::new(view::Views::new(true));

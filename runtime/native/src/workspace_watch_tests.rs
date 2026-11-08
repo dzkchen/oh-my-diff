@@ -338,6 +338,19 @@ async fn a_worktree_git_watch_reports_its_own_head_and_shared_refs_only() {
     );
 }
 
+/// Late filesystem events from setup may add the root or a ref directory; the linked paths must be reported.
+fn assert_linked_git_events(seen: &std::collections::BTreeSet<String>) {
+    assert!(
+        [".git/HEAD", ".git/refs/heads/x"]
+            .iter()
+            .all(|path| seen.contains(*path))
+            && seen
+                .iter()
+                .all(|path| path.is_empty() || path == ".git" || path.starts_with(".git/")),
+        "{seen:?}"
+    );
+}
+
 fn git_events(
     rx: mpsc::Receiver<(String, Vec<String>)>,
     write: impl Fn(usize) + Send + 'static,
@@ -404,11 +417,7 @@ async fn a_git_watch_follows_a_relative_gitfile_without_commondir() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        seen,
-        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-        "{seen:?}"
-    );
+    assert_linked_git_events(&seen);
 
     std::fs::remove_dir_all(modules.join("objects")).unwrap();
     let (sink, _rx) = channel_sink();
@@ -484,9 +493,5 @@ async fn a_git_watch_resolves_relative_worktree_links_from_the_git_directory() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        seen,
-        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-        "{seen:?}"
-    );
+    assert_linked_git_events(&seen);
 }

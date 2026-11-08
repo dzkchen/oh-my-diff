@@ -149,15 +149,17 @@ pub(crate) fn request_runtime(
 pub(super) fn hold_native_owner(
     owner: &codex_protocol::turn_input::TerminalOwner,
     thread: Option<&str>,
-) -> Result<Arc<Mods>, String> {
+) -> Result<(Arc<Mods>, bool), String> {
+    let key = owner.0.to_string();
     let mut holders = NATIVE_HOLDERS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let first = !holders.iter().any(|(held, _)| held == &key);
     let mods = ensure_owner(owner)?;
     if let Some(thread) = thread {
-        holders.insert((owner.0.to_string(), thread.to_owned()));
+        holders.insert((key, thread.to_owned()));
     }
-    Ok(mods)
+    Ok((mods, first))
 }
 
 pub(super) fn running_owner(
@@ -326,11 +328,12 @@ pub async fn select_thread(
         .expansion
         .current()
         .is_none_or(|current| current.thread != thread);
-    let first = target
-        .initialized_threads
-        .lock()
-        .map_err(|_| "terminal_owner_poisoned")?
-        .insert(thread.to_string());
+    let first = owns
+        && target
+            .initialized_threads
+            .lock()
+            .map_err(|_| "terminal_owner_poisoned")?
+            .insert(thread.to_string());
     target.expansion.select_thread(&target.core, &lead);
     target
         .sessions
@@ -343,7 +346,7 @@ pub async fn select_thread(
         store.insert_arc(target.clone());
         target.views.start_thread(&store);
     }
-    if first && owns {
+    if first {
         target
             .event(
                 "session",

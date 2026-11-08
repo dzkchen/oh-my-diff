@@ -101,7 +101,7 @@ pub(super) struct State {
     pub(super) turns: Mutex<BTreeMap<String, u64>>,
     restarted: Mutex<BTreeMap<String, bool>>,
     watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
-    bus_scope: Option<String>,
+    bus_scope: BusScope,
     subscribed: Mutex<BTreeSet<String>>,
     bus_cursor: Mutex<String>,
     subscriptions: Mutex<Vec<(String, codex_omd::ModSubscriptions)>>,
@@ -122,6 +122,19 @@ pub(super) struct State {
     pub(super) agent_spawn: Mutex<Option<bool>>,
     pub(super) turn_stop: Mutex<Option<bool>>,
     pub(super) peers: AtomicBool,
+}
+
+#[derive(Default)]
+struct BusScope(Option<String>);
+
+impl Drop for BusScope {
+    fn drop(&mut self) {
+        if let Some(scope) = &self.0
+            && let Ok(mut bus) = codex_omd::event_bus::global().lock()
+        {
+            bus.release_scope(scope);
+        }
+    }
 }
 
 struct Delivery {
@@ -169,7 +182,7 @@ impl LeadHandle {
 impl State {
     pub(super) fn scoped(bus_scope: Option<String>) -> Self {
         Self {
-            bus_scope,
+            bus_scope: BusScope(bus_scope),
             ..Self::default()
         }
     }
@@ -618,13 +631,21 @@ pub(super) async fn dispatch(
                 .input_runtime
                 .lock()
                 .map_err(|_| "mod_runtime_poisoned")?;
-            let listed = codex_omd::package_controls::list_fields(
-                &store,
-                Some(&runtime.status()),
-                Value::Null,
-                Some(&core.host.repository),
-                core.terminal_owner.as_deref(),
-            )
+            let status = runtime.status();
+            let listed = if request.arguments["fields"]
+                .as_array()
+                .is_none_or(|fields| fields.iter().any(|field| field == "settings_schema"))
+            {
+                codex_omd::package_controls::list_fields(
+                    &store,
+                    Some(&status),
+                    Value::Null,
+                    Some(&core.host.repository),
+                    core.terminal_owner.as_deref(),
+                )
+            } else {
+                codex_omd::package_controls::list(&store, Some(&status))
+            }
             .map_err(|e| e.to_string())?;
             let listed = runtime
                 .configuration_listing(listed)

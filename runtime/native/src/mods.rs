@@ -190,6 +190,63 @@ struct PendingTool {
 }
 
 impl Mods {
+    fn prepare_owned_thread_config(
+        &self,
+        config: &mut Config,
+        thread: Option<&str>,
+        forked_from: Option<&str>,
+        selected: Option<&Mods>,
+    ) -> Result<(), String> {
+        let this = selected.unwrap_or(self);
+        let mut denied = Vec::new();
+        for path in this.host.protected_paths() {
+            if path
+                .canonicalize()
+                .map_err(|_| "protected_path_unavailable")?
+                != path
+                || path.starts_with(&this.host.repository)
+            {
+                return Err("protected_mod_path_must_be_canonical_and_external".into());
+            }
+            denied.push(
+                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
+                    .map_err(|_| "protected_path_unavailable")?,
+            );
+        }
+        this.refresh_native_configuration()?;
+        config
+            .features
+            .set_removed(
+                this.removed_features
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            )
+            .map_err(|error| error.to_string())?;
+        config.permissions.sandbox_denied_paths = denied;
+        config.model_provider.supports_websockets = false;
+        this.apply_native_configuration(config)?;
+        let mut runtime = match this.runtime.try_lock() {
+            Ok(runtime) => runtime,
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
+        };
+        if let (Some(thread), Some(parent)) = (thread, forked_from)
+            && let Err(error) =
+                codex_omd::data_store::fork_thread_data(&this.host.root, parent, thread)
+            && error.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            this.views.diagnostic(
+                &this.host,
+                "thread_store",
+                Some(format!("fork copy failed: {error}")),
+            );
+        }
+        let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
+        this.compaction_decision(&mut runtime, config)?;
+        this.routing_decision(&mut runtime, config)
+    }
+
     async fn resume(
         &self,
         call_id: &str,
@@ -1243,60 +1300,32 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             thread_init.get::<codex_extension_api::ThreadOwnedTerminal>(),
         ) {
             (Some(owner), Some(lifetime)) => {
-                let mods = clients::hold_native_owner(&owner, thread)?;
-                lifetime.on_drop(move || clients::release_native_owner(&owner, None));
-                Some(mods)
+                let (mods, first) = clients::hold_native_owner(&owner, thread)?;
+                if first {
+                    let owner = owner.clone();
+                    lifetime.on_drop(move || clients::release_native_owner(&owner, None));
+                }
+                Some((mods, Some(owner)))
             }
-            (owner, _) => owner.as_deref().map(clients::ensure_owner).transpose()?,
+            (owner, _) => owner
+                .as_deref()
+                .map(clients::ensure_owner)
+                .transpose()?
+                .map(|mods| (mods, None)),
         };
-        let this = selected.as_deref().unwrap_or(self);
-        let mut denied = Vec::new();
-        for path in this.host.protected_paths() {
-            if path
-                .canonicalize()
-                .map_err(|_| "protected_path_unavailable")?
-                != path
-                || path.starts_with(&this.host.repository)
-            {
-                return Err("protected_mod_path_must_be_canonical_and_external".into());
-            }
-            denied.push(
-                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
-                    .map_err(|_| "protected_path_unavailable")?,
-            );
-        }
-        this.refresh_native_configuration()?;
-        config
-            .features
-            .set_removed(
-                this.removed_features
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone(),
-            )
-            .map_err(|error| error.to_string())?;
-        config.permissions.sandbox_denied_paths = denied;
-        config.model_provider.supports_websockets = false;
-        this.apply_native_configuration(config)?;
-        let mut runtime = match this.runtime.try_lock() {
-            Ok(runtime) => runtime,
-            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
-            Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
-        };
-        if let (Some(thread), Some(parent)) = (thread, forked_from)
-            && let Err(error) =
-                codex_omd::data_store::fork_thread_data(&this.host.root, parent, thread)
-            && error.kind() != std::io::ErrorKind::AlreadyExists
+        let held = selected.as_ref().and_then(|(_, owner)| owner.clone());
+        let result = self.prepare_owned_thread_config(
+            config,
+            thread,
+            forked_from,
+            selected.as_ref().map(|(mods, _)| mods.as_ref()),
+        );
+        if result.is_err()
+            && let (Some(owner), Some(thread)) = (held, thread)
         {
-            this.views.diagnostic(
-                &this.host,
-                "thread_store",
-                Some(format!("fork copy failed: {error}")),
-            );
+            clients::release_native_owner(&owner, Some(thread));
         }
-        let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
-        this.compaction_decision(&mut runtime, config)?;
-        this.routing_decision(&mut runtime, config)
+        result
     }
 
     fn on_config_changed(

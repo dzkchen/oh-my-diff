@@ -997,7 +997,7 @@ impl Host<'_> {
         let thread = caller.thread.unwrap_or("cli");
         if !crate::resource_data::token(caller.id)
             || !crate::resource_data::token(thread)
-            || !crate::is_sha256_hex(&caller.source_sha256)
+            || !crate::is_sha256_hex(caller.source_sha256)
             || self
                 .data_root
                 .canonicalize()
@@ -1093,7 +1093,7 @@ impl Host<'_> {
         }
         let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         let digest = &input.artifact.sha256;
-        if !crate::is_sha256_hex(&digest) || input.artifact.reference != *digest {
+        if !crate::is_sha256_hex(digest) || input.artifact.reference != *digest {
             return Err("exec_output_reference_invalid".into());
         }
         let directory = self.output_directory(caller)?;

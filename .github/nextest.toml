@@ -1,4 +1,8 @@
+[test-groups."@tool:omd:embedded-app-server"]
+max-threads = 4
+
 [[profile.default.overrides]]
-# Fills the 1 MB markdown cache budget, which takes about a minute in a debug build.
-filter = 'package(codex-tui) & test(=mod_ui::tests::markdown_cache_is_bounded_by_the_size_of_its_lines_not_its_source)'
-slow-timeout = { period = "1m", terminate-after = 5 }
+# Each case starts embedded app servers; a full codex-tui run otherwise starts so many at once that they time out.
+filter = 'package(codex-tui) & (test(/^app::tests::session_lifecycle_requests::/) | test(/^app::tests::background_task_defaults_tests::/) | test(/^app::tests::fresh_sparkle_tests::/) | test(/^app::agents_overview::tests::actions::/))'
+test-group = '@tool:omd:embedded-app-server'
+slow-timeout = { period = "1m", terminate-after = 3 }

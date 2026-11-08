@@ -79,12 +79,16 @@ since the release, mods that need host features the release lacks, and a mod API
    `bundle` lists the mods it would ship, `new` the ones that changed since the last bundle (the build refuses when
    it is empty), `needs_host` mods whose `required_features` the release's host lacks (the build refuses them) and
    `needs_release` new mods it skips. `host_changed` lists host files changed since the tag: a mod fix that depends
-   on one of those changes waits for the release.
+   on one of those changes waits for the release. `api_changed` lists the host operations whose arguments or results
+   changed, and `mods/api.d.ts` when it changed; the build refuses a changed API unless you pass `--api-reviewed`
+   after leaving out every mod that depends on the change with `--exclude ID...` (`plan` takes `--exclude` too).
 2. Optional: dry-run it. It checks, builds and signs, then prints the publish command:
 
    ```sh
    gh workflow run mods.yml --ref main -f dry_run=true
    ```
+
+   With a changed API, add `-f exclude="ID ID" -f api_reviewed=true` to both workflow runs.
 
 3. Publish:
 

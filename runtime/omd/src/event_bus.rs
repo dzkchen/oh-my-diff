@@ -106,6 +106,13 @@ impl EventBus {
         self.subscribers.remove(&key(scope, subscriber));
     }
 
+    pub fn release_scope(&mut self, scope: &str) {
+        self.subscribers
+            .retain(|(owner, _), _| owner.as_deref() != Some(scope));
+        self.sequences
+            .retain(|(owner, _), _| owner.as_deref() != Some(scope));
+    }
+
     pub fn publish(
         &mut self,
         scope: Option<&str>,
