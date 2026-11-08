@@ -868,11 +868,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "41e9fd717ecac32e316af61c96bae2830e84ffc4b41fd156bbe7e397414113a7",
+        "index.ts": "60747a9fd541b9db8de771087efab20fe3d27c3633aa76c1ca49c7a8173c09ba",
         "mod.json": "784243b08b1e186311b0efa26ba199908df993de15966cd5685402deb3c53cef"
       },
       "id": "omd_update",
-      "package_sha256": "5089c96d2eda13a644455bdeb86a071135467851fe778d4e0404174dd251900a",
+      "package_sha256": "17dd7a046e3490ee8e2582f1fc87fa3d30b0735156bd2a15c366e03e789a9477",
       "source": "mods/first-party/omd_update",
       "version": "1.0.1"
     },

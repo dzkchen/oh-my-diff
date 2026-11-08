@@ -806,9 +806,8 @@ def uninstall(args, root, bin_dir, current):
         refuse_sessions(root, args.session)
         generations = sorted((root / "releases").iterdir())
         generations = [item for item in generations if (item / "receipt.json").is_file()]
-        for generation in generations:
-            if not removing(generation):
-                status(generation)
+        if not removing(current):
+            status(current)
         failures = []
         for generation in [item for item in generations if item != current]:
             try:

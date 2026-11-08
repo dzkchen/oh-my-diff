@@ -9,6 +9,7 @@ follow its fix.
 | --- | --- | --- |
 | `Python 3.12 or newer is required` | macOS ships Python 3.9 | Install Python 3.12 or later (`brew install python@3.12`) and rerun. |
 | `Oh My Diff supports Apple Silicon macOS only.` | Another platform | OMD doesn't run there. See [support](support.md). |
+| `upstream Codex X.Y.x is required` from `omd update` or `/update` | OMD 1.4.2 and earlier check your own Codex before updating; later releases bring their own | Run the [install command](install.md#install) again. It updates in place and keeps your mods, settings and sign-ins. |
 | `Python could not verify GitHub's certificate` | Python from python.org has no CA certificates until you install them | Run `Install Certificates.command` in its `/Applications/Python 3.x` folder, or use Homebrew's Python, then rerun. |
 | `No terminal is available` | The installer can't ask which profile you want | Add `--profile full` or `--profile platform`. |
 

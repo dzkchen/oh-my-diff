@@ -115,6 +115,7 @@ export default function activate(api: ModAPI) {
     if (rows.length && last.length <= width) rows[rows.length - 1] = last; else rows.push(word);
     return rows;
   }, []).slice(0, lines).join('\n');
+  const INSTALL = "curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh";
   const line = (id: string, label: string, value: string, tone: TerminalTone = 'normal', lines = 3, width = 72): TerminalComponent =>
     ({ type: 'text', id: `omd_update_${id}`, label, text: wrap(value, lines, width), tone });
   const button = (verb: string, label: string): TerminalComponent =>
@@ -155,6 +156,8 @@ export default function activate(api: ModAPI) {
         ...(info.available ? release(state, info.available) : info.mods ? modUpdates(info, info.mods) : info.blocked && !info.error ? []
           : [line('current', 'Status', info.error ? `The last check failed: ${visible(info.error, 200)}` : info.checked_at ? 'You have the newest release for your settings.' : 'No check has run yet; run omd update check in a shell.', info.error ? 'attention' : 'muted', 3)]),
         ...(info.blocked ? [line('blocked', 'Not compatible', `Oh My Diff ${visible(info.blocked.version, 40)} needs: ${(info.blocked.reasons ?? []).map(reason => visible(reason, 120)).join('; ')}`, 'attention', 4)] : []),
+        ...(info.blocked?.reasons?.some(reason => reason.includes('Codex')) ? [line('reinstall', 'Update', `Releases from ${visible(info.blocked.version, 40)} bring their own Codex. To update, quit OMD and run the install command again:`, 'normal', 2),
+          { type: 'code', id: 'omd_update_reinstall_command', label: 'Install command', text: INSTALL, language: 'sh' } as TerminalComponent] : []),
       ];
     const children: TerminalComponent[] = [
       { type: 'line', id: 'omd_update_header', label: 'Updates', spans: [{ text: 'Updates', bold: true, tone: 'accent' }] },
