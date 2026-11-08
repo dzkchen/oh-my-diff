@@ -230,7 +230,6 @@ pub use mods::take_turned_off;
 pub use mods::terminal_configuration_owner;
 pub use mods::terminal_shared;
 pub use mods::write_settings;
-pub use mods::write_settings_in;
 pub use mods::write_settings_shared;
 
 pub mod turn_evidence;

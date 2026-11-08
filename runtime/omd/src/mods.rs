@@ -2590,18 +2590,6 @@ fn validate_stored_settings(
 }
 
 pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
-    write_settings_in(store, id, values, None)
-}
-
-pub fn write_settings_in(
-    store: &ModStore,
-    id: &str,
-    values: &Value,
-    scope: Option<&str>,
-) -> Result<Value> {
-    if scope.is_some_and(|scope| !matches!(scope, "user" | "project")) {
-        return Err(failure("configuration_scope_invalid"));
-    }
     let values = values
         .as_object()
         .ok_or_else(|| failure("settings_values_must_be_object"))?;
@@ -2610,13 +2598,7 @@ pub fn write_settings_in(
         .as_array()
         .into_iter()
         .flatten()
-        .find(|selection| {
-            selection["id"] == id
-                && match scope {
-                    Some(scope) => selection["scope"] == scope && selection["error"].is_null(),
-                    None => selection["effective"] == true,
-                }
-        })
+        .find(|selection| selection["id"] == id && selection["effective"] == true)
         .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
     let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
     let settings = store.save_configuration(&path, values, None, None, "settings")?;

@@ -988,6 +988,9 @@ impl ModStore {
         {
             return Err(failure("capability_denied"));
         }
+        if !selection.authority_current() {
+            return Err(failure("grant_expired: trust the package again"));
+        }
         super::validate_stored_settings(&manifest, &selection.settings)?;
         selection.enabled = true;
         store::refuse_second_copy(&config, &path, &scope, &manifest.id, &|selection| {

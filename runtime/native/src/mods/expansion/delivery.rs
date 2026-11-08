@@ -287,7 +287,7 @@ fn next_channel_event(
     expansion: &State,
     subscribers: &mut std::collections::VecDeque<String>,
 ) -> Option<(String, codex_omd::event_bus::ChannelEvent)> {
-    let scope = expansion.bus_scope.as_deref();
+    let scope = expansion.bus_scope.0.as_deref();
     let mut bus = codex_omd::event_bus::global().lock().ok()?;
     while let Some(id) = subscribers.pop_front() {
         let Some(event) = bus.drain(scope, &id, 1).pop() else {
@@ -423,7 +423,7 @@ pub(super) fn sync_bus(expansion: &State) -> Vec<String> {
     ) else {
         return Vec::new();
     };
-    let scope = expansion.bus_scope.as_deref();
+    let scope = expansion.bus_scope.0.as_deref();
     for removed in subscribed.difference(&current) {
         bus.unsubscribe(scope, removed);
     }
@@ -459,7 +459,7 @@ pub(in crate::mods) fn publish(
         .lock()
         .map_err(|_| "event_bus_poisoned")?
         .publish(
-            core.expansion.bus_scope.as_deref(),
+            core.expansion.bus_scope.0.as_deref(),
             caller,
             &input.channel,
             input.data,
