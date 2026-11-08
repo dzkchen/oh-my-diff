@@ -167393,10 +167393,10 @@ index 0000000000000000000000000000000000000000..810a873e4b715fdcf8462d5129f9b723
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e51fbbd3af3359d0b9381c88e907b7f4b1002319
+index 0000000000000000000000000000000000000000..224ccdc79d193f8b1df1031ffd3667530c7a0bd9
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,7808 @@
+@@ -0,0 +1,7809 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -169649,11 +169649,12 @@ index 0000000000000000000000000000000000000000..e51fbbd3af3359d0b9381c88e907b7f4
 +    };
 +    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 +    let recorded = seen.clone();
-+    let _observer = codex_omd::client_surface::register_observer(std::sync::Arc::new(move |observed| {
-+        if let codex_omd::client_surface::Observed::State { mod_id, terminal } = observed {
-+            recorded.lock().unwrap().push((mod_id, terminal));
-+        }
-+    }));
++    let _observer =
++        codex_omd::client_surface::register_observer(std::sync::Arc::new(move |observed| {
++            if let codex_omd::client_surface::Observed::State { mod_id, terminal } = observed {
++                recorded.lock().unwrap().push((mod_id, terminal));
++            }
++        }));
 +    invoke(&mut first, "ui", json!(1));
 +    assert_eq!(invoke(&mut same, "read", Value::Null), 1);
 +    assert!(invoke(&mut other, "read", Value::Null).is_null());

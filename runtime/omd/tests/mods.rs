@@ -2250,11 +2250,12 @@ fn ui_state_is_separate_per_terminal_and_only_saved_state_is_announced() {
     };
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorded = seen.clone();
-    let _observer = codex_omd::client_surface::register_observer(std::sync::Arc::new(move |observed| {
-        if let codex_omd::client_surface::Observed::State { mod_id, terminal } = observed {
-            recorded.lock().unwrap().push((mod_id, terminal));
-        }
-    }));
+    let _observer =
+        codex_omd::client_surface::register_observer(std::sync::Arc::new(move |observed| {
+            if let codex_omd::client_surface::Observed::State { mod_id, terminal } = observed {
+                recorded.lock().unwrap().push((mod_id, terminal));
+            }
+        }));
     invoke(&mut first, "ui", json!(1));
     assert_eq!(invoke(&mut same, "read", Value::Null), 1);
     assert!(invoke(&mut other, "read", Value::Null).is_null());
