@@ -48,6 +48,9 @@ pub(crate) use expansion::take_route_selection;
 
 type Reply = std::sync::mpsc::SyncSender<std::io::Result<Value>>;
 type Facts = BTreeMap<String, (String, Option<ModGrants>)>;
+type SharedSessions = Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>;
+type SharedTurns = Arc<Mutex<BTreeMap<String, TurnRecord>>>;
+type SharedProviderSwitches = Arc<Mutex<BTreeMap<String, Config>>>;
 
 struct HostRequest {
     caller: String,
@@ -141,9 +144,9 @@ struct TurnRecord {
 }
 
 pub(super) struct Core {
-    sessions: Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>,
-    turns: Arc<Mutex<BTreeMap<String, TurnRecord>>>,
-    provider_switches: Arc<Mutex<BTreeMap<String, Config>>>,
+    sessions: SharedSessions,
+    turns: SharedTurns,
+    provider_switches: SharedProviderSwitches,
     terminal_owner: Option<String>,
     session_runtime: Option<tokio::runtime::Handle>,
     host: Arc<Host>,
