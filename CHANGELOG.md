@@ -2,6 +2,37 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.5.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.0) — 2026-11-08
+
+Per-terminal mod settings, lower resource use in idle and background sessions, Codex 0.167.0, and fixes across first-party mods, the git panel, threads and the installer.
+
+### New
+
+- Mods: `/mods` and the `/omd` mod list can apply a mod's on/off and settings to this terminal only; terminal-only choices last until the terminal closes, and "Keep these for every terminal" saves them
+- Idle sessions: an unfocused or idle terminal redraws once a second and pauses theme animation, and unused mod runners are released, while agents, tools and monitors keep running; focus or input resumes full speed
+
+### Changed
+
+- Codex: updated to 0.167.0, including Guardian review, provider-error handling, deferred-tool discovery and audio attachments, with OMD's approval and review boundaries kept
+- Subagents: delegated results arrive once through the parent thread's mailbox instead of a second wake prompt, and helper agents follow the hooks and execution policy of the thread that started them
+- Claude: sessions through omd_claude_cli reuse the prompt cache between requests, so plan limits last about as long as in Claude Code
+- Privacy: omd_privacy no longer asks before a shell command that names a sensitive file by default; secrets in its output are still redacted, and Sensitive paths in its settings turns asking back on
+- Performance: lower mod callback cost, faster exec output paging, cached store reads and no stream decoding when no mod listens
+
+### Fixed
+
+- Git panel: discarding, staging or attaching a hunk is refused when the file changed since it was shown, so unreviewed changes are never discarded
+- Threads: opening a thread no longer deletes other threads' saved data, forked sessions no longer receive their parent's monitor results, and each thread's evidence stays its own
+- Undo: a retried `/undo force` keeps its `/redo`, and each checkout keeps its own checkpoints
+- Mods: the first mod command after a minute idle answers at once, idle sessions stop drawing frames that change nothing, `/mods ACTION ID` asks which copy when an id is installed for both you and the project, and dialogs size to their content
+- Cursor and subagents: Cursor settles cost against the run that ended, and a subagent restart refuses a route whose provider, account or billing changed
+- Kernels: Python and Bun cells no longer show output written by an earlier cell's threads or timers
+- LSP: same-line results are kept, lines past the end of a file are refused, and trimmed errors are no longer reported as new
+- Workflow and accounts: checkpoint decisions are capped by size, a lost store race no longer fails a workflow, and `/profile` refreshes accounts when it lists or selects them
+- Verify stop: a command joined with `||` or `;` no longer counts as a passing check
+- Installer: `omd update check` prints a one-line status, an unknown `omd update` action fails in one line, uninstall leaves no empty folders, mods that left the profile stay trusted across updates, uninstall and mod maintenance block new sessions first, and `omd mini` points to `omd install` when omd_mini is missing
+- Tools: `omd-package` prints one line per mod, `omd-mod-author` is quieter and reloads newly named assets in watch mode, and `omd-package plugins` creates CODEX_HOME first
+
 ## [1.4.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.2) — 2026-11-04
 
 Signed mod updates, account switching for new threads, keyboard panel arranging, turn undo and redo, and fixes for themes and overlapping turns.
