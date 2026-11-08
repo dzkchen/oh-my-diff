@@ -18,9 +18,13 @@ Per-terminal mod settings, lower resource use in idle and background sessions, C
 - Claude: sessions through omd_claude_cli reuse the prompt cache between requests, so plan limits last about as long as in Claude Code
 - Privacy: omd_privacy no longer asks before a shell command that names a sensitive file by default; secrets in its output are still redacted, and Sensitive paths in its settings turns asking back on
 - Performance: lower mod callback cost, faster exec output paging, cached store reads and no stream decoding when no mod listens
+- Workspace: omd_workspace keeps its arrangement, sizes, tabs, panels and on/off per conversation, so terminals on different conversations no longer share one layout
 
 ### Fixed
 
+- Mods across terminals: a mod's saved state changed in one terminal or attached client redraws it in the others, while its UI state, settings and enablement stay with each terminal
+- Rollback: after `omd update rollback`, the previous release still reads the mod store this one wrote
+- Clients: a client a mod launches starts again, recovery shows a mod whose renderer keeps failing and reports reload errors instead of failing, and the TUI attaches to the server's mod host only in Oh My Diff mode
 - Git panel: discarding, staging or attaching a hunk is refused when the file changed since it was shown, so unreviewed changes are never discarded
 - Threads: opening a thread no longer deletes other threads' saved data, forked sessions no longer receive their parent's monitor results, and each thread's evidence stays its own
 - Undo: a retried `/undo force` keeps its `/redo`, and each checkout keeps its own checkpoints
