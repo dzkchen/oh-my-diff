@@ -29940,7 +29940,7 @@ index 99d7152fcd276a16347d540f61c7c6df731f7bf4..9673299b1618122bcd55c6fec2e4dcd3
 +    }
 +}
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 77ce9b873c5e746cd9ab096a8654a6396de1bc9c..82f24ac956a2d2cfdb8a023e52925540c24ec6fc 100644
+index 77ce9b873c5e746cd9ab096a8654a6396de1bc9c..4549f79618a6de8f63b86603d3306e10df29d988 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -71,6 +71,7 @@ pub(crate) use user_shell::execute_user_shell_command;
@@ -30033,7 +30033,7 @@ index 77ce9b873c5e746cd9ab096a8654a6396de1bc9c..82f24ac956a2d2cfdb8a023e52925540
              return;
          }
 
-@@ -514,16 +541,50 @@ impl Session {
+@@ -514,16 +541,51 @@ impl Session {
                  .and_then(|context| context.cyber_access_program);
          }
          let options = NewTurnContextOptions {
@@ -30060,14 +30060,15 @@ index 77ce9b873c5e746cd9ab096a8654a6396de1bc9c..82f24ac956a2d2cfdb8a023e52925540
 +        ) {
 +            Ok(options) => options,
 +            Err(error) => {
-+                let mut active = self.active_turn.lock().await;
-+                if active
-+                    .as_ref()
-+                    .is_some_and(|turn| Arc::ptr_eq(&turn.turn_state, &turn_state))
 +                {
-+                    *active = None;
++                    let mut active = self.active_turn.lock().await;
++                    if active
++                        .as_ref()
++                        .is_some_and(|turn| Arc::ptr_eq(&turn.turn_state, &turn_state))
++                    {
++                        *active = None;
++                    }
 +                }
-+                drop(active);
 +                self.send_event_raw(codex_protocol::protocol::Event {
 +                    id: sub_id,
 +                    msg: EventMsg::Error(ErrorEvent {
@@ -30089,7 +30090,7 @@ index 77ce9b873c5e746cd9ab096a8654a6396de1bc9c..82f24ac956a2d2cfdb8a023e52925540
          if let Some(trigger) = start_options.turn_trigger {
              turn_context.turn_metadata_state.set_turn_trigger(trigger);
          }
-@@ -657,6 +718,13 @@ impl Session {
+@@ -657,6 +719,13 @@ impl Session {
          turn_context: Arc<TurnContext>,
          task_result: SessionTaskResult,
      ) {
@@ -30103,7 +30104,7 @@ index 77ce9b873c5e746cd9ab096a8654a6396de1bc9c..82f24ac956a2d2cfdb8a023e52925540
          let (last_agent_message, abort_reason) = match task_result {
              Ok(last_agent_message) => (last_agent_message, None),
              Err(err) if matches!(err.details(), CodexErrorDetails::TurnAborted) => {
-@@ -688,6 +756,10 @@ impl Session {
+@@ -688,6 +757,10 @@ impl Session {
          let turn_state = {
              let mut active = self.active_turn.lock().await;
              active.as_mut().and_then(|active_turn| {
@@ -30190,7 +30191,7 @@ index 2c33f0c78eccbe9a10be400965729188ebe95267..695e425f2ed4c6fce4b68a342561c4db
 +    manager.with_extensions_for_tests(extensions)
 +}
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59afaac3dd 100644
+index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..7ee2c08edbbc970220ce48a4e8a65053e601aa60 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -81,6 +81,7 @@ use codex_models_manager::manager::RefreshStrategy;
@@ -30249,10 +30250,14 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
          }
      }
  }
-@@ -844,6 +872,16 @@ impl ThreadManager {
+@@ -844,6 +872,20 @@ impl ThreadManager {
 
      /// Construct with a dummy AuthManager containing the provided CodexAuth and codex home.
      /// Used for integration tests: should not be used by ordinary business logic.
++    #[expect(
++        clippy::expect_used,
++        reason = "test builder runs before the state is shared"
++    )]
 +    pub(crate) fn with_extensions_for_tests(
 +        mut self,
 +        extensions: Arc<ExtensionRegistry<Config>>,
@@ -30266,7 +30271,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
      pub(crate) fn with_models_provider_and_home_for_tests(
          auth: CodexAuth,
          provider: ModelProviderInfo,
-@@ -1061,8 +1099,32 @@ impl ThreadManager {
+@@ -1061,8 +1103,32 @@ impl ThreadManager {
              .await
      }
 
@@ -30301,7 +30306,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
      }
 
      pub async fn list_thread_ids(&self) -> Vec<ThreadId> {
-@@ -1299,6 +1361,66 @@ impl ThreadManager {
+@@ -1299,6 +1365,66 @@ impl ThreadManager {
          self.start_thread(options).await
      }
 
@@ -30368,7 +30373,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
      /// Allocates a thread ID before startup so a caller can associate host-owned state with it.
      pub fn reserve_thread_id(&self) -> ThreadId {
          self.state.thread_id_generator.as_ref()()
-@@ -1638,6 +1760,15 @@ impl ThreadManager {
+@@ -1638,6 +1764,15 @@ impl ThreadManager {
              parent.session.fork_config().await;
          let mut thread_extension_init = ExtensionDataInit::default();
          thread_extension_init.insert(reasoning_effort_pin);
@@ -30384,7 +30389,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
          Ok((
              StartThreadOptions {
                  history_mode: Some(settings.history_mode),
-@@ -1646,7 +1777,7 @@ impl ThreadManager {
+@@ -1646,7 +1781,7 @@ impl ThreadManager {
                  client_mcp_extensions: parent.client_mcp_extensions(),
                  disabled_plugin_ids: Some(settings.disabled_plugin_ids),
                  thread_extension_init,
@@ -30393,7 +30398,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
                  ..StartThreadOptions::new(config)
              },
              CodexThreadSettingsOverrides {
-@@ -2302,6 +2433,7 @@ impl ThreadManagerState {
+@@ -2302,6 +2437,7 @@ impl ThreadManagerState {
              inherited_instructions,
              inherited_exec_policy,
              user_shell_override,
@@ -30401,7 +30406,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
          } = request;
          let history_initialization = if let Some(child) = &prepared_child {
              child.history_initialization
-@@ -2339,7 +2471,7 @@ impl ThreadManagerState {
+@@ -2339,7 +2475,7 @@ impl ThreadManagerState {
              inherited_environments: captured_environments,
              user_instructions: supplied_user_instructions,
              mut thread_extension_init,
@@ -30410,7 +30415,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
              client_mcp_extensions,
              mut reserved_thread_id,
              disabled_plugin_ids,
-@@ -2351,6 +2483,37 @@ impl ThreadManagerState {
+@@ -2351,6 +2487,37 @@ impl ThreadManagerState {
                  "thread store resume preparation requires a persisted resumed thread".to_string(),
              ));
          }
@@ -30448,7 +30453,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
          let inherited_environments = captured_environments.or(inherited_environments);
          let session_source = session_source.unwrap_or_else(|| self.session_source.clone());
          // Older callers and saved reviewers identify isolation through their source.
-@@ -2508,8 +2671,12 @@ impl ThreadManagerState {
+@@ -2508,8 +2675,12 @@ impl ThreadManagerState {
              instructions.user_provider = None;
              config.startup_warnings.extend(supplied.warnings);
          }
@@ -30461,7 +30466,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
              SessionIsolation::Inherit if prepared_child.is_some() => {
                  (inherited_exec_policy, Some(MultiAgentVersion::V2))
              }
-@@ -2563,9 +2730,37 @@ impl ThreadManagerState {
+@@ -2563,9 +2734,37 @@ impl ThreadManagerState {
                  CodexAppsToolsCache::default(),
              );
              (extensions, Arc::new(mcp_manager))
@@ -30499,7 +30504,7 @@ index 7bd869f2c0770ea1ac9858998302e2002bc77b6b..cdd16c7752327026336b6891416e1e59
          let tracked_session_source = session_source.clone();
          let source_changed_during_startup = Arc::new(AtomicBool::new(false));
          {
-@@ -3011,6 +3206,14 @@ fn append_interrupted_boundary(
+@@ -3011,6 +3210,14 @@ fn append_interrupted_boundary(
      }
  }
 
@@ -39121,7 +39126,7 @@ index 8e7b3f7b8a1f8960f85e219716632ebb366662a3..ba6dbeefc39b7b667bc8f4a4190dcff4
          | ServerNotification::WindowsSandboxSetupCompleted(_)
          | ServerNotification::AccountLoginCompleted(_) => None,
 diff --git a/codex-rs/tui/src/app/app_server_events.rs b/codex-rs/tui/src/app/app_server_events.rs
-index 87ccb4495d5c759ac0bd2b89362eeb9ae3e60cc7..ee4983410ef22db5005e50d85c16d0dde0483091 100644
+index 87ccb4495d5c759ac0bd2b89362eeb9ae3e60cc7..69b837e629d2966efd536c991b44d5c777c2bc37 100644
 --- a/codex-rs/tui/src/app/app_server_events.rs
 +++ b/codex-rs/tui/src/app/app_server_events.rs
 @@ -129,6 +129,7 @@ impl App {
@@ -39153,7 +39158,7 @@ index 87ccb4495d5c759ac0bd2b89362eeb9ae3e60cc7..ee4983410ef22db5005e50d85c16d0dd
          // A picker can leave an old runtime's close notification queued while the same thread
          // is resumed. Thread IDs survive reloads, so confirm that the displayed thread is still
          // unloaded before routing a close that would exit the TUI or switch away from it.
-@@ -607,11 +615,130 @@ impl App {
+@@ -607,11 +615,134 @@ impl App {
              .handle_server_notification(notification, /*replay_kind*/ None);
      }
 
@@ -39186,12 +39191,16 @@ index 87ccb4495d5c759ac0bd2b89362eeb9ae3e60cc7..ee4983410ef22db5005e50d85c16d0dd
 +        let message = arguments["message"]
 +            .as_str()
 +            .filter(|value| value.len() <= 2000);
-+        if params.operation != "terminal.prompt" || title.is_none() || message.is_none() {
++        let (Some(title), Some(message)) = (title, message) else {
++            respond(serde_json::json!({"status":"declined"}));
++            return;
++        };
++        if params.operation != "terminal.prompt" {
 +            respond(serde_json::json!({"status":"declined"}));
 +            return;
 +        }
-+        let title = format!("Mod {} asks: {}", params.caller, title.unwrap());
-+        let message = message.unwrap().to_owned();
++        let title = format!("Mod {} asks: {}", params.caller, title);
++        let message = message.to_owned();
 +        if arguments["kind"] == "text" {
 +            let view = crate::bottom_pane::SecretPromptView::new(
 +                title,
@@ -39284,7 +39293,7 @@ index 87ccb4495d5c759ac0bd2b89362eeb9ae3e60cc7..ee4983410ef22db5005e50d85c16d0dd
          let request = &buffered_request.request;
          let thread_id = server_request_thread_id(request);
          if thread_id
-@@ -760,6 +887,7 @@ impl App {
+@@ -760,6 +891,7 @@ impl App {
              ServerRequest::DynamicToolCall { .. }
                  | ServerRequest::AttestationGenerate { .. }
                  | ServerRequest::CurrentTimeRead { .. }
@@ -68054,10 +68063,10 @@ index 0000000000000000000000000000000000000000..53bc90f4dce5591639f907585ea4bab0
 +workspace = true
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..765e53f7a0c99838da428ffa980cda2fdb09023f
+index 0000000000000000000000000000000000000000..a42744d141d24f103eb3dda9a9c86fea39e00510
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2565 @@
+@@ -0,0 +1,2569 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -68570,6 +68579,10 @@ index 0000000000000000000000000000000000000000..765e53f7a0c99838da428ffa980cda2f
 +    }
 +
 +    /// Runs `model_send` over the exact body about to be sent, page by page, until no policy edits it.
++    #[expect(
++        clippy::too_many_arguments,
++        reason = "Each argument is a distinct piece of request context"
++    )]
 +    fn police(
 +        &self,
 +        mods: &Mutex<codex_omd::ModHost>,
@@ -72753,10 +72766,10 @@ index 0000000000000000000000000000000000000000..d7fc0b4bd8eb3d9cf13c65351b828bb6
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..875e8f59cfe76b49a6d37351bb8dc588fbd7c99f
+index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed504a6ea55
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,1469 @@
+@@ -0,0 +1,1465 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -73287,17 +73300,13 @@ index 0000000000000000000000000000000000000000..875e8f59cfe76b49a6d37351bb8dc588
 +    }
 +}
 +
-+pub(super) fn shared_native_tasks() -> Option<(
-+    Arc<Mutex<BTreeMap<String, TurnRecord>>>,
-+    Arc<Mutex<BTreeMap<String, Config>>>,
-+)> {
++pub(super) fn shared_native_tasks() -> Option<(SharedTurns, SharedProviderSwitches)> {
 +    core()
 +        .ok()
 +        .map(|core| (core.turns.clone(), core.provider_switches.clone()))
 +}
 +
-+pub(super) fn shared_native_sessions()
-+-> Option<Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>> {
++pub(super) fn shared_native_sessions() -> Option<SharedSessions> {
 +    Some(core().ok()?.sessions.clone())
 +}
 +
@@ -81058,10 +81067,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8e5ebd1d35b5b047ae0dce7f9f8f56fe242418e5
+index 0000000000000000000000000000000000000000..d378c5c2f37264250c0d8dd5bc42ea9c0907192e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,3087 @@
+@@ -0,0 +1,3090 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -81112,6 +81121,9 @@ index 0000000000000000000000000000000000000000..8e5ebd1d35b5b047ae0dce7f9f8f56fe
 +
 +type Reply = std::sync::mpsc::SyncSender<std::io::Result<Value>>;
 +type Facts = BTreeMap<String, (String, Option<ModGrants>)>;
++type SharedSessions = Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>;
++type SharedTurns = Arc<Mutex<BTreeMap<String, TurnRecord>>>;
++type SharedProviderSwitches = Arc<Mutex<BTreeMap<String, Config>>>;
 +
 +struct HostRequest {
 +    caller: String,
@@ -81205,9 +81217,9 @@ index 0000000000000000000000000000000000000000..8e5ebd1d35b5b047ae0dce7f9f8f56fe
 +}
 +
 +pub(super) struct Core {
-+    sessions: Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>,
-+    turns: Arc<Mutex<BTreeMap<String, TurnRecord>>>,
-+    provider_switches: Arc<Mutex<BTreeMap<String, Config>>>,
++    sessions: SharedSessions,
++    turns: SharedTurns,
++    provider_switches: SharedProviderSwitches,
 +    terminal_owner: Option<String>,
 +    session_runtime: Option<tokio::runtime::Handle>,
 +    host: Arc<Host>,
@@ -92231,10 +92243,10 @@ index 0000000000000000000000000000000000000000..708e3e710b8c9b6974f4c32640ca2c49
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540191b415b
+index 0000000000000000000000000000000000000000..1359092e94b2293b1505ec096244adabf8f1482a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,6900 @@
+@@ -0,0 +1,6928 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -94530,7 +94542,7 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +        mods.adjust_tool_specs(&thread_store, &thread_store, &[]),
 +        None
 +    );
-+    thread_store.insert(fixture.lead.clone());
++    thread_store.insert(fixture.lead);
 +    let view = |name: &str| ToolSpecView {
 +        name: name.to_owned(),
 +        description: String::new(),
@@ -97385,7 +97397,7 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +    let form = |server: &'static str, schema: Value| async move {
 +        let request = json!({"mode": "form", "message": "who?", "requested_schema": schema});
 +        mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
-+            turn_store: &thread_store,
++            turn_store: thread_store,
 +            turn_id: "turn-2",
 +            server,
 +            request_id: "7",
@@ -97427,7 +97439,7 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +        {"type": "object", "properties": {"token": {"type": "string", "format": "password"}}}});
 +    for id in (0..=64).rev() {
 +        mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
-+            turn_store: &thread_store,
++            turn_store: thread_store,
 +            turn_id: "turn-2",
 +            server: "bulk",
 +            request_id: &format!("{id:02}"),
@@ -97975,6 +97987,10 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
 +async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_clients() {
 +    let _guard = DISPATCHER_TEST.lock().await;
 +    let mut registry = ExtensionRegistryBuilder::new();
@@ -98432,6 +98448,10 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
 +async fn terminal_owner_external_modules_render_and_receive_events_in_their_owner() {
 +    let _guard = DISPATCHER_TEST.lock().await;
 +    let mut registry = ExtensionRegistryBuilder::new();
@@ -98507,6 +98527,10 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
 +async fn embedded_session_dispatch_uses_explicit_terminal_owner_and_preserves_authority() {
 +    let _guard = DISPATCHER_TEST.lock().await;
 +    let mut registry = ExtensionRegistryBuilder::new();
@@ -98579,6 +98603,10 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
 +async fn terminal_owner_user_commands_admit_settings_and_confirmed_package_controls() {
 +    struct Confirm;
 +    impl codex_omd::client_surface::ClientSurface for Confirm {
@@ -98672,6 +98700,10 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
 +async fn terminal_owner_subagents_follow_the_parent_and_unowned_threads_use_shared_defaults() {
 +    let _guard = DISPATCHER_TEST.lock().await;
 +    type Captured = Arc<Mutex<Option<(codex_protocol::turn_input::TerminalOwner, Arc<Mods>)>>>;
@@ -98949,6 +98981,10 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +}
 +
 +#[tokio::test]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
 +async fn terminal_owner_native_configuration_refreshes_before_turn_and_conversation_admission() {
 +    let _guard = DISPATCHER_TEST.lock().await;
 +    let mut registry = ExtensionRegistryBuilder::new();
@@ -99067,6 +99103,10 @@ index 0000000000000000000000000000000000000000..db2c4ede3b7740082c00500a81724540
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
 +async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
 +    let _guard = DISPATCHER_TEST.lock().await;
 +    let mut registry = ExtensionRegistryBuilder::new();
@@ -140883,7 +140923,7 @@ index 0000000000000000000000000000000000000000..29ab066f7019bc8216ab009616d6fb11
 +}
 diff --git a/codex-rs/omd/src/mods/configuration_overrides.rs b/codex-rs/omd/src/mods/configuration_overrides.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d5312282063701e7b210bff0a7a334162b6f6dd7
+index 0000000000000000000000000000000000000000..e499256d930ae4f08a15a999c1288a440b05e1a3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/configuration_overrides.rs
 @@ -0,0 +1,1059 @@
@@ -141177,274 +141217,6 @@ index 0000000000000000000000000000000000000000..d5312282063701e7b210bff0a7a33416
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
 +        Ok(())
-+    }
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+    use super::*;
-+
-+    fn selection() -> ModSelection {
-+        serde_json::from_value(json!({
-+            "path": "/example/package", "sha256": "trusted", "enabled": true,
-+            "capabilities": [], "scope": "user"
-+        }))
-+        .unwrap()
-+    }
-+
-+    #[test]
-+    fn legacy_epoch_preserves_security_grant_and_defaults_writes_keep_binding() {
-+        let mut saved = selection();
-+        assert_eq!(saved.configuration_epoch, 0);
-+        assert!(json!(saved).get("configuration_epoch").is_none());
-+        let grant = store::grant(&json!(saved));
-+        let mut owner = ConfigurationOverrides::default();
-+        owner.set_enabled(&saved, false).unwrap();
-+        saved.settings.insert("value".into(), json!(1));
-+        saved.enabled = false;
-+        owner.set_enabled(&saved, true).unwrap();
-+        assert!(owner.enabled(&saved));
-+        saved.configuration_epoch = 1;
-+        assert_eq!(store::grant(&json!(saved)), grant);
-+        assert!(!owner.enabled(&saved));
-+        owner.retain(&[saved.clone()]).unwrap();
-+        let package: ModPackage = serde_json::from_value(json!({
-+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
-+            "state_version": 1, "capabilities": []
-+        }))
-+        .unwrap();
-+        assert_eq!(
-+            owner.values(&saved, &package, &BTreeMap::new()),
-+            json!({"settings":{}})
-+        );
-+    }
-+
-+    #[test]
-+    fn independent_owners_inherit_current_defaults_after_reset() {
-+        let mut saved = selection();
-+        let mut a = ConfigurationOverrides::default();
-+        let b = ConfigurationOverrides::default();
-+        let grant = store::grant(&json!(saved));
-+        a.set_enabled(&saved, false).unwrap();
-+        assert!(!a.enabled(&saved));
-+        assert!(b.enabled(&saved));
-+        assert!(saved.enabled);
-+        assert_eq!(grant, store::grant(&json!(saved)));
-+        saved.enabled = false;
-+        a.set_enabled(&saved, true).unwrap();
-+        assert!(a.enabled(&saved));
-+        assert!(!b.enabled(&saved));
-+        a.reset(&saved).unwrap();
-+        assert!(!a.enabled(&saved));
-+        assert!(!ConfigurationOverrides::default().enabled(&saved));
-+    }
-+
-+    #[test]
-+    fn authority_changes_and_removal_discard_bindings() {
-+        let mut saved = selection();
-+        let mut overrides = ConfigurationOverrides::default();
-+        overrides.set_enabled(&saved, false).unwrap();
-+        saved.sha256 = "replacement".into();
-+        assert!(overrides.enabled(&saved));
-+        overrides.retain(&[saved.clone()]).unwrap();
-+        saved.sha256 = "trusted".into();
-+        assert!(overrides.enabled(&saved));
-+        overrides.set_enabled(&saved, false).unwrap();
-+        overrides.retain(&[]).unwrap();
-+        assert!(overrides.enabled(&saved));
-+    }
-+
-+    #[test]
-+    fn required_managed_and_expired_selections_are_authoritative() {
-+        for change in ["required", "managed", "expired"] {
-+            let mut saved = selection();
-+            let mut overrides = ConfigurationOverrides::default();
-+            overrides.set_enabled(&saved, false).unwrap();
-+            match change {
-+                "required" => saved.required = true,
-+                "managed" => saved.scope = MANAGED_SCOPE.into(),
-+                _ => saved.expires_at = Some(0),
-+            }
-+            let error = overrides
-+                .set_enabled(&saved, false)
-+                .unwrap_err()
-+                .to_string();
-+            assert_eq!(
-+                error.starts_with("grant_expired"),
-+                change == "expired",
-+                "{error}"
-+            );
-+            assert!(overrides.enabled(&saved));
-+        }
-+    }
-+
-+    #[test]
-+    fn authoritative_restrictions_discard_previous_overrides() {
-+        for change in ["managed", "expired"] {
-+            let saved = selection();
-+            let mut overrides = ConfigurationOverrides::default();
-+            overrides.set_enabled(&saved, false).unwrap();
-+            let mut restricted = saved.clone();
-+            match change {
-+                "managed" => restricted.scope = MANAGED_SCOPE.into(),
-+                _ => restricted.expires_at = Some(0),
-+            }
-+            overrides.retain(&[restricted]).unwrap();
-+            assert!(overrides.enabled(&saved), "{change}");
-+        }
-+    }
-+
-+    #[test]
-+    fn noop_resets_keep_the_revision_and_owners_are_distinct() {
-+        let saved = selection();
-+        let mut overrides = ConfigurationOverrides::default();
-+        overrides.reset(&saved).unwrap();
-+        overrides.reset_setting(&saved, "color").unwrap();
-+        assert_eq!(overrides.revision(), 0);
-+        overrides.set_enabled(&saved, false).unwrap();
-+        overrides.reset_setting(&saved, "color").unwrap();
-+        assert_eq!(overrides.revision(), 1);
-+        overrides.reset(&saved).unwrap();
-+        assert_eq!(overrides.revision(), 2);
-+        let mut managed = saved.clone();
-+        managed.scope = MANAGED_SCOPE.into();
-+        assert!(overrides.reset(&managed).is_err());
-+        assert_ne!(overrides.id(), ConfigurationOverrides::default().id());
-+        assert_eq!(overrides.id(), overrides.clone().id());
-+    }
-+
-+    #[test]
-+    fn overrides_equal_to_inherited_values_are_dropped() {
-+        let saved = selection();
-+        let package: ModPackage = serde_json::from_value(json!({
-+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
-+            "state_version": 1, "capabilities": [],
-+            "settings_schema": {"type": "object",
-+                "properties": {"color": {"type": "string", "default": "blue"}}}
-+        }))
-+        .unwrap();
-+        let inherited = BTreeMap::from([("color".into(), json!("red"))]);
-+        let mut owner = ConfigurationOverrides::default();
-+        owner.set_enabled(&saved, false).unwrap();
-+        owner.set_enabled(&saved, true).unwrap();
-+        owner
-+            .write_settings(
-+                &saved,
-+                &package,
-+                &inherited,
-+                json!({"color":"green"}).as_object().unwrap(),
-+            )
-+            .unwrap();
-+        owner
-+            .write_settings(
-+                &saved,
-+                &package,
-+                &inherited,
-+                json!({"color":"red"}).as_object().unwrap(),
-+            )
-+            .unwrap();
-+        assert_eq!(
-+            owner.values(&saved, &package, &inherited),
-+            json!({"settings":{}})
-+        );
-+    }
-+
-+    #[test]
-+    fn overrides_matching_a_changed_inherited_value_read_as_inherited() {
-+        let saved = selection();
-+        let package: ModPackage = serde_json::from_value(json!({
-+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
-+            "state_version": 1, "capabilities": [],
-+            "settings_schema": {"type": "object",
-+                "properties": {"color": {"type": "string", "default": "blue"}}}
-+        }))
-+        .unwrap();
-+        let mut owner = ConfigurationOverrides::default();
-+        owner
-+            .write_settings(
-+                &saved,
-+                &package,
-+                &BTreeMap::from([("color".into(), json!("red"))]),
-+                json!({"color":"green"}).as_object().unwrap(),
-+            )
-+            .unwrap();
-+        owner.set_enabled(&saved, false).unwrap();
-+        let mut shared = saved.clone();
-+        shared.enabled = false;
-+        let inherited: BTreeMap<String, Value> = BTreeMap::from([("color".into(), json!("green"))]);
-+        assert_eq!(
-+            owner.values(&shared, &package, &inherited),
-+            json!({"settings":{}})
-+        );
-+    }
-+
-+    #[test]
-+    fn settings_validate_atomically_and_null_differs_from_reset() {
-+        let saved = selection();
-+        let package: ModPackage = serde_json::from_value(json!({
-+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
-+            "state_version": 1, "capabilities": [],
-+            "settings_schema": {"type": "object", "additionalProperties": false,
-+                "properties": {"color": {"type": "string", "default": "blue"}}}
-+        }))
-+        .unwrap();
-+        let mut required = saved.clone();
-+        required.required = true;
-+        let mut owner = ConfigurationOverrides::default();
-+        owner
-+            .write_settings(
-+                &required,
-+                &package,
-+                &BTreeMap::new(),
-+                json!({"color":"green"}).as_object().unwrap(),
-+            )
-+            .unwrap();
-+        assert_eq!(
-+            owner
-+                .settings(&required, &package, &BTreeMap::new())
-+                .unwrap()["color"],
-+            "green"
-+        );
-+        assert!(owner.set_enabled(&required, false).is_err());
-+        let inherited =
-+            BTreeMap::from([("color".into(), json!("red")), ("removed".into(), json!(1))]);
-+        let mut overrides = ConfigurationOverrides::default();
-+        let values = json!({"color": "green"});
-+        overrides
-+            .write_settings(&saved, &package, &inherited, values.as_object().unwrap())
-+            .unwrap();
-+        let revision = overrides.revision();
-+        let bad = json!({"color": 42});
-+        assert!(
-+            overrides
-+                .write_settings(&saved, &package, &inherited, bad.as_object().unwrap())
-+                .is_err()
-+        );
-+        assert_eq!(overrides.revision(), revision);
-+        let unknown = json!({"removed": 2});
-+        assert!(
-+            overrides
-+                .write_settings(&saved, &package, &inherited, unknown.as_object().unwrap())
-+                .is_err()
-+        );
-+        assert_eq!(overrides.revision(), revision);
-+        assert_eq!(
-+            overrides.settings(&saved, &package, &inherited).unwrap()["color"],
-+            "green"
-+        );
-+        let null = json!({"color": null});
-+        assert_eq!(
-+            overrides
-+                .write_settings(&saved, &package, &inherited, null.as_object().unwrap())
-+                .unwrap()["color"],
-+            "blue"
-+        );
-+        overrides.reset_setting(&saved, "color").unwrap();
-+        assert_eq!(
-+            overrides.settings(&saved, &package, &inherited).unwrap()["color"],
-+            "red"
-+        );
-+        assert_eq!(inherited["color"], "red");
 +    }
 +}
 +
@@ -141945,6 +141717,274 @@ index 0000000000000000000000000000000000000000..d5312282063701e7b210bff0a7a33416
 +        }
 +    }
 +    Ok(result)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn selection() -> ModSelection {
++        serde_json::from_value(json!({
++            "path": "/example/package", "sha256": "trusted", "enabled": true,
++            "capabilities": [], "scope": "user"
++        }))
++        .unwrap()
++    }
++
++    #[test]
++    fn legacy_epoch_preserves_security_grant_and_defaults_writes_keep_binding() {
++        let mut saved = selection();
++        assert_eq!(saved.configuration_epoch, 0);
++        assert!(json!(saved).get("configuration_epoch").is_none());
++        let grant = store::grant(&json!(saved));
++        let mut owner = ConfigurationOverrides::default();
++        owner.set_enabled(&saved, false).unwrap();
++        saved.settings.insert("value".into(), json!(1));
++        saved.enabled = false;
++        owner.set_enabled(&saved, true).unwrap();
++        assert!(owner.enabled(&saved));
++        saved.configuration_epoch = 1;
++        assert_eq!(store::grant(&json!(saved)), grant);
++        assert!(!owner.enabled(&saved));
++        owner.retain(&[saved.clone()]).unwrap();
++        let package: ModPackage = serde_json::from_value(json!({
++            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
++            "state_version": 1, "capabilities": []
++        }))
++        .unwrap();
++        assert_eq!(
++            owner.values(&saved, &package, &BTreeMap::new()),
++            json!({"settings":{}})
++        );
++    }
++
++    #[test]
++    fn independent_owners_inherit_current_defaults_after_reset() {
++        let mut saved = selection();
++        let mut a = ConfigurationOverrides::default();
++        let b = ConfigurationOverrides::default();
++        let grant = store::grant(&json!(saved));
++        a.set_enabled(&saved, false).unwrap();
++        assert!(!a.enabled(&saved));
++        assert!(b.enabled(&saved));
++        assert!(saved.enabled);
++        assert_eq!(grant, store::grant(&json!(saved)));
++        saved.enabled = false;
++        a.set_enabled(&saved, true).unwrap();
++        assert!(a.enabled(&saved));
++        assert!(!b.enabled(&saved));
++        a.reset(&saved).unwrap();
++        assert!(!a.enabled(&saved));
++        assert!(!ConfigurationOverrides::default().enabled(&saved));
++    }
++
++    #[test]
++    fn authority_changes_and_removal_discard_bindings() {
++        let mut saved = selection();
++        let mut overrides = ConfigurationOverrides::default();
++        overrides.set_enabled(&saved, false).unwrap();
++        saved.sha256 = "replacement".into();
++        assert!(overrides.enabled(&saved));
++        overrides.retain(&[saved.clone()]).unwrap();
++        saved.sha256 = "trusted".into();
++        assert!(overrides.enabled(&saved));
++        overrides.set_enabled(&saved, false).unwrap();
++        overrides.retain(&[]).unwrap();
++        assert!(overrides.enabled(&saved));
++    }
++
++    #[test]
++    fn required_managed_and_expired_selections_are_authoritative() {
++        for change in ["required", "managed", "expired"] {
++            let mut saved = selection();
++            let mut overrides = ConfigurationOverrides::default();
++            overrides.set_enabled(&saved, false).unwrap();
++            match change {
++                "required" => saved.required = true,
++                "managed" => saved.scope = MANAGED_SCOPE.into(),
++                _ => saved.expires_at = Some(0),
++            }
++            let error = overrides
++                .set_enabled(&saved, false)
++                .unwrap_err()
++                .to_string();
++            assert_eq!(
++                error.starts_with("grant_expired"),
++                change == "expired",
++                "{error}"
++            );
++            assert!(overrides.enabled(&saved));
++        }
++    }
++
++    #[test]
++    fn authoritative_restrictions_discard_previous_overrides() {
++        for change in ["managed", "expired"] {
++            let saved = selection();
++            let mut overrides = ConfigurationOverrides::default();
++            overrides.set_enabled(&saved, false).unwrap();
++            let mut restricted = saved.clone();
++            match change {
++                "managed" => restricted.scope = MANAGED_SCOPE.into(),
++                _ => restricted.expires_at = Some(0),
++            }
++            overrides.retain(&[restricted]).unwrap();
++            assert!(overrides.enabled(&saved), "{change}");
++        }
++    }
++
++    #[test]
++    fn noop_resets_keep_the_revision_and_owners_are_distinct() {
++        let saved = selection();
++        let mut overrides = ConfigurationOverrides::default();
++        overrides.reset(&saved).unwrap();
++        overrides.reset_setting(&saved, "color").unwrap();
++        assert_eq!(overrides.revision(), 0);
++        overrides.set_enabled(&saved, false).unwrap();
++        overrides.reset_setting(&saved, "color").unwrap();
++        assert_eq!(overrides.revision(), 1);
++        overrides.reset(&saved).unwrap();
++        assert_eq!(overrides.revision(), 2);
++        let mut managed = saved.clone();
++        managed.scope = MANAGED_SCOPE.into();
++        assert!(overrides.reset(&managed).is_err());
++        assert_ne!(overrides.id(), ConfigurationOverrides::default().id());
++        assert_eq!(overrides.id(), overrides.clone().id());
++    }
++
++    #[test]
++    fn overrides_equal_to_inherited_values_are_dropped() {
++        let saved = selection();
++        let package: ModPackage = serde_json::from_value(json!({
++            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
++            "state_version": 1, "capabilities": [],
++            "settings_schema": {"type": "object",
++                "properties": {"color": {"type": "string", "default": "blue"}}}
++        }))
++        .unwrap();
++        let inherited = BTreeMap::from([("color".into(), json!("red"))]);
++        let mut owner = ConfigurationOverrides::default();
++        owner.set_enabled(&saved, false).unwrap();
++        owner.set_enabled(&saved, true).unwrap();
++        owner
++            .write_settings(
++                &saved,
++                &package,
++                &inherited,
++                json!({"color":"green"}).as_object().unwrap(),
++            )
++            .unwrap();
++        owner
++            .write_settings(
++                &saved,
++                &package,
++                &inherited,
++                json!({"color":"red"}).as_object().unwrap(),
++            )
++            .unwrap();
++        assert_eq!(
++            owner.values(&saved, &package, &inherited),
++            json!({"settings":{}})
++        );
++    }
++
++    #[test]
++    fn overrides_matching_a_changed_inherited_value_read_as_inherited() {
++        let saved = selection();
++        let package: ModPackage = serde_json::from_value(json!({
++            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
++            "state_version": 1, "capabilities": [],
++            "settings_schema": {"type": "object",
++                "properties": {"color": {"type": "string", "default": "blue"}}}
++        }))
++        .unwrap();
++        let mut owner = ConfigurationOverrides::default();
++        owner
++            .write_settings(
++                &saved,
++                &package,
++                &BTreeMap::from([("color".into(), json!("red"))]),
++                json!({"color":"green"}).as_object().unwrap(),
++            )
++            .unwrap();
++        owner.set_enabled(&saved, false).unwrap();
++        let mut shared = saved.clone();
++        shared.enabled = false;
++        let inherited: BTreeMap<String, Value> = BTreeMap::from([("color".into(), json!("green"))]);
++        assert_eq!(
++            owner.values(&shared, &package, &inherited),
++            json!({"settings":{}})
++        );
++    }
++
++    #[test]
++    fn settings_validate_atomically_and_null_differs_from_reset() {
++        let saved = selection();
++        let package: ModPackage = serde_json::from_value(json!({
++            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
++            "state_version": 1, "capabilities": [],
++            "settings_schema": {"type": "object", "additionalProperties": false,
++                "properties": {"color": {"type": "string", "default": "blue"}}}
++        }))
++        .unwrap();
++        let mut required = saved.clone();
++        required.required = true;
++        let mut owner = ConfigurationOverrides::default();
++        owner
++            .write_settings(
++                &required,
++                &package,
++                &BTreeMap::new(),
++                json!({"color":"green"}).as_object().unwrap(),
++            )
++            .unwrap();
++        assert_eq!(
++            owner
++                .settings(&required, &package, &BTreeMap::new())
++                .unwrap()["color"],
++            "green"
++        );
++        assert!(owner.set_enabled(&required, false).is_err());
++        let inherited =
++            BTreeMap::from([("color".into(), json!("red")), ("removed".into(), json!(1))]);
++        let mut overrides = ConfigurationOverrides::default();
++        let values = json!({"color": "green"});
++        overrides
++            .write_settings(&saved, &package, &inherited, values.as_object().unwrap())
++            .unwrap();
++        let revision = overrides.revision();
++        let bad = json!({"color": 42});
++        assert!(
++            overrides
++                .write_settings(&saved, &package, &inherited, bad.as_object().unwrap())
++                .is_err()
++        );
++        assert_eq!(overrides.revision(), revision);
++        let unknown = json!({"removed": 2});
++        assert!(
++            overrides
++                .write_settings(&saved, &package, &inherited, unknown.as_object().unwrap())
++                .is_err()
++        );
++        assert_eq!(overrides.revision(), revision);
++        assert_eq!(
++            overrides.settings(&saved, &package, &inherited).unwrap()["color"],
++            "green"
++        );
++        let null = json!({"color": null});
++        assert_eq!(
++            overrides
++                .write_settings(&saved, &package, &inherited, null.as_object().unwrap())
++                .unwrap()["color"],
++            "blue"
++        );
++        overrides.reset_setting(&saved, "color").unwrap();
++        assert_eq!(
++            overrides.settings(&saved, &package, &inherited).unwrap()["color"],
++            "red"
++        );
++        assert_eq!(inherited["color"], "red");
++    }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
@@ -142476,10 +142516,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..637e81174d1e39649a50b9efb15ae01c7e34c6d2
+index 0000000000000000000000000000000000000000..d9ee2db3392f09db4dbad6bacf9b72c262ec0457
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2944 @@
+@@ -0,0 +1,2948 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -143647,6 +143687,10 @@ index 0000000000000000000000000000000000000000..637e81174d1e39649a50b9efb15ae01c
 +        )
 +    }
 +
++    #[expect(
++        clippy::too_many_arguments,
++        reason = "one store transaction carries every changed document"
++    )]
 +    pub(super) fn commit_configuration_transaction(
 +        &self,
 +        lock: ModPackageLock,
@@ -153611,10 +153655,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3a7dbe195b888377058c6dc1876ac648ec2f26e0
+index 0000000000000000000000000000000000000000..0d09d0c82f7d4961b7f8afdeb8ae14252eb40559
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,883 @@
+@@ -0,0 +1,885 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -153888,9 +153932,11 @@ index 0000000000000000000000000000000000000000..3a7dbe195b888377058c6dc1876ac648
 +    Ok(listed)
 +}
 +
-+static CONNECTED: OnceLock<fn(Option<&str>, &str, &str) -> bool> = OnceLock::new();
++type ConnectedModels = fn(Option<&str>, &str, &str) -> bool;
 +
-+pub fn set_connected_models(connected: fn(Option<&str>, &str, &str) -> bool) {
++static CONNECTED: OnceLock<ConnectedModels> = OnceLock::new();
++
++pub fn set_connected_models(connected: ConnectedModels) {
 +    let _ = CONNECTED.set(connected);
 +}
 +
@@ -154500,10 +154546,10 @@ index 0000000000000000000000000000000000000000..3a7dbe195b888377058c6dc1876ac648
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..88c5211387351a9eba9207019961e71b6bd69ccb
+index 0000000000000000000000000000000000000000..105e5e0a92d0caf7648c891927130dcf63e9983f
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,495 @@
+@@ -0,0 +1,491 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -154788,19 +154834,15 @@ index 0000000000000000000000000000000000000000..88c5211387351a9eba9207019961e71b
 +    )
 +    .unwrap();
 +    apply(&store, &disable.control).unwrap();
-+    let states = list(&store, None).unwrap()["packages"]
-+        .as_array()
-+        .unwrap()
-+        .iter()
-+        .map(|package| {
-+            (
-+                package["scope"].clone(),
-+                package["source"].clone(),
-+                package["enabled"].clone(),
-+            )
-+        })
-+        .collect::<Vec<_>>();
-+    assert!(states.contains(&(json!("user"), json!("selection"), json!(false))));
++    assert!(
++        list(&store, None).unwrap()["packages"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .any(|package| package["scope"] == "user"
++                && package["source"] == "selection"
++                && package["enabled"] == false)
++    );
 +    let enable = preview(
 +        &store,
 +        json!({"action": "enable", "target": "shared", "id": "author_mod"}),
@@ -167349,7 +167391,7 @@ index 0000000000000000000000000000000000000000..810a873e4b715fdcf8462d5129f9b723
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..78b2853e286d0d4fd3e094a87c5071211bf35a16
+index 0000000000000000000000000000000000000000..dc473459b3ad08dd82266680c31994a428c2c7b1
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
 @@ -0,0 +1,7754 @@
@@ -175022,7 +175064,7 @@ index 0000000000000000000000000000000000000000..78b2853e286d0d4fd3e094a87c507121
 +            .unwrap()
 +            .mods
 +            .into_iter()
-+            .find(|selection| selection.path == PathBuf::from(row["path"].as_str().unwrap()))
++            .find(|selection| selection.path == Path::new(row["path"].as_str().unwrap()))
 +            .unwrap();
 +        assert!(renewed.authority_current(), "packaged={packaged}");
 +        assert_eq!(renewed.capabilities, ["commands"]);
@@ -187624,10 +187666,10 @@ index 0000000000000000000000000000000000000000..1bcdfa2a2385cc6b4de11cc7ef78b304
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2866f05d4d6b0464eb936e7a91b4a608d7bbdd7
+index 0000000000000000000000000000000000000000..fa61541346c02edf20dccebaf4c315a0407c2b5c
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,685 @@
+@@ -0,0 +1,689 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SearchMode;
@@ -188168,6 +188210,10 @@ index 0000000000000000000000000000000000000000..e2866f05d4d6b0464eb936e7a91b4a60
 +        self.request_redraw();
 +    }
 +
++    #[expect(
++        clippy::too_many_arguments,
++        reason = "Mirrors the fields of AppEvent::OmdEditSetting"
++    )]
 +    pub(crate) fn open_omd_setting(
 +        &mut self,
 +        id: String,
@@ -197440,10 +197486,10 @@ index 0000000000000000000000000000000000000000..0a13c9deb169fad6568a54321e33ec53
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..afc726328523efea7b41f630f908963df663212b
+index 0000000000000000000000000000000000000000..95336aa9ae4190c73ff847904b3a5cbdaa5686f2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,2507 @@
+@@ -0,0 +1,2506 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -198493,11 +198539,10 @@ index 0000000000000000000000000000000000000000..afc726328523efea7b41f630f908963d
 +        }
 +        shared_host()?
 +    };
-+    let result = runtime
++    runtime
 +        .locked()
 +        .write_configuration_in(id, &values, target, &reset, scope)
-+        .map_err(|error| error.to_string());
-+    result
++        .map_err(|error| error.to_string())
 +}
 +
 +pub(crate) fn apply_bound_configuration(
@@ -199392,14 +199437,14 @@ index 0000000000000000000000000000000000000000..afc726328523efea7b41f630f908963d
 +    let input = serde_json::json!({"key": key, "value": value, "original": row["value"],
 +        "source": row["source"], "scope": row["scope"]});
 +    let result = codex_omd::continue_operation(
-+        &runtime,
++        runtime,
 +        "config_set",
 +        input,
 +        serde_json::json!({"caller": caller, "thread_id": thread}),
 +        active,
 +        |caller, call| {
 +            crate::mod_surface::host_call(
-+                &paths,
++                paths,
 +                &policy,
 +                grants.get(caller).cloned(),
 +                caller,

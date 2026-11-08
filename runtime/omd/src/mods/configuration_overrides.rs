@@ -291,274 +291,6 @@ impl ConfigurationOverrides {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn selection() -> ModSelection {
-        serde_json::from_value(json!({
-            "path": "/example/package", "sha256": "trusted", "enabled": true,
-            "capabilities": [], "scope": "user"
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn legacy_epoch_preserves_security_grant_and_defaults_writes_keep_binding() {
-        let mut saved = selection();
-        assert_eq!(saved.configuration_epoch, 0);
-        assert!(json!(saved).get("configuration_epoch").is_none());
-        let grant = store::grant(&json!(saved));
-        let mut owner = ConfigurationOverrides::default();
-        owner.set_enabled(&saved, false).unwrap();
-        saved.settings.insert("value".into(), json!(1));
-        saved.enabled = false;
-        owner.set_enabled(&saved, true).unwrap();
-        assert!(owner.enabled(&saved));
-        saved.configuration_epoch = 1;
-        assert_eq!(store::grant(&json!(saved)), grant);
-        assert!(!owner.enabled(&saved));
-        owner.retain(&[saved.clone()]).unwrap();
-        let package: ModPackage = serde_json::from_value(json!({
-            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
-            "state_version": 1, "capabilities": []
-        }))
-        .unwrap();
-        assert_eq!(
-            owner.values(&saved, &package, &BTreeMap::new()),
-            json!({"settings":{}})
-        );
-    }
-
-    #[test]
-    fn independent_owners_inherit_current_defaults_after_reset() {
-        let mut saved = selection();
-        let mut a = ConfigurationOverrides::default();
-        let b = ConfigurationOverrides::default();
-        let grant = store::grant(&json!(saved));
-        a.set_enabled(&saved, false).unwrap();
-        assert!(!a.enabled(&saved));
-        assert!(b.enabled(&saved));
-        assert!(saved.enabled);
-        assert_eq!(grant, store::grant(&json!(saved)));
-        saved.enabled = false;
-        a.set_enabled(&saved, true).unwrap();
-        assert!(a.enabled(&saved));
-        assert!(!b.enabled(&saved));
-        a.reset(&saved).unwrap();
-        assert!(!a.enabled(&saved));
-        assert!(!ConfigurationOverrides::default().enabled(&saved));
-    }
-
-    #[test]
-    fn authority_changes_and_removal_discard_bindings() {
-        let mut saved = selection();
-        let mut overrides = ConfigurationOverrides::default();
-        overrides.set_enabled(&saved, false).unwrap();
-        saved.sha256 = "replacement".into();
-        assert!(overrides.enabled(&saved));
-        overrides.retain(&[saved.clone()]).unwrap();
-        saved.sha256 = "trusted".into();
-        assert!(overrides.enabled(&saved));
-        overrides.set_enabled(&saved, false).unwrap();
-        overrides.retain(&[]).unwrap();
-        assert!(overrides.enabled(&saved));
-    }
-
-    #[test]
-    fn required_managed_and_expired_selections_are_authoritative() {
-        for change in ["required", "managed", "expired"] {
-            let mut saved = selection();
-            let mut overrides = ConfigurationOverrides::default();
-            overrides.set_enabled(&saved, false).unwrap();
-            match change {
-                "required" => saved.required = true,
-                "managed" => saved.scope = MANAGED_SCOPE.into(),
-                _ => saved.expires_at = Some(0),
-            }
-            let error = overrides
-                .set_enabled(&saved, false)
-                .unwrap_err()
-                .to_string();
-            assert_eq!(
-                error.starts_with("grant_expired"),
-                change == "expired",
-                "{error}"
-            );
-            assert!(overrides.enabled(&saved));
-        }
-    }
-
-    #[test]
-    fn authoritative_restrictions_discard_previous_overrides() {
-        for change in ["managed", "expired"] {
-            let saved = selection();
-            let mut overrides = ConfigurationOverrides::default();
-            overrides.set_enabled(&saved, false).unwrap();
-            let mut restricted = saved.clone();
-            match change {
-                "managed" => restricted.scope = MANAGED_SCOPE.into(),
-                _ => restricted.expires_at = Some(0),
-            }
-            overrides.retain(&[restricted]).unwrap();
-            assert!(overrides.enabled(&saved), "{change}");
-        }
-    }
-
-    #[test]
-    fn noop_resets_keep_the_revision_and_owners_are_distinct() {
-        let saved = selection();
-        let mut overrides = ConfigurationOverrides::default();
-        overrides.reset(&saved).unwrap();
-        overrides.reset_setting(&saved, "color").unwrap();
-        assert_eq!(overrides.revision(), 0);
-        overrides.set_enabled(&saved, false).unwrap();
-        overrides.reset_setting(&saved, "color").unwrap();
-        assert_eq!(overrides.revision(), 1);
-        overrides.reset(&saved).unwrap();
-        assert_eq!(overrides.revision(), 2);
-        let mut managed = saved.clone();
-        managed.scope = MANAGED_SCOPE.into();
-        assert!(overrides.reset(&managed).is_err());
-        assert_ne!(overrides.id(), ConfigurationOverrides::default().id());
-        assert_eq!(overrides.id(), overrides.clone().id());
-    }
-
-    #[test]
-    fn overrides_equal_to_inherited_values_are_dropped() {
-        let saved = selection();
-        let package: ModPackage = serde_json::from_value(json!({
-            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
-            "state_version": 1, "capabilities": [],
-            "settings_schema": {"type": "object",
-                "properties": {"color": {"type": "string", "default": "blue"}}}
-        }))
-        .unwrap();
-        let inherited = BTreeMap::from([("color".into(), json!("red"))]);
-        let mut owner = ConfigurationOverrides::default();
-        owner.set_enabled(&saved, false).unwrap();
-        owner.set_enabled(&saved, true).unwrap();
-        owner
-            .write_settings(
-                &saved,
-                &package,
-                &inherited,
-                json!({"color":"green"}).as_object().unwrap(),
-            )
-            .unwrap();
-        owner
-            .write_settings(
-                &saved,
-                &package,
-                &inherited,
-                json!({"color":"red"}).as_object().unwrap(),
-            )
-            .unwrap();
-        assert_eq!(
-            owner.values(&saved, &package, &inherited),
-            json!({"settings":{}})
-        );
-    }
-
-    #[test]
-    fn overrides_matching_a_changed_inherited_value_read_as_inherited() {
-        let saved = selection();
-        let package: ModPackage = serde_json::from_value(json!({
-            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
-            "state_version": 1, "capabilities": [],
-            "settings_schema": {"type": "object",
-                "properties": {"color": {"type": "string", "default": "blue"}}}
-        }))
-        .unwrap();
-        let mut owner = ConfigurationOverrides::default();
-        owner
-            .write_settings(
-                &saved,
-                &package,
-                &BTreeMap::from([("color".into(), json!("red"))]),
-                json!({"color":"green"}).as_object().unwrap(),
-            )
-            .unwrap();
-        owner.set_enabled(&saved, false).unwrap();
-        let mut shared = saved.clone();
-        shared.enabled = false;
-        let inherited: BTreeMap<String, Value> = BTreeMap::from([("color".into(), json!("green"))]);
-        assert_eq!(
-            owner.values(&shared, &package, &inherited),
-            json!({"settings":{}})
-        );
-    }
-
-    #[test]
-    fn settings_validate_atomically_and_null_differs_from_reset() {
-        let saved = selection();
-        let package: ModPackage = serde_json::from_value(json!({
-            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
-            "state_version": 1, "capabilities": [],
-            "settings_schema": {"type": "object", "additionalProperties": false,
-                "properties": {"color": {"type": "string", "default": "blue"}}}
-        }))
-        .unwrap();
-        let mut required = saved.clone();
-        required.required = true;
-        let mut owner = ConfigurationOverrides::default();
-        owner
-            .write_settings(
-                &required,
-                &package,
-                &BTreeMap::new(),
-                json!({"color":"green"}).as_object().unwrap(),
-            )
-            .unwrap();
-        assert_eq!(
-            owner
-                .settings(&required, &package, &BTreeMap::new())
-                .unwrap()["color"],
-            "green"
-        );
-        assert!(owner.set_enabled(&required, false).is_err());
-        let inherited =
-            BTreeMap::from([("color".into(), json!("red")), ("removed".into(), json!(1))]);
-        let mut overrides = ConfigurationOverrides::default();
-        let values = json!({"color": "green"});
-        overrides
-            .write_settings(&saved, &package, &inherited, values.as_object().unwrap())
-            .unwrap();
-        let revision = overrides.revision();
-        let bad = json!({"color": 42});
-        assert!(
-            overrides
-                .write_settings(&saved, &package, &inherited, bad.as_object().unwrap())
-                .is_err()
-        );
-        assert_eq!(overrides.revision(), revision);
-        let unknown = json!({"removed": 2});
-        assert!(
-            overrides
-                .write_settings(&saved, &package, &inherited, unknown.as_object().unwrap())
-                .is_err()
-        );
-        assert_eq!(overrides.revision(), revision);
-        assert_eq!(
-            overrides.settings(&saved, &package, &inherited).unwrap()["color"],
-            "green"
-        );
-        let null = json!({"color": null});
-        assert_eq!(
-            overrides
-                .write_settings(&saved, &package, &inherited, null.as_object().unwrap())
-                .unwrap()["color"],
-            "blue"
-        );
-        overrides.reset_setting(&saved, "color").unwrap();
-        assert_eq!(
-            overrides.settings(&saved, &package, &inherited).unwrap()["color"],
-            "red"
-        );
-        assert_eq!(inherited["color"], "red");
-    }
-}
-
 struct ConfigurationContext {
     status: Value,
     config: ModConfiguration,
@@ -1056,4 +788,272 @@ pub fn write_settings_shared(
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn selection() -> ModSelection {
+        serde_json::from_value(json!({
+            "path": "/example/package", "sha256": "trusted", "enabled": true,
+            "capabilities": [], "scope": "user"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn legacy_epoch_preserves_security_grant_and_defaults_writes_keep_binding() {
+        let mut saved = selection();
+        assert_eq!(saved.configuration_epoch, 0);
+        assert!(json!(saved).get("configuration_epoch").is_none());
+        let grant = store::grant(&json!(saved));
+        let mut owner = ConfigurationOverrides::default();
+        owner.set_enabled(&saved, false).unwrap();
+        saved.settings.insert("value".into(), json!(1));
+        saved.enabled = false;
+        owner.set_enabled(&saved, true).unwrap();
+        assert!(owner.enabled(&saved));
+        saved.configuration_epoch = 1;
+        assert_eq!(store::grant(&json!(saved)), grant);
+        assert!(!owner.enabled(&saved));
+        owner.retain(&[saved.clone()]).unwrap();
+        let package: ModPackage = serde_json::from_value(json!({
+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
+            "state_version": 1, "capabilities": []
+        }))
+        .unwrap();
+        assert_eq!(
+            owner.values(&saved, &package, &BTreeMap::new()),
+            json!({"settings":{}})
+        );
+    }
+
+    #[test]
+    fn independent_owners_inherit_current_defaults_after_reset() {
+        let mut saved = selection();
+        let mut a = ConfigurationOverrides::default();
+        let b = ConfigurationOverrides::default();
+        let grant = store::grant(&json!(saved));
+        a.set_enabled(&saved, false).unwrap();
+        assert!(!a.enabled(&saved));
+        assert!(b.enabled(&saved));
+        assert!(saved.enabled);
+        assert_eq!(grant, store::grant(&json!(saved)));
+        saved.enabled = false;
+        a.set_enabled(&saved, true).unwrap();
+        assert!(a.enabled(&saved));
+        assert!(!b.enabled(&saved));
+        a.reset(&saved).unwrap();
+        assert!(!a.enabled(&saved));
+        assert!(!ConfigurationOverrides::default().enabled(&saved));
+    }
+
+    #[test]
+    fn authority_changes_and_removal_discard_bindings() {
+        let mut saved = selection();
+        let mut overrides = ConfigurationOverrides::default();
+        overrides.set_enabled(&saved, false).unwrap();
+        saved.sha256 = "replacement".into();
+        assert!(overrides.enabled(&saved));
+        overrides.retain(&[saved.clone()]).unwrap();
+        saved.sha256 = "trusted".into();
+        assert!(overrides.enabled(&saved));
+        overrides.set_enabled(&saved, false).unwrap();
+        overrides.retain(&[]).unwrap();
+        assert!(overrides.enabled(&saved));
+    }
+
+    #[test]
+    fn required_managed_and_expired_selections_are_authoritative() {
+        for change in ["required", "managed", "expired"] {
+            let mut saved = selection();
+            let mut overrides = ConfigurationOverrides::default();
+            overrides.set_enabled(&saved, false).unwrap();
+            match change {
+                "required" => saved.required = true,
+                "managed" => saved.scope = MANAGED_SCOPE.into(),
+                _ => saved.expires_at = Some(0),
+            }
+            let error = overrides
+                .set_enabled(&saved, false)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                error.starts_with("grant_expired"),
+                change == "expired",
+                "{error}"
+            );
+            assert!(overrides.enabled(&saved));
+        }
+    }
+
+    #[test]
+    fn authoritative_restrictions_discard_previous_overrides() {
+        for change in ["managed", "expired"] {
+            let saved = selection();
+            let mut overrides = ConfigurationOverrides::default();
+            overrides.set_enabled(&saved, false).unwrap();
+            let mut restricted = saved.clone();
+            match change {
+                "managed" => restricted.scope = MANAGED_SCOPE.into(),
+                _ => restricted.expires_at = Some(0),
+            }
+            overrides.retain(&[restricted]).unwrap();
+            assert!(overrides.enabled(&saved), "{change}");
+        }
+    }
+
+    #[test]
+    fn noop_resets_keep_the_revision_and_owners_are_distinct() {
+        let saved = selection();
+        let mut overrides = ConfigurationOverrides::default();
+        overrides.reset(&saved).unwrap();
+        overrides.reset_setting(&saved, "color").unwrap();
+        assert_eq!(overrides.revision(), 0);
+        overrides.set_enabled(&saved, false).unwrap();
+        overrides.reset_setting(&saved, "color").unwrap();
+        assert_eq!(overrides.revision(), 1);
+        overrides.reset(&saved).unwrap();
+        assert_eq!(overrides.revision(), 2);
+        let mut managed = saved.clone();
+        managed.scope = MANAGED_SCOPE.into();
+        assert!(overrides.reset(&managed).is_err());
+        assert_ne!(overrides.id(), ConfigurationOverrides::default().id());
+        assert_eq!(overrides.id(), overrides.clone().id());
+    }
+
+    #[test]
+    fn overrides_equal_to_inherited_values_are_dropped() {
+        let saved = selection();
+        let package: ModPackage = serde_json::from_value(json!({
+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
+            "state_version": 1, "capabilities": [],
+            "settings_schema": {"type": "object",
+                "properties": {"color": {"type": "string", "default": "blue"}}}
+        }))
+        .unwrap();
+        let inherited = BTreeMap::from([("color".into(), json!("red"))]);
+        let mut owner = ConfigurationOverrides::default();
+        owner.set_enabled(&saved, false).unwrap();
+        owner.set_enabled(&saved, true).unwrap();
+        owner
+            .write_settings(
+                &saved,
+                &package,
+                &inherited,
+                json!({"color":"green"}).as_object().unwrap(),
+            )
+            .unwrap();
+        owner
+            .write_settings(
+                &saved,
+                &package,
+                &inherited,
+                json!({"color":"red"}).as_object().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            owner.values(&saved, &package, &inherited),
+            json!({"settings":{}})
+        );
+    }
+
+    #[test]
+    fn overrides_matching_a_changed_inherited_value_read_as_inherited() {
+        let saved = selection();
+        let package: ModPackage = serde_json::from_value(json!({
+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
+            "state_version": 1, "capabilities": [],
+            "settings_schema": {"type": "object",
+                "properties": {"color": {"type": "string", "default": "blue"}}}
+        }))
+        .unwrap();
+        let mut owner = ConfigurationOverrides::default();
+        owner
+            .write_settings(
+                &saved,
+                &package,
+                &BTreeMap::from([("color".into(), json!("red"))]),
+                json!({"color":"green"}).as_object().unwrap(),
+            )
+            .unwrap();
+        owner.set_enabled(&saved, false).unwrap();
+        let mut shared = saved.clone();
+        shared.enabled = false;
+        let inherited: BTreeMap<String, Value> = BTreeMap::from([("color".into(), json!("green"))]);
+        assert_eq!(
+            owner.values(&shared, &package, &inherited),
+            json!({"settings":{}})
+        );
+    }
+
+    #[test]
+    fn settings_validate_atomically_and_null_differs_from_reset() {
+        let saved = selection();
+        let package: ModPackage = serde_json::from_value(json!({
+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
+            "state_version": 1, "capabilities": [],
+            "settings_schema": {"type": "object", "additionalProperties": false,
+                "properties": {"color": {"type": "string", "default": "blue"}}}
+        }))
+        .unwrap();
+        let mut required = saved.clone();
+        required.required = true;
+        let mut owner = ConfigurationOverrides::default();
+        owner
+            .write_settings(
+                &required,
+                &package,
+                &BTreeMap::new(),
+                json!({"color":"green"}).as_object().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            owner
+                .settings(&required, &package, &BTreeMap::new())
+                .unwrap()["color"],
+            "green"
+        );
+        assert!(owner.set_enabled(&required, false).is_err());
+        let inherited =
+            BTreeMap::from([("color".into(), json!("red")), ("removed".into(), json!(1))]);
+        let mut overrides = ConfigurationOverrides::default();
+        let values = json!({"color": "green"});
+        overrides
+            .write_settings(&saved, &package, &inherited, values.as_object().unwrap())
+            .unwrap();
+        let revision = overrides.revision();
+        let bad = json!({"color": 42});
+        assert!(
+            overrides
+                .write_settings(&saved, &package, &inherited, bad.as_object().unwrap())
+                .is_err()
+        );
+        assert_eq!(overrides.revision(), revision);
+        let unknown = json!({"removed": 2});
+        assert!(
+            overrides
+                .write_settings(&saved, &package, &inherited, unknown.as_object().unwrap())
+                .is_err()
+        );
+        assert_eq!(overrides.revision(), revision);
+        assert_eq!(
+            overrides.settings(&saved, &package, &inherited).unwrap()["color"],
+            "green"
+        );
+        let null = json!({"color": null});
+        assert_eq!(
+            overrides
+                .write_settings(&saved, &package, &inherited, null.as_object().unwrap())
+                .unwrap()["color"],
+            "blue"
+        );
+        overrides.reset_setting(&saved, "color").unwrap();
+        assert_eq!(
+            overrides.settings(&saved, &package, &inherited).unwrap()["color"],
+            "red"
+        );
+        assert_eq!(inherited["color"], "red");
+    }
 }

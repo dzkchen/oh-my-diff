@@ -7667,7 +7667,7 @@ fn an_expired_grant_lists_as_expired_and_trust_renews_it() {
             .unwrap()
             .mods
             .into_iter()
-            .find(|selection| selection.path == PathBuf::from(row["path"].as_str().unwrap()))
+            .find(|selection| selection.path == Path::new(row["path"].as_str().unwrap()))
             .unwrap();
         assert!(renewed.authority_current(), "packaged={packaged}");
         assert_eq!(renewed.capabilities, ["commands"]);
