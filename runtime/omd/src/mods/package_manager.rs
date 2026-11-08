@@ -1165,6 +1165,10 @@ impl ModStore {
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one store transaction carries every changed document"
+    )]
     pub(super) fn commit_configuration_transaction(
         &self,
         lock: ModPackageLock,

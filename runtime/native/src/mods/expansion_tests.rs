@@ -2293,7 +2293,7 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
         mods.adjust_tool_specs(&thread_store, &thread_store, &[]),
         None
     );
-    thread_store.insert(fixture.lead.clone());
+    thread_store.insert(fixture.lead);
     let view = |name: &str| ToolSpecView {
         name: name.to_owned(),
         description: String::new(),
@@ -5148,7 +5148,7 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
     let form = |server: &'static str, schema: Value| async move {
         let request = json!({"mode": "form", "message": "who?", "requested_schema": schema});
         mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
-            turn_store: &thread_store,
+            turn_store: thread_store,
             turn_id: "turn-2",
             server,
             request_id: "7",
@@ -5190,7 +5190,7 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         {"type": "object", "properties": {"token": {"type": "string", "format": "password"}}}});
     for id in (0..=64).rev() {
         mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
-            turn_store: &thread_store,
+            turn_store: thread_store,
             turn_id: "turn-2",
             server: "bulk",
             request_id: &format!("{id:02}"),
@@ -5738,6 +5738,10 @@ async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
 async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_clients() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
@@ -6195,6 +6199,10 @@ async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_c
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
 async fn terminal_owner_external_modules_render_and_receive_events_in_their_owner() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
@@ -6270,6 +6278,10 @@ async fn terminal_owner_external_modules_render_and_receive_events_in_their_owne
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
 async fn embedded_session_dispatch_uses_explicit_terminal_owner_and_preserves_authority() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
@@ -6342,6 +6354,10 @@ async fn embedded_session_dispatch_uses_explicit_terminal_owner_and_preserves_au
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
 async fn terminal_owner_user_commands_admit_settings_and_confirmed_package_controls() {
     struct Confirm;
     impl codex_omd::client_surface::ClientSurface for Confirm {
@@ -6435,6 +6451,10 @@ async fn terminal_owner_user_commands_admit_settings_and_confirmed_package_contr
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
 async fn terminal_owner_subagents_follow_the_parent_and_unowned_threads_use_shared_defaults() {
     let _guard = DISPATCHER_TEST.lock().await;
     type Captured = Arc<Mutex<Option<(codex_protocol::turn_input::TerminalOwner, Arc<Mods>)>>>;
@@ -6712,6 +6732,10 @@ async fn terminal_owner_native_config_baselines_restore_child_defaults_and_nativ
 }
 
 #[tokio::test]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
 async fn terminal_owner_native_configuration_refreshes_before_turn_and_conversation_admission() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();
@@ -6830,6 +6854,10 @@ async fn terminal_owner_native_configuration_refreshes_before_turn_and_conversat
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
 async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
     let _guard = DISPATCHER_TEST.lock().await;
     let mut registry = ExtensionRegistryBuilder::new();

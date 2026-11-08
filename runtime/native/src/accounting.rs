@@ -510,6 +510,10 @@ impl Accounts {
     }
 
     /// Runs `model_send` over the exact body about to be sent, page by page, until no policy edits it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Each argument is a distinct piece of request context"
+    )]
     fn police(
         &self,
         mods: &Mutex<codex_omd::ModHost>,
