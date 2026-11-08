@@ -1,5 +1,99 @@
 [
   {
+    "version": "1.5.0",
+    "date": "2026-11-08",
+    "title": "Oh My Diff 1.5.0",
+    "summary": "Per-terminal mod settings, lower resource use in idle and background sessions, Codex 0.167.0, and fixes across first-party mods, the git panel, threads and the installer.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Reduce resource use in background and idle TUI sessions (#401)",
+          "Add per-terminal mod configuration (#397)"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Drop dead omd re-exports, ModPaths.evidence and a duplicate glob matcher (#388)",
+          "Drop the runner's dead suspend-and-rerun host-call protocol (#398)",
+          "Share hash, validator and store-transaction helpers and collapse ModHost wrappers (#411)",
+          "Decode SSE events once when no mod observes the stream (#417)",
+          "Cache parsed store documents and stop creating directories on reads (#418)",
+          "Keep event monitors scoped to their creating thread and discard inherited watches in forked sessions. (#407)",
+          "Reduce mod callback overhead and fix TUI sizing, queued pastes, privacy handling and activation diagnostics. (#413)",
+          "Use seek-based exec output paging, consolidate mod host entry points and apply workspace lints. (#412)",
+          "Preserve activation diagnostics and patch outcomes while isolating TUI test state. (#408)",
+          "Update Codex to 0.167.0, preserve approval and worker lifecycle boundaries, and prevent duplicate immediate delegated results. (#437)",
+          "Bind queued client work, retries, cost settlement and kernel output to their originating context. (#445)",
+          "Reject stale git hunk actions and correct evidence scoping, managed data access, signed pointers and author package checks. (#446)",
+          "Serve mod commands after idle without render contention and avoid empty redraws, preserving terminal configuration integration. (#448)",
+          "Preserve terminal ownership and enforce package configuration guards after integrating current main. (#449)"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Report omd mods update in the mod's own scope and make the keystroke-budget test prove the wait (#394)",
+          "Refresh accounts when /profile lists or selects them (#389)",
+          "Cap checkpoint decisions by bytes and stop failing on a lost store race (#390)",
+          "Keep same-line results, refuse lines past the end and stop reporting trimmed errors as new (#391)",
+          "Page exec output without rehashing the artifact and size mod dialogs by their drawn rows (#415)",
+          "Restore turn_diff_display_roots' trace span (#416)",
+          "Create CODEX_HOME before omd-package plugins runs (#429)",
+          "Point omd mini at omd install when omd_mini is missing (#430)",
+          "Keep mods that left the profile trusted across updates (#432)",
+          "One-line output from omd-package mod and activate (#433)",
+          "Quieter and clearer omd-mod-author (#434)",
+          "Tidy omd update check, update errors and uninstall leftovers (#435)",
+          "Freeze workspace.unwatch, accurate OMD+ prompt, ambiguous /mods ids and idle timer warning (#409)",
+          "Reuse the prompt cache across requests and label CLI traffic as oh-my-diff (#443)",
+          "Thread store retention, checkpoint recovery and installer races (#444)",
+          "Refuse host API changes and allow excluding mods"
+        ]
+      }
+    ],
+    "commits": [
+      "9b2759e",
+      "8023654",
+      "18739df",
+      "f0f159b",
+      "6ab616d",
+      "bf3b345",
+      "a0b5744",
+      "9cf6253",
+      "cf2f2a9",
+      "a78b707",
+      "3dea93d",
+      "73cfe0c",
+      "0c21a36",
+      "c260969",
+      "5e9772b",
+      "c707285",
+      "75a7754",
+      "47d68a6",
+      "19a9098",
+      "b8afa7e",
+      "61ebadf",
+      "24d265d",
+      "9a879c7",
+      "402ad73",
+      "85e1782",
+      "7129b41",
+      "6a9367f",
+      "2057687",
+      "6be98b9",
+      "4fda040",
+      "8408d60",
+      "079015a",
+      "cdc87aa",
+      "7850e8b",
+      "331eea2",
+      "9a17f1a",
+      "7f574ab"
+    ]
+  },
+  {
     "version": "1.4.2",
     "date": "2026-11-04",
     "title": "Oh My Diff 1.4.2",
