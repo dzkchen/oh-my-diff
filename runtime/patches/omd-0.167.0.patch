@@ -45887,7 +45887,7 @@ index d08632d79e9cc7a22d061adfaffe8db0ebf6f1cd..3e4ec4041ea370e2276f97f8b32229a8
              .as_ref()
              .and_then(|info| info.model_context_window)
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 9e6baf141297a482fc8e4c212bea3e7514a043b9..d9fdd5aad1ca374f575e095ed0f79d3064683802 100644
+index 9e6baf141297a482fc8e4c212bea3e7514a043b9..3b0512955a850418187ca50224a3fac968a3339a 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 @@ -4,6 +4,7 @@
@@ -45929,7 +45929,7 @@ index 9e6baf141297a482fc8e4c212bea3e7514a043b9..d9fdd5aad1ca374f575e095ed0f79d30
 -        self.set_status_line(content);
 +        let mut prefix = Vec::new();
 +        for part in summary
-+            .map(|status| status.bold())
++            .map(ratatui::prelude::Stylize::bold)
 +            .into_iter()
 +            .chain(mod_segments.into_iter().map(Span::from))
 +        {
@@ -47062,7 +47062,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..290fef67df8edf4654df13e6f90b5b78
 +    assert!(rows[0].contains("Patch not applied"), "{rows:?}");
 +}
 diff --git a/codex-rs/tui/src/chatwidget/tests/helpers.rs b/codex-rs/tui/src/chatwidget/tests/helpers.rs
-index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..d519917b73861c093212d8e4e7fe032e9ad2a74e 100644
+index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..96aceca03b87517f6a78b13200e7e8d723bd9775 100644
 --- a/codex-rs/tui/src/chatwidget/tests/helpers.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/helpers.rs
 @@ -23,12 +23,32 @@ pub(super) async fn test_config() -> (tempfile::TempDir, Config) {
@@ -47099,7 +47099,7 @@ index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..d519917b73861c093212d8e4e7fe032e
  pub(super) fn test_project_path() -> PathBuf {
      PathBuf::from(test_path_display("/tmp/project"))
  }
-@@ -70,6 +90,69 @@ pub(crate) fn normalize_snapshot_paths(text: impl Into<String>) -> String {
+@@ -70,6 +90,81 @@ pub(crate) fn normalize_snapshot_paths(text: impl Into<String>) -> String {
      }
  }
 
@@ -47116,15 +47116,27 @@ index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..d519917b73861c093212d8e4e7fe032e
 +        return text;
 +    }
 +    let expected = "/tmp/project";
++    let path_character = |character: char| {
++        character.is_alphanumeric()
++            || "/._-~".contains(character)
++            || character == std::path::MAIN_SEPARATOR
++    };
 +    let replace_path = |text: &mut String, from: &str, to: &str| {
++        let truncated = from.contains('…');
 +        let mut normalized = String::with_capacity(text.len());
 +        let mut start = 0;
 +        for (offset, _) in text.match_indices(from) {
-+            if text[..offset].chars().next_back().is_some_and(|character| {
-+                character.is_alphanumeric()
-+                    || "/._-~".contains(character)
-+                    || character == std::path::MAIN_SEPARATOR
-+            }) {
++            if offset < start
++                || text[..offset]
++                    .chars()
++                    .next_back()
++                    .is_some_and(path_character)
++                || truncated
++                    && text[offset + from.len()..]
++                        .chars()
++                        .next()
++                        .is_some_and(path_character)
++            {
 +                continue;
 +            }
 +            normalized.push_str(&text[start..offset]);
@@ -47169,7 +47181,7 @@ index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..d519917b73861c093212d8e4e7fe032e
  /// Normalize command-center fixture paths without moving fixed pane separators.
  /// Pad after each complete pane so group counts and destination hints keep their spacing.
  pub(crate) fn normalize_agent_center_snapshot(text: impl AsRef<str>) -> String {
-@@ -162,6 +245,7 @@ pub(super) fn snapshot(percent: f64) -> RateLimitSnapshot {
+@@ -162,6 +257,7 @@ pub(super) fn snapshot(percent: f64) -> RateLimitSnapshot {
          spend_control_reached: None,
          plan_type: None,
          rate_limit_reached_type: None,
@@ -47177,7 +47189,7 @@ index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..d519917b73861c093212d8e4e7fe032e
      }
  }
 
-@@ -441,15 +525,30 @@ pub(super) fn drain_insert_history_with(
+@@ -441,15 +537,30 @@ pub(super) fn drain_insert_history_with(
      rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
      render: impl Fn(&dyn HistoryCell) -> Vec<ratatui::text::Line<'static>>,
  ) -> Vec<Vec<ratatui::text::Line<'static>>> {
@@ -47213,7 +47225,7 @@ index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..d519917b73861c093212d8e4e7fe032e
      }
      out
  }
-@@ -1371,7 +1470,7 @@ pub(crate) fn render_bottom_popup(chat: &ChatWidget, width: u16) -> String {
+@@ -1371,7 +1482,7 @@ pub(crate) fn render_bottom_popup(chat: &ChatWidget, width: u16) -> String {
          lines.pop();
      }
 
@@ -66218,7 +66230,7 @@ index 0000000000000000000000000000000000000000..faa5d4317c52b6ac14339ffcced3b126
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb30777fa96
+index 0000000000000000000000000000000000000000..cd32857484d8e0146e96136d03aba5af04e81aa2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
 @@ -0,0 +1,1376 @@
@@ -67192,7 +67204,7 @@ index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb3
 +    let path = root.path().join("paid.json");
 +    let grant = json!({"schema":1,"paid_api_key":true,"revocable":true,"repository":"repo-a","provider":"provider-a","model":"model-a","responses_url":"https://example.invalid/responses"});
 +    std::fs::write(&path, grant.to_string()).unwrap();
-+    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
++    let sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
 +    let allowed = || {
 +        worker_authorized(
 +            &path,
@@ -67238,7 +67250,7 @@ index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb3
 +    let path = root.path().join("subscription.json");
 +    let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repository":"fixture","provider":"openai","model":"fixture-model","responses_url":SUBSCRIPTION_RESPONSES_URL});
 +    std::fs::write(&path, grant.to_string()).unwrap();
-+    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
++    let sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
 +    assert!(worker_authorized(
 +        &path,
 +        &sha,
@@ -67330,7 +67342,7 @@ index 0000000000000000000000000000000000000000..9d0d37c71f2c1a732a7d332e99373eb3
 +    let mut mixed = grant.clone();
 +    mixed["paid_api_key"] = true.into();
 +    std::fs::write(&path, mixed.to_string()).unwrap();
-+    let mixed_sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
++    let mixed_sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
 +    assert!(!worker_authorized(
 +        &path,
 +        &mixed_sha,
@@ -73255,7 +73267,7 @@ index 0000000000000000000000000000000000000000..622281990211652205d1d5e724010b08
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..33a30b6cf54ef34484de7b022399a951d10883d5
+index 0000000000000000000000000000000000000000..b1bbadcfd2c64d5f91847f3a19b5c08e21e3ace9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
 @@ -0,0 +1,2538 @@
@@ -75361,7 +75373,7 @@ index 0000000000000000000000000000000000000000..33a30b6cf54ef34484de7b022399a951
 +            blit: None,
 +        };
 +        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
-+        let sha256 = codex_omd::sha256_hex(&fs::read(&sh).unwrap());
++        let sha256 = codex_omd::sha256_hex(fs::read(&sh).unwrap());
 +        let pidfile = repository.join("child.pid");
 +        let start = |owner: ProcessOwner<'_>, session: &str| {
 +            processes.call(
@@ -86544,7 +86556,7 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..12f0072859d9b197cd947c05d6cd70416f2282dd
+index 0000000000000000000000000000000000000000..84994d1a517f1aadcac932d37aceadd5d82d9442
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 @@ -0,0 +1,5693 @@
@@ -86632,7 +86644,7 @@ index 0000000000000000000000000000000000000000..12f0072859d9b197cd947c05d6cd7041
 +    let root = base.join("store").canonicalize().unwrap();
 +    let host = Arc::new(Host {
 +        root: root.clone(),
-+        repository: repository.clone(),
++        repository,
 +        repository_identity: "fixture".into(),
 +        config: config::HostConfig::default(),
 +        routes: Mutex::new(crate::RouteTable {
@@ -86654,7 +86666,7 @@ index 0000000000000000000000000000000000000000..12f0072859d9b197cd947c05d6cd7041
 +            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
 +        ));
 +        let persist_runtime = Arc::new(Mutex::new(
-+            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
++            ModHost::open(root, ModOpenOptions::default()).unwrap(),
 +        ));
 +        let persist_required = persist_runtime.lock().unwrap().required_surfaces();
 +        let views = Arc::new(view::Views::new());
@@ -93408,10 +93420,10 @@ index 0000000000000000000000000000000000000000..ac3eef4f0eaf7b0adc3629c4338e3952
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..27a97ea62e88e1503386b05b6c7401f944cfa366
+index 0000000000000000000000000000000000000000..cf7ddf054683f35222cda635d44ae3ad981c237b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,879 @@
+@@ -0,0 +1,880 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::ModInvokeOptions;
@@ -93484,6 +93496,7 @@ index 0000000000000000000000000000000000000000..27a97ea62e88e1503386b05b6c7401f9
 +                    "app.routes"
 +                        | "model.complete"
 +                        | "model.fork"
++                        | "routes.list"
 +                        | "session.info"
 +                        | "tools.list"
 +                        | "turns.activity"
@@ -98530,10 +98543,10 @@ index 0000000000000000000000000000000000000000..347e272d3eafbc406ee51cda7932c2fc
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..07d05e61847dace1e2b9f28ef39ff4ff1986b45f
+index 0000000000000000000000000000000000000000..e61a06391271cb10bddef5468105e76d1b41068a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,492 @@
+@@ -0,0 +1,497 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -98874,6 +98887,19 @@ index 0000000000000000000000000000000000000000..07d05e61847dace1e2b9f28ef39ff4ff
 +    );
 +}
 +
++/// Late filesystem events from setup may add the root or a ref directory; the linked paths must be reported.
++fn assert_linked_git_events(seen: &std::collections::BTreeSet<String>) {
++    assert!(
++        [".git/HEAD", ".git/refs/heads/x"]
++            .iter()
++            .all(|path| seen.contains(*path))
++            && seen
++                .iter()
++                .all(|path| path.is_empty() || path == ".git" || path.starts_with(".git/")),
++        "{seen:?}"
++    );
++}
++
 +fn git_events(
 +    rx: mpsc::Receiver<(String, Vec<String>)>,
 +    write: impl Fn(usize) + Send + 'static,
@@ -98940,11 +98966,7 @@ index 0000000000000000000000000000000000000000..07d05e61847dace1e2b9f28ef39ff4ff
 +    )
 +    .await
 +    .unwrap();
-+    assert_eq!(
-+        seen,
-+        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-+        "{seen:?}"
-+    );
++    assert_linked_git_events(&seen);
 +
 +    std::fs::remove_dir_all(modules.join("objects")).unwrap();
 +    let (sink, _rx) = channel_sink();
@@ -99020,11 +99042,7 @@ index 0000000000000000000000000000000000000000..07d05e61847dace1e2b9f28ef39ff4ff
 +    )
 +    .await
 +    .unwrap();
-+    assert_eq!(
-+        seen,
-+        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-+        "{seen:?}"
-+    );
++    assert_linked_git_events(&seen);
 +}
 diff --git a/codex-rs/ext/omd/tests/omd_mod_cli.rs b/codex-rs/ext/omd/tests/omd_mod_cli.rs
 new file mode 100644
@@ -110027,7 +110045,7 @@ index 0000000000000000000000000000000000000000..2b58603604ac99369de86f3a32d443e9
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ec2670eb19ff6780a6979efc24e6ab5ee950a1ec
+index 0000000000000000000000000000000000000000..0499190a3d520db16a26b5238f4048ce7212bdbf
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
 @@ -0,0 +1,1010 @@
@@ -110378,7 +110396,7 @@ index 0000000000000000000000000000000000000000..ec2670eb19ff6780a6979efc24e6ab5e
 +
 +fn digest_text(arguments: &Value, key: &str) -> io::Result<String> {
 +    let value = text(arguments, key)?;
-+    if !crate::is_sha256_hex(&value) {
++    if !crate::is_sha256_hex(value) {
 +        return Err(failure("authority_request_invalid"));
 +    }
 +    Ok(value.to_owned())
@@ -114232,7 +114250,7 @@ index 0000000000000000000000000000000000000000..e27047eb10e974034486697ff8acc189
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e8e49f7978ac8d772cb93ea2db4d7b79919b8534
+index 0000000000000000000000000000000000000000..ae85d18f19626d8e5899ce39a3dc18e9e6ebf998
 --- /dev/null
 +++ b/codex-rs/omd/src/consents.rs
 @@ -0,0 +1,158 @@
@@ -114259,7 +114277,7 @@ index 0000000000000000000000000000000000000000..e8e49f7978ac8d772cb93ea2db4d7b79
 +}
 +
 +pub fn digest(text: &str, attachments: &[ResourceRef]) -> String {
-+    crate::sha256_hex(&serde_json::to_vec(&(text, attachments)).unwrap_or_default())
++    crate::sha256_hex(serde_json::to_vec(&(text, attachments)).unwrap_or_default())
 +}
 +
 +fn with<T>(
@@ -116025,7 +116043,7 @@ index 0000000000000000000000000000000000000000..64d28ee59f68767cd2d3b8ac869a0401
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2f2903ea8e50bc03b3c3ad4192ddab9afb3e6eea
+index 0000000000000000000000000000000000000000..5cccb61a26e63bf73f48d2b963085e6fdc53401b
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
 @@ -0,0 +1,515 @@
@@ -116371,7 +116389,7 @@ index 0000000000000000000000000000000000000000..2f2903ea8e50bc03b3c3ad4192ddab9a
 +            _ => return Err(failure("store_scope_invalid")),
 +        };
 +        if !crate::resource_data::token(self.owner)
-+            || !(scope != "repository" || crate::is_sha256_hex(&self.repository_key))
++            || !(scope != "repository" || crate::is_sha256_hex(self.repository_key))
 +            || self.root.canonicalize()? != self.root
 +        {
 +            return Err(failure("store_root_invalid"));
@@ -117652,7 +117670,7 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fe1ddb69af706983c62066b7641d6b89d1e6f605
+index 0000000000000000000000000000000000000000..ec68f05e8189492017ed652daac5a7345d524bbe
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
 @@ -0,0 +1,2162 @@
@@ -118650,7 +118668,7 @@ index 0000000000000000000000000000000000000000..fe1ddb69af706983c62066b7641d6b89
 +        let thread = caller.thread.unwrap_or("cli");
 +        if !crate::resource_data::token(caller.id)
 +            || !crate::resource_data::token(thread)
-+            || !crate::is_sha256_hex(&caller.source_sha256)
++            || !crate::is_sha256_hex(caller.source_sha256)
 +            || self
 +                .data_root
 +                .canonicalize()
@@ -118746,7 +118764,7 @@ index 0000000000000000000000000000000000000000..fe1ddb69af706983c62066b7641d6b89
 +        }
 +        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
 +        let digest = &input.artifact.sha256;
-+        if !crate::is_sha256_hex(&digest) || input.artifact.reference != *digest {
++        if !crate::is_sha256_hex(digest) || input.artifact.reference != *digest {
 +            return Err("exec_output_reference_invalid".into());
 +        }
 +        let directory = self.output_directory(caller)?;
@@ -121840,10 +121858,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4121586df6c5182a68b2b68acbb199cd2f7d488d
+index 0000000000000000000000000000000000000000..505859491551cfa1fb99b80e1fbf24aa3d0fd517
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7439 @@
+@@ -0,0 +1,7440 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -124171,8 +124189,9 @@ index 0000000000000000000000000000000000000000..4121586df6c5182a68b2b68acbb199cd
 +        }
 +        if self.lifecycle.len() > 3
 +            || self.lifecycle.iter().any(|(event, path)| {
-+                !["install", "update", "uninstall"].contains(&event.as_str())
-+                    || !(path.ends_with(".ts") && relative_path(path, 128))
++                !(["install", "update", "uninstall"].contains(&event.as_str())
++                    && path.ends_with(".ts")
++                    && relative_path(path, 128))
 +            })
 +        {
 +            return Err(failure("invalid_lifecycle_scripts"));
@@ -130991,7 +131010,7 @@ index 0000000000000000000000000000000000000000..025e58bcfb1fee012314b22c7461f279
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cfdbf2f5c01522a81be8a046266cae02c55e845a
+index 0000000000000000000000000000000000000000..c3a3306d3f8076cb6ffce1f02a97473b80ec8fc5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
 @@ -0,0 +1,1966 @@
@@ -132504,7 +132523,7 @@ index 0000000000000000000000000000000000000000..cfdbf2f5c01522a81be8a046266cae02
 +            .flat_map(|policy| policy.namespaces.clone())
 +            .collect::<Vec<_>>();
 +        let policy = crate::sha256_hex(
-+            &serde_json::to_vec(
++            serde_json::to_vec(
 +                &exempt
 +                    .iter()
 +                    .filter_map(|id| {
@@ -132700,7 +132719,7 @@ index 0000000000000000000000000000000000000000..cfdbf2f5c01522a81be8a046266cae02
 +            .map(|(id, loaded)| json!([id, loaded.selection.sha256, loaded.selection.settings]))
 +            .collect::<Vec<_>>();
 +        let fingerprint = crate::sha256_hex(
-+            &serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
++            serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
 +        );
 +        Some(SendPolicy {
 +            required: required == Some(true) || !self.policies.is_empty(),
@@ -133739,7 +133758,7 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..918dc6b35aa1ba1cd4f61098d6ac3612495c8dd9
+index 0000000000000000000000000000000000000000..f53c4d332b94d2ce1f7de76fde8727927bb6f33e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
 @@ -0,0 +1,2879 @@
@@ -135337,7 +135356,7 @@ index 0000000000000000000000000000000000000000..918dc6b35aa1ba1cd4f61098d6ac3612
 +            },
 +            exec_environment: package.exec_environment.clone(),
 +            settings_schema_sha256: crate::sha256_hex(
-+                &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
++                serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
 +            ),
 +            lifecycle: declared_lifecycle,
 +            scope: request.scope.clone(),
@@ -151429,7 +151448,7 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9baf9422dd0d240b609b777337eda1ee2ee10d16
+index 0000000000000000000000000000000000000000..ff88503acf7b9c5fa3cdef29265922b17574312b
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
 @@ -0,0 +1,1600 @@
@@ -151924,7 +151943,7 @@ index 0000000000000000000000000000000000000000..9baf9422dd0d240b609b777337eda1ee
 +                let hash = match cached.get(&name) {
 +                    Some((seen, hash)) if *seen == stamp => hash.clone(),
 +                    // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
-+                    _ if metadata.nlink() != 1 => crate::sha256_hex(&identity(&metadata)),
++                    _ if metadata.nlink() != 1 => crate::sha256_hex(identity(&metadata)),
 +                    _ => {
 +                        let (content, _) = read_version(repository, &name, max_bytes)?
 +                            .ok_or_else(|| invalid("workspace file disappeared during index"))?;
@@ -153841,10 +153860,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4fffb7d917caf64cf503731b150474d01cc135e1
+index 0000000000000000000000000000000000000000..293a2fecd8bf57ca7b46675b8a34897b16c8551f
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2423 @@
+@@ -0,0 +1,2422 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::BuiltinControls;
@@ -154235,8 +154254,7 @@ index 0000000000000000000000000000000000000000..4fffb7d917caf64cf503731b150474d0
 +            "exec.output_page",
 +            json!({"artifact":artifact,"cursor":1})
 +        )
-+        .unwrap_err()
-+        .to_string(),
++        .unwrap_err(),
 +        "exec_output_cursor_invalid"
 +    );
 +    let path = data
@@ -154872,7 +154890,7 @@ index 0000000000000000000000000000000000000000..4fffb7d917caf64cf503731b150474d0
 +        .unwrap();
 +    assert_eq!(
 +        stat["files"]["README.md"]["sha256"],
-+        codex_omd::sha256_hex(&std::fs::read(repository.join("README.md")).unwrap())
++        codex_omd::sha256_hex(std::fs::read(repository.join("README.md")).unwrap())
 +    );
 +    for path in ["link.md", "outside/file"] {
 +        assert!(
@@ -175861,7 +175879,7 @@ index 0000000000000000000000000000000000000000..d09c2e94aba8325cfa392be009e2d4fe
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..deef6a8e187b3e90f74d71c847ebb81a8deb2ebf
+index 0000000000000000000000000000000000000000..1bcdfa2a2385cc6b4de11cc7ef78b3044e61593c
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
 @@ -0,0 +1,684 @@
@@ -176084,7 +176102,7 @@ index 0000000000000000000000000000000000000000..deef6a8e187b3e90f74d71c847ebb81a
 +        let revision = composer.mod_draft_sync();
 +        let attachments = composer
 +            .local_images()
-+            .into_iter()
++            .iter()
 +            .map(|image| {
 +                let owner = composer
 +                    .mod_draft_owner(&image.path)
@@ -187642,7 +187660,7 @@ index 0000000000000000000000000000000000000000..aaaf741400bf2b3dea53c627b8f402f8
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9a674e2e5602a4111611ecc1ff084b241b0ce4a7
+index 0000000000000000000000000000000000000000..eb4610622f502678c4d0fc46db2639f95fa346aa
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
 @@ -0,0 +1,1150 @@
@@ -187675,7 +187693,7 @@ index 0000000000000000000000000000000000000000..9a674e2e5602a4111611ecc1ff084b24
 +        let publisher_context = active_context.clone();
 +        let publisher = scope.spawn(move || {
 +            ACTIVE_CONTEXT.replace(publisher_context);
-+            assert!(publish_for_context(&invocation, || {
++            assert!(publish_for_context(invocation, || {
 +                ready.send(()).unwrap();
 +                released.recv().unwrap();
 +                actions.locked().push("old preview");
@@ -187875,7 +187893,7 @@ index 0000000000000000000000000000000000000000..9a674e2e5602a4111611ecc1ff084b24
 +    let busy = runtime.lock().unwrap();
 +    let active = Arc::new(AtomicBool::new(true));
 +    let worker_active = active.clone();
-+    let worker_repository = repository.clone();
++    let worker_repository = repository;
 +    let (entered, waiting) = std::sync::mpsc::channel();
 +    let (finished, completion) = std::sync::mpsc::channel();
 +    let worker = std::thread::spawn(move || {
@@ -188798,10 +188816,10 @@ index 0000000000000000000000000000000000000000..9a674e2e5602a4111611ecc1ff084b24
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..24ff0da1f959fb6569f0d9217b277cb2fced3f99
+index 0000000000000000000000000000000000000000..9c87c7dd062c665a1234973055ae345bf4a86f9c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1214 @@
+@@ -0,0 +1,1232 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -189432,17 +189450,28 @@ index 0000000000000000000000000000000000000000..24ff0da1f959fb6569f0d9217b277cb2
 +
 +/// In-order delivery on one worker; beyond `EVENT_QUEUE` new events drop and `with_dropped` reports the count on the next.
 +struct EventQueue<T> {
-+    sender: std::sync::mpsc::SyncSender<T>,
++    sender: std::sync::mpsc::SyncSender<Queued<T>>,
 +    dropped: Arc<AtomicUsize>,
 +}
 +
++#[cfg(not(test))]
++type Queued<T> = T;
++#[cfg(test)]
++type Queued<T> = (T, Box<dyn FnOnce() + Send>);
++
 +impl<T: Send + 'static> EventQueue<T> {
 +    fn spawn(deliver: impl Fn(T, &AtomicUsize) + Send + 'static) -> Self {
-+        let (sender, receiver) = std::sync::mpsc::sync_channel(EVENT_QUEUE);
++        let (sender, receiver) = std::sync::mpsc::sync_channel::<Queued<T>>(EVENT_QUEUE);
 +        let dropped = Arc::new(AtomicUsize::new(0));
 +        let counter = Arc::clone(&dropped);
 +        std::thread::spawn(move || {
 +            while let Ok(item) = receiver.recv() {
++                #[cfg(test)]
++                let item = {
++                    let (item, inherit) = item;
++                    inherit();
++                    item
++                };
 +                deliver(item, &counter);
 +            }
 +        });
@@ -189450,6 +189479,13 @@ index 0000000000000000000000000000000000000000..24ff0da1f959fb6569f0d9217b277cb2
 +    }
 +
 +    fn push(&self, item: T) -> bool {
++        #[cfg(test)]
++        let item: Queued<T> = (
++            item,
++            Box::new(crate::mod_runtime::inherit_test_context(
++                crate::mod_ui::inherit_test_state(|| {}),
++            )),
++        );
 +        let queued = self.sender.try_send(item).is_ok();
 +        if !queued {
 +            self.dropped.fetch_add(1, Ordering::Relaxed);
@@ -189933,8 +189969,8 @@ index 0000000000000000000000000000000000000000..24ff0da1f959fb6569f0d9217b277cb2
 +            crate::mod_runtime::command_host_guarded(paths, policy, grants, caller, call, &scoped)
 +        }
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
-+        "model.complete" | "model.fork" | "session.info" | "tools.list" | "turns.abort"
-+        | "events.schedule" | "events.cancel" => {
++        "model.complete" | "model.fork" | "session.info" | "tools.list" | "routes.list"
++        | "turns.abort" | "events.schedule" | "events.cancel" => {
 +            let thread = scope
 +                .thread
 +                .map(str::to_owned)
@@ -190018,7 +190054,7 @@ index 0000000000000000000000000000000000000000..24ff0da1f959fb6569f0d9217b277cb2
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab2ae0a59482efeb20b82a75aa0601b1f60299ac
+index 0000000000000000000000000000000000000000..826c762f6828813e60f0a54f41ed081e491eb057
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
 @@ -0,0 +1,1224 @@
@@ -191151,7 +191187,7 @@ index 0000000000000000000000000000000000000000..ab2ae0a59482efeb20b82a75aa0601b1
 +    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
 +}
 +
-+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++#[tokio::test]
 +#[serial_test::serial]
 +async fn app_requests_are_served_while_the_event_loop_awaits_a_lifecycle_request() {
 +    struct Restore(Option<State>);
@@ -191248,10 +191284,10 @@ index 0000000000000000000000000000000000000000..ab2ae0a59482efeb20b82a75aa0601b1
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..67c2a23f70a7947db7ba2d8c98f28a58180a01c5
+index 0000000000000000000000000000000000000000..8c60a7feae0f8af4d0e68dfe2b12a3a01d6759f6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,6174 @@
+@@ -0,0 +1,6188 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -196616,6 +196652,20 @@ index 0000000000000000000000000000000000000000..67c2a23f70a7947db7ba2d8c98f28a58
 +    ))
 +}
 +
++/// Gives a worker thread this test's view cache and interaction state.
++#[cfg(test)]
++pub(crate) fn inherit_test_state(
++    run: impl FnOnce() + Send + 'static,
++) -> impl FnOnce() + Send + 'static {
++    let interaction = INTERACTION.capture();
++    let cache = CACHE.capture();
++    move || {
++        INTERACTION.replace(interaction);
++        CACHE.replace(cache);
++        run();
++    }
++}
++
 +pub(crate) fn component_owner(component: &str) -> Option<String> {
 +    INTERACTION.with(|interaction_state| {
 +        interaction_state
@@ -197695,7 +197745,7 @@ index 0000000000000000000000000000000000000000..db9882f2468090380f949e1c1e144114
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f66a6e4aea7dda2be91cc955bd5cc99baf748f24
+index 0000000000000000000000000000000000000000..26de19be562185b1bdd30089b0af7a2178a92fda
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
 @@ -0,0 +1,2967 @@
@@ -199116,7 +199166,7 @@ index 0000000000000000000000000000000000000000..f66a6e4aea7dda2be91cc955bd5cc99b
 +#[serial_test::serial]
 +fn markdown_cache_is_bounded_by_the_size_of_its_lines_not_its_source() {
 +    for block in 0..40 {
-+        markdown_lines(&format!("**b** x{block} ").repeat(3000), 40);
++        markdown_lines(&format!("**b** x{block}\n\n").repeat(600), 40);
 +    }
 +    let cached = MARKDOWN.with(|state| {
 +        state

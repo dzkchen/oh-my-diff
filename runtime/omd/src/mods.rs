@@ -2325,8 +2325,9 @@ impl ModPackage {
         }
         if self.lifecycle.len() > 3
             || self.lifecycle.iter().any(|(event, path)| {
-                !["install", "update", "uninstall"].contains(&event.as_str())
-                    || !(path.ends_with(".ts") && relative_path(path, 128))
+                !(["install", "update", "uninstall"].contains(&event.as_str())
+                    && path.ends_with(".ts")
+                    && relative_path(path, 128))
             })
         {
             return Err(failure("invalid_lifecycle_scripts"));
