@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index ace2368771e8fff18b79d2578be34e32f6369efd..96d4cda28185800b67ae3665f824234fba5b8470 100644
+index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d88cde0ea 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -265,7 +265,7 @@ version = "1.1.5"
@@ -158,7 +158,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..96d4cda28185800b67ae3665f824234f
 
 +[[package]]
 +name = "codex-omd"
-+version = "1.4.2"
++version = "1.5.0"
 +dependencies = [
 + "base64 0.22.1",
 + "codex-features",
@@ -226,7 +226,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..96d4cda28185800b67ae3665f824234f
 +
 +[[package]]
 +name = "codex-omd-runner"
-+version = "1.4.2"
++version = "1.5.0"
 +dependencies = [
 + "aws-lc-rs",
 + "base64 0.22.1",
@@ -106500,13 +106500,13 @@ index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01c
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..16a4c21d4ec3d3210f875eb0d70b2322f7b4dd3b
+index 0000000000000000000000000000000000000000..204c1b6483f82e05ad241075fdd4c34dccef1322
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
 @@ -0,0 +1,31 @@
 +[package]
 +name = "codex-omd"
-+version = "1.4.2"
++version = "1.5.0"
 +edition = "2024"
 +rust-version = "1.95"
 +license = "Apache-2.0"
@@ -106581,13 +106581,13 @@ index 0000000000000000000000000000000000000000..e60353e4c93c79280f009f9d5728cd61
 +)
 diff --git a/codex-rs/omd/runner/Cargo.toml b/codex-rs/omd/runner/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..7e0eca5ff1fd795fb4889d10492f4d0ef10dfe0c
+index 0000000000000000000000000000000000000000..3c004c5978c71ae73503d753f0782ef55b185d47
 --- /dev/null
 +++ b/codex-rs/omd/runner/Cargo.toml
 @@ -0,0 +1,25 @@
 +[package]
 +name = "codex-omd-runner"
-+version = "1.4.2"
++version = "1.5.0"
 +edition = "2024"
 +rust-version = "1.95"
 +license = "Apache-2.0"
@@ -129262,10 +129262,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..30fe3f2b39a0b706f76bd2332c8845c40ace651a
+index 0000000000000000000000000000000000000000..166a0c4d180031587aa6f5eb2d9ef1f4855931d0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7514 @@
+@@ -0,0 +1,7518 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -131944,6 +131944,10 @@ index 0000000000000000000000000000000000000000..30fe3f2b39a0b706f76bd2332c8845c4
 +    pub required: bool,
 +}
 +
++#[expect(
++    clippy::trivially_copy_pass_by_ref,
++    reason = "serde passes skip_serializing_if a reference"
++)]
 +fn zero_configuration_epoch(epoch: &u64) -> bool {
 +    *epoch == 0
 +}
