@@ -219,6 +219,28 @@ test('a reattach cut off by a disconnect is replayed on reconnect', async () => 
   }
 });
 
+test('a reattach resets the viewport and focus that reconnect replays', async () => {
+  const host = fakeHost();
+  await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+  let reconnected;
+  const session = await connect({
+    url: `ws://127.0.0.1:${host.server.address().port}`, name: 'sdk-test', renderer,
+    onView() {}, onRoster() {}, onMirrored() {},
+    onReconnect: change => { reconnected = change; },
+  });
+  try {
+    await session.update({ viewport: { width: 80, height: 24, unit: 'cell' }, focus: true });
+    await session.attach({ renderer: { ...renderer, kind: 'gui' } });
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected || session.closed);
+    assert.equal(session.closed, false);
+    assert.equal(host.seen.some(message => message.epoch === '2' && message.method === 'omd/client/update'), false);
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
 test('a resume refused as overloaded after a reconnect is retried, not dropped', async () => {
   const host = fakeHost({ overloadedResumes: 1 });
   const path = join(mkdtempSync(join(tmpdir(), 'omd-client-')), 'host.sock');

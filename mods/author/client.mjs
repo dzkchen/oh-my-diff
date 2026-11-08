@@ -225,7 +225,7 @@ class Session {
           break;
         }
         if (this.attached) {
-          await fatal(() => this.attach(this.attached));
+          await fatal(() => this.sendAttach(this.attached));
           if (Object.keys(this.updated).length) await tolerate(() => this.call('omd/client/update', this.updated), () => { this.updated = {}; });
         }
         for (const [thread, params] of this.resumed) await tolerate(() => this.call('thread/resume', params), () => this.resumed.delete(thread));
@@ -243,6 +243,15 @@ class Session {
   }
 
   async attach(params = {}) {
+    const previous = this.attached;
+    try {
+      return await this.sendAttach(params);
+    } finally {
+      if (this.attached !== previous) this.updated = {};
+    }
+  }
+
+  async sendAttach(params) {
     const attached = { name: this.options.name, renderer: this.options.renderer, operations: this.options.operations ?? [], terminalToken: undefined, ...params };
     let attachment;
     try {
