@@ -331,7 +331,7 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
         }
         "install" | "inspect" | "enable" | "disable" | "update" | "remove" | "rollback" => {
             let target = first()?;
-            let mut arguments = json!({"action": if action == "inspect" { "install" } else { action }, "scope": scope});
+            let mut arguments = json!({"action": if action == "inspect" { "install" } else { action }, "scope": scope, "target":"shared"});
             if matches!(action, "install" | "inspect") {
                 arguments["reference"] = json!(folder_reference(&target)?);
                 arguments["version"] = json!(version);

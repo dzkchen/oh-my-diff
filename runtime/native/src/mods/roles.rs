@@ -34,6 +34,15 @@ fn write_once(path: &std::path::Path, text: &str) -> Result<(), String> {
 }
 
 impl Core {
+    fn refresh_role_definitions(&self) {
+        if let Ok(mut runtime) = self.input_runtime.lock() {
+            let _ = runtime.refresh(&|| true);
+            if let Ok(mut definitions) = self.expansion.definitions.lock() {
+                *definitions = runtime.agent_definitions();
+            }
+        }
+    }
+
     pub(super) fn definition(&self, name: &str) -> Option<ModAgentDefinition> {
         let (owner, short) = name.split_once('/')?;
         self.expansion
@@ -307,7 +316,11 @@ impl Core {
                 value => arguments[key] = value.clone(),
             }
         }
-        spawn_route_admitted(lead, arguments["model"].as_str())?;
+        spawn_route_admitted(
+            lead,
+            arguments["model"].as_str(),
+            self.terminal_owner.as_deref(),
+        )?;
         let definition = effective["definition"].as_str();
         if let Some(name) = definition.filter(|name| name.contains('/'))
             && self.definition(name).is_none()
@@ -379,15 +392,29 @@ pub(super) fn spawn_result(result: &Value) -> Value {
 }
 
 impl AgentRoleContributor for Mods {
-    fn offered_agent_roles(&self, thread_store: &ExtensionData) -> Vec<ContributedAgentRole> {
+    fn offered_agent_roles(
+        &self,
+        thread_store: &ExtensionData,
+        turn_store: &ExtensionData,
+    ) -> Vec<ContributedAgentRole> {
+        let selected = clients::for_store(turn_store);
+        if selected.is_none()
+            && turn_store
+                .get::<codex_protocol::turn_input::TerminalOwner>()
+                .is_some()
+        {
+            return Vec::new();
+        }
+        let this = selected.as_deref().unwrap_or(self);
+        this.refresh_role_definitions();
         let Some(lead) = thread_store.get::<Lead>() else {
             return Vec::new();
         };
-        self.offers(&lead)
+        this.offers(&lead)
             .into_iter()
             .filter_map(|(name, description)| {
-                let definition = self.definition(&name)?;
-                match self.role_file(&lead, &name, &description, Some(&definition)) {
+                let definition = this.definition(&name)?;
+                match this.role_file(&lead, &name, &description, Some(&definition)) {
                     Ok(config_file) => Some(ContributedAgentRole {
                         name,
                         description,
@@ -395,8 +422,8 @@ impl AgentRoleContributor for Mods {
                         cwd: None,
                     }),
                     Err(error) => {
-                        self.views
-                            .diagnostic(&self.host, &format!("agent:{name}"), Some(error));
+                        this.views
+                            .diagnostic(&this.host, &format!("agent:{name}"), Some(error));
                         None
                     }
                 }
@@ -407,14 +434,31 @@ impl AgentRoleContributor for Mods {
     fn resolve_agent_role(
         &self,
         thread_store: &ExtensionData,
+        turn_store: Option<&ExtensionData>,
         name: &str,
     ) -> Option<ContributedAgentRole> {
+        let selected = match turn_store {
+            Some(store) => {
+                let selected = clients::for_store(store);
+                if selected.is_none()
+                    && store
+                        .get::<codex_protocol::turn_input::TerminalOwner>()
+                        .is_some()
+                {
+                    return None;
+                }
+                selected.or_else(|| clients::for_store(thread_store))
+            }
+            None => clients::for_store(thread_store),
+        };
+        let this = selected.as_deref().unwrap_or(self);
+        this.refresh_role_definitions();
         let lead = thread_store.get::<Lead>()?;
-        match self.resolve(&lead, name) {
+        match this.resolve(&lead, name) {
             Ok(role) => role,
             Err(error) => {
-                self.views
-                    .diagnostic(&self.host, &format!("agent:{name}"), Some(error));
+                this.views
+                    .diagnostic(&this.host, &format!("agent:{name}"), Some(error));
                 None
             }
         }
@@ -451,8 +495,14 @@ pub(super) fn spawn_capacity_admitted(
     )
 }
 
-pub(super) fn spawn_route_admitted(lead: &Lead, model: Option<&str>) -> Result<(), String> {
-    let Some((provider, _)) = model.and_then(codex_models_manager::runtime_models::find) else {
+pub(super) fn spawn_route_admitted(
+    lead: &Lead,
+    model: Option<&str>,
+    owner: Option<&str>,
+) -> Result<(), String> {
+    let Some((provider, _)) =
+        model.and_then(|model| codex_models_manager::runtime_models::find_for(owner, model))
+    else {
         return Ok(());
     };
     let parent = lead

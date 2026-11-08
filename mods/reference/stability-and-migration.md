@@ -10,6 +10,12 @@ Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 ## Stability
 
 API `1.0.0` is stable.
+
+Terminal configuration targeting (`target`, `reset`, settings `scope`, package `reset` and `save-defaults` actions) and package
+inheritance metadata are experimental additions. Settings and enablement changes are saved for every terminal by default;
+`target: "terminal"` opts in to a change for the current terminal only.
+`PackageState.scope` now includes `managed`: `packages.list` already returned administrator-managed mods, and the type
+was corrected to match.
 [The conformance registry](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/contract.json) marks each
 public operation, event, capability, interceptor, component, render site, view field, classic hook and author command as
 frozen or experimental:
