@@ -1,9 +1,21 @@
 use super::*;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ConfigurationOverrides {
+    id: u64,
     revision: u64,
     entries: BTreeMap<String, Override>,
+}
+
+impl Default for ConfigurationOverrides {
+    fn default() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self {
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            revision: 0,
+            entries: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -45,6 +57,10 @@ impl ConfigurationOverrides {
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn set_enabled(&mut self, selection: &ModSelection, enabled: bool) -> Result<()> {
@@ -115,12 +131,17 @@ impl ConfigurationOverrides {
     }
 
     pub fn reset(&mut self, selection: &ModSelection) -> Result<()> {
-        self.bump()?;
-        self.entries.remove(&Self::key(selection));
+        Self::writable(selection)?;
+        let key = Self::key(selection);
+        if self.entries.contains_key(&key) {
+            self.bump()?;
+            self.entries.remove(&key);
+        }
         Ok(())
     }
 
     pub fn reset_setting(&mut self, selection: &ModSelection, name: &str) -> Result<()> {
+        Self::writable(selection)?;
         self.clear(selection, false, &[name.to_owned()])
     }
 
@@ -165,6 +186,9 @@ impl ConfigurationOverrides {
     }
 
     pub(super) fn retain_unblocked(&mut self, store: &ModStore) -> Result<()> {
+        if self.entries.is_empty() {
+            return Ok(());
+        }
         let lock = store.read_package_lock()?;
         let blocked: BTreeSet<_> = lock
             .packages
@@ -379,6 +403,25 @@ mod tests {
             overrides.retain(&[restricted]).unwrap();
             assert!(overrides.enabled(&saved), "{change}");
         }
+    }
+
+    #[test]
+    fn noop_resets_keep_the_revision_and_owners_are_distinct() {
+        let saved = selection();
+        let mut overrides = ConfigurationOverrides::default();
+        overrides.reset(&saved).unwrap();
+        overrides.reset_setting(&saved, "color").unwrap();
+        assert_eq!(overrides.revision(), 0);
+        overrides.set_enabled(&saved, false).unwrap();
+        overrides.reset_setting(&saved, "color").unwrap();
+        assert_eq!(overrides.revision(), 1);
+        overrides.reset(&saved).unwrap();
+        assert_eq!(overrides.revision(), 2);
+        let mut managed = saved.clone();
+        managed.scope = MANAGED_SCOPE.into();
+        assert!(overrides.reset(&managed).is_err());
+        assert_ne!(overrides.id(), ConfigurationOverrides::default().id());
+        assert_eq!(overrides.id(), overrides.clone().id());
     }
 
     #[test]
@@ -759,7 +802,7 @@ impl ModHost {
             "settings": settings_diff(&before.1, &after.1),
         });
         preview.control.owner_revision = Some((
-            Arc::as_ptr(&self.configuration_overrides) as usize,
+            owner.id(),
             owner.revision(),
             json!({"enabled":selection.enabled,"settings":shared}),
         ));
@@ -803,7 +846,7 @@ impl ModHost {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let reviewed = (
-            Arc::as_ptr(&self.configuration_overrides) as usize,
+            owner.id(),
             owner.revision(),
             json!({"enabled":selection.enabled,"settings":effective_settings(package.settings_schema.as_ref(), &inherited)}),
         );

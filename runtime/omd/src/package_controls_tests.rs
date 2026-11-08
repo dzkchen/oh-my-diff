@@ -98,17 +98,16 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
 
     let enable = preview(
         &store,
-        json!({"action": "enable", "target": "shared", "id": "sample_mod", "expected_generation": generation}),
+        json!({"action": "enable", "id": "sample_mod", "expected_generation": generation}),
     )
     .unwrap();
+    assert_eq!(enable.control.target, "shared");
     apply(&store, &enable.control).unwrap();
     assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], true);
 
-    let disable = preview(
-        &store,
-        json!({"action": "disable", "target": "shared", "id": "sample_mod"}),
-    )
-    .unwrap();
+    let disable = preview(&store, json!({"action": "disable", "id": "sample_mod"})).unwrap();
+    let reset = preview(&store, json!({"action": "reset", "id": "sample_mod"})).unwrap();
+    assert_eq!(reset.control.target, "terminal");
     apply(&store, &disable.control).unwrap();
     assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], false);
 

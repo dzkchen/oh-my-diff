@@ -120548,10 +120548,10 @@ index 0000000000000000000000000000000000000000..64ca75a360215f2faabe4fb181edefe4
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b9c9b4fc1c87a867628217a76eeda1ec63de7894
+index 0000000000000000000000000000000000000000..f340cbac6709b43fc86470e8e41e701657ddb3b6
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,839 @@
+@@ -0,0 +1,841 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -121321,6 +121321,7 @@ index 0000000000000000000000000000000000000000..b9c9b4fc1c87a867628217a76eeda1ec
 +            "packages.apply",
 +            json!({"action":"reset","id":"m","target":"terminal"}),
 +        ),
++        ("packages.apply", json!({"action":"save-defaults","id":"m"})),
 +    ] {
 +        assert!(
 +            submit(
@@ -121346,6 +121347,7 @@ index 0000000000000000000000000000000000000000..b9c9b4fc1c87a867628217a76eeda1ec
 +            "packages.apply",
 +            json!({"action":"disable","id":"m","target":"shared"}),
 +        ),
++        ("packages.apply", json!({"action":"disable","id":"m"})),
 +        ("credentials.request", json!({})),
 +        ("terminal.copy", json!({"text":"secret"})),
 +    ] {
@@ -129098,10 +129100,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6800c3227f640aef368b1cb5f4ce59860dce77d6
+index 0000000000000000000000000000000000000000..fb4c6d032690a81d786a6529ea7b0a175223a6ed
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7326 @@
+@@ -0,0 +1,7330 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -133540,7 +133542,7 @@ index 0000000000000000000000000000000000000000..6800c3227f640aef368b1cb5f4ce5986
 +            .clone()
 +    }
 +
-+    fn overrides_current(&self) -> bool {
++    fn overrides_settled(&self) -> bool {
 +        self.override_revision
 +            == Some(
 +                self.configuration_overrides
@@ -133551,13 +133553,17 @@ index 0000000000000000000000000000000000000000..6800c3227f640aef368b1cb5f4ce5986
 +    }
 +
 +    fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
-+        !self.inspect_retry_due()
-+            && self.overrides_current()
++        self.current_settled(stamp)
 +            && self
 +                .configuration_overrides
 +                .lock()
 +                .unwrap_or_else(PoisonError::into_inner)
 +                .sources_current()
++    }
++
++    fn current_settled(&self, stamp: &Option<ConfigurationStamp>) -> bool {
++        !self.inspect_retry_due()
++            && self.overrides_settled()
 +            && stamp.is_some()
 +            && *stamp == self.configuration_stamp
 +            && self
@@ -133597,7 +133603,7 @@ index 0000000000000000000000000000000000000000..6800c3227f640aef368b1cb5f4ce5986
 +            .retain_sources()?;
 +        let path = self.store.root.join("mods.json");
 +        let stamp = configuration_stamps(&self.store.root);
-+        if self.current(&stamp) {
++        if self.current_settled(&stamp) {
 +            return Ok(false);
 +        }
 +        self.configuration_stamp = None;
@@ -133615,7 +133621,7 @@ index 0000000000000000000000000000000000000000..6800c3227f640aef368b1cb5f4ce5986
 +            Ok(deployment) => (deployment, None),
 +            Err(error) => (policy::ManagedDeployment::default(), Some(error)),
 +        };
-+        let retrying = hash == self.configuration_sha256 && self.overrides_current();
++        let retrying = hash == self.configuration_sha256 && self.overrides_settled();
 +        if retrying && !self.inspect_retry_due() {
 +            self.configuration_stamp = self.settled(stamp);
 +            return Ok(false);
@@ -134782,7 +134788,7 @@ index 0000000000000000000000000000000000000000..6800c3227f640aef368b1cb5f4ce5986
 +            && *stamp == modified
 +            && *sha256 == self.configuration_sha256
 +            && *granted == grant
-+            && self.overrides_current()
++            && self.overrides_settled()
 +        {
 +            return Ok(());
 +        }
@@ -140341,16 +140347,28 @@ index 0000000000000000000000000000000000000000..29ab066f7019bc8216ab009616d6fb11
 +}
 diff --git a/codex-rs/omd/src/mods/configuration_overrides.rs b/codex-rs/omd/src/mods/configuration_overrides.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b4b369da5402a3931d7778277c424b30fa823822
+index 0000000000000000000000000000000000000000..d5312282063701e7b210bff0a7a334162b6f6dd7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/configuration_overrides.rs
-@@ -0,0 +1,1016 @@
+@@ -0,0 +1,1059 @@
 +use super::*;
 +
-+#[derive(Clone, Debug, Default)]
++#[derive(Clone, Debug)]
 +pub struct ConfigurationOverrides {
++    id: u64,
 +    revision: u64,
 +    entries: BTreeMap<String, Override>,
++}
++
++impl Default for ConfigurationOverrides {
++    fn default() -> Self {
++        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
++        Self {
++            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
++            revision: 0,
++            entries: BTreeMap::new(),
++        }
++    }
 +}
 +
 +#[derive(Clone, Debug, Default)]
@@ -140392,6 +140410,10 @@ index 0000000000000000000000000000000000000000..b4b369da5402a3931d7778277c424b30
 +
 +    pub fn revision(&self) -> u64 {
 +        self.revision
++    }
++
++    pub(crate) fn id(&self) -> u64 {
++        self.id
 +    }
 +
 +    pub fn set_enabled(&mut self, selection: &ModSelection, enabled: bool) -> Result<()> {
@@ -140462,12 +140484,17 @@ index 0000000000000000000000000000000000000000..b4b369da5402a3931d7778277c424b30
 +    }
 +
 +    pub fn reset(&mut self, selection: &ModSelection) -> Result<()> {
-+        self.bump()?;
-+        self.entries.remove(&Self::key(selection));
++        Self::writable(selection)?;
++        let key = Self::key(selection);
++        if self.entries.contains_key(&key) {
++            self.bump()?;
++            self.entries.remove(&key);
++        }
 +        Ok(())
 +    }
 +
 +    pub fn reset_setting(&mut self, selection: &ModSelection, name: &str) -> Result<()> {
++        Self::writable(selection)?;
 +        self.clear(selection, false, &[name.to_owned()])
 +    }
 +
@@ -140512,6 +140539,9 @@ index 0000000000000000000000000000000000000000..b4b369da5402a3931d7778277c424b30
 +    }
 +
 +    pub(super) fn retain_unblocked(&mut self, store: &ModStore) -> Result<()> {
++        if self.entries.is_empty() {
++            return Ok(());
++        }
 +        let lock = store.read_package_lock()?;
 +        let blocked: BTreeSet<_> = lock
 +            .packages
@@ -140726,6 +140756,25 @@ index 0000000000000000000000000000000000000000..b4b369da5402a3931d7778277c424b30
 +            overrides.retain(&[restricted]).unwrap();
 +            assert!(overrides.enabled(&saved), "{change}");
 +        }
++    }
++
++    #[test]
++    fn noop_resets_keep_the_revision_and_owners_are_distinct() {
++        let saved = selection();
++        let mut overrides = ConfigurationOverrides::default();
++        overrides.reset(&saved).unwrap();
++        overrides.reset_setting(&saved, "color").unwrap();
++        assert_eq!(overrides.revision(), 0);
++        overrides.set_enabled(&saved, false).unwrap();
++        overrides.reset_setting(&saved, "color").unwrap();
++        assert_eq!(overrides.revision(), 1);
++        overrides.reset(&saved).unwrap();
++        assert_eq!(overrides.revision(), 2);
++        let mut managed = saved.clone();
++        managed.scope = MANAGED_SCOPE.into();
++        assert!(overrides.reset(&managed).is_err());
++        assert_ne!(overrides.id(), ConfigurationOverrides::default().id());
++        assert_eq!(overrides.id(), overrides.clone().id());
 +    }
 +
 +    #[test]
@@ -141106,7 +141155,7 @@ index 0000000000000000000000000000000000000000..b4b369da5402a3931d7778277c424b30
 +            "settings": settings_diff(&before.1, &after.1),
 +        });
 +        preview.control.owner_revision = Some((
-+            Arc::as_ptr(&self.configuration_overrides) as usize,
++            owner.id(),
 +            owner.revision(),
 +            json!({"enabled":selection.enabled,"settings":shared}),
 +        ));
@@ -141150,7 +141199,7 @@ index 0000000000000000000000000000000000000000..b4b369da5402a3931d7778277c424b30
 +            .lock()
 +            .unwrap_or_else(PoisonError::into_inner);
 +        let reviewed = (
-+            Arc::as_ptr(&self.configuration_overrides) as usize,
++            owner.id(),
 +            owner.revision(),
 +            json!({"enabled":selection.enabled,"settings":effective_settings(package.settings_schema.as_ref(), &inherited)}),
 +        );
@@ -152982,7 +153031,7 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7bd0cfdc553ea3ffa8e92c0e5b21db448ad13414
+index 0000000000000000000000000000000000000000..3a7dbe195b888377058c6dc1876ac648ec2f26e0
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
 @@ -0,0 +1,883 @@
@@ -153004,7 +153053,7 @@ index 0000000000000000000000000000000000000000..7bd0cfdc553ea3ffa8e92c0e5b21db44
 +    confirmation: Option<String>,
 +    selection: Option<Selection>,
 +    generation: u64,
-+    pub(crate) owner_revision: Option<(usize, u64, Value)>,
++    pub(crate) owner_revision: Option<(u64, u64, Value)>,
 +}
 +
 +impl PackageControl {
@@ -153871,10 +153920,10 @@ index 0000000000000000000000000000000000000000..7bd0cfdc553ea3ffa8e92c0e5b21db44
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e1bbec0e9a236dd48c20c1e2db56d801324dc997
+index 0000000000000000000000000000000000000000..88c5211387351a9eba9207019961e71b6bd69ccb
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,496 @@
+@@ -0,0 +1,495 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -153975,17 +154024,16 @@ index 0000000000000000000000000000000000000000..e1bbec0e9a236dd48c20c1e2db56d801
 +
 +    let enable = preview(
 +        &store,
-+        json!({"action": "enable", "target": "shared", "id": "sample_mod", "expected_generation": generation}),
++        json!({"action": "enable", "id": "sample_mod", "expected_generation": generation}),
 +    )
 +    .unwrap();
++    assert_eq!(enable.control.target, "shared");
 +    apply(&store, &enable.control).unwrap();
 +    assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], true);
 +
-+    let disable = preview(
-+        &store,
-+        json!({"action": "disable", "target": "shared", "id": "sample_mod"}),
-+    )
-+    .unwrap();
++    let disable = preview(&store, json!({"action": "disable", "id": "sample_mod"})).unwrap();
++    let reset = preview(&store, json!({"action": "reset", "id": "sample_mod"})).unwrap();
++    assert_eq!(reset.control.target, "terminal");
 +    apply(&store, &disable.control).unwrap();
 +    assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], false);
 +

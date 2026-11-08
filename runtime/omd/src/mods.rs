@@ -4436,7 +4436,7 @@ impl ModHost {
             .clone()
     }
 
-    fn overrides_current(&self) -> bool {
+    fn overrides_settled(&self) -> bool {
         self.override_revision
             == Some(
                 self.configuration_overrides
@@ -4447,13 +4447,17 @@ impl ModHost {
     }
 
     fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
-        !self.inspect_retry_due()
-            && self.overrides_current()
+        self.current_settled(stamp)
             && self
                 .configuration_overrides
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .sources_current()
+    }
+
+    fn current_settled(&self, stamp: &Option<ConfigurationStamp>) -> bool {
+        !self.inspect_retry_due()
+            && self.overrides_settled()
             && stamp.is_some()
             && *stamp == self.configuration_stamp
             && self
@@ -4493,7 +4497,7 @@ impl ModHost {
             .retain_sources()?;
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamps(&self.store.root);
-        if self.current(&stamp) {
+        if self.current_settled(&stamp) {
             return Ok(false);
         }
         self.configuration_stamp = None;
@@ -4511,7 +4515,7 @@ impl ModHost {
             Ok(deployment) => (deployment, None),
             Err(error) => (policy::ManagedDeployment::default(), Some(error)),
         };
-        let retrying = hash == self.configuration_sha256 && self.overrides_current();
+        let retrying = hash == self.configuration_sha256 && self.overrides_settled();
         if retrying && !self.inspect_retry_due() {
             self.configuration_stamp = self.settled(stamp);
             return Ok(false);
@@ -5678,7 +5682,7 @@ impl ModHost {
             && *stamp == modified
             && *sha256 == self.configuration_sha256
             && *granted == grant
-            && self.overrides_current()
+            && self.overrides_settled()
         {
             return Ok(());
         }
