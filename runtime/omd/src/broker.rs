@@ -345,7 +345,7 @@ fn text_within<'a>(arguments: &'a Value, key: &str, limit: usize) -> io::Result<
 
 fn digest_text(arguments: &Value, key: &str) -> io::Result<String> {
     let value = text(arguments, key)?;
-    if !crate::is_sha256_hex(&value) {
+    if !crate::is_sha256_hex(value) {
         return Err(failure("authority_request_invalid"));
     }
     Ok(value.to_owned())

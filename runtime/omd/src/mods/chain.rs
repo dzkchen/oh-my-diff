@@ -1507,7 +1507,7 @@ impl ModHost {
             .flat_map(|policy| policy.namespaces.clone())
             .collect::<Vec<_>>();
         let policy = crate::sha256_hex(
-            &serde_json::to_vec(
+            serde_json::to_vec(
                 &exempt
                     .iter()
                     .filter_map(|id| {
@@ -1703,7 +1703,7 @@ impl ModHost {
             .map(|(id, loaded)| json!([id, loaded.selection.sha256, loaded.selection.settings]))
             .collect::<Vec<_>>();
         let fingerprint = crate::sha256_hex(
-            &serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
+            serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
         );
         Some(SendPolicy {
             required: required == Some(true) || !self.policies.is_empty(),

@@ -138,6 +138,7 @@ user contexts. A user context can call only:
 - the user-action operations (`app.request`, `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`,
   `packages.*`, `routes.add`, `routes.models`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
+- `routes.list`, when the terminal shows a session
 - `turns.activity`
 - `events.publish`, `events.schedule` and `events.cancel`
 

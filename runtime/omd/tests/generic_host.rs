@@ -388,8 +388,7 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
             "exec.output_page",
             json!({"artifact":artifact,"cursor":1})
         )
-        .unwrap_err()
-        .to_string(),
+        .unwrap_err(),
         "exec_output_cursor_invalid"
     );
     let path = data
@@ -1025,7 +1024,7 @@ fn workspace_stat_hash_reads_contained_regular_files_only() {
         .unwrap();
     assert_eq!(
         stat["files"]["README.md"]["sha256"],
-        codex_omd::sha256_hex(&std::fs::read(repository.join("README.md")).unwrap())
+        codex_omd::sha256_hex(std::fs::read(repository.join("README.md")).unwrap())
     );
     for path in ["link.md", "outside/file"] {
         assert!(
