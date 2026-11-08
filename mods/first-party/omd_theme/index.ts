@@ -127,7 +127,10 @@ export default function activate(api: ModAPI) {
     if (wasInactive && !inactive) restart(true);
   });
   api.on('turn_start', () => {
-    if (!read().busy) write({ busy: true });
+    const s = read();
+    if (s.busy) return;
+    const shown = s.prefs && !still(s) ? Math.max(1, Math.floor((Date.now() - (s.origin ?? s.run)) / (s.prefs.speed === 'slow' ? SLOW_MS : FRAME_MS))) : s.frame;
+    write({ busy: true, frame: Math.max(s.frame ?? -1, shown ?? -1) });
   });
   api.on('turn_end', () => {
     write({ busy: false, ended: Date.now() });

@@ -340,7 +340,7 @@ impl DataStore<'_> {
             _ => return Err(failure("store_scope_invalid")),
         };
         if !crate::resource_data::token(self.owner)
-            || !(scope != "repository" || crate::is_sha256_hex(&self.repository_key))
+            || !(scope != "repository" || crate::is_sha256_hex(self.repository_key))
             || self.root.canonicalize()? != self.root
         {
             return Err(failure("store_root_invalid"));

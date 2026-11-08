@@ -29,11 +29,11 @@ impl ModStore {
             .position(|item| item.path == path)
             .ok_or_else(|| failure("package_not_trusted"))?;
         let selection = config.mods[index].clone();
-        if selection.scope == MANAGED_SCOPE
-            || !selection.authority_current()
-            || enabled.is_some() && selection.required
-        {
+        if selection.scope == MANAGED_SCOPE || enabled.is_some() && selection.required {
             return Err(failure("configuration_override_forbidden"));
+        }
+        if !selection.authority_current() {
+            return Err(failure("grant_expired: trust the package again"));
         }
         let (package, hash) = store::verified_package(path)?;
         if hash != selection.sha256 {
@@ -709,16 +709,22 @@ fn yaml_value_span(text: &str, key: &str) -> Option<std::ops::Range<usize>> {
         }
         let bytes = content.as_bytes();
         let key_end = if matches!(bytes[0], b'"' | b'\'') {
-            quoted_end(bytes, 0)?
+            quoted_end(bytes, 0)
         } else {
             content
-                .find(": ")
-                .or_else(|| content.ends_with(':').then(|| content.len() - 1))?
+                .match_indices(':')
+                .map(|(end, _)| end)
+                .find(|end| matches!(bytes.get(end + 1), None | Some(b' ' | b'\t')))
+        };
+        let Some(key_end) = key_end else {
+            continue;
         };
         if bytes.get(key_end) != Some(&b':') {
             continue;
         }
-        let name: String = serde_yaml::from_str(&content[..key_end]).ok()?;
+        let Ok(name) = serde_yaml::from_str::<String>(&content[..key_end]) else {
+            continue;
+        };
         if name != key {
             continue;
         }
