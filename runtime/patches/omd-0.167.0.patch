@@ -88862,10 +88862,10 @@ index 0000000000000000000000000000000000000000..508769308ff445e5868bbc76aed7e69a
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c9f82559e1d127c91d101eaf87235d1d83f63fc9
+index 0000000000000000000000000000000000000000..0b62d573decba065f0c0e6b5979892cfae90225a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,965 @@
+@@ -0,0 +1,986 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -88969,7 +88969,7 @@ index 0000000000000000000000000000000000000000..c9f82559e1d127c91d101eaf87235d1d
 +    pub(super) turns: Mutex<BTreeMap<String, u64>>,
 +    restarted: Mutex<BTreeMap<String, bool>>,
 +    watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
-+    bus_scope: Option<String>,
++    bus_scope: BusScope,
 +    subscribed: Mutex<BTreeSet<String>>,
 +    bus_cursor: Mutex<String>,
 +    subscriptions: Mutex<Vec<(String, codex_omd::ModSubscriptions)>>,
@@ -88990,6 +88990,19 @@ index 0000000000000000000000000000000000000000..c9f82559e1d127c91d101eaf87235d1d
 +    pub(super) agent_spawn: Mutex<Option<bool>>,
 +    pub(super) turn_stop: Mutex<Option<bool>>,
 +    pub(super) peers: AtomicBool,
++}
++
++#[derive(Default)]
++struct BusScope(Option<String>);
++
++impl Drop for BusScope {
++    fn drop(&mut self) {
++        if let Some(scope) = &self.0
++            && let Ok(mut bus) = codex_omd::event_bus::global().lock()
++        {
++            bus.release_scope(scope);
++        }
++    }
 +}
 +
 +struct Delivery {
@@ -89037,7 +89050,7 @@ index 0000000000000000000000000000000000000000..c9f82559e1d127c91d101eaf87235d1d
 +impl State {
 +    pub(super) fn scoped(bus_scope: Option<String>) -> Self {
 +        Self {
-+            bus_scope,
++            bus_scope: BusScope(bus_scope),
 +            ..Self::default()
 +        }
 +    }
@@ -89486,13 +89499,21 @@ index 0000000000000000000000000000000000000000..c9f82559e1d127c91d101eaf87235d1d
 +                .input_runtime
 +                .lock()
 +                .map_err(|_| "mod_runtime_poisoned")?;
-+            let listed = codex_omd::package_controls::list_fields(
-+                &store,
-+                Some(&runtime.status()),
-+                Value::Null,
-+                Some(&core.host.repository),
-+                core.terminal_owner.as_deref(),
-+            )
++            let status = runtime.status();
++            let listed = if request.arguments["fields"]
++                .as_array()
++                .is_none_or(|fields| fields.iter().any(|field| field == "settings_schema"))
++            {
++                codex_omd::package_controls::list_fields(
++                    &store,
++                    Some(&status),
++                    Value::Null,
++                    Some(&core.host.repository),
++                    core.terminal_owner.as_deref(),
++                )
++            } else {
++                codex_omd::package_controls::list(&store, Some(&status))
++            }
 +            .map_err(|e| e.to_string())?;
 +            let listed = runtime
 +                .configuration_listing(listed)
@@ -90544,7 +90565,7 @@ index 0000000000000000000000000000000000000000..d2d9d9bbf288a9bfd26c083d48a1a7f2
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..511f68b0682c7223959d5f04fb3a1de4e49cf85b
+index 0000000000000000000000000000000000000000..fc6cc1eaa6a8a9d4a81bf33eac837121e3fb7a62
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 @@ -0,0 +1,769 @@
@@ -90837,7 +90858,7 @@ index 0000000000000000000000000000000000000000..511f68b0682c7223959d5f04fb3a1de4
 +    expansion: &State,
 +    subscribers: &mut std::collections::VecDeque<String>,
 +) -> Option<(String, codex_omd::event_bus::ChannelEvent)> {
-+    let scope = expansion.bus_scope.as_deref();
++    let scope = expansion.bus_scope.0.as_deref();
 +    let mut bus = codex_omd::event_bus::global().lock().ok()?;
 +    while let Some(id) = subscribers.pop_front() {
 +        let Some(event) = bus.drain(scope, &id, 1).pop() else {
@@ -90973,7 +90994,7 @@ index 0000000000000000000000000000000000000000..511f68b0682c7223959d5f04fb3a1de4
 +    ) else {
 +        return Vec::new();
 +    };
-+    let scope = expansion.bus_scope.as_deref();
++    let scope = expansion.bus_scope.0.as_deref();
 +    for removed in subscribed.difference(&current) {
 +        bus.unsubscribe(scope, removed);
 +    }
@@ -91009,7 +91030,7 @@ index 0000000000000000000000000000000000000000..511f68b0682c7223959d5f04fb3a1de4
 +        .lock()
 +        .map_err(|_| "event_bus_poisoned")?
 +        .publish(
-+            core.expansion.bus_scope.as_deref(),
++            core.expansion.bus_scope.0.as_deref(),
 +            caller,
 +            &input.channel,
 +            input.data,
@@ -123679,10 +123700,10 @@ index 0000000000000000000000000000000000000000..9bd4322894b74db06818c99ddc5479d0
 +}
 diff --git a/codex-rs/omd/src/event_bus.rs b/codex-rs/omd/src/event_bus.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9537fd8e7abf239c6adb77cfd8db3ab1792a884c
+index 0000000000000000000000000000000000000000..c8781fd555a1992e5da89c8dc49ee94ce9fcfe7a
 --- /dev/null
 +++ b/codex-rs/omd/src/event_bus.rs
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,272 @@
 +use crate::app_routes::subscribed;
 +use serde_json::Value;
 +use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -123789,6 +123810,13 @@ index 0000000000000000000000000000000000000000..9537fd8e7abf239c6adb77cfd8db3ab1
 +
 +    pub fn unsubscribe(&mut self, scope: Option<&str>, subscriber: &str) {
 +        self.subscribers.remove(&key(scope, subscriber));
++    }
++
++    pub fn release_scope(&mut self, scope: &str) {
++        self.subscribers
++            .retain(|(owner, _), _| owner.as_deref() != Some(scope));
++        self.sequences
++            .retain(|(owner, _), _| owner.as_deref() != Some(scope));
 +    }
 +
 +    pub fn publish(
@@ -127147,10 +127175,10 @@ index 0000000000000000000000000000000000000000..b8856c41e743275aa86b95065af45100
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..06b5b265f0e1f7b55fd5c4dfa0028c3ffe1a534b
+index 0000000000000000000000000000000000000000..08636dc43ed2f8a22a4091a5993df885074c81c9
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,240 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -127382,7 +127410,6 @@ index 0000000000000000000000000000000000000000..06b5b265f0e1f7b55fd5c4dfa0028c3f
 +pub use mods::take_turned_off;
 +pub use mods::terminal_configuration_owner;
 +pub use mods::write_settings;
-+pub use mods::write_settings_in;
 +pub use mods::write_settings_shared;
 +
 +pub mod turn_evidence;
@@ -129039,10 +129066,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..742c203990410093dcf09b70bb1c71a6e5bba508
+index 0000000000000000000000000000000000000000..6800c3227f640aef368b1cb5f4ce59860dce77d6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7332 @@
+@@ -0,0 +1,7326 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -131634,18 +131661,6 @@ index 0000000000000000000000000000000000000000..742c203990410093dcf09b70bb1c71a6
 +}
 +
 +pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
-+    write_settings_in(store, id, values, None)
-+}
-+
-+pub fn write_settings_in(
-+    store: &ModStore,
-+    id: &str,
-+    values: &Value,
-+    scope: Option<&str>,
-+) -> Result<Value> {
-+    if scope.is_some_and(|scope| !matches!(scope, "user" | "project")) {
-+        return Err(failure("configuration_scope_invalid"));
-+    }
 +    let values = values
 +        .as_object()
 +        .ok_or_else(|| failure("settings_values_must_be_object"))?;
@@ -131654,13 +131669,7 @@ index 0000000000000000000000000000000000000000..742c203990410093dcf09b70bb1c71a6
 +        .as_array()
 +        .into_iter()
 +        .flatten()
-+        .find(|selection| {
-+            selection["id"] == id
-+                && match scope {
-+                    Some(scope) => selection["scope"] == scope && selection["error"].is_null(),
-+                    None => selection["effective"] == true,
-+                }
-+        })
++        .find(|selection| selection["id"] == id && selection["effective"] == true)
 +        .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
 +    let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
 +    let settings = store.save_configuration(&path, values, None, None, "settings")?;
@@ -133499,11 +133508,24 @@ index 0000000000000000000000000000000000000000..742c203990410093dcf09b70bb1c71a6
 +            .clone()
 +    }
 +
++    fn overrides_current(&self) -> bool {
++        self.override_revision
++            == Some(
++                self.configuration_overrides
++                    .lock()
++                    .unwrap_or_else(PoisonError::into_inner)
++                    .revision(),
++            )
++    }
++
 +    fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
-+        let overrides = self.current_overrides();
 +        !self.inspect_retry_due()
-+            && overrides.sources_current()
-+            && self.override_revision == Some(overrides.revision())
++            && self.overrides_current()
++            && self
++                .configuration_overrides
++                .lock()
++                .unwrap_or_else(PoisonError::into_inner)
++                .sources_current()
 +            && stamp.is_some()
 +            && *stamp == self.configuration_stamp
 +            && self
@@ -133561,8 +133583,7 @@ index 0000000000000000000000000000000000000000..742c203990410093dcf09b70bb1c71a6
 +            Ok(deployment) => (deployment, None),
 +            Err(error) => (policy::ManagedDeployment::default(), Some(error)),
 +        };
-+        let retrying = hash == self.configuration_sha256
-+            && self.override_revision == Some(self.current_overrides().revision());
++        let retrying = hash == self.configuration_sha256 && self.overrides_current();
 +        if retrying && !self.inspect_retry_due() {
 +            self.configuration_stamp = self.settled(stamp);
 +            return Ok(false);
@@ -134729,7 +134750,7 @@ index 0000000000000000000000000000000000000000..742c203990410093dcf09b70bb1c71a6
 +            && *stamp == modified
 +            && *sha256 == self.configuration_sha256
 +            && *granted == grant
-+            && self.override_revision == Some(self.current_overrides().revision())
++            && self.overrides_current()
 +        {
 +            return Ok(());
 +        }
@@ -140288,10 +140309,10 @@ index 0000000000000000000000000000000000000000..29ab066f7019bc8216ab009616d6fb11
 +}
 diff --git a/codex-rs/omd/src/mods/configuration_overrides.rs b/codex-rs/omd/src/mods/configuration_overrides.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..76dd0185952bf7f2ef72e6fcc7695dc1f9d8cf5e
+index 0000000000000000000000000000000000000000..b4b369da5402a3931d7778277c424b30fa823822
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/configuration_overrides.rs
-@@ -0,0 +1,1000 @@
+@@ -0,0 +1,1016 @@
 +use super::*;
 +
 +#[derive(Clone, Debug, Default)]
@@ -140314,7 +140335,11 @@ index 0000000000000000000000000000000000000000..76dd0185952bf7f2ef72e6fcc7695dc1
 +        package: &ModPackage,
 +        inherited: &BTreeMap<String, Value>,
 +    ) -> Value {
-+        let Some(entry) = self.entries.get(&Self::key(selection)) else {
++        let Some(entry) = self
++            .entries
++            .get(&Self::key(selection))
++            .filter(|_| Self::writable(selection).is_ok())
++        else {
 +            return json!({"settings": {}});
 +        };
 +        let settings = Self::resolve_settings(entry, package, inherited).unwrap_or_default();
@@ -140326,7 +140351,7 @@ index 0000000000000000000000000000000000000000..76dd0185952bf7f2ef72e6fcc7695dc1
 +            .collect::<BTreeMap<_, _>>()});
 +        if let Some(enabled) = entry
 +            .enabled
-+            .filter(|enabled| *enabled != selection.enabled)
++            .filter(|enabled| !selection.required && *enabled != selection.enabled)
 +        {
 +            value["enabled"] = json!(enabled);
 +        }
@@ -140358,13 +140383,17 @@ index 0000000000000000000000000000000000000000..76dd0185952bf7f2ef72e6fcc7695dc1
 +        settings: &[String],
 +    ) -> Result<()> {
 +        let key = Self::key(selection);
-+        let Some(mut entry) = self.entries.get(&key).cloned() else {
++        let Some(current) = self.entries.get(&key) else {
 +            return Ok(());
 +        };
++        let mut entry = current.clone();
 +        if enabled {
 +            entry.enabled = None;
 +        }
 +        entry.settings.retain(|name, _| !settings.contains(name));
++        if entry.enabled == current.enabled && entry.settings == current.settings {
++            return Ok(());
++        }
 +        self.bump()?;
 +        self.put(key, entry);
 +        Ok(())
@@ -140951,13 +140980,15 @@ index 0000000000000000000000000000000000000000..76dd0185952bf7f2ef72e6fcc7695dc1
 +            if !reset.is_empty() {
 +                return Err(failure("configuration_reset_requires_terminal"));
 +            }
-+            let (selection, _) = self.configuration_selection_in(id, scope)?;
-+            let result = write_settings_in(&self.store, id, values, Some(&selection.scope))?;
-+            let written: Vec<String> = values
++            let values = values
 +                .as_object()
-+                .into_iter()
-+                .flat_map(|values| values.keys().cloned())
-+                .collect();
++                .ok_or_else(|| failure("settings_values_must_be_object"))?;
++            let (selection, package) = self.configuration_selection_in(id, scope)?;
++            let settings =
++                self.store
++                    .save_configuration(&selection.path, values, None, None, "settings")?;
++            let result = json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)});
++            let written: Vec<String> = values.keys().cloned().collect();
 +            self.configuration_overrides
 +                .lock()
 +                .unwrap_or_else(PoisonError::into_inner)
@@ -141189,6 +141220,12 @@ index 0000000000000000000000000000000000000000..76dd0185952bf7f2ef72e6fcc7695dc1
 +    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
 +) -> Result<Value> {
 +    let _thread = crate::StateThread::enter(thread.map(str::to_owned));
++    match target {
++        "terminal" => {}
++        "shared" if reset.is_empty() => {}
++        "shared" => return Err(failure("configuration_reset_requires_terminal")),
++        _ => return Err(failure("configuration_target_invalid")),
++    }
 +    let mut values = values
 +        .as_object()
 +        .ok_or_else(|| failure("settings_values_must_be_object"))?
@@ -141822,10 +141859,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d927bcecc70eb6f8a0efdc122413f965f29a3be3
+index 0000000000000000000000000000000000000000..2bbb83385ceeee7dbc515f1a9acc7abfb69c50ca
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2941 @@
+@@ -0,0 +1,2944 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -142806,6 +142843,9 @@ index 0000000000000000000000000000000000000000..d927bcecc70eb6f8a0efdc122413f965
 +            .iter_mut()
 +            .find(|selection| selection.path == path && selection.scope == scope)
 +            .ok_or_else(|| failure("package_selection_missing"))?;
++        if !selection.authority_current() {
++            return Err(failure("grant_expired: trust the package again"));
++        }
 +        if selection.sha256 != integrity {
 +            return Err(failure("source_changed: inspect and trust the new digest"));
 +        }

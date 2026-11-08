@@ -20,7 +20,11 @@ impl ConfigurationOverrides {
         package: &ModPackage,
         inherited: &BTreeMap<String, Value>,
     ) -> Value {
-        let Some(entry) = self.entries.get(&Self::key(selection)) else {
+        let Some(entry) = self
+            .entries
+            .get(&Self::key(selection))
+            .filter(|_| Self::writable(selection).is_ok())
+        else {
             return json!({"settings": {}});
         };
         let settings = Self::resolve_settings(entry, package, inherited).unwrap_or_default();
@@ -32,7 +36,7 @@ impl ConfigurationOverrides {
             .collect::<BTreeMap<_, _>>()});
         if let Some(enabled) = entry
             .enabled
-            .filter(|enabled| *enabled != selection.enabled)
+            .filter(|enabled| !selection.required && *enabled != selection.enabled)
         {
             value["enabled"] = json!(enabled);
         }
@@ -64,13 +68,17 @@ impl ConfigurationOverrides {
         settings: &[String],
     ) -> Result<()> {
         let key = Self::key(selection);
-        let Some(mut entry) = self.entries.get(&key).cloned() else {
+        let Some(current) = self.entries.get(&key) else {
             return Ok(());
         };
+        let mut entry = current.clone();
         if enabled {
             entry.enabled = None;
         }
         entry.settings.retain(|name, _| !settings.contains(name));
+        if entry.enabled == current.enabled && entry.settings == current.settings {
+            return Ok(());
+        }
         self.bump()?;
         self.put(key, entry);
         Ok(())
@@ -657,13 +665,15 @@ impl ModHost {
             if !reset.is_empty() {
                 return Err(failure("configuration_reset_requires_terminal"));
             }
-            let (selection, _) = self.configuration_selection_in(id, scope)?;
-            let result = write_settings_in(&self.store, id, values, Some(&selection.scope))?;
-            let written: Vec<String> = values
+            let values = values
                 .as_object()
-                .into_iter()
-                .flat_map(|values| values.keys().cloned())
-                .collect();
+                .ok_or_else(|| failure("settings_values_must_be_object"))?;
+            let (selection, package) = self.configuration_selection_in(id, scope)?;
+            let settings =
+                self.store
+                    .save_configuration(&selection.path, values, None, None, "settings")?;
+            let result = json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)});
+            let written: Vec<String> = values.keys().cloned().collect();
             self.configuration_overrides
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -895,6 +905,12 @@ pub fn write_settings_shared(
     mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
 ) -> Result<Value> {
     let _thread = crate::StateThread::enter(thread.map(str::to_owned));
+    match target {
+        "terminal" => {}
+        "shared" if reset.is_empty() => {}
+        "shared" => return Err(failure("configuration_reset_requires_terminal")),
+        _ => return Err(failure("configuration_target_invalid")),
+    }
     let mut values = values
         .as_object()
         .ok_or_else(|| failure("settings_values_must_be_object"))?

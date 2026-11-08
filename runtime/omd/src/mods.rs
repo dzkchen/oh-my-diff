@@ -2589,18 +2589,6 @@ fn validate_stored_settings(
 }
 
 pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
-    write_settings_in(store, id, values, None)
-}
-
-pub fn write_settings_in(
-    store: &ModStore,
-    id: &str,
-    values: &Value,
-    scope: Option<&str>,
-) -> Result<Value> {
-    if scope.is_some_and(|scope| !matches!(scope, "user" | "project")) {
-        return Err(failure("configuration_scope_invalid"));
-    }
     let values = values
         .as_object()
         .ok_or_else(|| failure("settings_values_must_be_object"))?;
@@ -2609,13 +2597,7 @@ pub fn write_settings_in(
         .as_array()
         .into_iter()
         .flatten()
-        .find(|selection| {
-            selection["id"] == id
-                && match scope {
-                    Some(scope) => selection["scope"] == scope && selection["error"].is_null(),
-                    None => selection["effective"] == true,
-                }
-        })
+        .find(|selection| selection["id"] == id && selection["effective"] == true)
         .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
     let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
     let settings = store.save_configuration(&path, values, None, None, "settings")?;
@@ -4454,11 +4436,24 @@ impl ModHost {
             .clone()
     }
 
+    fn overrides_current(&self) -> bool {
+        self.override_revision
+            == Some(
+                self.configuration_overrides
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .revision(),
+            )
+    }
+
     fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
-        let overrides = self.current_overrides();
         !self.inspect_retry_due()
-            && overrides.sources_current()
-            && self.override_revision == Some(overrides.revision())
+            && self.overrides_current()
+            && self
+                .configuration_overrides
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .sources_current()
             && stamp.is_some()
             && *stamp == self.configuration_stamp
             && self
@@ -4516,8 +4511,7 @@ impl ModHost {
             Ok(deployment) => (deployment, None),
             Err(error) => (policy::ManagedDeployment::default(), Some(error)),
         };
-        let retrying = hash == self.configuration_sha256
-            && self.override_revision == Some(self.current_overrides().revision());
+        let retrying = hash == self.configuration_sha256 && self.overrides_current();
         if retrying && !self.inspect_retry_due() {
             self.configuration_stamp = self.settled(stamp);
             return Ok(false);
@@ -5684,7 +5678,7 @@ impl ModHost {
             && *stamp == modified
             && *sha256 == self.configuration_sha256
             && *granted == grant
-            && self.override_revision == Some(self.current_overrides().revision())
+            && self.overrides_current()
         {
             return Ok(());
         }
