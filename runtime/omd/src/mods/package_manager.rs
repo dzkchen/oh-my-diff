@@ -1181,11 +1181,15 @@ impl ModStore {
     ) -> Result<ModPackageLock> {
         let old_lock = serde_json::to_value(self.read_package_lock()?)?;
         let mut old_config = serde_json::to_value(self.configuration()?)?;
-        for selection in old_config["mods"].as_array_mut().into_iter().flatten() {
-            if let Some(selection) = selection.as_object_mut() {
-                selection.remove("configuration_epoch");
-            }
-        }
+        let old_epochs: Vec<Value> = old_config["mods"]
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .filter_map(|selection| {
+                let epoch = selection.as_object_mut()?.remove("configuration_epoch")?;
+                Some(json!([selection["scope"], selection["path"], epoch]))
+            })
+            .collect();
         let old_settings = settings
             .map(|(name, _)| {
                 store::read(&self.root.join(name), 65_536)
@@ -1194,7 +1198,7 @@ impl ModStore {
             .transpose()?;
         self.write(
             "package-transaction.json",
-            &json!({"old_lock":old_lock,"old_config":old_config,"old_settings":old_settings}),
+            &json!({"old_lock":old_lock,"old_config":old_config,"old_epochs":old_epochs,"old_settings":old_settings}),
         )?;
         let result: Result<ModPackageLock> = (|| {
             for (package, event) in lifecycle {
@@ -1268,13 +1272,24 @@ impl ModStore {
             let bytes: Vec<u8> = serde_json::from_value(settings["bytes"].clone())?;
             self.write_staged(name, &bytes, || Ok(()))?;
         }
-        let restored = transaction["old_config"]["mods"]
+        let mut config = transaction["old_config"].clone();
+        for epoch in transaction["old_epochs"].as_array().into_iter().flatten() {
+            if let Some(selection) = config["mods"]
+                .as_array_mut()
+                .into_iter()
+                .flatten()
+                .find(|selection| selection["scope"] == epoch[0] && selection["path"] == epoch[1])
+            {
+                selection["configuration_epoch"] = epoch[2].clone();
+            }
+        }
+        let restored = config["mods"]
             .as_array()
             .into_iter()
             .flatten()
             .map(store::grant)
             .collect();
-        self.write_granting("mods.json", &transaction["old_config"], &restored)?;
+        self.write_granting("mods.json", &config, &restored)?;
         self.write("packages.lock.json", &transaction["old_lock"])?;
         std::fs::remove_file(path)?;
         std::fs::File::open(&self.root)?.sync_all()
