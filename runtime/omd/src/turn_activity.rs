@@ -324,10 +324,11 @@ fn tail(values: &[Value], limit: usize) -> Value {
 
 pub type Reader = std::sync::Arc<dyn Fn(&str, Value) -> Result<Value, String> + Send + Sync>;
 
-static READER: std::sync::Mutex<(u64, Option<Reader>)> = std::sync::Mutex::new((0, None));
+static READERS: std::sync::Mutex<(u64, Vec<(u64, Reader)>)> =
+    std::sync::Mutex::new((0, Vec::new()));
 
-fn reader() -> std::sync::MutexGuard<'static, (u64, Option<Reader>)> {
-    READER
+fn readers() -> std::sync::MutexGuard<'static, (u64, Vec<(u64, Reader)>)> {
+    READERS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -337,23 +338,36 @@ pub struct ReaderRegistration(u64);
 
 impl Drop for ReaderRegistration {
     fn drop(&mut self) {
-        let mut slot = reader();
-        if slot.0 == self.0 {
-            slot.1 = None;
-        }
+        readers().1.retain(|(id, _)| *id != self.0);
     }
 }
 
 pub fn register_reader(read: Reader) -> ReaderRegistration {
-    let mut slot = reader();
-    slot.0 += 1;
-    slot.1 = Some(read);
-    ReaderRegistration(slot.0)
+    let mut readers = readers();
+    readers.0 += 1;
+    let id = readers.0;
+    readers.1.push((id, read));
+    ReaderRegistration(id)
 }
 
 pub fn read_registered(thread: &str, arguments: Value) -> Result<Value, String> {
-    let read = reader().1.clone().ok_or("turn_activity_unavailable")?;
-    read(thread, arguments)
+    let registered = readers()
+        .1
+        .iter()
+        .map(|(_, read)| read.clone())
+        .collect::<Vec<_>>();
+    let mut result = Err("turn_activity_unavailable".to_owned());
+    for read in registered {
+        result = read(thread, arguments.clone());
+        if result
+            .as_ref()
+            .is_err_and(|error| error == "turn_activity_unavailable")
+        {
+            continue;
+        }
+        break;
+    }
+    result
 }
 
 #[cfg(test)]

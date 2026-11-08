@@ -454,12 +454,16 @@ pub enum Observed {
         arguments: Value,
         pixels: Option<Arc<crate::process_raster::PixelFrame>>,
     },
+    State {
+        mod_id: String,
+        terminal: u64,
+    },
 }
 
 #[derive(Default)]
 struct Hub {
     surface: Option<(u64, Arc<dyn ClientSurface>)>,
-    wake: Option<(u64, Wake)>,
+    wakes: Vec<(u64, Wake)>,
     clients: Vec<(u64, ClientEntry)>,
     observers: Vec<(u64, Observer)>,
     next: u64,
@@ -485,7 +489,7 @@ pub fn presented(mut presentation: Value) -> Value {
 
 static HUB: Mutex<Hub> = Mutex::new(Hub {
     surface: None,
-    wake: None,
+    wakes: Vec::new(),
     clients: Vec::new(),
     observers: Vec::new(),
     next: 0,
@@ -515,7 +519,7 @@ impl Drop for Registration {
         let mut hub = hub();
         match self.slot {
             Slot::Surface => drop(hub.surface.take_if(|(slot, _)| *slot == id)),
-            Slot::Wake => drop(hub.wake.take_if(|(slot, _)| *slot == id)),
+            Slot::Wake => hub.wakes.retain(|(slot, _)| *slot != id),
             Slot::Observer => hub.observers.retain(|(slot, _)| *slot != id),
             Slot::Client => {
                 let attached = hub.clients.len();
@@ -542,7 +546,7 @@ pub fn register(surface: Arc<dyn ClientSurface>) -> Registration {
 }
 
 pub fn register_wake(wake: Wake) -> Registration {
-    insert(Slot::Wake, |hub, id| hub.wake = Some((id, wake)))
+    insert(Slot::Wake, |hub, id| hub.wakes.push((id, wake)))
 }
 
 pub fn register_observer(observer: Observer) -> Registration {
@@ -616,9 +620,21 @@ fn roster_changed() {
     wake();
 }
 
+/// A committed `api.state` write of `mod_id` by the runtime of `terminal`.
+pub fn state_committed(mod_id: &str, terminal: u64) {
+    notify(Observed::State {
+        mod_id: mod_id.to_owned(),
+        terminal,
+    });
+}
+
 pub fn wake() {
-    let wake = hub().wake.as_ref().map(|(_, wake)| wake.clone());
-    if let Some(wake) = wake {
+    let wakes = hub()
+        .wakes
+        .iter()
+        .map(|(_, wake)| wake.clone())
+        .collect::<Vec<_>>();
+    for wake in wakes {
         wake();
     }
 }

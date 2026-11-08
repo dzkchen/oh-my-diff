@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Debug)]
 pub struct ConfigurationOverrides {
     id: u64,
+    terminal: Option<String>,
     revision: u64,
     entries: BTreeMap<String, Override>,
 }
@@ -12,6 +13,7 @@ impl Default for ConfigurationOverrides {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
             id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            terminal: None,
             revision: 0,
             entries: BTreeMap::new(),
         }
@@ -61,6 +63,10 @@ impl ConfigurationOverrides {
 
     pub(crate) fn id(&self) -> u64 {
         self.id
+    }
+
+    pub(crate) fn terminal(&self) -> Option<&str> {
+        self.terminal.as_deref()
     }
 
     pub fn set_enabled(&mut self, selection: &ModSelection, enabled: bool) -> Result<()> {
@@ -661,7 +667,10 @@ pub fn terminal_configuration_owner(token: &str) -> Arc<Mutex<ConfigurationOverr
     if let Some(owner) = owners.get(token).and_then(std::sync::Weak::upgrade) {
         return owner;
     }
-    let owner = Arc::new(Mutex::new(ConfigurationOverrides::default()));
+    let owner = Arc::new(Mutex::new(ConfigurationOverrides {
+        terminal: Some(token.into()),
+        ..ConfigurationOverrides::default()
+    }));
     owners.insert(token.into(), Arc::downgrade(&owner));
     owner
 }

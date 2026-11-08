@@ -80,6 +80,13 @@ pub fn configuration(client: &str, request: Value) -> Result<Value, String> {
         }
         _ => return Err("configuration_action_invalid".into()),
     }.map_err(|e| e.to_string())?;
+    drop(runtime);
+    if matches!(action, "write" | "package") {
+        if let Ok(mut runtime) = core.runtime.lock() {
+            runtime.turn_boundary(&|| true);
+        }
+        republish(&core);
+    }
     Ok(result)
 }
 
@@ -467,6 +474,41 @@ impl Coalesce {
 }
 
 static REPUBLISH: Coalesce = Coalesce::new();
+static STATE_REPUBLISH: Coalesce = Coalesce::new();
+static STATE_WRITES: Mutex<std::collections::BTreeSet<(String, u64)>> =
+    Mutex::new(std::collections::BTreeSet::new());
+
+fn all_cores() -> Vec<Arc<Core>> {
+    let mut cores = OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .map(|owner| owner.core.clone())
+        .collect::<Vec<_>>();
+    if let Ok(core) = self::core() {
+        cores.push(core);
+    }
+    cores
+}
+
+/// Redraws every other terminal owner running a mod whose saved state changed.
+fn republish_state_writes() {
+    let writes = std::mem::take(
+        &mut *STATE_WRITES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    for core in all_cores() {
+        let stale = core.runtime.lock().is_ok_and(|runtime| {
+            writes.iter().any(|(id, terminal)| {
+                *terminal != runtime.terminal() && runtime.grants(id).is_some()
+            })
+        });
+        if stale {
+            republish(&core);
+        }
+    }
+}
 
 pub(super) fn install(
     core: &Arc<Core>,
@@ -477,24 +519,22 @@ pub(super) fn install(
         return Err("host_already_installed".into());
     }
     let owner = Arc::new(());
-    let roster = codex_omd::client_surface::register_observer(Arc::new(|observed| {
-        if matches!(observed, codex_omd::client_surface::Observed::Roster) {
-            REPUBLISH.request(|| {
-                let mut cores = OWNERS
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .values()
-                    .map(|owner| owner.core.clone())
-                    .collect::<Vec<_>>();
-                if let Ok(core) = self::core() {
-                    cores.push(core);
-                }
-                for core in cores {
+    let roster =
+        codex_omd::client_surface::register_observer(Arc::new(|observed| match observed {
+            codex_omd::client_surface::Observed::Roster => REPUBLISH.request(|| {
+                for core in all_cores() {
                     republish(&core);
                 }
-            });
-        }
-    }));
+            }),
+            codex_omd::client_surface::Observed::State { mod_id, terminal } => {
+                STATE_WRITES
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert((mod_id, terminal));
+                STATE_REPUBLISH.request(republish_state_writes);
+            }
+            _ => {}
+        }));
     *installed = Some(Installed {
         owner: owner.clone(),
         core: Arc::downgrade(core),
@@ -587,8 +627,11 @@ fn owner<'a>(snapshot: &'a ModViewSnapshot, component: &str) -> Result<&'a str, 
         .ok_or_else(|| format!("view_stale: {component}"))
 }
 
-pub fn published() -> Option<Arc<ModViewSnapshot>> {
-    core().ok()?.views.published()
+pub fn published(terminal_owner: Option<&str>) -> Option<Arc<ModViewSnapshot>> {
+    match terminal_owner {
+        Some(owner) => OWNERS.lock().ok()?.get(owner)?.core.views.published(),
+        None => core().ok()?.views.published(),
+    }
 }
 
 const EVENT_BYTES: usize = 64 * 1024;
@@ -1182,6 +1225,11 @@ fn recovery_read_from(
         }
         Err(error) => return Err(error),
     };
+    let rendered = core
+        .runtime
+        .lock()
+        .map(|runtime| runtime.status())
+        .unwrap_or_default();
     let mut runtime = core
         .input_runtime
         .lock()
@@ -1190,7 +1238,12 @@ fn recovery_read_from(
         .refresh(&|| true)
         .err()
         .map(|error| error.to_string());
-    let status = runtime.status();
+    let mut status = runtime.status();
+    if let (Some(mods), Some(rendered)) =
+        (status["mods"].as_array_mut(), rendered["mods"].as_array())
+    {
+        mods.splice(0..0, rendered.iter().cloned());
+    }
     let (mods, store_error) = match store.selection_status().and_then(|mut selections| {
         let projected =
             runtime.configuration_listing(json!({"packages":selections["selections"]}))?;
@@ -1224,8 +1277,8 @@ fn recovery_entries(selections: &Value, status: &Value) -> Vec<Value> {
                 .or_else(|| {
                     loaded
                         .iter()
-                        .find(|item| item["id"] == selection["id"] && item["scope"] == selection["scope"])
-                        .and_then(|item| item["error"].as_str())
+                        .filter(|item| item["id"] == selection["id"] && item["scope"] == selection["scope"])
+                        .find_map(|item| item["error"].as_str())
                 });
             let error = failure.or(selection["error"].as_str());
             json!({"id": selection["id"], "path": selection["path"], "scope": selection["scope"],
@@ -1256,11 +1309,15 @@ pub fn recovery_apply(client: Option<&str>, action: &str, target: &str) -> Resul
     let (_, store) = store()?;
     store.reload().map_err(|error| error.to_string())?;
     if let Some(core) = selected {
-        core.input_runtime
-            .lock()
-            .map_err(|_| "mod_runtime_poisoned")?
-            .reload()
-            .map_err(|error| error.to_string())?;
+        {
+            let mut runtime = core
+                .input_runtime
+                .lock()
+                .map_err(|_| "mod_runtime_poisoned")?;
+            if runtime.reload().is_err() {
+                runtime.turn_boundary(&|| true);
+            }
+        }
         reloaded(&core);
     }
     Ok(json!({"action": action, "target": target, "status": "applied"}))
