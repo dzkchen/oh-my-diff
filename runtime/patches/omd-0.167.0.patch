@@ -129262,10 +129262,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c4f73fb71f73a72f915279952a043f598155c6f8
+index 0000000000000000000000000000000000000000..166a0c4d180031587aa6f5eb2d9ef1f4855931d0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7515 @@
+@@ -0,0 +1,7518 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -131944,7 +131944,10 @@ index 0000000000000000000000000000000000000000..c4f73fb71f73a72f915279952a043f59
 +    pub required: bool,
 +}
 +
-+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde passes skip_serializing_if a reference")]
++#[expect(
++    clippy::trivially_copy_pass_by_ref,
++    reason = "serde passes skip_serializing_if a reference"
++)]
 +fn zero_configuration_epoch(epoch: &u64) -> bool {
 +    *epoch == 0
 +}
