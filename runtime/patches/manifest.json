@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.0.patch",
-    "sha256": "7403568a06d6a8dec1bebf7c4ec04bea73fe5d5ce99e3c517ee68d06a18a787f"
+    "sha256": "5dfe3697e63bada870584bdc88aee71b05ac4181dfe5ebed628dafa9465695e0"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1675,7 +1675,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "24da55fb3a581b9ef15c044fa82881879dfd50b3ea948371a3245d9666a11346"
+      "after": "4fa314316908c948469119b99fcc4862d82690103de01aad74476a6cd8c0994f"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,

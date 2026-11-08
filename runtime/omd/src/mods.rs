@@ -2676,6 +2676,7 @@ pub struct ModSelection {
     pub required: bool,
 }
 
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde passes skip_serializing_if a reference")]
 fn zero_configuration_epoch(epoch: &u64) -> bool {
     *epoch == 0
 }
