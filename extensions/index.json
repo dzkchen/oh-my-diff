@@ -876,8 +876,8 @@
       "source": "mods/ports/blast_radius",
       "published": {
         "repository": "https://github.com/dzkchen/oh-my-diff",
-        "revision": "b81de0bdc57b4a12d117f7eac3a9cb3d2ce1a785",
-        "sha256": "a0f6a32c22987e9584e590f40a2048e6dde46a253581f6a2f7f6113f4330dbc9"
+        "revision": "0fb2f85db673e662bd6f6ca69c87ef3733ab4427",
+        "sha256": "d740a05770b3363692d7cb75fa3477250ca309e2ce5eb8b7dc8032091a9a4a57"
       },
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
