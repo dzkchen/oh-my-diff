@@ -591,8 +591,11 @@ fn owner<'a>(snapshot: &'a ModViewSnapshot, component: &str) -> Result<&'a str, 
         .ok_or_else(|| format!("view_stale: {component}"))
 }
 
-pub fn published() -> Option<Arc<ModViewSnapshot>> {
-    core().ok()?.views.published()
+pub fn published(terminal_owner: Option<&str>) -> Option<Arc<ModViewSnapshot>> {
+    match terminal_owner {
+        Some(owner) => OWNERS.lock().ok()?.get(owner)?.core.views.published(),
+        None => core().ok()?.views.published(),
+    }
 }
 
 const EVENT_BYTES: usize = 64 * 1024;

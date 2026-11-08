@@ -6004,8 +6004,7 @@ fn configuration_owners_reload_independently_without_writing_defaults() {
         &["commands"],
     );
     let saved = std::fs::read(store.root().join("mods.json")).unwrap();
-    let config: Value = serde_json::from_slice(&saved).unwrap();
-    let selection = serde_json::from_value(config["mods"][0].clone()).unwrap();
+    let selection = store.configuration().unwrap().mods[0].clone();
     let mut first = host(&temp);
     let mut second = host(&temp);
     let owner = first.configuration_overrides();
@@ -6280,6 +6279,11 @@ fn configuration_owner_missed_package_lifecycle_discards_overrides() {
         );
         let current = store.configuration().unwrap().mods[0].clone();
         assert!(current.configuration_epoch > saved.configuration_epoch);
+        assert!(
+            !std::fs::read_to_string(store.root().join("mods.json"))
+                .unwrap()
+                .contains("configuration_epoch")
+        );
         assert_eq!(
             owner.lock().unwrap().values(
                 &current,

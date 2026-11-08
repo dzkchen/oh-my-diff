@@ -487,6 +487,8 @@ pub struct ModStore {
 pub(super) const STATE_LIMIT: usize = 524_288;
 pub(super) const PACKAGE_FILE_LIMIT: u64 = 524_288;
 const SECURITY_EVENTS: &str = "security-events.jsonl";
+/// Kept out of `mods.json` so the previous release, which rejects unknown fields, still reads the store after a rollback.
+pub(super) const CONFIGURATION_EPOCHS: &str = "configuration-epochs.json";
 const SECURITY_EVENT_LIMIT: usize = 65_536;
 
 #[derive(Clone, Debug)]
@@ -733,6 +735,13 @@ impl ModStore {
         value: &Value,
         approved: &BTreeSet<String>,
     ) -> Result<()> {
+        let stripped;
+        let value = if name == "mods.json" {
+            stripped = self.write_epochs(value)?;
+            &stripped
+        } else {
+            value
+        };
         let bytes = serde_json::to_vec_pretty(value)?;
         let brokered = match name {
             "mods.json" => brokered_grants(&self.root)?,
@@ -772,6 +781,24 @@ impl ModStore {
             }
             Ok(())
         })
+    }
+
+    fn write_epochs(&self, config: &Value) -> Result<Value> {
+        let mut config = config.clone();
+        let epochs: Vec<_> = config["mods"]
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .filter_map(|selection| {
+                let epoch = selection.as_object_mut()?.remove("configuration_epoch")?;
+                Some(json!([selection["scope"], selection["path"], epoch]))
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&epochs)?;
+        if read(&self.root.join(CONFIGURATION_EPOCHS), 65_536).ok() != Some(bytes.clone()) {
+            self.write_staged(CONFIGURATION_EPOCHS, &bytes, || Ok(()))?;
+        }
+        Ok(config)
     }
 
     pub(super) fn write_staged(

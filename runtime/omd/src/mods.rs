@@ -2744,8 +2744,22 @@ pub struct ModConfiguration {
 
 impl ModConfiguration {
     pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
-        serde_json::from_slice(bytes)
-            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))
+        let mut config: Self = serde_json::from_slice(bytes)
+            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
+        let epochs: Vec<(String, PathBuf, u64)> = path
+            .parent()
+            .and_then(|root| store::read(&root.join(store::CONFIGURATION_EPOCHS), 65_536).ok())
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        for selection in &mut config.mods {
+            if let Some((_, _, epoch)) = epochs
+                .iter()
+                .find(|(scope, path, _)| *scope == selection.scope && *path == selection.path)
+            {
+                selection.configuration_epoch = *epoch;
+            }
+        }
+        Ok(config)
     }
 }
 
