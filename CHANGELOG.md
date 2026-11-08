@@ -8,44 +8,30 @@ Per-terminal mod settings, lower resource use in idle and background sessions, C
 
 ### New
 
-- Reduce resource use in background and idle TUI sessions (#401)
-- Add per-terminal mod configuration (#397)
+- Mods: `/mods` and the `/omd` mod list can apply a mod's on/off and settings to this terminal only; terminal-only choices last until the terminal closes, and "Keep these for every terminal" saves them
+- Idle sessions: an unfocused or idle terminal redraws once a second and pauses theme animation, and unused mod runners are released, while agents, tools and monitors keep running; focus or input resumes full speed
 
 ### Changed
 
-- Drop dead omd re-exports, ModPaths.evidence and a duplicate glob matcher (#388)
-- Drop the runner's dead suspend-and-rerun host-call protocol (#398)
-- Share hash, validator and store-transaction helpers and collapse ModHost wrappers (#411)
-- Decode SSE events once when no mod observes the stream (#417)
-- Cache parsed store documents and stop creating directories on reads (#418)
-- Keep event monitors scoped to their creating thread and discard inherited watches in forked sessions. (#407)
-- Reduce mod callback overhead and fix TUI sizing, queued pastes, privacy handling and activation diagnostics. (#413)
-- Use seek-based exec output paging, consolidate mod host entry points and apply workspace lints. (#412)
-- Preserve activation diagnostics and patch outcomes while isolating TUI test state. (#408)
-- Update Codex to 0.167.0, preserve approval and worker lifecycle boundaries, and prevent duplicate immediate delegated results. (#437)
-- Bind queued client work, retries, cost settlement and kernel output to their originating context. (#445)
-- Reject stale git hunk actions and correct evidence scoping, managed data access, signed pointers and author package checks. (#446)
-- Serve mod commands after idle without render contention and avoid empty redraws, preserving terminal configuration integration. (#448)
-- Preserve terminal ownership and enforce package configuration guards after integrating current main. (#449)
+- Codex: updated to 0.167.0, including Guardian review, provider-error handling, deferred-tool discovery and audio attachments, with OMD's approval and review boundaries kept
+- Subagents: delegated results arrive once through the parent thread's mailbox instead of a second wake prompt, and helper agents follow the hooks and execution policy of the thread that started them
+- Claude: sessions through omd_claude_cli reuse the prompt cache between requests, so plan limits last about as long as in Claude Code
+- Privacy: omd_privacy no longer asks before a shell command that names a sensitive file by default; secrets in its output are still redacted, and Sensitive paths in its settings turns asking back on
+- Performance: lower mod callback cost, faster exec output paging, cached store reads and no stream decoding when no mod listens
 
 ### Fixed
 
-- Report omd mods update in the mod's own scope and make the keystroke-budget test prove the wait (#394)
-- Refresh accounts when /profile lists or selects them (#389)
-- Cap checkpoint decisions by bytes and stop failing on a lost store race (#390)
-- Keep same-line results, refuse lines past the end and stop reporting trimmed errors as new (#391)
-- Page exec output without rehashing the artifact and size mod dialogs by their drawn rows (#415)
-- Restore turn_diff_display_roots' trace span (#416)
-- Create CODEX_HOME before omd-package plugins runs (#429)
-- Point omd mini at omd install when omd_mini is missing (#430)
-- Keep mods that left the profile trusted across updates (#432)
-- One-line output from omd-package mod and activate (#433)
-- Quieter and clearer omd-mod-author (#434)
-- Tidy omd update check, update errors and uninstall leftovers (#435)
-- Freeze workspace.unwatch, accurate OMD+ prompt, ambiguous /mods ids and idle timer warning (#409)
-- Reuse the prompt cache across requests and label CLI traffic as oh-my-diff (#443)
-- Thread store retention, checkpoint recovery and installer races (#444)
-- Refuse host API changes and allow excluding mods
+- Git panel: discarding, staging or attaching a hunk is refused when the file changed since it was shown, so unreviewed changes are never discarded
+- Threads: opening a thread no longer deletes other threads' saved data, forked sessions no longer receive their parent's monitor results, and each thread's evidence stays its own
+- Undo: a retried `/undo force` keeps its `/redo`, and each checkout keeps its own checkpoints
+- Mods: the first mod command after a minute idle answers at once, idle sessions stop drawing frames that change nothing, `/mods ACTION ID` asks which copy when an id is installed for both you and the project, and dialogs size to their content
+- Cursor and subagents: Cursor settles cost against the run that ended, and a subagent restart refuses a route whose provider, account or billing changed
+- Kernels: Python and Bun cells no longer show output written by an earlier cell's threads or timers
+- LSP: same-line results are kept, lines past the end of a file are refused, and trimmed errors are no longer reported as new
+- Workflow and accounts: checkpoint decisions are capped by size, a lost store race no longer fails a workflow, and `/profile` refreshes accounts when it lists or selects them
+- Verify stop: a command joined with `||` or `;` no longer counts as a passing check
+- Installer: `omd update check` prints a one-line status, an unknown `omd update` action fails in one line, uninstall leaves no empty folders, mods that left the profile stay trusted across updates, uninstall and mod maintenance block new sessions first, and `omd mini` points to `omd install` when omd_mini is missing
+- Tools: `omd-package` prints one line per mod, `omd-mod-author` is quieter and reloads newly named assets in watch mode, and `omd-package plugins` creates CODEX_HOME first
 
 ## [1.4.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.2) — 2026-11-04
 
