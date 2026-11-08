@@ -1656,7 +1656,7 @@ impl ModStore {
             },
             exec_environment: package.exec_environment.clone(),
             settings_schema_sha256: crate::sha256_hex(
-                &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
+                serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
             ),
             lifecycle: declared_lifecycle,
             scope: request.scope.clone(),

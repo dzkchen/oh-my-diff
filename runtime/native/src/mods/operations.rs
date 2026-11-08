@@ -74,6 +74,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                     "app.routes"
                         | "model.complete"
                         | "model.fork"
+                        | "routes.list"
                         | "session.info"
                         | "tools.list"
                         | "turns.activity"

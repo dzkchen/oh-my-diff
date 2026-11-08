@@ -2329,8 +2329,9 @@ impl ModPackage {
         }
         if self.lifecycle.len() > 3
             || self.lifecycle.iter().any(|(event, path)| {
-                !["install", "update", "uninstall"].contains(&event.as_str())
-                    || !(path.ends_with(".ts") && relative_path(path, 128))
+                !(["install", "update", "uninstall"].contains(&event.as_str())
+                    && path.ends_with(".ts")
+                    && relative_path(path, 128))
             })
         {
             return Err(failure("invalid_lifecycle_scripts"));
@@ -3484,6 +3485,7 @@ pub struct ModHost {
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
     renders: BTreeMap<String, (String, Value, Option<Instant>)>,
+    terminal_revision: u64,
     clock_reads: BTreeSet<String>,
     ui_mods: Option<Vec<String>>,
     rendered: HashMap<String, render::Rendered>,
@@ -3551,6 +3553,185 @@ impl Access<'_> {
             Access::Shared(runtime) | Access::Bounded(runtime, _) => Access::Bounded(runtime, wait),
         }
     }
+}
+
+pub fn terminal_shared(
+    runtime: &Mutex<ModHost>,
+    payload: Value,
+    active: impl Fn() -> bool,
+    publish: impl FnOnce(ModTerminalView, &str),
+) -> Result<()> {
+    let thread = state_thread(&payload);
+    let payload = TerminalPayload::new(payload);
+    let (generation, revision, mut results, mut pending) = {
+        let mut host = runtime
+            .lock()
+            .map_err(|_| failure("mod_runtime_poisoned"))?;
+        if !active() {
+            return Err(failure("terminal_view_stale"));
+        }
+        host.terminal_revision = host.terminal_revision.wrapping_add(1);
+        let generation = host.generation;
+        let revision = host.terminal_revision;
+        let mut results = Vec::new();
+        let mut pending = Vec::new();
+        for id in host.event_ids("terminal") {
+            if thread.is_none()
+                && host
+                    .loaded
+                    .get(&id)
+                    .is_some_and(|loaded| loaded.package.state_scope == "thread")
+            {
+                continue;
+            }
+            let own = payload.own(&id);
+            let stamp = host.terminal_state_key(&id, thread.as_deref());
+            let key = stamp
+                .as_ref()
+                .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
+            let cached = key.as_ref().and_then(|key| {
+                host.renders
+                    .get(&id)
+                    .filter(|(cached, _, clock)| {
+                        cached == key
+                            && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
+                    })
+                    .map(|(_, value, _)| value.clone())
+            });
+            if cached.is_none() {
+                pending.push((
+                    results.len(),
+                    host.begin(&id, generation, &active, thread.as_deref()),
+                    own,
+                ));
+            }
+            results.push((id, cached.map(Ok), key, stamp));
+        }
+        (generation, revision, results, pending)
+    };
+    for attempt in 0..2 {
+        let replies = concurrently(pending, &active, |(index, mut begun, own), active| {
+            let mut input_stamp = results[index].3.clone();
+            for retry in 0..2 {
+                let reply = begun.and_then(|mut invocation| {
+                    if invocation.migrate {
+                        invocation.loaded.state = packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
+                    }
+                    let reply = registered_call(&invocation.loaded, &invocation.dynamic, "terminal", "").and_then(|()| bridge::run(
+                        &invocation.loaded, "terminal", "", payload.payload(own.clone()), &[], active,
+                        &mut |call| Err(failure(match call.operation.as_str() {
+                            "time.sleep" => "host_operation_unavailable: time.sleep is not available during terminal",
+                            _ => "host_operation_unavailable: requires a native task",
+                        })), &mut |_| {}, Some(invocation.virtual_time_ms.unwrap_or_else(crate::peers::now_ms)), &InvocationScope::default(),
+                    ));
+                    Ok((invocation, reply))
+                });
+                let mut host = match runtime.lock() {
+                    Ok(host) => host,
+                    Err(_) => return (index, Err(failure("mod_runtime_poisoned")), None, None),
+                };
+                let id = &results[index].0;
+                if !active() || host.generation != generation || host.terminal_revision != revision
+                {
+                    return (
+                        index,
+                        Err(failure("terminal_view_stale")),
+                        input_stamp,
+                        None,
+                    );
+                }
+                if host.terminal_state_key(id, thread.as_deref()) != input_stamp {
+                    if retry == 1 {
+                        return (
+                            index,
+                            Err(failure("terminal_state_changed")),
+                            input_stamp.clone(),
+                            input_stamp,
+                        );
+                    }
+                    begun = host.begin(id, generation, active, thread.as_deref());
+                    input_stamp = host.terminal_state_key(id, thread.as_deref());
+                    continue;
+                }
+                let result = match reply {
+                    Ok((invocation, reply)) => {
+                        host.finish(id, generation, "terminal", "", invocation, reply, active)
+                    }
+                    Err(error) => Err(error),
+                };
+                if retry == 0
+                    && result
+                        .as_ref()
+                        .is_err_and(|error| error.to_string().starts_with("state_conflict"))
+                {
+                    begun = host.begin(id, generation, active, thread.as_deref());
+                    input_stamp = host.terminal_state_key(id, thread.as_deref());
+                    continue;
+                }
+                let stamp = host.terminal_state_key(id, thread.as_deref());
+                return (index, result, input_stamp, stamp);
+            }
+            unreachable!()
+        });
+        for (index, value, input_stamp, stamp) in replies {
+            results[index].1 = Some(value);
+            results[index].2 = input_stamp
+                .map(|stamp| format!("{stamp}:{}", payload.key(&payload.own(&results[index].0))));
+            results[index].3 = stamp;
+        }
+        let mut host = runtime
+            .lock()
+            .map_err(|_| failure("mod_runtime_poisoned"))?;
+        if !active() || host.generation != generation || host.terminal_revision != revision {
+            return Err(failure("terminal_view_stale"));
+        }
+        let changed = results
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (id, _, _, stamp))| {
+                (host.terminal_state_key(id, thread.as_deref()) != *stamp).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if !changed.is_empty() {
+            if attempt == 1 {
+                return Err(failure("terminal_state_changed"));
+            }
+            pending = changed
+                .into_iter()
+                .map(|index| {
+                    let id = &results[index].0;
+                    let own = payload.own(id);
+                    let begun = host.begin(id, generation, &active, thread.as_deref());
+                    let stamp = host.terminal_state_key(&results[index].0, thread.as_deref());
+                    results[index].2 = stamp
+                        .as_ref()
+                        .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
+                    results[index].3 = stamp;
+                    (index, begun, own)
+                })
+                .collect();
+            continue;
+        }
+        let mut accepted = Vec::new();
+        for (id, value, key, _) in results {
+            let result = value.unwrap_or_else(|| Err(failure("callback_cancelled")));
+            match (&result, key) {
+                (Ok(value), Some(key)) => {
+                    let clock = host.clock_reads.contains(&id).then(Instant::now);
+                    host.renders.insert(id.clone(), (key, value.clone(), clock));
+                }
+                _ => {
+                    host.renders.remove(&id);
+                }
+            }
+            accepted.push((id, result));
+        }
+        let origin = payload.shared["event"].as_str().unwrap_or_default();
+        let view = host.compose_terminal(accepted, origin, None);
+        publish(view, host.configuration_sha256());
+        return Ok(());
+    }
+    Err(failure("terminal_state_changed"))
 }
 
 type NextFn<'n> = dyn FnMut(
@@ -4125,6 +4306,7 @@ impl ModHost {
             checkout: None,
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
+            terminal_revision: 0,
             clock_reads: BTreeSet::new(),
             ui_mods: mod_ui_allowlist().map(<[String]>::to_vec),
             rendered: HashMap::new(),
@@ -6434,6 +6616,7 @@ impl ModHost {
     }
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
+        self.terminal_revision = self.terminal_revision.wrapping_add(1);
         let thread = state_thread(&payload);
         let payload = TerminalPayload::new(payload);
         let generation = self.generation;
@@ -6564,6 +6747,7 @@ impl ModHost {
         {
             return Err(failure("terminal_owner_unavailable"));
         }
+        self.terminal_revision = self.terminal_revision.wrapping_add(1);
         let stamp = self.terminal_state_key(id, state_thread(payload).as_deref());
         let accepted = self
             .loaded

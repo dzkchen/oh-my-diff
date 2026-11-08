@@ -70,7 +70,8 @@
     "agents.cancel": [
       {
         "result": {
-          "cancelled": false
+          "cancelled": false,
+          "delivered": false
         }
       }
     ]
