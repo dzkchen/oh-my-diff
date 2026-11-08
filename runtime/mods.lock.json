@@ -966,13 +966,13 @@
       "extension_type": "mod",
       "files": {
         "index.ts": "43e270a3d75f2a29b85dc805e951ea3033cf680499341271f0af7ff16f129103",
-        "mod.json": "4ac23ad69283ff3ef42b8573b3738c8b431a0e0f17741a30cf488fe901c2e981",
+        "mod.json": "0fbfb3f1080d93ac5b09abbf9650c4016f84f55e04bb278411c5540efc18e48f",
         "tree.ts": "bf7fbea96846738c7fad9738cac75182c8dd46a796837f4b175a2f8eb9ce28f6"
       },
       "id": "omd_workspace",
-      "package_sha256": "f35127fd355d41e05cc8a61b4a94023024e138006e21511f971f6ae8d8963b52",
+      "package_sha256": "70c28b29a91a249ddb9b71e9fca93c91f4a4d1d8d611ce14b2306e3f7d517c8c",
       "source": "mods/first-party/omd_workspace",
-      "version": "1.2.0"
+      "version": "1.2.1"
     },
     "omd_yazi": {
       "api": "1.0.0",

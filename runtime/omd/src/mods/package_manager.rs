@@ -1180,7 +1180,12 @@ impl ModStore {
         settings: Option<(&str, &[u8])>,
     ) -> Result<ModPackageLock> {
         let old_lock = serde_json::to_value(self.read_package_lock()?)?;
-        let old_config = serde_json::to_value(self.configuration()?)?;
+        let mut old_config = serde_json::to_value(self.configuration()?)?;
+        for selection in old_config["mods"].as_array_mut().into_iter().flatten() {
+            if let Some(selection) = selection.as_object_mut() {
+                selection.remove("configuration_epoch");
+            }
+        }
         let old_settings = settings
             .map(|(name, _)| {
                 store::read(&self.root.join(name), 65_536)

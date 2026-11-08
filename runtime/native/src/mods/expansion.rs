@@ -92,7 +92,7 @@ pub(super) struct State {
     tool_specs_required: AtomicBool,
     inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
     tool_batch: AtomicBool,
-    gates: Mutex<std::collections::VecDeque<(String, String)>>,
+    gates: Mutex<std::collections::VecDeque<(String, Option<String>)>>,
     current: Mutex<Option<LeadHandle>>,
     leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
     threads: Mutex<std::collections::HashMap<ThreadId, (LeadHandle, String, u32)>>,
