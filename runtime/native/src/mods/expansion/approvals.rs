@@ -231,7 +231,9 @@ impl ApprovalGateContributor for Mods {
         input: ApprovalGateInput<'a>,
     ) -> ExtensionFuture<'a, ApprovalGate> {
         Box::pin(async move {
-            if !self.expansion.approval.load(Ordering::Acquire) {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            if !this.expansion.approval.load(Ordering::Acquire) {
                 return ApprovalGate::Continue;
             }
             let Some(lead) = input.thread_store.get::<Lead>() else {
@@ -241,7 +243,7 @@ impl ApprovalGateContributor for Mods {
                 "thread_id": lead.thread.to_string(), "turn_id": input.turn_id,
                 "agent_id": agent_id(input.thread_store), "host_decision": input.host_decision,
                 "policy": input.policy, "details": input.details, "assessment": input.assessment});
-            let runtime = self.runtime.clone();
+            let runtime = this.runtime.clone();
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let repository = lead.host.repository.clone();
@@ -278,7 +280,7 @@ impl ApprovalGateContributor for Mods {
             };
             if let (Some(owner), Ok(mut gates)) = (
                 owner.filter(|_| !input.assessment),
-                self.expansion.gates.lock(),
+                this.expansion.gates.lock(),
             ) {
                 gates.retain(|(call, _)| call != input.call_id);
                 if gates.len() >= 256 {
@@ -286,7 +288,7 @@ impl ApprovalGateContributor for Mods {
                 }
                 gates.push_back((input.call_id.to_owned(), owner));
             }
-            self.cleanup_failed(Some(&lead)).await;
+            this.cleanup_failed(Some(&lead)).await;
             gate
         })
     }

@@ -18,6 +18,11 @@ pub(in crate::mods) enum Pending {
         paths: Vec<String>,
         include_ignored: bool,
     },
+    ThreadBroadcast {
+        thread: ThreadId,
+        event: &'static str,
+        payload: Value,
+    },
     Broadcast {
         event: &'static str,
         payload: Value,
@@ -162,7 +167,7 @@ pub(in crate::mods) fn lead_started(core: &Arc<Core>, lead: &Lead, forked: Optio
     ensure_delivery(core);
 }
 
-fn ensure_delivery(core: &Arc<Core>) {
+pub(super) fn ensure_delivery(core: &Arc<Core>) {
     let Ok(mut delivery) = core.expansion.delivery.lock() else {
         return;
     };
@@ -282,12 +287,13 @@ fn next_channel_event(
     expansion: &State,
     subscribers: &mut std::collections::VecDeque<String>,
 ) -> Option<(String, codex_omd::event_bus::ChannelEvent)> {
+    let scope = expansion.bus_scope.as_deref();
     let mut bus = codex_omd::event_bus::global().lock().ok()?;
     while let Some(id) = subscribers.pop_front() {
-        let Some(event) = bus.drain(&id, 1).pop() else {
+        let Some(event) = bus.drain(scope, &id, 1).pop() else {
             continue;
         };
-        if bus.pending(&id) > 0 {
+        if bus.pending(scope, &id) > 0 {
             subscribers.push_back(id.clone());
         }
         if let Ok(mut cursor) = expansion.bus_cursor.lock() {
@@ -354,6 +360,15 @@ async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending
         Pending::Broadcast { event, payload } => {
             core.event(event, payload, current).await;
         }
+        Pending::ThreadBroadcast {
+            thread,
+            event,
+            payload,
+        } => {
+            if let Some(lead) = core.expansion.thread(thread) {
+                core.event(event, payload, Some(&lead)).await;
+            }
+        }
         Pending::Timer {
             thread,
             owner,
@@ -408,18 +423,19 @@ pub(super) fn sync_bus(expansion: &State) -> Vec<String> {
     ) else {
         return Vec::new();
     };
+    let scope = expansion.bus_scope.as_deref();
     for removed in subscribed.difference(&current) {
-        bus.unsubscribe(removed);
+        bus.unsubscribe(scope, removed);
     }
     for (id, subscriptions) in &subscriptions {
         if !subscriptions.channels.is_empty() {
-            bus.subscribe(id, subscriptions.channels.clone());
+            bus.subscribe(scope, id, subscriptions.channels.clone());
         }
     }
     *subscribed = current.clone();
     current
         .into_iter()
-        .filter(|id| bus.pending(id) > 0)
+        .filter(|id| bus.pending(scope, id) > 0)
         .collect()
 }
 
@@ -443,6 +459,7 @@ pub(in crate::mods) fn publish(
         .lock()
         .map_err(|_| "event_bus_poisoned")?
         .publish(
+            core.expansion.bus_scope.as_deref(),
             caller,
             &input.channel,
             input.data,

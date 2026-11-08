@@ -321,9 +321,10 @@ pub(super) fn refuse_second_copy(
     path: &Path,
     scope: &str,
     id: &str,
+    enabled: &dyn Fn(&ModSelection) -> bool,
 ) -> Result<()> {
     match config.mods.iter().find(|other| {
-        other.enabled
+        enabled(other)
             && other.path != path
             && other.scope == scope
             && package(&other.path).is_ok_and(|(manifest, _, _)| manifest.id == id)
@@ -773,7 +774,7 @@ impl ModStore {
         })
     }
 
-    fn write_staged(
+    pub(super) fn write_staged(
         &self,
         name: &str,
         bytes: &[u8],
@@ -1247,6 +1248,10 @@ impl ModStore {
             config.mods.retain(|m| m.path != path);
             trusted.insert(path.clone());
             config.mods.push(ModSelection {
+                configuration_epoch: config
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| failure("revision_overflow"))?,
                 path,
                 sha256: actual,
                 enabled: false,
@@ -1333,6 +1338,10 @@ impl ModStore {
         });
         let mut config = self.configuration()?;
         let mut revoked = Vec::new();
+        let epoch = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         for selection in &mut config.mods {
             if managed
                 .as_ref()
@@ -1343,7 +1352,8 @@ impl ModStore {
                 selection.enabled = false;
                 selection.capabilities.clear();
                 selection.secret_environment.clear();
-                selection.expires_at = None;
+                selection.expires_at = Some(0);
+                selection.configuration_epoch = epoch;
                 revoked.push(json!({"path": selection.path, "scope": selection.scope}));
             }
         }
@@ -1392,6 +1402,9 @@ impl ModStore {
         };
         if enabled {
             let selection = &config.mods[index];
+            if !selection.authority_current() {
+                return Err(failure("grant_expired: trust the package again"));
+            }
             let (manifest, _, hash) = package(path)?;
             if hash != selection.sha256 {
                 return Err(failure("source_changed: inspect and trust the new digest"));
@@ -1403,8 +1416,14 @@ impl ModStore {
             {
                 return Err(failure("capability_denied: trust the package again"));
             }
-            self.check_service_providers(&manifest, path)?;
-            refuse_second_copy(&config, path, &selection.scope, &manifest.id)?;
+            self.check_service_providers(&manifest, path, &|selection| selection.enabled)?;
+            refuse_second_copy(
+                &config,
+                path,
+                &selection.scope,
+                &manifest.id,
+                &|selection| selection.enabled,
+            )?;
         }
         config.mods[index].enabled = enabled;
         next_revision(&mut config.revision)?;
@@ -1428,7 +1447,12 @@ impl ModStore {
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 
-    pub(super) fn check_service_providers(&self, package: &ModPackage, path: &Path) -> Result<()> {
+    pub(super) fn check_service_providers(
+        &self,
+        package: &ModPackage,
+        path: &Path,
+        enabled: &dyn Fn(&ModSelection) -> bool,
+    ) -> Result<()> {
         let selections = self.configuration()?.mods;
         for import in package
             .services
@@ -1454,7 +1478,7 @@ impl ModStore {
                                     .iter()
                                     .any(|export| export.name == import.name)
                             });
-                            (manifest.id, selection.enabled || cyclic)
+                            (manifest.id, enabled(selection) || cyclic)
                         })
                 })
                 .collect::<Vec<_>>();

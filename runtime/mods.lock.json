@@ -495,11 +495,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "412807a860e5da0d1950aaf062f9558f7080c163dfa381e7ad81e22ba9215641",
+        "index.ts": "cd5cb3a4ed0b6349727c707f71a437990387052ed799ad70fc9f7e8a06c3af74",
         "mod.json": "6707361eb89f3a704cf2fc2b086192f9d5cffe659246315c462e2894be6887b8"
       },
       "id": "omd_mods",
-      "package_sha256": "4be60acf90d1b27898a4e852cc769afdd47a30c30138c8ba1375706b0b27b5d5",
+      "package_sha256": "64c62302cdd9044968fe85175003648f51e8d0871278ec10c268c290aaad6973",
       "source": "mods/first-party/omd_mods",
       "version": "1.0.2"
     },

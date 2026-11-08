@@ -14,6 +14,7 @@ pub const CHANNEL_PUBLISHER_IDLE: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChannelEvent {
+    pub scope: Option<String>,
     pub publisher: String,
     pub thread: String,
     pub channel: String,
@@ -41,9 +42,15 @@ struct PublisherSequences {
     channels: BTreeMap<String, u64>,
 }
 
+type Key = (Option<String>, String);
+
+fn key(scope: Option<&str>, id: &str) -> Key {
+    (scope.map(str::to_owned), id.to_owned())
+}
+
 pub struct EventBus {
-    subscribers: BTreeMap<String, Subscriber>,
-    sequences: BTreeMap<String, PublisherSequences>,
+    subscribers: BTreeMap<Key, Subscriber>,
+    sequences: BTreeMap<Key, PublisherSequences>,
     max_events: usize,
     max_bytes: usize,
 }
@@ -78,14 +85,14 @@ impl EventBus {
         }
     }
 
-    pub fn subscribe(&mut self, subscriber: &str, patterns: Vec<String>) {
+    pub fn subscribe(&mut self, scope: Option<&str>, subscriber: &str, patterns: Vec<String>) {
         if patterns.is_empty() {
-            self.subscribers.remove(subscriber);
+            self.unsubscribe(scope, subscriber);
             return;
         }
         let entry = self
             .subscribers
-            .entry(subscriber.to_owned())
+            .entry(key(scope, subscriber))
             .or_insert_with(|| Subscriber {
                 patterns: Vec::new(),
                 queue: VecDeque::new(),
@@ -95,23 +102,34 @@ impl EventBus {
         entry.patterns = patterns;
     }
 
-    pub fn unsubscribe(&mut self, subscriber: &str) {
-        self.subscribers.remove(subscriber);
+    pub fn unsubscribe(&mut self, scope: Option<&str>, subscriber: &str) {
+        self.subscribers.remove(&key(scope, subscriber));
     }
 
     pub fn publish(
         &mut self,
+        scope: Option<&str>,
         publisher: &str,
         name: &str,
         data: Value,
         correlation: Option<String>,
         thread: &str,
     ) -> io::Result<Delivery> {
-        self.publish_at(publisher, name, data, correlation, thread, Instant::now())
+        self.publish_at(
+            scope,
+            publisher,
+            name,
+            data,
+            correlation,
+            thread,
+            Instant::now(),
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn publish_at(
         &mut self,
+        scope: Option<&str>,
         publisher: &str,
         name: &str,
         data: Value,
@@ -141,15 +159,16 @@ impl EventBus {
                     subscriber
                         .queue
                         .iter()
-                        .map(|(event, _)| event.publisher.as_str())
+                        .map(|(event, _)| key(event.scope.as_deref(), &event.publisher))
                 })
                 .collect::<BTreeSet<_>>();
             self.sequences.retain(|publisher, sequences| {
                 now.duration_since(sequences.used) < CHANNEL_PUBLISHER_IDLE
-                    || queued.contains(publisher.as_str())
+                    || queued.contains(publisher)
             });
         }
-        let current = self.sequences.get(publisher);
+        let publisher_key = key(scope, publisher);
+        let current = self.sequences.get(&publisher_key);
         if !current.is_some_and(|sequences| sequences.channels.contains_key(name))
             && (current.is_some_and(|sequences| sequences.channels.len() >= CHANNELS_PER_PUBLISHER)
                 || self
@@ -162,13 +181,13 @@ impl EventBus {
             return Err(io::Error::other("channel_sequence_limit"));
         }
         let channel = format!("{publisher}/{name}");
-        let publisher_sequences = self
-            .sequences
-            .entry(publisher.to_owned())
-            .or_insert_with(|| PublisherSequences {
-                used: now,
-                channels: BTreeMap::new(),
-            });
+        let publisher_sequences =
+            self.sequences
+                .entry(publisher_key)
+                .or_insert_with(|| PublisherSequences {
+                    used: now,
+                    channels: BTreeMap::new(),
+                });
         publisher_sequences.used = now;
         let sequence = publisher_sequences
             .channels
@@ -176,6 +195,7 @@ impl EventBus {
             .or_default();
         *sequence += 1;
         let event = ChannelEvent {
+            scope: scope.map(str::to_owned),
             publisher: publisher.to_owned(),
             thread: thread.to_owned(),
             channel: channel.clone(),
@@ -187,8 +207,11 @@ impl EventBus {
         let mut delivery = Delivery::default();
         for subscriber in self
             .subscribers
-            .values_mut()
-            .filter(|s| subscribed(&s.patterns, &channel))
+            .iter_mut()
+            .filter(|((subscriber_scope, _), s)| {
+                subscriber_scope.as_deref() == scope && subscribed(&s.patterns, &channel)
+            })
+            .map(|(_, subscriber)| subscriber)
         {
             subscriber.bytes += size;
             subscriber.queue.push_back((event.clone(), size));
@@ -206,8 +229,13 @@ impl EventBus {
         Ok(delivery)
     }
 
-    pub fn drain(&mut self, subscriber: &str, limit: usize) -> Vec<ChannelEvent> {
-        let Some(entry) = self.subscribers.get_mut(subscriber) else {
+    pub fn drain(
+        &mut self,
+        scope: Option<&str>,
+        subscriber: &str,
+        limit: usize,
+    ) -> Vec<ChannelEvent> {
+        let Some(entry) = self.subscribers.get_mut(&key(scope, subscriber)) else {
             return Vec::new();
         };
         let count = limit.min(entry.queue.len());
@@ -225,9 +253,9 @@ impl EventBus {
         drained
     }
 
-    pub fn pending(&self, subscriber: &str) -> usize {
+    pub fn pending(&self, scope: Option<&str>, subscriber: &str) -> usize {
         self.subscribers
-            .get(subscriber)
+            .get(&key(scope, subscriber))
             .map_or(0, |s| s.queue.len())
     }
 }

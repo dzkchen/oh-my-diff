@@ -469,6 +469,10 @@ fn config_rows_mark_managed_and_writable_keys_and_never_carry_secrets() {
     let packages = json!({"packages": [
         {"id": "notes", "effective": true, "settings": {"limit": 3},
             "settings_schema": {"properties": {"limit": {"type": "number", "default": 5}}}},
+        {"id": "managed", "scope":"managed", "effective":true, "settings":{"x":1},
+            "settings_schema":{"properties":{"x":{"type":"number"}}}},
+        {"id": "required", "required":true, "effective":true, "settings":{"x":1},
+            "settings_schema":{"properties":{"x":{"type":"number"}}}},
         {"id": "off", "effective": false, "settings": {"x": 1},
             "settings_schema": {"properties": {"x": {"type": "number"}}}}
     ]});
@@ -477,6 +481,16 @@ fn config_rows_mark_managed_and_writable_keys_and_never_carry_secrets() {
     assert_eq!(rows[0]["key"], "mods.notes.limit");
     assert_eq!(rows[0]["value"], 3);
     assert!(row("mods.off.x").is_none());
+    let value = row("mods.managed.x").unwrap();
+    assert_eq!(
+        (value["managed"].clone(), value["editable"].clone()),
+        (json!(true), json!(false))
+    );
+    let value = row("mods.required.x").unwrap();
+    assert_eq!(
+        (value["managed"].clone(), value["editable"].clone()),
+        (json!(false), json!(true))
+    );
     let depth = row("agents.max_depth").unwrap();
     assert_eq!(
         (
@@ -737,5 +751,91 @@ fn packed_blits_decode_colors_and_refuse_invalid_cells_before_queueing() {
         unpacked(json!({"key": "art", "rect": rect, "packed": packed(&cells)})),
         json!({"key": "art", "rect": rect,
             "cells": [["▀", "#ff8000", null], ["a", 9, "#000001"], [" ", null, 255]]})
+    );
+}
+
+#[test]
+fn admitted_terminal_user_keeps_remote_authority_boundaries() {
+    let _serial = hub_test();
+    let _registration = register(Arc::new(Echo));
+    let _owner = enter_terminal_owner(Some("terminal-a".into()));
+    let _user = enter_terminal_user(true);
+    for (operation, arguments) in [
+        ("terminal.panel", json!({"title":"Settings","items":[]})),
+        ("prompts.consent", json!({"title":"Confirm"})),
+        (
+            "packages.apply",
+            json!({"action":"reset","id":"m","target":"terminal"}),
+        ),
+        ("packages.apply", json!({"action":"save-defaults","id":"m"})),
+    ] {
+        assert!(
+            submit(
+                "m",
+                operation,
+                arguments,
+                InvocationContext::User,
+                true,
+                None,
+                None
+            )
+            .is_ok(),
+            "{operation}"
+        );
+    }
+    for (operation, arguments) in [
+        (
+            "packages.apply",
+            json!({"action":"install","reference":"folder"}),
+        ),
+        ("packages.apply", json!({"action":"trust","id":"m"})),
+        (
+            "packages.apply",
+            json!({"action":"disable","id":"m","target":"shared"}),
+        ),
+        ("packages.apply", json!({"action":"disable","id":"m"})),
+        ("credentials.request", json!({})),
+        ("terminal.copy", json!({"text":"secret"})),
+    ] {
+        assert_eq!(
+            submit(
+                "m",
+                operation,
+                arguments,
+                InvocationContext::User,
+                true,
+                None,
+                None
+            )
+            .err(),
+            Some(needs_terminal_error(operation))
+        );
+    }
+    assert_eq!(
+        submit(
+            "m",
+            "terminal.panel",
+            json!({}),
+            InvocationContext::Event,
+            true,
+            None,
+            None
+        )
+        .err(),
+        Some("host_operation_user_only: terminal.panel".into())
+    );
+    drop(_owner);
+    assert_eq!(
+        submit(
+            "m",
+            "terminal.panel",
+            json!({}),
+            InvocationContext::User,
+            true,
+            None,
+            None
+        )
+        .err(),
+        Some(needs_terminal_error("terminal.panel"))
     );
 }
