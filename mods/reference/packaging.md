@@ -93,10 +93,12 @@ The higher-level `packages.preview`/`packages.apply` operations and `omd` CLI us
 ```
 
 `action` is one of `install`, `update`, `remove`, `rollback`, `enable`, `disable`, `trust`, `reset` or `save-defaults`.
-Experimental `target: "terminal" | "shared"` selects configuration ownership for enable/disable; terminal is the
-default in a terminal host. `reset` clears that terminal’s enablement and settings overrides. `save-defaults`
-explicitly persists its effective choices as shared defaults. Install, update, remove, rollback and trust remain
-shared. The shell CLI has no terminal context and changes shared defaults. A request names a package
+`enable` and `disable` save for every terminal; experimental `target: "terminal"` applies them to this terminal only,
+until it closes (`"shared"` is the default). `reset` clears this terminal's choices for the mod and `save-defaults`
+saves them for every terminal. Their preview's `changes` is
+`{target: 'terminal'|'shared', enabled: {before, after} | null, settings: [{key, before, after}]}`; a null `enabled`
+and empty `settings` mean nothing differs. Install, update, remove, rollback and trust are always shared, and the
+shell CLI, which has no terminal, changes what every terminal uses. A request names a package
 with `source` or with a `reference` (and optional `version`), never both. `scope` is `user` or `project`.
 `expected_generation` is described under
 [`packages.apply`, `packages.preview` and `packages.reload`](#packagesapply-packagespreview-and-packagesreload).
@@ -302,9 +304,9 @@ update it.
   and grants it does not show.
 - `packages.list` reports effective `enabled` and `settings`, plus `settings_schema`. Experimental
   `inherited_enabled` and `inherited_settings` report current defaults before terminal overrides;
-  `overrides: {enabled?, settings}` reports the terminal’s explicit choices.
+  `overrides: {enabled?, settings}` reports this terminal's own choices, leaving out values equal to the inherited ones.
 - `required` marks a selection the installer keeps on. `/mods` and `/omd` don't turn it off, but `omd mods disable`
-  does.
+  does. Its settings stay editable.
 
 ### `packages.index`
 

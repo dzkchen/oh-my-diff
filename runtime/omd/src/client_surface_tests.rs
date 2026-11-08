@@ -481,11 +481,16 @@ fn config_rows_mark_managed_and_writable_keys_and_never_carry_secrets() {
     assert_eq!(rows[0]["key"], "mods.notes.limit");
     assert_eq!(rows[0]["value"], 3);
     assert!(row("mods.off.x").is_none());
-    for key in ["mods.managed.x", "mods.required.x"] {
-        let value = row(key).unwrap();
-        assert_eq!(value["managed"], true);
-        assert_eq!(value["editable"], false);
-    }
+    let value = row("mods.managed.x").unwrap();
+    assert_eq!(
+        (value["managed"].clone(), value["editable"].clone()),
+        (json!(true), json!(false))
+    );
+    let value = row("mods.required.x").unwrap();
+    assert_eq!(
+        (value["managed"].clone(), value["editable"].clone()),
+        (json!(false), json!(true))
+    );
     let depth = row("agents.max_depth").unwrap();
     assert_eq!(
         (

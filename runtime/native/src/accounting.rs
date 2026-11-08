@@ -731,27 +731,31 @@ impl Accounts {
         Ok(())
     }
 
-    fn request_account(
+    fn captured_account(
         &self,
-        request: &Request,
+        context: &http::Extensions,
         thread: &str,
     ) -> Result<Option<Account>, TransportError> {
-        if let Some(account) = request.policy_context.get::<RequestAccount>() {
-            return Ok(account.0.clone());
-        }
-        if let Some(store) = request
-            .policy_context
-            .get::<Arc<codex_extension_api::ExtensionData>>()
-            && let Some(account) = store.get::<RequestAccount>()
-        {
-            return Ok(account.0.clone());
-        }
-        Ok(self
+        let captured = context
+            .get::<RequestAccount>()
+            .map(|account| account.0.clone())
+            .or_else(|| {
+                context
+                    .get::<Arc<codex_extension_api::ExtensionData>>()
+                    .and_then(|store| store.get::<RequestAccount>())
+                    .map(|account| account.0.clone())
+            });
+        let live = self
             .by_thread
             .lock()
             .map_err(|_| denied("account lock poisoned"))?
             .get(thread)
-            .cloned())
+            .cloned();
+        Ok(match (captured, live) {
+            (Some(Some(captured)), Some(live)) if live.owner == captured.owner => Some(live),
+            (Some(captured), _) => captured,
+            (None, live) => live,
+        })
     }
 
     fn request_runtime(
@@ -1118,7 +1122,7 @@ impl ResponseObserver for Accounts {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
             .unwrap_or_default();
-        let Some(mut account) = self.request_account(request, &thread)? else {
+        let Some(mut account) = self.captured_account(&request.policy_context, &thread)? else {
             request.policy_context.insert(RequestAccount(None));
             // Unenrolled internal requests (titles, reviews, guardians) still pass the final-request stage.
             let (Some(mods), Some(encoded)) = (self.mods_for(binding.as_ref()), body.as_ref())
@@ -1379,7 +1383,7 @@ impl ResponseObserver for Accounts {
         {
             return Err(denied(reason));
         }
-        let Some(mut account) = self.request_account(request, &thread)? else {
+        let Some(mut account) = self.captured_account(&request.policy_context, &thread)? else {
             return Ok(None);
         };
         account.mod_runtime = binding;
@@ -1719,20 +1723,7 @@ impl ResponseObserver for Accounts {
             return Ok(());
         };
         let thread = thread.unwrap_or_default();
-        let mut account = if let Some(captured) = context.get::<RequestAccount>() {
-            captured.0.clone()
-        } else if let Some(captured) = context
-            .get::<Arc<codex_extension_api::ExtensionData>>()
-            .and_then(|store| store.get::<RequestAccount>())
-        {
-            captured.0.clone()
-        } else {
-            self.by_thread
-                .lock()
-                .map_err(|_| denied("account lock poisoned"))?
-                .get(thread)
-                .cloned()
-        };
+        let mut account = self.captured_account(context, thread)?;
         if let Some(account) = &mut account {
             account.mod_runtime = binding.clone();
         }

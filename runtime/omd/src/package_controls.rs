@@ -20,6 +20,10 @@ pub struct PackageControl {
 }
 
 impl PackageControl {
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn scope(&self) -> Option<&str> {
         self.request
             .as_ref()
@@ -41,6 +45,7 @@ struct Selection {
     enabled: bool,
     secret_environment: Vec<String>,
     exec_environment: Value,
+    authority_current: bool,
 }
 
 pub struct PackagePreview {
@@ -51,8 +56,8 @@ pub struct PackagePreview {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Arguments {
-    #[serde(default = "terminal")]
-    target: String,
+    #[serde(default)]
+    target: Option<String>,
     action: String,
     #[serde(default)]
     id: Option<String>,
@@ -105,8 +110,12 @@ pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
     store.package_index_entries(&path, &arguments.query, start, limit)
 }
 
-fn terminal() -> String {
-    "terminal".into()
+pub fn target<'a>(target: Option<&'a str>, action: &str) -> &'a str {
+    target.unwrap_or(if matches!(action, "reset" | "save-defaults") {
+        "terminal"
+    } else {
+        "shared"
+    })
 }
 
 fn user() -> String {
@@ -422,7 +431,10 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                     && item["scope"] == selection["scope"]
                     && item["sha256"] == selection["sha256"]
             });
-            let failed = selection["error"].as_str().or_else(|| {
+            let failed = (selection["authority_current"] == false)
+                .then_some("grant_expired: trust the package again")
+                .or(selection["error"].as_str())
+                .or_else(|| {
                 enabled
                     .then(|| {
                         running.and_then(|item| item["error"].as_str()).or_else(|| {
@@ -510,7 +522,10 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
 pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview> {
     let arguments: Arguments = serde_json::from_value(arguments)
         .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
-    if !["terminal", "shared"].contains(&arguments.target.as_str()) {
+    let target = target(arguments.target.as_deref(), &arguments.action).to_owned();
+    if !["terminal", "shared"].contains(&target.as_str())
+        || matches!(arguments.action.as_str(), "reset" | "save-defaults") && target == "shared"
+    {
         return Err(failure("configuration_target_invalid"));
     }
     let generation = generation(store)?;
@@ -608,6 +623,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                 .filter(|name| crate::host::secret_like(name))
                 .collect();
             if sha256 == current.sha256
+                && current.authority_current
                 && secret_environment
                     .iter()
                     .all(|name| current.secret_environment.contains(name))
@@ -676,7 +692,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
         public,
         control: PackageControl {
             scope: arguments.scope,
-            target: arguments.target,
+            target,
             action: arguments.action,
             id,
             request,
@@ -742,7 +758,8 @@ fn selected(store: &ModStore, arguments: &Arguments) -> io::Result<(String, Sele
         .find(|item| {
             item["id"] == id.as_str()
                 && item["scope"] == arguments.scope.as_str()
-                && item["packaged"] != true
+                && (item["packaged"] != true
+                    || arguments.action == "trust" && item["authority_current"] == false)
         })
         .ok_or_else(|| failure(format!("package_not_installed: {id}")))?;
     let current = Selection {
@@ -754,6 +771,7 @@ fn selected(store: &ModStore, arguments: &Arguments) -> io::Result<(String, Sele
         secret_environment: serde_json::from_value(selection["secret_environment"].clone())
             .unwrap_or_default(),
         exec_environment: selection["exec_environment"].clone(),
+        authority_current: selection["authority_current"] != false,
     };
     Ok((id, current))
 }

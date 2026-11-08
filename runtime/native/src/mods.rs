@@ -45,7 +45,6 @@ use std::sync::atomic::Ordering;
 
 pub(crate) use access::AccessState;
 pub(crate) use expansion::take_route_selection;
-pub(crate) use operations::DataScope;
 
 type Reply = std::sync::mpsc::SyncSender<std::io::Result<Value>>;
 type Facts = BTreeMap<String, (String, Option<ModGrants>)>;
@@ -505,7 +504,7 @@ fn create_owner(
             codex_config,
             services: services::Services::new(terminal_owner.clone()),
             views,
-            expansion: expansion::State::default(),
+            expansion: expansion::State::scoped(terminal_owner.clone()),
             inventory,
             autonomy: autonomy::Queues::default(),
             peering: peering::Registry::default(),
@@ -1206,13 +1205,13 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
     fn prepare_turn_config(
         &self,
         config: &mut Config,
-        _thread_store: &ExtensionData,
+        thread_store: &ExtensionData,
         turn_store: &ExtensionData,
     ) -> Result<(), String> {
         let selected = turn_store
             .get::<codex_protocol::turn_input::TerminalOwner>()
             .as_deref()
-            .map(clients::ensure_owner)
+            .map(|owner| clients::running_owner(owner, thread_store))
             .transpose()?;
         if let Some(owner) = selected.as_ref() {
             turn_store.insert_arc(owner.clone());
@@ -1238,16 +1237,18 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         forked_from: Option<&str>,
         thread_init: &codex_extension_api::ExtensionDataInit,
     ) -> Result<(), String> {
-        let selected = thread_init
-            .get::<codex_protocol::turn_input::TerminalOwner>()
-            .as_deref()
-            .map(clients::ensure_owner)
-            .transpose()?;
-        if let Some(lifetime) = thread_init.get::<codex_extension_api::ThreadOwnedTerminal>()
-            && let Some(owner) = thread_init.get::<codex_protocol::turn_input::TerminalOwner>()
-        {
-            lifetime.on_drop(move || clients::release_native_owner(&owner));
-        }
+        let owner = thread_init.get::<codex_protocol::turn_input::TerminalOwner>();
+        let selected = match (
+            owner,
+            thread_init.get::<codex_extension_api::ThreadOwnedTerminal>(),
+        ) {
+            (Some(owner), Some(lifetime)) => {
+                let mods = clients::hold_native_owner(&owner, thread)?;
+                lifetime.on_drop(move || clients::release_native_owner(&owner, None));
+                Some(mods)
+            }
+            (owner, _) => owner.as_deref().map(clients::ensure_owner).transpose()?,
+        };
         let this = selected.as_deref().unwrap_or(self);
         let mut denied = Vec::new();
         for path in this.host.protected_paths() {
@@ -1757,7 +1758,7 @@ impl TurnLifecycleContributor for Mods {
             let selected = match input
                 .terminal_owner
                 .as_ref()
-                .map(clients::ensure_owner)
+                .map(|owner| clients::running_owner(owner, input.thread_store))
                 .transpose()
             {
                 Ok(selected) => selected,
@@ -2474,7 +2475,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
                     .thread_store
                     .get::<codex_protocol::turn_input::TerminalOwner>()
             {
-                clients::release_native_owner(&owner);
+                clients::release_native_owner(&owner, Some(thread));
             }
             let status = match this
                 .inventory

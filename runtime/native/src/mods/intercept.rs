@@ -222,7 +222,11 @@ pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher
             }
             let lead = ThreadId::from_string(thread)
                 .ok()
-                .and_then(|thread| core.expansion.thread(thread))
+                .and_then(|thread| {
+                    core.expansion
+                        .thread(thread)
+                        .or_else(|| core.expansion.lead(thread))
+                })
                 .ok_or_else(|| unavailable("no session for this thread"))?;
             let ((source, grants), generation) = {
                 let mut runtime = core

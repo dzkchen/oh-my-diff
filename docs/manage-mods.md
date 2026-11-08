@@ -78,18 +78,20 @@ Git tag or a package instead.
 - For organizations, the [administrator policy](../mods/reference/administrator-policy.md)
   controls which mods may run.
 
-## Terminal choices and saved defaults
+## Terminal choices and saved settings
 
-Ordinary on/off switches and setting edits in `/mods` and native `/omd` affect this terminal only.
-In `/omd`, open **All mods** to edit string, number, boolean and enum settings, including while `/mods` is disabled.
-Each setting shows its effective value, inherited value and terminal override; **Reset setting** clears only that key.
-They survive conversation changes and mod reloads, and disappear when the terminal host exits.
-Another terminal, including one on the same conversation, starts from shared defaults. Reconnecting the
-same attached terminal retains its choices while its host is alive; children start from defaults.
+Changes in `/mods` and `/omd` save for every terminal and for future launches. To change a mod in one terminal
+only, open it in `/mods` and set **Changes apply to** to **Only this terminal**, or pick its **Changes apply to** row
+under **All mods…** in `/omd`. Those choices last until you close
+that terminal, and forks and subagents started from it follow them. A mod that already has choices in this terminal
+opens on **Only this terminal**; pick **Every terminal** to save the next change for all.
 
-Use **Reset to defaults** to clear local enablement and settings choices and inherit the latest shared values. If a shell command disabled an installer-required mod, native `/omd` offers **Restore saved default**; this explicit shared action turns it back on for every terminal. Administrator policy remains authoritative.
-Use **Save as defaults** explicitly to persist your choices for future launches and terminals inheriting defaults. If the mod has a settings file, this action also saves the effective values there; JSON syntax is used for JSON and YAML files, replacing existing formatting and comments.
-Shared changes do not replace valid local overrides. Shell `omd mods` commands change shared configuration.
-Install, update, remove, rollback and trust are always shared. Policy and trust still apply: local choices cannot
-grant permissions, undo revocation or revive removed packages. Source, schema and authority changes invalidate
-or revalidate overrides. Mod data and credentials are separate from terminal configuration.
+When a terminal has its own choices, the mod says **This terminal has its own choices** and offers two actions, each
+showing what changes before it asks you:
+
+- **Use saved settings** drops this terminal's choices.
+- **Keep these for every terminal** saves them for every terminal.
+
+`/omd` offers the same two actions. If a mod has a settings file, saving a setting the
+file sets updates that line in the file and keeps its comments. A mod the installer keeps on can't be turned off,
+but you can change its settings. Your administrator's mods can't be changed.

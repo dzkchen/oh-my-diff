@@ -101,6 +101,7 @@ pub(super) struct State {
     pub(super) turns: Mutex<BTreeMap<String, u64>>,
     restarted: Mutex<BTreeMap<String, bool>>,
     watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
+    bus_scope: Option<String>,
     subscribed: Mutex<BTreeSet<String>>,
     bus_cursor: Mutex<String>,
     subscriptions: Mutex<Vec<(String, codex_omd::ModSubscriptions)>>,
@@ -166,6 +167,13 @@ impl LeadHandle {
 }
 
 impl State {
+    pub(super) fn scoped(bus_scope: Option<String>) -> Self {
+        Self {
+            bus_scope,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn current(&self) -> Option<Lead> {
         self.current
             .lock()
@@ -200,7 +208,6 @@ impl State {
             self.refresh(&runtime);
         }
         delivery::ensure_delivery(core);
-        self.thread_started(lead);
         *self
             .current
             .lock()
@@ -674,7 +681,7 @@ pub(super) async fn dispatch(
                         runtime,
                         &id,
                         &arguments.values,
-                        arguments.target.as_deref().unwrap_or("terminal"),
+                        arguments.target.as_deref().unwrap_or("shared"),
                         &arguments.reset,
                         arguments.scope.as_deref(),
                         &caller,

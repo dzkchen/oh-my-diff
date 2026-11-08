@@ -2618,17 +2618,8 @@ pub fn write_settings_in(
         })
         .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
     let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
-    if let Some(name) = values
-        .keys()
-        .find(|name| selection["settings_origin"][name.as_str()] == "file")
-    {
-        return Err(failure(format!("setting_set_by_file: {name}")));
-    }
-    let mut settings = store.merge_settings(&path, values)?;
-    if let Some(file) = selection["file_settings"].as_object() {
-        settings.extend(file.clone());
-    }
-    let (package, _, _) = store::package(&path)?;
+    let settings = store.save_configuration(&path, values, None, None, "settings")?;
+    let (package, _) = store::verified_package(&path)?;
     Ok(json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)}))
 }
 
@@ -4410,8 +4401,6 @@ impl ModHost {
     }
 
     pub fn reload(&mut self) -> Result<bool> {
-        self.configuration_stamp = None;
-        self.override_revision = None;
         for loaded in self.loaded.values() {
             process::invalidate_session_owner(&self.session_owner(loaded), None);
         }
@@ -5741,10 +5730,6 @@ impl ModHost {
             .get(&loaded.package.id)
             .unwrap_or(&loaded.selection);
         // An unchanged authority inventory cannot introduce a different precedence winner.
-        self.configuration_overrides
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .retain_unblocked(&self.store)?;
         let overrides = self.current_overrides();
         let unchanged = hash == self.configuration_sha256
             && self.override_revision == Some(overrides.revision());

@@ -92,7 +92,6 @@ pub(crate) struct Session {
     contract_state: PathBuf,
     processes: Arc<managed_process::ManagedProcesses>,
     power: Arc<codex_omd::power::Leases>,
-    data: mods::DataScope,
     access: mods::AccessState,
 }
 
@@ -554,7 +553,6 @@ impl Host {
             )),
             processes: Arc::new(managed_process::ManagedProcesses::default()),
             power: Arc::default(),
-            data: mods::DataScope::default(),
             access: mods::AccessState::default(),
             evidence,
         }))

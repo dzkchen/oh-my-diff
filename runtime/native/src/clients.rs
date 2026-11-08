@@ -11,6 +11,8 @@ use codex_omd::resource_data::ResourceRef;
 static OWNERS: Mutex<BTreeMap<String, Arc<Mods>>> = Mutex::new(BTreeMap::new());
 static SESSION_OWNERS: Mutex<BTreeMap<String, std::sync::Weak<Mods>>> = Mutex::new(BTreeMap::new());
 static CLIENT_OWNERS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+static NATIVE_HOLDERS: Mutex<std::collections::BTreeSet<(String, String)>> =
+    Mutex::new(std::collections::BTreeSet::new());
 
 pub fn configuration(client: &str, request: Value) -> Result<Value, String> {
     let action = request["action"]
@@ -65,7 +67,7 @@ pub fn configuration(client: &str, request: Value) -> Result<Value, String> {
         "write" => {
             let id = request["id"].as_str().ok_or("mod_id_required")?;
             let reset: Vec<String> = serde_json::from_value(request.get("reset").cloned().unwrap_or_else(|| json!([]))).map_err(|e| e.to_string())?;
-            runtime.write_configuration_in(id, &request["values"], request["target"].as_str().unwrap_or("terminal"), &reset, request["scope"].as_str())
+            runtime.write_configuration_in(id, &request["values"], request["target"].as_str().unwrap_or("shared"), &reset, request["scope"].as_str())
         }
         "package" => {
             let arguments = &request["request"];
@@ -92,7 +94,10 @@ pub fn terminal_package_preview(
     if !arguments["expected_generation"].is_u64() {
         return Err("expected_generation_required".into());
     }
-    if arguments["target"].as_str().unwrap_or("terminal") != "terminal"
+    if codex_omd::package_controls::target(
+        arguments["target"].as_str(),
+        arguments["action"].as_str().unwrap_or_default(),
+    ) != "terminal"
         || !matches!(
             arguments["action"].as_str(),
             Some("enable" | "disable" | "reset" | "save-defaults")
@@ -141,22 +146,61 @@ pub(crate) fn request_runtime(
     }))
 }
 
-pub(super) fn release_native_owner(owner: &codex_protocol::turn_input::TerminalOwner) {
+pub(super) fn hold_native_owner(
+    owner: &codex_protocol::turn_input::TerminalOwner,
+    thread: Option<&str>,
+) -> Result<Arc<Mods>, String> {
+    let mut holders = NATIVE_HOLDERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mods = ensure_owner(owner)?;
+    if let Some(thread) = thread {
+        holders.insert((owner.0.to_string(), thread.to_owned()));
+    }
+    Ok(mods)
+}
+
+pub(super) fn running_owner(
+    owner: &codex_protocol::turn_input::TerminalOwner,
+    thread_store: &ExtensionData,
+) -> Result<Arc<Mods>, String> {
+    if thread_store
+        .get::<codex_extension_api::ThreadOwnedTerminal>()
+        .is_some()
+    {
+        return for_owner(owner).ok_or_else(|| "terminal_owner_released".into());
+    }
+    ensure_owner(owner)
+}
+
+pub(super) fn release_native_owner(
+    owner: &codex_protocol::turn_input::TerminalOwner,
+    thread: Option<&str>,
+) {
     let key = owner.0.to_string();
+    let mut holders = NATIVE_HOLDERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    holders.retain(|(held, holder)| held != &key || thread.is_some_and(|thread| thread != holder));
+    if holders.iter().any(|(held, _)| held == &key) {
+        return;
+    }
     let mut owners = OWNERS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let clients = CLIENT_OWNERS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !clients.values().any(|value| value == &key) {
-        owners.remove(&key);
-    }
+    let removed = (!clients.values().any(|value| value == &key))
+        .then(|| owners.remove(&key))
+        .flatten();
+    drop((clients, owners, holders));
+    drop(removed);
 }
 
 pub fn release_owner(owner: codex_protocol::turn_input::TerminalOwner) {
     let key = owner.0.to_string();
-    OWNERS
+    let released = OWNERS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&key);
@@ -164,6 +208,7 @@ pub fn release_owner(owner: codex_protocol::turn_input::TerminalOwner) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .retain(|_, value| value != &key);
+    drop(released);
 }
 
 pub fn bind(client: &str, owner: codex_protocol::turn_input::TerminalOwner) -> Result<(), String> {
@@ -276,6 +321,7 @@ pub async fn select_thread(
         .find_map(|core| core.expansion.thread(thread))
         .ok_or("session_unavailable")?;
     let target = ensure_owner(&owner)?;
+    let owns = target.expansion.thread(thread).is_some();
     let changed = target
         .expansion
         .current()
@@ -291,29 +337,13 @@ pub async fn select_thread(
         .lock()
         .map_err(|_| "terminal_owner_poisoned")?
         .insert(thread.to_string(), Arc::downgrade(&lead.session));
-    if let Some(invoker) = sources.iter().find_map(|source| {
-        source
-            .expansion
-            .invokers
-            .lock()
-            .ok()?
-            .get(&thread.to_string())
-            .cloned()
-    }) {
-        target
-            .expansion
-            .invokers
-            .lock()
-            .map_err(|_| "terminal_owner_poisoned")?
-            .insert(thread.to_string(), invoker);
-    }
     if changed || first {
         let store = ExtensionData::new(thread.to_string());
         store.insert(lead.clone());
         store.insert_arc(target.clone());
         target.views.start_thread(&store);
     }
-    if first {
+    if first && owns {
         target
             .event(
                 "session",
@@ -328,6 +358,8 @@ pub async fn select_thread(
         target
             .views
             .presentation(&thread.to_string(), Some("resumed"));
+    }
+    if changed && owns {
         target
             .event(
                 "session",
@@ -575,8 +607,13 @@ const POINTER_ACTIONS: &[&str] = &[
 const POINTER_BUTTONS: &[&str] = &["left", "right", "middle"];
 
 fn pointer(pointer: &Value) -> Option<Value> {
-    (pointer["column"].is_u64()
-        && pointer["row"].is_u64()
+    let coordinate = |axis: &str| {
+        pointer[axis]
+            .as_i64()
+            .is_some_and(|value| i32::try_from(value).is_ok())
+    };
+    (coordinate("column")
+        && coordinate("row")
         && pointer["action"]
             .as_str()
             .is_some_and(|action| POINTER_ACTIONS.contains(&action))
@@ -670,17 +707,17 @@ pub(super) fn reconcile(views: &view::Views, snapshot: &ModViewSnapshot) {
         current
     });
 }
-/// Undelivered `component_post` payloads by owner, the latest per client instance.
-struct ComponentPost {
+struct Post {
     core: std::sync::Weak<Core>,
-    lead: Lead,
     owner: String,
     source: String,
     payload: Value,
+    thread: Option<ThreadId>,
     revoked: Arc<AtomicBool>,
 }
 
-static POSTS: Mutex<Vec<ComponentPost>> = Mutex::new(Vec::new());
+/// Undelivered `component_post` payloads, the latest per client instance.
+static POSTS: Mutex<Vec<Post>> = Mutex::new(Vec::new());
 static POSTING: Coalesce = Coalesce::new();
 
 /// Defaults to 80 columns and rows 0 (the auto height a terminal node without `height` gets) when no size was given or rendered.
@@ -727,8 +764,8 @@ fn module_step(
         );
         (owner, module.to_owned(), props.clone(), size, revoked)
     };
-    let _thread =
-        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
+    let thread = core.expansion.current().map(|lead| lead.thread);
+    let _thread = codex_omd::StateThread::enter(thread.map(|thread| thread.to_string()));
     let frame = json!({"instance": instance(client, component), "client": client,
         "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
         "columns": columns, "rows": rows, "events": events});
@@ -755,12 +792,12 @@ fn module_step(
                     || queued.payload["component"] != payload["component"]
                     || queued.payload["client"] != payload["client"]
             });
-            posts.push(ComponentPost {
+            posts.push(Post {
                 core: Arc::downgrade(&core),
-                lead: session(&core)?,
                 owner,
                 source,
                 payload,
+                thread,
                 revoked,
             });
         }
@@ -769,36 +806,62 @@ fn module_step(
     Ok(step)
 }
 
-fn deliver_posts() {
-    while let Some(post) = POSTS
-        .lock()
-        .ok()
-        .and_then(|mut posts| (!posts.is_empty()).then(|| posts.remove(0)))
-    {
-        if post.revoked.load(Ordering::Acquire) {
-            continue;
+fn next_post(core: &std::sync::Weak<Core>, thread: ThreadId) -> Option<Post> {
+    let mut posts = POSTS.lock().ok()?;
+    while let Some(index) = posts.iter().position(|post| post.core.ptr_eq(core)) {
+        let post = posts.remove(index);
+        if !post.revoked.load(Ordering::Acquire) && post.thread == Some(thread) {
+            return Some(post);
         }
-        let Some(core) = post.core.upgrade() else {
+    }
+    None
+}
+
+fn deliver_posts() {
+    let cores = POSTS.lock().map_or_else(
+        |_| Vec::new(),
+        |mut posts| {
+            posts.retain(|post| post.core.strong_count() > 0);
+            let mut cores: Vec<std::sync::Weak<Core>> = Vec::new();
+            for post in posts.iter() {
+                if !cores.iter().any(|core| core.ptr_eq(&post.core)) {
+                    cores.push(post.core.clone());
+                }
+            }
+            cores
+        },
+    );
+    for weak in cores {
+        let Some(core) = weak.upgrade() else {
             continue;
         };
-        let registered = core.runtime.lock().is_ok_and(|runtime| {
-            runtime.registered(&post.owner, "component_post")
-                && runtime
-                    .grants(&post.owner)
-                    .is_some_and(|grants| grants.source_sha256 == post.source)
-        });
-        if registered {
-            let lead = Lead {
-                permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
-                ..post.lead
-            };
-            let _ = block(
-                &core,
-                expansion::REMOTE.scope(
-                    true,
-                    expansion::invoke_one(&core, &lead, post.owner, "component_post", post.payload),
-                ),
-            );
+        while let Ok(lead) = session(&core)
+            && let Some(Post {
+                owner,
+                source,
+                payload,
+                ..
+            }) = next_post(&weak, lead.thread)
+        {
+            let registered = core.runtime.lock().is_ok_and(|runtime| {
+                runtime.registered(&owner, "component_post")
+                    && runtime
+                        .grants(&owner)
+                        .is_some_and(|grants| grants.source_sha256 == source)
+            });
+            if registered {
+                let lead = Lead {
+                    permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
+                    ..lead
+                };
+                let _ = block(
+                    &core,
+                    expansion::REMOTE.scope(
+                        true,
+                        expansion::invoke_one(&core, &lead, owner, "component_post", payload),
+                    ),
+                );
+            }
         }
     }
 }

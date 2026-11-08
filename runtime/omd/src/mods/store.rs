@@ -321,9 +321,10 @@ pub(super) fn refuse_second_copy(
     path: &Path,
     scope: &str,
     id: &str,
+    enabled: &dyn Fn(&ModSelection) -> bool,
 ) -> Result<()> {
     match config.mods.iter().find(|other| {
-        other.enabled
+        enabled(other)
             && other.path != path
             && other.scope == scope
             && package(&other.path).is_ok_and(|(manifest, _, _)| manifest.id == id)
@@ -909,6 +910,54 @@ impl ModStore {
         self.selection_status_inspected_in(project, &configuration, &lock, None)
     }
 
+    pub(crate) fn data_selection(
+        &self,
+        project: &Path,
+        owner: &str,
+        source_sha256: &str,
+    ) -> Result<(u64, ModSelection)> {
+        let managed = self.managed()?;
+        let configuration = match self.configuration() {
+            Ok(configuration) => configuration,
+            Err(_) if managed.is_some() => ModConfiguration {
+                schema: 1,
+                revision: 0,
+                node: None,
+                mods: Vec::new(),
+            },
+            Err(error) => return Err(error),
+        };
+        let brokered = brokered_grants(&self.root)?;
+        let mut selections = match &managed {
+            Some(managed) => {
+                managed
+                    .selections(
+                        &self.managed_deployment()?,
+                        &self.managed_user(),
+                        Some(project),
+                    )
+                    .0
+            }
+            None => Vec::new(),
+        };
+        let administered = selections.len();
+        selections.extend(configuration.mods);
+        let selection = super::ModHost::select(
+            &selections,
+            administered,
+            true,
+            brokered.as_ref().map(|(_, grants)| grants),
+            managed.as_ref().map(|managed| &managed.policy),
+            &mut Vec::new(),
+            |path| verified_package(path).map(|(package, sha256)| (package, String::new(), sha256)),
+        )?
+        .remove(owner)
+        .map(|(selection, _, _)| selection)
+        .filter(|selection| selection.sha256 == source_sha256 && selection.authority_current())
+        .ok_or_else(|| failure("data_source_not_selected"))?;
+        Ok((configuration.revision, selection))
+    }
+
     pub(crate) fn selection_status_inspected_in(
         &self,
         project: Option<&Path>,
@@ -1353,6 +1402,9 @@ impl ModStore {
         };
         if enabled {
             let selection = &config.mods[index];
+            if !selection.authority_current() {
+                return Err(failure("grant_expired: trust the package again"));
+            }
             let (manifest, _, hash) = package(path)?;
             if hash != selection.sha256 {
                 return Err(failure("source_changed: inspect and trust the new digest"));
@@ -1364,8 +1416,14 @@ impl ModStore {
             {
                 return Err(failure("capability_denied: trust the package again"));
             }
-            self.check_service_providers(&manifest, path)?;
-            refuse_second_copy(&config, path, &selection.scope, &manifest.id)?;
+            self.check_service_providers(&manifest, path, &|selection| selection.enabled)?;
+            refuse_second_copy(
+                &config,
+                path,
+                &selection.scope,
+                &manifest.id,
+                &|selection| selection.enabled,
+            )?;
         }
         config.mods[index].enabled = enabled;
         next_revision(&mut config.revision)?;
@@ -1389,7 +1447,12 @@ impl ModStore {
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 
-    pub(super) fn check_service_providers(&self, package: &ModPackage, path: &Path) -> Result<()> {
+    pub(super) fn check_service_providers(
+        &self,
+        package: &ModPackage,
+        path: &Path,
+        enabled: &dyn Fn(&ModSelection) -> bool,
+    ) -> Result<()> {
         let selections = self.configuration()?.mods;
         for import in package
             .services
@@ -1415,7 +1478,7 @@ impl ModStore {
                                     .iter()
                                     .any(|export| export.name == import.name)
                             });
-                            (manifest.id, selection.enabled || cyclic)
+                            (manifest.id, enabled(selection) || cyclic)
                         })
                 })
                 .collect::<Vec<_>>();

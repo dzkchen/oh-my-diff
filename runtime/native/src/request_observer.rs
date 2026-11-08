@@ -8,7 +8,10 @@ use std::sync::OnceLock;
 
 tokio::task_local! { static POLICY_CONTEXT: http::Extensions; }
 
-pub async fn with_policy_context<F: std::future::Future>(context: http::Extensions, future: F) -> F::Output {
+pub async fn with_policy_context<F: std::future::Future>(
+    context: http::Extensions,
+    future: F,
+) -> F::Output {
     POLICY_CONTEXT.scope(context, future).await
 }
 
@@ -37,7 +40,12 @@ pub trait ResponseObserver: Send + Sync {
         body: Option<&EncodedJsonBody>,
     ) -> Result<Option<Box<dyn ResponseAttempt>>, TransportError>;
     /// Runs the final-request stage over a unary JSON request body.
-    fn police_unary(&self, thread: Option<&str>, body: &mut Value, _context: &http::Extensions) -> Result<(), TransportError> {
+    fn police_unary(
+        &self,
+        thread: Option<&str>,
+        body: &mut Value,
+        _context: &http::Extensions,
+    ) -> Result<(), TransportError> {
         let _ = (thread, body);
         Ok(())
     }
@@ -49,7 +57,9 @@ pub trait ResponseObserver: Send + Sync {
     fn policed(&self) -> Option<String> {
         None
     }
-    fn policed_for(&self, _context: &http::Extensions) -> Option<String> { self.policed() }
+    fn policed_for(&self, _context: &http::Extensions) -> Option<String> {
+        self.policed()
+    }
     fn answer(&self, request: &Request) -> Option<Vec<Value>> {
         let _ = request;
         None
@@ -111,8 +121,14 @@ pub(crate) fn reject_policed_transport(transport: &str) -> Result<(), crate::err
     reject_policed_transport_for(transport, &policy_context())
 }
 
-fn reject_policed_transport_for(transport: &str, context: &http::Extensions) -> Result<(), crate::error::ApiError> {
-    if let Some(owners) = OBSERVER.get().and_then(|observer| observer.policed_for(context)) {
+fn reject_policed_transport_for(
+    transport: &str,
+    context: &http::Extensions,
+) -> Result<(), crate::error::ApiError> {
+    if let Some(owners) = OBSERVER
+        .get()
+        .and_then(|observer| observer.policed_for(context))
+    {
         return Err(crate::error::ApiError::InvalidRequest {
             message: format!(
                 "local OMD request policy: final_request_refused: request_policy_unsupported_transport: {transport} requests cannot pass the final-request policy of {owners}; turn {owners} off to use this feature"
@@ -172,7 +188,9 @@ pub(crate) fn prepare(
     request: &mut Request,
     body: &mut Option<EncodedJsonBody>,
 ) -> Result<(), TransportError> {
-    if request.policy_context.is_empty() { request.policy_context = policy_context(); }
+    if request.policy_context.is_empty() {
+        request.policy_context = policy_context();
+    }
     if let Some(observer) = OBSERVER.get() {
         observer.prepare(request, body)?;
     }

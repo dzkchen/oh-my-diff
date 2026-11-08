@@ -78,10 +78,10 @@ test('a shadowed or off copy shows no settings and never writes them, since the 
   const packages = [{ ...logo, effective: false }, { ...logo, scope: 'project' }];
   const shadowed = invoke('mod user:omd_logo', { packages });
   assert.ok(!shadowed.panels[0].items.some(item => item.id.startsWith('setting:')));
-  assert.match(shadowed.panels[0].subtitle, /Settings save to the project copy, which is on/);
+  assert.match(shadowed.panels[0].subtitle, /This project's copy is in use; change its settings there/);
   const typed = invoke('mod user:omd_logo setting:size small', { packages, ui_state: shadowed.ui });
   assert.ok(!operations(typed).includes('settings.write'));
-  assert.match(typed.panels[0].subtitle, /change them there/);
+  assert.match(typed.panels[0].subtitle, /change its settings there/);
   const off = invoke('mod user:omd_logo', { packages: [{ ...logo, enabled: false, effective: false }] });
   assert.match(off.panels[0].subtitle, /Turn it on to change its settings/);
   assert.ok(invoke('mod project:omd_logo', { packages }).panels[0].items.some(item => item.id === 'setting:size'));
@@ -225,28 +225,116 @@ test('an identity collision warning is shown before accepting trust', () => {
   assert.ok(JSON.stringify(panel.panels).includes(warning));
 });
 
-test('terminal details expose inherited configuration and explicit reset and save actions', () => {
-  const item = mod('theme', { inherited_enabled: false, inherited_settings: {}, overrides: { enabled: true, settings: {} } });
-  const opened = invoke('theme', { packages: [item] });
-  assert.match(opened.panels[0].subtitle, /Saved default: off.*Terminal overrides active/s);
-  assert.ok(opened.panels[0].items.some(item => item.id === 'do:reset'));
-  assert.ok(opened.panels[0].items.some(item => item.id === 'do:save-defaults'));
-  for (const action of ['reset', 'save-defaults']) {
+const theme = mod('theme', { settings: { greeting: 'hi' }, settings_schema: { properties: { greeting: { type: 'string', title: 'Greeting' }, limit: { type: 'number', title: 'Max tokens' } } },
+  inherited_enabled: true, inherited_settings: { greeting: 'hi' }, overrides: { settings: {} } });
+
+test('changes save for every terminal unless Only this terminal is chosen for that mod', () => {
+  const off = { ...theme, enabled: false, effective: false };
+  const sent = [];
+  const answers = { packages: [off], 'packages.apply': args => { sent.push(args); return { status: 'applied', generation: 2 }; } };
+  const opened = invoke('theme', { packages: [off] });
+  assert.deepEqual(opened.panels[0].items.find(item => item.id === 'target'), { id: 'target', label: 'Changes apply to', kind: 'choice', value: 'shared',
+    options: [{ value: 'shared', label: 'Every terminal' }, { value: 'terminal', label: 'Only this terminal' }] });
+  assert.equal(opened.panels[0].items.find(item => item.id === 'enabled').label, 'On');
+  const shared = invoke('mod user:theme enabled true', { ...answers, ui_state: opened.ui });
+  assert.equal(sent.pop().target, undefined);
+  assert.equal(shared.ui.notice, 'Theme is on.');
+  const local = invoke('mod user:theme target terminal', { packages: [off], ui_state: opened.ui });
+  assert.equal(local.panels[0].items.find(item => item.id === 'target').value, 'terminal');
+  const toggled = invoke('mod user:theme enabled true', { ...answers, ui_state: local.ui });
+  assert.equal(sent.pop().target, 'terminal');
+  assert.equal(toggled.ui.notice, 'Theme is on in this terminal until you close it.');
+  invoke('panel user user:theme true', { ...answers, ui_state: local.ui });
+  assert.equal(sent.pop().target, 'terminal');
+  invoke('panel user user:theme true', { ...answers, ui_state: opened.ui });
+  assert.equal(sent.pop().target, undefined);
+  const written = [];
+  const write = args => { written.push(args); return { settings: args.values }; };
+  const saved = invoke('mod user:theme setting:greeting yo', { packages: [theme], ui_state: opened.ui, 'settings.write': write });
+  assert.deepEqual(written.pop(), { id: 'theme', scope: 'user', values: { greeting: 'yo' } });
+  assert.equal(saved.ui.notice, 'Greeting saved.');
+  const set = invoke('mod user:theme setting:greeting yo', { packages: [theme], ui_state: local.ui, 'settings.write': write });
+  assert.deepEqual(written.pop(), { id: 'theme', scope: 'user', values: { greeting: 'yo' }, target: 'terminal' });
+  assert.equal(set.ui.notice, 'Greeting set for this terminal until you close it.');
+  const reverted = invoke('mod user:theme target shared', { packages: [off], ui_state: local.ui });
+  assert.equal(reverted.panels[0].items.find(item => item.id === 'target').value, 'shared');
+});
+
+test('a mod with its own choices in this terminal is marked in the list and offers to use saved settings or keep them', () => {
+  const plain = invoke('theme', { packages: [theme] });
+  assert.doesNotMatch(plain.panels[0].subtitle, /Saved default|own choices/);
+  assert.ok(!plain.panels[0].items.some(item => item.id.startsWith('do:reset') || item.id === 'do:save-defaults'));
+  assert.doesNotMatch(invoke('', { packages: [theme] }).panels[0].items.find(item => item.id === 'user:theme').description ?? '', /only this terminal/);
+  const own = { ...theme, overrides: { enabled: true, settings: {} } };
+  assert.match(invoke('', { packages: [own] }).panels[0].items.find(item => item.id === 'user:theme').description, /only this terminal/);
+  const opened = invoke('theme', { packages: [own] });
+  assert.match(opened.panels[0].subtitle, /This terminal has its own choices/);
+  assert.deepEqual(opened.panels[0].items.filter(item => item.id === 'do:reset' || item.id === 'do:save-defaults').map(item => item.label), ['Use saved settings', 'Keep these for every terminal']);
+});
+
+test('a mod with terminal choices keeps editing this terminal after its UI state is cleared until Every terminal is picked', () => {
+  const own = { ...theme, overrides: { settings: { greeting: 'yo' } } };
+  const written = [];
+  const write = args => { written.push(args); return { settings: args.values }; };
+  const opened = invoke('theme', { packages: [own] });
+  assert.equal(opened.panels[0].items.find(item => item.id === 'target').value, 'terminal');
+  invoke('mod user:theme setting:greeting hey', { packages: [own], 'settings.write': write });
+  assert.equal(written.pop().target, 'terminal');
+  const shared = invoke('mod user:theme target shared', { packages: [own], ui_state: opened.ui });
+  assert.equal(shared.panels[0].items.find(item => item.id === 'target').value, 'shared');
+  invoke('mod user:theme setting:greeting hey', { packages: [own], ui_state: shared.ui, 'settings.write': write });
+  assert.equal(written.pop().target, undefined);
+});
+
+test('reset and save-defaults reviews list what changes and offer no Apply when nothing differs', () => {
+  const own = { ...theme, overrides: { enabled: false, settings: { greeting: 'yo' } } };
+  const changes = { target: 'shared', enabled: { before: false, after: true }, settings: [{ key: 'greeting', before: 'hi', after: 'yo' }] };
+  for (const [action, note] of [['save-defaults', 'Applies to every terminal and future launches.'], ['reset', 'This terminal goes back to your saved settings.']]) {
     let request;
-    const previewed = invoke(`mod user:theme do:${action}`, { packages: [item], 'packages.preview': args => {
-      request = args;
-      return { action, id: 'theme', changes: {}, grants_added: [] };
-    } });
-    assert.equal(request.action, action);
-    assert.equal(request.scope, 'user');
-    assert.ok(!operations(previewed).includes('packages.apply'));
+    const previewed = invoke(`mod user:theme do:${action}`, { packages: [own], 'packages.preview': args => { request = args; return { action, id: 'theme', changes, grants_added: [] }; } });
+    assert.deepEqual([request.action, request.scope, request.target], [action, 'user', undefined]);
+    const subtitle = previewed.panels[0].subtitle;
+    for (const line of ['On: off → on', 'Greeting: hi → yo', note]) assert.ok(subtitle.split('\n').includes(line), subtitle);
+    assert.doesNotMatch(subtitle, /no package changes/);
     let applied;
-    invoke('apply', { packages: [item], ui_state: previewed.ui, 'packages.apply': args => {
-      applied = args;
-      return { status: 'applied', generation: 2 };
-    } });
+    invoke('apply', { packages: [own], ui_state: previewed.ui, 'packages.apply': args => { applied = args; return { status: 'applied', generation: 2 }; } });
     assert.equal(applied.action, action);
+    const same = invoke(`mod user:theme do:${action}`, { packages: [own], 'packages.preview': () => ({ action, id: 'theme', changes: { target: 'shared', enabled: null, settings: [] }, grants_added: [] }) });
+    assert.match(same.panels[0].subtitle, /Nothing to change/);
+    assert.ok(!same.panels[0].items.some(item => item.id === 'apply'));
   }
+});
+
+test('a required mod keeps its settings editable and an administrator-managed one shows them read-only', () => {
+  const required = { ...theme, required: true };
+  const opened = invoke('theme', { packages: [required] });
+  assert.ok(!opened.panels[0].items.some(item => item.id === 'enabled'));
+  assert.equal(opened.panels[0].items.find(item => item.id === 'setting:greeting').kind, 'text');
+  let written;
+  const saved = invoke('mod user:theme setting:greeting yo', { packages: [required], 'settings.write': args => { written = args; return { settings: args.values }; } });
+  assert.deepEqual(written, { id: 'theme', scope: 'user', values: { greeting: 'yo' } });
+  assert.equal(saved.ui.notice, 'Greeting saved.');
+  const managed = { ...theme, scope: 'managed', required: true };
+  const shown = invoke('mod managed:theme', { packages: [managed] });
+  assert.match(shown.panels[0].subtitle, /Your administrator manages this mod/);
+  assert.deepEqual(shown.panels[0].items.filter(item => item.id.startsWith('setting:')).map(item => [item.kind, item.description]), [['action', 'hi'], ['action', 'not set']]);
+  assert.ok(!shown.panels[0].items.some(item => item.id === 'target'));
+  const typed = invoke('mod managed:theme setting:greeting yo', { packages: [managed], ui_state: shown.ui });
+  assert.ok(!operations(typed).includes('settings.write'));
+  const refused = invoke('mod user:theme setting:greeting yo', { packages: [theme], 'settings.write': () => { throw new Error('configuration_override_forbidden'); } });
+  assert.doesNotMatch(refused.panels[0].subtitle, /configuration_override_forbidden/);
+  for (const [error, notice] of [['grant_expired: trust the package again', 'Greeting was not saved (its permission expired; choose Trust again)'],
+    ['settings_file_invalid: mode', 'Greeting was not saved (its settings file has a mistake; fix or delete the file, then try again)']])
+    assert.equal(invoke('mod user:theme setting:greeting yo', { packages: [theme], 'settings.write': () => { throw new Error(error); } }).ui.notice, notice);
+  for (const source of ['npm', 'selection']) {
+    const expired = { ...theme, source, enabled: false, failed: 'grant_expired: trust the package again' };
+    assert.ok(invoke('theme', { packages: [expired] }).panels[0].items.some(item => item.id === 'do:trust' && item.label === 'Trust again'), source);
+  }
+});
+
+test('a number setting asks for a number by its label', () => {
+  const typed = invoke('mod user:theme setting:limit lots', { packages: [theme] });
+  assert.equal(typed.ui.notice, 'Enter a number for Max tokens, like 5');
 });
 
 test('settings writes retain the selected user or project copy', () => {

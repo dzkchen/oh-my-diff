@@ -965,7 +965,7 @@ impl ModStore {
                 "state_migration_required: previous state preserved",
             ));
         }
-        self.check_service_providers(&manifest, &package.path)?;
+        self.check_service_providers(&manifest, &package.path, &|selection| selection.enabled)?;
         self.state(&package.id, &package.scope, package.state_version)?;
         package.enabled = true;
         let path = package.path.clone();
@@ -990,7 +990,9 @@ impl ModStore {
         }
         super::validate_stored_settings(&manifest, &selection.settings)?;
         selection.enabled = true;
-        store::refuse_second_copy(&config, &path, &scope, &manifest.id)?;
+        store::refuse_second_copy(&config, &path, &scope, &manifest.id, &|selection| {
+            selection.enabled
+        })?;
         store::next_revision(&mut config.revision)?;
         let event = json!({"package": package_event(&lock.packages[id])});
         self.commit_package_transaction(lock, config, &[], "enable", event, &[])
@@ -1168,7 +1170,7 @@ impl ModStore {
         event: &str,
         detail: Value,
         provenance: &[ModLockedPackage],
-        settings: Option<(&str, &Value)>,
+        settings: Option<(&str, &[u8])>,
     ) -> Result<ModPackageLock> {
         let old_lock = serde_json::to_value(self.read_package_lock()?)?;
         let old_config = serde_json::to_value(self.configuration()?)?;
@@ -1212,8 +1214,8 @@ impl ModStore {
             );
             self.write_granting("mods.json", &serde_json::to_value(&config)?, &approved)?;
             self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
-            if let Some((name, value)) = settings {
-                self.write(name, value)?;
+            if let Some((name, bytes)) = settings {
+                self.write_staged(name, bytes, || Ok(()))?;
             }
             std::fs::remove_file(self.root.join("package-transaction.json"))?;
             std::fs::File::open(&self.root)?.sync_all()?;

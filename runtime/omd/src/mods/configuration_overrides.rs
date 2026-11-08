@@ -14,17 +14,29 @@ struct Override {
 }
 
 impl ConfigurationOverrides {
-    pub fn values(&self, selection: &ModSelection) -> Value {
-        self.entries
-            .get(&Self::key(selection))
-            .map(|entry| {
-                let mut value = json!({"settings": entry.settings});
-                if let Some(enabled) = entry.enabled {
-                    value["enabled"] = json!(enabled);
-                }
-                value
-            })
-            .unwrap_or_else(|| json!({"settings": {}}))
+    pub fn values(
+        &self,
+        selection: &ModSelection,
+        package: &ModPackage,
+        inherited: &BTreeMap<String, Value>,
+    ) -> Value {
+        let Some(entry) = self.entries.get(&Self::key(selection)) else {
+            return json!({"settings": {}});
+        };
+        let settings = Self::resolve_settings(entry, package, inherited).unwrap_or_default();
+        let base = effective_settings(package.settings_schema.as_ref(), inherited);
+        let mut value = json!({"settings": entry
+            .settings
+            .iter()
+            .filter(|(name, _)| settings.get(*name) != base.get(*name))
+            .collect::<BTreeMap<_, _>>()});
+        if let Some(enabled) = entry
+            .enabled
+            .filter(|enabled| *enabled != selection.enabled)
+        {
+            value["enabled"] = json!(enabled);
+        }
+        value
     }
 
     pub fn revision(&self) -> u64 {
@@ -33,11 +45,43 @@ impl ConfigurationOverrides {
 
     pub fn set_enabled(&mut self, selection: &ModSelection, enabled: bool) -> Result<()> {
         Self::writable(selection)?;
-        self.bump()?;
-        let entry = self.entries.entry(Self::key(selection)).or_default();
+        if selection.required {
+            return Err(failure("configuration_override_forbidden"));
+        }
+        let key = Self::key(selection);
+        let mut entry = self.entries.get(&key).cloned().unwrap_or_default();
         entry.source = Some((selection.path.clone(), selection.sha256.clone()));
-        entry.enabled = Some(enabled);
+        entry.enabled = (enabled != selection.enabled).then_some(enabled);
+        self.bump()?;
+        self.put(key, entry);
         Ok(())
+    }
+
+    pub fn clear(
+        &mut self,
+        selection: &ModSelection,
+        enabled: bool,
+        settings: &[String],
+    ) -> Result<()> {
+        let key = Self::key(selection);
+        let Some(mut entry) = self.entries.get(&key).cloned() else {
+            return Ok(());
+        };
+        if enabled {
+            entry.enabled = None;
+        }
+        entry.settings.retain(|name, _| !settings.contains(name));
+        self.bump()?;
+        self.put(key, entry);
+        Ok(())
+    }
+
+    fn put(&mut self, key: String, entry: Override) {
+        if entry.enabled.is_none() && entry.settings.is_empty() {
+            self.entries.remove(&key);
+        } else {
+            self.entries.insert(key, entry);
+        }
     }
 
     pub fn write_settings(
@@ -53,8 +97,12 @@ impl ConfigurationOverrides {
         entry.source = Some((selection.path.clone(), selection.sha256.clone()));
         entry.settings.extend(values.clone());
         let settings = Self::resolve_settings(&entry, package, inherited)?;
+        let base = effective_settings(package.settings_schema.as_ref(), inherited);
+        entry
+            .settings
+            .retain(|name, _| settings.get(name) != base.get(name));
         self.bump()?;
-        self.entries.insert(key, entry);
+        self.put(key, entry);
         Ok(settings)
     }
 
@@ -65,11 +113,7 @@ impl ConfigurationOverrides {
     }
 
     pub fn reset_setting(&mut self, selection: &ModSelection, name: &str) -> Result<()> {
-        self.bump()?;
-        if let Some(entry) = self.entries.get_mut(&Self::key(selection)) {
-            entry.settings.remove(name);
-        }
-        Ok(())
+        self.clear(selection, false, &[name.to_owned()])
     }
 
     pub fn enabled(&self, selection: &ModSelection) -> bool {
@@ -102,7 +146,7 @@ impl ConfigurationOverrides {
     pub fn retain(&mut self, selections: &[ModSelection]) -> Result<()> {
         let current: BTreeSet<_> = selections
             .iter()
-            .filter(|selection| !selection.required && Self::writable(selection).is_ok())
+            .filter(|selection| Self::writable(selection).is_ok())
             .map(Self::key)
             .collect();
         if self.entries.keys().any(|key| !current.contains(key)) {
@@ -197,9 +241,11 @@ impl ConfigurationOverrides {
     }
 
     fn writable(selection: &ModSelection) -> Result<()> {
-        if selection.required || selection.scope == MANAGED_SCOPE || !selection.authority_current()
-        {
+        if selection.scope == MANAGED_SCOPE {
             return Err(failure("configuration_override_forbidden"));
+        }
+        if !selection.authority_current() {
+            return Err(failure("grant_expired: trust the package again"));
         }
         Ok(())
     }
@@ -241,7 +287,15 @@ mod tests {
         assert_eq!(store::grant(&json!(saved)), grant);
         assert!(!owner.enabled(&saved));
         owner.retain(&[saved.clone()]).unwrap();
-        assert_eq!(owner.values(&saved), json!({"settings":{}}));
+        let package: ModPackage = serde_json::from_value(json!({
+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
+            "state_version": 1, "capabilities": []
+        }))
+        .unwrap();
+        assert_eq!(
+            owner.values(&saved, &package, &BTreeMap::new()),
+            json!({"settings":{}})
+        );
     }
 
     #[test]
@@ -290,26 +344,98 @@ mod tests {
                 "managed" => saved.scope = MANAGED_SCOPE.into(),
                 _ => saved.expires_at = Some(0),
             }
-            assert!(overrides.set_enabled(&saved, false).is_err());
+            let error = overrides
+                .set_enabled(&saved, false)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                error.starts_with("grant_expired"),
+                change == "expired",
+                "{error}"
+            );
             assert!(overrides.enabled(&saved));
         }
     }
 
     #[test]
     fn authoritative_restrictions_discard_previous_overrides() {
-        for change in ["required", "managed", "expired"] {
+        for change in ["managed", "expired"] {
             let saved = selection();
             let mut overrides = ConfigurationOverrides::default();
             overrides.set_enabled(&saved, false).unwrap();
             let mut restricted = saved.clone();
             match change {
-                "required" => restricted.required = true,
                 "managed" => restricted.scope = MANAGED_SCOPE.into(),
                 _ => restricted.expires_at = Some(0),
             }
             overrides.retain(&[restricted]).unwrap();
             assert!(overrides.enabled(&saved), "{change}");
         }
+    }
+
+    #[test]
+    fn overrides_equal_to_inherited_values_are_dropped() {
+        let saved = selection();
+        let package: ModPackage = serde_json::from_value(json!({
+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
+            "state_version": 1, "capabilities": [],
+            "settings_schema": {"type": "object",
+                "properties": {"color": {"type": "string", "default": "blue"}}}
+        }))
+        .unwrap();
+        let inherited = BTreeMap::from([("color".into(), json!("red"))]);
+        let mut owner = ConfigurationOverrides::default();
+        owner.set_enabled(&saved, false).unwrap();
+        owner.set_enabled(&saved, true).unwrap();
+        owner
+            .write_settings(
+                &saved,
+                &package,
+                &inherited,
+                json!({"color":"green"}).as_object().unwrap(),
+            )
+            .unwrap();
+        owner
+            .write_settings(
+                &saved,
+                &package,
+                &inherited,
+                json!({"color":"red"}).as_object().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            owner.values(&saved, &package, &inherited),
+            json!({"settings":{}})
+        );
+    }
+
+    #[test]
+    fn overrides_matching_a_changed_inherited_value_read_as_inherited() {
+        let saved = selection();
+        let package: ModPackage = serde_json::from_value(json!({
+            "schema": 1, "id": "example", "version": "1.0.0", "api": "1.0.0",
+            "state_version": 1, "capabilities": [],
+            "settings_schema": {"type": "object",
+                "properties": {"color": {"type": "string", "default": "blue"}}}
+        }))
+        .unwrap();
+        let mut owner = ConfigurationOverrides::default();
+        owner
+            .write_settings(
+                &saved,
+                &package,
+                &BTreeMap::from([("color".into(), json!("red"))]),
+                json!({"color":"green"}).as_object().unwrap(),
+            )
+            .unwrap();
+        owner.set_enabled(&saved, false).unwrap();
+        let mut shared = saved.clone();
+        shared.enabled = false;
+        let inherited: BTreeMap<String, Value> = BTreeMap::from([("color".into(), json!("green"))]);
+        assert_eq!(
+            owner.values(&shared, &package, &inherited),
+            json!({"settings":{}})
+        );
     }
 
     #[test]
@@ -324,18 +450,22 @@ mod tests {
         .unwrap();
         let mut required = saved.clone();
         required.required = true;
-        let mut forbidden = ConfigurationOverrides::default();
-        assert!(
-            forbidden
-                .write_settings(
-                    &required,
-                    &package,
-                    &BTreeMap::new(),
-                    json!({"color":"green"}).as_object().unwrap()
-                )
-                .is_err()
+        let mut owner = ConfigurationOverrides::default();
+        owner
+            .write_settings(
+                &required,
+                &package,
+                &BTreeMap::new(),
+                json!({"color":"green"}).as_object().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            owner
+                .settings(&required, &package, &BTreeMap::new())
+                .unwrap()["color"],
+            "green"
         );
-        assert_eq!(forbidden.revision(), 0);
+        assert!(owner.set_enabled(&required, false).is_err());
         let inherited =
             BTreeMap::from([("color".into(), json!("red")), ("removed".into(), json!(1))]);
         let mut overrides = ConfigurationOverrides::default();
@@ -378,44 +508,76 @@ mod tests {
     }
 }
 
+struct ConfigurationContext {
+    status: Value,
+    config: ModConfiguration,
+    lock: ModPackageLock,
+}
+
+fn settings_diff(before: &Value, after: &Value) -> Vec<Value> {
+    let empty = serde_json::Map::new();
+    let before = before.as_object().unwrap_or(&empty);
+    let after = after.as_object().unwrap_or(&empty);
+    before
+        .keys()
+        .chain(after.keys())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|key| before.get(*key) != after.get(*key))
+        .map(|key| json!({"key":key,"before":before.get(key),"after":after.get(key)}))
+        .collect()
+}
+
 impl ModHost {
+    fn configuration_context(&self) -> Result<ConfigurationContext> {
+        Ok(ConfigurationContext {
+            status: self.store.selection_status_in(self.project.as_deref())?,
+            config: self.store.configuration()?,
+            lock: self.store.read_package_lock()?,
+        })
+    }
+
     fn configuration_selection_in(
         &self,
         id: &str,
         scope: Option<&str>,
     ) -> Result<(ModSelection, ModPackage)> {
-        let status = self.store.selection_status_in(self.project.as_deref())?;
-        if status["selections"]
-            .as_array()
-            .into_iter()
-            .flatten()
+        let context = self.configuration_context()?;
+        Self::select_configuration(&context, &self.current_overrides(), id, scope)
+    }
+
+    fn select_configuration(
+        context: &ConfigurationContext,
+        owner: &ConfigurationOverrides,
+        id: &str,
+        scope: Option<&str>,
+    ) -> Result<(ModSelection, ModPackage)> {
+        let rows = || {
+            context.status["selections"]
+                .as_array()
+                .into_iter()
+                .flatten()
+        };
+        if rows()
             .any(|row| row["id"] == id && row["scope"] == MANAGED_SCOPE && row["error"].is_null())
         {
             return Err(failure("configuration_override_forbidden"));
         }
-        let config = self.store.configuration()?;
-        let candidates: Vec<_> = config
+        let candidates: Vec<_> = context
+            .config
             .mods
             .iter()
             .filter(|item| scope.is_none_or(|scope| item.scope == scope))
             .filter(|item| {
-                status["selections"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .any(|row| {
-                        row["id"] == id
-                            && row["path"] == json!(item.path)
-                            && row["scope"] == item.scope
-                            && row["error"].is_null()
-                    })
+                rows().any(|row| {
+                    row["id"] == id
+                        && row["path"] == json!(item.path)
+                        && row["scope"] == item.scope
+                        && row["error"].is_null()
+                })
             })
             .collect();
         let candidates = if scope.is_none() {
-            let owner = self
-                .configuration_overrides
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
             let enabled: Vec<_> = candidates
                 .iter()
                 .copied()
@@ -441,19 +603,33 @@ impl ModHost {
             .find(|(_, loss)| loss.is_none())
             .map(|(item, _)| item.clone())
             .ok_or_else(|| failure(format!("mod_not_selected: {id}")))?;
-        let path = selection.path.clone();
-        let lock = self.store.read_package_lock()?;
-        if let Some(package) = lock.packages.values().find(|package| package.path == path)
+        if let Some(package) = context
+            .lock
+            .packages
+            .values()
+            .find(|package| package.path == selection.path)
             && let Some(reason) =
-                lock.blocked_reason(&package.id, &package.version, &package.integrity)
+                context
+                    .lock
+                    .blocked_reason(&package.id, &package.version, &package.integrity)
         {
             return Err(failure(format!("package_blocked: {reason}")));
         }
-        let (package, _, hash) = store::package(&path)?;
+        let (package, hash) = store::verified_package(&selection.path)?;
         if hash != selection.sha256 {
             return Err(failure("source_changed"));
         }
         Ok((selection, package))
+    }
+
+    fn inherited_settings(
+        &self,
+        selection: &ModSelection,
+        package: &ModPackage,
+    ) -> BTreeMap<String, Value> {
+        let mut inherited = selection.settings.clone();
+        inherited.extend(self.store.settings_file(package, selection).1);
+        inherited
     }
 
     pub fn write_configuration(
@@ -482,7 +658,17 @@ impl ModHost {
                 return Err(failure("configuration_reset_requires_terminal"));
             }
             let (selection, _) = self.configuration_selection_in(id, scope)?;
-            return write_settings_in(&self.store, id, values, Some(&selection.scope));
+            let result = write_settings_in(&self.store, id, values, Some(&selection.scope))?;
+            let written: Vec<String> = values
+                .as_object()
+                .into_iter()
+                .flat_map(|values| values.keys().cloned())
+                .collect();
+            self.configuration_overrides
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear(&selection, false, &written)?;
+            return Ok(result);
         }
         if target != "terminal" {
             return Err(failure("configuration_target_invalid"));
@@ -492,8 +678,7 @@ impl ModHost {
             .ok_or_else(|| failure("settings_values_must_be_object"))?;
         let (selection, package) = self.configuration_selection_in(id, scope)?;
         ConfigurationOverrides::writable(&selection)?;
-        let mut inherited = selection.settings.clone();
-        inherited.extend(self.store.settings_file(&package, &selection).1);
+        let inherited = self.inherited_settings(&selection, &package);
         let mut owner = self
             .configuration_overrides
             .lock()
@@ -523,27 +708,50 @@ impl ModHost {
         let (selection, package) =
             self.configuration_selection_in(&preview.control.id, Some(&preview.control.scope))?;
         ConfigurationOverrides::writable(&selection)?;
-        let mut inherited = selection.settings.clone();
-        inherited.extend(self.store.settings_file(&package, &selection).1);
-        let inherited = json!({"enabled":selection.enabled,"settings":effective_settings(package.settings_schema.as_ref(), &inherited)});
+        let action = preview.control.action.clone();
+        if selection.required && matches!(action.as_str(), "enable" | "disable") {
+            return Err(failure("configuration_override_forbidden"));
+        }
+        if action == "enable" {
+            let owner = self.current_overrides();
+            self.store
+                .admit_enable(&package, &selection, &|other| owner.enabled(other))?;
+        }
+        let inherited = self.inherited_settings(&selection, &package);
+        let schema = package.settings_schema.as_ref();
+        let shared = json!(effective_settings(schema, &inherited));
         let owner = self
             .configuration_overrides
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let values: BTreeMap<String, Value> =
-            serde_json::from_value(inherited["settings"].clone())?;
-        let before = json!({"enabled":owner.enabled(&selection),"settings":owner.settings(&selection, &package, &values)?});
-        let mut after = before.clone();
-        match preview.control.action.as_str() {
-            "enable" | "disable" => after["enabled"] = json!(preview.control.action == "enable"),
-            "reset" => after = inherited.clone(),
-            _ => (),
-        }
-        preview.public["changes"] = json!({"enabled":after["enabled"],"settings":after["settings"],"before":before,"inherited":inherited,"target":if preview.control.action == "save-defaults" {"shared"} else {"terminal"}});
+        let current = (
+            owner.enabled(&selection),
+            json!(owner.settings(&selection, &package, &inherited)?),
+        );
+        let overrides = owner.values(&selection, &package, &inherited);
+        let (before, after) = match action.as_str() {
+            "enable" | "disable" => {
+                let after = (action == "enable", current.1.clone());
+                (current, after)
+            }
+            "reset" => (current, (selection.enabled, shared.clone())),
+            _ => (
+                (selection.enabled, shared.clone()),
+                (
+                    overrides["enabled"].as_bool().unwrap_or(selection.enabled),
+                    current.1,
+                ),
+            ),
+        };
+        preview.public["changes"] = json!({
+            "target": if action == "save-defaults" {"shared"} else {"terminal"},
+            "enabled": (before.0 != after.0).then(|| json!({"before":before.0,"after":after.0})),
+            "settings": settings_diff(&before.1, &after.1),
+        });
         preview.control.owner_revision = Some((
             Arc::as_ptr(&self.configuration_overrides) as usize,
             owner.revision(),
-            inherited,
+            json!({"enabled":selection.enabled,"settings":shared}),
         ));
         Ok(preview)
     }
@@ -555,18 +763,35 @@ impl ModHost {
         if !["enable", "disable", "reset", "save-defaults"].contains(&control.action.as_str())
             || control.target == "shared"
         {
-            return crate::package_controls::apply(&self.store, control);
+            let toggled = matches!(control.action.as_str(), "enable" | "disable")
+                .then(|| {
+                    self.configuration_selection_in(&control.id, Some(&control.scope))
+                        .ok()
+                })
+                .flatten();
+            let result = crate::package_controls::apply(&self.store, control)?;
+            if let Some((selection, _)) = toggled {
+                self.configuration_overrides
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clear(&selection, true, &[])?;
+            }
+            return Ok(result);
         }
         crate::package_controls::validate_generation(&self.store, control)?;
         let (selection, package) =
             self.configuration_selection_in(&control.id, Some(&control.scope))?;
         ConfigurationOverrides::writable(&selection)?;
+        if control.action == "enable" {
+            let owner = self.current_overrides();
+            self.store
+                .admit_enable(&package, &selection, &|other| owner.enabled(other))?;
+        }
+        let inherited = self.inherited_settings(&selection, &package);
         let mut owner = self
             .configuration_overrides
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let mut inherited = selection.settings.clone();
-        inherited.extend(self.store.settings_file(&package, &selection).1);
         let reviewed = (
             Arc::as_ptr(&self.configuration_overrides) as usize,
             owner.revision(),
@@ -578,27 +803,26 @@ impl ModHost {
         match control.action.as_str() {
             "enable" | "disable" => owner.set_enabled(&selection, control.action == "enable")?,
             "reset" => owner.reset(&selection)?,
-            "save-defaults" => {
-                let mut inherited = selection.settings.clone();
-                inherited.extend(self.store.settings_file(&package, &selection).1);
-                let settings = owner.settings(&selection, &package, &inherited)?;
+            _ => {
+                let overrides = owner.values(&selection, &package, &inherited);
                 self.store.save_configuration(
                     &selection.path,
-                    settings,
-                    owner.enabled(&selection),
+                    overrides["settings"]
+                        .as_object()
+                        .unwrap_or(&serde_json::Map::new()),
+                    overrides["enabled"].as_bool(),
+                    Some(control.generation()),
+                    &control.action,
                 )?;
                 owner.reset(&selection)?;
             }
-            _ => unreachable!(),
         }
         Ok(json!({"status":"applied", "generation":self.store.configuration()?.revision}))
     }
 
     pub fn configuration_listing(&self, mut listed: Value) -> Result<Value> {
-        let owner = self
-            .configuration_overrides
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let context = self.configuration_context()?;
+        let owner = self.current_overrides();
         for row in listed["packages"].as_array_mut().into_iter().flatten() {
             row["inherited_enabled"] = row["enabled"].clone();
             row["inherited_settings"] = row["settings"].clone();
@@ -607,7 +831,7 @@ impl ModHost {
                 continue;
             };
             let Ok((selection, package)) =
-                self.configuration_selection_in(id, row["scope"].as_str())
+                Self::select_configuration(&context, &owner, id, row["scope"].as_str())
             else {
                 continue;
             };
@@ -618,15 +842,22 @@ impl ModHost {
             {
                 continue;
             }
-            let mut inherited = selection.settings.clone();
-            inherited.extend(self.store.settings_file(&package, &selection).1);
+            let enabled = owner.enabled(&selection);
+            let running = self
+                .loaded
+                .get(id)
+                .is_some_and(|loaded| loaded.selection.path == selection.path);
+            if enabled != selection.enabled && row.get("pending").is_some() {
+                row["pending"] = json!((enabled != running).then_some("reload"));
+            }
+            let inherited = self.inherited_settings(&selection, &package);
             row["inherited_enabled"] = json!(selection.enabled);
             row["inherited_settings"] = json!(effective_settings(
                 package.settings_schema.as_ref(),
                 &inherited
             ));
-            row["overrides"] = owner.values(&selection);
-            row["enabled"] = json!(owner.enabled(&selection));
+            row["overrides"] = owner.values(&selection, &package, &inherited);
+            row["enabled"] = json!(enabled);
             row["settings"] = json!(owner.settings(&selection, &package, &inherited)?);
         }
         Ok(listed)
@@ -677,8 +908,7 @@ pub fn write_settings_shared(
         if target == "terminal" {
             ConfigurationOverrides::writable(&selection)?;
         }
-        let mut inherited = selection.settings.clone();
-        inherited.extend(runtime.store.settings_file(&package, &selection).1);
+        let inherited = runtime.inherited_settings(&selection, &package);
         let before = runtime
             .current_overrides()
             .settings(&selection, &package, &inherited)?;

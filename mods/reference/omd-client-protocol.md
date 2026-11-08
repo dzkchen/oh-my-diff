@@ -89,6 +89,9 @@ omd/client/event {epoch, component, event}
 - `{kind: 'key', key, text?}`
 - `{kind: 'focus'}`
 
+Pointer `column` and `row` are signed 32-bit cell coordinates relative to the component. Captured `drag` and
+`up` events may carry negative positions after moving above or left of its bounds.
+
 Behavior:
 
 - `{delivered}` is answered in the order the connection sent its events and actions.
@@ -165,11 +168,11 @@ omd/configuration {action: 'command', command, args}
 ```
 
 `read` returns the effective package list, including inherited values and terminal overrides. `write` follows
-[`settings.write`](settings.md#settingswrite), with terminal targeting by default and optional `scope: "user" | "project"` for a specific installed copy. `package` supports only the
-four configuration actions above; install, update, remove, rollback and trust keep their existing shared
-lifecycle and confirmation paths. Reset and Save as defaults use terminal targeting; `save-defaults` explicitly
-persists terminal choices. Clients must present
-shared changes and confirmation choices to their user before requesting them.
+[`settings.write`](settings.md#settingswrite): it saves for every terminal unless `target` is `terminal`, and optional
+`scope: "user" | "project"` picks an installed copy. `package` supports only the four configuration actions above;
+install, update, remove, rollback and trust keep their existing shared lifecycle and confirmation paths. `reset`
+clears this terminal's choices and `save-defaults` saves them for every terminal. Clients must present shared changes
+and confirmation choices to their user before requesting them.
 
 `catalog` supplies the backend runtime status, latest `ModViewSnapshot` (or null before publication), and effective
 package listing; `builtins` describes its effective builtin controls. `command` resolves an available mod command and invokes it as the owning terminal's user; it

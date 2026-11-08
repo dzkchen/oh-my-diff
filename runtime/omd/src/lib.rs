@@ -160,6 +160,7 @@ pub use mods::ModOpenOptions;
 pub use mods::ModOsAccess;
 pub use mods::ModOverlay;
 pub use mods::ModOverlayClip;
+pub use mods::ModPackage;
 pub use mods::ModPackageGrant;
 pub use mods::ModPackageLock;
 pub(crate) use mods::ModPackagePlan;

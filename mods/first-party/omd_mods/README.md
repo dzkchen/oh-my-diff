@@ -77,18 +77,13 @@ It has no settings.
 
 Trust previews warn when an ID is already installed in another scope: same-ID copies share storage and owned credential authority.
 
-## Terminal choices and saved defaults
+## Terminal choices and saved settings
 
-Ordinary on/off switches and setting edits in `/mods` and native `/omd` affect this terminal only.
-They survive conversation changes and mod reloads, and disappear when the terminal host exits.
-Another terminal, including one on the same conversation, starts from shared defaults. Reconnecting the
-same attached terminal retains its choices while its host is alive; children start from defaults.
-
-Use **Reset to defaults** to clear local enablement and settings choices and inherit the latest shared values.
-Use **Save as defaults** explicitly to persist your choices for future launches and terminals inheriting defaults.
-Shared changes do not replace valid local overrides. Shell `omd mods` commands change shared configuration.
-Install, update, remove, rollback and trust are always shared. Policy and trust still apply: local choices cannot
-grant permissions, undo revocation or revive removed packages. Source, schema and authority changes invalidate
-or revalidate overrides. Mod data and credentials are separate from terminal configuration.
+Switches and setting edits save for every terminal. In a mod's panel, **Changes apply to** set to **Only this
+terminal** keeps that mod's changes in this terminal until you close it. A mod that already has choices in this
+terminal opens on **Only this terminal** until you pick **Every terminal**. The list marks such a mod "only this
+terminal", and its panel offers **Use saved settings** and **Keep these for every terminal**, which show what changes
+and ask first. A mod the installer keeps on can't be turned off, but its settings can change. An administrator's mod
+shows its settings read-only.
 
 When user and project copies have the same mod ID, settings edits apply to the selected copy and its schema.

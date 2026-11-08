@@ -126,7 +126,7 @@ omd uninstall
 
 This removes OMD, its release and catalog caches, and its Codex plugins, and puts back any command in
 `~/.local/bin` that the installer renamed to `NAME.before-omd`. Codex settings, accounts and sessions stay.
-OMD saved mod defaults, data and sign-ins stay in `~/.local/share/oh-my-diff/stores` by default. Terminal-local choices last until that terminal host exits; use [Save as defaults](manage-mods.md#terminal-choices-and-saved-defaults) to keep them.
+OMD mod settings, data and saved sign-ins stay in `~/.local/share/oh-my-diff/stores` by default.
 
 To remove OMD's mod data and saved sign-ins too, use this instead:
 

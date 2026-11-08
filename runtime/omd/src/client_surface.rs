@@ -684,7 +684,10 @@ fn submit_bound(
         && TERMINAL_OWNER.with(|owner| owner.borrow().is_some())
         && (matches!(operation, "terminal.panel" | "prompts.consent")
             || operation == "packages.apply"
-                && arguments["target"].as_str().unwrap_or("terminal") == "terminal"
+                && crate::package_controls::target(
+                    arguments["target"].as_str(),
+                    arguments["action"].as_str().unwrap_or_default(),
+                ) == "terminal"
                 && matches!(
                     arguments["action"].as_str(),
                     Some("enable" | "disable" | "reset" | "save-defaults")
@@ -906,7 +909,7 @@ pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
         if package["effective"] != true {
             continue;
         }
-        let managed = package["scope"] == "managed" || package["required"] == true;
+        let managed = package["scope"] == "managed";
         for (name, property) in package["settings_schema"]["properties"]
             .as_object()
             .into_iter()

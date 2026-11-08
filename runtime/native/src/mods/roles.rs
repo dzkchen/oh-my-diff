@@ -34,11 +34,13 @@ fn write_once(path: &std::path::Path, text: &str) -> Result<(), String> {
 }
 
 impl Core {
-    fn refresh_role_definitions(&self) -> Option<()> {
-        let mut runtime = self.input_runtime.lock().ok()?;
-        runtime.refresh(&|| true).ok()?;
-        *self.expansion.definitions.lock().ok()? = runtime.agent_definitions();
-        Some(())
+    fn refresh_role_definitions(&self) {
+        if let Ok(mut runtime) = self.input_runtime.lock() {
+            let _ = runtime.refresh(&|| true);
+            if let Ok(mut definitions) = self.expansion.definitions.lock() {
+                *definitions = runtime.agent_definitions();
+            }
+        }
     }
 
     pub(super) fn definition(&self, name: &str) -> Option<ModAgentDefinition> {
@@ -404,9 +406,7 @@ impl AgentRoleContributor for Mods {
             return Vec::new();
         }
         let this = selected.as_deref().unwrap_or(self);
-        if this.refresh_role_definitions().is_none() {
-            return Vec::new();
-        }
+        this.refresh_role_definitions();
         let Some(lead) = thread_store.get::<Lead>() else {
             return Vec::new();
         };
@@ -452,7 +452,7 @@ impl AgentRoleContributor for Mods {
             None => clients::for_store(thread_store),
         };
         let this = selected.as_deref().unwrap_or(self);
-        this.refresh_role_definitions()?;
+        this.refresh_role_definitions();
         let lead = thread_store.get::<Lead>()?;
         match this.resolve(&lead, name) {
             Ok(role) => role,
