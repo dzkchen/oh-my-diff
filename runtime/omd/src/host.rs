@@ -148,6 +148,7 @@ fn credential_paths() -> Vec<PathBuf> {
 
 pub type SessionDispatcher = Arc<
     dyn Fn(
+            Option<&str>,
             &str,
             &str,
             Option<&str>,
@@ -216,6 +217,7 @@ pub fn reserve_session_dispatcher() -> std::io::Result<SessionRegistration> {
 }
 
 pub fn session_call(
+    terminal_owner: Option<&str>,
     thread: &str,
     caller: &str,
     source: Option<&str>,
@@ -223,6 +225,9 @@ pub fn session_call(
     call: crate::ModHostCall,
     active: &dyn Fn() -> bool,
 ) -> std::io::Result<Value> {
+    if !active() {
+        return Err(std::io::Error::other("callback_cancelled"));
+    }
     let dispatcher = SESSION_DISPATCHER
         .lock()
         .ok()
@@ -234,7 +239,7 @@ pub fn session_call(
         .ok_or_else(|| {
             std::io::Error::other("host_operation_unavailable: no session in this process")
         })?;
-    dispatcher(thread, caller, source, policy, call, active)
+    dispatcher(terminal_owner, thread, caller, source, policy, call, active)
 }
 
 /// A protected root's canonical form, resolved again whenever the root itself (for example a retargeted symlink) changes.
@@ -2118,7 +2123,8 @@ mod installation_tests {
     fn singleton_rejects_replacement_and_stale_teardown() {
         let dispatcher = || {
             Arc::new(
-                |_: &str,
+                |_: Option<&str>,
+                 _: &str,
                  _: &str,
                  _: Option<&str>,
                  _: Option<&Value>,
