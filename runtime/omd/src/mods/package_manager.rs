@@ -978,9 +978,6 @@ impl ModStore {
             .iter_mut()
             .find(|selection| selection.path == path && selection.scope == scope)
             .ok_or_else(|| failure("package_selection_missing"))?;
-        if !selection.authority_current() {
-            return Err(failure("grant_expired: trust the package again"));
-        }
         if selection.sha256 != integrity {
             return Err(failure("source_changed: inspect and trust the new digest"));
         }
@@ -990,6 +987,9 @@ impl ModStore {
             .any(|capability| !selection.capabilities.contains(capability))
         {
             return Err(failure("capability_denied"));
+        }
+        if !selection.authority_current() {
+            return Err(failure("grant_expired: trust the package again"));
         }
         super::validate_stored_settings(&manifest, &selection.settings)?;
         selection.enabled = true;

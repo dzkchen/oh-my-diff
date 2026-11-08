@@ -72615,10 +72615,10 @@ index 0000000000000000000000000000000000000000..d7fc0b4bd8eb3d9cf13c65351b828bb6
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..43cd8dde27eb3dc3a8747a4ec093e727e3ac5484
+index 0000000000000000000000000000000000000000..875e8f59cfe76b49a6d37351bb8dc588fbd7c99f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,1466 @@
+@@ -0,0 +1,1469 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -72770,15 +72770,17 @@ index 0000000000000000000000000000000000000000..43cd8dde27eb3dc3a8747a4ec093e727
 +pub(super) fn hold_native_owner(
 +    owner: &codex_protocol::turn_input::TerminalOwner,
 +    thread: Option<&str>,
-+) -> Result<Arc<Mods>, String> {
++) -> Result<(Arc<Mods>, bool), String> {
++    let key = owner.0.to_string();
 +    let mut holders = NATIVE_HOLDERS
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let first = !holders.iter().any(|(held, _)| held == &key);
 +    let mods = ensure_owner(owner)?;
 +    if let Some(thread) = thread {
-+        holders.insert((owner.0.to_string(), thread.to_owned()));
++        holders.insert((key, thread.to_owned()));
 +    }
-+    Ok(mods)
++    Ok((mods, first))
 +}
 +
 +pub(super) fn running_owner(
@@ -72947,11 +72949,12 @@ index 0000000000000000000000000000000000000000..43cd8dde27eb3dc3a8747a4ec093e727
 +        .expansion
 +        .current()
 +        .is_none_or(|current| current.thread != thread);
-+    let first = target
-+        .initialized_threads
-+        .lock()
-+        .map_err(|_| "terminal_owner_poisoned")?
-+        .insert(thread.to_string());
++    let first = owns
++        && target
++            .initialized_threads
++            .lock()
++            .map_err(|_| "terminal_owner_poisoned")?
++            .insert(thread.to_string());
 +    target.expansion.select_thread(&target.core, &lead);
 +    target
 +        .sessions
@@ -72964,7 +72967,7 @@ index 0000000000000000000000000000000000000000..43cd8dde27eb3dc3a8747a4ec093e727
 +        store.insert_arc(target.clone());
 +        target.views.start_thread(&store);
 +    }
-+    if first && owns {
++    if first {
 +        target
 +            .event(
 +                "session",
@@ -80917,10 +80920,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4616b3aed5e1e0bcd50e72a4b9f25aadd69169b5
+index 0000000000000000000000000000000000000000..8e5ebd1d35b5b047ae0dce7f9f8f56fe242418e5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,3058 @@
+@@ -0,0 +1,3087 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -81113,6 +81116,63 @@ index 0000000000000000000000000000000000000000..4616b3aed5e1e0bcd50e72a4b9f25aad
 +}
 +
 +impl Mods {
++    fn prepare_owned_thread_config(
++        &self,
++        config: &mut Config,
++        thread: Option<&str>,
++        forked_from: Option<&str>,
++        selected: Option<&Mods>,
++    ) -> Result<(), String> {
++        let this = selected.unwrap_or(self);
++        let mut denied = Vec::new();
++        for path in this.host.protected_paths() {
++            if path
++                .canonicalize()
++                .map_err(|_| "protected_path_unavailable")?
++                != path
++                || path.starts_with(&this.host.repository)
++            {
++                return Err("protected_mod_path_must_be_canonical_and_external".into());
++            }
++            denied.push(
++                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
++                    .map_err(|_| "protected_path_unavailable")?,
++            );
++        }
++        this.refresh_native_configuration()?;
++        config
++            .features
++            .set_removed(
++                this.removed_features
++                    .lock()
++                    .unwrap_or_else(std::sync::PoisonError::into_inner)
++                    .clone(),
++            )
++            .map_err(|error| error.to_string())?;
++        config.permissions.sandbox_denied_paths = denied;
++        config.model_provider.supports_websockets = false;
++        this.apply_native_configuration(config)?;
++        let mut runtime = match this.runtime.try_lock() {
++            Ok(runtime) => runtime,
++            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
++            Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
++        };
++        if let (Some(thread), Some(parent)) = (thread, forked_from)
++            && let Err(error) =
++                codex_omd::data_store::fork_thread_data(&this.host.root, parent, thread)
++            && error.kind() != std::io::ErrorKind::AlreadyExists
++        {
++            this.views.diagnostic(
++                &this.host,
++                "thread_store",
++                Some(format!("fork copy failed: {error}")),
++            );
++        }
++        let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
++        this.compaction_decision(&mut runtime, config)?;
++        this.routing_decision(&mut runtime, config)
++    }
++
 +    async fn resume(
 +        &self,
 +        call_id: &str,
@@ -82166,60 +82226,32 @@ index 0000000000000000000000000000000000000000..4616b3aed5e1e0bcd50e72a4b9f25aad
 +            thread_init.get::<codex_extension_api::ThreadOwnedTerminal>(),
 +        ) {
 +            (Some(owner), Some(lifetime)) => {
-+                let mods = clients::hold_native_owner(&owner, thread)?;
-+                lifetime.on_drop(move || clients::release_native_owner(&owner, None));
-+                Some(mods)
++                let (mods, first) = clients::hold_native_owner(&owner, thread)?;
++                if first {
++                    let owner = owner.clone();
++                    lifetime.on_drop(move || clients::release_native_owner(&owner, None));
++                }
++                Some((mods, Some(owner)))
 +            }
-+            (owner, _) => owner.as_deref().map(clients::ensure_owner).transpose()?,
++            (owner, _) => owner
++                .as_deref()
++                .map(clients::ensure_owner)
++                .transpose()?
++                .map(|mods| (mods, None)),
 +        };
-+        let this = selected.as_deref().unwrap_or(self);
-+        let mut denied = Vec::new();
-+        for path in this.host.protected_paths() {
-+            if path
-+                .canonicalize()
-+                .map_err(|_| "protected_path_unavailable")?
-+                != path
-+                || path.starts_with(&this.host.repository)
-+            {
-+                return Err("protected_mod_path_must_be_canonical_and_external".into());
-+            }
-+            denied.push(
-+                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
-+                    .map_err(|_| "protected_path_unavailable")?,
-+            );
-+        }
-+        this.refresh_native_configuration()?;
-+        config
-+            .features
-+            .set_removed(
-+                this.removed_features
-+                    .lock()
-+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-+                    .clone(),
-+            )
-+            .map_err(|error| error.to_string())?;
-+        config.permissions.sandbox_denied_paths = denied;
-+        config.model_provider.supports_websockets = false;
-+        this.apply_native_configuration(config)?;
-+        let mut runtime = match this.runtime.try_lock() {
-+            Ok(runtime) => runtime,
-+            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
-+            Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
-+        };
-+        if let (Some(thread), Some(parent)) = (thread, forked_from)
-+            && let Err(error) =
-+                codex_omd::data_store::fork_thread_data(&this.host.root, parent, thread)
-+            && error.kind() != std::io::ErrorKind::AlreadyExists
++        let held = selected.as_ref().and_then(|(_, owner)| owner.clone());
++        let result = self.prepare_owned_thread_config(
++            config,
++            thread,
++            forked_from,
++            selected.as_ref().map(|(mods, _)| mods.as_ref()),
++        );
++        if result.is_err()
++            && let (Some(owner), Some(thread)) = (held, thread)
 +        {
-+            this.views.diagnostic(
-+                &this.host,
-+                "thread_store",
-+                Some(format!("fork copy failed: {error}")),
-+            );
++            clients::release_native_owner(&owner, Some(thread));
 +        }
-+        let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
-+        this.compaction_decision(&mut runtime, config)?;
-+        this.routing_decision(&mut runtime, config)
++        result
 +    }
 +
 +    fn on_config_changed(
@@ -141859,7 +141891,7 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2bbb83385ceeee7dbc515f1a9acc7abfb69c50ca
+index 0000000000000000000000000000000000000000..68344e26d5ce79da606027d3c706aa9f4a40d5c2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
 @@ -0,0 +1,2944 @@
@@ -142843,9 +142875,6 @@ index 0000000000000000000000000000000000000000..2bbb83385ceeee7dbc515f1a9acc7abf
 +            .iter_mut()
 +            .find(|selection| selection.path == path && selection.scope == scope)
 +            .ok_or_else(|| failure("package_selection_missing"))?;
-+        if !selection.authority_current() {
-+            return Err(failure("grant_expired: trust the package again"));
-+        }
 +        if selection.sha256 != integrity {
 +            return Err(failure("source_changed: inspect and trust the new digest"));
 +        }
@@ -142855,6 +142884,9 @@ index 0000000000000000000000000000000000000000..2bbb83385ceeee7dbc515f1a9acc7abf
 +            .any(|capability| !selection.capabilities.contains(capability))
 +        {
 +            return Err(failure("capability_denied"));
++        }
++        if !selection.authority_current() {
++            return Err(failure("grant_expired: trust the package again"));
 +        }
 +        super::validate_stored_settings(&manifest, &selection.settings)?;
 +        selection.enabled = true;
@@ -144809,10 +144841,10 @@ index 0000000000000000000000000000000000000000..2bbb83385ceeee7dbc515f1a9acc7abf
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d132f2d8a127f7d6ad73d5804888f4a72dbd2e87
+index 0000000000000000000000000000000000000000..8a317fd95900ede1e7c94c6fbe8861966bb76856
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,755 @@
+@@ -0,0 +1,761 @@
 +use super::*;
 +
 +pub const SETTINGS_FILE_EXTENSIONS: [&str; 3] = ["json", "yaml", "yml"];
@@ -144844,11 +144876,11 @@ index 0000000000000000000000000000000000000000..d132f2d8a127f7d6ad73d5804888f4a7
 +            .position(|item| item.path == path)
 +            .ok_or_else(|| failure("package_not_trusted"))?;
 +        let selection = config.mods[index].clone();
-+        if selection.scope == MANAGED_SCOPE
-+            || !selection.authority_current()
-+            || enabled.is_some() && selection.required
-+        {
++        if selection.scope == MANAGED_SCOPE || enabled.is_some() && selection.required {
 +            return Err(failure("configuration_override_forbidden"));
++        }
++        if !selection.authority_current() {
++            return Err(failure("grant_expired: trust the package again"));
 +        }
 +        let (package, hash) = store::verified_package(path)?;
 +        if hash != selection.sha256 {
@@ -145524,16 +145556,22 @@ index 0000000000000000000000000000000000000000..d132f2d8a127f7d6ad73d5804888f4a7
 +        }
 +        let bytes = content.as_bytes();
 +        let key_end = if matches!(bytes[0], b'"' | b'\'') {
-+            quoted_end(bytes, 0)?
++            quoted_end(bytes, 0)
 +        } else {
 +            content
-+                .find(": ")
-+                .or_else(|| content.ends_with(':').then(|| content.len() - 1))?
++                .match_indices(':')
++                .map(|(end, _)| end)
++                .find(|end| matches!(bytes.get(end + 1), None | Some(b' ' | b'\t')))
++        };
++        let Some(key_end) = key_end else {
++            continue;
 +        };
 +        if bytes.get(key_end) != Some(&b':') {
 +            continue;
 +        }
-+        let name: String = serde_yaml::from_str(&content[..key_end]).ok()?;
++        let Ok(name) = serde_yaml::from_str::<String>(&content[..key_end]) else {
++            continue;
++        };
 +        if name != key {
 +            continue;
 +        }
@@ -196297,7 +196335,7 @@ index 0000000000000000000000000000000000000000..31347fab5ebf78e8613f2355d236b37f
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6a352e0f3df68b2a70fe3fd6a41e3edb23e7f15
+index 0000000000000000000000000000000000000000..1aab7f2d47984347a74821eab88b9fa00e86d651
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
 @@ -0,0 +1,2410 @@
@@ -197616,7 +197654,6 @@ index 0000000000000000000000000000000000000000..a6a352e0f3df68b2a70fe3fd6a41e3ed
 +    Some(grants.source_sha256)
 +}
 +
-+/// Mods the terminal's own host has failed; `mod-status.json` belongs to the session's host and never lists them.
 +pub(crate) fn terminal_status() -> Option<Arc<Value>> {
 +    static STATUS: Mutex<Option<(u64, Arc<Value>)>> = Mutex::new(None);
 +    let mut cached = STATUS.locked();
@@ -197634,6 +197671,7 @@ index 0000000000000000000000000000000000000000..a6a352e0f3df68b2a70fe3fd6a41e3ed
 +    cached.as_ref().map(|(_, status)| status.clone())
 +}
 +
++/// Mods the terminal's own host has failed; `mod-status.json` belongs to the session's host and never lists them.
 +pub(crate) fn terminal_failures() -> BTreeMap<String, String> {
 +    (|| {
 +        let runtime = lock_within(&HOST, LOCK_WAIT)?.clone()?;
