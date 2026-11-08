@@ -177,6 +177,14 @@ async function headless() {
   await until('module post reached its hook', () => component(desk.view(), 'client_tag_clicked')?.text === 'Last click at column 3, row 0');
   say({ step: 'modules', tree: tag.tree[0].text });
 
+  const choose = action => text.session.request('omd/configuration', { action: 'package', request: { action, id: 'approval_desk', scope: 'user', target: 'terminal' } });
+  await choose('disable');
+  await until('terminal disable left this view', () => !component(text.view(), 'desk_log'));
+  assert.ok(component(desk.view(), 'desk_log'), 'a terminal choice leaves other terminals alone');
+  await choose('reset');
+  await until('terminal reset drew the mod again', () => component(text.view(), 'desk_log'));
+  say({ step: 'isolation', disabledHere: true, keptThere: true });
+
   const hello = await time('turn_ms', () => turn(desk, thread.id, 'hello'));
   assert.equal(hello.status, 'completed');
   for (const watcher of [desk, text]) {
@@ -254,7 +262,7 @@ async function headless() {
   await reconnected.session.read();
   say({ step: 'broken_renderer', hostAlive: true });
 
-  const recovery = await reconnected.session.recovery();
+  const recovery = await text.session.recovery();
   const fixture = recovery.mods.find(entry => entry.id === 'broken_fixture');
   assert.ok(fixture?.failing, `the broken mod is failing: ${JSON.stringify(fixture)}`);
   assert.ok(component(reconnected.view(), 'desk_log') && component(reconnected.view(), 'external_clients'), 'other mods keep drawing');
@@ -349,9 +357,10 @@ async function coattach() {
   await ask('client_visible');
   const observer = client('text console', TEXT, () => ({ decision: 'decline' }));
   await observer.ready;
-  await until('observer sees both', () => observer.roster.length === 2);
+  const listed = name => observer.roster.some(entry => entry.name === name);
+  await until('observer sees both', () => listed('approval desk gui') && listed('text console'));
   desk.session.close();
-  await until('roster dropped the vanished client', () => observer.roster.length === 1 && observer.roster[0].name === 'text console');
+  await until('roster dropped the vanished client', () => !listed('approval desk gui') && listed('text console'));
   await ask('client_gone');
   observer.session.close();
   say({ step: 'client_gone', terminalKeptWorking: true });

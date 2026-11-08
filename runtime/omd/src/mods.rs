@@ -2746,10 +2746,17 @@ impl ModConfiguration {
     pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
         let mut config: Self = serde_json::from_slice(bytes)
             .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
-        let epochs: Vec<(String, PathBuf, u64)> = path
+        #[derive(Deserialize)]
+        struct Epochs {
+            revision: u64,
+            epochs: Vec<(String, PathBuf, u64)>,
+        }
+        let epochs = path
             .parent()
             .and_then(|root| store::read(&root.join(store::CONFIGURATION_EPOCHS), 65_536).ok())
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .and_then(|bytes| serde_json::from_slice::<Epochs>(&bytes).ok())
+            .filter(|sidecar| sidecar.revision == config.revision)
+            .map(|sidecar| sidecar.epochs)
             .unwrap_or_default();
         for selection in &mut config.mods {
             if let Some((_, _, epoch)) = epochs
@@ -3484,6 +3491,7 @@ pub struct ModHost {
     configuration_sha256: String,
     configuration_stamp: Option<ConfigurationStamp>,
     configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
+    terminal: (u64, Option<String>),
     override_revision: Option<u64>,
     /// The configuration whose timed-out inspections were already retried once.
     inspect_retried: String,
@@ -4301,12 +4309,19 @@ impl ModHost {
             configuration_overrides,
         } = options;
         let store = ModStore::open(root)?;
+        let terminal = {
+            let overrides = configuration_overrides
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            (overrides.id(), overrides.terminal().map(str::to_owned))
+        };
         let mut host = Self {
             store,
             generation: 0,
             configuration_sha256: String::new(),
             configuration_stamp: None,
             configuration_overrides,
+            terminal,
             override_revision: None,
             inspect_retried: String::new(),
             inspect_retry: None,
@@ -4627,6 +4642,10 @@ impl ModHost {
 
     pub fn configuration_overrides(&self) -> Arc<Mutex<ConfigurationOverrides>> {
         Arc::clone(&self.configuration_overrides)
+    }
+
+    pub fn terminal(&self) -> u64 {
+        self.terminal.0
     }
 
     fn current_overrides(&self) -> ConfigurationOverrides {
@@ -6211,6 +6230,7 @@ impl ModHost {
                 &loaded.state,
                 &reply.state,
             )?;
+            crate::client_surface::state_committed(&loaded.package.id, self.terminal.0);
         }
         if let Some(state) = ui.as_mut()
             && (ui_state != loaded.ui_state || reply.ui_written && ui_state != state.value)
@@ -6586,6 +6606,7 @@ impl ModHost {
             crate::sha256_hex(
                 json!([
                     self.project,
+                    self.terminal.1,
                     thread,
                     selection,
                     loaded.adapter.as_ref().map(|adapter| &adapter.sha256)

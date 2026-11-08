@@ -4001,6 +4001,9 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
   as Codex keeps `.git` read-only. Outside a Git checkout, as in a projectless session, checkout state is unavailable
   (`state_checkout_unavailable`) and nothing is written to the directory.
 
+A committed `api.state` change redraws the mod in every terminal and attached client showing the same store, checkout
+or thread state. Hooks, prompts, timers, channels and `api.uiState` stay with the terminal that caused them.
+
 These rules apply in every scope:
 
 - Mods never run with the home directory or the filesystem root as the session directory. The host stays off with a
@@ -4042,7 +4045,7 @@ requires `terminal`. Saved `api.state` is unchanged by it.
   escapes.
 - Strings and object keys must contain valid Unicode scalars (no lone surrogates).
 - The host checks the original serialized bytes before parsing; number reformatting does not change the limit.
-- Values are shared by host instances in the same process, store, repository, thread and package identity.
+- Values are shared by host instances in the same process, terminal, store, repository, thread and package identity.
 - Commands and component events may write; other callbacks may read.
 - Writes commit only after successful validation and cancellation checks. A revision conflict reruns the callback
   under the same replay rules as [`api.state` compare-and-swap](#apistate-compare-and-swap).
@@ -8502,7 +8505,8 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
   retains the in-memory `attachment.terminalToken`, replays the last update, resumes the threads it resumed
   through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`. Explicit detach clears
   terminal ownership. If a restarted host rejects the retained token, it attaches once without it and inherits
-  shared defaults. Keep terminal tokens private and in memory.
+  shared defaults. Keep terminal tokens private and in memory. Clients with separate terminal owners share a mod's
+  saved state, not its settings, enablement or session UI state.
 - `unsupported(component, renderer, drawable)` returns null when the renderer can draw the component. Otherwise it
   returns an error with `fallback` set to the component's alt text, text or label. A renderer can't draw a type
   outside `drawable`, a `raster` without `cells` or an `image` without an image format. The error message has the
@@ -8564,7 +8568,8 @@ omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('sv
 - Attaching again on the connection replaces its entry.
 - `terminalToken` is an opaque capability for this terminal's in-memory settings and enablement. Keep it in
   memory and send it when reattaching after a disconnect. Another client without it gets a separate owner,
-  including on the same conversation. Do not log, persist or share the token.
+  including on the same conversation. Separate owners share a mod's saved state, not its settings, enablement or
+  session UI state. Do not log, persist or share the token.
 - Connections that never attach have no reconnect capability; their terminal overrides are released on disconnect.
 - Explicit detach invalidates the token and drops its terminal overrides. A server restart also invalidates it;
   `terminal_owner_unknown` means attach without it to start from shared defaults.

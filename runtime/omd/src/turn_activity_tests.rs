@@ -147,3 +147,36 @@ fn a_turn_without_an_end_is_interrupted_unless_running_or_paused() {
         (Some("unknown"), Some(false))
     );
 }
+
+#[test]
+fn registered_readers_answer_for_the_thread_they_own() {
+    let reader = |owned: &'static str| {
+        register_reader(std::sync::Arc::new(move |thread, _| {
+            if thread == owned {
+                Ok(serde_json::json!(owned))
+            } else {
+                Err("turn_activity_unavailable".to_owned())
+            }
+        }))
+    };
+    let first = reader("first-thread");
+    let second = reader("second-thread");
+    assert_eq!(
+        read_registered("first-thread", Value::Null).unwrap(),
+        "first-thread"
+    );
+    assert_eq!(
+        read_registered("second-thread", Value::Null).unwrap(),
+        "second-thread"
+    );
+    drop(second);
+    assert_eq!(
+        read_registered("first-thread", Value::Null).unwrap(),
+        "first-thread"
+    );
+    drop(first);
+    assert_eq!(
+        read_registered("first-thread", Value::Null).unwrap_err(),
+        "turn_activity_unavailable"
+    );
+}

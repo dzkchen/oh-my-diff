@@ -201,6 +201,9 @@ Change settings in `/mods` (open the workspace's settings there). The same names
 - Resizing overrides `dock_size` until `/workspace reset`.
 - Panels you leave out of `panels` are hidden, and unknown ids are listed under `Ignored:`. An empty `panels` shows
   built-ins, terminals, then registrations.
+- Everything the workspace saves is kept per conversation: the arrangement, sizes, tabs, screen modes, registered
+  panels and `/workspace off`. A new conversation starts from your settings, and another terminal on a different
+  conversation keeps its own workspace. Changes need a started conversation and are refused before one exists.
 
 ## Needs and limits
 
@@ -252,7 +255,7 @@ reason.
 - `replaces`: a built-in panel (`changes` or `terminal`) it stands in for. That panel is hidden unless the `panels`
   setting lists it.
 
-A registration persists until `unregister` or until its owner (the `<mod>` of its site) is turned off, so a mod you
+A registration persists in its conversation until `unregister` or until its owner (the `<mod>` of its site) is turned off, so a mod you
 turned off leaves no tab behind. Registering again on every `start` is harmless. At most 16 panels can be
 registered. Titles are at most 30 bytes (tab titles 32) without control characters. The workspace only places
 panels, and the registering mod draws them. Panels missing from an arrangement join it by their placement, else the
