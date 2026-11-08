@@ -3,7 +3,7 @@
 This is every [mod API reference page](reference/README.md) in one file, for agents and search. Generated from
 the pages in the order of their contents table; edit the pages, not this file.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.166.0`.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.167.0`.
 `omd-mod status` reports the OMD release as `host.omd`. A package's `compatibility.releases` is matched against that
 version. The host loads only mods for this API version. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
@@ -343,7 +343,8 @@ These failures don't count:
 
 - errors starting `state_conflict`, `state_thread_unavailable`, `state_checkout_unavailable`, `callback_cancelled`,
   `host_receipt_limit`, `host_result_limit`, `host_call_limit` or `callback_execution_budget`;
-- failures of `service` and `component` events.
+- failures of `service` and `component` events;
+- an interceptor that throws the error its `next` rejected with, such as a tool result the host could not hand back.
 
 The count is kept in process memory and is not persisted, so each `omd-mod command` starts at 0 and `omd-mod status`
 shows `faults: 0` afterwards.
@@ -400,7 +401,7 @@ Use it when you check whether a design fits the host. Each row gives one limit a
 states the exact rule and the error a call gets. The `host.json` limits an operator can change are under
 [Host limits](#host-limits).
 
-Values are those of Mod API `1.0.0` on Codex `0.166.0`; limits of experimental entries may change in any release.
+Values are those of Mod API `1.0.0` on Codex `0.167.0`; limits of experimental entries may change in any release.
 
 ### Limits by area
 
@@ -645,7 +646,7 @@ The registry marks these entries experimental in Mod API `1.0.0`:
 | Capabilities | `approve.override`, `autonomous`, `fs.external`, `history_write`, `mcp`, `peers`, `power`, `unix_sockets` |
 | Events | `config_change`, `contract`, `elicitation_result`, `focus`, `host_operation`, `instructions_loaded`, `migrate`, `mods_changed`, `peer_message`, `peer_receipt`, `prompt`, `prompt_expanded`, `session`, `tool_batch_end`, `tool_exposure`, `turn_queue`, `view`, `worktree` |
 | Interceptors | `agent_offers`, `agent_spawn`, `compaction`, `component_change`, `composer_key`, `elicitation`, `mention`, `peer_receive`, `peer_send`, `turn_stop` |
-| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access`, `workspace.unwatch` |
+| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access` |
 | Components | `raster` |
 | Render sites | `composer_hint`, `notice`, `session_mode`, `tool_result`, `turn_duration`, `user_message` |
 | View fields | `background`, `footer`, `foreground`, `header`, `key_contexts`, `panels`, `placeholder`, `surface_styles`, `underlay` |
@@ -691,6 +692,7 @@ These frozen entries have experimental fields:
 | `operations:session.info` | `process_id`, `omd_version` | none |
 | `operations:sidecars.status` | `started_at_ms` | none |
 | `operations:terminal.panel` | `group`, `keywords`, `detail`, `query`, `selected`, `close_args` | `terminal_panel_navigation_v1` |
+| `operations:workspace.unwatch` | `key` | `workspace_watch_key_v1` |
 | `operations:workspace.watch` | `key`, `git` | `workspace_watch_key_v1`, `workspace_watch_git_v1` |
 | `components:code` | `start` | `terminal_code_highlight_v1` |
 | `view_fields:keybindings` | `region`, `help` | `terminal_focus_v1` |
@@ -736,13 +738,13 @@ These changes ship in OMD 1.3.0.
   `/dev/tty` (git credentials, ssh passphrases, `sudo`) fails instead of drawing over the TUI and waiting. Pass input
   through `stdin` or the program's non-interactive flags. Runs with `sandbox: "none"` also receive `SSH_AUTH_SOCK`, so
   programs under an `os` grant can sign in through the user's SSH agent.
-### Package trust digest framing
+
+#### Package trust digest framing
 
 Package digests now prefix each manifest, path and file-content record with its eight-byte big-endian length.
 Existing trust digests change: inspect and re-trust folder mods, and reinstall curated packages from the new release.
 Do not copy old grants to a new digest. Same-ID mods share storage and owned credential authority; project scope takes precedence.
 Package previews report `identity_warning` when the ID is installed in another scope.
-
 
 ## Authoring
 
@@ -765,7 +767,7 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author create DIR [ID]` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
-| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
+| `pnpm check` | Host package inspection and syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
 | `pnpm test` | Runs the offline scenarios, the type check and the TypeScript tests (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs `debug.test.json`, which expects an error, and exits 0 with the error's mapped source location |
@@ -776,6 +778,10 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE [OUTPUT]` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
 | `omd-mod-author explain DENIAL` | Cause, safe remedy, and the authority boundary for a denial |
+
+`pnpm check` requires `omd-mod` (or `OMD_MOD_BIN`) for the same package inspection used by the host. This enforces
+the 512 KiB limit per entrypoint, asset or lifecycle file and the 1 MiB combined entrypoint/UTF-8 asset limit,
+including when TypeScript is absent.
 
 `pnpm test` runs, in order:
 
@@ -1066,7 +1072,8 @@ While a mod is written, `omd-mod-author watch DIR STORE` (or `pnpm watch STORE`)
 3. Queues a reload of that store's host and refreshes `.omd/`.
 
 Saving an entry point, asset or lifecycle file reloads again after 100 ms, and reports a half-written file instead of
-stopping. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
+stopping. Files named in `mod.json` are watched as soon as it is saved, so a new asset that doesn't exist yet reloads
+once you create it. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
 and also disables or resets a mod.
 
 **Because `watch` approves what it watches, point it only at a scratch store** (`omd-mod init STORE`) that contains
@@ -1444,7 +1451,7 @@ A package over the per-callback text limit is refused by inspection, install and
 const sent = api.host.tryCall('process.exchange', { session: session(m), send: [{ src: api.assets.read('github.mjs').text }], wait_ms: 0 });
 ```
 
-That call is from [`omd_monitor`](first-party/omd_monitor/index.ts). The mod owns its watch/list/cancel subscriptions, persistence, timeouts and delivery; companion plugin guidance teaches the agent when to subscribe and how to handle results. Enabling the mod with its declared grants is sufficient to watch repositories through the user’s `gh` login.
+That call is from [`omd_monitor`](first-party/omd_monitor/index.ts). The mod owns its watch/list/cancel subscriptions, persistence, timeouts and delivery; companion plugin guidance teaches the agent when to subscribe and how to handle results. Enabling the mod with its declared grants is sufficient to watch repositories through the user’s `gh` login. Watches and results belong to their creating thread; forks do not adopt them.
 
 ### Installed package manifests
 
@@ -2018,7 +2025,7 @@ it needs and its registry status. An operation marked experimental may change in
 | `workspace.snapshot` | `fs.read` | frozen |
 | `workspace.stat` | `fs.read`; `fs.external` for `root` | frozen |
 | `workspace.transaction` | `fs.write`; `fs.external` for `root` | frozen |
-| `workspace.unwatch` | `fs.read` | experimental |
+| `workspace.unwatch` | `fs.read` | frozen; experimental fields: `key` |
 | `workspace.watch` | `fs.read` | frozen; experimental fields: `key`, `git` |
 
 ## Authority grants
@@ -2970,6 +2977,12 @@ An approve outside the grant, an expired grant, an error, a timeout or an invali
 - A command that the user's own execpolicy rules forbid reaches the middleware with `host_decision: 'forbidden'`.
   Only a mod with `approve.override` (experimental) can approve it; anything else keeps it forbidden.
 - Managed requirements and other host denials never reach the middleware.
+- A command that managed requirements mark `prompt-user` always needs a fresh human decision: a mod's `{approve}`
+  counts as `ask`, and `approve.override` can't lift a user-rule `forbidden` on it.
+- An `ask` still runs `PermissionRequest` hooks, whose deny wins; where the session requires automatic review, the
+  forced request goes to the reviewer instead of the user.
+- In `thread/guardianReview`, a mod's deny or `ask` fails the review (`ask` reports that a human must approve); an
+  `{approve}` leaves the assessment to the reviewer.
 - `permissions` requests (`request_permissions`) are not delegable: `approves.kinds` can't list them, so a mod's
   `{approve}` counts as `ask`.
 - An `exec` or `stdin` grant also covers requests of that kind that ask to leave the sandbox or widen it.
@@ -3348,8 +3361,9 @@ Handlers may set `key` to another character or to a key name valid in view `keyb
 
 #### Submitted drafts and `prompt_expanded`
 
-The `input` interceptors also receive the submitted draft's `revision`, `attachments` (`{kind, source}`) and
-placeholder `elements` (`{kind: 'paste' | 'mention' | 'skill' | 'image', start?, end?, name?, source}`).
+The `input` interceptors also receive the submitted draft's `revision`, `attachments` (`{kind, source}`, where `source`
+is a local path, `'inline'` for inline data or `'file'` for an uploaded audio file) and placeholder `elements`
+(`{kind: 'paste' | 'mention' | 'skill' | 'image', start?, end?, name?, source}`).
 
 After skills and mentions are expanded, the experimental `prompt_expanded` event (capability `middleware`) lists them by
 name, path and SHA-256 only (`{kind: 'skill' | 'mention' | 'paste' | 'image', …}`), never their content, and the
@@ -3547,11 +3561,14 @@ is smaller. The result contains a 4 KiB preview, `{reference, sha256}` in `outpu
 `stdout_preview_truncated`. Oversize output fails with `exec_output_artifact_limit` without creating an artifact.
 
 `exec.output_page {artifact, cursor?, max_bytes?}` (experimental) reads at most 16 KiB per call with a byte cursor and
-returns `{text, cursor, bytes, sha256}`.
+returns `{text, cursor, bytes, sha256}`. The host seeks to the cursor and reads only that page, so paging a large
+artifact does not reread it. A cursor inside a UTF-8 character or past the end fails with `exec_output_cursor_invalid`,
+and a page never splits a character. `cursor` is `null` on the last page.
 
-The artifact is bound to the repository, the current mod source and the thread. Reads check its hash, and each
-repository, source and thread combination has a 64 MiB quota. Large command output stays outside mod callback
-receipts, and later callbacks can page it in.
+The artifact is bound to the repository, the current mod source and the thread. Each page is checked against block
+hashes recorded when the artifact was written or first verified, so a modified artifact fails with
+`exec_output_integrity_failed`. Each repository, source and thread combination has a 64 MiB quota. Large command
+output stays outside mod callback receipts, and later callbacks can page it in.
 
 #### `exclusive_workspace`
 
@@ -3756,7 +3773,7 @@ A `key` lets a mod find and replace one of its watches instead of adding another
 - Calling again from the same thread with the same arguments keeps the watch.
 - Other arguments or another thread replace it without counting against the limit. Changes it already queued are
   still delivered.
-- `workspace.unwatch {key}` (experimental) stops it. `workspace.unwatch {watch_id}` stops one of the mod's watches.
+- `workspace.unwatch {key}` stops it. `workspace.unwatch {watch_id}` stops one of the mod's watches.
 
 ##### Git metadata
 
@@ -3876,6 +3893,10 @@ evidence.read {reference, cursor?, max_bytes?} → {reference, text, cursor, byt
 
 `evidence.write` stores content-addressed evidence and returns a `ResourceRef` `{reference, sha256}`. The `base64`
 form is binary evidence (`binary_evidence_v1`).
+
+Evidence is bound to the mod, source digest, configuration generation, repository and current thread, including
+original tool output. Parent and child threads have separate bindings even when they share a host session.
+Each operation rechecks the effective managed, project or user selection and its current grants.
 
 | Media type | Size |
 | --- | --- |
@@ -4275,7 +4296,7 @@ experimental may change in any release
 | `component_event` | `{component, thread_id, kind, ...}` | nothing | `api.on` | frozen; experimental fields: `content`, `target`, `edge`, `columns`, `rows` | [Terminal input](reference/terminal-input.md#component_event) |
 | `component_post` | `{component, module, client?, data}` | nothing | `api.on` | frozen | [Terminal input](reference/terminal-input.md#component-module-handlers) |
 | `view` | `{phase, view, view_id, dropped?}` | nothing | `api.on` | experimental | [Terminal input](reference/terminal-input.md#component_event) |
-| `focus` | `{focused, dropped?}` | nothing | `api.on` | experimental | [Terminal input](reference/terminal-input.md#component_event) |
+| `focus` | `{focused, idle?, dropped?}` | nothing | `api.on` | experimental | [Terminal input](reference/terminal-input.md#component_event) |
 | `composer` | `{kind: 'change', ...}` or `{kind: 'suggestion', ...}` | nothing | `api.on` | frozen | [Commands and composer](reference/commands-and-composer.md#composer-event) |
 | `prompt_expanded` | `{turn_id, items}` | nothing | `api.on` | experimental | [Commands and composer](reference/commands-and-composer.md#submitted-drafts-and-prompt_expanded) |
 | `config_change` | `{key, original, effective, source, scope, caller}` | nothing | `api.on` | experimental | [Commands and composer](reference/commands-and-composer.md#configset) |
@@ -4435,7 +4456,7 @@ Full-screen transcript cells can repaint when background state changes. Inline s
 rows; a mod can show its latest asynchronous result through an `above_composer` terminal site when
 `event.presentation?.surface === "inline"`. Closed sessions do not deliver assistant completion callbacks.
 
-### Timers (`timers_v1`)
+#### Timers (`timers_v1`)
 
 `events.schedule {key, delay_ms, data?}` (`timers_v1`) delivers one `timer` event `{key, data?}` to the calling mod after
 `delay_ms`, which is 16 ms to 24 h.
@@ -4756,7 +4777,7 @@ session's worker limits.
 
 ```text
 agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?, snapshot?, parent_history?,
-              resolution_context?, model?}
+              resolution_context?, model?, hold_failure?}
 ```
 
 #### `agents.spawn` arguments
@@ -4774,6 +4795,7 @@ agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?,
 | `parent_history` | `true` delivers the parent conversation; see [Parent history](#parent-history) |
 | `resolution_context` | `{acceptance_sha256, findings}` for a worker that resolves contract findings ([Contracts and receipts](reference/contracts.md)) |
 | `model` | Experimental. Another model from the provider's runtime catalog on a provider lead route; rates and billing stay the route's |
+| `hold_failure` | `true` keeps a failure out of the parent's mailbox until `agents.cancel` with `deliver: true` |
 
 A `snapshot` agent:
 
@@ -4821,19 +4843,28 @@ const result = api.host.call('agents.wait', { handle: agent.handle });
 | Operation | Arguments | Result |
 | --- | --- | --- |
 | `agents.wait` | `{handle, consume?}` | `AgentResult`; waits at most 30 s, then returns `{status: 'running'}` |
-| `agents.result` | `{handle, consume?}` | `AgentResult` without waiting |
+| `agents.result` | `{handle, consume?, claim?}` | `AgentResult` without waiting; `claim: true` claims a final result as a returning `agents.wait` does |
 | `agents.message` (experimental) | `{handle, message}` (1 to 8,192 bytes) | `{delivered}` |
-| `agents.cancel` | `{handle}` | `{cancelled}` |
+| `agents.cancel` | `{handle, deliver?}` | `{cancelled, delivered}`; `deliver: true` first sends a held failure to the parent's mailbox. It waits up to 5 s for a send already in flight; `delivered` is `true` when the result reached the parent's mailbox, `'pending'` when a send was still in flight, and otherwise `false` |
 | `agents.list` (experimental) | none | `[{handle, finished, consumed}]` |
 
-`AgentResult` is `{status: 'running'}`, `{status: 'failed', error, failure?}` or `{status: 'completed', text,
-consumed, evidence, candidate_sha256?, changed_paths?}`.
+`AgentResult` is `{status: 'running'}`, `{status: 'failed', error, failure?, delivered?}` or `{status: 'completed', text,
+consumed, evidence, candidate_sha256?, changed_paths?, delivered?}`. `delivered: true` means the host already sent the
+result to the parent's mailbox, and `delivered: 'pending'` that it is sending it, so a claim can no longer stop it. An
+interruption sends nothing, so its result ends with no `delivered`.
 
 - These operations address only the caller's handles; another handle fails with `unknown_or_foreign_agent`.
 - `agents.message` fails with `message_limit`, `agent_finished` or `agent_not_running`.
 - Calls on one handle run in order; a wait on one handle does not block calls on another.
 - The host keeps at most 16 agent handles, counting spawns in progress.
-- Agent handles last until cancelled, the mod is disabled or fails, or the session stops.
+- Agent handles last until cancelled, the mod is disabled or fails, or the session stops. A held failure is dropped
+  when its session stops.
+- A finished or failed agent's result also reaches the parent thread's mailbox, as a native child's does, from
+  `<parent path>/<handle>` with the handle lowercased and each character other than a letter, digit or `_` made `_`.
+  An interrupted agent sends nothing, and a cancel sends only what its returned `delivered` reports. Nor is a result sent once it was claimed before the host
+  sent it: by an `agents.wait` that was already waiting, or by `agents.result` with `claim: true`. A claimed failure of a
+  `hold_failure` agent stays held for `agents.cancel` with `deliver: true`. A result over 16 KiB is cut there. With `agents.completion_wake` on, the result wakes an idle
+  parent ([Completion wake](#completion-wake)).
 
 ### Parent history
 
@@ -4872,8 +4903,9 @@ These rules apply to children the model spawns with Codex's multi-agent V2 tools
 
 These rules set when a parent runs again after its children report.
 
-- When a child's result reaches an idle parent (the root or another child), the parent starts one turn about 500 ms
-  after the last result. That turn reads every queued result.
+- With `agents.completion_wake` on (off by default; a package turns it on through `codex_config`), a child's result
+  that reaches an idle parent (the root or another child) starts one turn about 500 ms after the last result. That
+  turn reads every queued result. With it off, results wait for the parent's next turn.
 - A parent that was interrupted, or is in Plan mode, stays idle.
 - A result over 16 KiB is cut, with a pointer to `list_agents`.
 - A `wait_agent` that times out tells the model to end its turn.
@@ -5412,6 +5444,8 @@ const { turns, recording } = api.host.call('turns.activity', { last: 1 });
 ```
 
 ### `sessions.list`
+
+Recorded-session access rechecks the effective managed, project or user selection and its current grants on every call.
 
 `sessions.list {since?, until?, cursor?, limit?}` pages this repository's recorded sessions that allow memory (Codex
 memory mode `enabled`). It returns `{sessions, cursor, revision, scan_truncated, unavailable, projection}`; each
@@ -6669,7 +6703,7 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 ### `tool_call` props
 
 Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
-`interrupted`), `duration_ms` (null without a recorded start and completion, such as a patch row drawn live) and
+`interrupted`), `duration_ms` (null without a recorded start and completion) and
 `expanded`, and per kind:
 
 | `kind` | Props |
@@ -6682,6 +6716,10 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 | `mcp` | `server`, `tool`, `arguments`, `output_lines` |
 | `dynamic` | `tool`, `arguments`, `output_lines` |
 | `image` | `tool`, `path`, `prompt` |
+
+Patch rows are inserted on completion. Declined patches show an informational notice, matching restored
+history; they do not produce a `tool_call` render target. Patch `duration_ms` is a number when timing is recorded,
+otherwise null.
 
 Group and file limits:
 
@@ -7209,7 +7247,7 @@ selected binding and Esc clears the search or closes the overlay.
 
 - `action`: `enter`, `leave`, `move`, `down`, `up`, `drag`, or `scroll_up` and `scroll_down` for the mouse wheel;
 - `button`: `left`, `right`, `middle`, or null for motion and the wheel;
-- `column`/`row` relative to the component's first cell (a nested box counts its title and children);
+- `column`/`row` as signed 32-bit integers relative to the component's first cell (a nested box counts its title and children);
 - `half` (0 or 1, the half-cell row) on terminals that report pixel positions (Kitty, Ghostty and WezTerm), else
   null.
 
@@ -7221,7 +7259,16 @@ position, never a backlog. Views with no pointer components add no pointer work.
 
 `component_event` reports interaction with a mod's components and goes only to the component's owner. Two experimental
 events report native state: `view` (`{phase, view, view_id, dropped?}`) when a native bottom-pane view or overlay opens
-or closes, and `focus` (`{focused, dropped?}`) when the terminal window gains or loses focus.
+or closes, and `focus` (`{focused, idle?, dropped?}`) when the terminal window gains or loses focus or enters/leaves display idle.
+`idle: true` means five minutes without terminal input. Stop visual timers while `!focused || idle` and restart
+them on the next active event. `terminal` callbacks also carry `client.active` so a newly shown
+thread can recover without waiting for another window focus change. Active turns, tools, monitors and desktop
+notifications continue; the TUI redraws at most once a second, so content stays current without animation, and releases unused stateless
+runners and spare processes. Session runners and mounted component state remain resident. After a minute without
+runner use, all spare runners are released. Focus, keys, paste or mouse resume full-rate drawing; resize and returning from
+an external editor resume it while focused, and an approval, question or finished turn ends display idle in a
+focused terminal. Background detection needs a terminal that reports focus events.
+This reduces display work and disposable memory; it does not unload the conversation or freeze the session process.
 
 With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
 `view {phase: 'opened', view: 'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent.
@@ -7360,8 +7407,9 @@ by `columns` and `rows`, or as last rendered. The default is 80 columns and 0 ro
 says when the next tick is due. The client sends key and pointer events through `omd/client/event`.
 
 Their posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
-host operations as `component_event` hooks, for terminal and client posts alike. Detaching unmounts the client's
-instances.
+host operations as `component_event` hooks, for terminal and client posts alike. A post is delivered only while the
+thread it was posted in is still current and its instance is still mounted. Detaching unmounts the client's instances
+and drops their undelivered posts.
 
 ## Graphics
 
@@ -7952,12 +8000,13 @@ In [`direct` mode](reference/glossary.md#stores-and-data), which runs plain Code
 
 ### `terminal` event `client`
 
-The `terminal` event has `client: {kind: 'terminal', graphics, pointer, reduced_motion, cell_px, columns,
+The `terminal` event has `client: {kind: 'terminal', active?, graphics, pointer, reduced_motion, cell_px, columns,
 rows, sites?}` and, with external clients attached, `clients` (see
 [Renderer capabilities and fallback](reference/omd-client-protocol.md#renderer-capabilities-and-fallback)):
 
 | Field | Meaning |
 | --- | --- |
+| `active` | When present, false while the terminal is unfocused or display-idle; true when active. |
 | `graphics` | `kitty` (pixel images), `iip` (iTerm2 inline images: Orca, iTerm2, WezTerm), `cells` (half-block) or `text` (`NO_COLOR`). |
 | `pointer` | `half_cell`, `cell` or `none` (no mouse capture: tmux, `OMD_TUI_MOUSE=off`, inline viewport). |
 | `reduced_motion` | Follows `tui.animations` and the system setting, and mods that animate stop when it is true. |
@@ -8530,6 +8579,9 @@ omd/client/event {epoch, component, event}
 - `{kind: 'key', key, text?}`
 - `{kind: 'focus'}`
 
+Pointer `column` and `row` are signed 32-bit cell coordinates relative to the component. Captured `drag` and
+`up` events may carry negative positions after moving above or left of its bounds.
+
 Behavior:
 
 - `{delivered}` is answered in the order the connection sent its events and actions.
@@ -8607,10 +8659,9 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
   `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with
   `client_surface_operation_unavailable`.
 - `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them.
-- When a mod's source changes after trust, its last trusted code keeps running. The mod reports
-  `source_changed: ...`, and `reload_error` is `untrusted_source: ...`. The new source loads after `omd-mod trust`
-  and a reload. Administered content that no longer matches its pin reports `managed_content_stale: ...` instead and
-  loads after `omd-mod package-sync`.
+- When a mod's source changes after trust, its last trusted code keeps running. The mod and `reload_error` both
+  report `source_changed: ...`. The new source loads after `omd-mod trust` and a reload. Administered content that
+  no longer matches its pin reports `managed_content_stale: ...` instead and loads after `omd-mod package-sync`.
 
 ### Host notifications and server requests
 

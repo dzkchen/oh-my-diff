@@ -149,7 +149,7 @@ impl SessionContract {
         if bytes.len() > STATE_BYTES {
             return Err("contract_state_byte_limit".into());
         }
-        let digest = codex_omd::broker::sha256(&bytes);
+        let digest = codex_omd::sha256_hex(&bytes);
         match anchor {
             Some(anchor) if anchor.count == 0 => {
                 codex_omd::broker::seed(path, 1, &codex_omd::broker::chain("", &digest), &digest)

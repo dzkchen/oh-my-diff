@@ -35,6 +35,8 @@ use codex_extension_api::UserInputInterceptInput;
 use codex_omd::ModGrants;
 use codex_omd::ModHost;
 use codex_omd::ModHostCall;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModTool;
 use codex_protocol::models::PermissionProfile;
 use std::sync::Mutex;
@@ -43,7 +45,6 @@ use std::sync::atomic::Ordering;
 
 pub(crate) use access::AccessState;
 pub(crate) use expansion::take_route_selection;
-pub(crate) use operations::DataScope;
 
 type Reply = std::sync::mpsc::SyncSender<std::io::Result<Value>>;
 type Facts = BTreeMap<String, (String, Option<ModGrants>)>;
@@ -332,7 +333,7 @@ fn event_fragments_scoped(
     private: BTreeMap<String, Value>,
     active: impl Fn() -> bool,
     authority: &str,
-    host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
+    mut host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
 ) -> Vec<PromptFragment> {
     let mut fragments = Vec::new();
     let mut remaining_bytes = 6144;
@@ -352,8 +353,11 @@ fn event_fragments_scoped(
             }
             value
         },
-        active,
-        host,
+        codex_omd::ModInvokeOptions {
+            active: &active,
+            host: codex_omd::ModHostCallback::Scoped(&mut host),
+            ..codex_omd::ModInvokeOptions::default()
+        },
     ) {
         match result {
             Ok(value) if event == "context" => {
@@ -422,13 +426,20 @@ fn initialize(
 ) -> Result<Arc<Mods>, String> {
     let registration =
         codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-    let runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-        .map_err(|e| e.to_string())?;
-    let input_runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-        .map_err(|e| e.to_string())?;
-    let persist_runtime =
-        ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
-            .map_err(|e| e.to_string())?;
+    let open = || {
+        ModHost::open(
+            host.root.clone(),
+            ModOpenOptions {
+                tool_validator: validate_tool_schema,
+                repository: Some(&host.repository),
+                ..ModOpenOptions::default()
+            },
+        )
+        .map_err(|e| e.to_string())
+    };
+    let runtime = open()?;
+    let input_runtime = open()?;
+    let persist_runtime = open()?;
     let persist_required = persist_runtime.required_surfaces();
     services::define_providers(&host.config, |id| runtime.grants(id).is_some());
     let _ = host.persist_json("mod-status.json", &runtime.status());
@@ -605,7 +616,7 @@ fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) -> Opt
         .err()
         .map(|error| format!("OMD session refresh failed: {error}"));
     if let Ok(mut runtime) = runtime.lock() {
-        runtime.turn_boundary();
+        runtime.turn_boundary(&|| true);
         refresh_contract(&runtime, session);
         codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
     }
@@ -895,6 +906,7 @@ impl Mods {
             json!({"token_limit":config.model_auto_compact_token_limit
                 .or_else(|| config.model_context_window.map(|window| window * 9 / 10)),
                 "context_window":config.model_context_window}),
+            ModInvokeOptions::default(),
         );
         let mut selected: Option<(String, Option<String>)> = None;
         for (id, result) in compaction {
@@ -995,6 +1007,7 @@ impl Mods {
             "routing",
             json!({"routes":routes,"model":config.model,"provider":config.model_provider_id,
                 "reasoning":config.model_reasoning_effort}),
+            ModInvokeOptions::default(),
         );
         let mut selected: Option<String> = None;
         let mut diagnostic = None;
@@ -1166,9 +1179,12 @@ fn submission_context(items: &[Value]) -> (Vec<Value>, Vec<Value>) {
             }
             Some("image") => attachments.push(json!({"kind": "image", "source": "inline"})),
             Some(kind @ ("audio" | "local_audio")) => {
-                attachments.push(
-                    json!({"kind": kind, "source": item.get("path").unwrap_or(&json!("inline"))}),
-                );
+                let source = match (item.get("path"), item.get("file_id")) {
+                    (Some(path), _) => path.clone(),
+                    (None, Some(_)) => json!("file"),
+                    (None, None) => json!("inline"),
+                };
+                attachments.push(json!({"kind": kind, "source": source}));
             }
             _ => {}
         }
@@ -1527,8 +1543,14 @@ impl TurnLifecycleContributor for Mods {
                 tokio::task::spawn_blocking(move || {
                     let _thread = codex_omd::StateThread::enter(scoped);
                     if let Ok(mut runtime) = runtime.lock() {
-                        let _ = runtime
-                            .event_guarded("prompt", prompt, || !flag.load(Ordering::Acquire));
+                        let _ = runtime.event(
+                            "prompt",
+                            prompt,
+                            ModInvokeOptions {
+                                active: &|| !flag.load(Ordering::Acquire),
+                                ..ModInvokeOptions::default()
+                            },
+                        );
                     }
                 })
             };
@@ -1538,7 +1560,7 @@ impl TurnLifecycleContributor for Mods {
                 let _thread = codex_omd::StateThread::enter(scoped);
                 let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
                 runtime
-                    .refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire))
+                    .refresh(&|| !boundary_cancelled.load(Ordering::Acquire))
                     .map_err(|error| error.to_string())?;
                 Ok::<_, String>(runtime.intercepts("input"))
             })
@@ -2284,7 +2306,7 @@ impl ToolLifecycleContributor for Mods {
             let intercepting = tokio::task::spawn_blocking(move || {
                 let _thread = codex_omd::StateThread::enter(Some(thread));
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-                let _ = runtime.event_guarded("tool_call", observed, || true);
+                let _ = runtime.event("tool_call", observed, ModInvokeOptions::default());
                 Ok::<_, String>((
                     runtime.intercepts(surface),
                     runtime.intercepts_with(surface, "code_mode_values_v1"),
@@ -2614,6 +2636,33 @@ impl Drop for Cancellation {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Release);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn audio_attachments_report_their_source() {
+    use codex_protocol::models::AudioReference;
+    use codex_protocol::user_input::UserInput;
+    let items = [
+        UserInput::Audio {
+            audio: AudioReference::File {
+                file_id: "file-1".into(),
+            },
+        },
+        UserInput::Audio {
+            audio: AudioReference::Inline {
+                audio_url: "data:audio/wav;base64,AA==".into(),
+            },
+        },
+    ]
+    .map(|item| serde_json::to_value(item).unwrap_or_default());
+    assert_eq!(
+        submission_context(&items).0,
+        vec![
+            json!({"kind": "audio", "source": "file"}),
+            json!({"kind": "audio", "source": "inline"}),
+        ]
+    );
 }
 
 #[cfg(test)]

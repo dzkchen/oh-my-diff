@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest an improvement to Oh My Diff, a first-party mod, a plugin or the installer
+title: "[Feature]: "
+labels: ["type: feature", "status: triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most new features fit best as a mod, plugin, skill or hook. If a mod can't do what you want because the API
+        is missing something, use **Mod or API request** instead. Please write in English.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Installer or updates
+        - OMD host, TUI or patched Codex
+        - A first-party mod or the SDK
+        - A bundled plugin or skill
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What you are trying to do, and what is missing today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+      description: Other approaches you tried or considered, existing mods that come close, mockups.

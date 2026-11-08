@@ -182,8 +182,13 @@ const POINTER_ACTIONS: &[&str] = &[
 const POINTER_BUTTONS: &[&str] = &["left", "right", "middle"];
 
 fn pointer(pointer: &Value) -> Option<Value> {
-    (pointer["column"].is_u64()
-        && pointer["row"].is_u64()
+    let coordinate = |axis: &str| {
+        pointer[axis]
+            .as_i64()
+            .is_some_and(|value| i32::try_from(value).is_ok())
+    };
+    (coordinate("column")
+        && coordinate("row")
         && pointer["action"]
             .as_str()
             .is_some_and(|action| POINTER_ACTIONS.contains(&action))
@@ -277,8 +282,15 @@ pub(super) fn reconcile(views: &view::Views, snapshot: &ModViewSnapshot) {
         current
     });
 }
-/// Undelivered `component_post` payloads by owner, the latest per client instance.
-static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
+struct Post {
+    owner: String,
+    payload: Value,
+    thread: Option<ThreadId>,
+    revoked: Arc<AtomicBool>,
+}
+
+/// Undelivered `component_post` payloads, the latest per client instance.
+static POSTS: Mutex<Vec<Post>> = Mutex::new(Vec::new());
 static POSTING: Coalesce = Coalesce::new();
 
 /// Defaults to 80 columns and rows 0 (the auto height a terminal node without `height` gets) when no size was given or rendered.
@@ -325,8 +337,8 @@ fn module_step(
         );
         (owner, module.to_owned(), props.clone(), size, revoked)
     };
-    let _thread =
-        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
+    let thread = core.expansion.current().map(|lead| lead.thread);
+    let _thread = codex_omd::StateThread::enter(thread.map(|thread| thread.to_string()));
     let frame = json!({"instance": instance(client, component), "client": client,
         "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
         "columns": columns, "rows": rows, "events": events});
@@ -341,34 +353,45 @@ fn module_step(
         let payload = json!({"component": component, "module": module, "client": client,
             "data": post["data"]});
         if let Ok(mut posts) = POSTS.lock() {
-            posts.retain(|(queued, queued_payload)| {
-                *queued != owner
-                    || queued_payload["component"] != payload["component"]
-                    || queued_payload["client"] != payload["client"]
+            posts.retain(|queued| {
+                queued.owner != owner
+                    || queued.payload["component"] != payload["component"]
+                    || queued.payload["client"] != payload["client"]
             });
-            posts.push((owner, payload));
+            posts.push(Post {
+                owner,
+                payload,
+                thread,
+                revoked,
+            });
         }
         POSTING.request(deliver_posts);
     }
     Ok(step)
 }
 
+fn next_post(thread: ThreadId) -> Option<Post> {
+    let mut posts = POSTS.lock().ok()?;
+    while !posts.is_empty() {
+        let post = posts.remove(0);
+        if !post.revoked.load(Ordering::Acquire) && post.thread == Some(thread) {
+            return Some(post);
+        }
+    }
+    None
+}
+
 fn deliver_posts() {
-    while let Some((owner, payload)) = POSTS
-        .lock()
-        .ok()
-        .and_then(|mut posts| (!posts.is_empty()).then(|| posts.remove(0)))
+    let Ok(core) = core() else {
+        return;
+    };
+    while let Ok(lead) = session(&core)
+        && let Some(Post { owner, payload, .. }) = next_post(lead.thread)
     {
-        let Ok(core) = core() else {
-            return;
-        };
         let registered = core
             .runtime
             .lock()
             .is_ok_and(|runtime| runtime.registered(&owner, "component_post"));
-        let Ok(lead) = session(&core) else {
-            return;
-        };
         if registered {
             let lead = Lead {
                 permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
@@ -490,7 +513,7 @@ pub fn action(
         Origin::UserCommand,
         move |runtime, host, active| {
             let host = std::cell::RefCell::new(host);
-            let call = |caller: &str, request: ModHostCall| {
+            let mut call = |caller: &str, request: ModHostCall| {
                 let mut host = host.borrow_mut();
                 (*host)(caller, request)
             };
@@ -514,9 +537,11 @@ pub fn action(
                         "command",
                         &registration.name,
                         Value::String(args),
-                        active,
-                        call,
-                        |_| {},
+                        codex_omd::ModInvokeOptions {
+                            active,
+                            host: codex_omd::ModHostCallback::Scoped(&mut call),
+                            ..codex_omd::ModInvokeOptions::default()
+                        },
                     )
                     .map(|value| json!({"result": value}))
                 },
@@ -569,7 +594,7 @@ pub fn render(client: &str, slot: &str, props: Value) -> Result<Value, String> {
     let _thread =
         codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
     let input = json!({"component": slot, "id": format!("client:{slot}"), "surface": "inline",
-        "viewport": {"columns": 80, "rows": 24}, "lifecycle": "final", "owner": null, "props": props.clone()});
+        "viewport": {"columns": 80, "rows": 24}, "lifecycle": "final", "owner": null, "props": props});
     let chain = codex_omd::render_shared(&core.runtime, input, || true)
         .map_err(|error| error.to_string())?;
     Ok(
@@ -724,7 +749,7 @@ pub(super) fn reloaded(core: &Core) {
         }
         None => {
             if let Ok(mut runtime) = core.runtime.lock() {
-                runtime.turn_boundary();
+                runtime.turn_boundary(&|| true);
             }
         }
     }

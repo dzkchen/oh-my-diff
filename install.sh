@@ -25,6 +25,7 @@ fi
 exec "$OMD_PYTHON" -I - "$@" <<'PY'
 import argparse
 import codecs
+import contextlib
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import functools
@@ -65,7 +66,7 @@ CADENCES = {"daily": 86_400, "weekly": 604_800}
 POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "prerelease", "nightly"), "cadence": ("daily", "weekly")}
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
-UPSTREAM_MINOR = "0.166"
+UPSTREAM_MINOR = "0.167"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
 NOTICE_BYTES = 4096
@@ -241,9 +242,9 @@ def profile_choice(args):
             output.write(f"  {paint('Pick a profile', '1')}\n\n"
                          f"    {paint('1', '36')}  {paint('OMD+', '1')}       Core plus the first-party mod collection and bundled plugins.\n"
                          "                  Default mods start on; turn on the rest in /mods.\n"
-                         "                  Among them: a prompt unanswered for two minutes is declined,\n"
-                         "                  a large idle chat is compacted (losing detail and cancelling\n"
-                         "                  a pending approval), and /plan is removed.\n\n"
+                         "                  Among them: after two minutes unanswered, an approval or\n"
+                         "                  MCP request is declined, a permission request is denied,\n"
+                         "                  and a question gets \"use your best judgment\".\n\n"
                          f"    {paint('2', '36')}  {paint('OMD Core', '1')}   Patched Codex, mod manager, typed author tools,\n"
                          "                  and the logo, /mods and update mods.\n\n")
             while True:
@@ -766,28 +767,28 @@ def uninstall(args, root, bin_dir, current):
              + ", ".join(map(str, policies)))
     upstream = Path(upstream_binary(args, current)["path"])
     check_links(root, bin_dir)
-    refuse_sessions(root, args.session)
-    generations = sorted((root / "releases").iterdir())
-    generations = [item for item in generations if (item / "receipt.json").is_file()]
-    for generation in generations:
-        if not removing(generation):
-            status(generation, upstream, bin_dir)
-    failures = []
-    for generation in [item for item in generations if item != current]:
-        try:
-            remove_generation(generation, upstream, bin_dir, "--keep-broker")
-        except (OSError, ValueError) as error:
-            failures.append(f"{generation.name}: {error}")
-    kept = (root / "previous").resolve()
-    if not failures or not kept.is_dir() or removing(kept):
-        (root / "previous").unlink(missing_ok=True)
-    if failures:
-        fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
-    if purge:
-        package(current, upstream, bin_dir, "purge-accounts")
     write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir), "purge": purge})
-    restore_links(root, bin_dir)
     try:
+        refuse_sessions(root, args.session)
+        generations = sorted((root / "releases").iterdir())
+        generations = [item for item in generations if (item / "receipt.json").is_file()]
+        for generation in generations:
+            if not removing(generation):
+                status(generation, upstream, bin_dir)
+        failures = []
+        for generation in [item for item in generations if item != current]:
+            try:
+                remove_generation(generation, upstream, bin_dir, "--keep-broker")
+            except (OSError, ValueError) as error:
+                failures.append(f"{generation.name}: {error}")
+        kept = (root / "previous").resolve()
+        if not failures or not kept.is_dir() or removing(kept):
+            (root / "previous").unlink(missing_ok=True)
+        if failures:
+            fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
+        if purge:
+            package(current, upstream, bin_dir, "purge-accounts")
+        restore_links(root, bin_dir)
         remove_generation(current, upstream, bin_dir)
     except BaseException:
         if not removing(current):
@@ -823,6 +824,8 @@ def finish_uninstall(root, purge):
             leftover.unlink()
     journal.unlink(missing_ok=True)
     (root / "update").rmdir()
+    with contextlib.suppress(OSError):
+        (root / "releases").rmdir()
     return {"uninstalled": True, "purged_stores" if purge else "preserved_stores": str(root / "stores"),
             "preserved_administrator_policy": [str(path) for path in
                 (BROKER_POLICY, BROKER_POLICY.with_name("policy.json.previous")) if path.exists() or path.is_symlink()],
@@ -913,14 +916,21 @@ def releases(url, channel="stable", pin="", installed=None, missing=None):
                 version = tag.removeprefix("refs/tags/v") if isinstance(tag, str) and tag.startswith("refs/tags/v") else None
                 if version_key(version) and on_channel(channel, {"version": version, "prerelease": "-" in version}):
                     versions.append(version)
-        versions = sorted(set(versions), key=version_key, reverse=True)[:5]
-        listed = tag_documents(base, sorted({*versions, installed} - {None}, key=version_key, reverse=True), missing)
-    else:
-        listed = fetch_json(url, 2_000_000)
-        if not isinstance(listed, list):
-            fail("release list is malformed")
-    found = (entry for item in listed if (entry := release_entry(item)))
-    yield from found if matching else sorted(found, key=lambda item: version_key(item["version"]), reverse=True)
+        usable = 0
+        for version in sorted({*versions, installed} - {None}, key=version_key, reverse=True):
+            if usable >= 5 and version != installed:
+                if not installed or version_key(version) < version_key(installed):
+                    return
+                continue
+            for item in tag_documents(base, [version], missing):
+                if entry := release_entry(item):
+                    usable += 1
+                    yield entry
+        return
+    listed = fetch_json(url, 2_000_000)
+    if not isinstance(listed, list):
+        fail("release list is malformed")
+    yield from sorted((entry for item in listed if (entry := release_entry(item))), key=lambda item: version_key(item["version"]), reverse=True)
 
 
 def tag_documents(base, versions, missing=None, prefix="v"):
@@ -1013,7 +1023,8 @@ def mod_bundle(url, version, after=0):
         if not isinstance(refs, list):
             fail("mod bundle tags are malformed")
         tags = {ref.removeprefix("refs/tags/") for item in refs if isinstance(item, dict) and isinstance(ref := item.get("ref"), str)}
-        listed = tag_documents(base, sorted((tag for tag in tags if serial(tag) > after), key=serial, reverse=True)[:5], prefix="")
+        listed = itertools.islice((item for item in tag_documents(base, sorted((tag for tag in tags if serial(tag) > after), key=serial, reverse=True), prefix="")
+                                   if isinstance(item, dict) and not item.get("draft")), 5)
     else:
         listed = fetch_json(url, 2_000_000)
         if not isinstance(listed, list):
@@ -1293,8 +1304,14 @@ def apply_mods(args, root, current, mods):
             offered = json.loads((payload / "mods.lock.json").read_text())["packages"]
             if {identifier: package.get("package_sha256") for identifier, package in offered.items()} != manifest["packages"]:
                 fail("the mod bundle disagrees with its signed manifest")
-            result = json.loads(package(current, upstream, args.bin_dir, "mods-update", "--bundle", payload,
-                                        "--serial", str(mods["serial"])))
+            journaled(root, None, args.session)
+            try:
+                result = json.loads(package(current, upstream, args.bin_dir, "mods-update", "--bundle", payload,
+                                            "--serial", str(mods["serial"])))
+            finally:
+                (root / "update/journal.json").unlink(missing_ok=True)
+    except SessionsOpen:
+        raise
     except BaseException as error:
         save(root, pending_mods=None, failed_mods=mod_key(mods) | {"error": text(str(error), 300), "at": int(time.time())})
         forget_backup(root, current)
@@ -1311,21 +1328,25 @@ def forget_backup(root, current):
 
 
 def install_mods(args, root, current, mods):
-    if sessions(root, args.session):
-        with flocked(update_dir(root) / ".stage.lock", DOWNLOAD_WAIT):
-            stage(root, {"manifest": mods})
-        save(root, pending_mods=mod_key(mods))
-        return {"staged_mods": mods["changed"], "applies": "the next time OMD starts while no other OMD session is open"}
-    return apply_mods(args, root, current, mods)
+    if not sessions(root, args.session):
+        with contextlib.suppress(SessionsOpen):
+            return apply_mods(args, root, current, mods)
+    with flocked(update_dir(root) / ".stage.lock", DOWNLOAD_WAIT):
+        stage(root, {"manifest": mods})
+    save(root, pending_mods=mod_key(mods))
+    return {"staged_mods": mods["changed"], "applies": "the next time OMD starts while no other OMD session is open"}
 
 
 def rollback_mods(args, root, current):
-    refuse_sessions(root, args.session)
     upstream = Path(upstream_binary(args, current)["path"])
     record = installation(root, current)[1]
-    serial = record.get("mods_bundle", {}).get("serial")
-    save(root, mods=None, pending_mods=None, held_mods={"omd": record["version"], "serial": serial} if serial else None)
-    result = json.loads(package(current, upstream, args.bin_dir, "mods-rollback"))
+    journaled(root, None, args.session)
+    try:
+        serial = record.get("mods_bundle", {}).get("serial")
+        save(root, mods=None, pending_mods=None, held_mods={"omd": record["version"], "serial": serial} if serial else None)
+        result = json.loads(package(current, upstream, args.bin_dir, "mods-rollback"))
+    finally:
+        (root / "update/journal.json").unlink(missing_ok=True)
     save(root, last_mods=None)
     print(json.dumps({"restored_mods": result["updated"]}, indent=2))
 
@@ -1520,14 +1541,18 @@ def launch(args, root, current):
     print(f"Oh My Diff {ready} is installed.", file=sys.stderr)
 
 
+def latest_summary(status):
+    found = status["available"]
+    return (f"{found['version']} is available: run omd update" if found else
+            f"first-party mod updates are available ({', '.join(status['mods']['changed'])}): run omd update" if status["mods"] else
+            f"the last check failed: {status['error']}" if status["error"] else
+            "up to date" if status["checked_at"] else "not checked yet")
+
+
 def update_summary(status):
     rules = status["policy"]
     checks = f"{rules['cadence']} checks" if rules["checks"] == "on" else "update checks off"
-    found = status["available"]
-    latest = (f"{found['version']} is available: run omd update" if found else
-              f"first-party mod updates are available ({', '.join(status['mods']['changed'])}): run omd update" if status["mods"] else
-              f"the last check failed: {status['error']}" if status["error"] else
-              "up to date" if status["checked_at"] else "not checked yet")
+    latest = latest_summary(status)
     pinned = f", pinned to {rules['pin']}" if rules["pin"] else ""
     pulled = (f". {status['withdrawn']['version']} was withdrawn" + (f"; run {status['withdrawn']['run']}" if status["withdrawn"]["run"] else "")
               if status["withdrawn"] else "")
@@ -1535,10 +1560,17 @@ def update_summary(status):
             f"{checks}{pinned}: {latest}{pulled}")
 
 
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        if sys.argv[1:2] == ["update"]:
+            fail(f"omd update: {message}")
+        super().error(message)
+
+
 def main():
     if sys.version_info < (3, 12):
         fail("Python 3.12 or newer is required for verified archive extraction")
-    parser = argparse.ArgumentParser(
+    parser = Parser(
         prog="install.sh",
         description="Install, update and roll back Oh My Diff on Apple Silicon macOS",
         epilog="omd update [now|status|check|enable|disable|rollback], omd update checks on|off, "
@@ -1597,6 +1629,8 @@ def main():
             print(json.dumps(result, indent=2))
             if args.action == "status":
                 print(update_summary(result), file=sys.stderr)
+            elif args.action == "check":
+                print(f"Oh My Diff {result['installed']}: {latest_summary(result)}", file=sys.stderr)
         elif args.command == "install":
             install(args, root, current)
         elif args.command == "status":
@@ -1609,6 +1643,9 @@ def main():
             rollback(args, root, args.bin_dir, current)
         else:
             uninstall(args, root, args.bin_dir, current)
+    if args.command == "uninstall" and [path.name for path in root.iterdir()] == [".install.lock"]:
+        (root / ".install.lock").unlink()
+        root.rmdir()
 
 
 if __name__ == "__main__":

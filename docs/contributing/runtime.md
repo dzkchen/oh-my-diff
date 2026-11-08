@@ -14,7 +14,7 @@ change and write it back. For what `runtime/` contains, see [runtime/README.md](
 
 OMD is one patch on upstream Codex. These files are generated, so never edit them directly:
 
-- `runtime/patches/omd-0.166.0.patch` and `runtime/patches/manifest.json`
+- `runtime/patches/omd-0.167.0.patch` and `runtime/patches/manifest.json`
 - `runtime/omd` and `runtime/native`, copies of the `codex-rs/omd` and `codex-rs/ext/omd` crates the patch adds
 - `runtime/native/src/request_observer.rs`, a copy of the patched `codex-rs/codex-api/src/request_observer.rs`
 - `runtime/crate-notices.txt`
@@ -40,9 +40,9 @@ edits first, then use a new name for different sources. Keep each tree and targe
 - The build target is `/private/tmp/omd-bNAME/target`. Set `OMD_WORK_ROOT` to use another directory instead of
   `/private/tmp`.
 - The tree's `mods/` is a link to your checkout, so edits to mods there are ordinary edits.
-- The tree's `normalized<version>` tag is the pinned upstream source without the patch. On Codex `0.166.0` it is
-  `normalized1660`. List it with `git -C TREE tag -l 'normalized*'` and compare a path with
-  `git -C TREE diff normalized1660 -- codex-rs/PATH`.
+- The tree's `normalized<version>` tag is the pinned upstream source without the patch. On Codex `0.167.0` it is
+  `normalized1670`. List it with `git -C TREE tag -l 'normalized*'` and compare a path with
+  `git -C TREE diff normalized1670 -- codex-rs/PATH`.
 
 The [runtime README](../../runtime/README.md#crates) lists the crates the patch adds. Rust tests are beside the code
 in `*_tests.rs` files.
@@ -124,7 +124,8 @@ commands from the repository root; the wrapper runs Cargo in your scratch tree:
    python3 .github/scripts/build.py cargo NAME LOG nextest run --locked -p CRATE
    ```
 
-3. Before integration, Clippy and Rustfmt for the touched crates:
+3. Before integration, Clippy and Rustfmt for the touched crates. The `omd` crates use the workspace lints
+   (`[lints] workspace = true`), so unwrap and expect are denied outside tests:
 
    ```sh
    python3 .github/scripts/build.py cargo NAME LOG clippy --locked -p CRATE --tests

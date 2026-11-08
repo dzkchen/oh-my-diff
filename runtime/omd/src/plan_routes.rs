@@ -45,7 +45,7 @@ pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<Stri
     let directory = store.join("routes").join("plan");
     std::fs::create_dir_all(&directory)?;
     let grant_path = directory.join(format!("{name}.json"));
-    let identity = crate::resource_data::hash(repository.as_os_str().as_encoded_bytes());
+    let identity = crate::sha256_hex(repository.as_os_str().as_encoded_bytes());
     let mut grant = read(&grant_path)?.unwrap_or_else(|| {
         json!({"schema": 1, "included_subscription": true, "revocable": true, "provider": "openai",
             "model": plan.model, "responses_url": SUBSCRIPTION_RESPONSES_URL, "repositories": []})
@@ -86,7 +86,7 @@ pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<Stri
         None => {}
     }
     crate::fsio::write_json(&grant_path, &grant)?;
-    let sha256 = crate::resource_data::hash(&bytes);
+    let sha256 = crate::sha256_hex(&bytes);
     routes.push(json!({"name": name, "provider": "openai", "model": plan.model,
         "reasoning_effort": plan.reasoning_effort, "responses_url": SUBSCRIPTION_RESPONSES_URL,
         "roles": ["worker"], "mods": [plan.mod_id], "grant": {"path": grant_path, "sha256": sha256},

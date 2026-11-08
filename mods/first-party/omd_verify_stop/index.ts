@@ -1,6 +1,6 @@
 import type { Json, ModAPI } from '../../api.d.ts';
 
-type State = { seq: number; edited: number; passed: number; failed: number; failure: string; blocked: boolean; probed: boolean; files: string[]; added: string[]; continued: number; pending: Record<string, boolean> };
+type State = { seq: number; edited: number; passed: number; failed: number; failure: string; blocked: boolean; probed: boolean; files: string[]; added: string[]; continued: number; pending: Record<string, { check: boolean; proves: boolean }> };
 
 const fresh = (): State => ({ seq: 0, edited: 0, passed: 0, failed: 0, failure: '', blocked: false, probed: false, files: [], added: [], continued: 0, pending: {} });
 const LIST = 16;
@@ -102,13 +102,15 @@ export default function activate(api: ModAPI) {
       const session = String(field(event.arguments, 'session_id'));
       const code = EXIT.exec(event.text)?.[1];
       if (!(session in state.pending) || code === undefined) return null;
-      if (state.pending[session]) checked(state, Number(code), text);
+      const { check, proves } = state.pending[session];
+      if (check && (Number(code) !== 0 || proves)) checked(state, Number(code), text);
       delete state.pending[session];
     } else {
       const cmd = command(event.tool, event.arguments);
       if (!cmd) return null;
       const parts = segments(cmd);
       const check = parts.some(part => CHECK.test(part));
+      const proves = !/\|\||;|\n/.test(cmd.trim().replace(HEREDOC, '<<$2$3').replace(QUOTED, "''"));
       if (!state.edited && (check || parts.some(part => RUN.test(part)))) state.probed = true;
       const code = EXIT.exec(event.text)?.[1];
       if (parts.length > 1 || (code === undefined ? event.success : Number(code) === 0)) {
@@ -119,8 +121,11 @@ export default function activate(api: ModAPI) {
         for (const part of parts) if (/^rm\s/.test(part)) part.split(/\s+/).slice(1).filter(word => !word.startsWith('-')).forEach(path => forget(state, path.replace(/^\.\//, '')));
       }
       const session = RUNNING.exec(event.text)?.[1];
-      if (session) state.pending[session] = check;
-      else if (check) checked(state, (code === undefined ? !event.success : Number(code) !== 0) || (cmd.includes('|') && FAILED.test(text)) ? 1 : 0, text);
+      if (session) state.pending[session] = { check, proves };
+      else if (check) {
+        const failed = (code === undefined ? !event.success : Number(code) !== 0) || (cmd.includes('|') && FAILED.test(text));
+        if (failed || proves) checked(state, failed ? 1 : 0, text);
+      }
     }
     save(state);
     return null;

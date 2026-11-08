@@ -1,4 +1,7 @@
-use codex_omd::resource_data::hash;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
+use codex_omd::sha256_hex as hash;
 use codex_omd::{ModHost, ModStore};
 use serde_json::{Value, json};
 use std::fs;
@@ -25,7 +28,7 @@ fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
         )
         .unwrap();
     store.enable(&package, true).unwrap();
-    let mut host = ModHost::open(root.join("store")).unwrap();
+    let mut host = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
     assert_eq!(
         host.subscribers_with_capability("turn_end", "lifecycle"),
         ["example_review_probe"]
@@ -37,7 +40,7 @@ fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
         json!({"reference":"native-thread:fixture","sha256":hash(b"{\"findings\":[]}")});
     let event = json!({"turn_id":"turn-a","outcome":"completed","evidence":reference});
     let mut calls = Vec::new();
-    host.invoke_with("example_review_probe", generation, "turn_end", "", event.clone(), || true, |call| {
+    host.invoke("example_review_probe", generation, "turn_end", "", event.clone(), ModInvokeOptions { host: ModHostCallback::Own(&mut |call| {
         calls.push(call.operation.clone());
         match call.operation.as_str() {
             "evidence.read" => Ok(json!({"reference":reference,"text":"Visible fixture evidence","cursor":null,"bytes":24})),
@@ -57,7 +60,7 @@ fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
             "agents.cancel" => Ok(json!({"status":"cancelled"})),
             _ => panic!("unexpected operation {}", call.operation),
         }
-    }).unwrap();
+    }), ..ModInvokeOptions::default() }).unwrap();
     assert_eq!(
         calls,
         [
@@ -76,25 +79,28 @@ fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
             "command",
             "status",
             Value::Null,
+            ModInvokeOptions::default(),
         )
         .unwrap();
     assert_eq!(status["status"], "recorded");
-    host.invoke_with(
+    host.invoke(
         "example_review_probe",
         generation,
         "turn_end",
         "",
         event,
-        || true,
-        |call| match call.operation.as_str() {
-            "evidence.read" => {
-                Ok(json!({"reference":reference,"text":"fixture","cursor":null,"bytes":7}))
-            }
-            "workspace.snapshot" => {
-                Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]}))
-            }
-            "agents.spawn" => Err(std::io::Error::other("allowance_exhausted")),
-            _ => panic!("must not start another operation after denial"),
+        ModInvokeOptions {
+            host: ModHostCallback::Own(&mut |call| match call.operation.as_str() {
+                "evidence.read" => {
+                    Ok(json!({"reference":reference,"text":"fixture","cursor":null,"bytes":7}))
+                }
+                "workspace.snapshot" => {
+                    Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]}))
+                }
+                "agents.spawn" => Err(std::io::Error::other("allowance_exhausted")),
+                _ => panic!("must not start another operation after denial"),
+            }),
+            ..ModInvokeOptions::default()
         },
     )
     .unwrap();
@@ -105,18 +111,26 @@ fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
             "command",
             "status",
             Value::Null,
+            ModInvokeOptions::default(),
         )
         .unwrap();
     assert_eq!(status["status"], "denied");
     assert_eq!(status["reason"], "allowance_exhausted");
     store.enable(&package, false).unwrap();
-    host.turn_boundary();
+    host.turn_boundary(&|| true);
     assert!(
         host.subscribers_with_capability("turn_end", "lifecycle")
             .is_empty()
     );
     assert!(
-        host.event_guarded_with("turn_end", json!({}), || true, |_, _| panic!())
-            .is_empty()
+        host.event(
+            "turn_end",
+            json!({}),
+            ModInvokeOptions {
+                host: ModHostCallback::Scoped(&mut |_, _| panic!()),
+                ..ModInvokeOptions::default()
+            }
+        )
+        .is_empty()
     );
 }

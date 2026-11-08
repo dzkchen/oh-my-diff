@@ -26,18 +26,24 @@ omd mods disable omd_mods
 | `/` | Fuzzy-search names, ids, descriptions and command names across every tab; `Esc` clears the search. The line below the list shows the highlighted mod's state and commands. |
 | `Esc` | Close the panel, or go back from a mod's own panel. |
 | `/mods MOD` | Open one mod's panel: its settings, Update, Roll back and Remove. |
-| `/mods ACTION MOD` | Run an action without the panel. Actions are `enable`, `disable`, `update`, `rollback`, `remove` and `trust`. |
+| `/mods ACTION MOD` | Run an action without the panel. Actions are `enable`, `disable`, `toggle`, `update`, `rollback`, `remove` and `trust`. |
+| `/mods install SOURCE` | Review installing `npm:NAME[@VERSION]`, `git+URL#TAG`, an absolute folder or a directory id. |
+| `/mods scope user` or `/mods scope project` | Choose where `/mods install` and Directory installs go: your user store or this project. |
 | `/mods reload` | Reload every mod. |
 | `/mods apply` or `/mods cancel` | Confirm or drop a pending action. |
 
 The panel's tabs:
 
 - All lists your mods as switches, grouped into Needs attention, On, Off and Available, with counts.
-- Settings opens one mod's own panel.
+- Settings opens one mod's own panel. Settings change only on the copy that is on: a user or project copy shadowed by
+  the other, or one that is off, shows why instead of its settings.
 - Directory installs from a source or updates.
 
 For example, `/mods enable omd_frecency` turns on `omd_frecency` without opening the panel, after you approve
 its permissions.
+
+When the same id is installed both for you and for this project, a typed command asks which one you mean: write
+`user:ID` or `project:ID`.
 
 In Directory, Add from source takes `npm:NAME[@VERSION]`, `git+URL#TAG`, an absolute folder or a directory id. A
 directory entry installs its newest available version. To update a mod that's already installed, use its own panel

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "api": "1.0.0",
   "state_version": 1,
-  "description": "Redacts secrets and optional PII from every provider-bound request with stable opaque placeholders and gates reads of sensitive paths",
+  "description": "Redacts secrets and optional PII from every provider-bound request with stable opaque placeholders and can gate reads of sensitive paths",
   "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
@@ -32,7 +32,7 @@
       },
       "pii": {"type": "array", "default": [], "title": "Personal data checks", "description": "Personal data to catch: email, phone, ipv4, ipv6, card, us_ssn; none by default"},
       "scopes": {"type": "array", "default": ["prompt", "context", "tools", "replies"], "title": "Text to scan", "description": "Where to look: your prompts, instructions and context, tool calls and output, earlier replies"},
-      "paths": {"type": "string", "enum": ["ask", "deny", "off"], "default": "ask", "title": "Sensitive paths", "description": "When a shell command names a sensitive file: ask first, deny it, or off"},
+      "paths": {"type": "string", "enum": ["ask", "deny", "off"], "default": "off", "title": "Sensitive paths", "description": "When a shell command names a sensitive file: off (default; secrets in its output are still redacted), ask first or deny it"},
       "sensitive_paths": {
         "title": "Sensitive path patterns",
         "description": "File patterns that count as sensitive, such as .env, keys and SSH or cloud credentials",

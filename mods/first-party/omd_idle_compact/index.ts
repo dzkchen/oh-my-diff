@@ -2,7 +2,7 @@ import type { ModAPI, ModelResponse } from '../../api.d.ts';
 
 type Waiting = 'approval' | 'question';
 type State = { at: number; ttl: number; expires: number; reported: boolean; identity: string; tokens: number; running: boolean; pending: Record<string, Waiting>; compacted: number;
-  requested: 'idle' | Waiting | null };
+  requested: 'idle' | Waiting | null; limited: boolean };
 
 const OPENAI_TTL_MS = 30 * 60_000;
 const OPENAI_LONG_TTL_MS = 12 * 3_600_000;
@@ -12,17 +12,23 @@ const MAX_DELAY_MS = 24 * 3_600_000;
 const RETRY_MS = 15_000;
 const RETRYABLE = /^client(_surface)?_context_changed/;
 const NOTICE = 'Compacted after the estimated prompt-cache idle interval';
+const LIMITED = 'Idle compaction is off for this thread: other threads hold all of this mod\'s timers';
 const CANCELLED = { approval: 'The pending approval was cancelled.', question: 'The unanswered question was cancelled.' };
 
 export default function activate(api: ModAPI) {
   const minutes = Number(api.settings.cache_ttl_minutes) || 0;
   const minTokens = Number(api.settings.min_tokens ?? 100_000);
-  const load = (): State => ({ at: 0, ttl: 0, expires: 0, reported: false, identity: '', tokens: 0, running: false, pending: {}, compacted: 0, requested: null,
+  const load = (): State => ({ at: 0, ttl: 0, expires: 0, reported: false, identity: '', tokens: 0, running: false, pending: {}, compacted: 0, requested: null, limited: false,
     ...(api.state.get() as Partial<State> | null) });
   const save = (patch: Partial<State>) => api.state.set({ ...load(), ...patch });
   const live = (state: State) => state.ttl > 0 && state.tokens > 0 && state.tokens >= minTokens && Date.now() < state.expires;
-  const arm = (state: State) =>
-    api.host.tryCall('events.schedule', { key: 'idle', delay_ms: Math.min(MAX_DELAY_MS, Math.max(1000, Math.round(state.at + (state.expires - state.at) * FIRE_AT - Date.now()))) });
+  const arm = (state: State) => {
+    const armed = api.host.tryCall('events.schedule', { key: 'idle', delay_ms: Math.min(MAX_DELAY_MS, Math.max(1000, Math.round(state.at + (state.expires - state.at) * FIRE_AT - Date.now()))) });
+    const limited = !armed.ok && armed.error.startsWith('timer_limit');
+    if (limited === state.limited) return;
+    save({ limited });
+    if (limited) api.host.tryCall('terminal.notice', { text: LIMITED, kind: 'warning', placement: 'toast', ttl_ms: 8000 });
+  };
 
   const identity = (response: ModelResponse) => JSON.stringify([response.provider, response.route, response.credential, response.requested_model, response.served_model]);
   const ttlFor = (response: ModelResponse, state: State): [number, boolean] => {

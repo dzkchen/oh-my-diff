@@ -72,17 +72,9 @@ pub struct TurnActivityLog {
     path: PathBuf,
 }
 
-fn valid_thread(thread: &str) -> bool {
-    !thread.is_empty()
-        && thread.len() <= 128
-        && thread
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-}
-
 impl TurnActivityLog {
     pub fn open(root: &Path, thread: &str) -> io::Result<Self> {
-        if !valid_thread(thread) {
+        if !crate::resource_data::token(thread) {
             return Err(io::Error::other("turn_activity_thread_invalid"));
         }
         Ok(Self {

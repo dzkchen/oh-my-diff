@@ -8,13 +8,17 @@ const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url),
 const NOW = 1_800_000_000_000;
 const MINUTE = 60_000;
 
-function run(event, payload, state, { settings = {}, now = NOW, answer = () => ({}) } = {}) {
+function run(event, payload, state, { settings = {}, now = NOW, answer = () => ({}), schedule = args => args } = {}) {
   const calls = [];
   const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, event, payload,
     virtual_time_ms: now, hook_budget_ms: 2000 }, call => {
     calls.push(call);
-    if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.166.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };
-    if (call.operation === 'events.schedule') return call.arguments;
+    if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.167.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };
+    if (call.operation === 'events.schedule') {
+      const value = schedule(call.arguments);
+      if (value instanceof Error) throw value;
+      return value;
+    }
     if (call.operation === 'events.cancel') return { cancelled: true };
     const value = answer(call);
     if (value instanceof Error) throw value;
@@ -130,3 +134,13 @@ test('the timer compacts an idle thread or one waiting on the user, never a runn
   assert.deepEqual(run('turn_end', { turn_id: 't2', outcome: 'aborted' }, answered, { now: NOW + 28 * MINUTE }).calls, [['events.schedule', { key: 'idle', delay_ms: 1000 }]]);
 });
 
+
+test('a refused idle timer warns once and clears when a later one is armed', () => {
+  const full = () => new Error('timer_limit');
+  const refused = run('model_response', response(), null, { schedule: full });
+  assert.equal(refused.calls.filter(([operation]) => operation === 'terminal.notice').length, 1);
+  assert.equal(refused.state.limited, true);
+  const again = run('model_response', response({ request_id: 'r2' }), refused.state, { schedule: full });
+  assert.ok(!again.calls.some(([operation]) => operation === 'terminal.notice'));
+  assert.equal(run('model_response', response({ request_id: 'r3' }), again.state).state.limited, false);
+});

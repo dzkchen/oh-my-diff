@@ -350,3 +350,52 @@ test('a turn still marked running after three hours no longer blocks undo, and f
     assert.match(s.command('redo'), /A turn is running/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('a forced undo that fails halfway and is retried still lets /redo bring back edits made after the turn', () => {
+  const root = repo();
+  try {
+    const s = session(root);
+    s.turn('t-1', agent(root));
+    write(root, 'new.txt', 'I kept working on it\n');
+    s.box.world.failRestore = true;
+    assert.match(s.command('undo', 'force'), /^Checkpoints are unavailable here: simulated failure/);
+    assert.equal(text(root, 'new.txt'), null);
+    assert.match(s.command('undo', 'force'), /^Undid/);
+    assert.match(s.command('redo'), /^Redid/);
+    assert.deepEqual([text(root, 'new.txt'), text(root, 'a.txt')], ['I kept working on it\n', 'two\n']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a file made between a failed undo and its retry survives /redo, and checkpoint refs outside any checkout are removed', () => {
+  const root = repo();
+  try {
+    const s = session(root);
+    s.turn('t-1', agent(root));
+    s.box.world.failRestore = true;
+    assert.match(s.command('undo', 'force'), /simulated failure/);
+    write(root, 'later.txt', 'made after the failure\n');
+    sh(root, 'update-ref', 'refs/omd/checkpoints/' + s.box.state.entries[0].before, s.box.state.entries[0].before);
+    assert.match(s.command('undo', 'force'), /^Undid/);
+    assert.match(s.command('redo'), /^Redid/);
+    assert.equal(text(root, 'later.txt'), 'made after the failure\n');
+    const refs = sh(root, 'for-each-ref', '--format=%(refname)', 'refs/omd/checkpoints/').trim().split('\n');
+    assert.ok(refs.every(ref => ref.slice('refs/omd/checkpoints/'.length).includes('/')), refs.join(' '));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a turn in a linked worktree keeps the refs protecting another checkout\'s checkpoints', () => {
+  const root = repo();
+  const linked = `${root}-linked`;
+  try {
+    sh(root, 'worktree', 'add', '-q', '--detach', linked);
+    const a = session(root);
+    a.turn('t-a', () => write(root, 'a.txt', 'from a\n'));
+    const b = session(linked);
+    b.turn('t-b', () => write(linked, 'b.txt', 'from b\n'));
+    const refs = new Set(sh(root, 'for-each-ref', '--format=%(refname)', 'refs/omd/checkpoints/').trim().split('\n').map(ref => ref.split('/').at(-1)));
+    for (const entry of [...a.box.state.entries, ...b.box.state.entries]) for (const commit of [entry.before, entry.after]) assert.ok(refs.has(commit), commit);
+  } finally {
+    rmSync(linked, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});

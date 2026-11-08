@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::sessions::SessionIndex;
 use serde_json::{Value, json};
 use std::fs;

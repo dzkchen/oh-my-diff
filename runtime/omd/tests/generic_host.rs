@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use codex_omd::BuiltinControls;
 use codex_omd::ContractDocument;
 use codex_omd::ContractResolution;
@@ -5,6 +7,9 @@ use codex_omd::ContractSelection;
 use codex_omd::Gate;
 use codex_omd::MOD_API_VERSION;
 use codex_omd::ModHost;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModStore;
 use codex_omd::PolicyOwner;
 use codex_omd::Receipt;
@@ -285,7 +290,10 @@ fn owner() -> PolicyOwner {
 }
 
 fn strings(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
+    values
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 #[test]
@@ -336,6 +344,36 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
         .unwrap();
     assert_eq!(second["text"].as_str().unwrap().len(), 5000);
     assert!(second["cursor"].is_null());
+    let split = host
+        .call(
+            &owner,
+            "exec.run",
+            json!({"program":"sh", "argv":["-c", "printf 'aé'"], "output_artifact":true}),
+        )
+        .unwrap()["output_artifact"]
+        .clone();
+    let head = host
+        .call(
+            &owner,
+            "exec.output_page",
+            json!({"artifact":split,"max_bytes":2}),
+        )
+        .unwrap();
+    assert_eq!(
+        (head["text"].clone(), head["cursor"].clone()),
+        (json!("a"), json!(1))
+    );
+    let tail = host
+        .call(
+            &owner,
+            "exec.output_page",
+            json!({"artifact":split,"cursor":1,"max_bytes":2}),
+        )
+        .unwrap();
+    assert_eq!(
+        (tail["text"].clone(), tail["cursor"].clone()),
+        (json!("é"), Value::Null)
+    );
     let other = Caller {
         thread: Some("thread-2"),
         ..caller(&capabilities, &[], Origin::Tool)
@@ -344,13 +382,15 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
         host.call(&other, "exec.output_page", json!({"artifact":artifact}))
             .is_err()
     );
-    assert!(
+    assert_eq!(
         host.call(
             &owner,
             "exec.output_page",
             json!({"artifact":artifact,"cursor":1})
         )
-        .is_err()
+        .unwrap_err()
+        .to_string(),
+        "exec_output_cursor_invalid"
     );
     let path = data
         .join("exec-output")
@@ -364,6 +404,138 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
         host.call(&owner, "exec.output_page", json!({"artifact":artifact}))
             .is_err()
     );
+}
+
+#[test]
+fn exec_output_pages_a_multibyte_artifact_without_splitting_characters() {
+    let _exec = exec_slot();
+    let (_temp, repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["exec"]);
+    let owner = caller(&capabilities, &[], Origin::Tool);
+    let output = host
+        .call(
+            &owner,
+            "exec.run",
+            json!({"program":"sh", "argv":["-c", "yes 'é€' | head -n 700000"], "output_artifact":true}),
+        )
+        .unwrap();
+    assert_eq!(output["stdout_bytes"], 4_200_000);
+    let artifact = output["output_artifact"].clone();
+    let mut text = String::new();
+    let mut cursor = Some(0);
+    while let Some(at) = cursor {
+        let page = host
+            .call(
+                &owner,
+                "exec.output_page",
+                json!({"artifact":artifact,"cursor":at}),
+            )
+            .unwrap();
+        let chunk = page["text"].as_str().unwrap();
+        assert!(chunk.len() <= codex_omd::host::EXEC_ARTIFACT_PAGE_BYTES);
+        text.push_str(chunk);
+        cursor = page["cursor"].as_u64();
+    }
+    assert_eq!(text, "é€\n".repeat(700_000));
+    let page = |arguments: Value| host.call(&owner, "exec.output_page", arguments);
+    let euro = page(json!({"artifact":artifact,"cursor":2,"max_bytes":1})).unwrap();
+    assert_eq!(
+        (euro["text"].as_str(), euro["cursor"].as_u64()),
+        (Some("€"), Some(5))
+    );
+    let end = page(json!({"artifact":artifact,"cursor":4_200_000})).unwrap();
+    assert_eq!(
+        (end["text"].as_str(), end["cursor"].is_null()),
+        (Some(""), true)
+    );
+    for cursor in [1, 3, 4_200_001] {
+        assert_eq!(
+            page(json!({"artifact":artifact,"cursor":cursor})).unwrap_err(),
+            "exec_output_cursor_invalid"
+        );
+    }
+    let path = data
+        .join("exec-output")
+        .join(codex_omd::host::repository_key(&repository))
+        .join("fixture")
+        .join("thread-1")
+        .join(owner.source_sha256)
+        .join(format!("{}.txt", artifact["sha256"].as_str().unwrap()));
+    std::fs::write(path, "ë€\n".repeat(700_000)).unwrap();
+    assert_eq!(
+        page(json!({"artifact":artifact,"cursor":6})).unwrap_err(),
+        "exec_output_integrity_failed"
+    );
+}
+
+#[test]
+fn exec_output_page_rejects_bytes_changed_without_a_new_file_stamp() {
+    use std::os::fd::AsRawFd;
+    let _exec = exec_slot();
+    let (_temp, repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["exec"]);
+    let owner = caller(&capabilities, &[], Origin::Tool);
+    let output = host
+        .call(
+            &owner,
+            "exec.run",
+            json!({"program":"sh", "argv":["-c", "printf '%0100000d' 0"], "output_artifact":true}),
+        )
+        .unwrap();
+    let artifact = output["output_artifact"].clone();
+    let page = |cursor: usize| {
+        host.call(
+            &owner,
+            "exec.output_page",
+            json!({"artifact":artifact,"cursor":cursor,"max_bytes":4}),
+        )
+    };
+    assert_eq!(page(2).unwrap()["text"], "0000");
+    let path = data
+        .join("exec-output")
+        .join(codex_omd::host::repository_key(&repository))
+        .join("fixture")
+        .join("thread-1")
+        .join(owner.source_sha256)
+        .join(format!("{}.txt", artifact["sha256"].as_str().unwrap()));
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    let map = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            100_000,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            file.as_raw_fd(),
+            0,
+        )
+    };
+    assert_ne!(map, libc::MAP_FAILED);
+    unsafe { *map.cast::<u8>().add(2) = 0x80 };
+    let tampered = (page(2), page(0), page(70_000));
+    unsafe { libc::munmap(map, 100_000) };
+    assert_eq!(tampered.0.unwrap_err(), "exec_output_integrity_failed");
+    assert_eq!(tampered.1.unwrap_err(), "exec_output_integrity_failed");
+    assert_eq!(tampered.2.unwrap()["text"], "0000");
 }
 
 #[test]
@@ -853,7 +1025,7 @@ fn workspace_stat_hash_reads_contained_regular_files_only() {
         .unwrap();
     assert_eq!(
         stat["files"]["README.md"]["sha256"],
-        codex_omd::resource_data::hash(&std::fs::read(repository.join("README.md")).unwrap())
+        codex_omd::sha256_hex(&std::fs::read(repository.join("README.md")).unwrap())
     );
     for path in ["link.md", "outside/file"] {
         assert!(
@@ -1016,6 +1188,57 @@ fn workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions() {
         )
         .unwrap_err(),
         "workspace_write_permission_denied"
+    );
+}
+
+#[test]
+fn store_reads_create_nothing_and_follow_documents_replaced_on_disk() {
+    let (_temp, _repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: None,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["store"]);
+    let tool = caller(&capabilities, &[], Origin::Tool);
+    let user = |key: &str| json!({"key":key,"scope":"user"});
+    assert!(host.call(&tool, "store.get", user("k")).unwrap().is_null());
+    assert_eq!(
+        host.call(&tool, "store.list", json!({"scope":"user"}))
+            .unwrap()["generation"],
+        1
+    );
+    assert!(!data.join("data").exists());
+
+    host.call(
+        &tool,
+        "store.put",
+        json!({"key":"k","value":"first","expected_revision":null,"scope":"user"}),
+    )
+    .unwrap();
+    assert_eq!(
+        host.call(&tool, "store.get", user("k")).unwrap()["value"],
+        "first"
+    );
+    let path = data.join("data/user/fixture/store.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    document["entries"]["k"]["value"] = json!("second");
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    assert_eq!(
+        host.call(&tool, "store.get", user("k")).unwrap()["value"],
+        "second"
+    );
+
+    let mut padded = serde_json::to_vec(&document).unwrap();
+    padded.resize(16 * 1024 * 1024 + 1, b' ');
+    std::fs::write(&path, padded).unwrap();
+    assert_eq!(
+        host.call(&tool, "store.get", user("k")).unwrap_err(),
+        "store_document_invalid"
     );
 }
 
@@ -1646,7 +1869,7 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         &[],
     );
     trust(&store, &adapted);
-    let mut runtime = ModHost::open(root.join("store")).unwrap();
+    let mut runtime = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
     assert!(
         error_of(&runtime, "old_event").contains("unsupported_event"),
         "{}",
@@ -1666,7 +1889,8 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
                 runtime.generation(),
                 "command",
                 "answer",
-                Value::Null
+                Value::Null,
+                ModInvokeOptions::default()
             )
             .unwrap(),
         json!(42)
@@ -1678,20 +1902,22 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
     assert_eq!(documents[0].0.key(), "fixture@1");
     let mut calls = Vec::new();
     let result = runtime
-        .invoke_with(
+        .invoke(
             "accepted",
             runtime.generation(),
             "command",
             "run",
             Value::Null,
-            || true,
-            |call| {
-                calls.push(call.operation.clone());
-                Ok(if call.operation == "exec.run" {
-                    json!({"exit_code":0})
-                } else {
-                    json!({"revision":1})
-                })
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |call| {
+                    calls.push(call.operation.clone());
+                    Ok(if call.operation == "exec.run" {
+                        json!({"exit_code":0})
+                    } else {
+                        json!({"revision":1})
+                    })
+                }),
+                ..ModInvokeOptions::default()
             },
         )
         .unwrap();
@@ -1711,7 +1937,8 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
                 runtime.generation(),
                 "command",
                 "answer",
-                Value::Null
+                Value::Null,
+                ModInvokeOptions::default()
             )
             .unwrap(),
         json!(43)
@@ -1723,7 +1950,7 @@ fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store")).unwrap();
-    let empty = ModHost::open(root.join("store")).unwrap();
+    let empty = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
     assert!(empty.builtin_controls().is_empty());
     assert!(empty.contract_documents().is_empty());
     assert!(!empty.has_event("model_response"));
@@ -1746,7 +1973,7 @@ fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with
         &[],
     );
     trust(&store, &declared);
-    let runtime = ModHost::open(root.join("store")).unwrap();
+    let runtime = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
     assert!(
         error_of(&runtime, "undeclared").contains("capability_denied"),
         "{}",
@@ -1755,7 +1982,7 @@ fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with
     assert_eq!(runtime.builtin_controls().len(), 1);
     assert_eq!(runtime.contract_documents().len(), 1);
     store.enable(&declared, false).unwrap();
-    let reloaded = ModHost::open(root.join("store")).unwrap();
+    let reloaded = ModHost::open(root.join("store"), ModOpenOptions::default()).unwrap();
     assert!(reloaded.builtin_controls().is_empty());
     assert!(reloaded.contract_documents().is_empty());
 }
@@ -1862,7 +2089,7 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
         std::fs::set_permissions(program, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let path = std::env::var_os("PATH").unwrap();
-    let directories = [repository.join("bin"), outside.clone()];
+    let directories = [repository.join("bin"), outside];
     // SAFETY: the fixture name is unique to this test, so other tests resolve the same programs.
     unsafe {
         std::env::set_var(

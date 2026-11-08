@@ -93,7 +93,7 @@ impl ModHost {
                 ])
             })
             .collect::<Vec<_>>();
-        digest(Value::Array(values).to_string().as_bytes())
+        crate::sha256_hex(Value::Array(values).to_string().as_bytes())
     }
 }
 
@@ -118,14 +118,16 @@ pub fn component_shared(
         "component",
         component,
         frame,
-        &active,
-        |_, call| {
-            Err(failure(format!(
-                "host_operation_unavailable: {} is not available to component modules",
-                call.operation
-            )))
+        ModInvokeOptions {
+            active: &active,
+            host: ModHostCallback::Scoped(&mut |_, call| {
+                Err(failure(format!(
+                    "host_operation_unavailable: {} is not available to component modules",
+                    call.operation
+                )))
+            }),
+            ..ModInvokeOptions::default()
         },
-        |_| {},
     )?;
     if let Err(error) = checked_tree(&value) {
         if active() {
@@ -194,7 +196,7 @@ pub fn render_shared(
     input: Value,
     active: impl Fn() -> bool,
 ) -> Result<ModChain> {
-    let key = digest(json!([bound_thread(), input]).to_string().as_bytes());
+    let key = crate::sha256_hex(json!([bound_thread(), input]).to_string().as_bytes());
     let cached = {
         let mut runtime = runtime
             .lock()

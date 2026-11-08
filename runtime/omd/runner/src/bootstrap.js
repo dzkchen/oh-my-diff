@@ -62,10 +62,19 @@ let activating = true;
 let activatedState;
 const calls = [];
 let receipts = request.receipts ?? [];
+let echoed = null;
+// The host compared the registrations this runner last sent under the same digest, so identical ones need not be resent.
+function echo() {
+  const token = request.registrations_sha256;
+  const text = token ? JSON.stringify(registrations) : null;
+  if (token && echoed?.token === token && echoed.text === text) return undefined;
+  echoed = token ? { token, text } : null;
+  return registrations;
+}
 // A warm render runner answers the next render with the activated mod, from that render's own input.
 function serve(line) {
   const next = JSON.parse(line);
-  Object.assign(request, { event: next.event ?? request.event, activation_id: next.activation_id, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
+  Object.assign(request, { event: next.event ?? request.event, activation_id: next.activation_id, name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state, registrations_sha256: next.registrations_sha256 });
   receipts = request.receipts;
   if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
   clockRead = false;
@@ -918,7 +927,7 @@ const api = Object.freeze({
     },
   }),
 });
-globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
+globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, echo, updates,
   state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead, ui_written: uiWritten, clock_read: clockRead}), request, calls,
   ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;

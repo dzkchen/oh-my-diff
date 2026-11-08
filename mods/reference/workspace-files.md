@@ -139,7 +139,7 @@ A `key` lets a mod find and replace one of its watches instead of adding another
 - Calling again from the same thread with the same arguments keeps the watch.
 - Other arguments or another thread replace it without counting against the limit. Changes it already queued are
   still delivered.
-- `workspace.unwatch {key}` (experimental) stops it. `workspace.unwatch {watch_id}` stops one of the mod's watches.
+- `workspace.unwatch {key}` stops it. `workspace.unwatch {watch_id}` stops one of the mod's watches.
 
 #### Git metadata
 

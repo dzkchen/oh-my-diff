@@ -118,7 +118,7 @@ export const findAll = (view, match) => [...walk(view)].filter(matches(match));
 export const find = (view, match) => findAll(view, match)[0];
 /** @type {typeof import('../testing.d.ts').text} */
 export function text(view) {
-  const own = node => node.text ?? node.spans?.map(span => span.text).join('') ?? node.rows?.map(row => row.label).join('\n') ?? node.title ?? (typeof node.value === 'string' ? node.value : undefined);
+  const own = node => node.text ?? node.spans?.map(span => span.text).join('') ?? node.lines?.map(line => line.map(span => span.text).join('')).join('\n') ?? node.unified ?? node.rows?.map(row => row.label).join('\n') ?? node.title ?? (typeof node.value === 'string' ? node.value : undefined);
   return roots(view).map(node => [own(node), text(node.children ?? [])].filter(Boolean).join('\n')).filter(Boolean).join('\n');
 }
 

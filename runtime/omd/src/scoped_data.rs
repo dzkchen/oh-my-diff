@@ -1,11 +1,16 @@
-use crate::resource_data::{ResourceBinding, ResourceStore, hash};
+use crate::resource_data::{ResourceBinding, ResourceStore};
 use crate::sessions::SessionIndex;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
 
+#[cfg(test)]
+#[path = "scoped_data_tests.rs"]
+mod tests;
+
 pub struct ScopedDataHost {
+    store: crate::ModStore,
     pub root: PathBuf,
     pub repository: PathBuf,
     pub session_root: Option<PathBuf>,
@@ -30,35 +35,69 @@ impl ScopedDataHost {
         thread: String,
         source_sha256: String,
     ) -> io::Result<Self> {
+        Self::with_store(
+            crate::ModStore::open(root)?,
+            repository,
+            session_root,
+            session_database,
+            owner,
+            thread,
+            source_sha256,
+        )
+    }
+
+    fn with_store(
+        store: crate::ModStore,
+        repository: PathBuf,
+        session_root: Option<PathBuf>,
+        session_database: Option<PathBuf>,
+        owner: String,
+        thread: String,
+        source_sha256: String,
+    ) -> io::Result<Self> {
+        let root = store.root().to_path_buf();
         if repository.canonicalize()? != repository
             || root.canonicalize()? != root
             || root.starts_with(&repository)
         {
             return Err(io::Error::other("data_scope_invalid"));
         }
-        let configuration = crate::ModStore::open(root.clone())?.configuration()?;
-        if !configuration
-            .mods
-            .iter()
-            .any(|selection| selection.enabled && selection.sha256 == source_sha256)
-        {
-            return Err(io::Error::other("data_source_not_selected"));
-        }
+        let (generation, _) = store.data_selection(&repository, &owner, &source_sha256)?;
         let binding = ResourceBinding {
-            repository: hash(repository.as_os_str().as_encoded_bytes()),
+            repository: crate::sha256_hex(repository.as_os_str().as_encoded_bytes()),
             owner,
             thread,
-            generation: configuration.revision,
+            generation,
             source_sha256,
         };
         binding.validate()?;
         Ok(Self {
+            store,
             root,
             repository,
             session_root,
             session_database,
             binding,
         })
+    }
+
+    fn authorize(&mut self, name: &str) -> io::Result<crate::mods::ModSelection> {
+        let (generation, selection) = self.store.data_selection(
+            &self.repository,
+            &self.binding.owner,
+            &self.binding.source_sha256,
+        )?;
+        let required = crate::ModHostCall {
+            operation: name.into(),
+            arguments: Value::Null,
+        }
+        .capability()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+        if !selection.capabilities.iter().any(|cap| cap == required) {
+            return Err(io::Error::other("data_selection_changed_or_revoked"));
+        }
+        self.binding.generation = generation;
+        Ok(selection)
     }
 
     pub fn call(
@@ -70,22 +109,7 @@ impl ScopedDataHost {
         if !active() {
             return Err(io::Error::other("data_operation_cancelled"));
         }
-        let configuration = crate::ModStore::open(self.root.clone())?.configuration()?;
-        let selection = configuration
-            .mods
-            .iter()
-            .find(|selection| selection.enabled && selection.sha256 == self.binding.source_sha256)
-            .ok_or_else(|| io::Error::other("data_source_not_selected"))?;
-        let required = crate::ModHostCall {
-            operation: name.into(),
-            arguments: Value::Null,
-        }
-        .capability()
-        .map_err(|error| io::Error::other(error.to_string()))?;
-        if !selection.capabilities.iter().any(|cap| cap == required) {
-            return Err(io::Error::other("data_selection_changed_or_revoked"));
-        }
-        self.binding.generation = configuration.revision;
+        let selection = self.authorize(name)?;
         if name == "evidence.read" {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -192,9 +216,9 @@ impl ScopedDataHosts {
         label: &str,
         text: &str,
     ) -> io::Result<crate::resource_data::ResourceRef> {
-        self.host(owner, source_sha256)?
-            .resources()
-            .text_evidence(label, text)
+        let host = self.host(owner, source_sha256)?;
+        host.authorize("evidence.write")?;
+        host.resources().text_evidence(label, text)
     }
 
     fn host(&mut self, owner: &str, source_sha256: &str) -> io::Result<&mut ScopedDataHost> {

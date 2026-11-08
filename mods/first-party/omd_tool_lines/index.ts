@@ -102,7 +102,7 @@ const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null =>
     case 'agent': return { name: AGENT_TOOLS[props.tool] ?? 'Agent', args: [props.agents.join(', '), props.prompt].filter(Boolean).join(' · '), marker: [outcome(props.status)], ...base };
     case 'mcp': return { name: `${props.server}.${props.tool}`, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], ...base };
     case 'dynamic': return { name: props.tool, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], ...base };
-    case 'image': return { name: props.tool === 'view_image' ? 'View image' : 'Generate image', args: props.path ?? props.prompt ?? '', marker: [outcome(props.status)], ...base };
+    case 'image': return props.tool === 'view_image' ? null : { name: 'Generate image', args: props.path ?? props.prompt ?? '', marker: [outcome(props.status)], ...base };
     default: return null;
   }
 };

@@ -214,10 +214,9 @@ impl HostConfig {
                     .tools
                     .iter()
                     .any(|tool| !crate::mods::read_only_sandbox_tool(tool))
-                || route
-                    .grant
-                    .as_ref()
-                    .is_some_and(|grant| !external(&grant.path) || grant.sha256.len() != 64)
+                || route.grant.as_ref().is_some_and(|grant| {
+                    !external(&grant.path) || !codex_omd::is_sha256_hex(&grant.sha256)
+                })
                 || (route.rates.reservation_microusd == 0)
                     != (route.rates.included_subscription || route.rates.provider_billed)
                 || route.rates.included_subscription && route.rates.provider_billed

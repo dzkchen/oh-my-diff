@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.166.0",
-  "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856"
+  "tag": "rust-v0.167.0",
+  "commit": "086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a"
  },
  "requests": {
   "account/bedrock/checkGovCloudRequirements": {
@@ -325,8 +325,10 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
-    "cwds"
+    "cwds",
+    "threadId"
    ]
   },
   "marketplace/add": {
@@ -906,6 +908,16 @@
     "tokenBudget"
    ]
   },
+  "thread/guardianReview": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current",
+   "fields": [
+    "threadId"
+   ]
+  },
   "thread/items/list": {
    "class": "sessions",
    "contexts": [
@@ -1185,6 +1197,7 @@
     "disableMcp",
     "effort",
     "expectedTurnId",
+    "interruptOnCancel",
     "prompt",
     "responsesapiClientMetadata",
     "threadId",
@@ -1524,6 +1537,7 @@
   "thread/realtime/transcript/done",
   "thread/reverted",
   "thread/rewritten",
+  "thread/section/changed",
   "thread/settings/updated",
   "thread/started",
   "thread/status/changed",
@@ -1650,6 +1664,7 @@
   "otel.exporter",
   "otel.log_agent_responses",
   "otel.log_guardian_assessments",
+  "otel.log_sse_deltas",
   "otel.log_user_prompt",
   "otel.metrics_exporter",
   "otel.span_attributes",
@@ -1718,6 +1733,7 @@
   "features.apply_patch_preserve_line_endings",
   "features.apply_patch_streaming_events",
   "features.apps",
+  "features.apps_early_resource_discovery",
   "features.apps_mcp_path_override",
   "features.async_compaction",
   "features.background_paginated_rollout_migration",
@@ -1731,6 +1747,7 @@
   "features.code_mode_buffered_exec",
   "features.code_mode_host",
   "features.code_mode_host_grpc",
+  "features.code_mode_host_output_truncation",
   "features.code_mode_interrupt",
   "features.code_mode_only",
   "features.code_mode_only_strict_3p_tools",
@@ -1766,6 +1783,7 @@
   "features.external_agent_memory_import",
   "features.external_migration",
   "features.fast_mode",
+  "features.gcp_setup_wizard",
   "features.goals",
   "features.hooks",
   "features.image_detail_original",
@@ -1778,8 +1796,10 @@
   "features.in_app_local_automation",
   "features.in_app_updates",
   "features.in_app_voice",
+  "features.incremental_exec_tools",
   "features.incremental_tools",
   "features.instant_interrupt",
+  "features.interrupt_on_cancel",
   "features.item_ids",
   "features.js_repl",
   "features.js_repl_tools_only",
@@ -1843,6 +1863,7 @@
   "features.step_model_switching",
   "features.subagent_default_context_limits",
   "features.subagent_thread_environments",
+  "features.suppress_model_change_announcements",
   "features.telepathy",
   "features.terminal_resize_reflow",
   "features.terminal_visualization_instructions",
@@ -1854,6 +1875,7 @@
   "features.tool_suggest",
   "features.transcript_v2",
   "features.tui_app_server",
+  "features.tui_extensions_statusline",
   "features.tui_multi_backend",
   "features.ultrafast_mode",
   "features.unavailable_dummy_tools",

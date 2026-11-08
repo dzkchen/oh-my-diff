@@ -37,7 +37,7 @@ plan, so an old task's steps are never repeated.
 
 ## Needs and limits
 
-- It acts only when the session offers Codex's `update_plan` tool, which Codex 0.166 leaves off: turn on
+- It acts only when the session offers Codex's `update_plan` tool, which Codex 0.167 leaves off: turn on
   [`omd_plan_panel`](../omd_plan_panel/README.md) (or `[tools.update_plan] enabled = true` in `config.toml`). Either
   changes the tool list, so each new thread's first request misses the prompt cache stock Codex requests share (about
   12K uncached input tokens). The mod doesn't add the tool itself for that reason.

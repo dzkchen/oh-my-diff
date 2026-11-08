@@ -70,7 +70,7 @@ omd-mod package-enable STORE ID        # turn a mod you installed back on; its d
 
 | Message or symptom | Cause | Fix |
 | --- | --- | --- |
-| A mod installed from a folder stopped, and `omd-mod status STORE` lists it under `rejected` as `untrusted_source` | The folder changed after you trusted it, and trust covers the exact files (see [how trust is bound](trust-and-permissions.md#installing-doesnt-turn-a-mod-on)) | Review it again with `omd mods update ID`. |
+| A mod installed from a folder stopped, and `omd-mod status STORE` lists it under `rejected` as `source_changed` | The folder changed after you trusted it, and trust covers the exact files (see [how trust is bound](trust-and-permissions.md#installing-doesnt-turn-a-mod-on)) | Review it again with `omd mods update ID`. |
 | `package_integrity_failure` | A curated mod's download doesn't match its pinned hash | Don't install it. Report it in an [issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose). |
 | `incompatible_api` | The mod was built for another mod API version | Ask its author for an update. Only API `1.0.0` loads. |
 | `capability_denied: NAME` | The mod called something it wasn't granted | Ask its author; `omd-mod-author explain 'capability_denied: NAME'` shows what the message means. |

@@ -15,9 +15,8 @@ omd mods enable omd_subagent_router
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
-Turning it on asks for the `autonomous` grant. The mod uses it to queue a wake prompt, a turn that tells the lead a
-background task finished (at most 4 queued and 20 turns). While it's on, an idle lead also wakes about 0.5 s after a
-subagent's result arrives (Codex's `agents.completion_wake`).
+While it's on, an idle lead wakes about 0.5 s after a subagent's or a delegated task's result arrives (Codex's
+`agents.completion_wake`).
 
 ## Use it
 
@@ -49,9 +48,10 @@ The agent's tool row shows the model it runs on, and `/status` lists each subage
 
 ### Delegate tasks
 
-The model, not you, gets a `delegate_task` tool (found through `tool_search`). Its description tells the model to
-use native `spawn_agent` for same-provider work, and `delegate_task` for another provider's model through a worker
-route, for a worktree, or for a task the lead polls or integrates itself.
+The model, not you, gets a `delegate_task` tool (found through `tool_search`). Native `spawn_agent` already runs
+other providers' models and work that outlives the turn, so its description tells the model to use `delegate_task`
+only for what it alone gives: worker-only routes, a read-only sandbox, an isolated worktree whose result the lead
+applies with `integrate` (`workspace.integrate`), and `retry_after_limit`.
 
 | `action` | What it does |
 | --- | --- |
@@ -75,9 +75,11 @@ lead route of a provider such as `omd_claude_cli`, and it must be open to this m
 can run any model in that provider's catalog, for example `model: claude-sonnet-5-5` on the `claude` route. `targets`
 lists those models.
 
-- A finished task wakes the lead about 1.5 s later (batched). Results over 5 KiB are named for `status` instead of
-  shown in full. The wake prompt marks every result as untrusted subagent output.
-- A stored result is at most 8 KiB, and a longer one ends with a truncation marker.
+- A finished or failed task's result reaches the lead as a subagent message from `<lead path>/<handle>` (the handle
+  lowercased, with `-` made `_`), the way a native subagent's result does, and wakes an idle lead. A result that
+  `mode: 'wait'` already returned isn't sent again. The message carries up to 16 KiB of the result; `status` returns the
+  stored copy, which is at most 8 KiB.
+- A stored result longer than 8 KiB ends with a truncation marker.
 - A worker keeps going after the turn ends but not after the session. A finished `worktree` task uses one of the
   host's agent slots until you `integrate` or `cancel` it. Running tasks share `limits.concurrent_workers` in
   `host.json` with other subagents.
@@ -102,10 +104,10 @@ lead picked itself, and models on the built-in OpenAI provider, skip these check
 ### Restart after a usage limit
 
 With `retry_after_limit` on, a task that fails for a rate limit, on a provider whose usage window has a reset time
-within 6 hours and at least 90% used (Claude, ChatGPT), doesn't wake the lead. `status` reports it `waiting` with the restart time. About
-30 s after the reset it starts again as a new task with the same brief, route and model, and that task's result wakes
-the lead, naming the task it restarted. A restart that fails isn't restarted again. If the route is gone or skipped by
-then, the lead is woken with the original failure. `cancel` stops a pending restart, and so does turning the setting off. The mod keeps the brief
+within 6 hours and at least 90% used (Claude, ChatGPT), is held for a restart. Its failure doesn't reach the lead,
+and `status` reports it `waiting` with the restart time. About 30 s after the reset it starts again as a new task with
+the same brief, route and model, and that task's result reaches the lead like any other, from the new task's handle, and `status <original>` links the two. A restart that fails isn't
+restarted again. If the route is gone or skipped by then, or its name now points at another provider, account or billing, the original failure reaches the lead, and `status` says why. `cancel` stops a pending restart, and so does turning the setting off. The mod keeps the brief
 (up to 8,000 bytes) only while this setting is on. It never moves the task to another route or provider.
 
 ## Settings
@@ -126,9 +128,9 @@ ignores the effort settings, because the host sets a worker's effort from its ro
 ## Needs and limits
 
 - It asks to read the prompts you type for directives, change the model of subagents the lead starts, start background
-  workers on other routes, add `delegate_task`, read providers' rate-limit updates, queue wake prompts, show warnings,
-  run timers and keep its state. The capabilities are `input`, `agents`, `model`, `tools`, `threads`, `autonomous`,
-  `terminal`, `events`, `lifecycle`, `inventory` and `store` (see
+  workers on other routes, add `delegate_task`, read providers' rate-limit updates, show warnings, run timers and
+  keep its state. The capabilities are `input`, `agents`, `model`, `tools`, `threads`, `terminal`, `events`,
+  `lifecycle`, `inventory` and `store` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - A model from another provider needs that provider set up, for example `omd_claude_cli` with `/claude login`. See
   [Use other providers](../../../docs/use-other-providers.md).

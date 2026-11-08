@@ -96,8 +96,7 @@ impl ModStore {
         path: &Path,
         change: impl FnOnce(&mut BTreeMap<String, Value>),
     ) -> Result<BTreeMap<String, Value>> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let mut config = self.configuration()?;
         let selection = config
             .mods
@@ -115,10 +114,7 @@ impl ModStore {
             return Ok(settings);
         }
         selection.settings = settings.clone();
-        config.revision = config
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| failure("revision_overflow"))?;
+        store::next_revision(&mut config.revision)?;
         self.write("mods.json", &serde_json::to_value(config)?)?;
         Ok(settings)
     }
@@ -168,8 +164,7 @@ impl ModStore {
     }
 
     pub fn migrate(&self, target: &Path) -> Result<Value> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let config = self.configuration()?;
         let selection = selected(&config, target)?;
         let (package, source, hash, assets) = store::package_with_assets(&selection.path)?;
@@ -208,7 +203,10 @@ impl ModStore {
         self.verified_runner()?;
         loaded.registrations = migration_registrations(&loaded)?;
         let state = run_migration(&loaded, from, &|| true)?;
-        let backup = format!("{name}-backup-{}", digest(&serde_json::to_vec(&previous)?));
+        let backup = format!(
+            "{name}-backup-{}",
+            crate::sha256_hex(&serde_json::to_vec(&previous)?)
+        );
         self.write(&backup, &previous)?;
         self.write(
             &name,
@@ -216,13 +214,12 @@ impl ModStore {
         )?;
         Ok(
             json!({"id":loaded.package.id,"from":from,"to":to,"backup":self.root.join(backup),
-            "source_sha256":hash,"settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
+            "source_sha256":hash,"settings_sha256":crate::sha256_hex(&serde_json::to_vec(&selection.settings)?)}),
         )
     }
 
     pub fn rollback(&self, target: &Path, backup: &Path) -> Result<Value> {
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
+        let _lock = self.transaction()?;
         let config = self.configuration()?;
         let selection = selected(&config, target)?;
         let (package, _, hash) = store::package(&selection.path)?;
@@ -253,7 +250,7 @@ impl ModStore {
         };
         let restored: Value =
             serde_json::from_slice(&store::read(&backup, store::STATE_LIMIT as u64)?)?;
-        if digest(&serde_json::to_vec(&restored)?) != expected_digest {
+        if crate::sha256_hex(&serde_json::to_vec(&restored)?) != expected_digest {
             return Err(failure("rollback_backup_digest_mismatch"));
         }
         let restored_version = restored["version"]
@@ -272,14 +269,14 @@ impl ModStore {
         }
         let recovery = format!(
             "{state_name}-rollback-{}",
-            digest(&serde_json::to_vec(&current)?)
+            crate::sha256_hex(&serde_json::to_vec(&current)?)
         );
         self.write(&recovery, &current)?;
         self.write(&state_name, &restored)?;
         Ok(
             json!({"id":package.id,"from":current["version"],"to":restored_version,
             "restored":backup,"recovery":self.root.join(recovery),"source_sha256":hash,
-            "settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
+            "settings_sha256":crate::sha256_hex(&serde_json::to_vec(&selection.settings)?)}),
         )
     }
 }
@@ -345,13 +342,13 @@ pub(super) fn detached(
     state: Value,
 ) -> Loaded {
     Loaded {
-        package,
+        package: Arc::new(package),
         source: source.into(),
         assets: Arc::new(store::asset_map(assets)),
         request_metadata: Arc::new(OnceLock::new()),
         session_key: None,
         code_cache: None,
-        selection,
+        selection: Arc::new(selection),
         adapter: None,
         state,
         state_revision: 0,
@@ -361,8 +358,8 @@ pub(super) fn detached(
         ui_revision: 0,
         ui_clears: 0,
         command_view: None,
-        registrations: Registrations::default(),
-        source_use: ModSourceUse::default(),
+        registrations: Registered::default(),
+        source_use: Arc::default(),
         unused_grants: Vec::new(),
         unused_environment: Vec::new(),
         withheld: Vec::new(),
@@ -376,26 +373,19 @@ pub(super) fn detached(
     }
 }
 
-pub(super) fn migration_registrations(loaded: &Loaded) -> Result<Registrations> {
+pub(super) fn migration_registrations(loaded: &Loaded) -> Result<Registered> {
     let inspected = ModHost::run(loaded, "inspect", "", Value::Null, &|| true)?;
-    ModHost::validate_registrations(&loaded.package, &inspected.registrations)?;
-    if inspected.state != loaded.state
-        || !inspected
-            .registrations
-            .events
-            .iter()
-            .any(|e| e == "migrate")
-    {
+    let registrations = inspected
+        .registrations
+        .ok_or_else(|| failure("registrations_missing"))?;
+    ModHost::validate_registrations(&loaded.package, &registrations)?;
+    if inspected.state != loaded.state || !registrations.events.iter().any(|e| e == "migrate") {
         return Err(failure("explicit_migration_handler_required"));
     }
-    Ok(inspected.registrations)
+    Registered::new(registrations)
 }
 
 fn run_migration(loaded: &Loaded, from: u64, active: &dyn Fn() -> bool) -> Result<Value> {
     let to = loaded.package.state_version;
-    let reply = ModHost::run(loaded, "migrate", "", json!({"from":from,"to":to}), active)?;
-    if reply.registrations != loaded.registrations {
-        return Err(failure("migration_changed_registration"));
-    }
-    Ok(reply.state)
+    Ok(ModHost::run(loaded, "migrate", "", json!({"from":from,"to":to}), active)?.state)
 }

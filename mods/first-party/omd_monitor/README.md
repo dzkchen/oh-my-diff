@@ -75,8 +75,10 @@ final state ends its first line with the run link or the deployment status link.
 While a turn runs, the message is steered into that turn. When the thread is idle it becomes one queued turn: the host
 starts it a second after the thread goes idle and marks it as not typed by you. A monitor fires at most once.
 
-Monitors are kept per thread and survive `/resume` and a restart. Watches, the timer and adapters are re-armed. A
-monitor whose deadline passed reports a timeout. An `until change` file monitor whose path was deleted meanwhile
+Monitors belong to the thread that created them and survive `/resume` and a restart in that thread. A fork starts
+without its parent’s monitors or results; it can create its own watches. Enabling the mod exposes its tools to other
+sessions using the same mod store, so each agent may monitor its own work automatically. Watches, the timer and
+adapters are re-armed. A monitor whose deadline passed reports a timeout. An `until change` file monitor whose path was deleted meanwhile
 reports that as `condition met`. A command session that no longer exists reports `source lost` only when OMD itself
 restarted. A plain `/resume` in the same OMD process keeps it watching until its exit or timeout.
 

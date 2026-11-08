@@ -2,6 +2,9 @@ use super::*;
 use crate::mods::DISPATCHER_TEST;
 use codex_extension_api::ToolLifecycleContributor as _;
 use codex_extension_api::ToolOutputContributor;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModStore;
 use std::path::Path;
 
@@ -94,11 +97,15 @@ fn fixture_with_registry(
     let core = if let Some(registry) = registry {
         initialize(registry, host.clone()).unwrap().core.clone()
     } else {
-        let runtime = ModHost::open(root.clone()).unwrap();
+        let runtime = ModHost::open(root.clone(), ModOpenOptions::default()).unwrap();
         let environment = runtime.environment();
         let runtime = Arc::new(Mutex::new(runtime));
-        let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-        let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+        let input_runtime = Arc::new(Mutex::new(
+            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
+        ));
+        let persist_runtime = Arc::new(Mutex::new(
+            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
+        ));
         let persist_required = persist_runtime.lock().unwrap().required_surfaces();
         let views = Arc::new(view::Views::new());
         Arc::new_cyclic(|core| Core {
@@ -122,13 +129,6 @@ fn fixture_with_registry(
     };
     let thread = ThreadId::new();
     let session = host.open_session(thread, false).unwrap();
-    *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
-        root,
-        repository,
-        None,
-        None,
-        thread.to_string(),
-    ));
     let lead = Lead {
         host,
         session,
@@ -824,7 +824,7 @@ async fn scoped_environment_snapshot_execution_records_effective_values_and_secr
                     .starts_with("execution-")
             })
             .map(|path| std::fs::read(path).unwrap())
-            .find(|bytes| json!(crate::execution::hash(bytes)) == result["evidence"]["sha256"])
+            .find(|bytes| json!(codex_omd::sha256_hex(bytes)) == result["evidence"]["sha256"])
             .unwrap();
         let recorded: Value = serde_json::from_slice(&evidence).unwrap();
         assert_eq!(
@@ -833,7 +833,7 @@ async fn scoped_environment_snapshot_execution_records_effective_values_and_secr
         );
         assert_eq!(
             recorded["environment"]["FIXTURE_TOKEN"],
-            json!({"sha256": crate::execution::hash(b"private-token")})
+            json!({"sha256": codex_omd::sha256_hex(b"private-token")})
         );
         assert!(
             !String::from_utf8(evidence)
@@ -847,14 +847,18 @@ fn command(core: &Core, id: &str, name: &str) -> Value {
     let mut runtime = core.runtime.lock().unwrap();
     let generation = runtime.generation();
     runtime
-        .invoke_with(
+        .invoke(
             id,
             generation,
             "command",
             name,
             Value::Null,
-            || true,
-            |_| Err(std::io::Error::other("unexpected_host_call")),
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |_| {
+                    Err(std::io::Error::other("unexpected_host_call"))
+                }),
+                ..ModInvokeOptions::default()
+            },
         )
         .unwrap()
 }
@@ -912,6 +916,7 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1059,8 +1064,14 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         .grants("budget")
         .unwrap()
         .source_sha256;
-    let mut scope = fixture.lead.session.data.0.lock().unwrap();
-    let hosts = scope.as_mut().unwrap();
+    let mut hosts = operations::data_hosts(
+        &fixture.lead,
+        crate::workspace_operations::WorkspaceAuthority::for_platform(
+            &fixture.lead.host.repository,
+            PermissionProfile::default(),
+        )
+        .unwrap(),
+    );
     let reference = hosts
         .text_evidence("budget", &source, "probe", "hello world")
         .unwrap();
@@ -1123,7 +1134,7 @@ impl codex_extension_api::ToolInvoker for RecordingInvoker {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
-    let Some(fixture) = fixture(&[
+    let Some(mut fixture) = fixture(&[
         Package {
             id: "retry",
             capabilities: &["interception", "store"],
@@ -1139,8 +1150,8 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     ]) else {
         return;
     };
-    *fixture.lead.session.contract.lock().unwrap() =
-        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let _manager = attach_thread(&mut fixture).await;
+    fixture.core.expansion.thread_started(&fixture.lead);
     let mods = mods(&fixture.core);
     let (session_store, thread_store, turn_store) = (
         ExtensionData::new("session".to_owned()),
@@ -1160,6 +1171,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1367,7 +1379,7 @@ async fn tool_output_without_owner_is_not_offered() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
-    let Some(fixture) = fixture(&[Package {
+    let Some(mut fixture) = fixture(&[Package {
         id: "keeper",
         capabilities: &["interception", "store"],
         manifest: Value::Null,
@@ -1375,8 +1387,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     }]) else {
         return;
     };
-    *fixture.lead.session.contract.lock().unwrap() =
-        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let _manager = attach_thread(&mut fixture).await;
     let mods = mods(&fixture.core);
     let (session_store, thread_store, turn_store) = (
         ExtensionData::new("session".to_owned()),
@@ -1388,6 +1399,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1440,7 +1452,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     assert_eq!(report["original"]["bytes"], complete.len());
     assert_eq!(
         report["original"]["sha256"],
-        codex_omd::resource_data::hash(complete.as_bytes())
+        codex_omd::sha256_hex(complete.as_bytes())
     );
     assert!(
         fixture.core.expansion.originals.lock().unwrap().is_empty(),
@@ -1456,8 +1468,10 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         .source_sha256;
     let (mut paged, mut cursor, mut pages) = (String::new(), 0, 0);
     {
-        let mut scope = fixture.lead.session.data.0.lock().unwrap();
-        let hosts = scope.as_mut().unwrap();
+        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(&fixture.lead)
+            .await
+            .unwrap();
+        let mut hosts = operations::data_hosts(&fixture.lead, authority);
         loop {
             let page = hosts
                 .call(
@@ -1502,6 +1516,127 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         answered.starts_with("tool_original_unavailable"),
         "{answered}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shared_parent_child_sessions_bind_data_and_tool_output_to_each_thread() {
+    let mut fixture = fixture(&[Package {
+        id: "keeper",
+        capabilities: &["interception", "store"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }])
+    .unwrap();
+    let manager = attach_thread(&mut fixture).await;
+    let config = manager
+        .get_thread(fixture.lead.thread)
+        .await
+        .unwrap()
+        .config()
+        .await;
+    let started = manager
+        .start_thread(codex_core::StartThreadOptions::new((*config).clone()))
+        .await
+        .unwrap();
+    let parent = fixture.lead.clone();
+    let child = Lead {
+        thread: started.thread_id,
+        depth: 1,
+        ..parent.clone()
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    for first_child in [false, true] {
+        let session = parent.host.open_session(ThreadId::new(), false).unwrap();
+        *session.contract.lock().unwrap() =
+            crate::contract::SessionContract::resolve(&parent.host, &[]);
+        let parent = Lead {
+            session: session.clone(),
+            ..parent.clone()
+        };
+        let child = Lead {
+            session,
+            ..child.clone()
+        };
+        let order = if first_child {
+            [&child, &parent]
+        } else {
+            [&parent, &child]
+        };
+        for lead in order {
+            for operation in ["evidence.write", "tools.original"] {
+                let grants = fixture
+                    .core
+                    .runtime
+                    .lock()
+                    .unwrap()
+                    .grants("keeper")
+                    .unwrap();
+                let source = grants.source_sha256.clone();
+                let caller = Caller {
+                    id: "keeper",
+                    source: &source,
+                    grants: Some(grants),
+                    generation: fixture.core.runtime.lock().unwrap().generation(),
+                    origin: Origin::Event,
+                    record_changes: false,
+                };
+                let call_id = format!("call-{}-{operation}", lead.thread);
+                fixture.core.expansion.originals.lock().unwrap().insert(
+                    (lead.thread.to_string(), call_id.clone()),
+                    Arc::from("scoped output"),
+                );
+                let arguments = if operation == "evidence.write" {
+                    json!({"media_type": "text/plain", "content": "scoped output"})
+                } else {
+                    json!({"call_id": call_id})
+                };
+                let result = CHAIN_CALL
+                    .scope(
+                        call_id,
+                        operations::dispatch(
+                            &fixture.core,
+                            lead,
+                            caller,
+                            None,
+                            ModHostCall {
+                                operation: operation.into(),
+                                arguments,
+                            },
+                            &cancelled,
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                let reference = if operation == "tools.original" {
+                    result["reference"].clone()
+                } else {
+                    result
+                };
+                for reader in [&parent, &child] {
+                    let authority =
+                        crate::workspace_operations::WorkspaceAuthority::for_lead(reader)
+                            .await
+                            .unwrap();
+                    let mut data = codex_omd::scoped_data::ScopedDataHost::new(
+                        reader.host.root.clone(),
+                        authority.repository,
+                        authority.session_root,
+                        authority.session_database,
+                        "keeper".into(),
+                        reader.thread.to_string(),
+                        source.clone(),
+                    )
+                    .unwrap();
+                    let page = data.call("evidence.read", json!({"reference": reference}), || true);
+                    if reader.thread == lead.thread {
+                        assert!(page.unwrap().to_string().contains("scoped output"));
+                    } else {
+                        assert_eq!(page.unwrap_err().to_string(), "resource_scope_mismatch");
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1571,6 +1706,7 @@ async fn replacement_over_the_core_limit_is_dropped_with_a_diagnostic() {
     };
     static BIG: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("big"));
     mods.intercept_tool(ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -2142,7 +2278,7 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
     let mods = mods(&fixture.core);
     let thread_store = ExtensionData::new("thread".to_owned());
     assert_eq!(mods.adjust_tool_specs(&thread_store, &[]), None);
-    thread_store.insert(fixture.lead.clone());
+    thread_store.insert(fixture.lead);
     let view = |name: &str| ToolSpecView {
         name: name.to_owned(),
         description: String::new(),
@@ -2620,7 +2756,7 @@ async fn turn_evidence_survives_reload_and_clears_stale_diagnostics() {
             .runtime
             .lock()
             .unwrap()
-            .refresh_authority()
+            .refresh(&|| true)
             .unwrap()
     );
     assert!(fixture.core.runtime.lock().unwrap().generation() > generation);
@@ -2726,7 +2862,7 @@ async fn turn_evidence_excludes_replaced_and_disabled_subscribers() {
                 .runtime
                 .lock()
                 .unwrap()
-                .refresh_authority()
+                .refresh(&|| true)
                 .unwrap()
         );
         let private = super::super::evidence::finish(
@@ -2759,7 +2895,7 @@ async fn turn_evidence_excludes_replaced_and_disabled_subscribers() {
                 .runtime
                 .lock()
                 .unwrap()
-                .refresh_authority()
+                .refresh(&|| true)
                 .unwrap()
         );
         assert!(
@@ -2807,7 +2943,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         .persist_runtime
         .lock()
         .unwrap()
-        .refresh_guarded(&|| true)
+        .refresh(&|| true)
         .unwrap();
     assert!(!extension.rewrites_persisted_text());
     let held = fixture.core.persist_runtime.lock().unwrap();
@@ -2889,47 +3025,54 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
             let state = fixture.core.host.root.join("state-writer.json");
             let before = std::fs::read(&state).ok();
             let active = std::cell::Cell::new(true);
-            let result = runtime.invoke_with(
+            let result = runtime.invoke(
                 "writer",
                 generation,
                 "command",
                 "run",
                 Value::Null,
-                || active.get(),
-                |_| {
-                    match change {
-                        "disable" => store.enable(&path, false)?,
-                        "revoke" => {
-                            let config = fixture.core.host.root.join("mods.json");
-                            let mut value: Value =
-                                serde_json::from_slice(&std::fs::read(&config)?)?;
-                            value["mods"][0]["capabilities"] = json!(["commands", "store"]);
-                            std::fs::write(config, serde_json::to_vec(&value)?)?;
+                ModInvokeOptions {
+                    active: &|| active.get(),
+                    host: ModHostCallback::Own(&mut |_| {
+                        match change {
+                            "disable" => store.enable(&path, false)?,
+                            "revoke" => {
+                                let config = fixture.core.host.root.join("mods.json");
+                                let mut value: Value =
+                                    serde_json::from_slice(&std::fs::read(&config)?)?;
+                                value["mods"][0]["capabilities"] = json!(["commands", "store"]);
+                                std::fs::write(config, serde_json::to_vec(&value)?)?;
+                            }
+                            "replace" => {
+                                std::fs::write(path.join("index.ts"), "export default () => {}")?;
+                                std::thread::sleep(std::time::Duration::from_millis(2100));
+                            }
+                            "broken" => {
+                                std::fs::write(fixture.core.host.root.join("mods.json"), "{")?
+                            }
+                            "cancel" => active.set(false),
+                            _ => unreachable!(),
                         }
-                        "replace" => {
-                            std::fs::write(path.join("index.ts"), "export default () => {}")?;
-                            std::thread::sleep(std::time::Duration::from_millis(2100));
-                        }
-                        "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
-                        "cancel" => active.set(false),
-                        _ => unreachable!(),
-                    }
-                    Ok(Value::Null)
+                        Ok(Value::Null)
+                    }),
+                    ..ModInvokeOptions::default()
                 },
             );
             assert!(result.is_err(), "{lane} {change}");
             assert_eq!(std::fs::read(&state).ok(), before, "{lane} {change}");
             if change == "broken" {
-                assert!(runtime.refresh_guarded(&|| true).is_err());
+                assert!(runtime.refresh(&|| true).is_err());
             }
-            let next = runtime.invoke_with(
+            let next = runtime.invoke(
                 "writer",
                 generation,
                 "command",
                 "run",
                 Value::Null,
-                || true,
-                |_| Ok(Value::Null),
+                ModInvokeOptions {
+                    host: ModHostCallback::Own(&mut |_| Ok(Value::Null)),
+                    ..ModInvokeOptions::default()
+                },
             );
             assert_eq!(
                 next.is_ok(),
@@ -3457,9 +3600,12 @@ async fn dynamic_tools_are_defined_invoked_and_removed_by_their_mod() {
         "tool",
         "search",
         json!({"q": "x"}),
-        || true,
-        |_, _| Err(std::io::Error::other("unexpected_host_call")),
-        |_| {},
+        codex_omd::ModInvokeOptions {
+            host: codex_omd::ModHostCallback::Scoped(&mut |_, _| {
+                Err(std::io::Error::other("unexpected_host_call"))
+            }),
+            ..codex_omd::ModInvokeOptions::default()
+        },
     )
     .unwrap();
     assert_eq!(value, json!({"called": "search", "arguments": {"q": "x"}}));
@@ -3544,7 +3690,7 @@ fn external_change_hashes_regular_files_and_never_follow_links_or_fifos() {
     );
     assert_eq!(
         super::activity::file_hash(&root, "a.txt"),
-        Some(crate::execution::hash(b"a\n"))
+        Some(codex_omd::sha256_hex(b"a\n"))
     );
     assert_eq!(super::activity::file_hash(&root, "link"), None);
     assert_eq!(super::activity::file_hash(&root, "fifo"), None);
@@ -3935,6 +4081,7 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
             arguments: arguments.to_owned(),
         }));
         ToolStartInput {
+            serving_assessment: None,
             session_store: &session_store,
             thread_store: &thread_store,
             turn_store: &turn_store,
@@ -4557,6 +4704,7 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
                 arguments: r#"{"message":"go"}"#.to_owned(),
             };
             mods.intercept_tool(ToolStartInput {
+                serving_assessment: None,
                 session_store,
                 thread_store: &store,
                 turn_store: &ExtensionData::new("turn".to_owned()),
@@ -4652,6 +4800,33 @@ fn the_agent_inventory_prunes_only_stale_snapshots_and_staging_files() {
     assert!(directory.path().join("role.toml").exists());
     assert!(!directory.path().join("stale.json").exists());
     assert!(!directory.path().join(staging).exists());
+}
+
+#[test]
+fn a_new_thread_keeps_old_thread_store_data() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    let archived = fixture.lead.host.root.join("data/threads/archived/owner");
+    std::fs::create_dir_all(&archived).unwrap();
+    std::fs::write(archived.join("store.json"), "{}").unwrap();
+    for path in [
+        archived.join("store.json"),
+        archived.clone(),
+        archived.parent().unwrap().to_path_buf(),
+    ] {
+        std::fs::File::open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    fixture
+        .lead
+        .host
+        .open_session(ThreadId::new(), false)
+        .unwrap();
+    assert!(archived.join("store.json").exists());
 }
 
 #[test]
