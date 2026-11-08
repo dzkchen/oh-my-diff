@@ -42572,7 +42572,7 @@ index 4dcbc4d67185724f5919ca4eb166a9c070fc33af..0338abc01dfc3fb0c971da867971f015
          .await;
          if matches!(selection, SessionSelection::StartFresh) {
 diff --git a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
-index 9123904c5117dbf0c7c653826bea32110deaf0c1..5896b0af02f52384962f99dbdf57ba21ff38ac61 100644
+index 9123904c5117dbf0c7c653826bea32110deaf0c1..75719d943b561cde4a8df9d7900299a7e5b73632 100644
 --- a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
 +++ b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
 @@ -2,6 +2,7 @@
@@ -42621,7 +42621,7 @@ index 9123904c5117dbf0c7c653826bea32110deaf0c1..5896b0af02f52384962f99dbdf57ba21
      let turns = recorded_params(&requests, "turn/start");
      let params = turns.last().expect("turn/start was sent");
      assert_eq!(
-@@ -1309,3 +1317,61 @@ async fn command_center_new_checkout_and_worktree_preserve_source_and_default_br
+@@ -1309,3 +1317,62 @@ async fn command_center_new_checkout_and_worktree_preserve_source_and_default_br
      }
      Ok(())
  }
@@ -42659,6 +42659,7 @@ index 9123904c5117dbf0c7c653826bea32110deaf0c1..5896b0af02f52384962f99dbdf57ba21
 +    )
 +    .await?;
 +    server.bootstrap(&app.config).await?;
++    crate::mod_runtime::remote_frontend(false);
 +    std::fs::write(
 +        store.join("mod-status.json"),
 +        serde_json::to_vec(
@@ -42770,10 +42771,10 @@ index e40950562cb6dda8564af11a556010b8686a6444..d009fcd6b76e9e629c73c8fb32b86e67
              let event = ThreadBufferedEvent::Notification(Box::new(
                  agent_message_delta_notification(id, "new-turn", "new-item", "fresh delivery"),
 diff --git a/codex-rs/tui/src/app/tests/new_session_tests.rs b/codex-rs/tui/src/app/tests/new_session_tests.rs
-index 6ac99972f76cb34c7f567ba99af68e505fb412f6..a08ee3b44f1d34f18819783bcfec7917f2487a5a 100644
+index 6ac99972f76cb34c7f567ba99af68e505fb412f6..f07e578200acfd443ae2c388ff9d454f5dff403a 100644
 --- a/codex-rs/tui/src/app/tests/new_session_tests.rs
 +++ b/codex-rs/tui/src/app/tests/new_session_tests.rs
-@@ -369,11 +369,12 @@ async fn replacement_uses_server_defaults_and_preserves_explicit_launch_settings
+@@ -369,7 +369,8 @@ async fn replacement_uses_server_defaults_and_preserves_explicit_launch_settings
          );
          if explicit == "saved" {
              let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 140)
@@ -42781,14 +42782,8 @@ index 6ac99972f76cb34c7f567ba99af68e505fb412f6..a08ee3b44f1d34f18819783bcfec7917
 +                .replace(&server_config.cwd.display().to_string(), "<PROJECT>")
 +                .replace("/tmp/project", "<PROJECT>");
              insta::assert_snapshot!(rendered, @r"
--            › Ask Codex to do anything
-+            › Ask Oh My Diff to do anything
+             › Ask Codex to do anything
 
--              server-model high · <PROJECT> · ← for agents
-+              Oh My Diff · mod status unavailable · server-model high · <PROJECT>
-             ");
-         }
-         if explicit.starts_with("profile_summary") {
 diff --git a/codex-rs/tui/src/app/tests/patch_approval_tests.rs b/codex-rs/tui/src/app/tests/patch_approval_tests.rs
 index 283be96d302b1d7b6af3a9999ea2edb473425558..192063f7ca69d45ff34b351ee2ea9ab743743829 100644
 --- a/codex-rs/tui/src/app/tests/patch_approval_tests.rs
@@ -44645,7 +44640,7 @@ index 9c848858c6db4c4ccbb827bda612f6761fc69879..5f322716ad71520efb44e675d3268f29
          copy_source: Option<String>,
          cwd: PathBuf,
 diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
-index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf230c902af 100644
+index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..fde8316a1e5b37c43ea6950e28501ae0e7cc81b9 100644
 --- a/codex-rs/tui/src/app_server_session.rs
 +++ b/codex-rs/tui/src/app_server_session.rs
 @@ -133,8 +133,6 @@ use codex_app_server_protocol::TurnInterruptParams;
@@ -44675,7 +44670,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
              backend_id,
              connection_owner,
              request_handle,
-@@ -532,6 +534,97 @@ impl AppServerSession {
+@@ -532,6 +534,98 @@ impl AppServerSession {
          }
      }
 
@@ -44688,6 +44683,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
 +            std::sync::Mutex<HashMap<crate::backend_id::BackendId, String>>,
 +        > = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 +        if self.thread_params_mode == ThreadParamsMode::Cloud
++            || !crate::omd::effective_mode().is_ok_and(codex_omd::RuntimeMode::mod_host_enabled)
 +            || (!matches!(&self.connection_owner, Some(AppServerClient::Remote(_)))
 +                && crate::omd::mod_paths().is_none())
 +        {
@@ -44773,7 +44769,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
      pub(crate) fn backend_id(&self) -> crate::backend_id::BackendId {
          self.backend_id
      }
-@@ -788,6 +881,7 @@ impl AppServerSession {
+@@ -788,6 +882,7 @@ impl AppServerSession {
          account: GetAccountResponse,
          fallback: EmptyCatalogFallback,
      ) -> Result<AppServerBootstrap> {
@@ -44781,7 +44777,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
          let started_at = Instant::now();
          // `hooks/list` holds the global config queue during startup. Submit models and config
          // requirements together so an uncached model fetch can overlap both config requests.
-@@ -1002,6 +1096,7 @@ impl AppServerSession {
+@@ -1002,6 +1097,7 @@ impl AppServerSession {
              /*session_start_source*/ None,
              /*remote_cwd_override*/ None,
              /*selected_profile*/ None,
@@ -44789,7 +44785,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
          )
          .await
      }
-@@ -1013,6 +1108,7 @@ impl AppServerSession {
+@@ -1013,6 +1109,7 @@ impl AppServerSession {
          session_start_source: Option<ThreadStartSource>,
          remote_cwd_override: Option<&std::path::Path>,
          selected_profile: Option<&PermissionProfileSelection>,
@@ -44797,7 +44793,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
      ) -> Result<AppServerStartedThread> {
          if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Server
              && selected_profile.is_some()
-@@ -1030,12 +1126,18 @@ impl AppServerSession {
+@@ -1030,12 +1127,18 @@ impl AppServerSession {
              session_start_source,
          );
          if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
@@ -44819,7 +44815,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
          }
          if let Some(selected_profile) = selected_profile {
              params.runtime_workspace_roots = None;
-@@ -1588,7 +1690,7 @@ impl AppServerSession {
+@@ -1588,7 +1691,7 @@ impl AppServerSession {
      }
 
      #[allow(clippy::too_many_arguments)]
@@ -44828,7 +44824,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
          &mut self,
          thread_id: ThreadId,
          turn_trigger: &str,
-@@ -1606,36 +1708,42 @@ impl AppServerSession {
+@@ -1606,36 +1709,42 @@ impl AppServerSession {
          collaboration_mode: Option<codex_protocol::config_types::CollaborationMode>,
          output_schema: Option<serde_json::Value>,
          cyber_access_program: Option<codex_app_server_protocol::CyberAccessProgram>,
@@ -44899,7 +44895,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
      }
 
      pub(crate) async fn turn_interrupt(
-@@ -1664,30 +1772,6 @@ impl AppServerSession {
+@@ -1664,30 +1773,6 @@ impl AppServerSession {
          self.turn_interrupt(thread_id, String::new()).await
      }
 
@@ -44930,7 +44926,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
      pub(crate) async fn thread_set_name(
          &mut self,
          thread_id: ThreadId,
-@@ -1959,6 +2043,22 @@ impl AppServerSession {
+@@ -1959,6 +2044,22 @@ impl AppServerSession {
          client.resolve_server_request(request_id, result).await
      }
 
@@ -44953,7 +44949,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
      pub(crate) async fn shutdown(self) -> std::io::Result<()> {
          match self.connection_owner {
              Some(client) => client.shutdown().await,
-@@ -2113,6 +2213,8 @@ pub(crate) fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
+@@ -2113,6 +2214,8 @@ pub(crate) fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
          // `model/list` already returns models filtered for the active client/auth context.
          supported_in_api: true,
          input_modalities: model.input_modalities,
@@ -44962,7 +44958,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
      }
  }
 
-@@ -2540,6 +2642,10 @@ async fn started_thread_from_start_response(
+@@ -2540,6 +2643,10 @@ async fn started_thread_from_start_response(
      config: &Config,
      thread_params_mode: ThreadParamsMode,
  ) -> Result<AppServerStartedThread> {
@@ -44973,7 +44969,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
      let blocks_direct_input = thread_blocks_direct_input(&response.thread);
      let session = thread_session_state_from_thread_start_response(
          &response,
-@@ -2562,6 +2668,10 @@ async fn started_thread_from_resume_response(
+@@ -2562,6 +2669,10 @@ async fn started_thread_from_resume_response(
      local_settings: &LocalSettings,
      thread_params_mode: ThreadParamsMode,
  ) -> Result<AppServerStartedThread> {
@@ -44984,7 +44980,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
      let blocks_direct_input = thread_blocks_direct_input(&response.thread);
      let session = thread_session_state_from_thread_resume_response(
          &response,
-@@ -2584,6 +2694,10 @@ async fn started_thread_from_fork_response(
+@@ -2584,6 +2695,10 @@ async fn started_thread_from_fork_response(
      config: &Config,
      thread_params_mode: ThreadParamsMode,
  ) -> Result<AppServerStartedThread> {
@@ -44995,7 +44991,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
      let blocks_direct_input = thread_blocks_direct_input(&response.thread);
      let session = thread_session_state_from_thread_fork_response(
          &response,
-@@ -3133,6 +3247,7 @@ mod tests {
+@@ -3133,6 +3248,7 @@ mod tests {
              spend_control_reached: None,
              plan_type: None,
              rate_limit_reached_type: None,
@@ -45003,7 +44999,7 @@ index ae79c9ad3d05bb355cca4f3fd7c62235c603c34a..5c6035d51b48187f8d66e0910fe66cf2
          }
      }
 
-@@ -3152,6 +3267,8 @@ mod tests {
+@@ -3152,6 +3268,8 @@ mod tests {
              display_name: "Current model".to_string(),
              description: "A test model".to_string(),
              model_specialty: None,
