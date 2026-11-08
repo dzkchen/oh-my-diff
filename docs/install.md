@@ -6,9 +6,16 @@ How to install, update, switch install profile and uninstall Oh My Diff (OMD). I
 ## Before you begin
 
 - An Apple Silicon Mac. Other platforms are unsupported, and the installer refuses them.
+- The Codex version line the [latest release](https://github.com/dzkchen/oh-my-diff/releases/latest) builds on. Don't
+  update Codex until OMD supports the new version.
 - Python 3.12 or later. macOS ships 3.9.
 
-You don't need Codex installed: OMD brings its own. If you have one, it keeps working once OMD is uninstalled.
+If Codex is missing or on another version, the installer stops before changing anything and prints the command that
+installs the right one, such as:
+
+```sh
+npm install -g @openai/codex@X.Y
+```
 
 If your Python is older than 3.12, install a newer one:
 
@@ -36,11 +43,10 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/rele
 ```
 
 For OMD Core, use `--profile platform` instead. The [installer options](commands.md#installer-installsh) choose the
-release channel and the install folders.
+release channel, the install folders and the Codex executable.
 
-Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`; a `codex` already there,
-such as the one OpenAI's install script puts there, is renamed to `codex.before-omd` and comes back on uninstall. Your
-Codex settings, sign-in and sessions aren't touched.
+Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`. Your Codex settings,
+sign-in and sessions aren't touched.
 
 If OMD's `codex` isn't the first one on your `PATH`, the installer asks once whether to put `~/.local/bin` first in
 your shell's startup file (`~/.zshrc`, `~/.bash_profile` or `~/.config/fish/config.fish`). It adds a block between
@@ -68,9 +74,6 @@ release was withdrawn, it adds `VERSION was withdrawn` and, when one helps, the 
 Then open a new terminal, `cd` into a project and run `codex`, and type `/mods`. The `/mods` screen lists your
 installed mods and which ones are on. Mods stay off when `codex` starts in your home folder or in `/`, so start it in
 a project folder.
-
-`codex update` runs `omd update`, and OMD doesn't show Codex's own update notice: OMD releases carry the Codex
-version they build on.
 
 ## Update
 
@@ -130,8 +133,8 @@ omd uninstall
 ```
 
 This removes OMD, its release and catalog caches, its Codex plugins and the `PATH` block it added, and puts
-back any command in `~/.local/bin` that the installer renamed to `NAME.before-omd`. It doesn't need another Codex
-installed. Codex settings, accounts and sessions stay.
+back any command in `~/.local/bin` that the installer renamed to `NAME.before-omd`. Codex settings, accounts and
+sessions stay.
 OMD mod settings, data and saved sign-ins stay in `~/.local/share/oh-my-diff/stores` by default.
 
 To remove OMD's mod data and saved sign-ins too, use this instead:

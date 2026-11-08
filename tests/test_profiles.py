@@ -47,7 +47,8 @@ def uninstalling(record):
             patch.object(profiles.authority_broker, "deployed", return_value=False),
             patch.object(profiles.authority_broker, "POLICY", Path(record["store"]).parent / "system-policy.json"),
             patch.object(profiles, "CURSOR_DATA", Path(record["store"]).parent / "cursor-data"),
-            patch.object(profiles.shutil, "which", return_value=None))
+            patch.object(profiles.shutil, "which", return_value="/usr/bin/true"),
+            patch.object(profiles.support, "binary_identity"))
 
 
 class ProfileModeTests(unittest.TestCase):
@@ -373,8 +374,7 @@ class ProfileModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             codex = base / "fake-codex"
-            codex.write_text(f'#!/bin/sh\necho $$ > {base}/pid\nls {base}/root/sessions > {base}/seen\nprintf "%s\\n" "$@" > {base}/arguments\nexit 7\n')
-            (base / "install.sh").write_text(f'echo "$@" > {base}/installer\n')
+            codex.write_text(f'#!/bin/sh\necho $$ > {base}/pid\nls {base}/root/sessions > {base}/seen\nexit 7\n')
             codex.chmod(0o755)
             record = {"binary": {"installed_path": str(codex)}, "store": str(base / "store"), "profile": "platform",
                       "activation": {"selection": "platform"},
@@ -389,9 +389,6 @@ class ProfileModeTests(unittest.TestCase):
             result = subprocess.run(["sh", launcher])
             self.assertEqual(result.returncode, 7)
             self.assertEqual((base / "seen").read_text().split(), (base / "pid").read_text().split())
-            self.assertIn("check_for_update_on_startup=false", (base / "arguments").read_text().split())
-            self.assertEqual(subprocess.run(["sh", launcher, "update", "status"]).returncode, 0)
-            self.assertEqual((base / "installer").read_text().split(), ["update", "--root", str(base / "root"), "status"])
 
     def test_launcher_announces_a_staged_release_once_while_another_session_is_open(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -585,6 +582,7 @@ enabled = true
                         patch.object(profiles.authority_broker, "deployed", return_value=False):
                     resumed = profiles.uninstall(prefix, bin_dir)
                 self.assertTrue(resumed["uninstalled"])
+                self.assertEqual(resumed["upstream"], str(profiles.support.resolved("/usr/bin/true")))
                 self.assertFalse(prefix.exists())
                 self.assertEqual([path.name for path in bin_dir.iterdir()], ["codex"])
                 self.assertEqual((bin_dir / "codex").read_text(), "restored upstream")

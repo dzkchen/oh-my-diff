@@ -36,10 +36,12 @@ class PayloadInstallTests(unittest.TestCase):
     def test_an_extracted_payload_installs_only_after_verification_and_without_extracting_again(self):
         with tempfile.TemporaryDirectory() as directory:
             payload = extracted(Path(directory))
-            args = argparse.Namespace(payload=payload, profile='platform', prefix='prefix',
+            args = argparse.Namespace(payload=payload, upstream='/usr/bin/true', profile='platform', prefix='prefix',
                                       bin_dir='bin', store='store', node='node', attach_store=False)
             calls = []
             with patch.object(package.support, 'run', side_effect=lambda arguments, **kwargs: calls.append(arguments)), \
+                    patch.object(package.support, 'binary_identity', return_value={'path': '/usr/bin/true', 'version': 'fixture'}), \
+                    patch.object(package.support, 'compatible_upstream', return_value=True), \
                     patch.object(package.tarfile, 'open', side_effect=AssertionError('extracted again')):
                 package.install_archive(args)
                 self.assertEqual([call[2] for call in calls], ['scripts.release_lock', 'scripts.profiles'])

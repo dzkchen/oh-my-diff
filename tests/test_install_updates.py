@@ -91,6 +91,7 @@ class UpdateSelection(unittest.TestCase):
         self.module.fetch_bytes = self.fetch_bytes
         self.module.user_mods = lambda record, store, mod_api: []
         self.module.node_binary = lambda *arguments: Path("/usr/bin/true")
+        self.module.upstream_binary = self.upstream
         self.home = Path(tempfile.mkdtemp(prefix="omd-home-", dir="/private/tmp")).resolve()
         self.addCleanup(shutil.rmtree, self.home, True)
         patch.dict(os.environ, {"HOME": str(self.home)}).start()
@@ -104,6 +105,11 @@ class UpdateSelection(unittest.TestCase):
     def write_settings(self):
         store = self.root / "stores/platform"
         (store / "mods.json").write_text(json.dumps({"mods": [{"path": str(store / "sources/omd_update"), "enabled": self.enabled, "settings": self.settings}]}))
+
+    def upstream(self, args, current, minor=None):
+        if minor and minor != "0.162":
+            raise ValueError(f"upstream Codex {minor}.x is required; found codex-cli 0.162.0")
+        return {"path": "/usr/bin/true", "version": "codex-cli 0.162.0"}
 
     def fetch(self, url, limit):
         if url == "https://localhost/releases":
@@ -126,7 +132,9 @@ class UpdateSelection(unittest.TestCase):
         self.write_settings()
         return self.module.check(types.SimpleNamespace(), self.root, self.current)
 
-    def test_docs_name_no_codex_version(self):
+    def test_required_upstream_minor_matches_the_pin_and_docs_name_no_codex_version(self):
+        minor = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v").rsplit(".", 1)[0]
+        self.assertEqual(installer().UPSTREAM_MINOR, minor)
         for name in ("README.md", "docs/install.md", "docs/support.md", "docs/troubleshooting.md", "docs/commands.md"):
             self.assertNotRegex((ROOT / name).read_text(), r"Codex `\d|codex@\d", name)
 
@@ -217,6 +225,46 @@ class UpdateSelection(unittest.TestCase):
         with patch.object(self.module, "fetch_json", side_effect=fetch):
             self.assertEqual([item["version"] for item in self.module.releases(url)], ["0.1.0"])
             self.assertEqual(self.module.mod_bundle(url, "0.1.0")["serial"], 2)
+
+    def test_installer_accepts_the_pinned_upstream_minor(self):
+        module = installer()
+        version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
+        major, minor, _ = map(int, version.split("."))
+        codex = self.root / "codex"
+        args = types.SimpleNamespace(upstream=codex, bin_dir=self.root / "bin", root=self.root / "omd")
+        for candidate, accepted in ((version, True), (f"{major}.{minor}.99", True),
+                                    (f"{major}.{minor - 1}.0", False), (f"{major}.{minor + 1}.0", False)):
+            with self.subTest(version=candidate):
+                codex.write_text(f"#!/bin/sh\nprintf '%s\\n' 'codex-cli {candidate}'\n")
+                codex.chmod(0o755)
+                if accepted:
+                    self.assertEqual(module.upstream_binary(args, None, module.UPSTREAM_MINOR)["version"],
+                                     f"codex-cli {candidate}")
+                else:
+                    with self.assertRaisesRegex(ValueError, f"npm install -g @openai/codex@{module.UPSTREAM_MINOR}"):
+                        module.upstream_binary(args, None, module.UPSTREAM_MINOR)
+
+    def test_upstream_accepts_the_npm_layout_and_refuses_the_omd_launcher(self):
+        module = installer()
+        version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
+        script = self.root / "lib/node_modules/@openai/codex/bin/codex.js"
+        launcher = self.root / "omd/releases" / ("1" * 32) / "bin/codex"
+        for path in (script, launcher):
+            path.parent.mkdir(parents=True)
+            path.write_text(f"#!/bin/sh\nprintf '%s\\n' 'codex-cli {version}'\n")
+            path.chmod(0o755)
+        npm, bin_dir = self.root / "npm-bin", self.root / "bin"
+        for directory, target in ((npm, script), (bin_dir, launcher)):
+            directory.mkdir()
+            (directory / "codex").symlink_to(target)
+        args = types.SimpleNamespace(upstream=npm / "codex", bin_dir=bin_dir, root=self.root / "omd")
+        self.assertEqual(module.upstream_binary(args, None, module.UPSTREAM_MINOR)["path"], str(npm / "codex"))
+        args.upstream = None
+        with patch.dict(os.environ, {"PATH": f"{bin_dir}:{npm}"}):
+            self.assertEqual(module.upstream_binary(args, None, module.UPSTREAM_MINOR)["path"], str(npm / "codex"))
+        for upstream in (bin_dir / "codex", launcher):
+            with self.subTest(upstream=upstream), self.assertRaisesRegex(ValueError, "OMD launcher"):
+                module.upstream_binary(types.SimpleNamespace(**vars(args) | {"upstream": upstream}), None, module.UPSTREAM_MINOR)
 
     def terminal(self, answer):
         def opened(path, mode="r", *arguments, **keywords):
@@ -381,7 +429,7 @@ class UpdateSelection(unittest.TestCase):
                         else:
                             with self.assertRaisesRegex(OSError, "launcher creation failed"):
                                 self.module.transaction(args, root, None, root / "archive", "https://example.test/archive", "a" * 64,
-                                                        "platform")
+                                                        "platform", {"path": "/usr/bin/true"})
                     if interrupted:
                         self.module.recover(args, root, None)
                     for name, original in originals.items():
@@ -404,20 +452,20 @@ class UpdateSelection(unittest.TestCase):
             self.module.journaled(root, None, None)
             self.module.set_links(root, bin_dir)
             with patch.object(self.module, "restore_displaced", side_effect=OSError("restore failed")):
-                self.module.abandon(root, None, bin_dir)
+                self.module.abandon(root, None, None, bin_dir)
             self.assertTrue((root / "update/journal.json").exists(), "failed cleanup keeps recovery pending")
             self.module.recover(args, root, None)
             self.assertEqual((bin_dir / "codex").read_text(), "original codex")
             self.assertFalse((root / "update/journal.json").exists())
 
     def test_channel_pin_compatibility_and_failures(self):
-        self.published = [release("0.3.0-rc.1", prerelease=True), release("0.2.1", target="x86_64-apple-darwin"),
+        self.published = [release("0.3.0-rc.1", prerelease=True), release("0.2.1", upstream_tag="rust-v0.163.0"),
                           release("0.2.0"), release("0.1.0"), release("0.1.5"),
                           {"tag_name": "nightly", "assets": []}, {**release("0.4.0"), "draft": True}]
         stable = self.check()
         self.assertEqual(stable["available"]["version"], "0.2.0")
         self.assertEqual(stable["blocked"]["version"], "0.2.1")
-        self.assertEqual(stable["blocked"]["reasons"], ["built for x86_64-apple-darwin"])
+        self.assertIn("0.163.x", stable["blocked"]["reasons"][0])
         self.assertEqual(stable["available"]["manifest"]["url"], "https://example.test/0.2.0/oh-my-diff-0.2.0.tar.xz")
         self.assertEqual(self.check(channel="prerelease")["available"]["version"], "0.3.0-rc.1")
         self.assertEqual(self.check(pin="0.1.0")["available"], None)
@@ -509,7 +557,7 @@ class UpdateSelection(unittest.TestCase):
         for bad in (tampered, {key: value for key, value in manifest.items() if key != "signature"}):
             with self.assertRaisesRegex(ValueError, "no longer verifies"):
                 self.module.transaction(None, self.root, self.current, None, manifest["url"], manifest["sha256"],
-                                        "platform", bad)
+                                        "platform", None, bad)
 
     def bundled(self):
         record = json.loads((self.current / "prefix/install.json").read_text()) | {
@@ -578,7 +626,7 @@ class UpdateSelection(unittest.TestCase):
         self.module.digest = lambda path: "b" * 64 if str(path).endswith(".tar.xz") else real_digest(path)
         held = []
 
-        def package(generation, *arguments):
+        def package(generation, upstream, bin_dir, *arguments):
             calls.append(arguments[:1])
             if arguments[0] == "mods-rollback":
                 held.append(self.module.state(self.root).get("held_mods"))
@@ -693,7 +741,7 @@ class UpdateSelection(unittest.TestCase):
         self.module.apply = lambda args, root, current, available: applied.append(available["version"])
         args = types.SimpleNamespace(session=os.getpid())
         for changes in ({"auto": "off"}, {"pin": "0.1.0"}, {"auto": "off", "pin": "0.1.0"}, {"channel": "stable"},
-                        {"user_mods": True}, {"held": True}, {"failed": True}, {}):
+                        {"incompatible": True}, {"user_mods": True}, {"held": True}, {"failed": True}, {}):
             with self.subTest(changes=changes):
                 self.settings = {"auto": "on", "channel": "prerelease"}
                 self.write_settings()
@@ -705,6 +753,7 @@ class UpdateSelection(unittest.TestCase):
                 self.assertTrue((self.root / "update/ready.json").is_file())
                 self.settings.update({key: value for key, value in changes.items() if key in self.settings or key == "pin"})
                 self.write_settings()
+                self.module.upstream_binary = (lambda *arguments: self.upstream(args, self.current, "0.163")) if changes.get("incompatible") else self.upstream
                 self.module.user_mods = lambda *arguments: ["custom"] if changes.get("user_mods") else []
                 for key in ("held", "failed"):
                     if changes.get(key):
@@ -715,6 +764,7 @@ class UpdateSelection(unittest.TestCase):
                 if changes:
                     self.assertFalse((self.root / "update/ready.json").exists())
                     self.assertIsNone(self.module.state(self.root)["pending"])
+                self.module.upstream_binary = self.upstream
                 self.module.user_mods = lambda *arguments: []
 
     def test_recovery_removes_only_a_store_the_interrupted_install_created(self):
@@ -738,7 +788,7 @@ class UpdateSelection(unittest.TestCase):
                         patch.object(self.module, "discard"), patch.object(self.module, "abandon"):
                     with self.assertRaises(KeyboardInterrupt):
                         self.module.transaction(args, root, None, root / "archive", "https://example.test/archive", "a" * 64,
-                                                "platform")
+                                                "platform", {"path": "/usr/bin/true"})
                 self.assertEqual(self.module.read_json(root / "update/journal.json", {})["created"], None if existing else "platform")
                 self.module.recover(args, root, None)
                 self.assertEqual(store.exists(), existing)
@@ -875,7 +925,7 @@ class UpdateSelection(unittest.TestCase):
         (self.root / "sessions").mkdir()
         (self.root / "catalog").mkdir()
 
-        def package(generation, *arguments):
+        def package(generation, upstream, directory, *arguments):
             if (generation / "prefix/personal.txt").exists():
                 raise ValueError("installation prefix contains unmanaged files")
             shutil.rmtree(generation / "prefix")
@@ -943,7 +993,7 @@ class UpdateSelection(unittest.TestCase):
                 printed = []
                 calls = []
 
-                def package(generation, action, *args):
+                def package(generation, upstream, bin_dir, action, *args):
                     calls.append(action)
                     if action != "purge-accounts":
                         shutil.rmtree(generation / "prefix")
@@ -1082,14 +1132,14 @@ class UpdateSelection(unittest.TestCase):
         (self.current / "receipt.json").write_text(json.dumps(receipt))
         (self.root / "previous").symlink_to(older)
 
-        def status(generation):
+        def status(generation, upstream, directory):
             if generation == self.current:
                 raise ValueError(f"managed artifact changed: {generation}/codex")
             return {"profile": "platform"}
 
         with patch.object(self.module, "status", side_effect=status), patch.object(self.module, "package"), \
                 patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
-            self.module.rollback(types.SimpleNamespace(session=None), self.root, bin_dir, self.current)
+            self.module.rollback(types.SimpleNamespace(session=None, upstream=None), self.root, bin_dir, self.current)
         self.assertEqual(self.module.pointer(self.root, "current"), older)
         self.assertEqual(self.module.pointer(self.root, "previous"), self.current)
         self.assertEqual(os.readlink(bin_dir / "codex"), str(self.root / "current/bin/codex"))
@@ -1115,7 +1165,7 @@ class UpdateSelection(unittest.TestCase):
                 (root / "stores/platform/mods.json").write_text("{}")
                 self.module.set_links(root, bin_dir)
 
-                def package(generation, *arguments):
+                def package(generation, upstream, directory, *arguments):
                     prefix = generation / "prefix"
                     (prefix / ".uninstall.json").write_text("{}")
                     (generation / "bin/codex").unlink()
@@ -1133,7 +1183,7 @@ class UpdateSelection(unittest.TestCase):
                         raise OSError("interrupted")
                     real_rmdir(path)
 
-                args = types.SimpleNamespace(session=None, bin_dir=None, root=root, command="uninstall",
+                args = types.SimpleNamespace(session=None, upstream=None, bin_dir=None, root=root, command="uninstall",
                                              action=None, value=None)
                 with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
                         patch.object(self.module, "broker_deployed", return_value=False), \

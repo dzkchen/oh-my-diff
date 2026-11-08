@@ -12,6 +12,7 @@ host needs the macOS sandbox (Seatbelt) to run mods.
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
+| Codex | The version line the OMD release builds on; the installer names it | Everything. OMD builds on the Codex you install. |
 | Python | 3.12 or later | The installer and `omd update` |
 | Node | 22.18 or later | The setup and model routing of `omd_profiles`, `omd_claude_cli` and `omd_cursor` |
 | Node | 24.18 or a later 24.x | `omd-mod-author`, to write mods |
@@ -20,7 +21,8 @@ host needs the macOS sandbox (Seatbelt) to run mods.
 Mods themselves run in OMD's own runtime, not in Node. A few mods start Node programs, such as `omd_preview`;
 their READMEs say so.
 
-Each OMD release ships the Codex it builds on, so a Codex you installed separately doesn't matter. The
+Each OMD release supports one Codex version line. Turn off automatic Codex updates, and update Codex only once
+`omd update` offers an OMD release that supports the new version. The
 [compatibility matrix](../mods/conformance/COMPATIBILITY.md) lists which OMD release supports which Codex version,
 and what is tested.
 

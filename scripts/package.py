@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -116,6 +117,10 @@ def install_archive(args):
 
 
 def install_payload(payload, args):
+    upstream = support.binary_identity(args.upstream)
+    expected_version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
+    if not support.compatible_upstream(upstream["version"], expected_version):
+        raise ValueError("upstream fallback does not match the package's Codex minor version")
     support.run([sys.executable, "-m", "scripts.release_lock", "--artifact-dir", payload / "artifacts",
                  "--package-mode", "--version", json.loads((payload / "runtime/release.lock.json").read_text())["version"]],
                 cwd=payload, capture=False)
@@ -129,7 +134,9 @@ def install_payload(payload, args):
         command.append("--attach-store")
     if getattr(args, "previous", None):
         command += ["--previous", args.previous]
-    support.run(command, cwd=payload, capture=False)
+    environment = os.environ.copy()
+    environment["PATH"] = str(Path(upstream["path"]).parent) + os.pathsep + environment.get("PATH", "")
+    support.run(command, cwd=payload, env=environment, capture=False)
 
 
 def main():
@@ -144,6 +151,7 @@ def main():
     source_group.add_argument("--payload", type=Path, help=argparse.SUPPRESS)
     install.add_argument("--sha256")
     install.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
+    install.add_argument("--upstream", type=Path, required=True)
     install.add_argument("--profile", choices=("platform", "full"), required=True, help="platform: OMD Core; full: OMD+")
     install.add_argument("--prefix", type=Path, required=True)
     install.add_argument("--bin-dir", type=Path, required=True)

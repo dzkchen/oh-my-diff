@@ -252,10 +252,11 @@ def package(version=None):
     if archive.stat().st_size > 150_000_000:
         raise ValueError("nightly archive exceeds the curl installer download limit")
     pin = build.pin()
+    upstream = upstream_codex(pin["tag"], work / "upstream-bin")
     support.output([sys.executable, "-m", "scripts.profile_acceptance", "--artifact-dir", artifact_dir,
-                    "--output", WORK / "profile-acceptance.json"])
-    archive_acceptance(archive)
-    update_acceptance(archive, version)
+                    "--upstream", upstream, "--output", WORK / "profile-acceptance.json"])
+    archive_acceptance(archive, upstream)
+    update_acceptance(archive, version, upstream)
     provenance = {"schema": 1, "version": version, "commit": support.output(["git", "rev-parse", "HEAD"]),
                   "upstream_commit": pin["commit"], "upstream_tag": pin["tag"],
                   "patch_sha256": json.loads((build.ROOT / "runtime/patches/manifest.json").read_text())["patch"]["sha256"], "profile": "release",
@@ -282,8 +283,8 @@ def upstream_codex(tag, directory):
     return (directory / "codex-aarch64-apple-darwin").rename(directory / "codex")
 
 
-def update_acceptance(archive, version):
-    archive = archive.resolve()
+def update_acceptance(archive, version, upstream):
+    archive, upstream = archive.resolve(), upstream.resolve()
     with tempfile.TemporaryDirectory(prefix="omd-nightly-update-", dir="/private/tmp") as temporary:
         base = Path(temporary)
         home = base / "home"
@@ -305,48 +306,49 @@ def update_acceptance(archive, version):
         context.load_cert_chain(cert, key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        environment = profile_acceptance.isolated_environment(base, home)
+        environment = profile_acceptance.isolated_environment(base, home, upstream)
 
-        def installer(*arguments, env=environment, script=build.ROOT / "install.sh"):
-            return support.output(["sh", script, *arguments, "--root", base / "managed", "--bin-dir", base / "bin"], env=env)
+        def installer(codex, *arguments, env=environment, script=build.ROOT / "install.sh"):
+            return support.output(["sh", script, *arguments, "--root", base / "managed",
+                                   "--bin-dir", base / "bin", "--upstream", codex], env=env)
 
-        def installed(expected):
-            status = json.loads(installer("status"))["profile"]
+        def installed(codex, expected):
+            status = json.loads(installer(codex, "status"))["profile"]
             if status["version"] != expected or any(item["error"] or not item["pinned_source_current"] for item in status["packages"]):
                 raise ValueError(f"expected a healthy {expected} installation:\n{json.dumps(status, indent=2)}")
 
         try:
-            installer("install", "--profile", "full", "--asset-url", f"{download}/{latest['archive']}",
-                      "--asset-sha256", latest["sha256"], "--upstream", previous, script=base / "previous-install.sh")
-            installed(latest["version"])
-            installer("install", "--profile", "full", "--asset-url", f"https://localhost:{server.server_port}/{archive.name}",
+            installer(previous, "install", "--profile", "full", "--asset-url", f"{download}/{latest['archive']}",
+                      "--asset-sha256", latest["sha256"], script=base / "previous-install.sh")
+            installed(previous, latest["version"])
+            installer(upstream, "install", "--profile", "full", "--asset-url", f"https://localhost:{server.server_port}/{archive.name}",
                       "--asset-sha256", support.digest(archive), env=environment | {"SSL_CERT_FILE": str(cert)})
-            installed(version)
+            installed(upstream, version)
             if not (base / "managed/update/notice.json").is_file():
                 raise ValueError("the update wrote no update/notice.json")
-            installer("rollback")
-            installed(latest["version"])
+            installer(previous, "rollback")
+            installed(previous, latest["version"])
         finally:
             server.shutdown()
             server.server_close()
 
 
-def archive_acceptance(archive):
-    archive = archive.resolve()
+def archive_acceptance(archive, upstream):
+    archive, upstream = archive.resolve(), upstream.resolve()
     with tempfile.TemporaryDirectory(prefix="omd-nightly-install-", dir="/private/tmp") as temporary:
         base = Path(temporary)
         home = base / "home"
         home.mkdir()
         sentinel = home / "config.toml"
         sentinel.write_text('model = "preserve-user-choice"\n')
-        environment = profile_acceptance.isolated_environment(base, home)
+        environment = profile_acceptance.isolated_environment(base, home, upstream)
         digest = support.digest(archive)
         payload = release_package.checked_extract(archive, digest, base)
         for profile in ("platform", "full"):
             prefix, bin_dir = base / f"{profile}-prefix", base / f"{profile}-bin"
             install = [sys.executable, "-m", "scripts.package", "install", "--archive", archive,
                        "--sha256", digest, "--profile", profile, "--prefix", prefix, "--bin-dir", bin_dir,
-                       "--store", base / f"{profile}-store"]
+                       "--store", base / f"{profile}-store", "--upstream", upstream]
             subprocess.run(list(map(str, install)), cwd=payload, env=environment, check=True)
             next_prefix, next_bin = base / f"{profile}-next-prefix", base / f"{profile}-next-bin"
             reinstall = list(install)
