@@ -62,3 +62,11 @@ test('an install without update info shows only the unmanaged notice', () => {
   const dialog = run('terminal', {}, { ...state, open: true }).value.sites.dialog.components[1];
   assert.deepEqual(dialog.children.map(item => item.id), ['omd_update_header', 'omd_update_unmanaged', 'omd_update_close']);
 });
+
+test('a blocked release is not reported as the newest one', () => {
+  const ids = info => run('terminal', {}, { ...run('start', {}, null, { info }).state, open: true }).value.sites.dialog.components[1].children.map(item => item.id);
+  const blocked = ids({ installed: '1.0.0', checked_at: 1, blocked: { version: '1.1.0', reasons: ['built for x86_64-apple-darwin'] } });
+  assert.ok(blocked.includes('omd_update_blocked'));
+  assert.ok(!blocked.includes('omd_update_current'));
+  assert.ok(ids({ installed: '1.0.0', checked_at: 1 }).includes('omd_update_current'));
+});

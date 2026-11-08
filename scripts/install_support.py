@@ -63,11 +63,6 @@ def state_roots():
     return home, sqlite
 
 
-def path_without(bin_dir):
-    return os.pathsep.join(item for item in os.environ.get("PATH", "").split(os.pathsep)
-                           if item and resolved(item) != bin_dir)
-
-
 def validate_locations(prefix, bin_dir):
     prefix = resolved(prefix)
     bin_dir = resolved(bin_dir)

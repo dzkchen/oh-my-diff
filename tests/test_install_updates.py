@@ -91,7 +91,12 @@ class UpdateSelection(unittest.TestCase):
         self.module.fetch_bytes = self.fetch_bytes
         self.module.user_mods = lambda record, store, mod_api: []
         self.module.node_binary = lambda *arguments: Path("/usr/bin/true")
-        self.module.upstream_binary = self.upstream
+        self.home = Path(tempfile.mkdtemp(prefix="omd-home-", dir="/private/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, self.home, True)
+        patch.dict(os.environ, {"HOME": str(self.home)}).start()
+        self.addCleanup(patch.stopall)
+        for name in ("SHELL", "ZDOTDIR", "XDG_CONFIG_HOME"):
+            os.environ.pop(name, None)
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -99,11 +104,6 @@ class UpdateSelection(unittest.TestCase):
     def write_settings(self):
         store = self.root / "stores/platform"
         (store / "mods.json").write_text(json.dumps({"mods": [{"path": str(store / "sources/omd_update"), "enabled": self.enabled, "settings": self.settings}]}))
-
-    def upstream(self, args, current, minor=None):
-        if minor and minor != "0.162":
-            raise ValueError(f"upstream Codex {minor}.x is required; found codex-cli 0.162.0")
-        return {"path": "/usr/bin/true", "version": "codex-cli 0.162.0"}
 
     def fetch(self, url, limit):
         if url == "https://localhost/releases":
@@ -126,9 +126,7 @@ class UpdateSelection(unittest.TestCase):
         self.write_settings()
         return self.module.check(types.SimpleNamespace(), self.root, self.current)
 
-    def test_required_upstream_minor_matches_the_pin_and_docs_name_no_codex_version(self):
-        minor = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v").rsplit(".", 1)[0]
-        self.assertEqual(installer().UPSTREAM_MINOR, minor)
+    def test_docs_name_no_codex_version(self):
         for name in ("README.md", "docs/install.md", "docs/support.md", "docs/troubleshooting.md", "docs/commands.md"):
             self.assertNotRegex((ROOT / name).read_text(), r"Codex `\d|codex@\d", name)
 
@@ -151,10 +149,11 @@ class UpdateSelection(unittest.TestCase):
         for channel, selected, saved in ((None, "nightly", []), ("stable", "stable", [("channel", "stable")])):
             with self.subTest(channel=channel):
                 args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://localhost/releases",
-                                             channel=channel, session=None, json=True)
+                                             channel=channel, session=None, json=True, bin_dir=self.root / "bin")
                 with patch.object(self.module.platform, "system", return_value="Darwin"), \
                         patch.object(self.module.platform, "machine", return_value="arm64"), \
                         patch.object(self.module, "profile_choice", return_value="platform"), \
+                        patch.object(self.module, "path_plan", return_value={"shadowing": None, "profile": None, "write": False, "present": False}), \
                         patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download", return_value=0) as download, \
                         patch.object(self.module, "transaction", return_value={}), patch.object(self.module, "set_policy") as policy, \
                         patch("builtins.print"):
@@ -219,56 +218,90 @@ class UpdateSelection(unittest.TestCase):
             self.assertEqual([item["version"] for item in self.module.releases(url)], ["0.1.0"])
             self.assertEqual(self.module.mod_bundle(url, "0.1.0")["serial"], 2)
 
-    def test_installer_accepts_the_pinned_upstream_minor(self):
-        module = installer()
-        version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
-        major, minor, _ = map(int, version.split("."))
-        codex = self.root / "codex"
-        args = types.SimpleNamespace(upstream=codex, bin_dir=self.root / "bin", root=self.root / "omd")
-        for candidate, accepted in ((version, True), (f"{major}.{minor}.99", True),
-                                    (f"{major}.{minor - 1}.0", False), (f"{major}.{minor + 1}.0", False)):
-            with self.subTest(version=candidate):
-                codex.write_text(f"#!/bin/sh\nprintf '%s\\n' 'codex-cli {candidate}'\n")
-                codex.chmod(0o755)
-                if accepted:
-                    self.assertEqual(module.upstream_binary(args, None, module.UPSTREAM_MINOR)["version"],
-                                     f"codex-cli {candidate}")
-                else:
-                    with self.assertRaisesRegex(ValueError, f"npm install -g @openai/codex@{module.UPSTREAM_MINOR}"):
-                        module.upstream_binary(args, None, module.UPSTREAM_MINOR)
+    def terminal(self, answer):
+        def opened(path, mode="r", *arguments, **keywords):
+            if path != "/dev/tty":
+                return open(path, mode, *arguments, **keywords)
+            if answer is None:
+                raise OSError("no controlling terminal")
+            return io.StringIO(answer) if mode == "r" else io.StringIO()
+        return patch.object(self.module, "open", opened, create=True)
 
-    def test_upstream_accepts_the_npm_layout_and_refuses_the_omd_launcher(self):
-        module = installer()
-        version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
-        script = self.root / "lib/node_modules/@openai/codex/bin/codex.js"
-        launcher = self.root / "omd/releases" / ("1" * 32) / "bin/codex"
-        for path in (script, launcher):
-            path.parent.mkdir(parents=True)
-            path.write_text(f"#!/bin/sh\nprintf '%s\\n' 'codex-cli {version}'\n")
-            path.chmod(0o755)
-        npm, bin_dir = self.root / "npm-bin", self.root / "bin"
-        for directory, target in ((npm, script), (bin_dir, launcher)):
+    def test_shadowing_codex_follows_path_order(self):
+        upstream, bin_dir, empty = self.root / "upstream", self.root / "bin", self.root / "empty"
+        for directory in (upstream, bin_dir, empty):
             directory.mkdir()
-            (directory / "codex").symlink_to(target)
-        args = types.SimpleNamespace(upstream=npm / "codex", bin_dir=bin_dir, root=self.root / "omd")
-        self.assertEqual(module.upstream_binary(args, None, module.UPSTREAM_MINOR)["path"], str(npm / "codex"))
-        args.upstream = None
-        with patch.dict(os.environ, {"PATH": f"{bin_dir}:{npm}"}):
-            self.assertEqual(module.upstream_binary(args, None, module.UPSTREAM_MINOR)["path"], str(npm / "codex"))
-        for upstream in (bin_dir / "codex", launcher):
-            with self.subTest(upstream=upstream), self.assertRaisesRegex(ValueError, "OMD launcher"):
-                module.upstream_binary(types.SimpleNamespace(**vars(args) | {"upstream": upstream}), None, module.UPSTREAM_MINOR)
-
-    def test_install_warns_when_upstream_codex_precedes_the_launcher(self):
-        upstream, bin_dir = self.root / "upstream", self.root / "bin"
         for directory in (upstream, bin_dir):
-            directory.mkdir()
             (directory / "codex").write_text("#!/bin/sh\n")
             (directory / "codex").chmod(0o755)
-        with patch.dict(os.environ, {"PATH": f"{upstream}:{bin_dir}"}):
-            self.assertEqual(self.module.shadowing_codex(bin_dir), str(upstream / "codex"))
-        with patch.dict(os.environ, {"PATH": f"{bin_dir}:{upstream}"}):
-            self.assertIsNone(self.module.shadowing_codex(bin_dir))
+        plain = self.root / "plain"
+        plain.mkdir()
+        (plain / "codex").write_text("not executable")
+        for path, expected in ((f"{upstream}:{bin_dir}", str(upstream / "codex")), (f"{bin_dir}:{upstream}", None),
+                               (f"{empty}:{bin_dir}:{upstream}", None), (f"{empty}:{plain}:{upstream}:{bin_dir}", str(upstream / "codex")),
+                               (f"{plain}:{bin_dir}", None), (f"{empty}:{plain}", "missing"), ("", "missing"), (f"{upstream}", str(upstream / "codex"))):
+            with self.subTest(path=path), patch.dict(os.environ, {"PATH": path}):
+                self.assertEqual(self.module.shadowing_codex(bin_dir), expected)
+
+    def test_path_setup_asks_once_edits_one_marked_block_and_uninstall_removes_it(self):
+        other, bin_dir, elsewhere = self.root / "other", self.root / "bin", self.root / "elsewhere"
+        for directory in (other, bin_dir, elsewhere):
+            directory.mkdir()
+        (other / "codex").write_text("#!/bin/sh\n")
+        (other / "codex").chmod(0o755)
+        args = types.SimpleNamespace(bin_dir=bin_dir)
+        for shell, relative, line in (("zsh", ".zshrc", f'export PATH={bin_dir}:"$PATH"'),
+                                      ("bash", ".bash_profile", f'export PATH={bin_dir}:"$PATH"'),
+                                      ("fish", ".config/fish/config.fish", f"fish_add_path --global --move --path {bin_dir}")):
+            with self.subTest(shell=shell), patch.dict(os.environ, {"PATH": str(other), "SHELL": f"/bin/{shell}"}):
+                profile = self.home / relative
+                profile.parent.mkdir(parents=True, exist_ok=True)
+                foreign = self.module.path_block(elsewhere, profile)
+                before = f"alias ll='ls -l'\n{foreign}set -x EDITOR vim\n"
+                profile.write_text(before)
+                for answer in (None, "n\n", "no\n", ""):
+                    with self.terminal(answer):
+                        plan = self.module.path_plan(args)
+                    self.assertEqual((plan["write"], plan["shadowing"], plan["profile"]), (False, str(other / "codex"), profile))
+                self.assertEqual(profile.read_text(), before)
+                with self.terminal("\n"):
+                    plan = self.module.path_plan(args)
+                self.assertTrue(plan["write"])
+                self.module.add_path(bin_dir, plan["profile"])
+                self.assertEqual(profile.read_text(), before + self.module.path_block(bin_dir, profile))
+                self.assertEqual(profile.read_text().count(line), 1)
+                with self.terminal(None):
+                    again = self.module.path_plan(args)
+                self.assertEqual((again["write"], again["present"]), (False, True))
+                root = self.root / f"uninstall-{shell}"
+                (root / "releases").mkdir(parents=True)
+                self.module.update_dir(root)
+                self.assertEqual(self.module.uninstalled(root, bin_dir)["path_removed_from"], [str(profile)])
+                self.assertEqual(profile.read_text(), before)
+                self.assertEqual(self.module.remove_path(bin_dir), [])
+        with patch.dict(os.environ, {"PATH": str(other), "SHELL": "/bin/tcsh"}), self.terminal("\n"):
+            self.assertEqual(self.module.path_plan(args)["write"], False)
+
+    def test_bash_keeps_its_existing_startup_file_and_odd_folders_are_quoted(self):
+        (self.home / ".profile").write_text("export LANG=C\n")
+        with patch.dict(os.environ, {"SHELL": "/bin/bash"}):
+            self.assertEqual(self.module.shell_profiles()["bash"], self.home / ".profile")
+        odd = Path("/opt/it's $HOME")
+        self.assertEqual(self.module.path_line(odd, self.home / ".zshrc"), "export PATH='/opt/it'\"'\"'s $HOME':\"$PATH\"")
+        script = f"{self.module.path_line(odd, self.home / '.zshrc')}; printf %s \"${{PATH%%:*}}\""
+        self.assertEqual(subprocess.run(["/bin/sh", "-c", script], capture_output=True, text=True).stdout, str(odd))
+
+    def test_path_setup_does_not_ask_when_omd_comes_first_and_a_missing_profile_is_created(self):
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        args = types.SimpleNamespace(bin_dir=bin_dir)
+        with patch.dict(os.environ, {"PATH": str(bin_dir), "SHELL": "/bin/zsh"}), self.terminal(None):
+            self.assertEqual(self.module.path_plan(args)["write"], False)
+        with patch.dict(os.environ, {"PATH": str(self.root), "SHELL": "/bin/zsh"}), self.terminal("y\n"):
+            plan = self.module.path_plan(args)
+        self.assertEqual((plan["write"], plan["shadowing"]), (True, "missing"))
+        self.module.add_path(bin_dir, plan["profile"])
+        self.assertEqual((self.home / ".zshrc").read_text(), self.module.path_block(bin_dir, self.home / ".zshrc"))
 
     def test_summary_says_codex_cannot_start_while_the_broker_is_unpinned(self):
         result = {"profile_label": "OMD+", "version": "1.0.0", "bin_dir": str(self.root / "bin"), "moved_aside": [],
@@ -285,9 +318,20 @@ class UpdateSelection(unittest.TestCase):
         self.assertIn("can't start until the authority broker is pinned", broken)
         self.assertIn("Fix      omd-package broker pin", broken)
         self.assertNotIn("Start", broken)
-        shadowed = summary(codex_on_path="/opt/homebrew/bin/codex")
+        start = "Start    open a new terminal, cd into a project, then run codex"
+        for extra in ({"path_added_to": str(self.home / ".zshrc")}, {"path_in": str(self.home / ".zshrc")}):
+            opened = summary(**extra)
+            self.assertIn(start, opened)
+            self.assertEqual("Added to PATH" in opened, "path_added_to" in extra)
+        line = f'export PATH="{self.root}/bin:$PATH"'
+        shadowed = summary(codex_on_path="/opt/homebrew/bin/codex", path_line=line, shell_profile=str(self.home / ".zshrc"))
         self.assertIn("codex on your PATH is /opt/homebrew/bin/codex", shadowed)
+        self.assertIn(f"      {line}", shadowed)
+        self.assertIn("end of ~/.zshrc", shadowed)
         self.assertNotIn("Start", shadowed)
+        missing = summary(codex_on_path="missing", path_line=line, shell_profile=None)
+        self.assertIn("OMD isn't on your PATH", missing)
+        self.assertIn("your shell's startup file", missing)
 
     def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
         for interrupted in (False, True):
@@ -337,7 +381,7 @@ class UpdateSelection(unittest.TestCase):
                         else:
                             with self.assertRaisesRegex(OSError, "launcher creation failed"):
                                 self.module.transaction(args, root, None, root / "archive", "https://example.test/archive", "a" * 64,
-                                                        "platform", {"path": "/usr/bin/true"})
+                                                        "platform")
                     if interrupted:
                         self.module.recover(args, root, None)
                     for name, original in originals.items():
@@ -360,20 +404,20 @@ class UpdateSelection(unittest.TestCase):
             self.module.journaled(root, None, None)
             self.module.set_links(root, bin_dir)
             with patch.object(self.module, "restore_displaced", side_effect=OSError("restore failed")):
-                self.module.abandon(root, None, None, bin_dir)
+                self.module.abandon(root, None, bin_dir)
             self.assertTrue((root / "update/journal.json").exists(), "failed cleanup keeps recovery pending")
             self.module.recover(args, root, None)
             self.assertEqual((bin_dir / "codex").read_text(), "original codex")
             self.assertFalse((root / "update/journal.json").exists())
 
     def test_channel_pin_compatibility_and_failures(self):
-        self.published = [release("0.3.0-rc.1", prerelease=True), release("0.2.1", upstream_tag="rust-v0.163.0"),
+        self.published = [release("0.3.0-rc.1", prerelease=True), release("0.2.1", target="x86_64-apple-darwin"),
                           release("0.2.0"), release("0.1.0"), release("0.1.5"),
                           {"tag_name": "nightly", "assets": []}, {**release("0.4.0"), "draft": True}]
         stable = self.check()
         self.assertEqual(stable["available"]["version"], "0.2.0")
         self.assertEqual(stable["blocked"]["version"], "0.2.1")
-        self.assertIn("0.163.x", stable["blocked"]["reasons"][0])
+        self.assertEqual(stable["blocked"]["reasons"], ["built for x86_64-apple-darwin"])
         self.assertEqual(stable["available"]["manifest"]["url"], "https://example.test/0.2.0/oh-my-diff-0.2.0.tar.xz")
         self.assertEqual(self.check(channel="prerelease")["available"]["version"], "0.3.0-rc.1")
         self.assertEqual(self.check(pin="0.1.0")["available"], None)
@@ -389,6 +433,14 @@ class UpdateSelection(unittest.TestCase):
         offline = self.check()
         self.assertEqual((offline["available"]["version"], offline["error"]), ("0.2.0", "network is unreachable"))
         self.assertEqual(json.loads((self.root / "update/state.json").read_text())["installed"], "0.1.0")
+
+    def test_a_release_for_another_target_is_reported_blocked_not_up_to_date(self):
+        self.published = [release("0.2.0", target="x86_64-apple-darwin")]
+        args = types.SimpleNamespace(action=None, value=None, session=None, yes=False)
+        result = self.module.manual(args, self.root, self.current)
+        self.assertEqual((result["up_to_date"], result["blocked"]["version"]), (False, "0.2.0"))
+        summary = self.module.latest_summary(self.module.manual(types.SimpleNamespace(action="status", value=None), self.root, self.current))
+        self.assertEqual(summary, "0.2.0 can't install here: built for x86_64-apple-darwin")
 
     def test_the_launcher_notice_fits_an_environment_read(self):
         manifest = {"mod_api": "1.0.0", "body": "b" * 60_000, "signature": "s" * 4000}
@@ -457,7 +509,7 @@ class UpdateSelection(unittest.TestCase):
         for bad in (tampered, {key: value for key, value in manifest.items() if key != "signature"}):
             with self.assertRaisesRegex(ValueError, "no longer verifies"):
                 self.module.transaction(None, self.root, self.current, None, manifest["url"], manifest["sha256"],
-                                        "platform", None, bad)
+                                        "platform", bad)
 
     def bundled(self):
         record = json.loads((self.current / "prefix/install.json").read_text()) | {
@@ -526,7 +578,7 @@ class UpdateSelection(unittest.TestCase):
         self.module.digest = lambda path: "b" * 64 if str(path).endswith(".tar.xz") else real_digest(path)
         held = []
 
-        def package(generation, upstream, bin_dir, *arguments):
+        def package(generation, *arguments):
             calls.append(arguments[:1])
             if arguments[0] == "mods-rollback":
                 held.append(self.module.state(self.root).get("held_mods"))
@@ -641,7 +693,7 @@ class UpdateSelection(unittest.TestCase):
         self.module.apply = lambda args, root, current, available: applied.append(available["version"])
         args = types.SimpleNamespace(session=os.getpid())
         for changes in ({"auto": "off"}, {"pin": "0.1.0"}, {"auto": "off", "pin": "0.1.0"}, {"channel": "stable"},
-                        {"incompatible": True}, {"user_mods": True}, {"held": True}, {"failed": True}, {}):
+                        {"user_mods": True}, {"held": True}, {"failed": True}, {}):
             with self.subTest(changes=changes):
                 self.settings = {"auto": "on", "channel": "prerelease"}
                 self.write_settings()
@@ -653,7 +705,6 @@ class UpdateSelection(unittest.TestCase):
                 self.assertTrue((self.root / "update/ready.json").is_file())
                 self.settings.update({key: value for key, value in changes.items() if key in self.settings or key == "pin"})
                 self.write_settings()
-                self.module.upstream_binary = (lambda *arguments: self.upstream(args, self.current, "0.163")) if changes.get("incompatible") else self.upstream
                 self.module.user_mods = lambda *arguments: ["custom"] if changes.get("user_mods") else []
                 for key in ("held", "failed"):
                     if changes.get(key):
@@ -664,7 +715,6 @@ class UpdateSelection(unittest.TestCase):
                 if changes:
                     self.assertFalse((self.root / "update/ready.json").exists())
                     self.assertIsNone(self.module.state(self.root)["pending"])
-                self.module.upstream_binary = self.upstream
                 self.module.user_mods = lambda *arguments: []
 
     def test_recovery_removes_only_a_store_the_interrupted_install_created(self):
@@ -688,7 +738,7 @@ class UpdateSelection(unittest.TestCase):
                         patch.object(self.module, "discard"), patch.object(self.module, "abandon"):
                     with self.assertRaises(KeyboardInterrupt):
                         self.module.transaction(args, root, None, root / "archive", "https://example.test/archive", "a" * 64,
-                                                "platform", {"path": "/usr/bin/true"})
+                                                "platform")
                 self.assertEqual(self.module.read_json(root / "update/journal.json", {})["created"], None if existing else "platform")
                 self.module.recover(args, root, None)
                 self.assertEqual(store.exists(), existing)
@@ -825,7 +875,7 @@ class UpdateSelection(unittest.TestCase):
         (self.root / "sessions").mkdir()
         (self.root / "catalog").mkdir()
 
-        def package(generation, upstream, directory, *arguments):
+        def package(generation, *arguments):
             if (generation / "prefix/personal.txt").exists():
                 raise ValueError("installation prefix contains unmanaged files")
             shutil.rmtree(generation / "prefix")
@@ -893,12 +943,12 @@ class UpdateSelection(unittest.TestCase):
                 printed = []
                 calls = []
 
-                def package(generation, upstream, bin_dir, action, *args):
+                def package(generation, action, *args):
                     calls.append(action)
                     if action != "purge-accounts":
                         shutil.rmtree(generation / "prefix")
 
-                with patch.object(self.module, "package", side_effect=package), \
+                with patch.object(self.module, "package", side_effect=package), patch.dict(os.environ, {"PATH": str(root / "bin")}), \
                         patch.object(self.module, "status"), patch.object(self.module, "broker_deployed", return_value=False), \
                         patch("builtins.print", side_effect=printed.append):
                     self.module.uninstall(types.SimpleNamespace(session=None, purge=purge), root, root / "bin", current)
@@ -959,7 +1009,7 @@ class UpdateSelection(unittest.TestCase):
             self.module.update_dir(root)
             (root / "update/journal.json").write_text("{}")
             (root / "stores").symlink_to(self.root / "stores", target_is_directory=True)
-            self.module.uninstalled(root, purge=True)
+            self.module.uninstalled(root, root / "bin", purge=True)
             self.assertFalse((root / "stores").is_symlink())
             self.assertTrue((self.root / "stores/platform/mods.json").is_file())
 
@@ -975,7 +1025,7 @@ class UpdateSelection(unittest.TestCase):
                     self.module.uninstall(args, self.root, self.root / "bin", self.current)
                 self.assertTrue((self.current / "prefix/install.json").exists())
             self.module.update_dir(self.root)
-            self.assertEqual(self.module.uninstalled(self.root)["preserved_administrator_policy"], [str(policy)])
+            self.assertEqual(self.module.uninstalled(self.root, self.root / "bin")["preserved_administrator_policy"], [str(policy)])
         self.assertTrue(policy.is_file())
 
     def test_uninstall_purge_keeps_the_current_install_when_account_signout_fails(self):
@@ -997,7 +1047,7 @@ class UpdateSelection(unittest.TestCase):
 
         def cleanup():
             try:
-                self.module.uninstalled(self.root, purge=True)
+                self.module.uninstalled(self.root, self.root / "bin", purge=True)
             except BaseException as error:
                 errors.append(error)
             finally:
@@ -1032,14 +1082,14 @@ class UpdateSelection(unittest.TestCase):
         (self.current / "receipt.json").write_text(json.dumps(receipt))
         (self.root / "previous").symlink_to(older)
 
-        def status(generation, upstream, directory):
+        def status(generation):
             if generation == self.current:
                 raise ValueError(f"managed artifact changed: {generation}/codex")
             return {"profile": "platform"}
 
         with patch.object(self.module, "status", side_effect=status), patch.object(self.module, "package"), \
                 patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
-            self.module.rollback(types.SimpleNamespace(session=None, upstream=None), self.root, bin_dir, self.current)
+            self.module.rollback(types.SimpleNamespace(session=None), self.root, bin_dir, self.current)
         self.assertEqual(self.module.pointer(self.root, "current"), older)
         self.assertEqual(self.module.pointer(self.root, "previous"), self.current)
         self.assertEqual(os.readlink(bin_dir / "codex"), str(self.root / "current/bin/codex"))
@@ -1065,7 +1115,7 @@ class UpdateSelection(unittest.TestCase):
                 (root / "stores/platform/mods.json").write_text("{}")
                 self.module.set_links(root, bin_dir)
 
-                def package(generation, upstream, directory, *arguments):
+                def package(generation, *arguments):
                     prefix = generation / "prefix"
                     (prefix / ".uninstall.json").write_text("{}")
                     (generation / "bin/codex").unlink()
@@ -1083,7 +1133,7 @@ class UpdateSelection(unittest.TestCase):
                         raise OSError("interrupted")
                     real_rmdir(path)
 
-                args = types.SimpleNamespace(session=None, upstream=None, bin_dir=None, root=root, command="uninstall",
+                args = types.SimpleNamespace(session=None, bin_dir=None, root=root, command="uninstall",
                                              action=None, value=None)
                 with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
                         patch.object(self.module, "broker_deployed", return_value=False), \

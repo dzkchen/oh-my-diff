@@ -385,7 +385,8 @@ def selected_text(record):
         request = shlex.quote(str(Path(store) / "data/user/omd_update/store.json"))
         marker = f"{root}/sessions/$$"
         ready = f'{{ [ -e {root}/update/ready.json ] && {{ [ -z "$busy" ] || [ ! -e {root}/update/announced ] || [ {root}/update/ready.json -nt {root}/update/announced ] || [ -n "$(find {root}/update/announced -mmin +60 2>/dev/null)" ]; }}; }}'
-        lines += [f"mkdir -p {root}/sessions", "busy=", "unattended=", "skip=",
+        lines += [f'if [ "$1" = update ]; then shift; OMD_PYTHON={shlex.quote(update["python"])} exec sh {shlex.quote(update["installer"])} update --root {root} "$@"; fi',
+                  f"mkdir -p {root}/sessions", "busy=", "unattended=", "skip=",
                   f'for a; do if [ -n "$skip" ]; then skip=; continue; fi; case "$a" in -V|--version|-h|--help|{"|".join(UNATTENDED_COMMANDS)}) unattended=1; break;; {"|".join(sorted(CODEX_VALUE_OPTIONS | {"-i", "--image"}))}) skip=1;; -*) ;; *) break;; esac; done',
                   f'for m in {root}/sessions/*; do [ -e "$m" ] && {{ kill -0 "${{m##*/}}" 2>/dev/null && busy=1 || rm -f "$m"; }}; done',
                   f": > {marker}",
@@ -402,7 +403,7 @@ def selected_text(record):
         lines.append("export OMD_MODE=upstream_direct")
     else:
         lines.extend(["export OMD_MODE=omd", f"export OMD_MOD_STORE={shlex.quote(store)}"])
-    flags = ["-c", "features.daemon_auto_start=false"]
+    flags = ["-c", "features.daemon_auto_start=false", "-c", "check_for_update_on_startup=false"]
     for provider in record.get("providers", {}).values() if selection != "direct" else ():
         key = provider["env_key"]
         lines.append(f'{key}="$(cat {shlex.quote(provider["token"])} 2>/dev/null)"; export {key}')
@@ -775,10 +776,6 @@ def install(args):
     if (not author_archive.is_file()
             or support.digest(author_archive) != release["artifacts"]["mod-api.tgz"]["sha256"]):
         raise ValueError("mod author archive differs from the release lock")
-    fallback = shutil.which("codex", path=support.path_without(bin_dir))
-    if not fallback:
-        raise ValueError("no upstream Codex fallback resolves on PATH")
-    fallback_id = identity(fallback)
     previous = load(support.resolved(args.previous)) if args.previous else None
     attached = (store / "mods.json").read_bytes() if args.attach_store else None
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -920,7 +917,6 @@ def install(args):
                              "node": str(node) if node else None, "files": author_files},
                   "management": {"files": management_files},
                   "tools": tools,
-                  "upstream_fallback": fallback_id,
                   "upstream_commit": upstream_lock["commit"],
                   "runtime_patch_sha256": patch_lock["patch"]["sha256"],
                   "shared_state": {"codex_home": str(home), "codex_sqlite_home": str(sqlite),
@@ -1152,14 +1148,9 @@ def uninstall(prefix, bin_dir, keep_broker=False, purge=False):
         raise ValueError("installation prefix contains unmanaged files; move them before uninstall")
     if resuming:
         return removed(prefix, bin_dir, record)
-    found = shutil.which("codex", path=support.path_without(bin_dir))
-    if not found:
-        raise ValueError("no upstream codex remains on PATH; refusing to remove the launcher")
-    support.binary_identity(found)
     if purge:
         purge_accounts(record)
     plugins = remove_plugins(record, prefix)
-    record = {**record, "upstream": str(support.resolved(found))}
     support.atomic_text(journal, json.dumps(record))
     return removed(prefix, bin_dir, record) | ({"removed_plugins": plugins} if plugins else {})
 
@@ -1205,7 +1196,7 @@ def removed(prefix, bin_dir, record):
     journal.unlink()
     prefix.rmdir()
     return {"uninstalled": True, "purged_mod_store" if record.get("purge_mod_store") else "preserved_mod_store": record["store"],
-            "shared_state": record["shared_state"], "upstream": record["upstream"],
+            "shared_state": record["shared_state"],
             "preserved_administrator_policy": [str(path) for path in
                 (authority_broker.POLICY, authority_broker.POLICY.with_name("policy.json.previous")) if path.exists() or path.is_symlink()],
             **({} if record.get("purge_mod_store") else {"purge_option": "omd uninstall --purge removes OMD mod data and saved sign-ins too"})}

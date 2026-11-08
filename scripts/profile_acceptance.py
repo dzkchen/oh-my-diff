@@ -30,14 +30,13 @@ def call(arguments, env, parse=True):
     return json.loads(result.stdout) if parse else result.stdout.strip()
 
 
-def isolated_environment(base, home, upstream, source=None):
+def isolated_environment(base, home, source=None):
     inherited = os.environ if source is None else source
     env = {name: value for name, value in inherited.items()
            if not name.startswith(("CODEX_", "OMD_", *PROVIDER_ENV_PREFIXES))}
     env.update(HOME=str(home), CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home),
                TMPDIR=str(base), XDG_CONFIG_HOME=str(base / "xdg-config"),
                XDG_DATA_HOME=str(base / "xdg-data"), XDG_CACHE_HOME=str(base / "xdg-cache"))
-    env["PATH"] = str(upstream.parent) + os.pathsep + env.get("PATH", "")
     return env
 
 
@@ -86,7 +85,7 @@ def managed_recovery(base, profile, store, env, command, mode):
             "managed_after_mod_recovery": True, "removed": True}
 
 
-def run(artifact_dir, upstream, output, managed_policy=False):
+def run(artifact_dir, output, managed_policy=False):
     if output.exists():
         raise ValueError("evidence output already exists")
     started = time.monotonic()
@@ -104,7 +103,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         session.write_text('{"type":"preserve-session"}\n')
         shared_hashes = {str(path.relative_to(home)): support.digest(path)
                          for path in (sentinel, auth, session)}
-        env = isolated_environment(base, home, upstream)
+        env = isolated_environment(base, home)
         observations = {}
 
         def command(profile, *args):
@@ -167,7 +166,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         command("platform", "activate", "direct", "--json")
         assert command("platform", "status", "--json")["host_mode"] == "upstream_direct"
         command("platform", "activate", "platform", "--json")
-        assert call([base / "platform-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
+        assert call([base / "platform-bin/omd-package", "uninstall"], env)["uninstalled"]
         assert platform_store.is_dir()
         observations["platform"] = {"first_party_defaults": ["omd_logo", "omd_mods", "omd_update"], "user_mod_tool": offline["steps"][0]["value"],
                                     "disable": True, "broken_mod_recovery": True,
@@ -256,14 +255,14 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         else:
             raise AssertionError("uninstall removed an unmanaged user file")
         note.unlink()
-        assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
+        assert call([base / "full-bin/omd-package", "uninstall"], env)["uninstalled"]
         assert "oh-my-diff" not in tomllib.loads((home / "config.toml").read_text()).get("marketplaces", {})
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
         assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == sorted(set(expected_defaults()) - {"omd_statusline"})
         enabled = command("full", "mod", "enable", "omd_statusline", "--json")
         assert next(item for item in enabled["packages"] if item["id"] == "omd_statusline")["loaded_by_profile"]
-        assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
+        assert call([base / "full-bin/omd-package", "uninstall"], env)["uninstalled"]
         observations["full"] = {"installed_mods": [item["id"] for item in full["packages"]],
                                 "default_active": active, "staged_plugins": full["plugin_bundle"]["plugins"],
                                 "inert_tool_binaries": full["installed_tools"],
@@ -290,12 +289,11 @@ def run(artifact_dir, upstream, output, managed_policy=False):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifact-dir", type=Path, required=True)
-    parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--managed-policy", action="store_true",
                         help="also deploy and remove a machine-wide administrator policy and the broker (sudo, dialogs)")
     args = parser.parse_args()
-    run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve(), args.managed_policy)
+    run(args.artifact_dir.resolve(), args.output.resolve(), args.managed_policy)
 
 
 if __name__ == "__main__":

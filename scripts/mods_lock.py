@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
+import io
 import json
 from pathlib import Path
+import subprocess
 import sys
+import tarfile
+import tempfile
 
 from scripts import install_support as support
 
@@ -41,9 +45,40 @@ def build():
             "mod_api": json.loads((ROOT / "mods/package.json").read_text())["version"], "packages": packages}
 
 
+def published_digest(revision, subdirectory):
+    archive = subprocess.run(["git", "-C", ROOT, "archive", revision, subdirectory], capture_output=True)
+    if archive.returncode:
+        raise ValueError(f"{subdirectory} at {revision}: {archive.stderr.decode().strip()}")
+    with tempfile.TemporaryDirectory(prefix="omd-published-") as temporary:
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as files:
+            files.extractall(temporary, filter="data")
+        base = Path(temporary) / subdirectory
+        return support.package_digest(base), json.loads((base / "mod.json").read_text()).get("version")
+
+
+def published_drift():
+    problems = []
+    for entry in json.loads((ROOT / "extensions/index.json").read_text())["packages"]:
+        if published := entry.get("published"):
+            actual, version = published_digest(published["revision"], entry["source"])
+            if actual != published["sha256"]:
+                problems.append(f"{entry['id']}: published.sha256 is {published['sha256']}, "
+                                f"{entry['source']} at {published['revision']} is {actual}")
+            if version != entry["version"]:
+                problems.append(f"{entry['id']}: version is {entry['version']}, {entry['source']} at {published['revision']} is {version}")
+    return problems
+
+
 def main():
-    support.check_or_write(LOCK, json.dumps(build(), indent=2, sort_keys=True) + "\n", "--write" in sys.argv[1:],
-                           "first-party mod lock differs from pinned sources")
+    if "--published" not in sys.argv[1:]:
+        return support.check_or_write(LOCK, json.dumps(build(), indent=2, sort_keys=True) + "\n", "--write" in sys.argv[1:],
+                                      "first-party mod lock differs from pinned sources")
+    try:
+        problems = published_drift()
+    except ValueError as error:
+        problems = [str(error)]
+    if problems:
+        raise SystemExit("extensions/index.json published entries differ from their revisions:\n" + "\n".join(problems))
 
 
 if __name__ == "__main__":

@@ -152,7 +152,7 @@ export default function activate(api: ModAPI) {
         ...(info.held ? [line('held', 'Rolled back', `You rolled back from ${visible(info.held.version, 40)}; automatic updates skip it. Run omd update to install it again.`, 'muted', 2)] : []),
         ...(info.failed ? [line('failed', 'Last update', `The update to ${visible(info.failed.version, 40)} failed and nothing changed: ${visible(info.failed.error, 300)}`, 'failure', 4)] : []),
         ...(info.failed_mods ? [line('failed_mods', 'Last mod update', `The first-party mod update failed and nothing changed: ${visible(info.failed_mods.error, 300)}`, 'failure', 4)] : []),
-        ...(info.available ? release(state, info.available) : info.mods ? modUpdates(info, info.mods)
+        ...(info.available ? release(state, info.available) : info.mods ? modUpdates(info, info.mods) : info.blocked && !info.error ? []
           : [line('current', 'Status', info.error ? `The last check failed: ${visible(info.error, 200)}` : info.checked_at ? 'You have the newest release for your settings.' : 'No check has run yet; run omd update check in a shell.', info.error ? 'attention' : 'muted', 3)]),
         ...(info.blocked ? [line('blocked', 'Not compatible', `Oh My Diff ${visible(info.blocked.version, 40)} needs: ${(info.blocked.reasons ?? []).map(reason => visible(reason, 120)).join('; ')}`, 'attention', 4)] : []),
       ];
