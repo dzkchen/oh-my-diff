@@ -59714,10 +59714,10 @@ index 0000000000000000000000000000000000000000..481dcca52ef9ad7cbbb4821cffab14ae
 +}
 diff --git a/codex-rs/app-server/src/omd_clients.rs b/codex-rs/app-server/src/omd_clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5604a36e3aef68aa5095511e06c2ea3ad006ab05
+index 0000000000000000000000000000000000000000..ea0c18da68d4941a42a97eaac9a66abab8cdad30
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients.rs
-@@ -0,0 +1,1172 @@
+@@ -0,0 +1,1176 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -60424,6 +60424,7 @@ index 0000000000000000000000000000000000000000..5604a36e3aef68aa5095511e06c2ea3a
 +                            clients.push(connection_id, view, /*force*/ false).await;
 +                            continue;
 +                        }
++                        Observed::State { .. } => continue,
 +                        Observed::Roster => {
 +                            ServerNotification::OmdRosterUpdated(OmdRosterUpdatedNotification {
 +                                roster: roster(),
@@ -60479,6 +60480,9 @@ index 0000000000000000000000000000000000000000..5604a36e3aef68aa5095511e06c2ea3a
 +            }
 +        });
 +        Arc::new(move |observed| {
++            if matches!(observed, Observed::State { .. }) {
++                return;
++            }
 +            if let Observed::Mirrored { terminal_owner, .. } = &observed {
 +                let owner = ownership.upgrade().and_then(|clients| {
 +                    clients
@@ -61334,7 +61338,7 @@ index 0000000000000000000000000000000000000000..6e7562e898623fa545cdba8853638904
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..774f8b9fabf5402de0908e9b96ef0208b098a695
+index 0000000000000000000000000000000000000000..176f74ef0a3a145a7e213c437f646f65466e5f79
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
 @@ -0,0 +1,498 @@
@@ -61598,7 +61602,7 @@ index 0000000000000000000000000000000000000000..774f8b9fabf5402de0908e9b96ef0208
 +        let caller = &call.caller;
 +        let arguments = &call.arguments;
 +        let key = arguments["key"].as_str().unwrap_or_default();
-+        let published = codex_omd_extension::clients::published();
++        let published = codex_omd_extension::clients::published(call.terminal_owner.as_deref());
 +        let owner = published
 +            .as_ref()
 +            .and_then(|snapshot| snapshot.component_owners.get(key))
@@ -72766,10 +72770,10 @@ index 0000000000000000000000000000000000000000..d7fc0b4bd8eb3d9cf13c65351b828bb6
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed504a6ea55
+index 0000000000000000000000000000000000000000..1ccb30a5231c2b2530686aee15a9b0c12f05e7a7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,1465 @@
+@@ -0,0 +1,1522 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -72852,6 +72856,13 @@ index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed5
 +        }
 +        _ => return Err("configuration_action_invalid".into()),
 +    }.map_err(|e| e.to_string())?;
++    drop(runtime);
++    if matches!(action, "write" | "package") {
++        if let Ok(mut runtime) = core.runtime.lock() {
++            runtime.turn_boundary(&|| true);
++        }
++        republish(&core);
++    }
 +    Ok(result)
 +}
 +
@@ -73239,6 +73250,41 @@ index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed5
 +}
 +
 +static REPUBLISH: Coalesce = Coalesce::new();
++static STATE_REPUBLISH: Coalesce = Coalesce::new();
++static STATE_WRITES: Mutex<std::collections::BTreeSet<(String, u64)>> =
++    Mutex::new(std::collections::BTreeSet::new());
++
++fn all_cores() -> Vec<Arc<Core>> {
++    let mut cores = OWNERS
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .values()
++        .map(|owner| owner.core.clone())
++        .collect::<Vec<_>>();
++    if let Ok(core) = self::core() {
++        cores.push(core);
++    }
++    cores
++}
++
++/// Redraws every other terminal owner running a mod whose saved state changed.
++fn republish_state_writes() {
++    let writes = std::mem::take(
++        &mut *STATE_WRITES
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner),
++    );
++    for core in all_cores() {
++        let stale = core.runtime.lock().is_ok_and(|runtime| {
++            writes.iter().any(|(id, terminal)| {
++                *terminal != runtime.terminal() && runtime.grants(id).is_some()
++            })
++        });
++        if stale {
++            republish(&core);
++        }
++    }
++}
 +
 +pub(super) fn install(
 +    core: &Arc<Core>,
@@ -73249,24 +73295,22 @@ index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed5
 +        return Err("host_already_installed".into());
 +    }
 +    let owner = Arc::new(());
-+    let roster = codex_omd::client_surface::register_observer(Arc::new(|observed| {
-+        if matches!(observed, codex_omd::client_surface::Observed::Roster) {
-+            REPUBLISH.request(|| {
-+                let mut cores = OWNERS
-+                    .lock()
-+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-+                    .values()
-+                    .map(|owner| owner.core.clone())
-+                    .collect::<Vec<_>>();
-+                if let Ok(core) = self::core() {
-+                    cores.push(core);
-+                }
-+                for core in cores {
++    let roster =
++        codex_omd::client_surface::register_observer(Arc::new(|observed| match observed {
++            codex_omd::client_surface::Observed::Roster => REPUBLISH.request(|| {
++                for core in all_cores() {
 +                    republish(&core);
 +                }
-+            });
-+        }
-+    }));
++            }),
++            codex_omd::client_surface::Observed::State { mod_id, terminal } => {
++                STATE_WRITES
++                    .lock()
++                    .unwrap_or_else(std::sync::PoisonError::into_inner)
++                    .insert((mod_id, terminal));
++                STATE_REPUBLISH.request(republish_state_writes);
++            }
++            _ => {}
++        }));
 +    *installed = Some(Installed {
 +        owner: owner.clone(),
 +        core: Arc::downgrade(core),
@@ -73359,8 +73403,11 @@ index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed5
 +        .ok_or_else(|| format!("view_stale: {component}"))
 +}
 +
-+pub fn published() -> Option<Arc<ModViewSnapshot>> {
-+    core().ok()?.views.published()
++pub fn published(terminal_owner: Option<&str>) -> Option<Arc<ModViewSnapshot>> {
++    match terminal_owner {
++        Some(owner) => OWNERS.lock().ok()?.get(owner)?.core.views.published(),
++        None => core().ok()?.views.published(),
++    }
 +}
 +
 +const EVENT_BYTES: usize = 64 * 1024;
@@ -73954,6 +74001,11 @@ index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed5
 +        }
 +        Err(error) => return Err(error),
 +    };
++    let rendered = core
++        .runtime
++        .lock()
++        .map(|runtime| runtime.status())
++        .unwrap_or_default();
 +    let mut runtime = core
 +        .input_runtime
 +        .lock()
@@ -73962,7 +74014,12 @@ index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed5
 +        .refresh(&|| true)
 +        .err()
 +        .map(|error| error.to_string());
-+    let status = runtime.status();
++    let mut status = runtime.status();
++    if let (Some(mods), Some(rendered)) =
++        (status["mods"].as_array_mut(), rendered["mods"].as_array())
++    {
++        mods.splice(0..0, rendered.iter().cloned());
++    }
 +    let (mods, store_error) = match store.selection_status().and_then(|mut selections| {
 +        let projected =
 +            runtime.configuration_listing(json!({"packages":selections["selections"]}))?;
@@ -73996,8 +74053,8 @@ index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed5
 +                .or_else(|| {
 +                    loaded
 +                        .iter()
-+                        .find(|item| item["id"] == selection["id"] && item["scope"] == selection["scope"])
-+                        .and_then(|item| item["error"].as_str())
++                        .filter(|item| item["id"] == selection["id"] && item["scope"] == selection["scope"])
++                        .find_map(|item| item["error"].as_str())
 +                });
 +            let error = failure.or(selection["error"].as_str());
 +            json!({"id": selection["id"], "path": selection["path"], "scope": selection["scope"],
@@ -74028,11 +74085,15 @@ index 0000000000000000000000000000000000000000..40ef796a4cf36823ec4534feb4325ed5
 +    let (_, store) = store()?;
 +    store.reload().map_err(|error| error.to_string())?;
 +    if let Some(core) = selected {
-+        core.input_runtime
-+            .lock()
-+            .map_err(|_| "mod_runtime_poisoned")?
-+            .reload()
-+            .map_err(|error| error.to_string())?;
++        {
++            let mut runtime = core
++                .input_runtime
++                .lock()
++                .map_err(|_| "mod_runtime_poisoned")?;
++            if runtime.reload().is_err() {
++                runtime.turn_boundary(&|| true);
++            }
++        }
 +        reloaded(&core);
 +    }
 +    Ok(json!({"action": action, "target": target, "status": "applied"}))
@@ -89044,7 +89105,7 @@ index 0000000000000000000000000000000000000000..508769308ff445e5868bbc76aed7e69a
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0b62d573decba065f0c0e6b5979892cfae90225a
+index 0000000000000000000000000000000000000000..76c6b748ada60e7c6b02b19798afb14928f04783
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
 @@ -0,0 +1,986 @@
@@ -89142,7 +89203,7 @@ index 0000000000000000000000000000000000000000..0b62d573decba065f0c0e6b5979892cf
 +    tool_specs_required: AtomicBool,
 +    inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
 +    tool_batch: AtomicBool,
-+    gates: Mutex<std::collections::VecDeque<(String, String)>>,
++    gates: Mutex<std::collections::VecDeque<(String, Option<String>)>>,
 +    current: Mutex<Option<LeadHandle>>,
 +    leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
 +    threads: Mutex<std::collections::HashMap<ThreadId, (LeadHandle, String, u32)>>,
@@ -90419,10 +90480,10 @@ index 0000000000000000000000000000000000000000..c6a9dc91706e794f6050b070a04f4ebe
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/approvals.rs b/codex-rs/ext/omd/src/mods/expansion/approvals.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d2d9d9bbf288a9bfd26c083d48a1a7f27e518447
+index 0000000000000000000000000000000000000000..33db0b2d8d4e519dc7609f7fa0e833818b900c29
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/approvals.rs
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,335 @@
 +use super::*;
 +use codex_extension_api::ApprovalGate;
 +use codex_extension_api::ApprovalGateContributor;
@@ -90658,6 +90719,9 @@ index 0000000000000000000000000000000000000000..d2d9d9bbf288a9bfd26c083d48a1a7f2
 +        Box::pin(async move {
 +            let selected = clients::for_store(input.turn_store);
 +            let this = selected.as_deref().unwrap_or(self);
++            if !input.assessment {
++                record_gate(&this.expansion, input.call_id, None);
++            }
 +            if !this.expansion.approval.load(Ordering::Acquire) {
 +                return ApprovalGate::Continue;
 +            }
@@ -90703,15 +90767,8 @@ index 0000000000000000000000000000000000000000..d2d9d9bbf288a9bfd26c083d48a1a7f2
 +                    None,
 +                ),
 +            };
-+            if let (Some(owner), Ok(mut gates)) = (
-+                owner.filter(|_| !input.assessment),
-+                this.expansion.gates.lock(),
-+            ) {
-+                gates.retain(|(call, _)| call != input.call_id);
-+                if gates.len() >= 256 {
-+                    gates.pop_front();
-+                }
-+                gates.push_back((input.call_id.to_owned(), owner));
++            if let Some(owner) = owner.filter(|_| !input.assessment) {
++                record_gate(&this.expansion, input.call_id, Some(owner));
 +            }
 +            this.cleanup_failed(Some(&lead)).await;
 +            gate
@@ -90720,14 +90777,21 @@ index 0000000000000000000000000000000000000000..d2d9d9bbf288a9bfd26c083d48a1a7f2
 +
 +    fn on_approval_result<'a>(&'a self, input: ApprovalResultInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            let owner = self.expansion.gates.lock().ok().and_then(|mut gates| {
-+                let index = gates.iter().position(|(call, _)| call == input.call_id)?;
-+                gates.remove(index).map(|(_, owner)| owner)
-+            });
-+            if !self.expansion.approval_result.load(Ordering::Acquire) {
++            let Some(lead) = input.thread_store.get::<Lead>() else {
 +                return;
-+            }
-+            if input.thread_store.get::<Lead>().is_none() {
++            };
++            let (core, owner) = clients::cores_for_thread(lead.thread)
++                .into_iter()
++                .chain(std::iter::once(self.core.clone()))
++                .find_map(|core| {
++                    let mut gates = core.expansion.gates.lock().ok()?;
++                    let index = gates.iter().position(|(call, _)| call == input.call_id)?;
++                    let owner = gates.remove(index)?.1;
++                    drop(gates);
++                    Some((core, owner))
++                })
++                .unwrap_or_else(|| (self.core.clone(), None));
++            if !core.expansion.approval_result.load(Ordering::Acquire) {
 +                return;
 +            }
 +            let mut payload = json!({"id": input.call_id, "kind": input.kind,
@@ -90736,13 +90800,23 @@ index 0000000000000000000000000000000000000000..d2d9d9bbf288a9bfd26c083d48a1a7f2
 +                payload["mod"] = Value::String(owner);
 +            }
 +            delivery::push(
-+                &self.expansion,
++                &core.expansion,
 +                delivery::Pending::Broadcast {
 +                    event: "approval_result",
 +                    payload,
 +                },
 +            );
 +        })
++    }
++}
++
++fn record_gate(expansion: &super::State, call: &str, owner: Option<String>) {
++    if let Ok(mut gates) = expansion.gates.lock() {
++        gates.retain(|(id, _)| id != call);
++        if gates.len() >= 256 {
++            gates.pop_front();
++        }
++        gates.push_back((call.to_owned(), owner));
 +    }
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
@@ -119052,10 +119126,10 @@ index 0000000000000000000000000000000000000000..7add8f6e1ee5d3234f3d71142e6f37d0
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..64ca75a360215f2faabe4fb181edefe4e77500d2
+index 0000000000000000000000000000000000000000..0b2806a2494f27635f9585031b78c6f574347206
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1687 @@
+@@ -0,0 +1,1703 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -119512,12 +119586,16 @@ index 0000000000000000000000000000000000000000..64ca75a360215f2faabe4fb181edefe4
 +        arguments: Value,
 +        pixels: Option<Arc<crate::process_raster::PixelFrame>>,
 +    },
++    State {
++        mod_id: String,
++        terminal: u64,
++    },
 +}
 +
 +#[derive(Default)]
 +struct Hub {
 +    surface: Option<(u64, Arc<dyn ClientSurface>)>,
-+    wake: Option<(u64, Wake)>,
++    wakes: Vec<(u64, Wake)>,
 +    clients: Vec<(u64, ClientEntry)>,
 +    observers: Vec<(u64, Observer)>,
 +    next: u64,
@@ -119543,7 +119621,7 @@ index 0000000000000000000000000000000000000000..64ca75a360215f2faabe4fb181edefe4
 +
 +static HUB: Mutex<Hub> = Mutex::new(Hub {
 +    surface: None,
-+    wake: None,
++    wakes: Vec::new(),
 +    clients: Vec::new(),
 +    observers: Vec::new(),
 +    next: 0,
@@ -119573,7 +119651,7 @@ index 0000000000000000000000000000000000000000..64ca75a360215f2faabe4fb181edefe4
 +        let mut hub = hub();
 +        match self.slot {
 +            Slot::Surface => drop(hub.surface.take_if(|(slot, _)| *slot == id)),
-+            Slot::Wake => drop(hub.wake.take_if(|(slot, _)| *slot == id)),
++            Slot::Wake => hub.wakes.retain(|(slot, _)| *slot != id),
 +            Slot::Observer => hub.observers.retain(|(slot, _)| *slot != id),
 +            Slot::Client => {
 +                let attached = hub.clients.len();
@@ -119600,7 +119678,7 @@ index 0000000000000000000000000000000000000000..64ca75a360215f2faabe4fb181edefe4
 +}
 +
 +pub fn register_wake(wake: Wake) -> Registration {
-+    insert(Slot::Wake, |hub, id| hub.wake = Some((id, wake)))
++    insert(Slot::Wake, |hub, id| hub.wakes.push((id, wake)))
 +}
 +
 +pub fn register_observer(observer: Observer) -> Registration {
@@ -119674,9 +119752,21 @@ index 0000000000000000000000000000000000000000..64ca75a360215f2faabe4fb181edefe4
 +    wake();
 +}
 +
++/// A committed `api.state` write of `mod_id` by the runtime of `terminal`.
++pub fn state_committed(mod_id: &str, terminal: u64) {
++    notify(Observed::State {
++        mod_id: mod_id.to_owned(),
++        terminal,
++    });
++}
++
 +pub fn wake() {
-+    let wake = hub().wake.as_ref().map(|(_, wake)| wake.clone());
-+    if let Some(wake) = wake {
++    let wakes = hub()
++        .wakes
++        .iter()
++        .map(|(_, wake)| wake.clone())
++        .collect::<Vec<_>>();
++    for wake in wakes {
 +        wake();
 +    }
 +}
@@ -120745,10 +120835,10 @@ index 0000000000000000000000000000000000000000..64ca75a360215f2faabe4fb181edefe4
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f340cbac6709b43fc86470e8e41e701657ddb3b6
+index 0000000000000000000000000000000000000000..5145c82702854a30ca61adffad0d9e3a2c1bb4c9
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,841 @@
+@@ -0,0 +1,848 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -121069,13 +121159,20 @@ index 0000000000000000000000000000000000000000..f340cbac6709b43fc86470e8e41e7016
 +
 +    let woken = Arc::new(AtomicUsize::new(0));
 +    let counter = woken.clone();
-+    let wake_registration = register_wake(Arc::new(move || {
-+        counter.fetch_add(1, Ordering::SeqCst);
-+    }));
++    let registrations = [1, 10].map(|step| {
++        let counter = counter.clone();
++        register_wake(Arc::new(move || {
++            counter.fetch_add(step, Ordering::SeqCst);
++        }))
++    });
 +    wake();
-+    drop(wake_registration);
++    drop(registrations);
 +    wake();
-+    assert_eq!(woken.load(Ordering::SeqCst), 1);
++    assert_eq!(
++        woken.load(Ordering::SeqCst),
++        11,
++        "every registered wake runs"
++    );
 +}
 +
 +#[test]
@@ -129298,10 +129395,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..166a0c4d180031587aa6f5eb2d9ef1f4855931d0
+index 0000000000000000000000000000000000000000..55fa5149b72c700a845f64efadbbf7b5c49779fc
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7518 @@
+@@ -0,0 +1,7553 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -132048,8 +132145,29 @@ index 0000000000000000000000000000000000000000..166a0c4d180031587aa6f5eb2d9ef1f4
 +
 +impl ModConfiguration {
 +    pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
-+        serde_json::from_slice(bytes)
-+            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))
++        let mut config: Self = serde_json::from_slice(bytes)
++            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
++        #[derive(Deserialize)]
++        struct Epochs {
++            revision: u64,
++            epochs: Vec<(String, PathBuf, u64)>,
++        }
++        let epochs = path
++            .parent()
++            .and_then(|root| store::read(&root.join(store::CONFIGURATION_EPOCHS), 65_536).ok())
++            .and_then(|bytes| serde_json::from_slice::<Epochs>(&bytes).ok())
++            .filter(|sidecar| sidecar.revision == config.revision)
++            .map(|sidecar| sidecar.epochs)
++            .unwrap_or_default();
++        for selection in &mut config.mods {
++            if let Some((_, _, epoch)) = epochs
++                .iter()
++                .find(|(scope, path, _)| *scope == selection.scope && *path == selection.path)
++            {
++                selection.configuration_epoch = *epoch;
++            }
++        }
++        Ok(config)
 +    }
 +}
 +
@@ -132774,6 +132892,7 @@ index 0000000000000000000000000000000000000000..166a0c4d180031587aa6f5eb2d9ef1f4
 +    configuration_sha256: String,
 +    configuration_stamp: Option<ConfigurationStamp>,
 +    configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
++    terminal: (u64, Option<String>),
 +    override_revision: Option<u64>,
 +    /// The configuration whose timed-out inspections were already retried once.
 +    inspect_retried: String,
@@ -133591,12 +133710,19 @@ index 0000000000000000000000000000000000000000..166a0c4d180031587aa6f5eb2d9ef1f4
 +            configuration_overrides,
 +        } = options;
 +        let store = ModStore::open(root)?;
++        let terminal = {
++            let overrides = configuration_overrides
++                .lock()
++                .unwrap_or_else(PoisonError::into_inner);
++            (overrides.id(), overrides.terminal().map(str::to_owned))
++        };
 +        let mut host = Self {
 +            store,
 +            generation: 0,
 +            configuration_sha256: String::new(),
 +            configuration_stamp: None,
 +            configuration_overrides,
++            terminal,
 +            override_revision: None,
 +            inspect_retried: String::new(),
 +            inspect_retry: None,
@@ -133917,6 +134043,10 @@ index 0000000000000000000000000000000000000000..166a0c4d180031587aa6f5eb2d9ef1f4
 +
 +    pub fn configuration_overrides(&self) -> Arc<Mutex<ConfigurationOverrides>> {
 +        Arc::clone(&self.configuration_overrides)
++    }
++
++    pub fn terminal(&self) -> u64 {
++        self.terminal.0
 +    }
 +
 +    fn current_overrides(&self) -> ConfigurationOverrides {
@@ -135501,6 +135631,7 @@ index 0000000000000000000000000000000000000000..166a0c4d180031587aa6f5eb2d9ef1f4
 +                &loaded.state,
 +                &reply.state,
 +            )?;
++            crate::client_surface::state_committed(&loaded.package.id, self.terminal.0);
 +        }
 +        if let Some(state) = ui.as_mut()
 +            && (ui_state != loaded.ui_state || reply.ui_written && ui_state != state.value)
@@ -135876,6 +136007,7 @@ index 0000000000000000000000000000000000000000..166a0c4d180031587aa6f5eb2d9ef1f4
 +            crate::sha256_hex(
 +                json!([
 +                    self.project,
++                    self.terminal.1,
 +                    thread,
 +                    selection,
 +                    loaded.adapter.as_ref().map(|adapter| &adapter.sha256)
@@ -140749,15 +140881,16 @@ index 0000000000000000000000000000000000000000..29ab066f7019bc8216ab009616d6fb11
 +}
 diff --git a/codex-rs/omd/src/mods/configuration_overrides.rs b/codex-rs/omd/src/mods/configuration_overrides.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e499256d930ae4f08a15a999c1288a440b05e1a3
+index 0000000000000000000000000000000000000000..49be10909ebce2d45a527c5afe2ade36f4ff80a0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/configuration_overrides.rs
-@@ -0,0 +1,1059 @@
+@@ -0,0 +1,1068 @@
 +use super::*;
 +
 +#[derive(Clone, Debug)]
 +pub struct ConfigurationOverrides {
 +    id: u64,
++    terminal: Option<String>,
 +    revision: u64,
 +    entries: BTreeMap<String, Override>,
 +}
@@ -140767,6 +140900,7 @@ index 0000000000000000000000000000000000000000..e499256d930ae4f08a15a999c1288a44
 +        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 +        Self {
 +            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
++            terminal: None,
 +            revision: 0,
 +            entries: BTreeMap::new(),
 +        }
@@ -140816,6 +140950,10 @@ index 0000000000000000000000000000000000000000..e499256d930ae4f08a15a999c1288a44
 +
 +    pub(crate) fn id(&self) -> u64 {
 +        self.id
++    }
++
++    pub(crate) fn terminal(&self) -> Option<&str> {
++        self.terminal.as_deref()
 +    }
 +
 +    pub fn set_enabled(&mut self, selection: &ModSelection, enabled: bool) -> Result<()> {
@@ -141416,7 +141554,10 @@ index 0000000000000000000000000000000000000000..e499256d930ae4f08a15a999c1288a44
 +    if let Some(owner) = owners.get(token).and_then(std::sync::Weak::upgrade) {
 +        return owner;
 +    }
-+    let owner = Arc::new(Mutex::new(ConfigurationOverrides::default()));
++    let owner = Arc::new(Mutex::new(ConfigurationOverrides {
++        terminal: Some(token.into()),
++        ..ConfigurationOverrides::default()
++    }));
 +    owners.insert(token.into(), Arc::downgrade(&owner));
 +    owner
 +}
@@ -142342,10 +142483,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d9ee2db3392f09db4dbad6bacf9b72c262ec0457
+index 0000000000000000000000000000000000000000..e55698a4f63677d47d3c6bdf9e5a578fdd36bb7c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2948 @@
+@@ -0,0 +1,2953 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -143528,7 +143669,12 @@ index 0000000000000000000000000000000000000000..d9ee2db3392f09db4dbad6bacf9b72c2
 +        settings: Option<(&str, &[u8])>,
 +    ) -> Result<ModPackageLock> {
 +        let old_lock = serde_json::to_value(self.read_package_lock()?)?;
-+        let old_config = serde_json::to_value(self.configuration()?)?;
++        let mut old_config = serde_json::to_value(self.configuration()?)?;
++        for selection in old_config["mods"].as_array_mut().into_iter().flatten() {
++            if let Some(selection) = selection.as_object_mut() {
++                selection.remove("configuration_epoch");
++            }
++        }
 +        let old_settings = settings
 +            .map(|(name, _)| {
 +                store::read(&self.root.join(name), 65_536)
@@ -148858,10 +149004,10 @@ index 0000000000000000000000000000000000000000..42a6f21f76db858a7e18f132a9ad4189
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d44bd886a46b9178e9be2200c5927e0953a29d30
+index 0000000000000000000000000000000000000000..6c953a5bc04078f2f7a1ca1d4b4c63fc750de00d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1610 @@
+@@ -0,0 +1,1637 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -149351,6 +149497,8 @@ index 0000000000000000000000000000000000000000..d44bd886a46b9178e9be2200c5927e09
 +pub(super) const STATE_LIMIT: usize = 524_288;
 +pub(super) const PACKAGE_FILE_LIMIT: u64 = 524_288;
 +const SECURITY_EVENTS: &str = "security-events.jsonl";
++/// Kept out of `mods.json` so the previous release, which rejects unknown fields, still reads the store after a rollback.
++pub(super) const CONFIGURATION_EPOCHS: &str = "configuration-epochs.json";
 +const SECURITY_EVENT_LIMIT: usize = 65_536;
 +
 +#[derive(Clone, Debug)]
@@ -149597,6 +149745,13 @@ index 0000000000000000000000000000000000000000..d44bd886a46b9178e9be2200c5927e09
 +        value: &Value,
 +        approved: &BTreeSet<String>,
 +    ) -> Result<()> {
++        let stripped;
++        let value = if name == "mods.json" {
++            stripped = self.write_epochs(value)?;
++            &stripped
++        } else {
++            value
++        };
 +        let bytes = serde_json::to_vec_pretty(value)?;
 +        let brokered = match name {
 +            "mods.json" => brokered_grants(&self.root)?,
@@ -149636,6 +149791,24 @@ index 0000000000000000000000000000000000000000..d44bd886a46b9178e9be2200c5927e09
 +            }
 +            Ok(())
 +        })
++    }
++
++    fn write_epochs(&self, config: &Value) -> Result<Value> {
++        let mut config = config.clone();
++        let epochs: Vec<_> = config["mods"]
++            .as_array_mut()
++            .into_iter()
++            .flatten()
++            .filter_map(|selection| {
++                let epoch = selection.as_object_mut()?.remove("configuration_epoch")?;
++                Some(json!([selection["scope"], selection["path"], epoch]))
++            })
++            .collect();
++        let bytes = serde_json::to_vec(&json!({"revision": config["revision"], "epochs": epochs}))?;
++        if read(&self.root.join(CONFIGURATION_EPOCHS), 65_536).ok() != Some(bytes.clone()) {
++            self.write_staged(CONFIGURATION_EPOCHS, &bytes, || Ok(()))?;
++        }
++        Ok(config)
 +    }
 +
 +    pub(super) fn write_staged(
@@ -159958,10 +160131,10 @@ index 0000000000000000000000000000000000000000..a2eab537de32af723384df5e694349a4
 +}
 diff --git a/codex-rs/omd/src/turn_activity.rs b/codex-rs/omd/src/turn_activity.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..63785fa3b24deb10d61186e3127d037ffde8c027
+index 0000000000000000000000000000000000000000..1fd5acbfdd1140c5ca36d599fb868a5ff97f4456
 --- /dev/null
 +++ b/codex-rs/omd/src/turn_activity.rs
-@@ -0,0 +1,361 @@
+@@ -0,0 +1,375 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -160288,10 +160461,11 @@ index 0000000000000000000000000000000000000000..63785fa3b24deb10d61186e3127d037f
 +
 +pub type Reader = std::sync::Arc<dyn Fn(&str, Value) -> Result<Value, String> + Send + Sync>;
 +
-+static READER: std::sync::Mutex<(u64, Option<Reader>)> = std::sync::Mutex::new((0, None));
++static READERS: std::sync::Mutex<(u64, Vec<(u64, Reader)>)> =
++    std::sync::Mutex::new((0, Vec::new()));
 +
-+fn reader() -> std::sync::MutexGuard<'static, (u64, Option<Reader>)> {
-+    READER
++fn readers() -> std::sync::MutexGuard<'static, (u64, Vec<(u64, Reader)>)> {
++    READERS
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
 +}
@@ -160301,23 +160475,36 @@ index 0000000000000000000000000000000000000000..63785fa3b24deb10d61186e3127d037f
 +
 +impl Drop for ReaderRegistration {
 +    fn drop(&mut self) {
-+        let mut slot = reader();
-+        if slot.0 == self.0 {
-+            slot.1 = None;
-+        }
++        readers().1.retain(|(id, _)| *id != self.0);
 +    }
 +}
 +
 +pub fn register_reader(read: Reader) -> ReaderRegistration {
-+    let mut slot = reader();
-+    slot.0 += 1;
-+    slot.1 = Some(read);
-+    ReaderRegistration(slot.0)
++    let mut readers = readers();
++    readers.0 += 1;
++    let id = readers.0;
++    readers.1.push((id, read));
++    ReaderRegistration(id)
 +}
 +
 +pub fn read_registered(thread: &str, arguments: Value) -> Result<Value, String> {
-+    let read = reader().1.clone().ok_or("turn_activity_unavailable")?;
-+    read(thread, arguments)
++    let registered = readers()
++        .1
++        .iter()
++        .map(|(_, read)| read.clone())
++        .collect::<Vec<_>>();
++    let mut result = Err("turn_activity_unavailable".to_owned());
++    for read in registered {
++        result = read(thread, arguments.clone());
++        if result
++            .as_ref()
++            .is_err_and(|error| error == "turn_activity_unavailable")
++        {
++            continue;
++        }
++        break;
++    }
++    result
 +}
 +
 +#[cfg(test)]
@@ -160325,10 +160512,10 @@ index 0000000000000000000000000000000000000000..63785fa3b24deb10d61186e3127d037f
 +mod tests;
 diff --git a/codex-rs/omd/src/turn_activity_tests.rs b/codex-rs/omd/src/turn_activity_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ac335549630c14ac3787d5d3ee564d7b1a68da4d
+index 0000000000000000000000000000000000000000..2bf1b6c3d85be94c7d2d3e14032588a8828eda59
 --- /dev/null
 +++ b/codex-rs/omd/src/turn_activity_tests.rs
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,182 @@
 +use super::*;
 +use ActivityRecord::*;
 +
@@ -160476,6 +160663,39 @@ index 0000000000000000000000000000000000000000..ac335549630c14ac3787d5d3ee564d7b
 +    assert_eq!(
 +        (turn["outcome"].as_str(), turn["unrecorded_end"].as_bool()),
 +        (Some("unknown"), Some(false))
++    );
++}
++
++#[test]
++fn registered_readers_answer_for_the_thread_they_own() {
++    let reader = |owned: &'static str| {
++        register_reader(std::sync::Arc::new(move |thread, _| {
++            if thread == owned {
++                Ok(serde_json::json!(owned))
++            } else {
++                Err("turn_activity_unavailable".to_owned())
++            }
++        }))
++    };
++    let first = reader("first-thread");
++    let second = reader("second-thread");
++    assert_eq!(
++        read_registered("first-thread", Value::Null).unwrap(),
++        "first-thread"
++    );
++    assert_eq!(
++        read_registered("second-thread", Value::Null).unwrap(),
++        "second-thread"
++    );
++    drop(second);
++    assert_eq!(
++        read_registered("first-thread", Value::Null).unwrap(),
++        "first-thread"
++    );
++    drop(first);
++    assert_eq!(
++        read_registered("first-thread", Value::Null).unwrap_err(),
++        "turn_activity_unavailable"
 +    );
 +}
 diff --git a/codex-rs/omd/src/turn_evidence.rs b/codex-rs/omd/src/turn_evidence.rs
@@ -167173,10 +167393,10 @@ index 0000000000000000000000000000000000000000..810a873e4b715fdcf8462d5129f9b723
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..dc473459b3ad08dd82266680c31994a428c2c7b1
+index 0000000000000000000000000000000000000000..224ccdc79d193f8b1df1031ffd3667530c7a0bd9
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,7754 @@
+@@ -0,0 +1,7809 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -169399,6 +169619,57 @@ index 0000000000000000000000000000000000000000..dc473459b3ad08dd82266680c31994a4
 +    ] {
 +        assert!(ModCommandOutcome::parse(&invalid).is_err(), "{invalid}");
 +    }
++}
++
++#[test]
++fn ui_state_is_separate_per_terminal_and_only_saved_state_is_announced() {
++    let source = "export default api => { api.command('ui', value => { api.uiState.set(value); return null; }); api.command('save', value => { api.state.set(value); return null; }); api.command('read', () => api.uiState.get()); };";
++    let (temp, _, _) = fixture(source, &["commands", "store", "terminal"]);
++    let open = |token: &str| {
++        ModHost::open(
++            temp.path().canonicalize().unwrap().join("store"),
++            ModOpenOptions {
++                configuration_overrides: codex_omd::terminal_configuration_owner(token),
++                ..ModOpenOptions::default()
++            },
++        )
++        .unwrap()
++    };
++    let (mut first, mut same, mut other) = (open("ui-a"), open("ui-a"), open("ui-b"));
++    let invoke = |host: &mut ModHost, name: &str, value| {
++        host.invoke(
++            "fixture",
++            host.generation(),
++            "command",
++            name,
++            value,
++            ModInvokeOptions::default(),
++        )
++        .unwrap()
++    };
++    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
++    let recorded = seen.clone();
++    let _observer =
++        codex_omd::client_surface::register_observer(std::sync::Arc::new(move |observed| {
++            if let codex_omd::client_surface::Observed::State { mod_id, terminal } = observed {
++                recorded.lock().unwrap().push((mod_id, terminal));
++            }
++        }));
++    invoke(&mut first, "ui", json!(1));
++    assert_eq!(invoke(&mut same, "read", Value::Null), 1);
++    assert!(invoke(&mut other, "read", Value::Null).is_null());
++    let terminal = first.terminal();
++    let announced = |seen: &std::sync::Mutex<Vec<(String, u64)>>| {
++        seen.lock()
++            .unwrap()
++            .iter()
++            .filter(|(_, written)| *written == terminal)
++            .cloned()
++            .collect::<Vec<_>>()
++    };
++    assert!(announced(&seen).is_empty());
++    invoke(&mut first, "save", json!(2));
++    assert_eq!(announced(&seen), [("fixture".to_owned(), terminal)]);
 +}
 +
 +#[test]
@@ -173183,8 +173454,7 @@ index 0000000000000000000000000000000000000000..dc473459b3ad08dd82266680c31994a4
 +        &["commands"],
 +    );
 +    let saved = std::fs::read(store.root().join("mods.json")).unwrap();
-+    let config: Value = serde_json::from_slice(&saved).unwrap();
-+    let selection = serde_json::from_value(config["mods"][0].clone()).unwrap();
++    let selection = store.configuration().unwrap().mods[0].clone();
 +    let mut first = host(&temp);
 +    let mut second = host(&temp);
 +    let owner = first.configuration_overrides();
@@ -173459,6 +173729,11 @@ index 0000000000000000000000000000000000000000..dc473459b3ad08dd82266680c31994a4
 +        );
 +        let current = store.configuration().unwrap().mods[0].clone();
 +        assert!(current.configuration_epoch > saved.configuration_epoch);
++        assert!(
++            !std::fs::read_to_string(store.root().join("mods.json"))
++                .unwrap()
++                .contains("configuration_epoch")
++        );
 +        assert_eq!(
 +            owner.lock().unwrap().values(
 +                &current,
@@ -201240,10 +201515,10 @@ index 0000000000000000000000000000000000000000..a387b5c6d4a413f2d990aa9a24dff568
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1ef49bc566a86ffd8e16721968de7b7ab6d6a5dd
+index 0000000000000000000000000000000000000000..27ecf26b6d037decb9eeb10387527623837a4122
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1267 @@
+@@ -0,0 +1,1276 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -201323,6 +201598,7 @@ index 0000000000000000000000000000000000000000..1ef49bc566a86ffd8e16721968de7b7a
 +#[derive(Default)]
 +struct State {
 +    registration: Option<Registration>,
++    saved_state: Option<Registration>,
 +    thread: Option<String>,
 +    checked: Option<Instant>,
 +    subscribers: Vec<(String, Vec<String>)>,
@@ -201403,6 +201679,14 @@ index 0000000000000000000000000000000000000000..1ef49bc566a86ffd8e16721968de7b7a
 +            state.registration = Some(codex_omd::client_surface::register(Arc::new(TuiSurface(
 +                sender.clone(),
 +            ))));
++            let sender = sender.clone();
++            state.saved_state = Some(codex_omd::client_surface::register_observer(Arc::new(
++                move |observed| {
++                    if matches!(observed, codex_omd::client_surface::Observed::State { .. }) {
++                        sender.send(AppEvent::ModViewChanged);
++                    }
++                },
++            )));
 +        }
 +        changed.then(|| state.thread.clone()).flatten()
 +    });
@@ -202513,10 +202797,10 @@ index 0000000000000000000000000000000000000000..1ef49bc566a86ffd8e16721968de7b7a
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d604fd417da394dd14cc466a87f7a3516ca55f6d
+index 0000000000000000000000000000000000000000..c8b57534186c56bca390685f1a7bdc5db44e9a78
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,1286 @@
+@@ -0,0 +1,1301 @@
 +use super::*;
 +use crate::test_support::PathBufExt;
 +use codex_omd::ModOpenOptions;
@@ -203802,6 +204086,21 @@ index 0000000000000000000000000000000000000000..d604fd417da394dd14cc466a87f7a351
 +        assert_eq!(value, json!({"operation":operation,"arguments":arguments}));
 +    }
 +    drop(registration);
++}
++
++#[test]
++#[serial_test::serial]
++fn committed_saved_state_redraws_the_terminal() {
++    let (directory, _store, _source) = surface_package();
++    let _environment =
++        crate::omd::tests::omd_environment(&directory.path().canonicalize().unwrap().join("store"));
++    let previous = STATE.locked().take();
++    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
++    attach(&AppEventSender::new(tx), Some("surface-thread".into()));
++    while rx.try_recv().is_ok() {}
++    codex_omd::client_surface::state_committed("surface_fixture", u64::MAX);
++    assert!(matches!(rx.try_recv(), Ok(AppEvent::ModViewChanged)));
++    *STATE.locked() = previous;
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644

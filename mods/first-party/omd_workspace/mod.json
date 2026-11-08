@@ -1,9 +1,10 @@
 {
   "schema": 1,
   "id": "omd_workspace",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "api": "1.0.0",
   "state_version": 1,
+  "state_scope": "thread",
   "description": "Arrange the chat, a shell, Git changes, your own terminals and other mods' panels freely: presets, moves, drag, focus keys and a panel registry",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_workspace"},
