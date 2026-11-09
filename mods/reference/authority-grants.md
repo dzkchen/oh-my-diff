@@ -74,7 +74,7 @@ Three settings limit or end the authority grants:
 - `omd-mod trust ... --expires SECONDS` ends the authority grants at that time.
 - Project scope limits them to one repository.
 - `omd-mod revoke STORE MOD_ID_OR_PACKAGE` disables the mod and drops its grant at once. Its capabilities and secret
-  environment are cleared, and enabling it again needs a new trust or install.
+  environment are cleared, and enabling it again needs a new trust (`omd mods update ID`) or install.
 
 Trust output, the TUI trust dialog and status state what the grant exposes. In status, `mods[].authority` lists
 `os_access`, `approves`, `expires_at`, `current` and `exposure`.

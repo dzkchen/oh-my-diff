@@ -4,6 +4,27 @@ use std::fs;
 use std::process::Command;
 
 #[test]
+fn omd_exits_quietly_when_its_reader_is_gone() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let output = Command::new(env!("CARGO_BIN_EXE_omd"))
+        .arg("--help")
+        .stdout(writer)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn standalone_service_uses_provider_scoped_host_access() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();

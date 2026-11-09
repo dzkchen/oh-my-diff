@@ -2,15 +2,17 @@
 
 When a turn stops on an approval or a question while you're away, it answers for you after a wait (two minutes by
 default) so the turn keeps going. It never approves anything. Approvals are declined, and questions get an instruction
-to carry on. It's on by default in OMD+. OMD Core doesn't include it.
+to carry on. It's off by default in OMD+. OMD Core doesn't include it.
 
-## Turn it off
+## Turn it on
 
-Turn it off in `/mods`, or run:
+Turn it on in `/mods`, or run:
 
 ```sh
-omd mods disable omd_auto_continue
+omd mods enable omd_auto_continue
 ```
+
+To turn it off again, run `omd mods disable omd_auto_continue`.
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
