@@ -125,6 +125,8 @@ export default function activate(api: ModAPI) {
     const native = hud.native === null ? 0 : hud.native - totals(hud.entries.filter(entry => isLead(hud, entry))).estimate - hud.leadShed;
     return sum.billed + sum.estimate + hud.shed + native;
   };
+  const unpriced = (hud: Hud) => { const sum = totals(hud.native === null ? hud.entries : hud.entries.filter(entry => !isLead(hud, entry))); return sum.pending + sum.unknown; };
+  const gap = (hud: Hud) => unpriced(hud) ? `; ${unpriced(hud)} ${unpriced(hud) === 1 ? 'request has' : 'requests have'} no price yet, so the real spend is higher` : '';
   const level = (spent: number) => budget === null ? 0 : spent >= budget ? 100 : spent >= budget * 0.8 ? 80 : 0;
 
   const isLead = (hud: Hud, entry: Entry) => entry.kind === 'main' && !entry.agent && (hud.thread === null || entry.thread === hud.thread);
@@ -218,7 +220,7 @@ export default function activate(api: ModAPI) {
     const state = saved(); const spent = outlay(state.hud); const reached = level(spent);
     const seen = state.hud.alerted?.budget === budget ? state.hud.alerted.level : 0;
     if (reached === seen) return;
-    const shown = reached < seen || api.host.tryCall('terminal.notice', { id: 'omd_usage_budget', text: `Usage: ${reached}% of the ${usd(budget)} soft budget reached (${usd(spent)} spent)`, kind: reached === 100 ? 'error' : 'warning', placement: 'toast', ttl_ms: 10_000 }).ok;
+    const shown = reached < seen || api.host.tryCall('terminal.notice', { id: 'omd_usage_budget', text: `Usage: ${reached}% of the ${usd(budget)} soft budget reached (${usd(spent)} spent${gap(state.hud)})`, kind: reached === 100 ? 'error' : 'warning', placement: 'toast', ttl_ms: 10_000 }).ok;
     if (shown) hud(h => { h.alerted = { budget, level: reached }; });
   };
 
@@ -262,7 +264,7 @@ export default function activate(api: ModAPI) {
       `Host ledger: ${paid(state.ledger?.cost && typeof state.ledger.cost === 'object' && !Array.isArray(state.ledger.cost) ? state.ledger.cost : null)}`,
       ...(state.allowance ? [`Task allowance: up to ${usd(state.allowance.used / 1e6)} of ${usd(state.allowance.limit / 1e6)} (${Math.round(state.allowance.used / state.allowance.limit * 100)}%)`] : []),
       `Retained: ${h.entries.length} requests${h.since ? ` since ${span(now - h.since)} ago` : ''}${h.dropped ? ` · ${h.dropped} older dropped (not in these totals)` : ''}; totals are not lifetime spend`,
-      ...(budget !== null ? [`Soft budget ${usd(budget)}: ${usd(outlay(h))} spent (warning only, not a spending limit)`] : [])];
+      ...(budget !== null ? [`Soft budget ${usd(budget)}: ${usd(outlay(h))} spent${gap(h)} (warning only, not a spending limit)`] : [])];
     const quotaLines = quota(h, now).map(slot => `${slot.name}: ${slot.current.used}% used${slot.current.resets ? slot.passed ? ` · reset passed ${span(now - slot.current.resets)} ago, awaiting a new reading` : ` · resets in ${span(slot.current.resets - now)}` : ' · reset time not reported'} · observed ${span(now - slot.current.seen)} ago${slot.projected !== null ? ` · projection ~${Math.min(slot.projected, 999)}% at reset (${slot.samples} samples over ${span(slot.spanned)})` : ' · insufficient data for a projection'}`);
     quotaLines.unshift('Current route quota: unavailable (account-to-route binding is not reported)');
     if (h.credits) quotaLines.push(`Codex account Extra-usage credits: ${h.credits}`);

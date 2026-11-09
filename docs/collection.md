@@ -34,7 +34,7 @@ All of these come with OMD+ only.
 | [`omd_tool_fix`](../mods/first-party/omd_tool_fix/README.md) | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 | [`omd_theme`](../mods/first-party/omd_theme/README.md) | Living scenes drawn in character tiles behind the conversation, with opaque prompts and menus; `/theme` picks a scene and prints terminal background steps | |
 | [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Lets the agent watch a background command, file change or GitHub pull request, run or deployment and sends it one message when that finishes, fails or times out, so the agent doesn't poll; `/monitor` lists and cancels monitors | The `autonomous` and `os` grants; GitHub monitors need `gh`, logged in |
-| [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs in automatic batches or on `/continue` after estimated cache expiry; `/continue --compact` forces a batch; paged recall and `/mask` | Can't be on with `omd_programmable_context` |
+| [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs in automatic batches or on `/continue` after estimated cache expiry; `/continue --compact` forces a batch; paged recall and `/mask`. Never hides an output it can't restore | Can't be on with `omd_programmable_context`; continue mode needs `omd_continue` |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 
@@ -58,7 +58,7 @@ turn it on there (from a shell: `omd install ID`, then `omd mods enable ID`). [S
 | [`omd_claude_cli`](../mods/first-party/omd_claude_cli/README.md) | Claude models in `/model`, using your Claude plan or API credits | Claude CLI 2.1.307 or later and Node; see [use other providers](use-other-providers.md#use-claude) |
 | [`omd_profiles`](../mods/first-party/omd_profiles/README.md) | Switch between ChatGPT accounts, API keys and compatible providers | Node; see [use other providers](use-other-providers.md#use-an-api-key-or-another-provider) |
 | [`omd_cursor`](../mods/first-party/omd_cursor/README.md) | Cursor models in `/model`, using your Cursor account; `/cursor` | A Cursor account, Node and `pnpm`; see [use other providers](use-other-providers.md#use-cursor) |
-| [`omd_workflow`](../mods/first-party/omd_workflow/README.md) | Workflow checkpoints and completion checks | A contract: turn the mod on, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
+| [`omd_workflow`](../mods/first-party/omd_workflow/README.md) | Workflow checkpoints and completion checks | A contract and routes: turn the mod on, run `/omd_workflow:routes`, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
 | [`omd_advisor`](../mods/first-party/omd_advisor/README.md) | A second model reviews plans and claimed completion | Its own model allowance; see its README |
 | [`omd_source_knowledge`](../mods/first-party/omd_source_knowledge/README.md) | Keeps file-backed facts, test evidence and approved lessons for later tasks in this repository | |
 | [`omd_programmable_context`](../mods/first-party/omd_programmable_context/README.md) | A Python workspace that lasts through the session, where the model loads files, keeps results and hands work to child agents, and a session harness of notes, memories, skills and agent specs it can propose changes to; `/refine` | The `omd-code-execution` plugin's Python kernel |

@@ -43,6 +43,15 @@ test('the third identical failure and the fourth identical success get one note;
   assert.equal(run(state, { cmd: 'make' }, 'error 2', false).note, null);
 });
 
+test('a new turn restarts every count', () => {
+  const { state: counted } = repeat(2, { cmd: 'make' }, 'error', false);
+  const state = { ...counted, held: ['note'] };
+  const reset = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event: 'turn_start', payload: { turn_id: 't2' } }, () => ({}));
+  assert.equal(reset.error, undefined, reset.error);
+  assert.deepEqual(reset.state, { calls: {}, held: ['note'] });
+  assert.equal(run(reset.state, { cmd: 'make' }, 'error', false).note, 'note');
+});
+
 test('an edit restarts the count, an output capture is not an edit, and polling tools are ignored', () => {
   let { state } = repeat(2, { cmd: 'pytest' }, 'FAILED', false);
   ({ state } = run(state, '*** Begin Patch\n*** Update File: a.py\n*** End Patch', 'Success.', true, { tool: 'apply_patch' }));

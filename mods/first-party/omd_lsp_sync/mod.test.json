@@ -6,8 +6,10 @@
       {"result": null}
     ],
     "store.put": [
+      {"result": {"revision": 1}},
       {"result": {"revision": 1}}
     ],
+    "terminal.notice": [{"result": {"shown": true}}],
     "process.which": [
       {"result": {"found": []}}
     ]

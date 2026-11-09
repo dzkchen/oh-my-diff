@@ -16,6 +16,7 @@
   "capabilities": [
     "approvals",
     "commands",
+    "interception",
     "middleware",
     "request_policy",
     "store"

@@ -276,7 +276,9 @@ user contexts. A user context can call only:
 Slash command callbacks can also call `process.status` and `process.exchange` on their own existing managed
 processes. Starting, finding or stopping a process still requires a session callback.
 
-A service call from a user context works only when its provider needs no other host operation.
+A service call from a user context runs the provider in that same context with the provider's own grants, so it works
+when every host operation the provider makes is also allowed there (for example a provider that uses `store.*`,
+`exec.run` and `workspace.stat` answers from a key or command callback).
 
 Component input callbacks also run in the terminal, but not as user actions. They can't call `terminal.selection`,
 `terminal.copy`, `terminal.panel`, `credentials.request`, `terminal.import_file`, `builtins.invoke`,

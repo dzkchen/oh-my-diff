@@ -230,6 +230,7 @@ for (const part of dirname(output).split('/')) {
   directory = join(directory, part);
   try { mkdirSync(directory); } catch (error) { if (error.code !== 'EEXIST') throw error; }
   if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is a link or file, not a directory; remove it to preview here`);
+  if (directory === '.omd/preview') try { writeFileSync(join(directory, '.gitignore'), '*\n', { flag: 'wx' }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
 }
 // An exclusive temporary file renamed over the page replaces a planted link instead of writing through it.
 const temporary = join(dirname(output), `.${process.pid}.tmp`);

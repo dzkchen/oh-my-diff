@@ -7,12 +7,13 @@ type Entry = {
   thread: string; turn: string; outcome: string; at: number; before: string; after: string; count: number; paths: string[];
   undone: { at: number; before: string; after: string } | null; undoing?: string;
 };
-type State = { entries: Entry[]; pending: Record<string, { turn: string; before: string; at: number }>; error: string | null };
+type State = { entries: Entry[]; pending: Record<string, { turn: string; before: string; at: number }>; error: string | null; tidied?: boolean };
 type Outcome = { done: string; current: Snap; after: Snap } | { refused: string };
 
 const REFS = 'refs/omd/checkpoints/';
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const KEEP = 10;
+const INDEX_SLOTS = 4;
 const SHOWN = 12;
 const BATCH = 128;
 const STDIN_BYTES = 60_000;
@@ -108,14 +109,33 @@ export default function activate(api: ModAPI) {
     const run = api.host.tryCall('exec.run', { program: 'git', argv: ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], cwd: r.top, sandbox: 'none', timeout_ms: GIT_MS });
     return run.ok && run.value.exit_code === 0 ? run.value.stdout.trim() : '';
   };
-  const snapshot = (r: Repo, thread: string, label: string): Snap => {
-    const env = { GIT_INDEX_FILE: `${r.gitdir}/omd-checkpoint-${thread.replace(/[^A-Za-z0-9-]/g, '').slice(0, 64) || 'session'}.index` };
+  const snapshot = (r: Repo, label: string): Snap => {
     const parent = head(r);
-    if (parent && git(r.top, ['write-tree'], { env }).trim() === EMPTY_TREE) git(r.top, ['read-tree', parent], { env });
-    git(r.top, ['add', '--all'], { env, timeout: ADD_MS });
-    const tree = git(r.top, ['write-tree'], { env }).trim();
-    const commit = git(r.top, [...IDENTITY, 'commit-tree', tree, ...parent ? ['-p', parent] : [], '-m', label]).trim();
-    return { commit, tree };
+    // Git can't delete files, so concurrent snapshots take the first of a few reusable index files that isn't locked.
+    for (let slot = 0; ; slot += 1) {
+      const env = { GIT_INDEX_FILE: `${r.gitdir}/omd-checkpoint-${slot}.index` };
+      try {
+        if (parent && git(r.top, ['write-tree'], { env }).trim() === EMPTY_TREE) git(r.top, ['read-tree', parent], { env });
+        git(r.top, ['add', '--all'], { env, timeout: ADD_MS });
+        const tree = git(r.top, ['write-tree'], { env }).trim();
+        const commit = git(r.top, [...IDENTITY, 'commit-tree', tree, ...parent ? ['-p', parent] : [], '-m', label]).trim();
+        return { commit, tree };
+      } catch (error) {
+        if (slot + 1 >= INDEX_SLOTS || !/index\.lock/.test(message(error))) throw error;
+      }
+    }
+  };
+  // Git can't delete a path inside .git, but `clean` with the git dir as work tree removes exact, named untracked files.
+  const tidy = (r: Repo) => {
+    try {
+      const where = ['--literal-pathspecs', '--git-dir', r.gitdir, '--work-tree', r.gitdir, 'clean'];
+      const old = git(r.top, [...where, '-n', '-x']).split('\n').map(line => line.slice('Would remove '.length))
+        .filter(name => /^omd-checkpoint(-.+)?\.index$/.test(name) && !/^omd-checkpoint-[0-3]\.index$/.test(name));
+      if (old.length) git(r.top, [...where, '-f', '-x', '--', ...old]);
+      return true;
+    } catch {
+      return false;
+    }
   };
   const pin = (r: Repo, commits: string[]) => {
     try {
@@ -165,7 +185,7 @@ export default function activate(api: ModAPI) {
   const preview = (r: Repo, entry: Entry) => {
     const moved = changes(r, entry.before, entry.after);
     const lines = counts(r, entry.before, entry.after);
-    const current = snapshot(r, `${entry.thread}-preview`, 'omd checkpoint: preview');
+    const current = snapshot(r, 'omd checkpoint: preview');
     const drifted = new Set(changes(r, entry.after, current.commit).map(change => change.path));
     const rows = moved.slice(0, SHOWN).map(change => {
       const size = lines.get(change.path) ?? 'binary';
@@ -190,10 +210,10 @@ export default function activate(api: ModAPI) {
   };
 
   // Idempotent: a path already back at target counts as done, and one at neither source nor target is a later edit.
-  const revert = (r: Repo, thread: string, target: string, source: string, refusal: string | null, begin: (current: Snap, moved: Map<string, Change>) => void = () => {}): Outcome => {
+  const revert = (r: Repo, target: string, source: string, refusal: string | null, begin: (current: Snap, moved: Map<string, Change>) => void = () => {}): Outcome => {
     const moved = new Map(changes(r, target, source).map(change => [change.path, change]));
     if (!moved.size) return { refused: 'Nothing to change: that turn left no file changes.' };
-    const current = snapshot(r, thread, 'omd checkpoint: before undo');
+    const current = snapshot(r, 'omd checkpoint: before undo');
     pin(r, [current.commit]);
     const offSource = new Set(changes(r, source, current.commit).map(change => change.path).filter(path => moved.has(path)));
     const todo = changes(r, target, current.commit).filter(change => moved.has(change.path)).map(change => moved.get(change.path)!);
@@ -232,7 +252,7 @@ export default function activate(api: ModAPI) {
     for (const part of byBytes(restored)) {
       git(r.top, ['restore', `--source=${target}`, '--worktree', '--pathspec-from-file=-', '--pathspec-file-nul'], { stdin: part.join('\0'), timeout: RESTORE_MS });
     }
-    const after = snapshot(r, thread, 'omd checkpoint: after undo');
+    const after = snapshot(r, 'omd checkpoint: after undo');
     const parts = [restored.length ? `restored ${plural(restored.length, 'file')}` : '', deleted ? `deleted ${plural(deleted, 'file')}` : ''].filter(Boolean).join(' and ');
     const kept = failed.length ? ` Could not delete ${listed(failed)}; remove ${failed.length === 1 ? 'it' : 'them'} by hand if needed.` : '';
     return { done: `${parts.charAt(0).toUpperCase()}${parts.slice(1) || 'Nothing to change'}.${kept}`, current, after };
@@ -248,8 +268,9 @@ export default function activate(api: ModAPI) {
     let r: Repo | null = null;
     try {
       r = repo();
-      state.pending[thread] = { turn: turn_id, before: snapshot(r, thread, `omd checkpoint: before turn ${turn_id}`).commit, at: Date.now() };
+      state.pending[thread] = { turn: turn_id, before: snapshot(r, `omd checkpoint: before turn ${turn_id}`).commit, at: Date.now() };
       state.error = null;
+      if (!state.tidied) state.tidied = tidy(r);
     } catch (error) {
       delete state.pending[thread];
       state.error = message(error);
@@ -267,7 +288,7 @@ export default function activate(api: ModAPI) {
     try {
       r = repo();
       if (pending && pending.turn === turn_id) {
-        const after = snapshot(r, thread, `omd checkpoint: after turn ${turn_id}`);
+        const after = snapshot(r, `omd checkpoint: after turn ${turn_id}`);
         const moved = changes(r, pending.before, after.commit);
         if (moved.length) {
           state.entries = [...state.entries, {
@@ -319,7 +340,7 @@ export default function activate(api: ModAPI) {
     if (words[0] !== 'show' && running(state)) return { display: 'A turn is running. Use /undo after it ends.' };
     if (!entry) return { display: entries.length ? 'Every recorded turn is already undone. /redo brings the last one back.' : `No turn with file changes recorded in this repository yet.${state.error ? ` Last problem: ${state.error}` : ''}` };
     return apply(state,
-      r => revert(r, entry.thread, entry.before, entry.after, words[0] === 'force' ? null
+      r => revert(r, entry.before, entry.after, words[0] === 'force' ? null
         : 'Undoing would overwrite those edits. Run /undo force to undo anyway; the current files are saved first, so /redo brings them back.',
       (current, moved) => {
         if (!entry.undoing || changes(r, entry.undoing, current.commit).some(change => !moved.has(change.path))) entry.undoing = current.commit;
@@ -342,7 +363,7 @@ export default function activate(api: ModAPI) {
     if (!entry?.undone) return { display: 'Nothing to redo.' };
     const { before, after } = entry.undone;
     return apply(state,
-      r => revert(r, entry.thread, before, after, words[0] === 'force' ? null : 'Redoing would overwrite those edits, and /redo force does so without saving them.'),
+      r => revert(r, before, after, words[0] === 'force' ? null : 'Redoing would overwrite those edits, and /redo force does so without saving them.'),
       () => { entry.undone = null; },
       done => `Redid the ${clock(entry.at)} UTC turn: ${done}`);
   }, { description: 'Bring back the changes /undo removed', args_hint: '[force]' });

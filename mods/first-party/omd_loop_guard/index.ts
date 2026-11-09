@@ -63,6 +63,7 @@ const label = (args: Json) => {
 };
 
 export default function activate(api: ModAPI) {
+  api.on('turn_start', () => api.state.set({ held: [], ...(api.state.get() as Partial<State> | null), calls: {} } as unknown as Json));
   api.intercept('tool', async (e, next) => {
     const result = await next(e);
     const caller = next.origin?.caller;
@@ -80,7 +81,7 @@ export default function activate(api: ModAPI) {
     const calls = Object.fromEntries([...Object.entries(rest), [key, seen]].slice(-KEYS));
     const limit = result.success ? SAME_AFTER : FAILED_AFTER;
     const notes = seen.count === limit
-      ? [`[omd_loop_guard] \`${label(e.arguments)}\` has now returned the same ${result.success ? 'output' : 'error'} ${seen.count} times. Repeating it will not change the result: change the command or the approach.`]
+      ? [`[omd_loop_guard] \`${label(e.arguments)}\` has now returned the same ${result.success ? 'output' : 'error'} ${seen.count} times. ${result.success ? 'If you are waiting for it to change, wait longer between checks; otherwise change' : 'Repeating it will not change the result: change'} the command or the approach.`]
       : [];
     const all = caller === 'model' ? [...state.held, ...notes] : [];
     api.state.set({ calls, held: caller === 'code_mode' ? [...state.held, ...notes].slice(-HELD) : [] } as unknown as Json);

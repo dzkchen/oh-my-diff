@@ -22,8 +22,9 @@ measure a command's effect. The capabilities are `interception`, `terminal` and 
 There's nothing to run. When the agent calls a risky `exec_command`:
 
 1. Anything not risky runs untouched.
-2. For a risky command, the mod measures the effect with read-only commands in a sandbox.
-3. You choose Proceed or Cancel.
+2. For a risky command, the mod measures the effect with read-only commands in a sandbox. If nothing would change (no
+   matching path, no uncommitted changes, no untracked files, no pending migrations), it runs without asking.
+3. Otherwise you choose Proceed or Cancel.
 4. Cancel, dismissing, or any mod error denies the call. The model is told not to retry unless you ask.
 
 Codex's own approval may still ask afterwards.

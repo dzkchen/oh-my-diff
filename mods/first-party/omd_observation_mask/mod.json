@@ -16,7 +16,7 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "mode": {"type": "string", "enum": ["batch", "continue"], "default": "batch", "title": "When to hide outputs", "description": "Automatic batches, or only a successful /continue after estimated cache expiry (/continue --compact forces it)"},
+      "mode": {"type": "string", "enum": ["batch", "continue"], "default": "batch", "title": "When to hide outputs", "description": "Automatic batches, or only a successful /continue after estimated cache expiry (/continue --compact forces it). Continue mode needs the omd_continue mod and has no estimate on ChatGPT plans, so only --compact hides there"},
       "cache_ttl_minutes": {"type": "string", "enum": ["auto", "5", "10", "30", "60", "120"], "default": "auto", "title": "Estimated cache lifetime", "description": "Used in continue mode; auto skips OpenAI subscriptions and unpriced responses, and uses provider-reported lifetimes or a 30-minute OpenAI API estimate"},
       "keep_recent": {"type": "number", "default": 10, "title": "Recent outputs kept", "description": "Newest tool outputs always sent in full (at least 1)"},
       "min_bytes": {"type": "number", "default": 1024, "title": "Minimum size", "description": "Outputs smaller than this many bytes are never hidden"},

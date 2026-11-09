@@ -26,6 +26,7 @@ function answer(w, { operation: op, arguments: args }) {
       if (w.steerError) throw new Error(w.steerError);
       return w.declineSteer ? { status: 'declined' } : { turn_id: args.params.expectedTurnId };
     case 'turns.queue':
+      if (w.queueError) throw new Error(w.queueError);
       if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(args.key)) throw new Error('turn_queue_key_invalid');
       if (w.queued.some(item => item.key === args.key)) return { key: args.key, status: 'duplicate' };
       w.queued.push(args);
@@ -131,6 +132,14 @@ test('an idle thread gets one queued turn keyed by the monitor id, also when a s
     assert.equal(w.queued.length, 1);
     assert.match(w.queued[0].prompt, /process 4242\) failure: exited with code 1 after 5 s/);
   }
+});
+
+test('the toast says so when the model could not be told', () => {
+  const w = world({ turns: [], queueError: 'turn_queue_full: 8' });
+  const armed = watch(w, { source: 'process', session_id: 'call-1' });
+  const done = channel(w, 'exit', { item: { id: 'call-1', processId: null, status: 'failed', exitCode: 2, durationMs: null, tail: '' } }, armed.state);
+  assert.equal(monitor(done.state).delivered, 'not delivered (turn_queue_full)');
+  assert.deepEqual([w.notices.at(-1).kind, w.notices.at(-1).text], ['warning', 'omd_monitor: m1 condition met; not delivered (turn_queue_full) to the model']);
 });
 
 test('an exit that happened before the subscription is reported in the tool result without a message', () => {
