@@ -688,7 +688,7 @@ def author_launcher_text(node, cli):
     if node:
         return f"#!/bin/sh\nexec {shlex.quote(str(node))} {shlex.quote(str(cli))} \"$@\"\n"
     return ("#!/bin/sh\ncommand -v node >/dev/null 2>&1 || "
-            "{ echo 'omd-mod-author needs Node.js 22.18 or later on PATH' >&2; exit 127; }\n"
+            "{ echo 'omd-mod-author needs Node.js 24.18 or a later 24.x on PATH' >&2; exit 127; }\n"
             f"exec node {shlex.quote(str(cli))} \"$@\"\n")
 
 
