@@ -8505,12 +8505,13 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
 
 - The object `connect` returns has `attach`, `update`, `detach`, `read`, `event`, `action` (serialized), `render`,
   `resource`, `recovery` and `request(method, params)`. Together they cover every `omd/*` and app-server method.
-- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches,
-  retains the in-memory `attachment.terminalToken`, replays the last update, resumes the threads it resumed
-  through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`. Explicit detach clears
-  terminal ownership. If a restarted host rejects the retained token, it attaches once without it and inherits
-  shared defaults. Keep terminal tokens private and in memory. Clients with separate terminal owners share a mod's
-  saved state, not its settings, enablement or session UI state.
+- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches
+  with the last accepted or interrupted attach (a reattach the host refused is not carried over), retains the
+  in-memory `attachment.terminalToken`, replays the viewport and focus updated since that attach, resumes the
+  threads it resumed through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`.
+  Explicit detach clears terminal ownership. If a restarted host rejects the retained token, it attaches once
+  without it and inherits shared defaults. Keep terminal tokens private and in memory. Clients with separate
+  terminal owners share a mod's saved state, not its settings, enablement or session UI state.
 - `unsupported(component, renderer, drawable)` returns null when the renderer can draw the component. Otherwise it
   returns an error with `fallback` set to the component's alt text, text or label. A renderer can't draw a type
   outside `drawable`, a `raster` without `cells` or an `image` without an image format. The error message has the
