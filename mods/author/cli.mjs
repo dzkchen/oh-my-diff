@@ -129,6 +129,15 @@ function lock(directory) {
   if (result.status !== 0) process.stderr.write('pnpm install did not complete; run pnpm install in the project to link the SDK\n');
 }
 
+function agentInstructions(name) {
+  return `# ${name}
+
+An Oh My Diff mod. Follow https://github.com/dzkchen/oh-my-diff/blob/main/docs/AGENT_MOD_GUIDE.md.
+
+Check with \`pnpm check\`, test with \`pnpm test\`.
+`;
+}
+
 async function createProject(directory, name) {
   if (!/^[a-z0-9_]{1,24}$/.test(name)) fail(`invalid_mod_id: ${name}`);
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
@@ -136,6 +145,7 @@ async function createProject(directory, name) {
   await writeJson(join(directory, 'mod.json'), { schema: 1, id: name, version: '0.1.0', api: apiVersion, state_version: 1,
     license: 'UNLICENSED', provenance: { maintainer: 'CHANGE ME', source: 'CHANGE ME' }, capabilities: ['commands'] });
   await writeFile(join(directory, 'index.ts'), minimalSource());
+  await writeFile(join(directory, 'AGENTS.md'), agentInstructions(name));
   await writeProjectFiles(directory, name, minimalScenarios(name));
   lock(directory);
 }
@@ -288,7 +298,10 @@ function runScenario(directory, file) {
 
 function runTests(directory) {
   const scenario = existsSync(join(directory, 'mod.test.json'));
-  const files = readdirSync(directory).filter(name => /\.test\.(ts|mjs)$/.test(name));
+  const names = readdirSync(directory);
+  const files = names.filter(name => /\.test\.(ts|mjs)$/.test(name));
+  const skipped = names.filter(name => name.endsWith('.test.json') && !['mod.test.json', 'debug.test.json'].includes(name));
+  if (skipped.length) fail(`unsupported_scenario_files: ${skipped.join(', ')} would not run; \`test\` runs only mod.test.json (put the scenarios in it), \`debug\` runs debug.test.json`);
   if (!scenario && !files.length) fail('no_tests: add mod.test.json or a *.test.ts file');
   if (scenario) runScenario(directory, 'mod.test.json');
   if (files.length) command(node, ['--test', ...files], { cwd: directory });
@@ -364,6 +377,13 @@ export function watchProject(directory, store, once) {
     }
     const result = engineJson(['reload', store]);
     copyDeclarations(store, directory);
+    const status = engineJson(['status', store]);
+    const error = status.mods.find(mod => mod.id === inspected.manifest.id)?.error ?? status.rejected?.find(entry => entry.id === inspected.manifest.id)?.reason;
+    if (error) {
+      if (once) fail(`activation_failed: ${inspected.manifest.id}: ${error}`);
+      process.stderr.write(`${JSON.stringify({ activation_failed: inspected.manifest.id, error })}\n`);
+      return;
+    }
     process.stdout.write(`${JSON.stringify({ reloaded: directory, sha256: inspected.sha256, result })}\n`);
   };
   reload();

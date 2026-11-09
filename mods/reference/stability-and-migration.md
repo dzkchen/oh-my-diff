@@ -62,6 +62,7 @@ These experimental features have no registry entry of their own:
 | `settings_file_v1` | `api.settingsFile` and the settings file |
 | `terminal_focus_v1` | Focus regions, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus` |
 | `terminal_pty_v2` | The terminal pane extension: keys, mouse, cursor, OSC signals, session directories, binary pins and `autofocus` |
+| Plugin components | [The `.codex-plugin/omd.json` mod component descriptor and `omd COMMAND` shell dispatch](plugin-components.md) |
 
 ### Frozen entries with experimental fields
 

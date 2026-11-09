@@ -44,8 +44,9 @@ on the timeout.
 | --- | --- | --- |
 | `timeout_seconds` | `120` | Wait before answering (1 to 86,400). `0` turns the timer off, including for requests already waiting. |
 
-Change settings in `/mods`, or from a shell with `omd-mod`, the low-level tool that works on a mod store directly. The
-shell form replaces the mod's saved settings:
+Change settings in `/mods`, which changes one setting at a time, or from a shell with `omd-mod`, the low-level tool
+that works on a mod store directly. The shell form replaces all of the mod's saved settings, so any setting you leave
+out goes back to its default:
 
 ```sh
 STORE=~/.local/share/oh-my-diff/stores/full

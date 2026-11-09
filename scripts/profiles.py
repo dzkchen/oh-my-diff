@@ -34,6 +34,8 @@ UNINSTALL_JOURNAL = ".uninstall.json"
 CURSOR_DATA = Path("/private/tmp") / f"omd-cursor-{os.getuid()}"
 MODS_MARKER = ".mods-applying.json"
 ROUTES = {"profiles": "omd_profiles"}
+INSTALL_COMMAND = ("curl --proto '=https' --tlsv1.2 -fsSL "
+                   "https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile")
 CODEX_VALUE_OPTIONS = {"-c", "--config", "--enable", "--disable", "-m", "--model", "--local-provider", "-p", "--profile",
                        "-s", "--sandbox", "-a", "--ask-for-approval", "-C", "--cd", "--add-dir", "--remote",
                        "--remote-auth-token-env", "--listen", "--ws-auth", "--ws-token-file", "--ws-token-sha256",
@@ -181,10 +183,61 @@ def retire_packages(manager, store, profile, previous):
     return retired
 
 
+def restore_selection(manager, store, record):
+    sources = store / "sources"
+    listed = {item.get("path") for item in invoke(manager, "selection-status", store)["selections"]}
+    missing = [identifier for identifier in record["packages"] if str(sources / identifier) not in listed]
+    aside = store / "mods.json.corrupt"
+    if not missing:
+        if aside.exists():
+            aside.replace(store / "mods.json.restored")
+        return {}
+    try:
+        entries = json.loads(aside.read_text())["mods"]
+        saved = {Path(entry["path"]).name: entry for entry in entries if Path(entry["path"]).parent == sources}
+        others = sorted(str(entry["path"]) for entry in entries if Path(entry["path"]).parent != sources)
+    except (OSError, ValueError, KeyError, TypeError):
+        saved, others = None, []
+    invoke(manager, "trust-all", store, json.dumps([{"path": str(sources / identifier), "sha256": record["packages"][identifier]["sha256"],
+                                                     "capabilities": record["packages"][identifier]["capabilities"]}
+                                                    for identifier in missing]))
+    defaults = set(record["default_active"]) | set(PLATFORM_PACKAGES)
+    enabled = []
+    for identifier in missing:
+        entry = (saved or {}).get(identifier)
+        if entry and isinstance(entry.get("settings"), dict) and entry["settings"]:
+            invoke(manager, "settings", store, sources / identifier, json.dumps(entry["settings"]))
+        if entry.get("enabled") is True if entry else identifier in defaults:
+            invoke(manager, "enable", store, sources / identifier)
+            enabled.append(identifier)
+        if identifier in PLATFORM_PACKAGES:
+            invoke(manager, "require", store, sources / identifier)
+    if aside.exists():
+        aside.replace(store / "mods.json.restored")
+    invoke(manager, "reload", store)
+    return {"selections_from": "mods.json.corrupt" if saved is not None else "profile defaults",
+            "turned_on": enabled, "not_restored": others}
+
+
 def reconcile(prefix, bin_dir):
     record = load(prefix)
     _, manager = check(record, bin_dir)
-    return {"restored": sync_sources(manager, Path(record["store"]), prefix / "sources", record["packages"])}
+    store = Path(record["store"])
+    restored = restore_selection(manager, store, record)
+    return {"restored": sync_sources(manager, store, prefix / "sources", record["packages"]), **restored}
+
+
+def added_capabilities(before, after):
+    return {identifier: added for identifier, package in after.items() if identifier in before
+            and (added := sorted(set(package["capabilities"]) - set(before[identifier]["capabilities"])))}
+
+
+def update_changes(manager, store, previous, record):
+    selected = {item.get("path") for item in invoke(manager, "selection-status", store)["selections"] if item.get("selected")}
+    newly = set(record["default_active"]) - set(previous.get("default_active", DEFAULT_ACTIVE))
+    return {"retired": sorted(set(record["retired"]) - set(previous.get("retired", ()))),
+            "left_off": sorted(identifier for identifier in newly if str(store / "sources" / identifier) not in selected),
+            "capabilities": added_capabilities(previous["packages"], record["packages"])}
 
 
 def apply_mods(prefix, bin_dir, bundle, applied, backup):
@@ -232,6 +285,7 @@ def apply_mods(prefix, bin_dir, bundle, applied, backup):
         replace_tree(bundle / "sources" / identifier, prefix / "sources" / identifier)
     support.atomic_text(lock_path, text)
     record["management"]["files"]["runtime/mods.lock.json"] = support.digest(lock_path)
+    before = {identifier: dict(package) for identifier, package in record["packages"].items()}
     installed = {}
     for identifier in identifiers:
         package = lock["packages"][identifier]
@@ -258,7 +312,7 @@ def apply_mods(prefix, bin_dir, bundle, applied, backup):
     support.atomic_text(store / "package-index.json", json.dumps(index, indent=2) + "\n")
     sync_sources(manager, store, prefix / "sources", installed)
     marker.unlink()
-    return {"updated": sorted(installed)}
+    return {"updated": sorted(installed), "capabilities": added_capabilities(before, installed)}
 
 
 def rollback_mods(prefix, bin_dir):
@@ -346,7 +400,8 @@ def omd_text(record, tool, control):
               f"{shlex.quote(update['installer'])} \"$command\" --root {shlex.quote(update['root'])} \"$@\";; esac\n" if update
               else f"if [ \"$1\" = uninstall ]; then shift; exec {shlex.quote(str(control))} uninstall \"$@\"; fi\n")
     mini = f"if [ \"$1\" = mini ]; then shift; exec {shlex.quote(str(control))} mini -- \"$@\"; fi\n"
-    return (f"#!/bin/sh\n{omd_help(record, tool)}{mini}{routed}export OMD_MOD_STORE={shlex.quote(record['store'])}\n"
+    doctor = f"if [ \"$1\" = doctor ]; then shift; exec {shlex.quote(str(control))} doctor \"$@\"; fi\n"
+    return (f"#!/bin/sh\n{omd_help(record, tool)}{mini}{doctor}{routed}export OMD_MOD_STORE={shlex.quote(record['store'])}\n"
             f"exec {shlex.quote(tool)} \"$@\"\n")
 
 
@@ -356,22 +411,25 @@ def omd_help(record, tool):
                       ("omd install MOD", "Install a mod: a name, npm:PACKAGE, git+URL or ./folder"),
                       ("omd mods enable MOD", "Turn on a mod you installed (disable turns it off)"),
                       ("omd mods remove MOD", "Uninstall a mod")])]
-    if record.get("profile") == "full":
-        rows.append(("Sessions", [("omd mini", "Start Codex in the minimal scrollback interface (omd_mini mod)")]))
     rows.append(("Oh My Diff", [*([("omd update", "Install the newest release"),
                                    ("omd update status", "Check the install and update settings"),
                                    ("omd update rollback", "Undo the last update")] if record.get("update") else []),
+                                ("omd doctor [--json]", "Check this install and codex doctor; each problem names its fix"),
                                 ("omd uninstall [--purge]", "Remove OMD; --purge removes its mod data and sign-ins too; Codex data stays"),
                                 ("omd help --all", "Every command and flag")]))
+    row = lambda name, text: f"  {name:<26}${{d}}{text}${{r}}"
     lines = ["", "${b}Oh My Diff${r}  Codex CLI, extended with mods", "",
              "Run ${b}codex${r} as usual, and type ${b}/mods${r} inside it to turn mods on or off."]
     for title, commands in rows:
-        lines += ["", f"${{b}}{title}${{r}}", *(f"  {name:<26}${{d}}{text}${{r}}" for name, text in commands)]
-    lines += ["", "${d}Docs: https://github.com/dzkchen/oh-my-diff${r}", ""]
+        lines += ["", f"${{b}}{title}${{r}}", *(row(name, text) for name, text in commands)]
+    mini = ["", "${b}Sessions${r}", row("omd mini", "Start Codex in the minimal scrollback interface (omd_mini mod)")]
     return (f"if [ \"$1\" = help ] && [ \"$2\" = --all ]; then exec {shlex.quote(tool)} --help; fi\n"
             "case \"$1\" in ''|help|-h|--help)\n"
             "  b= d= r=; if [ -t 1 ]; then b=$(printf '\\033[1m') d=$(printf '\\033[2m') r=$(printf '\\033[0m'); fi\n"
-            "  cat <<EOF\n" + "\n".join(lines) + "\nEOF\n  exit 0;;\nesac\n")
+            "  cat <<EOF\n" + "\n".join(lines) + "\nEOF\n"
+            f"  if grep -q '/omd_mini\"' {shlex.quote(str(Path(record['store']) / 'mods.json'))} 2>/dev/null; then cat <<EOF\n"
+            + "\n".join(mini) + "\nEOF\n  fi\n"
+            "  printf '\\n%sDocs: https://github.com/dzkchen/oh-my-diff%s\\n\\n' \"$d\" \"$r\"\n  exit 0;;\nesac\n")
 
 
 def selected_text(record):
@@ -396,6 +454,9 @@ def selected_text(record):
                   "unset OH_MY_DIFF_UPDATED",
                   f"[ {root}/update/next -nt {marker} ] || ({installer} tick --root {root} </dev/null >/dev/null 2>&1 &)",
                   f"OH_MY_DIFF_UPDATE=; [ -f {root}/update/notice.json ] && read -r OH_MY_DIFF_UPDATE < {root}/update/notice.json; export OH_MY_DIFF_UPDATE"]
+    aside, control = shlex.quote(str(Path(store) / "mods.json.corrupt")), shlex.quote(str(Path(record["bin_dir"]) / "omd-package"))
+    lines.append(f"if [ -e {aside} ]; then {control} reconcile --summary >&2"
+                 " || echo 'Oh My Diff could not restore your mods after the reset; run omd doctor.' >&2; fi")
     lines.append("unset OMD_INSTALL_PROFILE OMD_MOD_STORE")
     lines.append(f"export OMD_INSTALL_PROFILE={'platform_only' if record['profile'] == 'platform' else 'full'}")
     if selection == "direct":
@@ -537,6 +598,118 @@ def status_summary(result):
     return "\n".join(lines)
 
 
+def doctor_checks(prefix, bin_dir):
+    checks = []
+
+    def add(name, status, detail, fix=None):
+        checks.append({"check": name, "status": status, "detail": detail, "fix": fix})
+
+    record = load(prefix)
+    store = Path(record["store"])
+    reinstall = f"reinstall: {INSTALL_COMMAND} {record['profile']}"
+    update = record.get("update")
+    try:
+        links = Path(json.loads((Path(update["root"]) / "current/receipt.json").read_text())["bin_dir"]) if update else bin_dir
+    except (OSError, ValueError, KeyError):
+        links = bin_dir
+    first = shutil.which("codex")
+    if first and Path(first).resolve() == (bin_dir / "codex").resolve():
+        add("path", "ok", f"codex runs {links / 'codex'}")
+    else:
+        add("path", "fail", f"codex on PATH is {first}" if first else "codex isn't on PATH",
+            f"put {links} first on PATH (export PATH=\"{links}:$PATH\" in your shell profile), then open a new terminal")
+    try:
+        check(record, bin_dir)
+        selection = record["activation"]["selection"]
+        add("launcher", "warn" if selection == "direct" else "ok",
+            f"{PROFILE_LABELS[record['profile']]} {record['version']}" + (", direct mode: no mods" if selection == "direct" else ""),
+            f"omd-package activate {record['profile']}" if selection == "direct" else None)
+    except ValueError as error:
+        add("launcher", "fail", str(error), reinstall)
+    try:
+        host = invoke(record["manager"]["installed_path"], "status", store)
+    except (RuntimeError, ValueError, OSError) as error:
+        host = None
+        add("store", "fail", f"{store / 'mods.json'} can't be read: {str(error).splitlines()[-1]}",
+            "type /omd in codex and choose Reset OMD state, then start codex again")
+    if host is not None:
+        failed = [f"{item['id']}: {item['error']}" for item in host["mods"] if item.get("error")]
+        problems = [*failed, *(f"{item.get('id') or item.get('path')}: {item.get('reason')}" for item in host.get("rejected") or [])]
+        if (store / "mods.json.corrupt").exists():
+            add("store", "warn", "a reset left your mod choices in mods.json.corrupt",
+                f"start codex once to restore them; if that keeps failing, {reinstall}")
+        elif problems:
+            add("store", "fail", "; ".join(problems), "turn the mod off in /mods, or omd mods disable ID")
+        else:
+            add("store", "ok", f"{store} · {len(host['mods'])} mods on")
+    cwd = Path.cwd().resolve()
+    if cwd in (Path.home().resolve(), Path("/")):
+        add("folder", "warn", f"mods are off in {cwd}", "cd into a project, then run codex")
+    else:
+        add("folder", "ok", f"mods run in {cwd}")
+    try:
+        runner = subprocess.run([record["runner"]["installed_path"]], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+        problem = None if runner.returncode == 0 else f"the mod runner exits {runner.returncode}: {(runner.stderr or runner.stdout).strip()[:200]}"
+    except (OSError, subprocess.SubprocessError) as error:
+        problem = f"the mod runner doesn't start: {error}"
+    add("runner", "fail" if problem else "ok", problem or "the mod runner starts", reinstall if problem else None)
+    broker = authority_broker.status()
+    if broker["deployed"] and not broker["loaded"]:
+        add("broker", "fail", "the authority broker is deployed but not running", "omd-package broker pin (needs sudo)")
+    else:
+        add("broker", "ok", broker["authority"])
+    if update:
+        root = Path(update["root"])
+        try:
+            entry = next((item for item in json.loads((store / "mods.json").read_text()).get("mods", [])
+                          if Path(item.get("path", "")).name == "omd_update" and Path(item["path"]).parent == store / "sources"), {})
+        except (OSError, ValueError):
+            entry = {}
+        try:
+            schema = json.loads((store / "sources/omd_update/mod.json").read_text())["settings_schema"]["properties"]
+        except (OSError, ValueError, KeyError) as error:
+            add("updates", "fail", f"omd_update can't be read: {error}", reinstall)
+            return checks
+        settings = {name: spec.get("default") for name, spec in schema.items()} | (entry.get("settings") or {})
+        checks_on = entry.get("enabled") and settings["checks"] == "on"
+        rules = (f"{settings['channel']} channel, " + (f"{settings['cadence']} checks" if checks_on else "update checks off")
+                 + (f", pinned to {settings['pin']}" if settings.get("pin") else ""))
+        try:
+            saved = json.loads((root / "update/state.json").read_text())
+        except (OSError, ValueError):
+            saved = {}
+        if blocked := saved.get("blocked"):
+            add("updates", "warn", f"{rules}; {blocked['version']} can't be installed: {'; '.join(blocked.get('reasons') or [])}",
+                "fix what the reason names, then run omd update")
+        elif failed := saved.get("failed"):
+            add("updates", "warn", f"{rules}; the update to {failed['version']} failed: {failed.get('error')}", "omd update")
+        elif saved.get("error"):
+            add("updates", "warn", f"{rules}; the last check failed: {saved['error']}", "check your network, then omd update check")
+        else:
+            add("updates", "ok", rules)
+    return checks
+
+
+def doctor(prefix, bin_dir, codex_args, as_json):
+    checks = doctor_checks(prefix, bin_dir)
+    command = [bin_dir / "codex", "doctor", *codex_args, *(["--json"] if as_json else [])]
+    upstream = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=as_json, text=True)
+    failed = upstream.returncode != 0 or any(item["status"] == "fail" for item in checks)
+    if as_json:
+        try:
+            codex = json.loads(upstream.stdout)
+        except ValueError:
+            codex = {"exit": upstream.returncode, "error": (upstream.stderr or upstream.stdout).strip()[-2000:]}
+        print(json.dumps({"omd": {"ok": not any(item["status"] == "fail" for item in checks), "checks": checks}, "codex": codex},
+                         indent=2, sort_keys=True))
+    else:
+        marks = {"ok": "✓", "warn": "⚠", "fail": "✗"}
+        print("\nOh My Diff")
+        for item in checks:
+            print(f"  {marks[item['status']]} {item['check']:<12} {item['detail']}" + (f" - {item['fix']}" if item["fix"] else ""))
+    return 1 if failed else 0
+
+
 def activation_summary(result):
     if result["activation"] == "direct":
         return f"Direct mode: codex runs without mods. `omd-package activate {result['profile']}` brings them back."
@@ -548,7 +721,8 @@ def activate(prefix, bin_dir, selection):
     record = load(prefix)
     check(record, bin_dir)
     if selection not in ("direct", record["profile"]):
-        raise ValueError("activation must select the installed profile or direct")
+        raise ValueError(f"{PROFILE_LABELS[selection]} isn't installed here; switch profiles with the install command and "
+                         f"--profile {selection}: {INSTALL_COMMAND} {selection}")
     record["activation"] = {"selection": selection}
     launcher = bin_dir / "codex"
     support.atomic_text(launcher, selected_text(record), 0o755)
@@ -688,7 +862,7 @@ def author_launcher_text(node, cli):
     if node:
         return f"#!/bin/sh\nexec {shlex.quote(str(node))} {shlex.quote(str(cli))} \"$@\"\n"
     return ("#!/bin/sh\ncommand -v node >/dev/null 2>&1 || "
-            "{ echo 'omd-mod-author needs Node.js 22.18 or later on PATH' >&2; exit 127; }\n"
+            "{ echo 'omd-mod-author needs Node.js 24.18 or later on PATH' >&2; exit 127; }\n"
             f"exec node {shlex.quote(str(cli))} \"$@\"\n")
 
 
@@ -934,7 +1108,10 @@ def install(args):
                   "runtime_patch_sha256": patch_lock["patch"]["sha256"],
                   "shared_state": {"codex_home": str(home), "codex_sqlite_home": str(sqlite),
                                    "policy": "inherited unchanged; never removed by uninstall"},
-                  "activation": {"selection": args.profile}, "retired": sorted(retired)}
+                  "activation": {"selection": args.profile}, "retired": sorted(retired),
+                  "default_active": sorted(set(DEFAULT_ACTIVE) & set(installed))}
+        if previous:
+            record["changes"] = update_changes(installed_manager, store, previous, record)
         if managed:
             record["update"] = {"root": str(prefix.parents[2]), "installer": str(management_root / "install.sh"),
                                 "python": sys.executable}
@@ -1259,7 +1436,8 @@ def main():
     install_parser.add_argument("--store", type=Path, required=True)
     install_parser.add_argument("--attach-store", action="store_true")
     install_parser.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
-    commands.add_parser("reconcile", help="restore this installation's first-party mod sources in its store (used by install.sh)")
+    reconcile_parser = commands.add_parser("reconcile", help="restore this installation's first-party mod sources in its store (used by install.sh)")
+    reconcile_parser.add_argument("--summary", action="store_true", help="print one line instead of JSON (used by the codex launcher)")
     commands.add_parser("purge-accounts", help="sign out isolated accounts before uninstall (used by install.sh)")
     mods_parser = commands.add_parser("mods-update", help="apply a verified first-party mod bundle (used by install.sh)")
     mods_parser.add_argument("--bundle", type=Path, required=True)
@@ -1267,9 +1445,10 @@ def main():
     commands.add_parser("mods-rollback", help="undo the last first-party mod bundle (used by install.sh)")
     status_parser = commands.add_parser("status", help="show the installed profile and its mods")
     status_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
-    activate_parser = commands.add_parser("activate", help="switch between OMD Core, OMD+ and upstream-style direct mode")
+    activate_parser = commands.add_parser("activate", help="turn the installed profile's mods back on, or run codex without mods (direct)")
     activate_parser.add_argument("selection", choices=("platform", "full", "direct"),
-                                 help="platform: OMD Core; full: OMD+; direct: upstream-style behavior")
+                                 help="the installed profile (platform: OMD Core; full: OMD+) or direct; "
+                                      "switching profiles needs the install command with --profile")
     activate_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
     mod_parser = commands.add_parser("mod", help="enable or disable one profile mod")
     mod_parser.add_argument("action", choices=("enable", "disable"))
@@ -1291,6 +1470,8 @@ def main():
     contract_parser.add_argument("action", choices=("list", "status", "plan", "select", "clear"))
     contract_parser.add_argument("contract", nargs="?", help="ID@VERSION for plan and select")
     commands.add_parser("plugins", help="add the OMD+ plugin marketplace to Codex at a path that survives updates")
+    doctor_parser = commands.add_parser("doctor", help="check this installation, then run codex doctor (omd doctor)")
+    doctor_parser.add_argument("--json", action="store_true", help="print both reports as JSON; other flags go to codex doctor")
     plugin_mod_parser = commands.add_parser("plugin-mod", help="review and turn on, or turn off, the mod component of a plugin you added")
     plugin_mod_parser.add_argument("action", choices=("enable", "disable"))
     plugin_mod_parser.add_argument("plugin", metavar="PLUGIN[@MARKETPLACE]", help="marketplace defaults to oh-my-diff")
@@ -1306,7 +1487,9 @@ def main():
     uninstall_parser.add_argument("--keep-broker", action="store_true",
                                   help="remove this installation while another one keeps using the authority broker")
     uninstall_parser.add_argument("--purge", action="store_true", help="also remove this installation's mod data and saved sign-ins; Codex data stays")
-    args = parser.parse_args()
+    args, extra = parser.parse_known_args()
+    if extra and args.command != "doctor":
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
     os.chdir(os.environ.pop("OMD_PACKAGE_CWD", "."))
     prefix, bin_dir = support.validate_locations(args.prefix, args.bin_dir)
     if args.command == "install":
@@ -1318,6 +1501,11 @@ def main():
             return
     elif args.command == "reconcile":
         result = reconcile(prefix, bin_dir)
+        if args.summary:
+            others = result.get("not_restored")
+            print("Oh My Diff restored your mod choices after the reset."
+                  + (f" Turn these back on in /mods: {', '.join(others)}." if others else ""))
+            return
     elif args.command == "purge-accounts":
         record = load(prefix)
         check(record, bin_dir)
@@ -1344,6 +1532,8 @@ def main():
         result = contract(prefix, args.action, args.contract)
     elif args.command == "plugins":
         result = register_plugins(prefix, bin_dir)
+    elif args.command == "doctor":
+        raise SystemExit(doctor(prefix, bin_dir, extra, args.json))
     elif args.command == "plugin-mod":
         plugin_mod(prefix, bin_dir, args.action, args.plugin)
         return

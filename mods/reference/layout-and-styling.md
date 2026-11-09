@@ -299,7 +299,14 @@ The host checks every view and patch against these limits.
 Keybindings:
 
 - Each mod's view or patch has at most 24 keybindings.
-- The view composed from every mod has at most 128, and a key bound by two mods rejects the later mod's patch.
+- The view composed from every mod has at most 128. When two mods bind the same key, the first in composition order
+  keeps it and the later binding is dropped and reported under `terminal.conflicts`.
+- A binding for a key the native keymap uses in the current context is ignored with a warning: the native action runs,
+  or, while a mod dialog shows, nothing.
+- Mod keys come before the transcript and composer only while a mod component or region has focus, help is open or a
+  mod dialog shows. Mod input is off while a native popup, overlay or expanded question is open.
+- Ctrl+] leaves a focused mod panel or workspace region. It doesn't clash with upstream's `chat.skip_question`: that
+  acts only on an expanded question, and mod input is off then.
 
 Components:
 

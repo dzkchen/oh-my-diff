@@ -738,8 +738,8 @@
       "source": "mods/ports/burn_meter",
       "published": {
         "repository": "https://github.com/dzkchen/oh-my-diff",
-        "revision": "b81de0bdc57b4a12d117f7eac3a9cb3d2ce1a785",
-        "sha256": "40710598f9be6a15c1f1093b048c4e30fe5b9371046e351dc1fb4a1ee78d7ad4"
+        "revision": "331eea2e00ac6eaba327d6931050a8eac719b23c",
+        "sha256": "3ef7e9d95ddc330c936ae9965a3a0ab25741d2e70919c3be7d43d72eccf2c380"
       },
       "license": "MIT",
       "maintainer": "Oh My Diff",
@@ -855,8 +855,8 @@
       "source": "mods/ports/token_weather",
       "published": {
         "repository": "https://github.com/dzkchen/oh-my-diff",
-        "revision": "b81de0bdc57b4a12d117f7eac3a9cb3d2ce1a785",
-        "sha256": "defd79a06208fe5370a2a78ec6cc41ab658825678eb2be56b98c36309ee16153"
+        "revision": "331eea2e00ac6eaba327d6931050a8eac719b23c",
+        "sha256": "3286eb6b693387660378fd3ebca5bb95f221b7668e21db5e655314d4c4ada60a"
       },
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
@@ -870,14 +870,14 @@
     },
     {
       "id": "blast_radius",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "extension_type": "mod",
       "capability": "Port of the Claude Code blast-radius mod: measures what a risky shell command would delete, discard or drop and holds it for a Proceed or Cancel answer",
       "source": "mods/ports/blast_radius",
       "published": {
         "repository": "https://github.com/dzkchen/oh-my-diff",
-        "revision": "b81de0bdc57b4a12d117f7eac3a9cb3d2ce1a785",
-        "sha256": "a0f6a32c22987e9584e590f40a2048e6dde46a253581f6a2f7f6113f4330dbc9"
+        "revision": "0fb2f85db673e662bd6f6ca69c87ef3733ab4427",
+        "sha256": "d740a05770b3363692d7cb75fa3477250ca309e2ce5eb8b7dc8032091a9a4a57"
       },
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",

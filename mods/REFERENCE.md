@@ -677,6 +677,7 @@ These experimental features have no registry entry of their own:
 | `settings_file_v1` | `api.settingsFile` and the settings file |
 | `terminal_focus_v1` | Focus regions, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus` |
 | `terminal_pty_v2` | The terminal pane extension: keys, mouse, cursor, OSC signals, session directories, binary pins and `autofocus` |
+| Plugin components | [The `.codex-plugin/omd.json` mod component descriptor and `omd COMMAND` shell dispatch](reference/plugin-components.md) |
 
 #### Frozen entries with experimental fields
 
@@ -1078,6 +1079,8 @@ While a mod is written, `omd-mod-author watch DIR STORE` (or `pnpm watch STORE`)
 1. Inspects the directory.
 2. Approves its current digest in `STORE` as the user would with `omd-mod trust`.
 3. Queues a reload of that store's host and refreshes `.omd/`.
+4. Loads the mod in a fresh host and reports `activation_failed` with the mod's error if `activate` throws or the
+   mod is refused. With `--once` that exits non-zero; while watching it is printed and watching continues.
 
 Saving an entry point, asset or lifecycle file reloads again after 100 ms, and reports a half-written file instead of
 stopping. Files named in `mod.json` are watched as soon as it is saved, so a new asset that doesn't exist yet reloads
@@ -1103,10 +1106,11 @@ its scope, settings, grants and enabled or disabled choice.
 #### Noninteractive watch and CI
 
 - `omd-mod-author watch DIR STORE --once` does one inspect, approve and reload and exits, which suits a build step
-  against a scratch store.
+  against a scratch store. It exits non-zero when the mod fails to activate.
 - `omd-mod-author test DIR` (or `pnpm test`) is the CI check. It needs no store, since it builds a throwaway store for
   every run. It fails (`no_tests`) when the project has neither `mod.test.json` nor a `*.test.ts` or `*.test.mjs`
-  file.
+  file. It also fails (`unsupported_scenario_files`) when the directory has a `*.test.json` other than `mod.test.json`
+  and `debug.test.json`, since those would never run.
 
 Neither starts a provider request.
 
@@ -1194,6 +1198,14 @@ The engine strips TypeScript types in place, so callback stacks report the autho
 
 `omd-mod status` keeps a bounded log per mod of each callback's event, handler, generation, outcome and elapsed
 microseconds, plus aggregate timing. The log never adds mod-side filesystem or process access.
+
+#### Logging from a mod
+
+`console.log` and the other `console` methods run without error, but a mod's output goes nowhere: it appears in no
+trace, store or terminal. To see a value, return it from a command as `display` (`pnpm run run` prints the trace),
+or show it with [`terminal.notice`](reference/terminal-operations.md#terminalnotice) (`terminal` capability). A thrown `Error`
+reaches the trace and `omd-mod status` with its authored `file:line`. `omd-mod-author report`, `events` and
+`diagnostics` describe registrations, source use and errors, not what a mod printed.
 
 #### Source-use report
 
@@ -6062,6 +6074,7 @@ timing}` from the worker's `model_response` records:
 | Error | When |
 | --- | --- |
 | `model_route_required` | `model.complete` without `route` |
+| `agent_prompt_or_role_limit` | `prompt` is empty or over 8 KiB, or `route` is empty |
 | `model_call_option_invalid` | `system`, `context`, `output.schema`, `effort`, `max_output_tokens` or `cache` is out of range |
 | `model_tools_require_fork` | `tools` on `model.complete` |
 | `capability_denied: sessions`, `capability_denied: sessions_tools` | `model.fork` without those capabilities |
@@ -7112,7 +7125,14 @@ The host checks every view and patch against these limits.
 Keybindings:
 
 - Each mod's view or patch has at most 24 keybindings.
-- The view composed from every mod has at most 128, and a key bound by two mods rejects the later mod's patch.
+- The view composed from every mod has at most 128. When two mods bind the same key, the first in composition order
+  keeps it and the later binding is dropped and reported under `terminal.conflicts`.
+- A binding for a key the native keymap uses in the current context is ignored with a warning: the native action runs,
+  or, while a mod dialog shows, nothing.
+- Mod keys come before the transcript and composer only while a mod component or region has focus, help is open or a
+  mod dialog shows. Mod input is off while a native popup, overlay or expanded question is open.
+- Ctrl+] leaves a focused mod panel or workspace region. It doesn't clash with upstream's `chat.skip_question`: that
+  acts only on an expanded question, and mod input is off then.
 
 Components:
 
@@ -8406,7 +8426,9 @@ Use it when a plugin contains a mod component or when you run a mod's exported s
 To bundle a mod in a plugin step by step, see
 [Bundle a mod in a plugin](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/bundle-in-a-plugin.md).
 
-The descriptor and `omd COMMAND` run on Apple Silicon macOS.
+Mod API `1.0.0`: the descriptor and `omd COMMAND` are experimental (see
+[Stability and migration](reference/stability-and-migration.md#experimental-features-without-a-registry-entry)). Platform:
+Apple Silicon macOS.
 
 ### Plugin component descriptor
 

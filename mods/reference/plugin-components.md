@@ -4,7 +4,9 @@ Use it when a plugin contains a mod component or when you run a mod's exported s
 To bundle a mod in a plugin step by step, see
 [Bundle a mod in a plugin](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/bundle-in-a-plugin.md).
 
-The descriptor and `omd COMMAND` run on Apple Silicon macOS.
+Mod API `1.0.0`: the descriptor and `omd COMMAND` are experimental (see
+[Stability and migration](stability-and-migration.md#experimental-features-without-a-registry-entry)). Platform:
+Apple Silicon macOS.
 
 ## Plugin component descriptor
 

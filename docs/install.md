@@ -54,13 +54,18 @@ OMD adds two kinds of extension to Codex. Mods change the `codex` interface and 
 `/mods` and `omd`. Plugins are ordinary Codex plugins of skills and tools that you add with `codex plugin add`; OMD+
 ships one ([plugins](../plugins/README.md)).
 
+If OMD's `codex` isn't the first one on your `PATH`, the installer asks once whether to put `~/.local/bin` first in
+your shell's startup file (`~/.zshrc`, `~/.bash_profile` or `~/.config/fish/config.fish`). It adds a block between
+`# >>> oh my diff >>>` and `# <<< oh my diff <<<`, which `omd uninstall` removes. Answer `n`, or install without a
+terminal, and it prints the line to add instead.
+
 To check it worked, run:
 
 ```sh
 omd update status
 ```
 
-It prints details of your install as JSON on standard output and a summary line like this one on standard error:
+It prints one summary line like this one (`--json` prints the details as JSON instead):
 
 ```text
 Oh My Diff VERSION (OMD+), stable channel, daily checks: not checked yet
@@ -72,8 +77,9 @@ The line names the installed version, the install profile, the release channel a
 to. A pinned install adds `, pinned to VERSION`. If the installed
 release was withdrawn, it adds `VERSION was withdrawn` and, when one helps, the command to run: `omd update` or `omd update rollback`.
 
-Then run `codex` and type `/mods`. The `/mods` screen lists your installed mods and which ones are on. Esc closes it;
-if you typed a search, the first Esc clears the search.
+Then open a new terminal, `cd` into a project and run `codex`, and type `/mods`. The `/mods` screen lists your
+installed mods and which ones are on. Esc closes it; if you typed a search, the first Esc clears the search. Mods stay
+off when `codex` starts in your home folder or in `/`, so start it in a project folder.
 
 ## Update
 
@@ -84,7 +90,9 @@ omd update enable     # install updates automatically
 ```
 
 While other OMD sessions are open, the update waits for your next `codex` start. Mods, settings and sign-in are
-kept. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
+kept. When it finishes, `omd update` and the next `codex` start name any mod the release retired, any mod that is
+now on by default but stays off for you, and any permission a first-party mod gained; `/update` shows them too.
+`omd update`, `omd uninstall` and the installer's `status` print text; add `--json` for JSON. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
 update anyway. If the newer release can't be installed, for example because your Codex is on another version or
 doesn't run, `omd update` exits with an error that names the reason.
 
@@ -102,7 +110,9 @@ To change how updates work, such as the release channel, the check cadence or a 
 
 ## Switch install profile
 
-Rerun the install command with the other `--profile`. Each install profile keeps its own mod choices.
+Rerun the install command with the other `--profile`. Each install profile keeps its own mod choices. A profile you
+install for the first time starts with your update settings (checks, cadence, channel, pin and automatic updates).
+`omd-package activate` doesn't switch profiles; it only turns the installed profile's mods back on after `direct`.
 
 `direct` isn't an install profile. It's a recovery state in which `codex` behaves as plain Codex with no mods. If a
 mod breaks `codex`, switch to it with `omd-package`, the tool that manages your install profile and the mods it came
@@ -133,8 +143,9 @@ Then remove OMD:
 omd uninstall
 ```
 
-This removes OMD, its release and catalog caches, and its Codex plugins, and puts back any command in
-`~/.local/bin` that the installer renamed to `NAME.before-omd`. Codex settings, accounts and sessions stay.
+This removes OMD, its release and catalog caches, its Codex plugins and the `PATH` block it added, and puts
+back any command in `~/.local/bin` that the installer renamed to `NAME.before-omd`. Codex settings, accounts and
+sessions stay.
 OMD mod settings, data and saved sign-ins stay in `~/.local/share/oh-my-diff/stores` by default.
 
 To remove OMD's mod data and saved sign-ins too, use this instead:
