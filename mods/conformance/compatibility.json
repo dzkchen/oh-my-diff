@@ -168,7 +168,8 @@
       "terminal_pty_v2",
       "terminal_welcome_hidden_v1",
       "routes_add_self_v1",
-      "routes_add_model_v1"
+      "routes_add_model_v1",
+      "package_needs_approval_v1"
     ]
   },
   "apis": [

@@ -88,10 +88,9 @@ fn run(args: &[String]) -> io::Result<Value> {
 
 fn main() {
     match run(&std::env::args().skip(1).collect::<Vec<_>>()) {
-        Ok(value) => println!(
-            "{}",
-            serde_json::to_string_pretty(&value).unwrap_or_default()
-        ),
+        Ok(value) => {
+            codex_omd::print_output(&serde_json::to_string_pretty(&value).unwrap_or_default())
+        }
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(1);

@@ -694,6 +694,7 @@ These frozen entries have experimental fields:
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
 | `operations:agents.spawn` | `model` | none |
 | `operations:events.schedule` | `data` | `timer_data_v1` |
+| `operations:packages.list` | `needs_approval` | `package_needs_approval_v1` |
 | `operations:routes.add` | `model`, `effort` | `routes_add_model_v1` |
 | `operations:routes.list` | `data` | `route_write_v1` |
 | `operations:session.info` | `process_id`, `omd_version` | none |
@@ -1530,6 +1531,8 @@ update it.
 
 - `source` is also `npm` for npm packages.
 - `blocked` is the quarantine reason or `null`.
+- `needs_approval` (`package_needs_approval_v1`) is `true` for a disabled mod whose grants were revoked or whose
+  manifest asks for a capability it wasn't granted. `omd mods update ID` reviews it again.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
 - `packages.list` reports effective `enabled` and `settings`, plus `settings_schema`. Experimental
@@ -2128,7 +2131,7 @@ Three settings limit or end the authority grants:
 - `omd-mod trust ... --expires SECONDS` ends the authority grants at that time.
 - Project scope limits them to one repository.
 - `omd-mod revoke STORE MOD_ID_OR_PACKAGE` disables the mod and drops its grant at once. Its capabilities and secret
-  environment are cleared, and enabling it again needs a new trust or install.
+  environment are cleared, and enabling it again needs a new trust (`omd mods update ID`) or install.
 
 Trust output, the TUI trust dialog and status state what the grant exposes. In status, `mods[].authority` lists
 `os_access`, `approves`, `expires_at`, `current` and `exposure`.
@@ -8427,7 +8430,8 @@ A plugin names its [mod component](reference/glossary.md#mods-and-the-host) in `
 `omd COMMAND --repo PATH [--store STORE] [--home CODEX_HOME] [--sqlite-home DIR]` runs the command a mod exports with
 the `cli` option of [`api.command`](reference/sdk-helpers.md#other-api-members). That command can call only `evidence.*` and
 `sessions.*`. Model and process operations aren't available. Protect the mod store from writes by agent processes.
-When more than one mod exports `COMMAND`, `omd` refuses to run it (`plugin_command_collision`).
+When more than one mod exports `COMMAND`, `omd` refuses to run it (`plugin_command_collision`). When no enabled mod
+exports it, or `--repo` is missing, `omd` fails with `unknown command: COMMAND`.
 
 ## External clients
 

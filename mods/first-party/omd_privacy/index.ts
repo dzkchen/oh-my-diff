@@ -469,7 +469,7 @@ export default function activate(api: ModAPI) {
     const counts = Object.entries(saved.counts ?? {}).map(([rule, count]) => `${rule} ${count}`).join(', ') || 'none';
     const exempt = config.exempt;
     return { display: [
-      'Model-bound privacy policy on every provider request; while enabled, requests are refused if it is unavailable, fails or times out.',
+      'Pattern-based text redaction on every provider request except web search; while enabled, requests are refused if it is unavailable, fails or times out.',
       `Secret rules: ${config.secrets.join(', ') || 'none'}`,
       `PII rules: ${config.pii.join(', ') || 'off'}`,
       ...config.unknown.length ? [`Unknown rules ignored: ${config.unknown.join(', ')}`] : [],

@@ -43,30 +43,20 @@ marketplace with `codex plugin marketplace add PATH/plugins/experimental/oh-my-d
 ## Turn on a component
 
 `omd-anchored-edit`, `omd-artifact-reading` and `omd-output-budget` contain a `mod/` folder. That folder is a mod
-component: an ordinary mod that the plugin contains. Adding the plugin doesn't run it. You inspect it, trust it with
-the capabilities it asks for, and turn it on in your mod store, like any other mod you trust. Each plugin's README
+component: an ordinary mod that the plugin contains. Adding the plugin doesn't run it. You review it, trust it with
+the capabilities it asks for, and turn it on in your mod store, like any other mod you install. Each plugin's README
 lists its component's capabilities.
 
-These steps use `jq` and `omd-mod`, the low-level tool that works on a mod store directly. Set `PLUGIN` to the
-plugin's name and `CAPABILITIES` to the list from its README. The store is `~/.local/share/oh-my-diff/stores/full`
-for OMD+. The script finds `ROOT`, the installed version's folder, from `codex plugin list`. Run the block once for
-each plugin, with its own `PLUGIN` and `CAPABILITIES`.
-
 ```sh
-PLUGIN=omd-anchored-edit
-CAPABILITIES=tools,fs.read,fs.write,exec
-STORE=~/.local/share/oh-my-diff/stores/full
-VERSION=$(codex plugin list --json --marketplace oh-my-diff | jq -r --arg id "$PLUGIN@oh-my-diff" '.installed[] | select(.pluginId == $id) | .version')
-ROOT="${CODEX_HOME:-$HOME/.codex}/plugins/cache/oh-my-diff/$PLUGIN/$VERSION"
-COMPONENT=$(omd-mod plugin-component "$ROOT" | jq -r .component)
-SHA256=$(omd-mod inspect "$COMPONENT" | jq -r .sha256)
-omd-mod trust "$STORE" "$COMPONENT" "$SHA256" "$CAPABILITIES"
-omd-mod enable "$STORE" "$COMPONENT"
+omd-package plugin-mod enable omd-anchored-edit
 ```
 
-`plugin-component` checks the folder against the digest (a SHA-256 hash of the component's package) that the
-plugin declares and prints the component's path. `trust` takes the digest that `inspect` prints, so a changed
-component must be trusted again. The component runs from your next message.
+The command finds the added plugin's installed folder, checks its component against the digest (a SHA-256 hash of
+the component's package) that the plugin declares, and runs `omd install` and `omd mods enable` on it. Each shows the
+component's source, digest and capabilities and asks before it changes anything; nothing is trusted if you answer
+no, and it refuses without a terminal. For an experimental plugin, name its marketplace:
+`omd-package plugin-mod enable omd-artifact-reading@oh-my-diff-experimental`. A changed component, for example after
+a plugin update, must be reviewed again with the same command. The component runs from your next message.
 
 A component you trust can do what its capabilities allow. See
 [Trust and permissions](../docs/trust-and-permissions.md) before you grant them.
@@ -85,14 +75,10 @@ entries in your Codex config. See [`omd-code-execution`](experimental/oh-my-diff
 ## Remove a plugin
 
 1. If you turned on the plugin's component, turn it off first. Removing the plugin doesn't turn off a component you
-   trusted. These commands find the component the same way as [Turn on a component](#turn-on-a-component):
+   trusted:
 
    ```sh
-   PLUGIN=omd-anchored-edit
-   STORE=~/.local/share/oh-my-diff/stores/full
-   VERSION=$(codex plugin list --json --marketplace oh-my-diff | jq -r --arg id "$PLUGIN@oh-my-diff" '.installed[] | select(.pluginId == $id) | .version')
-   COMPONENT=$(omd-mod plugin-component "${CODEX_HOME:-$HOME/.codex}/plugins/cache/oh-my-diff/$PLUGIN/$VERSION" | jq -r .component)
-   omd-mod disable "$STORE" "$COMPONENT"
+   omd-package plugin-mod disable omd-anchored-edit
    ```
 
 2. Remove the plugin:

@@ -28,4 +28,5 @@ A plugin names its [mod component](glossary.md#mods-and-the-host) in `.codex-plu
 `omd COMMAND --repo PATH [--store STORE] [--home CODEX_HOME] [--sqlite-home DIR]` runs the command a mod exports with
 the `cli` option of [`api.command`](sdk-helpers.md#other-api-members). That command can call only `evidence.*` and
 `sessions.*`. Model and process operations aren't available. Protect the mod store from writes by agent processes.
-When more than one mod exports `COMMAND`, `omd` refuses to run it (`plugin_command_collision`).
+When more than one mod exports `COMMAND`, `omd` refuses to run it (`plugin_command_collision`). When no enabled mod
+exports it, or `--repo` is missing, `omd` fails with `unknown command: COMMAND`.
