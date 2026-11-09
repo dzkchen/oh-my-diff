@@ -63,9 +63,8 @@ test('resizing wakes a still scene and retires its old timer without changing it
 test('rapid resizing preserves animation time and the frozen frame during a turn', () => {
   const state = ready();
   const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 266);
-  const busy = call({ event: 'turn_start', state: first.state, payload: null }).state;
-  const frozen = tick(busy, `f.${NOW}.2.0.0.0.0`, NOW + 300).state;
-  let resized = frozen;
+  const busy = call({ event: 'turn_start', state: first.state, payload: null, virtual_time_ms: NOW + 266 }).state;
+  let resized = busy;
   for (const columns of [140, 80, 160]) resized = draw(resized, { columns }).state;
   assert.equal(resized.run, NOW + 3);
   assert.equal(resized.origin, NOW);

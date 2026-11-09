@@ -205,6 +205,23 @@ class UpdateSelection(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "pinned version is malformed"):
                 list(self.module.releases(url, pin="bad pin"))
 
+    def test_unpublished_newer_tags_do_not_hide_an_older_release_or_mod_bundle(self):
+        url = "https://api.github.com/repos/example/omd/releases"
+        refs = [{"ref": f"refs/tags/v0.{minor}.0"} for minor in range(1, 8)] + [{"ref": f"refs/tags/mods-0.1.0-{serial}"} for serial in range(2, 9)]
+        def fetch(address, limit):
+            if "/git/matching-refs/tags/" in address:
+                prefix = address.rsplit("/tags/", 1)[1]
+                return [item for item in refs if item["ref"].startswith("refs/tags/" + prefix)]
+            if address.endswith("/tags/v0.1.0"):
+                return release("0.1.0")
+            if address.endswith("/tags/mods-0.1.0-2"):
+                return {key: value for key, value in mods(2).items() if key != "manifest"}
+            raise urllib.error.HTTPError(address, 404, "not found", {}, None)
+        self.published = [mods(2)]
+        with patch.object(self.module, "fetch_json", side_effect=fetch):
+            self.assertEqual([item["version"] for item in self.module.releases(url)], ["0.1.0"])
+            self.assertEqual(self.module.mod_bundle(url, "0.1.0")["serial"], 2)
+
     def test_installer_accepts_the_pinned_upstream_minor(self):
         module = installer()
         version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
@@ -545,6 +562,12 @@ class UpdateSelection(unittest.TestCase):
         other.touch()
         self.module.launch(args, self.root, self.current)
         self.assertEqual(calls, [])
+        gated = []
+        seen = self.module.sessions
+        with patch.object(self.module, "sessions", side_effect=lambda *arguments: gated.append((self.root / "update/journal.json").exists()) or seen(*arguments)):
+            with self.assertRaises(self.module.SessionsOpen):
+                self.module.apply_mods(args, self.root, self.current, self.module.state(self.root)["mods"])
+        self.assertEqual((calls, gated[-1], (self.root / "update/journal.json").exists()), ([], True, False))
         other.unlink()
         self.settings = {"auto": "off"}
         self.write_settings()
@@ -580,10 +603,12 @@ class UpdateSelection(unittest.TestCase):
         (self.current / "prefix/install.json").write_text(json.dumps(record))
         calls.clear()
         other.touch()
-        with self.assertRaises(self.module.SessionsOpen):
-            self.module.rollback(args, self.root, args.bin_dir, self.current)
+        gated.clear()
+        with patch.object(self.module, "sessions", side_effect=lambda *arguments: gated.append((self.root / "update/journal.json").exists()) or seen(*arguments)):
+            with self.assertRaises(self.module.SessionsOpen):
+                self.module.rollback(args, self.root, args.bin_dir, self.current)
         other.unlink()
-        self.assertEqual(calls, [])
+        self.assertEqual((calls, gated, (self.root / "update/journal.json").exists()), ([], [True], False))
         with contextlib.redirect_stdout(io.StringIO()):
             self.module.rollback(args, self.root, args.bin_dir, self.current)
         self.assertEqual((calls, held), ([("mods-rollback",)], [{"omd": "0.1.0", "serial": 2}]))
@@ -598,7 +623,7 @@ class UpdateSelection(unittest.TestCase):
     def test_a_built_mod_bundle_extracts_with_the_installer_and_matches_its_manifest(self):
         from scripts import mods_bundle
         planned = {"omd": "0.1.0", "serial": 4, "changed": ["omd_update"], "bundle": ["omd_update"], "new": ["omd_update"],
-                   "needs_host": {}, "needs_release": [], "commits": ["abc fix"]}
+                   "needs_host": {}, "needs_release": [], "api_changed": [], "commits": ["abc fix"]}
         with patch.object(mods_bundle, "plan", return_value=planned):
             manifest = mods_bundle.build(self.root / "bundle", "c" * 40)
         self.assertEqual(list(manifest["packages"]), ["omd_update"])
@@ -880,6 +905,20 @@ class UpdateSelection(unittest.TestCase):
                 patch.object(self.module.Path, "rmdir", rmdir):
             self.module.main()
         self.assertEqual([path.name for path in root.iterdir()], [".install.lock"])
+
+    def test_uninstall_publishes_its_launch_gate_before_checking_for_sessions(self):
+        bin_dir = self.root / "bin"
+        (self.root / "sessions").mkdir()
+        (self.root / "sessions/1").touch()
+        gated = []
+        seen = self.module.sessions
+        with patch.object(self.module, "sessions", side_effect=lambda *arguments: gated.append((self.root / "update/journal.json").exists()) or seen(*arguments)), \
+                patch.object(self.module, "package", side_effect=AssertionError("removed under a session")), patch.object(self.module, "status"), \
+                patch.object(self.module, "broker_deployed", return_value=False), patch.object(self.module, "set_links"):
+            with self.assertRaises(self.module.SessionsOpen):
+                self.module.uninstall(types.SimpleNamespace(session=None), self.root, bin_dir, self.current)
+        self.assertEqual((gated, (self.root / "update/journal.json").exists()), ([True], False))
+        self.assertTrue((self.current / "receipt.json").is_file())
 
     def test_uninstall_removes_catalog_and_purge_removes_stores_without_touching_codex(self):
         for purge in (False, True):

@@ -376,7 +376,7 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                 "inspect" => "install",
                 _ if reviewed => "trust",
                 _ => action,
-            }, "scope": scope});
+            }, "scope": scope, "target": "shared"});
             if matches!(action, "install" | "inspect") {
                 arguments["reference"] = json!(folder_reference(&target)?);
                 arguments["version"] = json!(version);

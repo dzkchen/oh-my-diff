@@ -321,9 +321,10 @@ pub(super) fn refuse_second_copy(
     path: &Path,
     scope: &str,
     id: &str,
+    enabled: &dyn Fn(&ModSelection) -> bool,
 ) -> Result<()> {
     match config.mods.iter().find(|other| {
-        other.enabled
+        enabled(other)
             && other.path != path
             && other.scope == scope
             && package(&other.path).is_ok_and(|(manifest, _, _)| manifest.id == id)
@@ -486,6 +487,8 @@ pub struct ModStore {
 pub(super) const STATE_LIMIT: usize = 524_288;
 pub(super) const PACKAGE_FILE_LIMIT: u64 = 524_288;
 const SECURITY_EVENTS: &str = "security-events.jsonl";
+/// Kept out of `mods.json` so the previous release, which rejects unknown fields, still reads the store after a rollback.
+pub(super) const CONFIGURATION_EPOCHS: &str = "configuration-epochs.json";
 const SECURITY_EVENT_LIMIT: usize = 65_536;
 
 #[derive(Clone, Debug)]
@@ -732,6 +735,13 @@ impl ModStore {
         value: &Value,
         approved: &BTreeSet<String>,
     ) -> Result<()> {
+        let stripped;
+        let value = if name == "mods.json" {
+            stripped = self.write_epochs(value)?;
+            &stripped
+        } else {
+            value
+        };
         let bytes = serde_json::to_vec_pretty(value)?;
         let brokered = match name {
             "mods.json" => brokered_grants(&self.root)?,
@@ -773,7 +783,25 @@ impl ModStore {
         })
     }
 
-    fn write_staged(
+    fn write_epochs(&self, config: &Value) -> Result<Value> {
+        let mut config = config.clone();
+        let epochs: Vec<_> = config["mods"]
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .filter_map(|selection| {
+                let epoch = selection.as_object_mut()?.remove("configuration_epoch")?;
+                Some(json!([selection["scope"], selection["path"], epoch]))
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&json!({"revision": config["revision"], "epochs": epochs}))?;
+        if read(&self.root.join(CONFIGURATION_EPOCHS), 65_536).ok() != Some(bytes.clone()) {
+            self.write_staged(CONFIGURATION_EPOCHS, &bytes, || Ok(()))?;
+        }
+        Ok(config)
+    }
+
+    pub(super) fn write_staged(
         &self,
         name: &str,
         bytes: &[u8],
@@ -907,6 +935,54 @@ impl ModStore {
         let configuration = self.configuration()?;
         let lock = self.package_lock()?;
         self.selection_status_inspected_in(project, &configuration, &lock, None)
+    }
+
+    pub(crate) fn data_selection(
+        &self,
+        project: &Path,
+        owner: &str,
+        source_sha256: &str,
+    ) -> Result<(u64, ModSelection)> {
+        let managed = self.managed()?;
+        let configuration = match self.configuration() {
+            Ok(configuration) => configuration,
+            Err(_) if managed.is_some() => ModConfiguration {
+                schema: 1,
+                revision: 0,
+                node: None,
+                mods: Vec::new(),
+            },
+            Err(error) => return Err(error),
+        };
+        let brokered = brokered_grants(&self.root)?;
+        let mut selections = match &managed {
+            Some(managed) => {
+                managed
+                    .selections(
+                        &self.managed_deployment()?,
+                        &self.managed_user(),
+                        Some(project),
+                    )
+                    .0
+            }
+            None => Vec::new(),
+        };
+        let administered = selections.len();
+        selections.extend(configuration.mods);
+        let selection = super::ModHost::select(
+            &selections,
+            administered,
+            true,
+            brokered.as_ref().map(|(_, grants)| grants),
+            managed.as_ref().map(|managed| &managed.policy),
+            &mut Vec::new(),
+            |path| verified_package(path).map(|(package, sha256)| (package, String::new(), sha256)),
+        )?
+        .remove(owner)
+        .map(|(selection, _, _)| selection)
+        .filter(|selection| selection.sha256 == source_sha256 && selection.authority_current())
+        .ok_or_else(|| failure("data_source_not_selected"))?;
+        Ok((configuration.revision, selection))
     }
 
     pub(crate) fn selection_status_inspected_in(
@@ -1199,6 +1275,10 @@ impl ModStore {
             config.mods.retain(|m| m.path != path);
             trusted.insert(path.clone());
             config.mods.push(ModSelection {
+                configuration_epoch: config
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| failure("revision_overflow"))?,
                 path,
                 sha256: actual,
                 enabled: false,
@@ -1285,6 +1365,10 @@ impl ModStore {
         });
         let mut config = self.configuration()?;
         let mut revoked = Vec::new();
+        let epoch = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         for selection in &mut config.mods {
             if managed
                 .as_ref()
@@ -1295,7 +1379,8 @@ impl ModStore {
                 selection.enabled = false;
                 selection.capabilities.clear();
                 selection.secret_environment.clear();
-                selection.expires_at = None;
+                selection.expires_at = Some(0);
+                selection.configuration_epoch = epoch;
                 revoked.push(json!({"path": selection.path, "scope": selection.scope}));
             }
         }
@@ -1345,6 +1430,12 @@ impl ModStore {
         if enabled {
             let selection = &config.mods[index];
             let (manifest, _, hash) = package(path)?;
+            if !selection.authority_current() {
+                return Err(failure(format!(
+                    "grant_expired: {}: approve it again with omd mods update {}",
+                    manifest.id, manifest.id
+                )));
+            }
             if hash != selection.sha256 {
                 return Err(failure(format!(
                     "source_changed: {}: review it again with omd mods update {}",
@@ -1361,8 +1452,14 @@ impl ModStore {
                     manifest.id, manifest.id
                 )));
             }
-            self.check_service_providers(&manifest, path)?;
-            refuse_second_copy(&config, path, &selection.scope, &manifest.id)?;
+            self.check_service_providers(&manifest, path, &|selection| selection.enabled)?;
+            refuse_second_copy(
+                &config,
+                path,
+                &selection.scope,
+                &manifest.id,
+                &|selection| selection.enabled,
+            )?;
         }
         config.mods[index].enabled = enabled;
         next_revision(&mut config.revision)?;
@@ -1386,7 +1483,12 @@ impl ModStore {
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 
-    pub(super) fn check_service_providers(&self, package: &ModPackage, path: &Path) -> Result<()> {
+    pub(super) fn check_service_providers(
+        &self,
+        package: &ModPackage,
+        path: &Path,
+        enabled: &dyn Fn(&ModSelection) -> bool,
+    ) -> Result<()> {
         let selections = self.configuration()?.mods;
         for import in package
             .services
@@ -1412,7 +1514,7 @@ impl ModStore {
                                     .iter()
                                     .any(|export| export.name == import.name)
                             });
-                            (manifest.id, selection.enabled || cyclic)
+                            (manifest.id, enabled(selection) || cyclic)
                         })
                 })
                 .collect::<Vec<_>>();

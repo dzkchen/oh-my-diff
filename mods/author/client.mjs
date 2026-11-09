@@ -244,8 +244,16 @@ class Session {
   }
 
   async attach(params = {}) {
-    const attached = { name: this.options.name, renderer: this.options.renderer, operations: this.options.operations ?? [], ...params };
-    const attachment = await this.call('omd/client/attach', attached);
+    const attached = { name: this.options.name, renderer: this.options.renderer, operations: this.options.operations ?? [], terminalToken: undefined, ...params };
+    let attachment;
+    try {
+      attachment = await this.call('omd/client/attach', attached);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'terminal_owner_unknown' || !attached.terminalToken || attached.terminalToken !== this.attachment?.terminalToken) throw error;
+      delete attached.terminalToken;
+      attachment = await this.call('omd/client/attach', attached);
+    }
+    attached.terminalToken = attachment.terminalToken;
     this.attached = attached;
     this.attachment = attachment;
     this.epoch = attachment.epoch;
@@ -263,6 +271,8 @@ class Session {
   async detach() {
     const result = await this.call('omd/client/detach', {});
     this.attached = null;
+    this.attachment = null;
+    this.actionToken = null;
     this.updated = {};
     return result;
   }

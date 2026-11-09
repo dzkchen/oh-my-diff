@@ -1,20 +1,25 @@
 import type { Json, ModAPI, PackageCatalogEntry, PackageRequest, PackageState, TerminalComponent, TerminalIdentity, TerminalPanel, TerminalPanelItem, TerminalPatch } from '../../api.d.ts';
 
-type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; warning?: string; from: string; generation: number };
+type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; warning?: string; from: string; generation: number; lines?: string[] };
 type Scope = 'user' | 'project';
 const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'required', 'effective', 'pending', 'failed', 'needs_approval', 'blocked', 'compatible', 'conflicts'] as const;
-type Listed = Pick<PackageState, typeof FIELDS[number]>;
+type Listed = Pick<PackageState, typeof FIELDS[number]> & { own: boolean };
 type Choice = { model: string; label: string; efforts: string[]; effort: string; window: number };
 type Choosing = { from: string; name: string; models: Choice[]; lead: string | null };
 type Saved = { generation: number; packages: Listed[]; reloadError: string | null; review: Review | null; notice: string | null;
-  catalog: PackageCatalogEntry[]; catalogError: string | null; scope: Scope; choosing: Choosing | null };
+  catalog: PackageCatalogEntry[]; catalogError: string | null; scope: Scope; choosing: Choosing | null; only: Record<string, boolean> };
 type Remembered = { onboarded?: boolean; selected?: string; query?: string };
 type Property = { type?: string; enum?: Json[]; default?: Json; title?: string; description?: string; choices?: 'routes' };
-const EMPTY: Saved = { generation: 0, packages: [], reloadError: null, review: null, notice: null, catalog: [], catalogError: null, scope: 'user', choosing: null };
+const EMPTY: Saved = { generation: 0, packages: [], reloadError: null, review: null, notice: null, catalog: [], catalogError: null, scope: 'user', choosing: null, only: {} };
 const LIST = 'mods';
 const SELF = 'omd_mods';
 const UNSET = '-';
 const kept = (item: Pick<PackageState, 'id' | 'required'>) => item.id === SELF || item.required;
+const managed = (item: Pick<PackageState, 'scope'>) => item.scope === 'managed';
+const copy = ({ scope }: Pick<PackageState, 'scope'>) => scope === 'managed' ? {} : { scope };
+const owns = ({ overrides }: Pick<PackageState, 'overrides'>) => Boolean(overrides && (overrides.enabled !== undefined || Object.keys(overrides.settings).length));
+const shown = (value: Json | undefined) => value === null || value === undefined ? 'not set' : typeof value === 'boolean' ? value ? 'on' : 'off' : typeof value === 'string' ? value : JSON.stringify(value);
+const PLAIN: Record<string, string> = { configuration_override_forbidden: 'your administrator manages this mod', grant_expired: 'its permission expired; choose Trust again', settings_file_invalid: 'its settings file has a mistake; fix or delete the file, then try again' };
 const labelOf = (name: string, property?: Property) => property?.title ?? name.replace(/_/g, ' ');
 const word = (value: string) => /^\S{1,128}$/.test(value);
 const compare = (a: string, b: string) => {
@@ -52,7 +57,8 @@ export default function activate(api: ModAPI) {
   const visible = (value: string, limit = 400) => [...value.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, ' ')].slice(0, limit).join('');
   const clip = (value: string, bytes: number) => { const text = visible(value, bytes); return text.slice(0, encoder.encodeInto(text, new Uint8Array(bytes)).read); };
   const key = (item: Pick<PackageState, 'id' | 'scope'>) => `${item.scope}:${item.id}`;
-  const scoped = (item: Pick<PackageState, 'scope'>) => item.scope === 'project' ? ' --scope project' : '';
+  const scopeFlag = (item: Pick<PackageState, 'scope'>) => item.scope === 'project' ? ' --scope project' : '';
+  const approval = (item: Pick<PackageState, 'id' | 'scope' | 'failed'>) => `${item.failed?.startsWith('grant_expired') ? 'Choose Trust again, or review' : 'Review'} it from a shell with omd mods update ${item.id}${scopeFlag(item)}`;
   const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => ACRONYMS.has(word) ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1)).join(' ') || id;
   const properties = (item: Pick<PackageState, 'settings_schema'>) => Object.entries(((item.settings_schema as { properties?: Record<string, Property> } | null)?.properties) ?? {});
   const matches = (argument: string) => (item: Pick<PackageState, 'id' | 'scope' | 'installed'>) => item.installed && (key(item) === argument || item.id === argument);
@@ -64,9 +70,9 @@ export default function activate(api: ModAPI) {
     return listed.ok && !ambiguous(listed.value.packages, argument) ? listed.value.packages.find(matches(argument)) ?? null : null;
   };
   const refresh = (state: Saved, notice: string | null): Saved => {
-    const listed = api.host.tryCall('packages.list', { fields: [...FIELDS] });
+    const listed = api.host.tryCall('packages.list', { fields: [...FIELDS, 'overrides'] });
     if (!listed.ok) return { ...state, packages: [], notice: `The mod list is unavailable (${listed.error})` };
-    const packages = ordered(listed.value.packages.map(entry => Object.fromEntries(FIELDS.map(field => [field, entry[field]])) as Listed));
+    const packages = ordered(listed.value.packages.map(entry => ({ ...Object.fromEntries(FIELDS.map(field => [field, entry[field]])), own: owns(entry) }) as Listed));
     return { ...state, packages, generation: listed.value.generation, reloadError: listed.value.reload_error, notice };
   };
   const ordered = (packages: Listed[]) => packages.sort((a, b) => Number(!a.failed) - Number(!b.failed) || compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
@@ -86,20 +92,29 @@ export default function activate(api: ModAPI) {
   };
   const apply = (state: Saved, request: PackageRequest, label: string, generation = state.generation): Saved | null => {
     const result = api.host.tryCall('packages.apply', { ...request, expected_generation: generation });
-    if (!result.ok || result.value.status === 'declined') return refresh({ ...state, review: null }, result.ok ? `${label} was declined` : `${label} failed: ${result.error}`);
+    if (!result.ok || result.value.status === 'declined') return refresh({ ...state, review: null }, result.ok ? `${label} was declined` : `${label} failed: ${plain(result.error)}`);
     const name = friendly(request.id ?? '');
-    store({ ...state, review: null, notice: request.action === 'enable' ? `${name} is on. Its commands work now; the rest starts with your next message.`
-      : request.action === 'disable' ? `${name} is off from your next message.`
+    store({ ...state, review: null, notice: request.action === 'enable' || request.action === 'disable' ? `${name} is ${request.action === 'enable' ? 'on' : 'off'}${request.target === 'terminal' ? ' in this terminal until you close it' : ''}.`
+      : request.action === 'reset' ? `${name} uses your saved settings again.` : request.action === 'save-defaults' ? `${name} keeps these choices in every terminal.`
         : `${label} ${request.action === 'install' ? 'installed and off; turn it on to use it' : 'done; it applies from your next message'}` });
     return null;
   };
-  const review = (state: Saved, request: PackageRequest, label: string, from: string): Saved => {
+  const differences = (changes: Json, item?: PackageState) => {
+    const { enabled, settings = [] } = changes as { enabled?: { before: boolean; after: boolean } | null; settings?: { key: string; before: Json; after: Json }[] };
+    const schema = item ? properties(item) : [];
+    return [...enabled ? [`On: ${shown(enabled.before)} → ${shown(enabled.after)}`] : [],
+      ...settings.slice(0, 20).map(({ key, before, after }) => `${labelOf(key, schema.find(([name]) => name === key)?.[1])}: ${clip(shown(before), 60)} → ${clip(shown(after), 60)}`)];
+  };
+  const review = (state: Saved, request: PackageRequest, label: string, from: string, item?: PackageState): Saved => {
     const result = api.host.tryCall('packages.preview', { ...request, expected_generation: state.generation });
     if (result.ok && request.action === 'install' && result.value.id === SELF) return { ...state, review: null, notice: 'Mods is already running; update it from its own panel' };
+    const lines = result.ok && (request.action === 'reset' || request.action === 'save-defaults') ? differences(result.value.changes, item) : undefined;
+    if (lines && !lines.length) return { ...state, review: null, notice: 'Nothing to change' };
     return result.ok
-      ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, grants: result.value.grants_added, warning: result.value.identity_warning ?? undefined, from, generation: state.generation }, notice: null }
-      : { ...state, review: null, notice: `${label} is unavailable (${result.error})` };
+      ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, grants: result.value.grants_added, warning: result.value.identity_warning ?? undefined, from, generation: state.generation, lines }, notice: null }
+      : { ...state, review: null, notice: `${label} is unavailable (${plain(result.error)})` };
   };
+  const scoped = (state: Saved, item: Pick<PackageState, 'id' | 'scope'> & ({ own: boolean } | Pick<PackageState, 'overrides'>)) => state.only[key(item)] ?? ('own' in item ? item.own : owns(item)) ? { target: 'terminal' as const } : {};
   const newest = (entry: PackageCatalogEntry | undefined) => entry?.versions.find(item => !item.blocked)?.version ?? '';
   const find = (state: Saved, argument: string) => state.packages.find(matches(argument));
   const write = (state: Saved, item: PackageState | undefined, argument: string): Saved | null => {
@@ -108,10 +123,12 @@ export default function activate(api: ModAPI) {
     if (!item || !property) return { ...state, notice: 'That setting is unavailable' };
     const text = property.choices === 'routes' && rest.join(' ') === UNSET ? '' : rest.join(' ');
     const value: Json = property.type === 'boolean' ? text === 'true' : property.type === 'number' ? Number(text) : text;
-    if (property.type === 'number' && (!text.trim() || !Number.isFinite(value))) return { ...state, notice: `${name} needs a number` };
-    const written = api.host.tryCall('settings.write', { id: item.id, values: { [name]: value } });
-    if (!written.ok) return refresh(state, `${name} was not saved (${written.error})`);
-    store({ ...state, notice: `${labelOf(name, property)} saved` });
+    const label = labelOf(name, property);
+    if (property.type === 'number' && (!text.trim() || !Number.isFinite(value))) return { ...state, notice: `Enter a number for ${label}, like 5` };
+    const target = scoped(state, item);
+    const written = api.host.tryCall('settings.write', { id: item.id, ...copy(item), values: { [name]: value }, ...target });
+    if (!written.ok) return refresh(state, `${label} was not saved (${plain(written.error)})`);
+    store({ ...state, notice: target.target ? `${label} set for this terminal until you close it.` : `${label} saved.` });
     return null;
   };
   const skips = (item: PackageState) => properties(item).some(([name, property]) => name === 'skip_same_model' && property.type === 'boolean'
@@ -135,7 +152,12 @@ export default function activate(api: ModAPI) {
     const info = api.host.tryCall('session.info', null);
     return { ...state, choosing: { from: key(item), name, models, lead: info.ok ? info.value.model : null }, notice: null };
   };
+  const locked = (item: PackageState, state: Saved) => managed(item) ? 'Your administrator manages this mod' : item.effective ? null
+    : state.packages.some(other => other.id === item.id && other.effective) ? `${item.scope === 'user' ? "This project's" : 'Your own'} copy is in use; change its settings there`
+      : 'Turn it on to change its settings';
   const act = (state: Saved, verb: string, argument: string, from = LIST, item?: PackageState): Saved | null => {
+    const refusal = item && ['set', 'route', 'choose', 'pick'].includes(verb) && locked(item, state);
+    if (refusal) return { ...state, notice: refusal };
     if (verb === 'cancel') return { ...state, review: null, choosing: null, notice: null };
     if (verb === 'apply') return state.review ? apply(state, state.review.request, state.review.label, state.review.generation) : { ...state, notice: 'Nothing to apply' };
     if (verb === 'set') return write(state, item, argument);
@@ -168,9 +190,10 @@ export default function activate(api: ModAPI) {
     if (!target) return { ...state, notice: `No installed mod ${argument || 'selected'}` };
     if (kept(target) && (verb === 'disable' || verb === 'remove' || (verb === 'toggle' && target.enabled)))
       return { ...state, notice: `${friendly(target.id)} stays on because Oh My Diff needs it; turn it off from a shell with omd mods disable ${target.id}` };
-    const request = { id: target.id, scope: target.scope };
-    if (verb === 'toggle') return apply(state, { action: target.enabled ? 'disable' : 'enable', ...request }, `${target.enabled ? 'Turning off' : 'Turning on'} ${friendly(target.id)}`);
-    if (verb === 'enable' || verb === 'disable') return apply(state, { action: verb, ...request }, `${verb === 'enable' ? 'Turning on' : 'Turning off'} ${friendly(target.id)}`);
+    const request = { id: target.id, ...copy(target) };
+    if (verb === 'toggle') return apply(state, { action: target.enabled ? 'disable' : 'enable', ...request, ...scoped(state, target) }, `${target.enabled ? 'Turning off' : 'Turning on'} ${friendly(target.id)}`);
+    if (verb === 'reset' || verb === 'save-defaults') return review(state, { action: verb, ...request }, verb === 'reset' ? `Use saved settings for ${friendly(target.id)}` : `Keep ${friendly(target.id)}'s choices for every terminal`, from, item);
+    if (verb === 'enable' || verb === 'disable') return apply(state, { action: verb, ...request, ...scoped(state, target) }, `${verb === 'enable' ? 'Turning on' : 'Turning off'} ${friendly(target.id)}`);
     if (REVIEWED.includes(verb)) return review(state, { action: verb as PackageRequest['action'], ...request }, `${verb} ${friendly(target.id)}`, from);
     return { ...state, notice: `Unknown action ${verb}` };
   };
@@ -180,6 +203,7 @@ export default function activate(api: ModAPI) {
     return range.from === range.to && integrity ? `${id} source ${(integrity.from ?? 'none').slice(0, 8)} → ${integrity.to.slice(0, 8)}` : `${id} ${range.from ?? 'new'} → ${range.to}`;
   };
   const brief = (error: string) => error.split('\n').map(part => part.trim()).filter(Boolean).slice(0, 2).join(' ');
+  const plain = (error: string) => PLAIN[error.split(':')[0].trim()] ?? brief(error);
   const changed = (changes: Json) => {
     const plan = changes as { packages?: Json[]; removed?: Json[]; version?: Json };
     return plan.packages ? plan.packages.map(version).join(', ') : plan.removed ? `remove ${plan.removed.map(version).join(', ')}` : plan.version ? `roll back ${version(plan).trim()}` : 'no package changes';
@@ -189,6 +213,7 @@ export default function activate(api: ModAPI) {
     return [...new Set([...Object.keys(plan.codex_config ?? {}), ...(plan.packages ?? []).flatMap(item => Object.keys(item.authority?.to?.codex_config ?? {}))])];
   };
   const reviewText = (review: Review) => {
+    if (review.lines) return [review.label, ...review.lines, review.request.action === 'reset' ? 'This terminal goes back to your saved settings.' : 'Applies to every terminal and future launches.'].join('\n');
     const config = configured(review.changes);
     return `${review.warning ? `WARNING: ${review.warning} · ` : ''}${review.label}: ${changed(review.changes)} · new permissions: ${review.grants.join(', ') || 'none'}${config.length ? ` · Codex config: ${config.join(', ')}` : ''}`;
   };
@@ -200,7 +225,7 @@ export default function activate(api: ModAPI) {
     for (const row of listed.ok ? listed.value.commands : []) if (row.owner && !row.hidden) owned.set(row.owner, [...owned.get(row.owner) ?? [], `/${row.command}`]);
     return owned;
   };
-  const status = (item: Listed) =>
+  const status = (item: Omit<Listed, 'own'>) =>
     !item.installed ? 'removed' : item.blocked ? 'quarantined' : item.needs_approval ? 'needs approval' : item.failed ? 'failed' : item.pending ? item.effective ? 'stopping' : 'starting'
       : item.effective ? 'on' : item.enabled ? 'shadowed' : 'off';
   const subtitle = (lines: (string | null | undefined | false)[]) => clip(lines.filter(Boolean).join('\n'), 2000);
@@ -221,10 +246,10 @@ export default function activate(api: ModAPI) {
       const fixed = kept(item) && item.enabled;
       const names = owned.get(item.id) ?? [];
       return entry({ id: key(item), tab: 'installed', group: group(item), label: friendly(item.id), ...fixed ? { kind: 'action' } : { kind: 'toggle', value: item.enabled },
-        description: [fixed ? 'always on' : extra, item.scope === 'project' ? 'this project' : null, item.description].filter(Boolean).join(' · '),
+        description: [fixed ? 'always on' : extra, item.scope === 'project' ? 'this project' : null, item.own ? 'only this terminal' : null, item.description].filter(Boolean).join(' · '),
         keywords: clip([item.id, ...names].join(' '), 256),
         detail: clip([`${word} · ${item.scope === 'project' ? 'this project' : 'every project'}`, names.length ? `Commands: ${names.join(' ')}` : 'No commands',
-          item.needs_approval ? `Review it from a shell with omd mods update ${item.id}${scoped(item)}` : item.failed && `Why it failed: ${brief(item.failed)}`, item.blocked && `Quarantined: ${item.blocked}`, !item.compatible && 'Needs a newer Oh My Diff',
+          item.needs_approval ? approval(item) : item.failed && `Why it failed: ${brief(item.failed)}`, item.blocked && `Quarantined: ${item.blocked}`, !item.compatible && 'Needs a newer Oh My Diff',
           ...item.conflicts.map(conflict => `Conflict: ${conflict}`)].filter(Boolean).join(' · '), 512) });
     });
     const settings = shown.map(item => entry({ id: `open:${key(item)}`, tab: 'settings', label: `${friendly(item.id)} ›`, kind: 'action', description: item.description ?? undefined }));
@@ -253,6 +278,7 @@ export default function activate(api: ModAPI) {
     const current = item.settings?.[name];
     const base = { id: `setting:${name}`, label: labelOf(name, property), description: property.description };
     if (/\s/.test(name) || encoder.encode(base.id).length > 128) return null;
+    if (managed(item)) return entry({ ...base, kind: 'action', description: clip(shown(current), 256) });
     if (property.type === 'boolean') return entry({ ...base, kind: 'toggle', value: current === true });
     const options = [...new Set((property.enum ?? []).map(value => String(value)).filter(value => word(value) && encoder.encode(value).length <= 128))].slice(0, 32);
     if (property.choices === 'routes') {
@@ -291,20 +317,28 @@ export default function activate(api: ModAPI) {
     if (state.review?.from === key(item)) return reviewing(title(item, state), state, args);
     if (state.choosing?.from === key(item)) return chooser(item, state, state.choosing);
     const fixed = kept(item) && item.enabled;
-    const actions = item.source !== 'selection' ? [['update', 'Update'], ['rollback', 'Roll back'], ...fixed ? [] : [['remove', 'Remove']]] : item.failed?.startsWith('source_changed') ? [['trust', 'Trust the edited source']] : [];
+    const editable = !locked(item, state);
+    const schema = properties(item);
+    const own = owns(item);
+    const actions = [...item.source !== 'selection' ? [['update', 'Update'], ['rollback', 'Roll back'], ...fixed ? [] : [['remove', 'Remove']]] : item.failed?.startsWith('source_changed') ? [['trust', 'Trust the edited source']] : [],
+      ...item.failed?.startsWith('grant_expired') ? [['trust', 'Trust again']] : []];
     return {
       title: title(item, state), action: { command: 'mods', args },
       subtitle: subtitle([`${status(item)} · ${item.version} · ${item.source === 'selection' ? 'local folder' : item.source}${item.compatible ? '' : ' · needs a newer Oh My Diff'}`, item.description,
-        item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}${scoped(item)}.`,
-        item.needs_approval ? `Review it from a shell with omd mods update ${item.id}${scoped(item)}.` : item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), state.notice]),
+        own && 'This terminal has its own choices',
+        item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}${scopeFlag(item)}.`,
+        item.needs_approval ? `${approval(item)}.` : item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), schema.length ? locked(item, state) : null, state.notice]),
       items: [
+        ...managed(item) || (fixed && !(editable && schema.length)) ? [] : [entry({ id: 'target', label: 'Changes apply to', kind: 'choice', value: scoped(state, item).target ?? 'shared',
+          options: [{ value: 'shared', label: 'Every terminal' }, { value: 'terminal', label: 'Only this terminal' }] })],
         ...fixed ? [] : [entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled })],
-        ...properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
-        ...properties(item).filter(([, property]) => property.choices === 'routes').slice(0, 8).flatMap(([name, property]) => [
+        ...!editable && !managed(item) ? [] : schema.slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
+        ...!editable ? [] : schema.filter(([, property]) => property.choices === 'routes').slice(0, 8).flatMap(([name, property]) => [
           entry({ id: `choose:${name}`, kind: 'action', label: `Choose a model for ${labelOf(name, property)}`,
             description: 'Pick a ChatGPT model and effort on your plan; asks before changing anything' }),
           entry({ id: `route:${name}`, kind: 'action', label: `Add a helper model for ${labelOf(name, property)}`,
             description: `Uses the model you are chatting with on your ChatGPT plan; asks before changing anything${skips(item) ? `. ${friendly(item.id)} skips it while skip_same_model is on` : ''}` })]),
+        ...!own ? [] : [entry({ id: 'do:reset', label: 'Use saved settings', kind: 'action', description: 'Drop the choices made only for this terminal' }), entry({ id: 'do:save-defaults', label: 'Keep these for every terminal', kind: 'action', description: 'Every terminal and future launches use them' })],
         ...actions.map(([verb, label]) => entry({ id: `do:${verb}`, label, kind: 'action' })),
       ],
     };
@@ -360,6 +394,7 @@ export default function activate(api: ModAPI) {
       const id = key(target);
       const next = !item ? { ...state, notice: current.notice }
         : item === 'apply' || item === 'cancel' ? act(state, item, '', id, target)
+          : item === 'target' ? { ...state, only: { ...state.only, [id]: text === 'terminal' }, notice: null }
           : item === 'enabled' ? act(state, text === 'true' ? 'enable' : 'disable', id, id, target)
             : item.startsWith('setting:') ? act(state, 'set', `${item.slice(8)} ${text}`, id, target)
               : item.startsWith('route:') ? act(state, 'route', item.slice(6), id, target)

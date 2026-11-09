@@ -106,6 +106,7 @@
     "prompts.status",
     "prompts.submit",
     "routes.add",
+    "routes.list",
     "routes.models",
     "routes.select",
     "routes.write",

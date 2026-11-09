@@ -25,6 +25,7 @@ fn rates() -> Rates {
 
 fn account(task: &Arc<Task>, root: &Path, owner: &str) -> Account {
     Account {
+        mod_runtime: None,
         task: task.clone(),
         owner: owner.into(),
         model: "fixture-model".into(),
@@ -277,7 +278,7 @@ fn final_request_policies_redact_unary_image_and_memory_bodies() {
         &["middleware", "request_policy"],
     );
     let mut image = json!({"model":"image-model","prompt":"draw SECRET-1"});
-    ResponseObserver::police_unary(&accounts, None, &mut image).unwrap();
+    ResponseObserver::police_unary(&accounts, None, &mut image, &http::Extensions::new()).unwrap();
     assert_eq!(image["prompt"], "draw [secret]");
     let mut memory = serde_json::to_value(codex_api::MemorySummarizeInput {
         model: "memory-model".into(),
@@ -292,15 +293,22 @@ fn final_request_policies_redact_unary_image_and_memory_bodies() {
         reasoning: None,
     })
     .unwrap();
-    ResponseObserver::police_unary(&accounts, Some("child"), &mut memory).unwrap();
+    ResponseObserver::police_unary(
+        &accounts,
+        Some("child"),
+        &mut memory,
+        &http::Extensions::new(),
+    )
+    .unwrap();
     assert_eq!(
         memory["traces"][0]["items"][0]["content"][0]["text"],
         "key [secret]"
     );
     let mut edit = json!({"model":"image-model","prompt":"edit","images":[{"file_id":"f1"}]});
-    let refused = ResponseObserver::police_unary(&accounts, None, &mut edit)
-        .unwrap_err()
-        .to_string();
+    let refused =
+        ResponseObserver::police_unary(&accounts, None, &mut edit, &http::Extensions::new())
+            .unwrap_err()
+            .to_string();
     assert!(refused.contains("unscanned file"), "{refused}");
 }
 
@@ -529,7 +537,7 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
     install_middleware(&accounts, root.path(), source);
     let notified = Arc::new(Mutex::new(Vec::new()));
     let sink = notified.clone();
-    accounts.install_mod_notifier(Arc::new(move |event, payload| {
+    accounts.install_mod_notifier(Arc::new(move |_terminal_owner, event, payload| {
         sink.lock().unwrap().push((event, payload));
     }));
     let mut lead = account(&task, root.path(), "lead");
@@ -845,8 +853,8 @@ fn observe_only_accounts_record_usage_without_admission() {
         .unwrap()
         .insert("main".into(), lead);
     request.headers.insert("thread-id", "main".parse().unwrap());
-    assert!(!accounts.requires_observation(Some("main")));
-    assert!(accounts.requires_observation(Some("child")));
+    assert!(!accounts.requires_observation(Some("main"), &http::Extensions::new()));
+    assert!(accounts.requires_observation(Some("child"), &http::Extensions::new()));
     let body = EncodedJsonBody::encode(&json!({"model":"any-model","stream":true,
         "tools":[{"type":"web_search"}]}))
     .unwrap();
@@ -1364,7 +1372,7 @@ fn unrated_native_requests_report_subscription_only_on_the_chatgpt_backend() {
     let (root, accounts, task, mut request, body) = setup();
     let notified = Arc::new(Mutex::new(Vec::new()));
     let sink = notified.clone();
-    accounts.install_mod_notifier(Arc::new(move |event, payload| {
+    accounts.install_mod_notifier(Arc::new(move |_terminal_owner, event, payload| {
         sink.lock().unwrap().push((event, payload));
     }));
     let mut lead = account(&task, root.path(), "lead");
@@ -1409,4 +1417,128 @@ fn unrated_native_requests_report_subscription_only_on_the_chatgpt_backend() {
         "unpriced"
     );
     assert!(task.attempts().unwrap().is_empty());
+}
+
+#[test]
+fn request_policy_context_captures_terminal_middleware_through_the_response() {
+    let (root, accounts, _task, mut request, body) = setup();
+    let source = "export default api => { api.intercept('model_request', (e, next) => api.settings.mode === 'blocked' ? {deny:'terminal blocked'} : next(e)); api.intercept('response_stream', {match:{kind:'text'}}, (e,next) => next({...e,text:api.settings.mode + ':' + e.text})); }";
+    let (store, package, _) = install_package(&accounts, root.path(), source, &["middleware"]);
+    let manifest = package.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["settings_schema"] =
+        json!({"type":"object","properties":{"mode":{"type":"string","default":"saved"}}});
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    let inspected = ModStore::inspect_package(&package).unwrap();
+    store
+        .trust(
+            package.clone(),
+            inspected["sha256"].as_str().unwrap(),
+            vec!["middleware".into()],
+            "user",
+        )
+        .unwrap();
+    store.enable(&package, true).unwrap();
+    let shared = std::fs::read(store.root().join("mods.json")).unwrap();
+    let a = Arc::new(Mutex::new(
+        ModHost::open(
+            store.root().to_path_buf(),
+            codex_omd::ModOpenOptions::default(),
+        )
+        .unwrap(),
+    ));
+    let b = Arc::new(Mutex::new(
+        ModHost::open(
+            store.root().to_path_buf(),
+            codex_omd::ModOpenOptions::default(),
+        )
+        .unwrap(),
+    ));
+    let notified = Arc::new(Mutex::new(Vec::new()));
+    let sink = notified.clone();
+    accounts.install_mod_notifier(Arc::new(move |owner, _, _| {
+        sink.lock().unwrap().push(owner.map(str::to_owned));
+    }));
+    let bind = |runtime: &Arc<Mutex<ModHost>>, owner: &str| RuntimeBinding {
+        terminal_owner: Some(owner.into()),
+        runtime: runtime.clone(),
+        required: runtime.lock().unwrap().required_surfaces(),
+    };
+    a.lock()
+        .unwrap()
+        .write_configuration(
+            "request_router",
+            &json!({"mode":"blocked"}),
+            "terminal",
+            &[],
+        )
+        .unwrap();
+    a.lock().unwrap().refresh(&|| true).unwrap();
+    request.policy_context.insert(bind(&a, "terminal-a"));
+    let mut encoded = Some(body.clone());
+    assert!(
+        accounts
+            .prepare(&mut request, &mut encoded)
+            .unwrap_err()
+            .to_string()
+            .contains("terminal blocked")
+    );
+    request.policy_context.clear();
+    request.policy_context.insert(bind(&b, "terminal-b"));
+    let mut encoded = Some(body.clone());
+    accounts.prepare(&mut request, &mut encoded).unwrap();
+    let captured_account = accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .get("child")
+        .unwrap()
+        .clone();
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .get_mut("child")
+        .unwrap()
+        .owner = "unadmitted-worker".into();
+    let mut attempt = accounts
+        .before_send(&mut request, encoded.as_ref())
+        .unwrap()
+        .unwrap();
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("child".into(), captured_account);
+    request.policy_context.clear();
+    request.policy_context.insert(bind(&a, "terminal-a"));
+    let mut delta =
+        json!({"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":"hello"});
+    attempt.observe(&mut delta, true).unwrap();
+    assert_eq!(delta["delta"], "saved:hello");
+    drop(attempt);
+    a.lock()
+        .unwrap()
+        .write_configuration("request_router", &json!({"mode":"local"}), "terminal", &[])
+        .unwrap();
+    a.lock().unwrap().refresh(&|| true).unwrap();
+    let mut encoded = Some(body);
+    accounts.prepare(&mut request, &mut encoded).unwrap();
+    let mut attempt = accounts
+        .before_send(&mut request, encoded.as_ref())
+        .unwrap()
+        .unwrap();
+    let mut delta =
+        json!({"type":"response.output_text.delta","output_index":0,"item_id":"n","delta":"hello"});
+    attempt.observe(&mut delta, true).unwrap();
+    assert_eq!(delta["delta"], "local:hello");
+    drop(attempt);
+    assert_eq!(
+        *notified.lock().unwrap(),
+        vec![Some("terminal-b".to_owned()), Some("terminal-a".to_owned())]
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        shared
+    );
 }

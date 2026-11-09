@@ -39,7 +39,7 @@ async function until(find) {
   throw new Error('timed out');
 }
 
-function fakeHost({ padding = '', view = {}, overloadedResumes = 0 } = {}) {
+function fakeHost({ padding = '', view = {}, overloadedResumes = 0, restartOwners = false } = {}) {
   const seen = [];
   const protocols = [];
   const sockets = new Set();
@@ -66,7 +66,12 @@ function fakeHost({ padding = '', view = {}, overloadedResumes = 0 } = {}) {
     if (message.method === 'initialize') reply({ userAgent: 'fake' });
     else if (message.method === 'omd/client/attach' && message.params.renderer.kind === 'invalid') host.send({ id: message.id, error: { code: -32602, message: 'invalid renderer' } });
     else if (message.method === 'omd/client/attach') {
-      reply({ clientId: `client-${host.epoch}`, protocol: 'omd-client/1', epoch: host.epoch, roster: [], features: [], delegable: [] });
+      const terminalToken = restartOwners ? `owner-${host.epoch}` : 'owner-retained';
+      if (message.params.terminalToken && message.params.terminalToken !== terminalToken) {
+        host.send({ id: message.id, error: { code: -32600, message: 'terminal_owner_unknown' } });
+        return;
+      }
+      reply({ terminalToken, clientId: `client-${host.epoch}`, protocol: 'omd-client/1', epoch: host.epoch, roster: [], features: [], delegable: [] });
       host.send({ method: 'omd/view/updated', params: { epoch: host.epoch, revision: 1, snapshot: { view, padding }, actionToken: host.token } });
     } else if (message.method === 'thread/resume' && host.epoch !== '1' && overloadedResumes > 0 && overloadedResumes--) host.send({ id: message.id, error: { code: -32001, message: 'Server overloaded; retry later.' } });
     else if (message.method === 'omd/action') {
@@ -153,6 +158,7 @@ test('unix client answers pings, reads large views and reconnects with attach, u
     assert.deepEqual(reconnected, { epoch: '2', previousEpoch: '1' });
     const second = host.seen.filter(message => message.epoch === '2' && message.method).map(message => message.method);
     assert.deepEqual(second, ['initialize', 'initialized', 'omd/client/attach', 'omd/client/update', 'thread/resume']);
+    assert.equal(host.seen.find(message => message.epoch === '2' && message.method === 'omd/client/attach').params.terminalToken, 'owner-retained');
     assert.equal(host.seen.findLast(message => message.method === 'thread/resume').params.threadId, 'thread-1');
     await until(() => views.some(view => view.epoch === '2'));
     assert.equal(session.actionToken, 'token-0');
@@ -232,5 +238,32 @@ test('server replies stay with the connection that requested them', async t => {
         host.server.close();
       }
     });
+  }
+});
+
+
+test('reconnect drops an expired owner token only after the host refuses it', async () => {
+  const host = fakeHost({ restartOwners: true });
+  const path = join(mkdtempSync(join(tmpdir(), 'omd-owner-reconnect-')), 'host.sock');
+  await new Promise(resolve => host.server.listen(path, resolve));
+  let reconnected;
+  const session = await connect({ url: `unix://${path}`, name: 'sdk-owner', renderer, onView() {}, onRoster() {}, onMirrored() {}, onReconnect: change => { reconnected = change; } });
+  try {
+    assert.equal(session.attachment.terminalToken, 'owner-1');
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected);
+    const attempts = host.seen.filter(message => message.epoch === '2' && message.method === 'omd/client/attach');
+    assert.equal(attempts.length, 2);
+    assert.equal(attempts[0].params.terminalToken, 'owner-1');
+    assert.equal(attempts[1].params.terminalToken, undefined);
+    assert.equal(session.attachment.terminalToken, 'owner-2');
+    await session.detach();
+    assert.equal(session.attachment, null);
+    await session.attach();
+    assert.equal(host.seen.filter(message => message.method === 'omd/client/attach').at(-1).params.terminalToken, undefined);
+  } finally {
+    session.close();
+    for (const socket of host.sockets) socket.destroy();
+    await new Promise(resolve => host.server.close(resolve));
   }
 });

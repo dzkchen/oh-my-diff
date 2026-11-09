@@ -45,10 +45,12 @@ use std::sync::atomic::Ordering;
 
 pub(crate) use access::AccessState;
 pub(crate) use expansion::take_route_selection;
-pub(crate) use operations::DataScope;
 
 type Reply = std::sync::mpsc::SyncSender<std::io::Result<Value>>;
 type Facts = BTreeMap<String, (String, Option<ModGrants>)>;
+type SharedSessions = Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>;
+type SharedTurns = Arc<Mutex<BTreeMap<String, TurnRecord>>>;
+type SharedProviderSwitches = Arc<Mutex<BTreeMap<String, Config>>>;
 
 struct HostRequest {
     caller: String,
@@ -142,10 +144,17 @@ struct TurnRecord {
 }
 
 pub(super) struct Core {
+    sessions: SharedSessions,
+    turns: SharedTurns,
+    provider_switches: SharedProviderSwitches,
+    terminal_owner: Option<String>,
     session_runtime: Option<tokio::runtime::Handle>,
     host: Arc<Host>,
     runtime: Arc<Mutex<ModHost>>,
+    runtime_required: Arc<Mutex<Vec<&'static str>>>,
     input_runtime: Arc<Mutex<ModHost>>,
+    disabled_modes: Arc<Mutex<Vec<String>>>,
+    removed_features: Arc<Mutex<std::collections::BTreeSet<codex_features::Feature>>>,
     persist_runtime: Arc<Mutex<ModHost>>,
     persist_required: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<codex_omd::host::Environment>,
@@ -154,7 +163,7 @@ pub(super) struct Core {
     services: services::Services,
     views: Arc<view::Views>,
     expansion: expansion::State,
-    inventory: inventory::Inventory,
+    inventory: Arc<inventory::Inventory>,
     autonomy: autonomy::Queues,
     peering: peering::Registry,
     this: std::sync::Weak<Core>,
@@ -163,8 +172,7 @@ pub(super) struct Core {
 struct Mods {
     registration: Mutex<Option<clients::Registration>>,
     core: Arc<Core>,
-    turns: Mutex<BTreeMap<String, TurnRecord>>,
-    sessions: Mutex<BTreeMap<String, std::sync::Weak<Session>>>,
+    initialized_threads: Mutex<std::collections::BTreeSet<String>>,
     workspace_before: Mutex<BTreeMap<String, Result<codex_omd::WorkspaceIndex, String>>>,
     worktrees: Mutex<BTreeMap<std::path::PathBuf, Arc<Host>>>,
     pending: Mutex<BTreeMap<String, PendingTool>>,
@@ -174,7 +182,6 @@ struct Mods {
     settled: Mutex<BTreeMap<(String, String), (String, String)>>,
     /// Secret fields of each pending elicitation, redacted from its result.
     elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
-    provider_switches: Mutex<BTreeMap<String, Config>>,
 }
 
 struct PendingTool {
@@ -186,6 +193,63 @@ struct PendingTool {
 }
 
 impl Mods {
+    fn prepare_owned_thread_config(
+        &self,
+        config: &mut Config,
+        thread: Option<&str>,
+        forked_from: Option<&str>,
+        selected: Option<&Mods>,
+    ) -> Result<(), String> {
+        let this = selected.unwrap_or(self);
+        let mut denied = Vec::new();
+        for path in this.host.protected_paths() {
+            if path
+                .canonicalize()
+                .map_err(|_| "protected_path_unavailable")?
+                != path
+                || path.starts_with(&this.host.repository)
+            {
+                return Err("protected_mod_path_must_be_canonical_and_external".into());
+            }
+            denied.push(
+                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
+                    .map_err(|_| "protected_path_unavailable")?,
+            );
+        }
+        this.refresh_native_configuration()?;
+        config
+            .features
+            .set_removed(
+                this.removed_features
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            )
+            .map_err(|error| error.to_string())?;
+        config.permissions.sandbox_denied_paths = denied;
+        config.model_provider.supports_websockets = false;
+        this.apply_native_configuration(config)?;
+        let mut runtime = match this.runtime.try_lock() {
+            Ok(runtime) => runtime,
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
+        };
+        if let (Some(thread), Some(parent)) = (thread, forked_from)
+            && let Err(error) =
+                codex_omd::data_store::fork_thread_data(&this.host.root, parent, thread)
+            && error.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            this.views.diagnostic(
+                &this.host,
+                "thread_store",
+                Some(format!("fork copy failed: {error}")),
+            );
+        }
+        let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
+        this.compaction_decision(&mut runtime, config)?;
+        this.routing_decision(&mut runtime, config)
+    }
+
     async fn resume(
         &self,
         call_id: &str,
@@ -421,58 +485,92 @@ pub fn validate_tool_schema(schema: &Value) -> std::io::Result<()> {
         .map_err(std::io::Error::other)
 }
 
-fn initialize(
-    registry: &mut ExtensionRegistryBuilder<Config>,
+fn create_owner(
     host: Arc<Host>,
+    owner: Arc<Mutex<codex_omd::ConfigurationOverrides>>,
+    terminal_owner: Option<String>,
 ) -> Result<Arc<Mods>, String> {
-    let registration =
-        codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
     let open = || {
         ModHost::open(
             host.root.clone(),
             ModOpenOptions {
                 tool_validator: validate_tool_schema,
                 repository: Some(&host.repository),
+                configuration_overrides: Arc::clone(&owner),
                 ..ModOpenOptions::default()
             },
         )
-        .map_err(|e| e.to_string())
+        .map_err(|error| error.to_string())
+    };
+    let (turns, provider_switches) = if terminal_owner.is_some() {
+        clients::shared_native_tasks().ok_or("native_task_state_unavailable")?
+    } else {
+        (Arc::default(), Arc::default())
+    };
+    let sessions = if terminal_owner.is_some() {
+        clients::shared_native_sessions().ok_or("native_sessions_unavailable")?
+    } else {
+        Arc::default()
+    };
+    let inventory = if terminal_owner.is_some() {
+        clients::shared_inventory().ok_or("native_inventory_unavailable")?
+    } else {
+        Arc::default()
     };
     let runtime = open()?;
+    let runtime_required = runtime.required_surfaces();
     let input_runtime = open()?;
     let persist_runtime = open()?;
     let persist_required = persist_runtime.required_surfaces();
     services::define_providers(&host.config, |id| runtime.grants(id).is_some());
-    let _ = host.persist_json("mod-status.json", &runtime.status());
-    let required = runtime.required_surfaces();
+    if terminal_owner.is_none() {
+        let _ = host.persist_json("mod-status.json", &runtime.status());
+    }
     let environment = runtime.environment();
-    let codex_config = runtime.codex_config();
+    let codex_config = input_runtime.codex_config();
     let runtime = Arc::new(Mutex::new(runtime));
-    let views = Arc::new(view::Views::new());
+    let views = Arc::new(view::Views::new(terminal_owner.is_none()));
+    let removed_features = Arc::new(Mutex::new(
+        codex_omd::BuiltinSnapshot::from_controls(&input_runtime.builtin_controls())
+            .removed_features(),
+    ));
+    let disabled_modes = Arc::new(Mutex::new(
+        input_runtime
+            .builtin_controls()
+            .into_iter()
+            .flat_map(|(_, controls)| controls.modes.disable)
+            .collect(),
+    ));
     let input_runtime = Arc::new(Mutex::new(input_runtime));
     let persist_runtime = Arc::new(Mutex::new(persist_runtime));
     let extension = Arc::new(Mods {
         registration: Mutex::new(None),
         core: Arc::new_cyclic(|core| Core {
+            sessions,
+            turns,
+            provider_switches,
+            terminal_owner: terminal_owner.clone(),
             session_runtime: tokio::runtime::Handle::try_current().ok(),
             agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
             host,
             runtime,
+            runtime_required,
             input_runtime,
+            disabled_modes,
+            removed_features,
             persist_runtime,
             persist_required,
             environment,
             codex_config,
-            services: services::Services::default(),
+            services: services::Services::new(terminal_owner.clone()),
             views,
-            expansion: expansion::State::default(),
-            inventory: inventory::Inventory::default(),
+            expansion: expansion::State::scoped(terminal_owner.clone()),
+            inventory,
             autonomy: autonomy::Queues::default(),
             peering: peering::Registry::default(),
             this: core.clone(),
         }),
-        turns: Mutex::new(BTreeMap::new()),
-        sessions: Mutex::new(BTreeMap::new()),
+        initialized_threads: Mutex::default(),
         workspace_before: Mutex::new(BTreeMap::new()),
         worktrees: Mutex::new(BTreeMap::new()),
         pending: Mutex::new(BTreeMap::new()),
@@ -480,8 +578,23 @@ fn initialize(
         child_errors: Mutex::new(BTreeMap::new()),
         settled: Mutex::new(BTreeMap::new()),
         elicitations: Mutex::default(),
-        provider_switches: Mutex::default(),
     });
+    Ok(extension)
+}
+
+fn initialize(
+    registry: &mut ExtensionRegistryBuilder<Config>,
+    host: Arc<Host>,
+) -> Result<Arc<Mods>, String> {
+    let registration =
+        codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
+    let extension = create_owner(host, Arc::default(), None)?;
+    let required = extension
+        .core
+        .runtime
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .required_surfaces();
     let dispatcher = intercept::dispatcher(&extension.core);
     registration
         .install(dispatcher.clone())
@@ -526,6 +639,7 @@ fn publish(
     runtime: &mut ModHost,
     host: &Host,
     views: &view::Views,
+    terminal_owner: bool,
     event: &str,
     ledger: Value,
     active: impl Fn() -> bool,
@@ -591,6 +705,9 @@ fn publish(
         rendered_ms,
         state_fingerprint,
     );
+    if terminal_owner {
+        return;
+    }
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
     codex_features::set_removed(
@@ -692,6 +809,7 @@ impl Core {
         let runtime = self.runtime.clone();
         let host = self.host.clone();
         let views = self.views.clone();
+        let terminal_owner = self.terminal_owner.is_some();
         let cancelled = Arc::new(AtomicBool::new(false));
         let _cancellation = Cancellation(cancelled.clone());
         let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
@@ -749,9 +867,15 @@ impl Core {
             let Ok(mut runtime) = runtime.lock() else {
                 return fragments;
             };
-            publish(&mut runtime, &host, &views, event, ledger, || {
-                !flag.load(Ordering::Acquire)
-            });
+            publish(
+                &mut runtime,
+                &host,
+                &views,
+                terminal_owner,
+                event,
+                ledger,
+                || !flag.load(Ordering::Acquire),
+            );
             if let Some(error) = runtime.status()["reload_error"].as_str() {
                 fragments.push(PromptFragment::developer_capability(
                     format!("Mod reload failed; previous eligible mods retained: {error}"),
@@ -1061,65 +1185,150 @@ impl Mods {
     }
 }
 
+#[derive(Clone)]
+struct NativeConfigBaseline {
+    base: (bool, bool, Option<usize>),
+    applied: (bool, bool, Option<usize>),
+}
+
+impl Core {
+    fn refresh_native_configuration(&self) -> Result<(), String> {
+        let mut runtime = self
+            .input_runtime
+            .lock()
+            .map_err(|_| "mod_runtime_poisoned")?;
+        runtime
+            .refresh(&|| true)
+            .map_err(|error| error.to_string())?;
+        *self
+            .removed_features
+            .lock()
+            .map_err(|_| "mod_configuration_poisoned")? =
+            codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls())
+                .removed_features();
+        Ok(())
+    }
+
+    fn apply_native_configuration(&self, config: &mut Config) -> Result<(), String> {
+        let current = (
+            config.update_plan_enabled,
+            config.agent_completion_wake,
+            config.tool_output_token_limit,
+        );
+        let mut base = current;
+        if let Some(previous) = config
+            .extension_baselines
+            .data
+            .get::<NativeConfigBaseline>()
+        {
+            if current.0 == previous.applied.0 {
+                base.0 = previous.base.0;
+            }
+            if current.1 == previous.applied.1 {
+                base.1 = previous.base.1;
+            }
+            if current.2 == previous.applied.2 {
+                base.2 = previous.base.2;
+            }
+        }
+        let keys = self
+            .codex_config
+            .lock()
+            .map_err(|_| "mod_configuration_poisoned")?;
+        config.update_plan_enabled = base.0 || keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN);
+        config.agent_completion_wake =
+            base.1 || keys.contains(codex_omd::CODEX_CONFIG_COMPLETION_WAKE);
+        config.tool_output_token_limit = if keys.contains(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE)
+        {
+            Some(
+                base.2
+                    .unwrap_or_default()
+                    .max(codex_omd::RAISED_TOOL_OUTPUT_TOKENS),
+            )
+        } else {
+            base.2
+        };
+        let applied = (
+            config.update_plan_enabled,
+            config.agent_completion_wake,
+            config.tool_output_token_limit,
+        );
+        config
+            .extension_baselines
+            .data
+            .insert(NativeConfigBaseline { base, applied });
+        Ok(())
+    }
+}
+
 impl codex_extension_api::ConfigContributor<Config> for Mods {
+    fn prepare_turn_config(
+        &self,
+        config: &mut Config,
+        thread_store: &ExtensionData,
+        turn_store: &ExtensionData,
+    ) -> Result<(), String> {
+        let selected = turn_store
+            .get::<codex_protocol::turn_input::TerminalOwner>()
+            .as_deref()
+            .map(|owner| clients::running_owner(owner, thread_store))
+            .transpose()?;
+        if let Some(owner) = selected.as_ref() {
+            turn_store.insert_arc(owner.clone());
+        }
+        let this = selected.as_deref().unwrap_or(self);
+        this.refresh_native_configuration()?;
+        let removed = this
+            .removed_features
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        config
+            .features
+            .set_removed(removed)
+            .map_err(|error| error.to_string())?;
+        this.apply_native_configuration(config)
+    }
+
     fn prepare_thread_config(
         &self,
         config: &mut Config,
         thread: Option<&str>,
         forked_from: Option<&str>,
+        thread_init: &codex_extension_api::ExtensionDataInit,
     ) -> Result<(), String> {
-        let mut denied = Vec::new();
-        for path in self.host.protected_paths() {
-            if path
-                .canonicalize()
-                .map_err(|_| "protected_path_unavailable")?
-                != path
-                || path.starts_with(&self.host.repository)
-            {
-                return Err("protected_mod_path_must_be_canonical_and_external".into());
+        let owner = thread_init.get::<codex_protocol::turn_input::TerminalOwner>();
+        let selected = match (
+            owner,
+            thread_init.get::<codex_extension_api::ThreadOwnedTerminal>(),
+        ) {
+            (Some(owner), Some(lifetime)) => {
+                let (mods, first) = clients::hold_native_owner(&owner, thread)?;
+                if first {
+                    let owner = owner.clone();
+                    lifetime.on_drop(move || clients::release_native_owner(&owner, None));
+                }
+                Some((mods, Some(owner)))
             }
-            denied.push(
-                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
-                    .map_err(|_| "protected_path_unavailable")?,
-            );
-        }
-        config.permissions.sandbox_denied_paths = denied;
-        config.model_provider.supports_websockets = false;
-        if let Ok(keys) = self.codex_config.lock() {
-            if keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
-                config.update_plan_enabled = true;
-            }
-            if keys.contains(codex_omd::CODEX_CONFIG_COMPLETION_WAKE) {
-                config.agent_completion_wake = true;
-            }
-            if keys.contains(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE) {
-                config.tool_output_token_limit = Some(
-                    config
-                        .tool_output_token_limit
-                        .unwrap_or_default()
-                        .max(codex_omd::RAISED_TOOL_OUTPUT_TOKENS),
-                );
-            }
-        }
-        let mut runtime = match self.runtime.try_lock() {
-            Ok(runtime) => runtime,
-            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
-            Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
+            (owner, _) => owner
+                .as_deref()
+                .map(clients::ensure_owner)
+                .transpose()?
+                .map(|mods| (mods, None)),
         };
-        if let (Some(thread), Some(parent)) = (thread, forked_from)
-            && let Err(error) =
-                codex_omd::data_store::fork_thread_data(&self.host.root, parent, thread)
-            && error.kind() != std::io::ErrorKind::AlreadyExists
+        let held = selected.as_ref().and_then(|(_, owner)| owner.clone());
+        let result = self.prepare_owned_thread_config(
+            config,
+            thread,
+            forked_from,
+            selected.as_ref().map(|(mods, _)| mods.as_ref()),
+        );
+        if result.is_err()
+            && let (Some(owner), Some(thread)) = (held, thread)
         {
-            self.views.diagnostic(
-                &self.host,
-                "thread_store",
-                Some(format!("fork copy failed: {error}")),
-            );
+            clients::release_native_owner(&owner, Some(thread));
         }
-        let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
-        self.compaction_decision(&mut runtime, config)?;
-        self.routing_decision(&mut runtime, config)
+        result
     }
 
     fn on_config_changed(
@@ -1128,26 +1337,53 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         thread_store: &codex_extension_api::ExtensionData,
         previous: &Config,
         next: &Config,
+        terminal_owner: Option<&codex_protocol::turn_input::TerminalOwner>,
     ) {
+        let selected = match terminal_owner {
+            Some(owner) => clients::for_owner(owner),
+            None => clients::for_store(thread_store),
+        };
+        if terminal_owner.is_some() && selected.is_none() {
+            return;
+        }
+        let this = selected.as_deref().unwrap_or(self);
         if previous.model_provider_id != next.model_provider_id
             && let Some(lead) = thread_store.get::<Lead>()
             && lead.owner == "lead"
         {
             let thread = lead.thread.to_string();
-            let running = self
+            let running = this
                 .turns
                 .lock()
                 .is_ok_and(|turns| turns.contains_key(&thread));
             if !running {
-                self.switch_ledger_provider(&lead, next);
-            } else if let Ok(mut switches) = self.provider_switches.lock() {
+                this.switch_ledger_provider(&lead, next);
+            } else if let Ok(mut switches) = this.provider_switches.lock() {
                 switches.insert(thread, next.clone());
             }
         }
         if lead_thread(thread_store)
             && let Some(change) = settings_change(&settings_view(previous), &settings_view(next))
         {
-            expansion::broadcast(&self.expansion, "thread_settings", change);
+            let Some(lead) = thread_store.get::<Lead>() else {
+                return;
+            };
+            let mut recipients = if terminal_owner.is_none() {
+                clients::cores_for_thread(lead.thread)
+            } else {
+                Vec::new()
+            };
+            if !recipients.iter().any(|core| Arc::ptr_eq(core, &this.core)) {
+                recipients.push(this.core.clone());
+            }
+            for core in recipients {
+                expansion::broadcast_thread(
+                    &core.expansion,
+                    lead.thread,
+                    "thread_settings",
+                    change.clone(),
+                );
+            }
         }
     }
 }
@@ -1239,11 +1475,13 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnAbortInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            self.release_pending(thread_id(input.thread_store));
-            if let Ok(mut errors) = self.child_errors.lock() {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.release_pending(thread_id(input.thread_store));
+            if let Ok(mut errors) = this.child_errors.lock() {
                 errors.remove(input.thread_store.level_id());
             }
-            self.agent_turn(input.thread_store, input.turn_store, "aborted", Value::Null);
+            this.agent_turn(input.thread_store, input.turn_store, "aborted", Value::Null);
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1251,26 +1489,26 @@ impl TurnLifecycleContributor for Mods {
             else {
                 return;
             };
-            self.views.diagnostic(&self.host, "turn_evidence", None);
+            this.views.diagnostic(&this.host, "turn_evidence", None);
             lead.session.processes.cleanup();
             lead.session.access.cleanup();
-            self.autonomy.turn_ended(
-                &self.core,
+            this.autonomy.turn_ended(
+                &this.core,
                 &lead,
                 matches!(
                     input.reason,
                     codex_protocol::protocol::TurnAbortReason::Interrupted
                 ),
             );
-            if let Some(turn) = self.take_turn(&lead.thread) {
+            if let Some(turn) = this.take_turn(&lead.thread) {
                 expansion::turn_ended(
-                    &self.core,
+                    &this.core,
                     &lead,
                     "aborted",
                     Some(format!("{:?}", input.reason)),
                     None,
                 );
-                self.event(
+                this.event(
                     "turn_end",
                     json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}),
                     Some(&*lead),
@@ -1285,17 +1523,19 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnErrorInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            self.release_pending(thread_id(input.thread_store));
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.release_pending(thread_id(input.thread_store));
             let failure =
                 agents::classify_error(&Some(input.error), &input.error_details.to_string());
             if let Some(thread) = thread_id(input.thread_store)
                 && lead_thread(input.thread_store)
-                && let Ok(mut turns) = self.turns.lock()
+                && let Ok(mut turns) = this.turns.lock()
                 && let Some(turn) = turns.get_mut(&thread)
             {
                 turn.error = Some(failure);
             } else if !lead_thread(input.thread_store)
-                && let Ok(mut errors) = self.child_errors.lock()
+                && let Ok(mut errors) = this.child_errors.lock()
             {
                 errors.insert(input.thread_store.level_id().to_owned(), failure);
             }
@@ -1307,13 +1547,15 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnStopInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            self.release_pending(thread_id(input.thread_store));
-            let failed = self
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.release_pending(thread_id(input.thread_store));
+            let failed = this
                 .child_errors
                 .lock()
                 .ok()
                 .and_then(|mut errors| errors.remove(input.thread_store.level_id()));
-            self.agent_turn(
+            this.agent_turn(
                 input.thread_store,
                 input.turn_store,
                 if failed.is_some() {
@@ -1330,8 +1572,8 @@ impl TurnLifecycleContributor for Mods {
             else {
                 return;
             };
-            self.autonomy.turn_ended(&self.core, &lead, false);
-            let Some(turn) = self.take_turn(&lead.thread) else {
+            this.autonomy.turn_ended(&this.core, &lead, false);
+            let Some(turn) = this.take_turn(&lead.thread) else {
                 return;
             };
             let payload = match turn.error {
@@ -1339,7 +1581,7 @@ impl TurnLifecycleContributor for Mods {
                 None => json!({"turn_id":turn.turn_id,"outcome":"completed"}),
             };
             expansion::turn_ended(
-                &self.core,
+                &this.core,
                 &lead,
                 payload["outcome"].as_str().unwrap_or("error"),
                 None,
@@ -1348,7 +1590,7 @@ impl TurnLifecycleContributor for Mods {
             let private = match &turn.evidence {
                 Some(cursor) => {
                     evidence::finish(
-                        &self.core,
+                        &this.core,
                         &lead,
                         cursor,
                         &turn.turn_id,
@@ -1358,9 +1600,9 @@ impl TurnLifecycleContributor for Mods {
                 }
                 None => Ok(BTreeMap::new()),
             };
-            self.views
-                .diagnostic(&self.host, "turn_evidence", private.as_ref().err().cloned());
-            self.event_with_private(
+            this.views
+                .diagnostic(&this.host, "turn_evidence", private.as_ref().err().cloned());
+            this.event_with_private(
                 "turn_end",
                 payload,
                 Some(&*lead),
@@ -1375,7 +1617,9 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnContinueInput<'a>,
     ) -> ExtensionFuture<'a, Option<codex_extension_api::TurnContinuation>> {
         Box::pin(async move {
-            let required = (*self.expansion.turn_stop.lock().ok()?)?;
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            let required = (*this.expansion.turn_stop.lock().ok()?)?;
             if input.continued >= autonomy::CONTINUATIONS {
                 return None;
             }
@@ -1389,13 +1633,13 @@ impl TurnLifecycleContributor for Mods {
                 "error": input.error.map(|error| error.chars().take(2048).collect::<String>()),
                 "message": input.last_agent_message.map(|message| message.chars().take(8192).collect::<String>()),
                 "continued": input.continued, "limit": autonomy::CONTINUATIONS,
-                "provenance": self.autonomy.running(&thread).map(|owner| json!({"kind": "mod", "package": owner}))});
+                "provenance": this.autonomy.running(&thread).map(|owner| json!({"kind": "mod", "package": owner}))});
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let chain = intercept::chain(
-                self.core.clone(),
+                this.core.clone(),
                 lead,
-                self.runtime.clone(),
+                this.runtime.clone(),
                 "turn_stop",
                 required,
                 payload,
@@ -1407,8 +1651,8 @@ impl TurnLifecycleContributor for Mods {
             let chain = match chain {
                 Ok(chain) => chain,
                 Err(error) => {
-                    self.views.diagnostic(
-                        &self.host,
+                    this.views.diagnostic(
+                        &this.host,
                         "turn_stop",
                         Some(format!("{error}; the turn ended")),
                     );
@@ -1420,7 +1664,7 @@ impl TurnLifecycleContributor for Mods {
                 .answered_by
                 .clone()
                 .unwrap_or_else(|| intercept::settled_by(&chain));
-            let (runtime, id) = (self.runtime.clone(), owner.clone());
+            let (runtime, id) = (this.runtime.clone(), owner.clone());
             let limit = tokio::task::spawn_blocking(move || {
                 runtime
                     .lock()
@@ -1432,7 +1676,7 @@ impl TurnLifecycleContributor for Mods {
             .await
             .ok()
             .flatten()?;
-            if !self
+            if !this
                 .autonomy
                 .continue_turn(&thread, input.turn_id, &owner, limit)
             {
@@ -1454,6 +1698,8 @@ impl TurnLifecycleContributor for Mods {
         item: &'a codex_protocol::items::TurnItem,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let selected = clients::for_store(turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let thread = thread_store.level_id();
             if let codex_protocol::items::TurnItem::AgentMessage(message) = item {
                 let text = message
@@ -1463,37 +1709,56 @@ impl TurnLifecycleContributor for Mods {
                         codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
                     })
                     .collect::<String>();
-                if self.inventory.contains(thread) {
-                    self.inventory.answer(thread, &text);
+                if this.inventory.contains(thread) {
+                    this.inventory.answer(thread, &text);
                 }
                 if let Some(lead) = ThreadId::from_string(thread)
                     .ok()
-                    .and_then(|thread| self.core.expansion.thread(thread))
+                    .and_then(|thread| this.core.expansion.thread(thread))
                 {
-                    self.core.event("assistant_message", json!({"thread_id": thread, "turn_id": turn_store.level_id(), "message_id": format!("{}:{}", turn_store.level_id(), message.id), "text": text.chars().take(8192).collect::<String>(), "truncated": text.chars().count() > 8192}), Some(&lead)).await;
+                    this.core.event("assistant_message", json!({"thread_id": thread, "turn_id": turn_store.level_id(), "message_id": format!("{}:{}", turn_store.level_id(), message.id), "text": text.chars().take(8192).collect::<String>(), "truncated": text.chars().count() > 8192}), Some(&lead)).await;
                 }
             }
         })
     }
 
-    fn disabled_collaboration_modes(&self) -> Vec<String> {
-        // Input interception reloads this runtime before the core reads the turn's modes.
-        match self.input_runtime.try_lock() {
-            Ok(runtime) => runtime
+    fn disabled_collaboration_modes(
+        &self,
+        terminal_owner: Option<&codex_protocol::turn_input::TerminalOwner>,
+    ) -> Vec<String> {
+        if let Some(owner) = terminal_owner
+            .and_then(clients::for_owner)
+            .filter(|owner| !Arc::ptr_eq(&owner.core, &self.core))
+        {
+            return owner.disabled_collaboration_modes(terminal_owner);
+        }
+        if let Ok(mut runtime) = self.input_runtime.try_lock()
+            && runtime.refresh(&|| true).is_ok()
+        {
+            let modes: Vec<_> = runtime
                 .builtin_controls()
                 .into_iter()
                 .flat_map(|(_, controls)| controls.modes.disable)
-                .collect(),
-            Err(_) => codex_omd::BuiltinSnapshot::read(&self.host.root, &self.host.repository)
+                .collect();
+            *self
                 .disabled_modes
-                .into_values()
-                .flatten()
-                .collect(),
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = modes.clone();
+            return modes;
         }
+        self.disabled_modes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
-    fn rewrites_persisted_text(&self) -> bool {
-        self.core
+    fn rewrites_persisted_text(
+        &self,
+        turn_store: Option<&codex_extension_api::ExtensionData>,
+    ) -> bool {
+        let selected = turn_store.and_then(clients::for_store);
+        let this = selected.as_deref().unwrap_or(self);
+        this.core
             .persist_runtime
             .try_lock()
             .map_or(true, |runtime| {
@@ -1505,11 +1770,16 @@ impl TurnLifecycleContributor for Mods {
         &'a self,
         input: codex_extension_api::PersistedTextInput<'a>,
     ) -> ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>> {
-        Box::pin(persisted::rewrite(
-            self.core.persist_runtime.clone(),
-            self.core.persist_required.clone(),
-            input,
-        ))
+        Box::pin(async move {
+            let selected = input.turn_store.and_then(clients::for_store);
+            let this = selected.as_deref().unwrap_or(self);
+            persisted::rewrite(
+                this.core.persist_runtime.clone(),
+                this.core.persist_required.clone(),
+                input,
+            )
+            .await
+        })
     }
 
     fn intercept_user_input<'a>(
@@ -1517,19 +1787,42 @@ impl TurnLifecycleContributor for Mods {
         input: UserInputInterceptInput<'a>,
     ) -> ExtensionFuture<'a, UserInputDecision> {
         Box::pin(async move {
+            let selected = match input
+                .terminal_owner
+                .as_ref()
+                .map(|owner| clients::running_owner(owner, input.thread_store))
+                .transpose()
+            {
+                Ok(selected) => selected,
+                Err(error) => {
+                    return UserInputDecision::Deny {
+                        notice: format!("Terminal mod configuration is unavailable: {error}"),
+                    };
+                }
+            };
+            let this = selected.as_deref().unwrap_or(self);
             if !lead_thread(input.thread_store) {
                 return UserInputDecision::Keep;
             }
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return UserInputDecision::Keep;
             };
-            let runtime = self.input_runtime.clone();
+            this.expansion.thread_started(&lead);
+            if this
+                .expansion
+                .current()
+                .as_ref()
+                .is_none_or(|current| current.thread != lead.thread)
+            {
+                expansion::lead_started(&this.core, &lead, None);
+            }
+            let runtime = this.input_runtime.clone();
             let thread = thread_id(input.thread_store);
-            let provenance = self
+            let provenance = this
                 .autonomy
                 .take_submitting(&lead.thread.to_string(), input.text);
             if provenance.is_none() {
-                self.autonomy.user_turn(&lead.thread.to_string());
+                this.autonomy.user_turn(&lead.thread.to_string());
             }
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
@@ -1557,12 +1850,26 @@ impl TurnLifecycleContributor for Mods {
             };
             let boundary = runtime.clone();
             let boundary_cancelled = cancelled.clone();
+            let disabled_modes = this.disabled_modes.clone();
+            let removed_features = this.removed_features.clone();
             let intercepting = tokio::task::spawn_blocking(move || {
                 let _thread = codex_omd::StateThread::enter(scoped);
                 let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
                 runtime
                     .refresh(&|| !boundary_cancelled.load(Ordering::Acquire))
                     .map_err(|error| error.to_string())?;
+                *removed_features
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls())
+                        .removed_features();
+                *disabled_modes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = runtime
+                    .builtin_controls()
+                    .into_iter()
+                    .flat_map(|(_, controls)| controls.modes.disable)
+                    .collect();
                 Ok::<_, String>(runtime.intercepts("input"))
             })
             .await
@@ -1587,9 +1894,9 @@ impl TurnLifecycleContributor for Mods {
                 None => json!({"caller":"user","thread_id":thread}),
             };
             let chain = intercept::chain(
-                self.core.clone(),
+                this.core.clone(),
                 lead,
-                self.input_runtime.clone(),
+                this.input_runtime.clone(),
                 "input",
                 required,
                 payload,
@@ -1634,14 +1941,22 @@ impl TurnLifecycleContributor for Mods {
         &'a self,
         input: CompactionLifecycleInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
-        Box::pin(self.compaction("compaction_start", input))
+        Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.compaction("compaction_start", input).await
+        })
     }
 
     fn on_compaction_end<'a>(
         &'a self,
         input: CompactionLifecycleInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
-        Box::pin(self.compaction("compaction_end", input))
+        Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.compaction("compaction_end", input).await
+        })
     }
 
     fn on_tool_batch_end<'a>(
@@ -1649,6 +1964,8 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::ToolBatchEndInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1657,7 +1974,7 @@ impl TurnLifecycleContributor for Mods {
                 return;
             };
             let calls = {
-                let mut settled = self.settled.lock().ok();
+                let mut settled = this.settled.lock().ok();
                 input
                     .call_ids
                     .iter()
@@ -1672,7 +1989,7 @@ impl TurnLifecycleContributor for Mods {
                     })
                     .collect::<Vec<_>>()
             };
-            self.event(
+            this.event(
                 "tool_batch_end",
                 json!({"turn_id": input.turn_id, "calls": calls}),
                 Some(&*lead),
@@ -1686,6 +2003,8 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::PromptExpandedInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1693,7 +2012,7 @@ impl TurnLifecycleContributor for Mods {
             else {
                 return;
             };
-            self.event(
+            this.event(
                 "prompt_expanded",
                 json!({"turn_id": input.turn_id, "items": input.items}),
                 Some(&*lead),
@@ -1707,6 +2026,8 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::InstructionsLoadedInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let selected = input.turn_store.and_then(clients::for_store);
+            let this = selected.as_deref().unwrap_or(self);
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1714,7 +2035,7 @@ impl TurnLifecycleContributor for Mods {
             else {
                 return;
             };
-            self.event(
+            this.event(
                 "instructions_loaded",
                 json!({"kind": input.kind, "source": input.source, "sha256": input.sha256,
                     "bytes": input.bytes, "reason": input.reason}),
@@ -1728,61 +2049,93 @@ impl TurnLifecycleContributor for Mods {
         &'a self,
         input: codex_extension_api::ElicitationInterceptInput<'a>,
     ) -> ExtensionFuture<'a, Option<codex_extension_api::ElicitationAnswer>> {
-        Box::pin(self.elicitation_answer(input))
+        Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.elicitation_answer(input).await
+        })
     }
 
     fn on_elicitation_result<'a>(
         &'a self,
         input: codex_extension_api::ElicitationResultInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
-        Box::pin(self.elicitation_result(input))
+        Box::pin(async move {
+            let selected = input.turn_store.and_then(clients::for_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.elicitation_result(input).await
+        })
     }
 
     fn plan_compaction<'a>(
         &'a self,
         input: codex_extension_api::CompactionInterceptInput<'a>,
     ) -> ExtensionFuture<'a, codex_extension_api::CompactionPlan> {
-        Box::pin(self.compaction_plan(input))
+        Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.compaction_plan(input).await
+        })
     }
 
     fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            self.inventory.turn_started(input.thread_store.level_id());
-            self.set_provider_worker_idle(input.thread_store.level_id(), false);
-            let Some(lead) = input
-                .thread_store
-                .get::<Lead>()
-                .filter(|lead| lead.owner == "lead")
-            else {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.inventory.turn_started(input.thread_store.level_id());
+            this.set_provider_worker_idle(input.thread_store.level_id(), false);
+            let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
-            self.views
-                .presentation(&lead.thread.to_string(), Some("started"));
-            let switch = self
-                .provider_switches
-                .lock()
-                .ok()
-                .and_then(|mut switches| switches.remove(&lead.thread.to_string()));
-            if let Some(config) = switch {
-                self.switch_ledger_provider(&lead, &config);
+            if lead.owner == "lead" {
+                let switch = this
+                    .provider_switches
+                    .lock()
+                    .ok()
+                    .and_then(|mut switches| switches.remove(&lead.thread.to_string()));
+                if let Some(config) = switch {
+                    this.switch_ledger_provider(&lead, &config);
+                }
             }
+            if let Err(error) = this
+                .host
+                .accounts
+                .capture_task(&lead.thread.to_string(), input.turn_store)
+            {
+                this.host.accounts.refuse(&lead.thread.to_string(), error);
+                return;
+            }
+            if lead.owner != "lead" {
+                return;
+            }
+            this.expansion.thread_started(&lead);
+            if this
+                .expansion
+                .current()
+                .as_ref()
+                .is_none_or(|current| current.thread != lead.thread)
+            {
+                expansion::lead_started(&this.core, &lead, None);
+            }
+            this.views
+                .presentation(&lead.thread.to_string(), Some("started"));
             // Batches settle within their turn; calls an aborted turn left behind are dropped here.
-            if let Ok(mut settled) = self.settled.lock() {
+            if let Ok(mut settled) = this.settled.lock() {
                 let thread = lead.thread.to_string();
                 settled.retain(|(owner, _), _| *owner != thread);
             }
-            let runtime = self.runtime.clone();
+            let runtime = this.runtime.clone();
             let session = lead.session.clone();
             let host = lead.host.clone();
             let refreshed =
                 tokio::task::spawn_blocking(move || refresh_turn(&host, &session, &runtime))
                     .await
                     .unwrap_or_else(|error| Some(error.to_string()));
-            self.views
-                .diagnostic(&self.host, "session_refresh", refreshed);
-            self.publish_workspace_changes(&lead).await;
-            let evidence = evidence::begin(&self.core, &lead).await;
-            if let Ok(mut turns) = self.turns.lock() {
+            this.views
+                .diagnostic(&this.host, "session_refresh", refreshed);
+            this.publish_workspace_changes(&lead).await;
+            let evidence = evidence::begin(&this.core, &lead).await;
+            if let Ok(mut turns) = this.turns.lock() {
                 turns.insert(
                     lead.thread.to_string(),
                     TurnRecord {
@@ -1792,8 +2145,8 @@ impl TurnLifecycleContributor for Mods {
                     },
                 );
             }
-            expansion::turn_started(&self.core, &lead, input.turn_id).await;
-            self.event("turn_start", json!({"turn_id":input.turn_id}), Some(&*lead))
+            expansion::turn_started(&this.core, &lead, input.turn_id).await;
+            this.event("turn_start", json!({"turn_id":input.turn_id}), Some(&*lead))
                 .await;
         })
     }
@@ -1805,6 +2158,8 @@ impl ContextContributor for Mods {
         input: TurnContextContributionInput<'a>,
     ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
         Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1818,7 +2173,7 @@ impl ContextContributor for Mods {
                 };
                 *current = profile.clone();
             }
-            self.event(
+            this.event(
                 "context",
                 json!({"thread_id": input.thread_id.to_string(), "turn_id": input.turn_id,
                     "ledger": lead.ledger()}),
@@ -1837,7 +2192,9 @@ impl codex_extension_api::TokenUsageContributor for Mods {
         _turn_store: &'a codex_extension_api::ExtensionData,
         token_usage: &'a codex_protocol::protocol::TokenUsageInfo,
     ) -> ExtensionFuture<'a, ()> {
-        self.inventory
+        let selected = clients::for_store(_turn_store);
+        let this = selected.as_deref().unwrap_or(self);
+        this.inventory
             .tokens(thread_store.level_id(), &token_usage.total_token_usage);
         Box::pin(std::future::ready(()))
     }
@@ -1858,18 +2215,23 @@ impl ThreadLifecycleContributor<Config> for Mods {
         input: ThreadStartInput<'a, Config>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let selected = clients::for_store(input.thread_store);
+            if let Some(owner) = selected.as_ref() {
+                input.thread_store.insert_arc(owner.clone());
+            }
+            let this = selected.as_deref().unwrap_or(self);
             let Ok(thread) = ThreadId::from_string(input.thread_store.level_id()) else {
                 return;
             };
-            self.native_agent_started(thread, input.session_source, input.thread_store);
-            let host = self.host_for(input.config.cwd.as_path());
+            this.native_agent_started(thread, input.session_source, input.thread_store);
+            let host = this.host_for(input.config.cwd.as_path());
             if reports_directory(
                 input.session_source,
                 input.config.cwd.as_path(),
                 input.config.codex_home.as_path(),
             ) {
-                self.views.diagnostic(
-                    &self.host,
+                this.views.diagnostic(
+                    &this.host,
                     "directory",
                     host.is_none().then(|| {
                         format!(
@@ -1882,7 +2244,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             let Some(host) = host else {
                 return;
             };
-            if self
+            if this
                 .host
                 .accounts
                 .by_thread
@@ -1898,7 +2260,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 _ => None,
             };
             let parent_session = parent.and_then(|parent| {
-                self.sessions
+                this.sessions
                     .lock()
                     .ok()?
                     .get(&parent.to_string())
@@ -1928,8 +2290,8 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 ) {
                     Ok(session) => session,
                     Err(error) => {
-                        self.views.diagnostic(
-                            &self.host,
+                        this.views.diagnostic(
+                            &this.host,
                             "session",
                             Some(format!("OMD session unavailable: {error}")),
                         );
@@ -1969,8 +2331,8 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 None => host.enroll(thread, &session, &owner, route.as_ref(), Some(input.config)),
             };
             if let Err(error) = enrolled {
-                self.views.diagnostic(
-                    &self.host,
+                this.views.diagnostic(
+                    &this.host,
                     "session",
                     Some(format!("OMD ledger enrollment failed: {error}")),
                 );
@@ -1993,11 +2355,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
                         ))
                     })
             {
-                self.inventory
+                this.inventory
                     .describe(&thread.to_string(), &provider, &model, billing);
             }
             if owner == "lead" {
-                let runtime = self.runtime.clone();
+                let runtime = this.runtime.clone();
                 let documents = tokio::task::spawn_blocking(move || {
                     runtime
                         .lock()
@@ -2015,11 +2377,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 }
                 let _ = session.persist_contract();
             }
-            if let Ok(mut sessions) = self.sessions.lock() {
+            if let Ok(mut sessions) = this.sessions.lock() {
                 sessions.retain(|_, session| session.strong_count() > 0);
                 sessions.insert(thread.to_string(), Arc::downgrade(&session));
             }
-            if let Ok(mut invokers) = self.expansion.invokers.lock() {
+            if let Ok(mut invokers) = this.expansion.invokers.lock() {
                 invokers.insert(
                     thread.to_string(),
                     input
@@ -2038,19 +2400,19 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 depth,
             });
             if let Some(lead) = input.thread_store.get::<Lead>() {
-                self.core.expansion.thread_started(&lead);
+                this.core.expansion.thread_started(&lead);
             }
             if owner == "lead" {
                 if let Some(lead) = input.thread_store.get::<Lead>() {
-                    self.views.start_thread(input.thread_store);
+                    this.views.start_thread(input.thread_store);
                     let forked = input
                         .thread_store
                         .get::<codex_extension_api::ForkedFromThread>()
                         .map(|forked| forked.0);
-                    expansion::lead_started(&self.core, &lead, forked);
-                    peering::start(&self.core, lead.thread);
+                    expansion::lead_started(&this.core, &lead, forked);
+                    peering::start(&this.core, lead.thread);
                 }
-                self.event(
+                this.event(
                     "session",
                     json!({"phase":"start","thread_id":thread.to_string()}),
                     None,
@@ -2065,51 +2427,64 @@ impl ThreadLifecycleContributor<Config> for Mods {
         input: ThreadReadyInput<'a, Config>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let selected = clients::for_store(input.thread_store);
+            let this = selected.as_deref().unwrap_or(self);
             if let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
                 .filter(|lead| lead.owner == "lead")
             {
-                self.event("start", Value::Null, Some(&*lead)).await;
+                let first = this
+                    .initialized_threads
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(lead.thread.to_string());
+                if first {
+                    this.event("start", Value::Null, Some(&*lead)).await;
+                }
             }
         })
     }
 
     fn on_thread_resume<'a>(&'a self, input: ThreadResumeInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let selected = clients::for_store(input.thread_store);
+            let this = selected.as_deref().unwrap_or(self);
             if let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
                 .filter(|lead| lead.owner == "lead")
             {
-                self.views
+                this.views
                     .presentation(&lead.thread.to_string(), Some("resumed"));
-                self.event(
+                this.event(
                     "session",
                     json!({"phase":"resume","thread_id":lead.thread.to_string()}),
                     None,
                 )
                 .await;
-                let payload = expansion::resume_payload(&self.core, &lead).await;
-                self.event("resume", payload, Some(&*lead)).await;
+                let payload = expansion::resume_payload(&this.core, &lead).await;
+                this.event("resume", payload, Some(&*lead)).await;
             }
         })
     }
 
     fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let selected = clients::for_store(input.thread_store);
+            let this = selected.as_deref().unwrap_or(self);
             if let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
                 .filter(|lead| lead.owner == "lead")
             {
-                self.event(
+                this.event(
                     "session",
                     json!({"phase":"idle","thread_id":lead.thread.to_string(),"cause":format!("{:?}", input.cause)}),
                     None,
                 )
                 .await;
-                self.event(
+                this.event(
                     "idle",
                     json!({"cause": format!("{:?}", input.cause)}),
                     Some(&*lead),
@@ -2121,8 +2496,20 @@ impl ThreadLifecycleContributor<Config> for Mods {
 
     fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let selected = clients::for_store(input.thread_store);
+            let this = selected.as_deref().unwrap_or(self);
             let thread = input.thread_store.level_id();
-            let status = match self
+            if input
+                .thread_store
+                .get::<codex_extension_api::ThreadOwnedTerminal>()
+                .is_some()
+                && let Some(owner) = input
+                    .thread_store
+                    .get::<codex_protocol::turn_input::TerminalOwner>()
+            {
+                clients::release_native_owner(&owner, Some(thread));
+            }
+            let status = match this
                 .inventory
                 .list()
                 .into_iter()
@@ -2134,48 +2521,50 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 Some(_) => Some("completed"),
                 None => None,
             };
-            if let Some(record) = status.and_then(|status| self.inventory.end(thread, status, None))
+            if let Some(record) = status.and_then(|status| this.inventory.end(thread, status, None))
             {
-                inventory::notify(&self.runtime, &self.inventory, "end", record);
+                inventory::notify(&this.runtime, &this.inventory, "end", record);
             }
-            self.host.accounts.forget_thread(thread);
+            this.host.accounts.forget_thread(thread);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
-            if let Ok(mut accounts) = self.host.accounts.by_thread.lock()
+            if let Ok(mut accounts) = this.host.accounts.by_thread.lock()
                 && let Some(account) = accounts.remove(&lead.thread.to_string())
                 && crate::provider_worker(&account.owner)
             {
                 let _ = account.task.finish_worker(&account.owner);
             }
-            expansion::release_thread(self, lead.thread);
-            if let Ok(mut invokers) = self.expansion.invokers.lock() {
+            expansion::release_thread(this, lead.thread);
+            if let Ok(mut invokers) = this.expansion.invokers.lock() {
                 invokers.remove(&lead.thread.to_string());
             }
             if lead.owner != "lead" {
-                self.environment.clear(Some(&lead.thread.to_string()), None);
+                this.environment.clear(Some(&lead.thread.to_string()), None);
                 return;
             }
-            self.expansion.forget_inventory(lead.thread);
-            self.inventory.forget_session(&lead.thread.to_string());
-            self.agents.cleanup_session(&lead.session).await;
-            self.agents.cleanup_snapshots(lead.thread);
-            self.services.cleanup_session(&lead.session).await;
-            self.event(
+            this.expansion.forget_inventory(lead.thread);
+            this.inventory.forget_session(&lead.thread.to_string());
+            this.agents.cleanup_session(&lead.session).await;
+            this.agents.cleanup_snapshots(lead.thread);
+            this.services.cleanup_session(&lead.session).await;
+            this.event(
                 "session",
                 json!({"phase":"stop","thread_id":lead.thread.to_string()}),
                 None,
             )
             .await;
-            self.event("stop", Value::Null, Some(&*lead)).await;
-            expansion::release_thread(self, lead.thread);
-            self.environment.clear(Some(&lead.thread.to_string()), None);
+            this.event("stop", Value::Null, Some(&*lead)).await;
+            expansion::release_thread(this, lead.thread);
+            this.environment.clear(Some(&lead.thread.to_string()), None);
             lead.session.processes.cleanup();
             lead.session.power.clear();
-            codex_features::set_removed(
-                &lead.host.repository.to_string_lossy(),
-                Default::default(),
-            );
+            if this.terminal_owner.is_none() {
+                codex_features::set_removed(
+                    &lead.host.repository.to_string_lossy(),
+                    Default::default(),
+                );
+            }
             lead.session.access.cleanup();
             let _ = lead.session.persist_cost_capture();
         })
@@ -2189,6 +2578,8 @@ impl ToolLifecycleContributor for Mods {
 
     fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
@@ -2197,13 +2588,13 @@ impl ToolLifecycleContributor for Mods {
                 _ => None,
             };
             expansion::tool_started(
-                &self.core,
+                &this.core,
                 &lead,
                 input.call_id,
                 &input.tool_name.to_string(),
                 arguments,
             );
-            let runtime = self.runtime.clone();
+            let runtime = this.runtime.clone();
             let repository = lead.host.repository.clone();
             let snapshot = tokio::task::spawn_blocking(move || {
                 let observed = runtime
@@ -2219,7 +2610,7 @@ impl ToolLifecycleContributor for Mods {
             let Some(snapshot) = snapshot else {
                 return;
             };
-            if let Ok(mut before) = self.workspace_before.lock() {
+            if let Ok(mut before) = this.workspace_before.lock() {
                 before.insert(input.call_id.to_owned(), snapshot);
             }
         })
@@ -2230,6 +2621,8 @@ impl ToolLifecycleContributor for Mods {
         input: ToolStartInput<'a>,
     ) -> ExtensionFuture<'a, Result<ToolInterception, String>> {
         Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return Ok(ToolInterception::Continue(None));
             };
@@ -2245,7 +2638,7 @@ impl ToolLifecycleContributor for Mods {
             let invoker = input
                 .thread_store
                 .get_or_init(codex_extension_api::ToolInvokerSlot::default);
-            let invoked_by = self
+            let invoked_by = this
                 .expansion
                 .invoked
                 .lock()
@@ -2261,7 +2654,7 @@ impl ToolLifecycleContributor for Mods {
             };
             if roles::is_spawn(input.tool_name) {
                 roles::spawn_capacity_admitted(
-                    &self.inventory,
+                    &this.inventory,
                     &lead,
                     input.call_id,
                     inventory::SpawnHold::Expiring,
@@ -2277,17 +2670,21 @@ impl ToolLifecycleContributor for Mods {
             };
             let spawn = arguments.is_object()
                 && roles::is_spawn(input.tool_name)
-                && self
+                && this
                     .expansion
                     .agent_spawn
                     .lock()
                     .is_ok_and(|intercepts| intercepts.is_some());
             if !spawn && roles::is_spawn(input.tool_name) {
-                roles::spawn_route_admitted(&lead, arguments["model"].as_str())?;
+                roles::spawn_route_admitted(
+                    &lead,
+                    arguments["model"].as_str(),
+                    this.terminal_owner.as_deref(),
+                )?;
             }
             let surface = if spawn { "agent_spawn" } else { "tool" };
             let payload = if spawn {
-                self.spawn_payload(&lead, &arguments, &lead.host.repository)
+                this.spawn_payload(&lead, &arguments, &lead.host.repository)
             } else {
                 let mut payload = expansion::tool_before_payload(
                     input.turn_store,
@@ -2300,7 +2697,7 @@ impl ToolLifecycleContributor for Mods {
                 payload["agent_id"] = json!(scope_agent_id);
                 payload
             };
-            let runtime = self.runtime.clone();
+            let runtime = this.runtime.clone();
             let observed = json!({"tool":original_tool.to_string(),"arguments":arguments,
                 "call_id":input.call_id,"agent_id":scope_agent_id});
             let thread = lead.thread.to_string();
@@ -2316,9 +2713,9 @@ impl ToolLifecycleContributor for Mods {
             .await
             .map_err(|e| e.to_string())??;
             let (Some(required), values) = intercepting else {
-                self.cleanup_failed(Some(&lead)).await;
+                this.cleanup_failed(Some(&lead)).await;
                 if !spawn {
-                    self.expansion.validate_call(
+                    this.expansion.validate_call(
                         lead.thread,
                         &original_tool.to_string(),
                         &arguments,
@@ -2334,7 +2731,7 @@ impl ToolLifecycleContributor for Mods {
             let (result, results) = std::sync::mpsc::channel::<Result<Value, String>>();
             let (flag, mut reached) = (cancelled.clone(), Some(reached));
             let (core, base_call, dispatcher) = (
-                self.core.clone(),
+                this.core.clone(),
                 input.call_id.to_owned(),
                 tokio::runtime::Handle::current(),
             );
@@ -2435,9 +2832,9 @@ impl ToolLifecycleContributor for Mods {
                 origin["cell_id"] = json!(cell_id);
             }
             let chain = tokio::spawn(intercept::chain(
-                self.core.clone(),
+                this.core.clone(),
                 lead,
-                self.runtime.clone(),
+                this.runtime.clone(),
                 surface,
                 required,
                 payload.clone(),
@@ -2447,7 +2844,7 @@ impl ToolLifecycleContributor for Mods {
             ));
             if let Ok(effective) = reached_at_executor.await {
                 if !spawn
-                    && let Err(error) = self.expansion.validate_call(
+                    && let Err(error) = this.expansion.validate_call(
                         thread_id,
                         effective["tool"].as_str().unwrap_or_default(),
                         &effective["arguments"],
@@ -2459,7 +2856,7 @@ impl ToolLifecycleContributor for Mods {
                     let _ = chain.await;
                     return Err(error);
                 }
-                if let Ok(mut pending) = self.pending.lock() {
+                if let Ok(mut pending) = this.pending.lock() {
                     pending.insert(
                         input.call_id.to_owned(),
                         PendingTool {
@@ -2508,7 +2905,7 @@ impl ToolLifecycleContributor for Mods {
                     reason.chars().take(512).collect::<String>()
                 ));
             }
-            if let Ok(mut answered) = self.answered.lock() {
+            if let Ok(mut answered) = this.answered.lock() {
                 answered.insert(
                     input.call_id.to_owned(),
                     chain.answered_by.clone().unwrap_or(by),
@@ -2534,26 +2931,30 @@ impl ToolLifecycleContributor for Mods {
         input: codex_extension_api::CommandEndInput<'a>,
     ) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             if let Some(lead) = input.thread_store.get::<Lead>() {
-                expansion::command_ended(&self.core, &lead, input.call_id, input.exit_code);
+                expansion::command_ended(&this.core, &lead, input.call_id, input.exit_code);
             }
         })
     }
 
     fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
-            self.inventory.release_spawn(input.call_id);
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
+            this.inventory.release_spawn(input.call_id);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
             if lead.owner == "lead"
-                && let Ok(mut turns) = self.turns.lock()
+                && let Ok(mut turns) = this.turns.lock()
                 && let Some(cursor) = turns
                     .get_mut(&lead.thread.to_string())
                     .and_then(|turn| turn.evidence.as_mut())
                 && cursor.tools.len() < 128
             {
-                let answered_by = self
+                let answered_by = this
                     .answered
                     .lock()
                     .ok()
@@ -2561,7 +2962,7 @@ impl ToolLifecycleContributor for Mods {
                 cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":tool_outcome(input.outcome),"answered_by":answered_by}));
             }
             expansion::tool_finished(
-                &self.core,
+                &this.core,
                 &lead,
                 input.call_id,
                 &input.tool_name.to_string(),
@@ -2569,22 +2970,22 @@ impl ToolLifecycleContributor for Mods {
             );
             let unavailable = format!("tool_result_unavailable: {}", tool_outcome(input.outcome));
             // A chain that only rethrows the tool's own failure is not a mod fault: the model already has that failure.
-            if let Some(Err(error)) = self.resume(input.call_id, Err(unavailable.clone())).await
+            if let Some(Err(error)) = this.resume(input.call_id, Err(unavailable.clone())).await
                 && error != unavailable
             {
-                self.views.diagnostic(
-                    &self.host,
+                this.views.diagnostic(
+                    &this.host,
                     "intercept",
                     Some(format!("{}: {error}", input.call_id)),
                 );
             }
-            let answered_by = self
+            let answered_by = this
                 .answered
                 .lock()
                 .ok()
                 .and_then(|mut answered| answered.remove(input.call_id));
             if lead.owner == "lead"
-                && let Ok(mut settled) = self.settled.lock()
+                && let Ok(mut settled) = this.settled.lock()
             {
                 settled.insert(
                     (lead.thread.to_string(), input.call_id.to_owned()),
@@ -2595,7 +2996,7 @@ impl ToolLifecycleContributor for Mods {
                 );
             }
             let event_lead = (lead.owner == "lead").then_some(&*lead);
-            self.event(
+            this.event(
                 "tool_result",
                 json!({"call_id": input.call_id, "agent_id":agent_id(input.thread_store),
                     "thread_id": lead.thread.to_string(), "tool": input.tool_name.to_string(),
@@ -2605,7 +3006,7 @@ impl ToolLifecycleContributor for Mods {
                 event_lead,
             )
             .await;
-            let before = self
+            let before = this
                 .workspace_before
                 .lock()
                 .ok()
@@ -2623,10 +3024,10 @@ impl ToolLifecycleContributor for Mods {
                 })
                 .await
                 .unwrap_or_else(|error| Err(error.to_string()));
-                self.workspace_change(&lead, "tool", Some(input.call_id), changes)
+                this.workspace_change(&lead, "tool", Some(input.call_id), changes)
                     .await;
             }
-            self.publish_workspace_changes(&lead).await;
+            this.publish_workspace_changes(&lead).await;
         })
     }
 }

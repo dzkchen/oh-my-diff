@@ -289,6 +289,7 @@ export type RenderEvent<C extends RenderComponent = RenderComponent> = C extends
 } : never;
 export type RenderTree = { tree: TerminalComponent[] };
 export type ComponentKey = { kind: 'key'; key: string | null; text: string | null };
+/** Component-relative signed 32-bit coordinates; captured drag and release positions may be negative. */
 export type ComponentPointer = { kind: 'pointer'; column: number; row: number; half?: 0 | 1 | null;
   action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
 /** The region a component module draws: its width in cells, its height in rows (the node's `height`, 0 when it has none), the props of its `module` node, and `post`, which hands the mod's `component_post` hooks at most one value per frame. */
@@ -357,9 +358,11 @@ export type TurnActivity = {
   files: { path: string; before: string | null; after: string | null; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external' }[];
   truncated: boolean;
 };
-export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'npm' | 'selection'; blocked: string | null; installed: boolean; enabled: boolean; required: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; needs_approval: boolean; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; settings: { [key: string]: Json } };
+export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project' | 'managed'; path: string | null; source: 'local' | 'repository' | 'package' | 'npm' | 'selection'; blocked: string | null; installed: boolean; enabled: boolean; required: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; needs_approval: boolean; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; inherited_enabled: boolean; inherited_settings: { [key: string]: Json }; overrides: { enabled?: boolean; settings: { [key: string]: Json } }; settings: { [key: string]: Json } };
 export type PackageSource = { kind: 'local'; path: string } | { kind: 'repository'; repository: string; revision: string; subdirectory?: string } | { kind: 'package'; index: string; id: string; version: string } | { kind: 'npm'; package: string; version?: string; registry?: string; integrity?: string };
-export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust'; id?: string; source?: PackageSource; reference?: string; version?: string; index?: string; scope?: 'user' | 'project' };
+export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust' | 'reset' | 'save-defaults'; id?: string; source?: PackageSource; reference?: string; version?: string; index?: string; /** `enable` and `disable` default to `shared` (saved for every terminal); `terminal` changes only this terminal. `reset` and `save-defaults` act on this terminal's changes and take only `terminal`. */ target?: 'terminal' | 'shared'; scope?: 'user' | 'project' };
+/** `enabled` is null and `settings` empty when nothing differs. */
+export type ConfigurationChanges = { target: 'terminal' | 'shared'; enabled: { before: boolean; after: boolean } | null; settings: { key: string; before: Json; after: Json }[] };
 export type PackageCatalogEntry = { id: string; latest: string; description: string; support: string | null; versions: { version: string; blocked: string | null }[]; installed: string | null };
 export type KeymapAction = `${string}.${string}`;
 export type Declined = { status: 'declined' };
@@ -394,6 +397,7 @@ export interface HostOperations {
   'store.list': { arguments: { prefix?: string; cursor?: string; limit?: number; scope?: StoreScope }; result: { keys: { key: string; revision: number; bytes: number; provenance: StoreProvenance }[]; cursor: string | null; generation: number } };
   'store.export': { arguments: { scope?: StoreScope; cursor?: string }; result: { schema: 1; owner: string; scope: StoreScope; generation: number; entries: Record<string, { value: Json; revision: number; provenance: StoreProvenance }>; cursor: string | null } };
   'store.reset': { arguments: { expected_generation: number; scope?: StoreScope }; result: { generation: number } };
+  /** Evidence is bound to the current thread, repository, mod source and configuration generation under the effective selection. */
   'evidence.write': { arguments: { media_type: 'application/json' | 'text/plain'; content: Json; label?: string } | { media_type: 'image/png' | 'image/jpeg' | 'image/svg+xml' | 'application/octet-stream'; base64: string; label?: string }; result: ResourceRef };
   'evidence.read': { arguments: { reference: ResourceRef; cursor?: number; max_bytes?: number }; result: { reference: ResourceRef; text: string; cursor: number | null; bytes: number } };
   'sessions.list': { arguments: { since?: string; until?: string; cursor?: string; limit?: number }; result: { sessions: SessionSummary[]; cursor: string | null; revision: string; scan_truncated: boolean; unavailable: number; projection: string } };
@@ -496,10 +500,10 @@ export interface HostOperations {
   /** `fields` keeps only those keys of each package. */
   'packages.list': { arguments: { fields: (keyof PackageState)[] } | null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
   'packages.index': { arguments: { index?: string; query?: string; cursor?: string; limit?: number }; result: { index: string; packages: PackageCatalogEntry[]; total: number; cursor: string | null } };
-  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; identity_warning?: string | null } };
+  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; /** `ConfigurationChanges` for this terminal's `enable`, `disable`, `reset` and `save-defaults`. */ changes: Json; grants_added: string[]; identity_warning?: string | null } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };
-  'settings.write': { arguments: { id?: string; values: { [key: string]: Json } }; result: { settings: { [key: string]: Json } } };
+  'settings.write': { arguments: { id?: string; scope?: 'user' | 'project'; values: { [key: string]: Json }; /** Defaults to `shared` (saved for every terminal); `terminal` changes only this terminal, where `reset` drops this terminal's change to a setting. */ target?: 'terminal' | 'shared'; reset?: string[] }; result: { settings: { [key: string]: Json } } };
   'terminal.open': { arguments: { url: string } | { path: string } | { path: string; line?: number; editor: true }; result: { opened: true } | Declined };
   'terminal.prompt': { arguments: { kind: 'confirm'; title: string; message: string } | { kind: 'text'; title: string; message: string; masked?: boolean }
     | { kind: 'choice'; title: string; message: string; options: { value: string; label: string }[]; multiple?: boolean; other?: boolean };

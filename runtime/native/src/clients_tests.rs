@@ -1,5 +1,30 @@
 use super::*;
 
+#[tokio::test]
+async fn inactive_host_keeps_client_attachment_and_recovery_available() {
+    let _serial = crate::mods::DISPATCHER_TEST.lock().await;
+    assert!(core().is_err());
+    let directory = tempfile::tempdir().unwrap();
+    let store = codex_omd::ModStore::create(directory.path().join("store")).unwrap();
+    let root = directory.path().join("store");
+    std::fs::write(
+        root.join("mod-status.json"),
+        json!({"activation_error":"invalid_host_config"}).to_string(),
+    )
+    .unwrap();
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000397".parse().unwrap(),
+    );
+    bind("inactive-recovery", owner.clone()).unwrap();
+    assert!(published_for("inactive-recovery").is_none());
+    let recovery = recovery_read_from("inactive-recovery", &root, &store).unwrap();
+    assert_eq!(recovery["activation_error"], "invalid_host_config");
+    assert_eq!(recovery["resettable"], json!(["host.json", "mods.json"]));
+    assert!(recovery["store_error"].is_null());
+    detached("inactive-recovery");
+    release_owner(owner);
+}
+
 fn snapshot() -> ModViewSnapshot {
     serde_json::from_value(json!({
         "view": {"sites": {"sidebar": {"components": [
@@ -111,6 +136,45 @@ fn actions_resolve_only_values_the_view_offers() {
 }
 
 #[test]
+fn captured_pointer_drag_and_release_keep_signed_component_coordinates() {
+    for (action, column, row) in [("down", 2, 1), ("drag", -3, -1), ("up", -3, -1)] {
+        let event = json!({"kind": "pointer", "pointer": {
+            "column": column, "row": row, "action": action, "button": "left"
+        }});
+        let payload = Value::Object(event_payload(&event).unwrap());
+        assert_eq!(
+            codex_omd::component_events(&payload),
+            vec![json!({
+                "kind": "pointer", "column": column, "row": row, "half": null,
+                "action": action, "button": "left"
+            })]
+        );
+    }
+    for action in ["drag", "up"] {
+        for (column, row) in [(-1, -3), (0, i32::MIN), (i32::MIN, i32::MAX), (i32::MAX, 0)] {
+            let event = json!({"kind": "pointer", "pointer": {
+                "column": column, "row": row, "half": 1, "action": action, "button": "left"
+            }});
+            assert_eq!(event_payload(&event).unwrap()["pointer"], event["pointer"]);
+        }
+        for coordinate in [
+            json!(i64::from(i32::MIN) - 1),
+            json!(i64::from(i32::MAX) + 1),
+            json!(u64::MAX),
+            json!(0.5),
+        ] {
+            for axis in ["column", "row"] {
+                let mut event = json!({"kind": "pointer", "pointer": {
+                    "column": 0, "row": 0, "action": action, "button": "left"
+                }});
+                event["pointer"][axis] = coordinate.clone();
+                assert!(event_payload(&event).is_err(), "{event}");
+            }
+        }
+    }
+}
+
+#[test]
 fn client_events_need_a_known_kind_its_fields_and_a_bounded_size() {
     for event in [
         json!({"kind": "change", "value": "x"}),
@@ -176,7 +240,7 @@ fn client_events_keep_only_their_kinds_fields() {
 #[test]
 fn clients_cannot_enable_disable_or_reset_mods() {
     for action in ["enable", "disable", "reset"] {
-        let refused = recovery_apply(action, "alpha").unwrap_err();
+        let refused = recovery_apply(None, action, "alpha").unwrap_err();
         assert!(
             refused.starts_with("client_surface_operation_unavailable:"),
             "{refused}"
@@ -203,4 +267,30 @@ fn commands_resolve_by_owner_or_unique_bare_name() {
     assert_eq!(owner("beta:open"), Some("beta".into()));
     assert_eq!(owner("open"), None);
     assert_eq!(owner("alpha:missing"), None);
+}
+
+#[test]
+fn queued_posts_reach_only_their_thread_and_live_instance() {
+    let (origin, other) = (ThreadId::new(), ThreadId::new());
+    let detached = Arc::new(AtomicBool::new(false));
+    let core = std::sync::Weak::new();
+    let post = |name: &str, thread, revoked: &Arc<AtomicBool>| Post {
+        core: core.clone(),
+        owner: name.into(),
+        source: String::new(),
+        payload: Value::Null,
+        thread: Some(thread),
+        revoked: revoked.clone(),
+    };
+    POSTS.lock().unwrap().extend([
+        post("moved", other, &Arc::default()),
+        post("detached", origin, &detached),
+        post("live", origin, &Arc::default()),
+    ]);
+    detached.store(true, Ordering::Release);
+    assert_eq!(
+        next_post(&core, origin).map(|post| post.owner),
+        Some("live".into())
+    );
+    assert!(next_post(&core, origin).is_none());
 }

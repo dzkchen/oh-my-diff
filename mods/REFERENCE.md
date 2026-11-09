@@ -269,6 +269,7 @@ user contexts. A user context can call only:
 - the user-action operations (`app.request`, `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`,
   `packages.*`, `routes.add`, `routes.models`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
+- `routes.list`, when the terminal shows a session
 - `turns.activity`
 - `events.publish`, `events.schedule` and `events.cancel`
 
@@ -624,6 +625,12 @@ Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 ### Stability
 
 API `1.0.0` is stable.
+
+Terminal configuration targeting (`target`, `reset`, settings `scope`, package `reset` and `save-defaults` actions) and package
+inheritance metadata are experimental additions. Settings and enablement changes are saved for every terminal by default;
+`target: "terminal"` opts in to a change for the current terminal only.
+`PackageState.scope` now includes `managed`: `packages.list` already returned administrator-managed mods, and the type
+was corrected to match.
 [The conformance registry](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/contract.json) marks each
 public operation, event, capability, interceptor, component, render site, view field, classic hook and author command as
 frozen or experimental:
@@ -739,13 +746,13 @@ These changes ship in OMD 1.3.0.
   `/dev/tty` (git credentials, ssh passphrases, `sudo`) fails instead of drawing over the TUI and waiting. Pass input
   through `stdin` or the program's non-interactive flags. Runs with `sandbox: "none"` also receive `SSH_AUTH_SOCK`, so
   programs under an `os` grant can sign in through the user's SSH agent.
-### Package trust digest framing
+
+#### Package trust digest framing
 
 Package digests now prefix each manifest, path and file-content record with its eight-byte big-endian length.
 Existing trust digests change: inspect and re-trust folder mods, and reinstall curated packages from the new release.
 Do not copy old grants to a new digest. Same-ID mods share storage and owned credential authority; project scope takes precedence.
 Package previews report `identity_warning` when the ID is installed in another scope.
-
 
 ## Authoring
 
@@ -768,7 +775,7 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author create DIR [ID]` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
-| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
+| `pnpm check` | Host package inspection and syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
 | `pnpm test` | Runs the offline scenarios, the type check and the TypeScript tests (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs `debug.test.json`, which expects an error, and exits 0 with the error's mapped source location |
@@ -779,6 +786,10 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE [OUTPUT]` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
 | `omd-mod-author explain DENIAL` | Cause, safe remedy, and the authority boundary for a denial |
+
+`pnpm check` requires `omd-mod` (or `OMD_MOD_BIN`) for the same package inspection used by the host. This enforces
+the 512 KiB limit per entrypoint, asset or lifecycle file and the 1 MiB combined entrypoint/UTF-8 asset limit,
+including when TypeScript is absent.
 
 `pnpm test` runs, in order:
 
@@ -1069,7 +1080,8 @@ While a mod is written, `omd-mod-author watch DIR STORE` (or `pnpm watch STORE`)
 3. Queues a reload of that store's host and refreshes `.omd/`.
 
 Saving an entry point, asset or lifecycle file reloads again after 100 ms, and reports a half-written file instead of
-stopping. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
+stopping. Files named in `mod.json` are watched as soon as it is saved, so a new asset that doesn't exist yet reloads
+once you create it. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
 and also disables or resets a mod.
 
 **Because `watch` approves what it watches, point it only at a scratch store** (`omd-mod init STORE`) that contains
@@ -1308,10 +1320,16 @@ Apply the identical request with the preview's `confirmation` string.
 The higher-level `packages.preview`/`packages.apply` operations and `omd` CLI use:
 
 ```text
-{action, id?, source?, reference?, version?, index?, scope?, expected_generation?}
+{action, id?, source?, reference?, version?, index?, scope?, target?, expected_generation?}
 ```
 
-`action` is one of `install`, `update`, `remove`, `rollback`, `enable`, `disable` or `trust`. A request names a package
+`action` is one of `install`, `update`, `remove`, `rollback`, `enable`, `disable`, `trust`, `reset` or `save-defaults`.
+`enable` and `disable` save for every terminal; experimental `target: "terminal"` applies them to this terminal only,
+until it closes (`"shared"` is the default). `reset` clears this terminal's choices for the mod and `save-defaults`
+saves them for every terminal. Their preview's `changes` is
+`{target: 'terminal'|'shared', enabled: {before, after} | null, settings: [{key, before, after}]}`; a null `enabled`
+and empty `settings` mean nothing differs. Install, update, remove, rollback and trust are always shared, and the
+shell CLI, which has no terminal, changes what every terminal uses. A request names a package
 with `source` or with a `reference` (and optional `version`), never both. `scope` is `user` or `project`.
 `expected_generation` is described under
 [`packages.apply`, `packages.preview` and `packages.reload`](#packagesapply-packagespreview-and-packagesreload).
@@ -1517,9 +1535,11 @@ update it.
   manifest asks for a capability it wasn't granted. `omd mods update ID` reviews it again.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
-- `packages.list` reports each mod's `settings` and `settings_schema`.
+- `packages.list` reports effective `enabled` and `settings`, plus `settings_schema`. Experimental
+  `inherited_enabled` and `inherited_settings` report current defaults before terminal overrides;
+  `overrides: {enabled?, settings}` reports this terminal's own choices, leaving out values equal to the inherited ones.
 - `required` marks a selection the installer keeps on. `/mods` and `/omd` don't turn it off, but `omd mods disable`
-  does.
+  does. Its settings stay editable.
 
 #### `packages.index`
 
@@ -1648,12 +1668,20 @@ experimental.
 ### `settings.write`
 
 ```text
-settings.write {id?, values} → {settings}
+settings.write {id?, scope?, values, target?, reset?} → {settings}
 ```
 
-`settings.write` checks settings against the schema, saves them and redraws at once. A `null` value removes a setting.
+`settings.write` checks settings against the schema, saves them for every terminal and redraws at once. A `null`
+value removes a setting. Experimental `target: "terminal"` instead keeps the values in memory for this terminal until
+it closes; forks and subagents started from it follow them. `target: "shared"` is the default. `reset: [key, ...]`
+clears this terminal's values for those keys; pass `values: {}` to reset without writing.
+Each changed key passes through `config_set` before the validated batch is applied. A denied or invalid key
+leaves the batch unchanged; successful writes notify other `config_change` listeners.
 It runs only from [user contexts](reference/host-model.md#callback-contexts). Without `id` it writes the caller's own settings.
-With `id` it needs `packages`. `/omd` stays the native recovery path for settings.
+With `id` or `scope` it needs `packages`. Experimental `scope: "user" | "project"` selects that trusted copy explicitly,
+including a copy shadowed by project precedence. Omit `scope` to use the current effective copy. The selected
+copy supplies its own schema, file settings and authority checks. Settings of a mod the installer keeps on can be
+written; an administrator-managed mod's settings can't. `/omd` stays the native recovery path for settings.
 
 Callbacks read the effective settings as `api.settings` (`Readonly<Record<string, Json>>`); see
 [Settings defaults](#settings-defaults) and the [settings file](#settings-file-settings_file_v1).
@@ -1662,7 +1690,7 @@ Callbacks read the effective settings as `api.settings` (`Readonly<Record<string
 
 Callbacks receive a setting's explicit value when one is set, else the `settings_schema` property's `default`. Give
 every property a default. With `additionalProperties: false`, the host ignores a stored setting the package no longer
-declares and drops it at the next settings write or update, so a release can remove a setting. A write that names an
+declares and drops it at the next shared settings write or package update, so a release can remove a setting. A write that names an
 undeclared setting is still refused with `unknown_setting`.
 
 A property can also have a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
@@ -1679,7 +1707,7 @@ the directory that contains `mods.json`.
 - Only one of the three files may exist. More than one is invalid.
 - The file is at most 64 KiB, and its top level must be an object whose keys are the mod's setting names.
 - Its keys override the saved settings (and the schema `default` values) in every callback, render and chain
-  digest. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
+  digest, before terminal overrides. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
   a wrongly typed value and a missing `required` setting are invalid.
 - Administrator-managed selections ignore the file (status `ignored`).
 - The saved settings must be valid on their own. Save a `required` setting without a `default` through
@@ -1689,8 +1717,9 @@ the directory that contains `mods.json`.
 - Creating, editing or deleting the file applies at the refresh points of a `mods.json` change.
 - `api.settingsFile` is `{path, status: 'missing' | 'loaded' | 'invalid' | 'ignored', error: string | null}`. `path` is
   the absolute file to tell the user to edit (the `.json` one while none exists); `error` is the reason when `invalid`.
-- `settings.write` of a key the file sets fails with `setting_set_by_file: <key>`. `omd-mod selection-status` lists
-  such keys with origin `file` and the file under `settings_file`.
+- A shared `settings.write` of a key the file sets updates that key in the file in place and keeps the rest of the
+  file, comments included. `omd-mod selection-status` lists such keys with origin `file` and the file under
+  `settings_file`.
 
 ### Manifest `environment`
 
@@ -3892,6 +3921,10 @@ evidence.read {reference, cursor?, max_bytes?} → {reference, text, cursor, byt
 `evidence.write` stores content-addressed evidence and returns a `ResourceRef` `{reference, sha256}`. The `base64`
 form is binary evidence (`binary_evidence_v1`).
 
+Evidence is bound to the mod, source digest, configuration generation, repository and current thread, including
+original tool output. Parent and child threads have separate bindings even when they share a host session.
+Each operation rechecks the effective managed, project or user selection and its current grants.
+
 | Media type | Size |
 | --- | --- |
 | `image/png`, `image/jpeg` | At most 8 MiB |
@@ -3971,6 +4004,9 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
   as Codex keeps `.git` read-only. Outside a Git checkout, as in a projectless session, checkout state is unavailable
   (`state_checkout_unavailable`) and nothing is written to the directory.
 
+A committed `api.state` change redraws the mod in every terminal and attached client showing the same store, checkout
+or thread state. Hooks, prompts, timers, channels and `api.uiState` stay with the terminal that caused them.
+
 These rules apply in every scope:
 
 - Mods never run with the home directory or the filesystem root as the session directory. The host stays off with a
@@ -4012,7 +4048,7 @@ requires `terminal`. Saved `api.state` is unchanged by it.
   escapes.
 - Strings and object keys must contain valid Unicode scalars (no lone surrogates).
 - The host checks the original serialized bytes before parsing; number reformatting does not change the limit.
-- Values are shared by host instances in the same process, store, repository, thread and package identity.
+- Values are shared by host instances in the same process, terminal, store, repository, thread and package identity.
 - Commands and component events may write; other callbacks may read.
 - Writes commit only after successful validation and cancellation checks. A revision conflict reruns the callback
   under the same replay rules as [`api.state` compare-and-swap](#apistate-compare-and-swap).
@@ -4450,7 +4486,7 @@ Full-screen transcript cells can repaint when background state changes. Inline s
 rows; a mod can show its latest asynchronous result through an `above_composer` terminal site when
 `event.presentation?.surface === "inline"`. Closed sessions do not deliver assistant completion callbacks.
 
-### Timers (`timers_v1`)
+#### Timers (`timers_v1`)
 
 `events.schedule {key, delay_ms, data?}` (`timers_v1`) delivers one `timer` event `{key, data?}` to the calling mod after
 `delay_ms`, which is 16 ms to 24 h.
@@ -5438,6 +5474,8 @@ const { turns, recording } = api.host.call('turns.activity', { last: 1 });
 ```
 
 ### `sessions.list`
+
+Recorded-session access rechecks the effective managed, project or user selection and its current grants on every call.
 
 `sessions.list {since?, until?, cursor?, limit?}` pages this repository's recorded sessions that allow memory (Codex
 memory mode `enabled`). It returns `{sessions, cursor, revision, scan_truncated, unavailable, projection}`; each
@@ -7239,7 +7277,7 @@ selected binding and Esc clears the search or closes the overlay.
 
 - `action`: `enter`, `leave`, `move`, `down`, `up`, `drag`, or `scroll_up` and `scroll_down` for the mouse wheel;
 - `button`: `left`, `right`, `middle`, or null for motion and the wheel;
-- `column`/`row` relative to the component's first cell (a nested box counts its title and children);
+- `column`/`row` as signed 32-bit integers relative to the component's first cell (a nested box counts its title and children);
 - `half` (0 or 1, the half-cell row) on terminals that report pixel positions (Kitty, Ghostty and WezTerm), else
   null.
 
@@ -7399,8 +7437,9 @@ by `columns` and `rows`, or as last rendered. The default is 80 columns and 0 ro
 says when the next tick is due. The client sends key and pointer events through `omd/client/event`.
 
 Their posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
-host operations as `component_event` hooks, for terminal and client posts alike. Detaching unmounts the client's
-instances.
+host operations as `component_event` hooks, for terminal and client posts alike. A post is delivered only while the
+thread it was posted in is still current and its instance is still mounted. Detaching unmounts the client's instances
+and drops their undelivered posts.
 
 ## Graphics
 
@@ -8467,8 +8506,11 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
 - The object `connect` returns has `attach`, `update`, `detach`, `read`, `event`, `action` (serialized), `render`,
   `resource`, `recovery` and `request(method, params)`. Together they cover every `omd/*` and app-server method.
 - After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches,
-  replays the last update, resumes the threads it resumed through `request('thread/resume', …)` and reports
-  `onReconnect({epoch, previousEpoch})`.
+  retains the in-memory `attachment.terminalToken`, replays the last update, resumes the threads it resumed
+  through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`. Explicit detach clears
+  terminal ownership. If a restarted host rejects the retained token, it attaches once without it and inherits
+  shared defaults. Keep terminal tokens private and in memory. Clients with separate terminal owners share a mod's
+  saved state, not its settings, enablement or session UI state.
 - `unsupported(component, renderer, drawable)` returns null when the renderer can draw the component. Otherwise it
   returns an error with `fallback` set to the component's alt text, text or label. A renderer can't draw a type
   outside `drawable`, a `raster` without `cells` or an `image` without an image format. The error message has the
@@ -8522,12 +8564,19 @@ Each request below is a method a client sends to the host.
 #### `omd/client/attach`
 
 ```text
-omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('svg'|'png'|'jpeg'|'cells'|'text')[], pointer: 'pixel'|'cell'|'half_cell'|'none', reducedMotion, cellPx?}, operations}
-// → {clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}, then omd/view/updated
+omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('svg'|'png'|'jpeg'|'cells'|'text')[], pointer: 'pixel'|'cell'|'half_cell'|'none', reducedMotion, cellPx?}, operations, terminalToken?}
+// → {terminalToken, clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}, then omd/view/updated
 ```
 
 - The result's `roster` already lists the new client, and `omd/roster/updated` reports later changes.
 - Attaching again on the connection replaces its entry.
+- `terminalToken` is an opaque capability for this terminal's in-memory settings and enablement. Keep it in
+  memory and send it when reattaching after a disconnect. Another client without it gets a separate owner,
+  including on the same conversation. Separate owners share a mod's saved state, not its settings, enablement or
+  session UI state. Do not log, persist or share the token.
+- Connections that never attach have no reconnect capability; their terminal overrides are released on disconnect.
+- Explicit detach invalidates the token and drops its terminal overrides. A server restart also invalidates it;
+  `terminal_owner_unknown` means attach without it to start from shared defaults.
 - Attach also succeeds while mods are inactive or failed to start (empty `epoch`, null `snapshot`), so the recovery
   calls stay reachable.
 
@@ -8570,6 +8619,9 @@ omd/client/event {epoch, component, event}
 - `{kind: 'scroll', offset}`
 - `{kind: 'key', key, text?}`
 - `{kind: 'focus'}`
+
+Pointer `column` and `row` are signed 32-bit cell coordinates relative to the component. Captured `drag` and
+`up` events may carry negative positions after moving above or left of its bounds.
 
 Behavior:
 
@@ -8628,6 +8680,38 @@ omd/resource/read {reference}
 
 `data` is base64. Only references in the current view can be read.
 
+#### `omd/configuration`
+
+This experimental method targets the authenticated connection's terminal owner. It does not accept an owner
+ID or another client's token in the request. Unknown actions and extra fields fail.
+
+```text
+omd/configuration {action: 'read'}
+// → {packages, generation, reload_error}
+omd/configuration {action: 'write', id, scope?: 'user'|'project', values, target?: 'terminal'|'shared', reset?: string[]}
+// → {settings}
+omd/configuration {action: 'package', request: {action: 'enable'|'disable'|'reset'|'save-defaults', id, scope: 'user'|'project', target?: 'terminal'|'shared', expected_generation?}}
+// → {status: 'applied', generation}
+omd/configuration {action: 'catalog'}
+// → {status, view, packages, builtins}
+omd/configuration {action: 'command', command, args}
+// → {status: 'completed', result, snapshot, catalog}
+```
+
+`read` returns the effective package list, including inherited values and terminal overrides. `write` follows
+[`settings.write`](reference/settings.md#settingswrite): it saves for every terminal unless `target` is `terminal`, and optional
+`scope: "user" | "project"` picks an installed copy. `package` supports only the four configuration actions above;
+install, update, remove, rollback and trust keep their existing shared lifecycle and confirmation paths. `reset`
+clears this terminal's choices and `save-defaults` saves them for every terminal. Clients must present shared changes
+and confirmation choices to their user before requesting them.
+
+`catalog` supplies the backend runtime status, latest `ModViewSnapshot` (or null before publication), and effective
+package listing; `builtins` describes its effective builtin controls. `command` resolves an available mod command and invokes it as the owning terminal's user; it
+requires a selected conversation and retains capability, source, policy and turn-state checks. Its `result` is
+the command outcome, `snapshot` the resulting view, and `catalog` the updated runtime status. It grants no
+additional permissions to tool or event callbacks. Delegated panels and prompts go only to that terminal's
+attached clients. View row actions should continue to use token-bound `omd/action`.
+
 #### `omd/recovery/read` and `omd/recovery/apply`
 
 ```text
@@ -8638,8 +8722,10 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
 `omd/recovery/read` returns the host-owned `/omd` recovery state, and `omd/recovery/apply` returns the result:
 
 ```text
-{mods: [{id, path, scope, enabled, packaged, failing, error}], resettable, store_error, activation_error, reload_error}
+{mods: [{id, path, scope, enabled, inherited_enabled, settings, inherited_settings, overrides, packaged, failing, error}], resettable, store_error, activation_error, reload_error}
 ```
+
+Attached recovery reads report this terminal’s effective values, inherited defaults and local overrides. Attached reload refreshes that terminal’s runtime; package-store reload remains shared.
 
 - `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails
   with `recovery_unavailable_during_turn` while the lead thread's turn runs. It needs no attached client: `/omd`'s
@@ -8691,7 +8777,8 @@ runs it like Space/Enter in the terminal: `command` interceptors, then the comma
 
 ### Ordering, epochs and reconnecting
 
-State is per connection. A disconnect removes the roster entry and at once fails that client's pending surface
+Roster and action tokens are per connection. Terminal configuration belongs to the retained terminal owner.
+A disconnect removes the roster entry and at once fails that client's pending surface
 calls with `client_surface_closed` (an attach on a closing connection gets `client_surface_closed: the connection
 is closing`).
 
@@ -8700,7 +8787,7 @@ is closing`).
 - `revision` grows within an `epoch`.
 - A new `epoch` means the host restarted and invalidates everything the client stored.
 
-Reconnecting is `initialize`, attach (a full snapshot, never deltas), then `thread/resume` per thread, which
+Reconnecting is `initialize`, attach with the retained `terminalToken` (a full snapshot, never deltas), then `thread/resume` per thread, which
 replays pending approvals. `thread/resume` also joins a loaded thread before its first turn.
 
 - Approvals stay upstream server requests broadcast to subscribed connections (first answer wins,

@@ -383,6 +383,10 @@ test('with retry_after_limit, a task stopped by a usage limit restarts once at t
   const roomy = fire('agent_end', '', failure, { state: started.state, settings, answer: stored({ windows: { claude: { used: 40, resets: now + 60 * 60_000, at: now } } }) });
   assert.equal(roomy.state.tasks.h1.retry_at, undefined, 'a window with room left is a transient limit');
   assert.deepEqual(fire('resume', '', { thread_id: 't', last_turn: null, restarted: true }, { state: ended.state, settings }).of('events.schedule').map(call => call.key), ['retry'], 'a resumed thread re-arms its restart');
+  const replaced = WORKERS.map(route => route.name === 'sonnet-worker' ? { ...route, credential: 'other-account' } : route);
+  const swapped = fire('timer', '', { key: 'retry' }, { state: due, settings, routes: replaced, answer: { ...ownFailure, 'agents.cancel': () => ({ cancelled: true, delivered: true }) } });
+  assert.equal(swapped.of('agents.spawn').length, 0, 'a route replaced under the same name is not reused');
+  assert.match(swapped.state.tasks.h1.error, /route sonnet-worker now uses a different provider, account or billing; start the task again/);
   const turnedOff = fire('timer', '', { key: 'retry' }, { state: due, answer: { 'agents.cancel': () => ({ cancelled: true, delivered: true }) } });
   assert.equal(turnedOff.of('agents.spawn').length, 0);
   assert.match(turnedOff.state.tasks.h1.error, /retry_after_limit is off/);

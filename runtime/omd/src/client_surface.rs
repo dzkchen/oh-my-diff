@@ -301,8 +301,43 @@ impl Drop for DepthGuard {
     }
 }
 
+thread_local! {
+    static TERMINAL_OWNER: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static TERMINAL_USER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub struct TerminalUserGuard(bool);
+
+pub fn enter_terminal_user(admitted: bool) -> TerminalUserGuard {
+    TerminalUserGuard(TERMINAL_USER.replace(admitted))
+}
+
+impl Drop for TerminalUserGuard {
+    fn drop(&mut self) {
+        TERMINAL_USER.set(self.0);
+    }
+}
+
+pub struct TerminalOwnerGuard(Option<String>);
+
+pub fn terminal_owner_id() -> Option<String> {
+    TERMINAL_OWNER.with(|owner| owner.borrow().clone())
+}
+
+pub fn enter_terminal_owner(owner: Option<String>) -> TerminalOwnerGuard {
+    TerminalOwnerGuard(TERMINAL_OWNER.with(|current| current.replace(owner)))
+}
+
+impl Drop for TerminalOwnerGuard {
+    fn drop(&mut self) {
+        TERMINAL_OWNER.with(|current| current.replace(self.0.take()));
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SurfaceCall {
+    pub terminal_user: bool,
+    pub terminal_owner: Option<String>,
     pub validity: Validity,
     pub caller: String,
     pub operation: String,
@@ -413,17 +448,22 @@ pub enum Observed {
     Redraw,
     Roster,
     Mirrored {
+        terminal_owner: Option<String>,
         caller: String,
         operation: String,
         arguments: Value,
         pixels: Option<Arc<crate::process_raster::PixelFrame>>,
+    },
+    State {
+        mod_id: String,
+        terminal: u64,
     },
 }
 
 #[derive(Default)]
 struct Hub {
     surface: Option<(u64, Arc<dyn ClientSurface>)>,
-    wake: Option<(u64, Wake)>,
+    wakes: Vec<(u64, Wake)>,
     clients: Vec<(u64, ClientEntry)>,
     observers: Vec<(u64, Observer)>,
     next: u64,
@@ -449,7 +489,7 @@ pub fn presented(mut presentation: Value) -> Value {
 
 static HUB: Mutex<Hub> = Mutex::new(Hub {
     surface: None,
-    wake: None,
+    wakes: Vec::new(),
     clients: Vec::new(),
     observers: Vec::new(),
     next: 0,
@@ -479,7 +519,7 @@ impl Drop for Registration {
         let mut hub = hub();
         match self.slot {
             Slot::Surface => drop(hub.surface.take_if(|(slot, _)| *slot == id)),
-            Slot::Wake => drop(hub.wake.take_if(|(slot, _)| *slot == id)),
+            Slot::Wake => hub.wakes.retain(|(slot, _)| *slot != id),
             Slot::Observer => hub.observers.retain(|(slot, _)| *slot != id),
             Slot::Client => {
                 let attached = hub.clients.len();
@@ -506,7 +546,7 @@ pub fn register(surface: Arc<dyn ClientSurface>) -> Registration {
 }
 
 pub fn register_wake(wake: Wake) -> Registration {
-    insert(Slot::Wake, |hub, id| hub.wake = Some((id, wake)))
+    insert(Slot::Wake, |hub, id| hub.wakes.push((id, wake)))
 }
 
 pub fn register_observer(observer: Observer) -> Registration {
@@ -580,9 +620,21 @@ fn roster_changed() {
     wake();
 }
 
+/// A committed `api.state` write of `mod_id` by the runtime of `terminal`.
+pub fn state_committed(mod_id: &str, terminal: u64) {
+    notify(Observed::State {
+        mod_id: mod_id.to_owned(),
+        terminal,
+    });
+}
+
 pub fn wake() {
-    let wake = hub().wake.as_ref().map(|(_, wake)| wake.clone());
-    if let Some(wake) = wake {
+    let wakes = hub()
+        .wakes
+        .iter()
+        .map(|(_, wake)| wake.clone())
+        .collect::<Vec<_>>();
+    for wake in wakes {
         wake();
     }
 }
@@ -643,7 +695,21 @@ fn submit_bound(
             "host_operation_user_only: {operation}"
         )));
     }
-    if remote && needs_terminal(operation, &arguments) {
+    let terminal_user = context == InvocationContext::User
+        && TERMINAL_USER.get()
+        && TERMINAL_OWNER.with(|owner| owner.borrow().is_some())
+        && (matches!(operation, "terminal.panel" | "prompts.consent")
+            || operation == "packages.apply"
+                && crate::package_controls::target(
+                    arguments["target"].as_str(),
+                    arguments["action"].as_str().unwrap_or_default(),
+                ) == "terminal"
+                && matches!(
+                    arguments["action"].as_str(),
+                    Some("enable" | "disable" | "reset" | "save-defaults")
+                ));
+
+    if remote && needs_terminal(operation, &arguments) && !terminal_user {
         return Err(BlitError::fatal(needs_terminal_error(operation)));
     }
     let surface = hub()
@@ -672,6 +738,8 @@ fn submit_bound(
     let queued = lifetime.clone();
     surface
         .submit(SurfaceCall {
+            terminal_user,
+            terminal_owner: TERMINAL_OWNER.with(|current| current.borrow().clone()),
             validity: Validity(Arc::new(move || queued.active() && active())),
             caller: caller.to_owned(),
             operation: operation.to_owned(),
@@ -857,6 +925,7 @@ pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
         if package["effective"] != true {
             continue;
         }
+        let managed = package["scope"] == "managed";
         for (name, property) in package["settings_schema"]["properties"]
             .as_object()
             .into_iter()
@@ -865,7 +934,7 @@ pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
             rows.push(serde_json::json!({"key": format!("mods.{id}.{name}"), "label": format!("{id} {name}"),
                 "value": package["settings"][name], "source": "mod_settings", "version": Value::Null,
                 "scope": "mod", "type": property["type"], "enum": property["enum"],
-                "editable": true, "managed": false, "secret": false, "hidden": false}));
+                "editable": !managed, "managed": managed, "secret": false, "hidden": false}));
         }
     }
     let mut config = read["config"].clone();
@@ -1068,6 +1137,7 @@ pub fn call_classified(
     let answer = wait_classified(pending, active.as_ref(), deadline)?;
     if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
         notify(Observed::Mirrored {
+            terminal_owner: TERMINAL_OWNER.with(|owner| owner.borrow().clone()),
             caller: caller.to_owned(),
             operation: operation.to_owned(),
             arguments: if operation == "terminal.blit" {

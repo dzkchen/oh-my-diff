@@ -770,28 +770,28 @@ def uninstall(args, root, bin_dir, current):
              + ", ".join(map(str, policies)))
     upstream = Path(upstream_binary(args, current)["path"])
     check_links(root, bin_dir)
-    refuse_sessions(root, args.session)
-    generations = sorted((root / "releases").iterdir())
-    generations = [item for item in generations if (item / "receipt.json").is_file()]
-    for generation in generations:
-        if not removing(generation):
-            status(generation, upstream, bin_dir)
-    failures = []
-    for generation in [item for item in generations if item != current]:
-        try:
-            remove_generation(generation, upstream, bin_dir, "--keep-broker")
-        except (OSError, ValueError) as error:
-            failures.append(f"{generation.name}: {error}")
-    kept = (root / "previous").resolve()
-    if not failures or not kept.is_dir() or removing(kept):
-        (root / "previous").unlink(missing_ok=True)
-    if failures:
-        fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
-    if purge:
-        package(current, upstream, bin_dir, "purge-accounts")
     write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir), "purge": purge})
-    restore_links(root, bin_dir)
     try:
+        refuse_sessions(root, args.session)
+        generations = sorted((root / "releases").iterdir())
+        generations = [item for item in generations if (item / "receipt.json").is_file()]
+        for generation in generations:
+            if not removing(generation):
+                status(generation, upstream, bin_dir)
+        failures = []
+        for generation in [item for item in generations if item != current]:
+            try:
+                remove_generation(generation, upstream, bin_dir, "--keep-broker")
+            except (OSError, ValueError) as error:
+                failures.append(f"{generation.name}: {error}")
+        kept = (root / "previous").resolve()
+        if not failures or not kept.is_dir() or removing(kept):
+            (root / "previous").unlink(missing_ok=True)
+        if failures:
+            fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
+        if purge:
+            package(current, upstream, bin_dir, "purge-accounts")
+        restore_links(root, bin_dir)
         remove_generation(current, upstream, bin_dir)
     except BaseException:
         if not removing(current):
@@ -919,14 +919,21 @@ def releases(url, channel="stable", pin="", installed=None, missing=None):
                 version = tag.removeprefix("refs/tags/v") if isinstance(tag, str) and tag.startswith("refs/tags/v") else None
                 if version_key(version) and on_channel(channel, {"version": version, "prerelease": "-" in version}):
                     versions.append(version)
-        versions = sorted(set(versions), key=version_key, reverse=True)[:5]
-        listed = tag_documents(base, sorted({*versions, installed} - {None}, key=version_key, reverse=True), missing)
-    else:
-        listed = fetch_json(url, 2_000_000)
-        if not isinstance(listed, list):
-            fail("release list is malformed")
-    found = (entry for item in listed if (entry := release_entry(item)))
-    yield from found if matching else sorted(found, key=lambda item: version_key(item["version"]), reverse=True)
+        usable = 0
+        for version in sorted({*versions, installed} - {None}, key=version_key, reverse=True):
+            if usable >= 5 and version != installed:
+                if not installed or version_key(version) < version_key(installed):
+                    return
+                continue
+            for item in tag_documents(base, [version], missing):
+                if entry := release_entry(item):
+                    usable += 1
+                    yield entry
+        return
+    listed = fetch_json(url, 2_000_000)
+    if not isinstance(listed, list):
+        fail("release list is malformed")
+    yield from sorted((entry for item in listed if (entry := release_entry(item))), key=lambda item: version_key(item["version"]), reverse=True)
 
 
 def tag_documents(base, versions, missing=None, prefix="v"):
@@ -1019,7 +1026,8 @@ def mod_bundle(url, version, after=0):
         if not isinstance(refs, list):
             fail("mod bundle tags are malformed")
         tags = {ref.removeprefix("refs/tags/") for item in refs if isinstance(item, dict) and isinstance(ref := item.get("ref"), str)}
-        listed = tag_documents(base, sorted((tag for tag in tags if serial(tag) > after), key=serial, reverse=True)[:5], prefix="")
+        listed = itertools.islice((item for item in tag_documents(base, sorted((tag for tag in tags if serial(tag) > after), key=serial, reverse=True), prefix="")
+                                   if isinstance(item, dict) and not item.get("draft")), 5)
     else:
         listed = fetch_json(url, 2_000_000)
         if not isinstance(listed, list):
@@ -1305,8 +1313,14 @@ def apply_mods(args, root, current, mods):
             offered = json.loads((payload / "mods.lock.json").read_text())["packages"]
             if {identifier: package.get("package_sha256") for identifier, package in offered.items()} != manifest["packages"]:
                 fail("the mod bundle disagrees with its signed manifest")
-            result = json.loads(package(current, upstream, args.bin_dir, "mods-update", "--bundle", payload,
-                                        "--serial", str(mods["serial"])))
+            journaled(root, None, args.session)
+            try:
+                result = json.loads(package(current, upstream, args.bin_dir, "mods-update", "--bundle", payload,
+                                            "--serial", str(mods["serial"])))
+            finally:
+                (root / "update/journal.json").unlink(missing_ok=True)
+    except SessionsOpen:
+        raise
     except BaseException as error:
         save(root, pending_mods=None, failed_mods=mod_key(mods) | {"error": text(str(error), 300), "at": int(time.time())})
         forget_backup(root, current)
@@ -1323,21 +1337,25 @@ def forget_backup(root, current):
 
 
 def install_mods(args, root, current, mods, automatic=False):
-    if sessions(root, args.session):
-        with flocked(update_dir(root) / ".stage.lock", DOWNLOAD_WAIT):
-            stage(root, {"manifest": mods})
-        save(root, pending_mods=mod_key(mods) | ({"automatic": True} if automatic else {}))
-        return {"staged_mods": mods["changed"], "applies": "the next time OMD starts while no other OMD session is open"}
-    return apply_mods(args, root, current, mods)
+    if not sessions(root, args.session):
+        with contextlib.suppress(SessionsOpen):
+            return apply_mods(args, root, current, mods)
+    with flocked(update_dir(root) / ".stage.lock", DOWNLOAD_WAIT):
+        stage(root, {"manifest": mods})
+    save(root, pending_mods=mod_key(mods) | ({"automatic": True} if automatic else {}))
+    return {"staged_mods": mods["changed"], "applies": "the next time OMD starts while no other OMD session is open"}
 
 
 def rollback_mods(args, root, current):
-    refuse_sessions(root, args.session)
     upstream = Path(upstream_binary(args, current)["path"])
     record = installation(root, current)[1]
-    serial = record.get("mods_bundle", {}).get("serial")
-    save(root, mods=None, pending_mods=None, held_mods={"omd": record["version"], "serial": serial} if serial else None)
-    result = json.loads(package(current, upstream, args.bin_dir, "mods-rollback"))
+    journaled(root, None, args.session)
+    try:
+        serial = record.get("mods_bundle", {}).get("serial")
+        save(root, mods=None, pending_mods=None, held_mods={"omd": record["version"], "serial": serial} if serial else None)
+        result = json.loads(package(current, upstream, args.bin_dir, "mods-rollback"))
+    finally:
+        (root / "update/journal.json").unlink(missing_ok=True)
     save(root, last_mods=None)
     print(json.dumps({"restored_mods": result["updated"]}, indent=2))
 

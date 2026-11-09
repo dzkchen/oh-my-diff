@@ -40,6 +40,8 @@ session = await connect({
   onMirrored: ({ caller, operation, arguments: args }) => console.error(`${caller} ${operation} ${JSON.stringify(args)}`),
   onClose: () => process.exit(0),
 });
+const [thread] = (await session.request('thread/loaded/list', {})).data;
+if (thread) await session.request('thread/resume', { threadId: thread });
 pick(await session.read());
 
 async function pick({ snapshot }) {

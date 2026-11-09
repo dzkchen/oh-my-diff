@@ -2,7 +2,11 @@ mod author;
 mod bridge;
 mod chain;
 mod code_cache;
+mod configuration_overrides;
 mod operation_validation;
+pub use configuration_overrides::ConfigurationOverrides;
+pub use configuration_overrides::terminal_configuration_owner;
+pub use configuration_overrides::write_settings_shared;
 mod persisted;
 mod render;
 pub use chain::ModChain;
@@ -2598,17 +2602,8 @@ pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Valu
         .find(|selection| selection["id"] == id && selection["effective"] == true)
         .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
     let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
-    if let Some(name) = values
-        .keys()
-        .find(|name| selection["settings_origin"][name.as_str()] == "file")
-    {
-        return Err(failure(format!("setting_set_by_file: {name}")));
-    }
-    let mut settings = store.merge_settings(&path, values)?;
-    if let Some(file) = selection["file_settings"].as_object() {
-        settings.extend(file.clone());
-    }
-    let (package, _, _) = store::package(&path)?;
+    let settings = store.save_configuration(&path, values, None, None, "settings")?;
+    let (package, _) = store::verified_package(&path)?;
     Ok(json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)}))
 }
 
@@ -2661,6 +2656,8 @@ fn identifier_list(values: &[String]) -> bool {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModSelection {
+    #[serde(default, skip_serializing_if = "zero_configuration_epoch")]
+    pub configuration_epoch: u64,
     pub path: PathBuf,
     pub sha256: String,
     pub enabled: bool,
@@ -2678,6 +2675,14 @@ pub struct ModSelection {
     /// Set by the installer: in-app mod screens keep the mod on, while `omd mods disable` still turns it off.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde passes skip_serializing_if a reference"
+)]
+fn zero_configuration_epoch(epoch: &u64) -> bool {
+    *epoch == 0
 }
 
 impl ModSelection {
@@ -2740,8 +2745,29 @@ pub struct ModConfiguration {
 
 impl ModConfiguration {
     pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
-        serde_json::from_slice(bytes)
-            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))
+        let mut config: Self = serde_json::from_slice(bytes)
+            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
+        #[derive(Deserialize)]
+        struct Epochs {
+            revision: u64,
+            epochs: Vec<(String, PathBuf, u64)>,
+        }
+        let epochs = path
+            .parent()
+            .and_then(|root| store::read(&root.join(store::CONFIGURATION_EPOCHS), 65_536).ok())
+            .and_then(|bytes| serde_json::from_slice::<Epochs>(&bytes).ok())
+            .filter(|sidecar| sidecar.revision == config.revision)
+            .map(|sidecar| sidecar.epochs)
+            .unwrap_or_default();
+        for selection in &mut config.mods {
+            if let Some((_, _, epoch)) = epochs
+                .iter()
+                .find(|(scope, path, _)| *scope == selection.scope && *path == selection.path)
+            {
+                selection.configuration_epoch = *epoch;
+            }
+        }
+        Ok(config)
     }
 }
 
@@ -3465,6 +3491,9 @@ pub struct ModHost {
     generation: u64,
     configuration_sha256: String,
     configuration_stamp: Option<ConfigurationStamp>,
+    configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
+    terminal: (u64, Option<String>),
+    override_revision: Option<u64>,
     /// The configuration whose timed-out inspections were already retried once.
     inspect_retried: String,
     /// A pending retry and the leniency (`initial`) of the reload it repeats.
@@ -3483,6 +3512,7 @@ pub struct ModHost {
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
     renders: BTreeMap<String, (String, Value, Option<Instant>)>,
+    terminal_revision: u64,
     clock_reads: BTreeSet<String>,
     ui_mods: Option<Vec<String>>,
     rendered: HashMap<String, render::Rendered>,
@@ -3550,6 +3580,185 @@ impl Access<'_> {
             Access::Shared(runtime) | Access::Bounded(runtime, _) => Access::Bounded(runtime, wait),
         }
     }
+}
+
+pub fn terminal_shared(
+    runtime: &Mutex<ModHost>,
+    payload: Value,
+    active: impl Fn() -> bool,
+    publish: impl FnOnce(ModTerminalView, &str),
+) -> Result<()> {
+    let thread = state_thread(&payload);
+    let payload = TerminalPayload::new(payload);
+    let (generation, revision, mut results, mut pending) = {
+        let mut host = runtime
+            .lock()
+            .map_err(|_| failure("mod_runtime_poisoned"))?;
+        if !active() {
+            return Err(failure("terminal_view_stale"));
+        }
+        host.terminal_revision = host.terminal_revision.wrapping_add(1);
+        let generation = host.generation;
+        let revision = host.terminal_revision;
+        let mut results = Vec::new();
+        let mut pending = Vec::new();
+        for id in host.event_ids("terminal") {
+            if thread.is_none()
+                && host
+                    .loaded
+                    .get(&id)
+                    .is_some_and(|loaded| loaded.package.state_scope == "thread")
+            {
+                continue;
+            }
+            let own = payload.own(&id);
+            let stamp = host.terminal_state_key(&id, thread.as_deref());
+            let key = stamp
+                .as_ref()
+                .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
+            let cached = key.as_ref().and_then(|key| {
+                host.renders
+                    .get(&id)
+                    .filter(|(cached, _, clock)| {
+                        cached == key
+                            && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
+                    })
+                    .map(|(_, value, _)| value.clone())
+            });
+            if cached.is_none() {
+                pending.push((
+                    results.len(),
+                    host.begin(&id, generation, &active, thread.as_deref()),
+                    own,
+                ));
+            }
+            results.push((id, cached.map(Ok), key, stamp));
+        }
+        (generation, revision, results, pending)
+    };
+    for attempt in 0..2 {
+        let replies = concurrently(pending, &active, |(index, mut begun, own), active| {
+            let mut input_stamp = results[index].3.clone();
+            for retry in 0..2 {
+                let reply = begun.and_then(|mut invocation| {
+                    if invocation.migrate {
+                        invocation.loaded.state = packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
+                    }
+                    let reply = registered_call(&invocation.loaded, &invocation.dynamic, "terminal", "").and_then(|()| bridge::run(
+                        &invocation.loaded, "terminal", "", payload.payload(own.clone()), &[], active,
+                        &mut |call| Err(failure(match call.operation.as_str() {
+                            "time.sleep" => "host_operation_unavailable: time.sleep is not available during terminal",
+                            _ => "host_operation_unavailable: requires a native task",
+                        })), &mut |_| {}, Some(invocation.virtual_time_ms.unwrap_or_else(crate::peers::now_ms)), &InvocationScope::default(),
+                    ));
+                    Ok((invocation, reply))
+                });
+                let mut host = match runtime.lock() {
+                    Ok(host) => host,
+                    Err(_) => return (index, Err(failure("mod_runtime_poisoned")), None, None),
+                };
+                let id = &results[index].0;
+                if !active() || host.generation != generation || host.terminal_revision != revision
+                {
+                    return (
+                        index,
+                        Err(failure("terminal_view_stale")),
+                        input_stamp,
+                        None,
+                    );
+                }
+                if host.terminal_state_key(id, thread.as_deref()) != input_stamp {
+                    if retry == 1 {
+                        return (
+                            index,
+                            Err(failure("terminal_state_changed")),
+                            input_stamp.clone(),
+                            input_stamp,
+                        );
+                    }
+                    begun = host.begin(id, generation, active, thread.as_deref());
+                    input_stamp = host.terminal_state_key(id, thread.as_deref());
+                    continue;
+                }
+                let result = match reply {
+                    Ok((invocation, reply)) => {
+                        host.finish(id, generation, "terminal", "", invocation, reply, active)
+                    }
+                    Err(error) => Err(error),
+                };
+                if retry == 0
+                    && result
+                        .as_ref()
+                        .is_err_and(|error| error.to_string().starts_with("state_conflict"))
+                {
+                    begun = host.begin(id, generation, active, thread.as_deref());
+                    input_stamp = host.terminal_state_key(id, thread.as_deref());
+                    continue;
+                }
+                let stamp = host.terminal_state_key(id, thread.as_deref());
+                return (index, result, input_stamp, stamp);
+            }
+            unreachable!()
+        });
+        for (index, value, input_stamp, stamp) in replies {
+            results[index].1 = Some(value);
+            results[index].2 = input_stamp
+                .map(|stamp| format!("{stamp}:{}", payload.key(&payload.own(&results[index].0))));
+            results[index].3 = stamp;
+        }
+        let mut host = runtime
+            .lock()
+            .map_err(|_| failure("mod_runtime_poisoned"))?;
+        if !active() || host.generation != generation || host.terminal_revision != revision {
+            return Err(failure("terminal_view_stale"));
+        }
+        let changed = results
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (id, _, _, stamp))| {
+                (host.terminal_state_key(id, thread.as_deref()) != *stamp).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if !changed.is_empty() {
+            if attempt == 1 {
+                return Err(failure("terminal_state_changed"));
+            }
+            pending = changed
+                .into_iter()
+                .map(|index| {
+                    let id = &results[index].0;
+                    let own = payload.own(id);
+                    let begun = host.begin(id, generation, &active, thread.as_deref());
+                    let stamp = host.terminal_state_key(&results[index].0, thread.as_deref());
+                    results[index].2 = stamp
+                        .as_ref()
+                        .map(|stamp| format!("{stamp}:{}", payload.key(&own)));
+                    results[index].3 = stamp;
+                    (index, begun, own)
+                })
+                .collect();
+            continue;
+        }
+        let mut accepted = Vec::new();
+        for (id, value, key, _) in results {
+            let result = value.unwrap_or_else(|| Err(failure("callback_cancelled")));
+            match (&result, key) {
+                (Ok(value), Some(key)) => {
+                    let clock = host.clock_reads.contains(&id).then(Instant::now);
+                    host.renders.insert(id.clone(), (key, value.clone(), clock));
+                }
+                _ => {
+                    host.renders.remove(&id);
+                }
+            }
+            accepted.push((id, result));
+        }
+        let origin = payload.shared["event"].as_str().unwrap_or_default();
+        let view = host.compose_terminal(accepted, origin, None);
+        publish(view, host.configuration_sha256());
+        return Ok(());
+    }
+    Err(failure("terminal_state_changed"))
 }
 
 type NextFn<'n> = dyn FnMut(
@@ -4042,6 +4251,7 @@ pub struct ModOpenOptions<'a> {
     pub tool_validator: fn(&Value) -> Result<()>,
     pub repository: Option<&'a Path>,
     pub active: &'a dyn Fn() -> bool,
+    pub configuration_overrides: Arc<Mutex<ConfigurationOverrides>>,
 }
 
 impl Default for ModOpenOptions<'_> {
@@ -4050,6 +4260,7 @@ impl Default for ModOpenOptions<'_> {
             tool_validator: |_| Ok(()),
             repository: None,
             active: &always_active,
+            configuration_overrides: Arc::default(),
         }
     }
 }
@@ -4096,13 +4307,23 @@ impl ModHost {
             tool_validator,
             repository,
             active,
+            configuration_overrides,
         } = options;
         let store = ModStore::open(root)?;
+        let terminal = {
+            let overrides = configuration_overrides
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            (overrides.id(), overrides.terminal().map(str::to_owned))
+        };
         let mut host = Self {
             store,
             generation: 0,
             configuration_sha256: String::new(),
             configuration_stamp: None,
+            configuration_overrides,
+            terminal,
+            override_revision: None,
             inspect_retried: String::new(),
             inspect_retry: None,
             ui_configuration: None,
@@ -4119,6 +4340,7 @@ impl ModHost {
             checkout: None,
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
+            terminal_revision: 0,
             clock_reads: BTreeSet::new(),
             ui_mods: mod_ui_allowlist().map(<[String]>::to_vec),
             rendered: HashMap::new(),
@@ -4419,8 +4641,43 @@ impl ModHost {
         self.inspect_retry = None;
     }
 
+    pub fn configuration_overrides(&self) -> Arc<Mutex<ConfigurationOverrides>> {
+        Arc::clone(&self.configuration_overrides)
+    }
+
+    pub fn terminal(&self) -> u64 {
+        self.terminal.0
+    }
+
+    fn current_overrides(&self) -> ConfigurationOverrides {
+        self.configuration_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn overrides_settled(&self) -> bool {
+        self.override_revision
+            == Some(
+                self.configuration_overrides
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .revision(),
+            )
+    }
+
     fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
+        self.current_settled(stamp)
+            && self
+                .configuration_overrides
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .sources_current()
+    }
+
+    fn current_settled(&self, stamp: &Option<ConfigurationStamp>) -> bool {
         !self.inspect_retry_due()
+            && self.overrides_settled()
             && stamp.is_some()
             && *stamp == self.configuration_stamp
             && self
@@ -4454,9 +4711,13 @@ impl ModHost {
         if !active() {
             return Err(failure("callback_cancelled"));
         }
+        self.configuration_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain_sources()?;
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamps(&self.store.root);
-        if self.current(&stamp) {
+        if self.current_settled(&stamp) {
             return Ok(false);
         }
         self.configuration_stamp = None;
@@ -4474,7 +4735,7 @@ impl ModHost {
             Ok(deployment) => (deployment, None),
             Err(error) => (policy::ManagedDeployment::default(), Some(error)),
         };
-        let retrying = hash == self.configuration_sha256;
+        let retrying = hash == self.configuration_sha256 && self.overrides_settled();
         if retrying && !self.inspect_retry_due() {
             self.configuration_stamp = self.settled(stamp);
             return Ok(false);
@@ -4540,6 +4801,18 @@ impl ModHost {
         }
         let administered = selections.len();
         selections.extend(config.mods.iter().cloned());
+        let overrides = {
+            let mut owner = self
+                .configuration_overrides
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            owner.retain(&selections)?;
+            owner.retain_unblocked(&self.store)?;
+            owner.clone()
+        };
+        for selection in &mut selections {
+            selection.enabled = overrides.enabled(selection);
+        }
         self.managed = managed;
         self.policies = selections
             .iter()
@@ -4608,6 +4881,18 @@ impl ModHost {
             }
             let (settings_file, file_settings) = self.store.settings_file(&package, &selection);
             selection.settings.extend(file_settings);
+            match overrides.settings(&selection, &package, &selection.settings) {
+                Ok(settings) => selection.settings = settings,
+                Err(error) => {
+                    rejected.push(ModRejection {
+                        path: selection.path.clone(),
+                        id: Some(id),
+                        scope: selection.scope.clone(),
+                        reason: error.to_string(),
+                    });
+                    continue;
+                }
+            }
             // An unchanged trusted selection and adapter keep their inspection; another host's also needs the state it ran with.
             let unchanged = |previous: &&Loaded| {
                 previous.error.is_none()
@@ -4821,6 +5106,7 @@ impl ModHost {
             self.inspect_retry = None;
         }
         self.configuration_sha256 = hash;
+        self.override_revision = Some(overrides.revision());
         self.configuration_stamp = self.settled(stamp);
         let key = (self.store.root.clone(), self.project.clone());
         let mut inspected: BTreeMap<_, _> = self
@@ -5616,6 +5902,7 @@ impl ModHost {
             && *stamp == modified
             && *sha256 == self.configuration_sha256
             && *granted == grant
+            && self.overrides_settled()
         {
             return Ok(());
         }
@@ -5661,7 +5948,9 @@ impl ModHost {
             .get(&loaded.package.id)
             .unwrap_or(&loaded.selection);
         // An unchanged authority inventory cannot introduce a different precedence winner.
-        let unchanged = hash == self.configuration_sha256;
+        let overrides = self.current_overrides();
+        let unchanged = hash == self.configuration_sha256
+            && self.override_revision == Some(overrides.revision());
         if !unchanged {
             self.configuration_stamp = None;
         }
@@ -5683,6 +5972,9 @@ impl ModHost {
                 .filter(|selection| selection.path == loaded.selection.path)
                 .count();
             selections.retain(|selection| selection.path == loaded.selection.path);
+        }
+        for selection in &mut selections {
+            selection.enabled = overrides.enabled(selection);
         }
         let selected = Self::select(
             &selections,
@@ -5939,6 +6231,7 @@ impl ModHost {
                 &loaded.state,
                 &reply.state,
             )?;
+            crate::client_surface::state_committed(&loaded.package.id, self.terminal.0);
         }
         if let Some(state) = ui.as_mut()
             && (ui_state != loaded.ui_state || reply.ui_written && ui_state != state.value)
@@ -6314,6 +6607,7 @@ impl ModHost {
             crate::sha256_hex(
                 json!([
                     self.project,
+                    self.terminal.1,
                     thread,
                     selection,
                     loaded.adapter.as_ref().map(|adapter| &adapter.sha256)
@@ -6362,6 +6656,7 @@ impl ModHost {
     }
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
+        self.terminal_revision = self.terminal_revision.wrapping_add(1);
         let thread = state_thread(&payload);
         let payload = TerminalPayload::new(payload);
         let generation = self.generation;
@@ -6492,6 +6787,7 @@ impl ModHost {
         {
             return Err(failure("terminal_owner_unavailable"));
         }
+        self.terminal_revision = self.terminal_revision.wrapping_add(1);
         let stamp = self.terminal_state_key(id, state_thread(payload).as_deref());
         let accepted = self
             .loaded

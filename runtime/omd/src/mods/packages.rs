@@ -10,6 +10,132 @@ pub struct SettingsFile {
 }
 
 impl ModStore {
+    pub fn save_configuration(
+        &self,
+        path: &Path,
+        values: &serde_json::Map<String, Value>,
+        enabled: Option<bool>,
+        revision: Option<u64>,
+        action: &str,
+    ) -> Result<BTreeMap<String, Value>> {
+        let _lock = self.transaction()?;
+        let mut config = self.configuration()?;
+        if revision.is_some_and(|revision| revision != config.revision) {
+            return Err(failure("package_state_changed: preview again"));
+        }
+        let index = config
+            .mods
+            .iter()
+            .position(|item| item.path == path)
+            .ok_or_else(|| failure("package_not_trusted"))?;
+        let selection = config.mods[index].clone();
+        if selection.scope == MANAGED_SCOPE || enabled.is_some() && selection.required {
+            return Err(failure("configuration_override_forbidden"));
+        }
+        if !selection.authority_current() {
+            return Err(failure("grant_expired: trust the package again"));
+        }
+        let (package, hash) = store::verified_package(path)?;
+        if hash != selection.sha256 {
+            return Err(failure("source_changed: inspect and trust the new digest"));
+        }
+        let (file, file_values) = self.settings_file(&package, &selection);
+        if let Some(error) = file.error {
+            return Err(failure(format!("settings_file_invalid: {error}")));
+        }
+        let mut saved = declared_settings(package.settings_schema.as_ref(), &selection.settings);
+        let mut from_file = file_values.clone();
+        for (name, value) in values {
+            if value.is_null() {
+                from_file.remove(name);
+                saved.remove(name);
+            } else if file_values.contains_key(name) {
+                from_file.insert(name.clone(), value.clone());
+            } else {
+                saved.insert(name.clone(), value.clone());
+            }
+        }
+        let mut merged = saved.clone();
+        merged.extend(from_file.clone());
+        validate_settings(&package, &merged)?;
+        let file_write = (from_file != file_values)
+            .then(|| edited_settings_file(Path::new(&file.path), &file_values, &from_file))
+            .transpose()?;
+        let mut lock = self.read_package_lock()?;
+        let installed = lock
+            .packages
+            .values()
+            .find(|item| item.path == path)
+            .map(|item| item.id.clone());
+        let lock_changed = enabled.is_some() && installed.is_some();
+        if enabled == Some(true) {
+            self.admit_enable(&package, &selection, &|selection| selection.enabled)?;
+        }
+        if let (Some(enabled), Some(id)) = (enabled, &installed) {
+            let item = &lock.packages[id];
+            if item.integrity != hash || item.state_version != package.state_version {
+                return Err(failure("package_state_changed"));
+            }
+            if enabled && let Some(reason) = lock.blocked_reason(id, &item.version, &item.integrity)
+            {
+                return Err(failure(format!("package_blocked: {reason}")));
+            }
+            if let Some(item) = lock.packages.get_mut(id) {
+                item.enabled = enabled;
+            }
+            package_manager::validate_locked_graph(&lock.packages)?;
+            store::next_revision(&mut lock.revision)?;
+        }
+        config.mods[index].settings = saved;
+        config.mods[index].enabled = enabled.unwrap_or(selection.enabled);
+        if config.mods[index].settings == selection.settings
+            && config.mods[index].enabled == selection.enabled
+            && file_write.is_none()
+        {
+            return Ok(merged);
+        }
+        store::next_revision(&mut config.revision)?;
+        if lock_changed || file_write.is_some() {
+            self.commit_configuration_transaction(
+                lock,
+                config,
+                &[],
+                action,
+                json!({"mod":package.id}),
+                &[],
+                file_write
+                    .as_ref()
+                    .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
+            )?;
+        } else {
+            self.write("mods.json", &serde_json::to_value(config)?)?;
+        }
+        Ok(merged)
+    }
+
+    pub(super) fn admit_enable(
+        &self,
+        package: &ModPackage,
+        selection: &ModSelection,
+        enabled: &dyn Fn(&ModSelection) -> bool,
+    ) -> Result<()> {
+        if package
+            .capabilities
+            .iter()
+            .any(|capability| !selection.capabilities.contains(capability))
+        {
+            return Err(failure("capability_denied: trust the package again"));
+        }
+        self.check_service_providers(package, &selection.path, enabled)?;
+        store::refuse_second_copy(
+            &self.configuration()?,
+            &selection.path,
+            &selection.scope,
+            &package.id,
+            enabled,
+        )
+    }
+
     pub fn settings_file(
         &self,
         package: &ModPackage,
@@ -73,22 +199,6 @@ impl ModStore {
     pub fn settings(&self, path: &Path, settings: BTreeMap<String, Value>) -> Result<()> {
         self.update_settings(path, |current| *current = settings)
             .map(drop)
-    }
-
-    pub fn merge_settings(
-        &self,
-        path: &Path,
-        values: &serde_json::Map<String, Value>,
-    ) -> Result<BTreeMap<String, Value>> {
-        self.update_settings(path, |settings| {
-            for (name, value) in values {
-                if value.is_null() {
-                    settings.remove(name);
-                } else {
-                    settings.insert(name.clone(), value.clone());
-                }
-            }
-        })
     }
 
     fn update_settings(
@@ -391,4 +501,264 @@ pub(super) fn migration_registrations(loaded: &Loaded) -> Result<Registered> {
 fn run_migration(loaded: &Loaded, from: u64, active: &dyn Fn() -> bool) -> Result<Value> {
     let to = loaded.package.state_version;
     Ok(ModHost::run(loaded, "migrate", "", json!({"from":from,"to":to}), active)?.state)
+}
+
+fn edited_settings_file(
+    path: &Path,
+    before: &BTreeMap<String, Value>,
+    after: &BTreeMap<String, Value>,
+) -> Result<(String, Vec<u8>)> {
+    let name = format!(
+        "settings/{}",
+        path.file_name()
+            .ok_or_else(|| failure("settings_file_invalid"))?
+            .to_string_lossy()
+    );
+    let json = path
+        .extension()
+        .is_some_and(|extension| extension == "json");
+    let bytes = store::read(path, 65_536)?;
+    if parsed_settings(&bytes, json).as_ref() != Some(before) {
+        return Err(failure("settings_file_changed: try again"));
+    }
+    let edited = std::str::from_utf8(&bytes).ok().and_then(|text| {
+        let mut text = text.to_owned();
+        for key in before.keys().filter(|key| !after.contains_key(*key)) {
+            text = removed_entry(&text, key, json)?;
+        }
+        for (key, value) in after {
+            if before.get(key) != Some(value) {
+                text = edited_entry(&text, key, value, json)?;
+            }
+        }
+        (parsed_settings(text.as_bytes(), json).as_ref() == Some(after)).then(|| text.into_bytes())
+    });
+    let bytes = match edited {
+        Some(bytes) => bytes,
+        None if json => {
+            let mut bytes = serde_json::to_vec_pretty(after)?;
+            bytes.push(b'\n');
+            bytes
+        }
+        None if !bytes.contains(&b'#') => {
+            serde_yaml::to_string(after).map_err(failure)?.into_bytes()
+        }
+        None => {
+            return Err(failure(format!(
+                "settings_file_not_editable: changing this would drop the comments in {}; change it there",
+                path.display()
+            )));
+        }
+    };
+    Ok((name, bytes))
+}
+
+fn parsed_settings(bytes: &[u8], json: bool) -> Option<BTreeMap<String, Value>> {
+    let value: Value = if json {
+        serde_json::from_slice(bytes).ok()?
+    } else {
+        serde_yaml::from_slice(bytes).ok()?
+    };
+    serde_json::from_value(value).ok()
+}
+
+fn edited_entry(text: &str, key: &str, value: &Value, json: bool) -> Option<String> {
+    let span = if json {
+        json_value_span(text, key)?
+    } else {
+        yaml_value_span(text, key)?
+    };
+    let quoted = serde_json::to_string(value).ok()?;
+    let candidates = match (json, value.as_str(), text.as_bytes()[span.start]) {
+        (false, Some(string), b'\'') => vec![format!("'{}'", string.replace('\'', "''"))],
+        (false, Some(string), first) if first != b'"' => vec![string.to_owned(), quoted],
+        _ => vec![quoted],
+    };
+    candidates.into_iter().find_map(|candidate| {
+        let edited = format!("{}{candidate}{}", &text[..span.start], &text[span.end..]);
+        parsed_settings(edited.as_bytes(), json)
+            .is_some_and(|parsed| parsed.get(key) == Some(value))
+            .then_some(edited)
+    })
+}
+
+fn removed_entry(text: &str, key: &str, json: bool) -> Option<String> {
+    let bytes = text.as_bytes();
+    let range = if json {
+        let (key_start, value) = json_entry_span(text, key)?;
+        let mut start = key_start;
+        while start > 0 && matches!(bytes[start - 1], b' ' | b'\t') {
+            start -= 1;
+        }
+        let mut next = value.end;
+        while bytes.get(next).is_some_and(u8::is_ascii_whitespace) {
+            next += 1;
+        }
+        if bytes.get(next) == Some(&b',') {
+            next += 1;
+            while bytes
+                .get(next)
+                .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+            {
+                next += 1;
+            }
+            if bytes.get(next) == Some(&b'\n') {
+                next += 1;
+            }
+            start..next
+        } else {
+            let comma = bytes[..key_start]
+                .iter()
+                .rposition(|byte| !byte.is_ascii_whitespace())
+                .filter(|index| bytes[*index] == b',');
+            comma.unwrap_or(key_start)..value.end
+        }
+    } else {
+        let value = yaml_value_span(text, key)?;
+        let start = text[..value.start].rfind('\n').map_or(0, |index| index + 1);
+        let end = text[value.end..]
+            .find('\n')
+            .map_or(text.len(), |index| value.end + index + 1);
+        start..end
+    };
+    Some(format!("{}{}", &text[..range.start], &text[range.end..]))
+}
+
+fn quoted_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let quote = bytes[start];
+    let mut index = start + 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if quote == b'"' => index += 2,
+            b'\'' if quote == b'\'' && bytes.get(index + 1) == Some(&b'\'') => index += 2,
+            byte if byte == quote => return Some(index + 1),
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+fn json_value_span(text: &str, key: &str) -> Option<std::ops::Range<usize>> {
+    json_entry_span(text, key).map(|(_, value)| value)
+}
+
+fn json_entry_span(text: &str, key: &str) -> Option<(usize, std::ops::Range<usize>)> {
+    let bytes = text.as_bytes();
+    let skip = |mut index: usize| {
+        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+            index += 1;
+        }
+        index
+    };
+    let (mut depth, mut expect_key, mut index) = (0usize, false, 0);
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => {
+                let end = quoted_end(bytes, index)?;
+                if depth == 1 && expect_key {
+                    let name: String = serde_json::from_str(&text[index..end]).ok()?;
+                    let colon = skip(end);
+                    (bytes.get(colon) == Some(&b':')).then_some(())?;
+                    let start = skip(colon + 1);
+                    if name == key {
+                        let end = match bytes.get(start)? {
+                            b'"' => quoted_end(bytes, start)?,
+                            b'{' | b'[' => return None,
+                            _ => {
+                                start
+                                    + bytes[start..]
+                                        .iter()
+                                        .position(|byte| {
+                                            matches!(byte, b',' | b'}')
+                                                || byte.is_ascii_whitespace()
+                                        })
+                                        .unwrap_or(bytes.len() - start)
+                            }
+                        };
+                        return Some((index, start..end));
+                    }
+                    expect_key = false;
+                    index = start;
+                    continue;
+                }
+                index = end;
+                continue;
+            }
+            b'{' => {
+                depth += 1;
+                expect_key = depth == 1;
+            }
+            b'[' => depth += 1,
+            b'}' | b']' => depth = depth.checked_sub(1)?,
+            b',' => expect_key = depth == 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn yaml_value_span(text: &str, key: &str) -> Option<std::ops::Range<usize>> {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut offset = 0;
+    for (index, line) in lines.iter().enumerate() {
+        let start = offset;
+        offset += line.len();
+        let content = line.trim_end_matches(['\n', '\r']);
+        if content.is_empty()
+            || content.starts_with([' ', '\t', '#', '-', '.', '%', '?', '{', '[', '&', '*', '!'])
+        {
+            continue;
+        }
+        let bytes = content.as_bytes();
+        let key_end = if matches!(bytes[0], b'"' | b'\'') {
+            quoted_end(bytes, 0)
+        } else {
+            content
+                .match_indices(':')
+                .map(|(end, _)| end)
+                .find(|end| matches!(bytes.get(end + 1), None | Some(b' ' | b'\t')))
+        };
+        let Some(key_end) = key_end else {
+            continue;
+        };
+        if bytes.get(key_end) != Some(&b':') {
+            continue;
+        }
+        let Ok(name) = serde_yaml::from_str::<String>(&content[..key_end]) else {
+            continue;
+        };
+        if name != key {
+            continue;
+        }
+        let rest = &content[key_end + 1..];
+        let value_start = key_end + 1 + (rest.len() - rest.trim_start().len());
+        let value = &content[value_start..];
+        if value.is_empty() || value.starts_with(['|', '>', '&', '*', '!', '{', '[', '#']) {
+            return None;
+        }
+        if lines[index + 1..]
+            .iter()
+            .map(|line| line.trim_end_matches(['\n', '\r']))
+            .find(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+            .is_some_and(|line| line.starts_with([' ', '\t']))
+        {
+            return None;
+        }
+        let value_end = match value.as_bytes()[0] {
+            b'"' | b'\'' => value_start + quoted_end(value.as_bytes(), 0)?,
+            _ => {
+                value_start
+                    + value
+                        .find(" #")
+                        .into_iter()
+                        .chain(value.find("\t#"))
+                        .min()
+                        .unwrap_or(value.len())
+            }
+        };
+        let value_end = value_start + content[value_start..value_end].trim_end().len();
+        return Some(start + value_start..start + value_end);
+    }
+    None
 }

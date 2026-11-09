@@ -92,7 +92,6 @@ pub(crate) struct Session {
     contract_state: PathBuf,
     processes: Arc<managed_process::ManagedProcesses>,
     power: Arc<codex_omd::power::Leases>,
-    data: mods::DataScope,
     access: mods::AccessState,
 }
 
@@ -226,8 +225,8 @@ fn install_active(
     });
     let root = host.root.clone();
     model_windows::load(&root);
-    codex_omd::package_controls::set_connected_models(|provider, model| {
-        codex_models_manager::runtime_models::find(model)
+    codex_omd::package_controls::set_connected_models(|terminal_owner, provider, model| {
+        codex_models_manager::runtime_models::find_for(terminal_owner, model)
             .is_some_and(|(owner, _)| owner == provider)
     });
     mods::install(registry, host).or_else(|error| inactive(&root, error))
@@ -521,10 +520,6 @@ impl Host {
             codex_omd::data_store::prune_thread_directories(&sessions, |name| {
                 name == current || name.starts_with("ledger-")
             });
-            codex_omd::data_store::prune_thread_directories(
-                &self.root.join("data").join("threads"),
-                |name| name == current,
-            );
         }
         let task = Arc::new(ledger::open(
             &sessions,
@@ -558,7 +553,6 @@ impl Host {
             )),
             processes: Arc::new(managed_process::ManagedProcesses::default()),
             power: Arc::default(),
-            data: mods::DataScope::default(),
             access: mods::AccessState::default(),
             evidence,
         }))
@@ -612,6 +606,7 @@ impl Host {
                 .flatten()
         });
         let account = Account {
+            mod_runtime: None,
             task: session.task.clone(),
             owner: owner.into(),
             model,
