@@ -28,7 +28,9 @@ omd mods enable omd_workspace
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
-Without it nothing changes. `/workspace off` hides the workspace and `/workspace on` brings it back, without `/mods`.
+Without it nothing changes. `/workspace off` asks where to hide the workspace: in this conversation (the default;
+`/workspace on` brings it back), in this terminal until it closes, or in every terminal (both turn the mod off, and
+`/mods` turns it back on).
 
 ## Use it
 
@@ -160,7 +162,7 @@ running shell costs about 2 MiB and no idle CPU.
 | Command | What it does |
 | --- | --- |
 | `/workspace` | Status and usage |
-| `/workspace on`, `off` | Show or hide the workspace |
+| `/workspace on`, `off [conversation\|terminal\|everywhere]` | Show or hide the workspace. `off` without a word asks; `terminal` and `everywhere` turn the mod off after a confirmation, and outside a terminal `off` hides it in this conversation |
 | `/workspace toggle` | Show or hide the panels and keep the workspace's keys (`key_toggle`). While the workspace is off, it turns it on |
 | `/workspace layout PRESET\|save NAME\|load NAME\|delete NAME` | Pick, save, load or delete an arrangement |
 | `/workspace move PANEL left\|right\|up\|down\|tab`, `swap PANEL PANEL` | Rearrange panels |
@@ -201,6 +203,9 @@ Change settings in `/mods` (open the workspace's settings there). The same names
 - Resizing overrides `dock_size` until `/workspace reset`.
 - Panels you leave out of `panels` are hidden, and unknown ids are listed under `Ignored:`. An empty `panels` shows
   built-ins, terminals, then registrations.
+- Everything the workspace saves is kept per conversation: the arrangement, sizes, tabs, screen modes, registered
+  panels and `/workspace off`. A new conversation starts from your settings, and another terminal on a different
+  conversation keeps its own workspace. Changes need a started conversation and are refused before one exists.
 
 ## Needs and limits
 
@@ -209,7 +214,11 @@ Change settings in `/mods` (open the workspace's settings there). The same names
   It also asks to write files and reach this computer's network so that `shell_write`, `shell_network` and terminals'
   `write` and `network` can work. Nothing writes or reaches the network unless you turn it on, and each start asks you
   first. The capabilities are `terminal`, `commands`, `exec`, `pty`, `fs.write`, `network`, `services`, `lifecycle`,
-  `inventory` and `store` (see [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
+  `inventory`, `packages` and `store` (see [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
+- It holds the `packages` permission so that `/workspace off terminal` and `everywhere` can turn the mod off, after a
+  confirmation. That permission also lets it change other mods' settings and model routes.
+- Turning the workspace off for a terminal or everywhere also removes the `omd_git` and `omd_files` panels from the
+  workspace until you turn it back on in `/mods`.
 - It needs `git` on your `PATH` for the Changes panel. A directory outside a Git repository shows "Not a Git
   repository".
 - At most 6 panels and 10 panel sites (each tab of a panel with tabs counts). Extra panels are left out.
@@ -252,7 +261,7 @@ reason.
 - `replaces`: a built-in panel (`changes` or `terminal`) it stands in for. That panel is hidden unless the `panels`
   setting lists it.
 
-A registration persists until `unregister` or until its owner (the `<mod>` of its site) is turned off, so a mod you
+A registration persists in its conversation until `unregister` or until its owner (the `<mod>` of its site) is turned off, so a mod you
 turned off leaves no tab behind. Registering again on every `start` is harmless. At most 16 panels can be
 registered. Titles are at most 30 bytes (tab titles 32) without control characters. The workspace only places
 panels, and the registering mod draws them. Panels missing from an arrangement join it by their placement, else the

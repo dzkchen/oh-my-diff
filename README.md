@@ -45,9 +45,9 @@ OMD+ comes with these, among others:
 
 - **[Grouped tool lines](mods/first-party/omd_tool_lines/README.md)**: adjacent shell commands collapse into one row; open it for the full output.
 - **[Status line](mods/first-party/omd_statusline/README.md)**: configurable, edited with `/statusline`.
-- **[Auto-continue](mods/first-party/omd_auto_continue/README.md)**: an unanswered approval or question no longer stalls the turn.
-- **[Privacy](mods/first-party/omd_privacy/README.md)**: hides secrets and chosen personal data from what's sent to the model (off; turn on in `/mods`).
-- **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request (off; turn on in `/mods`).
+- **[Privacy](mods/first-party/omd_privacy/README.md)**: redacts text that matches its secret and personal-data rules in requests sent to the model. Web search, transcripts and logs aren't covered.
+- **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request.
+- **[Auto-continue](mods/first-party/omd_auto_continue/README.md)**: off until you turn it on; an unanswered approval or question no longer stalls the turn.
 
 Experimental mods add other providers, a workspace dock, `/undo` and language-server feedback. The
 [included mods](docs/collection.md) page lists every one and says which are on by default and which are experimental.
@@ -65,9 +65,8 @@ Experimental mods add other providers, a workspace dock, `/undo` and language-se
 
 ## Install
 
-You need an Apple Silicon Mac, the Codex version the [latest release](https://github.com/dzkchen/oh-my-diff/releases/latest)
-builds on, and Python 3.12 or later. The installer prints the command that installs the right Codex if yours differs.
-The [install guide](docs/install.md) lists every requirement.
+You need an Apple Silicon Mac, Codex 0.167 (`npm install -g @openai/codex@0.167`, which needs Node, or Homebrew's
+Codex while it's on 0.167.x) and Python 3.12 or later. The [install guide](docs/install.md) lists every requirement.
 
 ### OMD+ (recommended)
 
@@ -94,7 +93,8 @@ You can switch later by running the other command.
 codex
 ```
 
-Codex starts and shows the OMD logo. Type `/mods` to see which mods are on and to turn others on or off. Outside
+Codex asks you to sign in if you haven't before, then shows the OMD logo. Type `/mods` to see which mods are on and
+to turn others on or off; Esc closes it. Outside
 `codex`, run `omd` for a short summary of the commands that install, update and manage mods. If `codex` still starts
 plain Codex, see [troubleshooting](docs/troubleshooting.md).
 

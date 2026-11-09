@@ -64,6 +64,7 @@ const SHELL = 'omd_workspace_shell';
 const ARRANGE_MS = 60_000;
 const STATUS = 40;
 const FRESH_MS = 2_000;
+const SCOPES = [['conversation', 'This conversation'], ['terminal', 'This terminal, until it closes'], ['everywhere', 'Every terminal']];
 const EXAMPLE = {
   layout: 'corner', panels: 'changes, terminal, snake', side: 'left', dock_size: 25, narrow_below: 90, border: 'plain', key_main: 'Home',
   shell_write: true, terminals: [{ id: 'snake', title: 'Snake', argv: ['node', 'demo/snake.mjs'] }],
@@ -549,7 +550,7 @@ export default function activate(api: ModAPI) {
     return [
       `Workspace is ${state.off ? 'off' : 'on'} (${source}). Panels: ${list.map((panel, index) => `${index + 1} ${panel.title}${panel.title.toLowerCase() === panel.id ? '' : ` (${panel.id})`}`).join(', ') || 'none'}. Screen mode: ${state.mode ? `${state.mode.target} ${state.mode.level}` : 'normal'}.`,
       ...notes,
-      `Usage: /workspace on | off | toggle | layout ${PRESETS.join('|')}|save NAME|load NAME|delete NAME | move PANEL left|right|up|down|tab | swap PANEL PANEL | arrange PANEL|left|right|up|down|tab|done | mode next|previous|normal|half|full [PANEL|dock|chat] | tab N|next|previous [PANEL] | grow [PANEL] | shrink [PANEL] | start [PANEL] | diff PATH | refresh | config | reset`,
+      `Usage: /workspace on | off [conversation|terminal|everywhere] | toggle | layout ${PRESETS.join('|')}|save NAME|load NAME|delete NAME | move PANEL left|right|up|down|tab | swap PANEL PANEL | arrange PANEL|left|right|up|down|tab|done | mode next|previous|normal|half|full [PANEL|dock|chat] | tab N|next|previous [PANEL] | grow [PANEL] | shrink [PANEL] | start [PANEL] | diff PATH | refresh | config | reset`,
       `Ctrl+] from the prompt enters the panels${keys.toggle ? ` and ${keys.toggle} shows or hides them` : ''}. In them: ${hints.join(', ')}.`,
     ].join('\n');
   };
@@ -569,9 +570,34 @@ export default function activate(api: ModAPI) {
     ].join('\n');
   };
 
+  const scopeOf = (word?: string): { scope: string } | { display: string } => {
+    if (word !== undefined) return { scope: word.toLowerCase() };
+    const picked = api.host.tryCall('terminal.prompt', { kind: 'choice', title: 'Turn the workspace off', message: 'Where should it be off?', options: SCOPES.map(([value, label]) => ({ value, label })) });
+    if (!picked.ok) return /^client_surface_(operation_)?unavailable:/.test(picked.error) ? { scope: 'conversation' } : { display: `Workspace stays on: ${picked.error}` };
+    const scope = picked.value.status === 'accepted' ? picked.value.values?.[0] ?? picked.value.value : undefined;
+    return scope ? { scope } : { display: 'Nothing changed' };
+  };
+  const disable = (target: 'terminal' | 'shared') => {
+    const listed = api.host.tryCall('packages.list', { fields: ['id', 'scope', 'enabled'] });
+    const self = listed.ok ? listed.value.packages.find(item => item.id === 'omd_workspace' && item.enabled) : undefined;
+    if (!listed.ok || !self) return `Workspace stays on: ${listed.ok ? 'it is not in the mod list' : listed.error}`;
+    if (self.scope === 'managed') return 'Workspace stays on: your administrator manages this mod';
+    const applied = api.host.tryCall('packages.apply', { action: 'disable', id: self.id, scope: self.scope, ...(target === 'terminal' ? { target } : {}), expected_generation: listed.value.generation });
+    if (applied.ok ? applied.value.status === 'declined' : applied.error.startsWith('package_confirmation_declined')) return 'Nothing changed';
+    if (!applied.ok) return `Workspace stays on: ${applied.error}`;
+    return `Workspace is off ${target === 'terminal' ? 'in this terminal until you close it' : 'in every terminal'}; /mods turns it back on`;
+  };
+
   api.command('workspace', (args): CommandResult => {
     const input = String(args ?? '').trim();
     const [op = '', ...words] = input.split(/\s+/);
+    if (op === 'off') {
+      const chosen = scopeOf(words[0]);
+      if ('display' in chosen) return chosen;
+      const { scope } = chosen;
+      if (scope === 'terminal' || scope === 'everywhere') return { display: disable(scope === 'terminal' ? 'terminal' : 'shared') };
+      if (scope !== 'conversation') return { display: 'Usage: /workspace off [conversation|terminal|everywhere]' };
+    }
     const display = changed(state => {
       const thread = () => api.session().thread_id;
       const list = panels(state);

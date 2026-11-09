@@ -8,15 +8,15 @@ host. The support policy, platforms and terminals are in [Support](../../docs/su
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.166.0 | 1.3.0 to 1.4.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.166.0 | 1.3.0 to 1.4.2 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.164.0 | 1.2.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 | 0.163.0 | 1.0.0 to 1.1.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 
 The `host` object in [compatibility.json](compatibility.json) describes `main`: Codex 0.167.0 with the host crate
-version `1.4.2` from `runtime/omd/Cargo.toml`, a development version, not a published support claim.
-The supported-version table stops at the latest stable release, `1.4.0`.
+version `1.5.0` from `runtime/omd/Cargo.toml`, a development version, not a published support claim.
+The supported-version table stops at the latest stable release, `1.4.2`.
 
 On the matrix's `as_of` date, OMD didn't lag upstream. Codex 0.166.0 was the newest stable Codex release then.
 
@@ -49,6 +49,7 @@ the API version matches. Each list holds at most 32 features.
 | Assistant message completion and canonical render identity (experimental) | `assistant_message_identity_v1` |
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
 | `routes.write` | `route_write_v1` |
+| `packages.list` `needs_approval` | `package_needs_approval_v1` |
 | `routes.add` without `mod` | `routes_add_self_v1` |
 | `routes.add` with `model` or `effort`, `routes.models` | `routes_add_model_v1` |
 | `api.settingsFile` | `settings_file_v1` |

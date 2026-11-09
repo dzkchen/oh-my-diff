@@ -271,9 +271,11 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     Ok(listed)
 }
 
-static CONNECTED: OnceLock<fn(Option<&str>, &str, &str) -> bool> = OnceLock::new();
+type ConnectedModels = fn(Option<&str>, &str, &str) -> bool;
 
-pub fn set_connected_models(connected: fn(Option<&str>, &str, &str) -> bool) {
+static CONNECTED: OnceLock<ConnectedModels> = OnceLock::new();
+
+pub fn set_connected_models(connected: ConnectedModels) {
     let _ = CONNECTED.set(connected);
 }
 
@@ -431,8 +433,10 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                     && item["scope"] == selection["scope"]
                     && item["sha256"] == selection["sha256"]
             });
-            let failed = (selection["authority_current"] == false)
-                .then_some("grant_expired: trust the package again")
+            let expired = (selection["authority_current"] == false)
+                .then(|| format!("grant_expired: {id}: approve it again with omd mods update {id}"));
+            let failed = expired
+                .as_deref()
                 .or(selection["error"].as_str())
                 .or_else(|| {
                 enabled
@@ -461,6 +465,7 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                 "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
                 "pending": (runtime.is_some() && wanted != running.is_some()).then_some("reload"),
                 "failed": failed,
+                "needs_approval": failed.is_some_and(|failed| failed.starts_with("grant_expired") || !enabled && failed.starts_with("capability_denied")),
                 "api": api,
                 "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == api),
                 "grants": selection["capabilities"],
@@ -562,7 +567,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                 Some(version) if !version.is_empty() => source.with_version(version)?,
                 _ => source,
             };
-            let (request, plan) = requested(store, source, index, arguments.scope.clone())?;
+            let (request, plan) = requested(store, source, index, arguments.scope.clone(), false)?;
             (plan.root.clone(), Some(request), Some(plan), None, None)
         }
         "update" => {
@@ -581,11 +586,30 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                         _ => None,
                     })
             });
+            let revoked = package
+                .capabilities
+                .iter()
+                .any(|capability| !package.trust.capabilities.contains(capability))
+                || store.selection_status()?["selections"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|item| {
+                        item["id"] == package.id.as_str()
+                            && item["scope"] == package.scope.as_str()
+                            && item["packaged"] == true
+                            && item["authority_current"] == false
+                    });
             let (request, plan) = requested(
                 store,
-                package.source.updatable(),
+                if revoked {
+                    package.source.clone()
+                } else {
+                    package.source.updatable()
+                },
                 index,
                 package.scope.clone(),
+                revoked,
             )
             .map_err(|error| failure(format!("package_update_unavailable: {error}")))?;
             (package.id, Some(request), Some(plan), None, None)
@@ -622,16 +646,19 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                 .into_iter()
                 .filter(|name| crate::host::secret_like(name))
                 .collect();
+            let capabilities: Vec<String> =
+                serde_json::from_value(inspected["manifest"]["capabilities"].clone())?;
             if sha256 == current.sha256
                 && current.authority_current
                 && secret_environment
                     .iter()
                     .all(|name| current.secret_environment.contains(name))
+                && capabilities
+                    .iter()
+                    .all(|capability| current.capabilities.contains(capability))
             {
                 return Err(failure("package_source_unchanged"));
             }
-            let capabilities: Vec<String> =
-                serde_json::from_value(inspected["manifest"]["capabilities"].clone())?;
             let added = capabilities
                 .iter()
                 .filter(|capability| !current.capabilities.contains(capability))
@@ -781,10 +808,11 @@ fn requested(
     source: ModPackageSource,
     index: Option<PathBuf>,
     scope: String,
+    offline: bool,
 ) -> io::Result<(ModInstallRequest, crate::ModPackagePlan)> {
     let mut request = ModInstallRequest {
         action: None,
-        offline: matches!(source, ModPackageSource::Local { .. }),
+        offline: offline || matches!(source, ModPackageSource::Local { .. }),
         source,
         index,
         scope,

@@ -7,7 +7,7 @@ The shell commands OMD installs in `~/.local/bin`, what each is for, and which o
 | --- | --- | --- |
 | `omd` | Everyone | You install, turn on or off, or remove mods, or update or uninstall OMD |
 | `omd-package` | Everyone | You switch install profile, turn a mod that came with your profile on or off, set up accounts, or deploy the broker or a policy |
-| `omd-mod` | Repair and administration | You need to change the mod store without running mods, or trust a plugin's mod component |
+| `omd-mod` | Repair and administration | You need to change the mod store without running mods |
 | `omd-mod-author` | Mod authors | You create, test, run or package your own mod |
 
 `omd mods` and `omd-package mod` both turn mods on and off. Use `omd mods` for mods you installed, and
@@ -18,7 +18,8 @@ The installer also adds `omd-contract`, which selects workflow contracts, the co
 
 ## `omd`
 
-Run `omd` with no arguments for a short summary, or `omd help --all` for every command and flag.
+Run `omd` with no arguments for a short summary, `omd help --all` for every command and flag, or `omd --version`
+(`-V`) for the OMD, Codex and mod API versions, for example `oh-my-diff 1.4.2 (Codex 0.167.0, mod API 1.0.0)`.
 
 ### Mods
 
@@ -29,12 +30,12 @@ Run `omd` with no arguments for a short summary, or `omd help --all` for every c
 | `omd mods catalog [QUERY]` | Search the curated directory |
 | `omd mods inspect REFERENCE` | Preview a mod without installing it |
 | `omd mods enable ID`, `omd mods disable ID` | Turn an installed mod on or off; finds it by id, shows its permissions and asks before turning it on |
-| `omd mods update ID` | Update a mod, or review a changed folder mod again |
+| `omd mods update ID` | Update a mod, or review a changed or revoked mod again |
 | `omd mods rollback ID` | Go back to the previous version |
 | `omd mods remove ID` | Uninstall a mod; its cache, state and local sources are kept |
 | `omd mods quarantine ID REASON` | Turn a mod off and block its installed version |
 | `omd mods unblock ID` | Lift a quarantine |
-| `omd mods revoke ID` | Turn a mod off and drop its grants; turning it on again needs a new trust |
+| `omd mods revoke ID` | Turn a mod off and drop its grants; `omd mods update ID` approves it again |
 | `omd mods events` | The store's security events |
 | `omd mods sync [--offline\|--rollback]` | Apply, or roll back, the managed deployment from an administrator policy |
 | `omd mods reset-lock` | Move the package lock aside; installed mods keep running as trusted selections |
@@ -67,7 +68,7 @@ set.
 | Command | What it does |
 | --- | --- |
 | `omd update` | Install the newest release, or first-party mod updates when no newer release is out |
-| `omd update status` | Show the install and update settings |
+| `omd update status` | Show the install and update settings: JSON on standard output, a summary line on standard error |
 | `omd update check` | Check for a release or first-party mod updates without installing them |
 | `omd update rollback` | Undo the last update |
 | `omd update enable\|disable` | Install updates automatically, or only when you run `omd update` |
@@ -82,12 +83,13 @@ set.
 ### Shell commands from mods
 
 `omd COMMAND --repo PATH [ARGS]` runs a shell command that a mod or mod component exports, if it's on. These commands
-can't make model requests or run processes. See
+can't make model requests or run processes. A command that no enabled mod exports, or any command
+without `--repo`, fails with `unknown command: COMMAND` and points to `omd help`. See
 [plugin components](../mods/reference/plugin-components.md).
 
 ## `omd-package`
 
-Manages the install profile. It prints JSON, except `status`, `activate`, `mod` and `doctor`, which print text unless you pass `--json`.
+Manages the install profile. It prints JSON, except `plugin-mod`, which prints what `omd` prints, and `status`, `activate`, `mod` and `doctor`, which print text unless you pass `--json`.
 
 | Command | What it does |
 | --- | --- |
@@ -98,6 +100,7 @@ Manages the install profile. It prints JSON, except `status`, `activate`, `mod` 
 | `omd-package mini` | The same as `omd mini` |
 | `omd-package contract list\|status\|plan\|select\|clear [ID@VERSION]` | List, show or select the workflow contract for this repository |
 | `omd-package plugins` | Register the OMD+ plugin marketplace with Codex ([plugins](../plugins/README.md)) |
+| `omd-package plugin-mod enable\|disable PLUGIN[@MARKETPLACE]` | Review and turn on, or turn off, the mod component of a plugin you added; enabling shows its digest and capabilities and asks first ([plugins](../plugins/README.md#turn-on-a-component)) |
 | `omd-package broker install\|pin\|status\|reset\|uninstall` | Deploy or manage the authority broker (needs `sudo`) |
 | `omd-package broker uninstall --purge` | Remove the broker, its protected credentials, the administrator policy and its rollback copy (needs `sudo`) |
 | `omd-package policy install\|rollback\|remove\|explain [FILE]` | Manage the administrator policy file (needs `sudo`) |
@@ -159,7 +162,7 @@ The install command in [Install Oh My Diff](install.md#install) runs `install.sh
 | `--channel stable\|prerelease\|nightly` | `stable` | Which release to install |
 | `--root DIR` | `~/.local/share/oh-my-diff` | Where OMD keeps releases and mod stores |
 | `--bin-dir DIR` | `~/.local/bin` | Where the `codex`, `omd` and other commands go |
-| `--upstream PATH` | `codex` on your `PATH` | The upstream Codex executable OMD builds on, at the version line the release needs |
+| `--upstream PATH` | `codex` on your `PATH` | The upstream Codex executable OMD builds on: Codex 0.167.x, from `npm install -g @openai/codex@0.167` or Homebrew |
 | `uninstall --purge` | mod data stays without `--purge` | Remove OMD's mod stores and saved sign-ins too; Codex data stays |
 
 An existing command in the bin folder is renamed to `NAME.before-omd` and comes back on uninstall.

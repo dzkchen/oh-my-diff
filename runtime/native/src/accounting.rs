@@ -76,10 +76,53 @@ fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
     Ok(())
 }
 
+static COST_WRITES: Mutex<BTreeMap<std::path::PathBuf, Arc<Mutex<()>>>> =
+    Mutex::new(BTreeMap::new());
+
+fn cost_write_lock(path: &std::path::Path) -> Arc<Mutex<()>> {
+    COST_WRITES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(path.to_path_buf())
+        .or_default()
+        .clone()
+}
+
+#[cfg(test)]
+type CostReplaceHook = (std::path::PathBuf, Box<dyn FnOnce() + Send>);
+
+#[cfg(test)]
+pub(crate) static BEFORE_COST_REPLACE: Mutex<Option<CostReplaceHook>> = Mutex::new(None);
+
 fn write_cost_capture(account: &Account, durability: Durability) -> Result<(), TransportError> {
+    let writing = cost_write_lock(&account.cost_capture);
+    let guard = writing.lock();
+    let result = write_cost_snapshot(account, durability);
+    drop(guard);
+    let mut locks = COST_WRITES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if Arc::strong_count(&writing) == 2 {
+        locks.remove(&account.cost_capture);
+    }
+    result
+}
+
+fn write_cost_snapshot(account: &Account, durability: Durability) -> Result<(), TransportError> {
     let bytes =
         serde_json::to_vec(&account.task.cost_capture().map_err(denied)?).map_err(denied)?;
-    codex_omd::fsio::write_bytes(&account.cost_capture, &bytes, durability).map_err(denied)
+    codex_omd::fsio::write_bytes_before(&account.cost_capture, &bytes, durability, || {
+        #[cfg(test)]
+        if let Some((_, hook)) = BEFORE_COST_REPLACE
+            .lock()
+            .ok()
+            .and_then(|mut hook| hook.take_if(|(path, _)| *path == account.cost_capture))
+        {
+            hook();
+        }
+        Ok(())
+    })
+    .map_err(denied)
 }
 
 pub(crate) fn billing(rates: Option<&Rates>) -> &'static str {
@@ -510,6 +553,10 @@ impl Accounts {
     }
 
     /// Runs `model_send` over the exact body about to be sent, page by page, until no policy edits it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Each argument is a distinct piece of request context"
+    )]
     fn police(
         &self,
         mods: &Mutex<codex_omd::ModHost>,

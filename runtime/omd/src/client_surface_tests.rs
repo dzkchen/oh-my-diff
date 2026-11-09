@@ -318,13 +318,20 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
 
     let woken = Arc::new(AtomicUsize::new(0));
     let counter = woken.clone();
-    let wake_registration = register_wake(Arc::new(move || {
-        counter.fetch_add(1, Ordering::SeqCst);
-    }));
+    let registrations = [1, 10].map(|step| {
+        let counter = counter.clone();
+        register_wake(Arc::new(move || {
+            counter.fetch_add(step, Ordering::SeqCst);
+        }))
+    });
     wake();
-    drop(wake_registration);
+    drop(registrations);
     wake();
-    assert_eq!(woken.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        woken.load(Ordering::SeqCst),
+        11,
+        "every registered wake runs"
+    );
 }
 
 #[test]

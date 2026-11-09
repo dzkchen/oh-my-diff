@@ -271,10 +271,11 @@ impl ModHost {
     }
 
     pub fn capability_explanation(code: &str) -> Value {
+        let unknown;
         let (cause, fix) = if code.starts_with("capability_denied") {
             (
                 "The package requested authority that the manifest or explicit trust grant does not include.",
-                "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant.",
+                "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant; a revoked mod is approved again with omd mods update ID.",
             )
         } else if code.starts_with("undeclared_operation_use") {
             (
@@ -311,10 +312,31 @@ impl ModHost {
                 "The callback ran without an active native task capable of servicing that host operation.",
                 "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
             )
-        } else {
+        } else if code.starts_with("package_blocked") {
             (
-                "The host denied or could not classify the requested authority.",
-                "Use omd-mod report and omd-mod events, then compare the literal operation, manifest declaration and user-approved grant.",
+                "The installed version was quarantined with omd mods quarantine, so it cannot be enabled, reinstalled or rolled back to.",
+                "If the reason no longer applies, run omd mods unblock ID, then omd mods enable ID.",
+            )
+        } else if code.starts_with("source_changed") {
+            (
+                "The package's files no longer match the digest the user trusted.",
+                "Review the change and approve it again in /omd or with omd mods update ID.",
+            )
+        } else if code.starts_with("package_not_trusted") {
+            (
+                "The store has no trusted selection for that mod or folder.",
+                "Install it with omd install REFERENCE, or trust a folder with omd-mod trust STORE PACKAGE SHA256 CAPABILITIES_CSV.",
+            )
+        } else if code.starts_with("managed_by_policy") {
+            (
+                "Administrator policy requires this mod, so it cannot be turned off locally.",
+                "Run omd-mod policy explain STORE to see the policy, then ask your administrator to change it.",
+            )
+        } else {
+            unknown = format!("OMD has no explanation for {code}; its cause is unknown.");
+            (
+                unknown.as_str(),
+                "Run omd-mod report STORE and omd-mod events STORE to see which mod or host step raised it.",
             )
         };
         json!({"code":code,"cause":cause,"fix":fix,

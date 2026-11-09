@@ -42,7 +42,8 @@ omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('sv
 - Attaching again on the connection replaces its entry.
 - `terminalToken` is an opaque capability for this terminal's in-memory settings and enablement. Keep it in
   memory and send it when reattaching after a disconnect. Another client without it gets a separate owner,
-  including on the same conversation. Do not log, persist or share the token.
+  including on the same conversation. Separate owners share a mod's saved state, not its settings, enablement or
+  session UI state. Do not log, persist or share the token.
 - Connections that never attach have no reconnect capability; their terminal overrides are released on disconnect.
 - Explicit detach invalidates the token and drops its terminal overrides. A server restart also invalidates it;
   `terminal_owner_unknown` means attach without it to start from shared defaults.

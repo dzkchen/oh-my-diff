@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import shutil
 import ssl
@@ -132,11 +133,13 @@ class UpdateSelection(unittest.TestCase):
         self.write_settings()
         return self.module.check(types.SimpleNamespace(), self.root, self.current)
 
-    def test_required_upstream_minor_matches_the_pin_and_docs_name_no_codex_version(self):
+    def test_required_upstream_minor_matches_the_pin_and_the_docs(self):
         minor = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v").rsplit(".", 1)[0]
         self.assertEqual(installer().UPSTREAM_MINOR, minor)
         for name in ("README.md", "docs/install.md", "docs/support.md", "docs/troubleshooting.md", "docs/commands.md"):
-            self.assertNotRegex((ROOT / name).read_text(), r"Codex `\d|codex@\d", name)
+            text = (ROOT / name).read_text()
+            self.assertEqual(set(re.findall(r"Codex `?(\d+\.\d+)|codex@(\d+\.\d+)", text)) - {(minor, ""), ("", minor)}, set(), name)
+        self.assertIn(f"npm install -g @openai/codex@{minor}", (ROOT / "docs/install.md").read_text())
 
     def test_versions_order_by_semantic_precedence(self):
         ordered = ["0.1.0-alpha.1", "0.1.0-alpha.2", "0.1.0-alpha.10", "0.1.0-beta", "0.1.0", "0.1.1", "0.10.0"]
@@ -485,10 +488,10 @@ class UpdateSelection(unittest.TestCase):
     def test_a_release_for_another_target_is_reported_blocked_not_up_to_date(self):
         self.published = [release("0.2.0", target="x86_64-apple-darwin")]
         args = types.SimpleNamespace(action=None, value=None, session=None, yes=False)
-        result = self.module.manual(args, self.root, self.current)
-        self.assertEqual((result["up_to_date"], result["blocked"]["version"]), (False, "0.2.0"))
+        with self.assertRaisesRegex(ValueError, r"^Oh My Diff 0\.2\.0 can't be installed: built for x86_64-apple-darwin"):
+            self.module.manual(args, self.root, self.current)
         summary = self.module.latest_summary(self.module.manual(types.SimpleNamespace(action="status", value=None), self.root, self.current))
-        self.assertEqual(summary, "0.2.0 can't install here: built for x86_64-apple-darwin")
+        self.assertEqual(summary, "0.2.0 can't be installed: built for x86_64-apple-darwin")
 
     def test_the_launcher_notice_fits_an_environment_read(self):
         manifest = {"mod_api": "1.0.0", "body": "b" * 60_000, "signature": "s" * 4000}
@@ -666,6 +669,12 @@ class UpdateSelection(unittest.TestCase):
                 self.module.apply_mods(args, self.root, self.current, self.module.state(self.root)["mods"])
         self.assertEqual((calls, gated[-1], (self.root / "update/journal.json").exists()), ([], True, False))
         other.unlink()
+        self.settings = {"auto": "off"}
+        self.write_settings()
+        self.module.launch(args, self.root, self.current)
+        self.assertEqual(calls, [])
+        self.settings = {"auto": "on"}
+        self.write_settings()
         self.module.launch(args, self.root, self.current)
         self.assertEqual(calls, [("mods-update",)])
         saved = self.module.state(self.root)
@@ -714,7 +723,7 @@ class UpdateSelection(unittest.TestCase):
     def test_a_built_mod_bundle_extracts_with_the_installer_and_matches_its_manifest(self):
         from scripts import mods_bundle
         planned = {"omd": "0.1.0", "serial": 4, "changed": ["omd_update"], "bundle": ["omd_update"], "new": ["omd_update"],
-                   "needs_host": {}, "needs_release": [], "commits": ["abc fix"]}
+                   "needs_host": {}, "needs_release": [], "api_changed": [], "commits": ["abc fix"]}
         with patch.object(mods_bundle, "plan", return_value=planned):
             manifest = mods_bundle.build(self.root / "bundle", "c" * 40)
         self.assertEqual(list(manifest["packages"]), ["omd_update"])
@@ -958,6 +967,54 @@ class UpdateSelection(unittest.TestCase):
         self.assertFalse((self.root / "releases").exists())
         self.assertTrue((self.root / "stores/platform/mods.json").is_file())
 
+    def test_a_waiter_on_a_removed_install_lock_retries_and_never_recreates_the_root(self):
+        root = self.root / "fresh"
+        root.mkdir()
+        lock = root / ".install.lock"
+        for removed in ((lock,), (lock, root)):
+            holder = self.module.flocked(lock)
+            acquired = []
+            with patch.object(self.module, "say"):
+                waiting = threading.Thread(target=lambda: acquired.append(self.module.flocked(lock, "waiting")))
+                waiting.start()
+                time.sleep(0.2)
+                lock.unlink()
+                if root in removed:
+                    root.rmdir()
+                holder.close()
+                waiting.join(5)
+            self.assertFalse(waiting.is_alive())
+            if root in removed:
+                self.assertEqual((acquired, root.exists()), ([None], False))
+                continue
+            with acquired[0]:
+                self.assertEqual(os.fstat(acquired[0].fileno()).st_ino, lock.stat().st_ino)
+                self.assertIsNone(self.module.flocked(lock), "a fresh entrant waits for the retried holder")
+
+    def test_an_uninstall_that_waited_for_another_uninstall_succeeds(self):
+        root = self.root / "fresh"
+        argv = ["install.sh", "uninstall", "--root", str(root), "--bin-dir", str(self.root / "bin")]
+        with patch.object(sys, "argv", argv), patch.object(self.module, "flocked", return_value=None), \
+                patch.object(self.module, "say") as said, patch.object(self.module, "uninstall") as removed:
+            self.module.main()
+        said.assert_called_once_with("Oh My Diff was uninstalled while this command waited.")
+        removed.assert_not_called()
+
+    def test_uninstall_succeeds_when_a_new_caller_recreates_the_lock_before_the_root_is_removed(self):
+        root = self.root / "fresh"
+        root.mkdir()
+        remove = Path.rmdir
+
+        def rmdir(path):
+            (path / ".install.lock").touch()
+            remove(path)
+
+        with patch.object(sys, "argv", ["install.sh", "uninstall", "--root", str(root), "--bin-dir", str(self.root / "bin")]), \
+                patch.object(self.module, "recover"), patch.object(self.module, "uninstall"), \
+                patch.object(self.module.Path, "rmdir", rmdir):
+            self.module.main()
+        self.assertEqual([path.name for path in root.iterdir()], [".install.lock"])
+
     def test_uninstall_publishes_its_launch_gate_before_checking_for_sessions(self):
         bin_dir = self.root / "bin"
         (self.root / "sessions").mkdir()
@@ -1045,9 +1102,8 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(self.module.update_text("now", {"mods_updated": ["omd_logo"], "capabilities": {}}), "Updated first-party mods: omd_logo.")
         self.assertEqual(self.module.update_text("checks", {"checks": "off", "profiles": ["full", "platform"]}),
                          "Update checks: off (OMD+, OMD Core).")
-        self.assertEqual(self.module.update_text("now", {"installed": "0.1.0", "up_to_date": False, "error": None,
-                                                         "blocked": {"version": "0.2.0", "reasons": ["built for x86_64"]}}),
-                         "Oh My Diff 0.1.0: 0.2.0 can't install here: built for x86_64")
+        self.assertEqual(self.module.update_text("now", {"installed": "0.1.0", "up_to_date": False, "error": "offline"}),
+                         "Oh My Diff 0.1.0: the check failed: offline")
         removed = {"uninstalled": True, "preserved_stores": str(self.home / "s"), "preserved_administrator_policy": [],
                    "purge_option": "omd uninstall --purge removes OMD mod data and saved sign-ins too",
                    "path_removed_from": [str(self.home / ".zshrc")], "restored_upstream": "/opt/homebrew/bin/codex"}
@@ -1066,6 +1122,13 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(self.module.latest_summary(status), "up to date")
         self.assertEqual(self.module.latest_summary(status | {"available": {"version": "0.2.0"}}),
                          "0.2.0 is available: run omd update")
+        blocked = {"version": "0.2.0", "reasons": ["put node on PATH"]}
+        self.assertEqual(self.module.latest_summary(status | {"blocked": blocked}), "0.2.0 can't be installed: put node on PATH")
+        self.assertEqual(self.module.latest_summary(status | {"installed": "0.2.0", "blocked": blocked}), "up to date")
+        self.assertEqual(self.module.latest_summary(status | {"held": {"version": "0.2.0"}}), "rolled back from 0.2.0")
+        self.published = [release("0.2.0", upstream_tag="rust-v0.163.0"), release("0.1.0")]
+        with self.assertRaisesRegex(ValueError, r"^Oh My Diff 0\.2\.0 can't be installed: upstream Codex 0\.163\.x is required"):
+            self.module.manual(types.SimpleNamespace(action=None, value=None), self.root, self.current)
         with patch.object(self.module.sys, "argv", ["install.sh", "update", "bogus"]), \
                 self.assertRaisesRegex(ValueError, "^omd update: argument action: invalid choice: 'bogus'"):
             self.module.Parser(prog="install.sh").error("argument action: invalid choice: 'bogus'")
@@ -1280,6 +1343,14 @@ class UpdateSelection(unittest.TestCase):
         result = subprocess.run(["sh", ROOT / "install.sh", "--help"], cwd=self.root, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(planted.exists())
+
+    def test_a_refused_install_leaves_only_the_install_lock(self):
+        fresh = self.root / "fresh"
+        result = subprocess.run(["sh", ROOT / "install.sh", "--root", fresh, "--asset-url", "https://example.invalid/x"],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("together", result.stderr)
+        self.assertEqual([path.name for path in fresh.iterdir()], [".install.lock"])
 
 
 class ProfilePrompt(unittest.TestCase):

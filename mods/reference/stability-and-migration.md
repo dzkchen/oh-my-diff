@@ -80,6 +80,7 @@ These frozen entries have experimental fields:
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
 | `operations:agents.spawn` | `model` | none |
 | `operations:events.schedule` | `data` | `timer_data_v1` |
+| `operations:packages.list` | `needs_approval` | `package_needs_approval_v1` |
 | `operations:routes.add` | `model`, `effort` | `routes_add_model_v1` |
 | `operations:routes.list` | `data` | `route_write_v1` |
 | `operations:session.info` | `process_id`, `omd_version` | none |

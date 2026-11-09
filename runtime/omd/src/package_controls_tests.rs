@@ -282,19 +282,15 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
     )
     .unwrap();
     apply(&store, &disable.control).unwrap();
-    let states = list(&store, None).unwrap()["packages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|package| {
-            (
-                package["scope"].clone(),
-                package["source"].clone(),
-                package["enabled"].clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert!(states.contains(&(json!("user"), json!("selection"), json!(false))));
+    assert!(
+        list(&store, None).unwrap()["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|package| package["scope"] == "user"
+                && package["source"] == "selection"
+                && package["enabled"] == false)
+    );
     let enable = preview(
         &store,
         json!({"action": "enable", "target": "shared", "id": "author_mod"}),

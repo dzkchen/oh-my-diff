@@ -108,6 +108,7 @@ pub use mods::AUTHORITY_CAPABILITIES;
 pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
 pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 pub use mods::CODEX_CONFIG_UPDATE_PLAN;
+pub use mods::CODEX_HOST_RELEASE;
 pub use mods::ConfigurationOverrides;
 pub use mods::FileStamp;
 pub use mods::MANAGED_POLICY_FILE;
@@ -239,3 +240,14 @@ pub mod plugin_component;
 mod session_policy;
 
 pub use mods::release_disposable_runners;
+
+/// Prints one CLI result; a closed reader ends the output quietly.
+pub fn print_output(text: &str) {
+    use std::io::Write;
+    if let Err(error) = writeln!(std::io::stdout().lock(), "{text}")
+        && error.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}

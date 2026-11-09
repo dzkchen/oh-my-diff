@@ -153,12 +153,17 @@ async function session(optionText) {
   return { profiles: routed };
 }
 
+async function routes() {
+  if (basename(dirname(source)) !== 'sources') throw new Error('setup_must_run_from_installed_mod');
+  return profilesOf((await json(join(dirname(dirname(source)), 'host.json'), {})).routes ?? []);
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [action, ...args] = process.argv.slice(2);
   try {
-    if (!['setup', 'session', 'catalog'].includes(action)) throw new Error('unsupported_profiles_setup_action');
+    if (!['setup', 'session', 'catalog', 'routes'].includes(action)) throw new Error('unsupported_profiles_setup_action');
     let input = '';
     if (action === 'session') for await (const chunk of process.stdin) input += chunk;
-    console.log(JSON.stringify(action === 'setup' ? await setup(...args) : action === 'catalog' ? await catalog(args[0]) : await session(input)));
+    console.log(JSON.stringify(action === 'setup' ? await setup(...args) : action === 'catalog' ? await catalog(args[0]) : action === 'routes' ? await routes() : await session(input)));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

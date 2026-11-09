@@ -225,8 +225,7 @@ class Session {
           break;
         }
         if (this.attached) {
-          const attached = this.attached;
-          await fatal(() => this.attach(attached));
+          await fatal(() => this.sendAttach(this.attached));
           if (Object.keys(this.updated).length) await tolerate(() => this.call('omd/client/update', this.updated), () => { this.updated = {}; });
         }
         for (const [thread, params] of this.resumed) await tolerate(() => this.call('thread/resume', params), () => this.resumed.delete(thread));
@@ -244,17 +243,33 @@ class Session {
   }
 
   async attach(params = {}) {
-    this.attached = { name: this.options.name, renderer: this.options.renderer, operations: this.options.operations ?? [], terminalToken: undefined, ...params };
+    const previous = this.attached;
     try {
-      this.attachment = await this.call('omd/client/attach', this.attached);
-    } catch (error) {
-      if (!(error instanceof Error) || error.message !== 'terminal_owner_unknown' || !this.attached.terminalToken || this.attached.terminalToken !== this.attachment?.terminalToken) throw error;
-      delete this.attached.terminalToken;
-      this.attachment = await this.call('omd/client/attach', this.attached);
+      return await this.sendAttach(params);
+    } finally {
+      if (this.attached !== previous) this.updated = {};
     }
-    this.attached.terminalToken = this.attachment.terminalToken;
-    this.epoch = this.attachment.epoch;
-    return this.attachment;
+  }
+
+  async sendAttach(params) {
+    const attached = { name: this.options.name, renderer: this.options.renderer, operations: this.options.operations ?? [], terminalToken: undefined, ...params };
+    let attachment;
+    try {
+      try {
+        attachment = await this.call('omd/client/attach', attached);
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'terminal_owner_unknown' || !attached.terminalToken || attached.terminalToken !== this.attachment?.terminalToken) throw error;
+        delete attached.terminalToken;
+        attachment = await this.call('omd/client/attach', attached);
+      }
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && Number.isInteger(error.code))) this.attached = attached;
+      throw error;
+    }
+    this.attached = { ...attached, terminalToken: attachment.terminalToken };
+    this.attachment = attachment;
+    this.epoch = attachment.epoch;
+    return attachment;
   }
 
   async update(params) {

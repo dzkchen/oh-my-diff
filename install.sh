@@ -218,7 +218,10 @@ def upstream_binary(args, current, minor=None):
             fail("--upstream must name an executable called codex")
         if path.parent.resolve() == args.bin_dir or path.resolve().is_relative_to(args.root):
             fail(f"{path} is or becomes the OMD launcher; pass an upstream codex outside {args.bin_dir} with --upstream")
-        version = run([path, "--version"]).strip()
+        try:
+            version = run([path, "--version"]).strip()
+        except (OSError, ValueError) as error:
+            fail(f"{path} --version failed: {error}. Put node on PATH (the npm Codex needs it) or pass --upstream /path/to/codex")
         if minor and not re.fullmatch(rf"codex-cli {re.escape(minor)}\.\d+", version):
             fail(f"upstream Codex {minor}.x is required; found {version}. Install it with npm install -g @openai/codex@{minor}")
         return {"path": str(path), "version": version}
@@ -1321,16 +1324,22 @@ def settled(root, version, **changes):
 
 
 def flocked(path, waiting=None):
-    lock = path.open("a+")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        if not waiting:
-            lock.close()
+    while True:
+        lock = path.open("a+")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if not waiting:
+                lock.close()
+                return None
+            say(waiting)
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        with contextlib.suppress(FileNotFoundError):
+            if os.fstat(lock.fileno()).st_ino == path.stat().st_ino:
+                return lock
+        lock.close()
+        if not waiting or not path.parent.is_dir():
             return None
-        say(waiting)
-        fcntl.flock(lock, fcntl.LOCK_EX)
-    return lock
 
 
 def staged(root, manifest):
@@ -1422,13 +1431,13 @@ def forget_backup(root, current):
         save(root, last_mods=None)
 
 
-def install_mods(args, root, current, mods):
+def install_mods(args, root, current, mods, automatic=False):
     if not sessions(root, args.session):
         with contextlib.suppress(SessionsOpen):
             return apply_mods(args, root, current, mods)
     with flocked(update_dir(root) / ".stage.lock", DOWNLOAD_WAIT):
         stage(root, {"manifest": mods})
-    save(root, pending_mods=mod_key(mods))
+    save(root, pending_mods=mod_key(mods) | ({"automatic": True} if automatic else {}))
     return {"staged_mods": mods["changed"], "applies": "the next time OMD starts while no other OMD session is open"}
 
 
@@ -1495,9 +1504,10 @@ def manual(args, root, current):
     available = result["available"]
     if not available and result.get("mods"):
         return install_mods(args, root, current, result["mods"])
+    if not available and newer(result["blocked"], record["version"]):
+        fail(f"Oh My Diff {latest_summary(result)}")
     if not available:
-        return {"installed": record["version"], "up_to_date": not result["blocked"] and not result["error"],
-                "blocked": result["blocked"], "error": result["error"]}
+        return {"installed": record["version"], "up_to_date": not result["error"], "error": result["error"]}
     if available["user_mods"] and not confirmed(args, available):
         fail("Update cancelled; nothing changed.")
     if sessions(root, None):
@@ -1595,7 +1605,7 @@ def launch(args, root, current):
     if (mods and mod_key(pending_mods) == mod_key(mods) and not requested and not available
             and (not pending_mods.get("automatic") or policy(store)["auto"] == "on")):
         try:
-            result = install_mods(args, root, current, mods)
+            result = install_mods(args, root, current, mods, automatic=bool(pending_mods.get("automatic")))
         except (OSError, ValueError, RuntimeError, tarfile.TarError) as error:
             print(f"The first-party mod update failed and nothing changed: {error}", file=sys.stderr)
             return
@@ -1641,8 +1651,10 @@ def latest_summary(status):
     found = status["available"]
     return (f"{found['version']} is available: run omd update" if found else
             f"first-party mod updates are available ({', '.join(status['mods']['changed'])}): run omd update" if status["mods"] else
-            f"{status['blocked']['version']} can't install here: {'; '.join(status['blocked']['reasons'])}" if status.get("blocked") else
+            f"{blocked['version']} can't be installed: {'; '.join(blocked['reasons'])}" if (
+                blocked := newer(status.get("blocked"), status["installed"])) else
             f"the last check failed: {status['error']}" if status["error"] else
+            f"rolled back from {status['held']['version']}" if status.get("held") else
             "up to date" if status["checked_at"] else "not checked yet")
 
 
@@ -1690,7 +1702,6 @@ def update_text(action, result):
                           *change_lines(result["changes"])])
     return f"Oh My Diff {result['installed']}: " + (
         "up to date" if result["up_to_date"] else
-        f"{result['blocked']['version']} can't install here: {'; '.join(result['blocked']['reasons'])}" if result["blocked"] else
         f"the check failed: {result['error']}")
 
 
@@ -1776,7 +1787,14 @@ def main():
     if args.command == "tick":
         return tick(args, root, active)
     root.mkdir(parents=True, exist_ok=True)
-    with flocked(root / ".install.lock", "Waiting for another Oh My Diff install or update to finish…"):
+    while not (gate := flocked(root / ".install.lock", "Waiting for another Oh My Diff install or update to finish…")):
+        if args.command == "uninstall":
+            say("Oh My Diff was uninstalled while this command waited.")
+            return
+        if args.command != "install":
+            fail("Oh My Diff was uninstalled while this command waited; nothing changed.")
+        root.mkdir(parents=True, exist_ok=True)
+    with gate:
         finished = resume_uninstall(args, root)
         current = pointer(root, "current")
         recover(args, root, current)
@@ -1801,9 +1819,10 @@ def main():
             rollback(args, root, args.bin_dir, current)
         else:
             uninstall(args, root, args.bin_dir, current)
-    if args.command == "uninstall" and [path.name for path in root.iterdir()] == [".install.lock"]:
-        (root / ".install.lock").unlink()
-        root.rmdir()
+        if args.command == "uninstall" and [path.name for path in root.iterdir()] == [".install.lock"]:
+            (root / ".install.lock").unlink()
+            with contextlib.suppress(OSError):
+                root.rmdir()
 
 
 if __name__ == "__main__":
