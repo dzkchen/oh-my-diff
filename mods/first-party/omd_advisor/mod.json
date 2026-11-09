@@ -6,6 +6,9 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Asks a second model to review your plans, stuck attempts and finished work, with cited findings, and can flag output you should know about",
+  "contributes": {
+    "commands": [{ "name": "advisor", "description": "Ask an independent model for a second opinion on a decision, a stalled attempt or finished work" }, { "name": "observations", "description": "List, inspect or dismiss the notes about output you should know about" }]
+  },
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_advisor" },
   "capabilities": [

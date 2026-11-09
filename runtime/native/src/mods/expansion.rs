@@ -67,6 +67,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "packages.index",
     "packages.preview",
     "packages.reload",
+    "plugins.components",
     "settings.write",
     "tools.list",
     "tools.define",
@@ -674,7 +675,18 @@ pub(super) async fn dispatch(
                 .and_then(|store| codex_omd::package_controls::reload(&store))
                 .map_err(|e| e.to_string())
         }
-        "packages.reload" => Err("host_operation_user_only: packages.reload".into()),
+        "plugins.components" if matches!(caller.origin, Origin::UserCommand) => {
+            blocking(Box::new(move || {
+                let home = codex_omd::host::codex_home().ok_or("codex_home_unavailable")?;
+                codex_omd::ModStore::open(host.root.clone())
+                    .and_then(|store| codex_omd::plugin_component::components(&store, &home))
+                    .map_err(|error| error.to_string())
+            }))
+            .await
+        }
+        "packages.reload" | "plugins.components" => {
+            Err(format!("host_operation_user_only: {}", request.operation))
+        }
         "settings.write" if matches!(caller.origin, Origin::UserCommand) => {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]

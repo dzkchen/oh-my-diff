@@ -7,7 +7,7 @@ const root = new URL('./', import.meta.url);
 const source = readFileSync(new URL('index.ts', root), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', root), 'utf8'));
 const mod = (id, extra = {}) => ({ id, scope: 'user', description: null, installed: true, enabled: true, effective: true, pending: null, failed: null, blocked: null,
-  version: '1.0.0', source: 'npm', compatible: true, conflicts: [], settings: {}, settings_schema: null, ...extra });
+  version: '1.0.0', source: 'npm', compatible: true, conflicts: [], settings: {}, settings_schema: null, maintainer: null, contributes: { commands: [], keys: [] }, ...extra });
 const logo = mod('omd_logo', { description: 'The OMD mark', settings: { size: 'big' }, settings_schema: { properties: { size: { type: 'string', enum: ['big', 'small'] }, 'max tokens': { type: 'number' } } } });
 
 function invoke(payload, { packages = [logo], generation = 1, ui_state, state = null, ...answers } = {}) {
@@ -18,6 +18,7 @@ function invoke(payload, { packages = [logo], generation = 1, ui_state, state = 
     if (call.operation === 'packages.list') return { generation, reload_error: null, packages };
     if (call.operation === 'packages.index') return { packages: [] };
     if (call.operation === 'commands.list') return { commands: [] };
+    if (call.operation === 'plugins.components') return { components: [] };
     if (call.operation === 'terminal.panel') return { shown: true };
     assert.fail(`unexpected host call ${call.operation}`);
   });
@@ -30,7 +31,7 @@ test('a toggle leaves redrawing to the host after a change and corrects the pane
   const opened = invoke('');
   assert.equal(opened.panels[0].items.find(item => item.id === 'user:omd_logo').value, true);
   const declined = invoke('panel user user:omd_logo false', { ui_state: opened.ui, 'packages.apply': () => ({ status: 'declined' }) });
-  assert.deepEqual(operations(declined), ['packages.list', 'packages.apply', 'packages.list', 'commands.list', 'terminal.panel']);
+  assert.deepEqual(operations(declined), ['packages.list', 'packages.apply', 'packages.list', 'commands.list', 'packages.list', 'plugins.components', 'terminal.panel']);
   assert.equal(declined.panels[0].items.find(item => item.id === 'user:omd_logo').value, true);
   const applied = invoke('panel user user:omd_logo false', { ui_state: opened.ui, 'packages.apply': () => ({ status: 'applied', generation: 2 }) });
   assert.deepEqual(operations(applied), ['packages.list', 'packages.apply']);
@@ -92,7 +93,7 @@ test('the mods mod cannot turn itself off or remove itself', () => {
   const opened = invoke('', { packages });
   assert.equal(opened.panels[0].items.find(item => item.id === 'user:omd_mods').kind, 'action');
   const pressed = invoke('panel user user:omd_mods', { packages, ui_state: opened.ui });
-  assert.deepEqual(operations(pressed), ['packages.list', 'commands.list', 'terminal.panel']);
+  assert.deepEqual(operations(pressed), ['packages.list', 'commands.list', 'packages.list', 'plugins.components', 'terminal.panel']);
   assert.deepEqual(invoke('omd_mods', { packages }).panels[0].items.map(item => item.id), ['do:update', 'do:rollback']);
   const typed = invoke('disable omd_mods', { packages });
   assert.deepEqual(operations(typed), ['packages.list']);
@@ -203,7 +204,7 @@ test('a mod that needs approval again says so and names the command that reviews
   const item = invoke('', { packages: [revoked] }).panels[0].items.find(item => item.id === 'user:omd_preview');
   assert.equal(item.group, 'Needs attention');
   assert.match(item.description, /^needs approval/);
-  assert.match(item.detail, /^needs approval · every project · .* · Review it from a shell with omd mods update omd_preview$/);
+  assert.match(item.detail, /^needs approval · every project · Review it from a shell with omd mods update omd_preview$/);
   const subtitle = invoke('omd_preview', { packages: [revoked] }).panels[0].subtitle;
   assert.match(subtitle, /^needs approval · 1\.0\.0/);
   assert.match(subtitle, /Review it from a shell with omd mods update omd_preview\./);
@@ -379,4 +380,69 @@ test('an id installed in both scopes asks for the scope instead of acting on the
   let sent;
   invoke('disable project:omd_logo', { packages, 'packages.apply': args => { sent = args; return { status: 'declined' }; } });
   assert.equal(sent.scope, 'project');
+});
+
+test('a bundled mod installed as a selection is listed once, and the directory marks experimental entries', () => {
+  const packages = [logo, mod('omd_usage', { source: 'selection', enabled: false, effective: false, maintainer: 'Oh My Diff',
+    contributes: { commands: [{ name: 'hud', description: 'Usage dialog' }], keys: [{ key: 'alt+a', description: 'Usage dialog' }] } })];
+  const index = () => ({ packages: [
+    { id: 'omd_usage', description: 'Usage', latest: '1.0.0', support: 'supported', installed: null, versions: [{ version: '1.0.0', blocked: null }] },
+    { id: 'omd_btw', description: 'Side questions', latest: '1.0.0', support: 'experimental', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });
+  const opened = invoke('', { packages, 'packages.index': index });
+  const items = opened.panels[0].items;
+  assert.deepEqual(items.filter(item => item.id.startsWith('get:')).map(item => [item.id, item.description]), [['get:omd_btw', 'Experimental · Side questions']]);
+  assert.match(items.find(item => item.id === 'user:omd_usage').detail, /^off · every project · Commands: \/hud · Keys: alt\+a · By Oh My Diff$/);
+  const got = invoke('panel user get:omd_usage', { packages, ui_state: opened.ui, 'packages.index': index });
+  assert.match(got.ui.notice, /already installed/);
+  assert.ok(!operations(got).includes('packages.preview'));
+});
+
+test('list and object settings are edited as text and saved with their type', () => {
+  const privacy = mod('omd_privacy', { settings: { pii: ['email'], terminals: [{ id: 't' }], check: {} }, settings_schema: { properties: {
+    pii: { type: 'array', default: [], title: 'Personal data checks' }, terminals: { type: 'array', default: [] }, check: { type: 'object', default: {} } } } });
+  const opened = invoke('omd_privacy', { packages: [privacy] });
+  const items = opened.panels[0].items;
+  assert.deepEqual(items.map(item => item.id).slice(0, 4), ['enabled', 'setting:pii', 'setting:terminals', 'setting:check']);
+  assert.ok(items.findIndex(item => item.id === 'target') > items.findIndex(item => item.id === 'setting:check'));
+  assert.deepEqual(items.filter(item => item.id.startsWith('setting:')).map(item => [item.kind, item.value]), [['text', 'email'], ['text', '[{"id":"t"}]'], ['text', '{}']]);
+  const written = [];
+  const answers = { packages: [privacy], ui_state: opened.ui, 'settings.write': args => { written.push(args.values); return { settings: {} }; } };
+  invoke('mod user:omd_privacy setting:pii email, phone ,', answers);
+  invoke('mod user:omd_privacy setting:check {"program": "/bin/true"}', answers);
+  invoke('mod user:omd_privacy setting:pii ["a,b"]', answers);
+  assert.deepEqual(written, [{ pii: ['email', 'phone'] }, { check: { program: '/bin/true' } }, { pii: ['a,b'] }]);
+  const bad = invoke('mod user:omd_privacy setting:terminals {"id": 1}', answers);
+  assert.match(bad.panels[0].subtitle, /Enter JSON for terminals, like \[\]/);
+  assert.equal(written.length, 3);
+});
+
+test('a plugin mod component is offered under Available and turned on with one reviewed install', () => {
+  const components = () => ({ components: [
+    { plugin: 'omd-anchored-edit', marketplace: 'oh-my-diff', version: '0.2.0', id: 'omd_anchored_edit', description: 'Anchored edits', sha256: 'a'.repeat(64), error: null, installed: false, enabled: false },
+    { plugin: 'other', marketplace: 'm', version: '1.0.0', id: 'other', description: null, sha256: null, error: 'plugin_component_digest_mismatch', installed: false, enabled: false },
+    { plugin: 'done', marketplace: 'm', version: '1.0.0', id: 'omd_logo', description: null, sha256: 'b'.repeat(64), error: null, installed: true, enabled: true }] });
+  const opened = invoke('', { 'plugins.components': components });
+  assert.deepEqual(opened.panels[0].items.filter(item => item.id.startsWith('plugin:')).map(item => [item.id, item.label, item.description]), [
+    ['plugin:oh-my-diff/omd-anchored-edit', 'Anchored Edit (plugin)', 'Anchored edits'],
+    ['plugin:m/other', 'Other (plugin)', "Can't be turned on: plugin_component_digest_mismatch"]]);
+  let previewed;
+  invoke('panel user plugin:oh-my-diff/omd-anchored-edit', { ui_state: opened.ui, 'plugins.components': components,
+    'packages.preview': args => { previewed = args; return { action: 'install', id: 'omd_anchored_edit', changes: {}, grants_added: ['fs.write'] }; } });
+  assert.deepEqual([previewed.action, previewed.source, previewed.enable], ['install', { kind: 'plugin', plugin: 'omd-anchored-edit', marketplace: 'oh-my-diff' }, true]);
+});
+
+test('the welcome card shows once on a fresh session without repeating the mod count', () => {
+  const show = (state, phase) => callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event: 'terminal',
+    payload: { presentation: { phase }, identity: { install_profile: 'full', mods: { active: 3, installed: 5, failed: 1 } } } }, () => assert.fail('no host calls'));
+  const fresh = show(null, 'fresh');
+  const texts = fresh.value.sites.welcome.components.slice(1).map(component => component.text).join('\n');
+  assert.match(texts, /\/mods turns more on/);
+  assert.doesNotMatch(texts, /of 5|failed/);
+  assert.equal(show(null, 'resumed').value, null);
+});
+
+test('an install that could not also turn the mod on says why it is still off', () => {
+  const reviewed = invoke('plugin oh-my-diff/omd-anchored-edit', { 'packages.preview': () => ({ action: 'install', id: 'omd_anchored_edit', changes: {}, grants_added: [] }) });
+  const applied = invoke('apply', { ui_state: reviewed.ui, 'packages.apply': () => ({ status: 'applied', generation: 2, enabled: false, reason: 'service_provider_missing: needs lsp' }) });
+  assert.match(applied.value.display, /installed but still off \(service_provider_missing: needs lsp\)/);
 });

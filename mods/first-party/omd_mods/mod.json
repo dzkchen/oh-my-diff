@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_mods",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "api": "1.0.0",
   "state_version": 1,
   "description": "The /mods screen: turn mods on or off, change their settings and install new ones",
@@ -19,8 +19,10 @@
   ],
   "compatibility": {
     "required_features": [
+      "package_contributes_v1",
       "package_controls_v1",
       "package_needs_approval_v1",
+      "plugin_components_v1",
       "package_index_paging_v1",
       "routes_add_model_v1",
       "terminal_panel_v1",

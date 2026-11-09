@@ -5,7 +5,10 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Previews responses and files as HTML or inline, and draws Mermaid diagrams in responses",
+  "description": "Preview a response or file as HTML or inline with /preview, and see Mermaid diagrams drawn in responses",
+  "contributes": {
+    "commands": [{ "name": "preview", "description": "Show a response or file as HTML, inline or in the browser, or inspect Mermaid diagrams" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_preview"},
   "capabilities": ["commands", "terminal", "store", "sessions", "exec", "fs.read", "fs.write", "events", "lifecycle", "inventory"],

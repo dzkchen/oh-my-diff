@@ -5,7 +5,11 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Hover, definition, references, symbols, diagnostics, code actions and formatting from the omd_lsp_sync language servers",
+  "description": "Code intelligence with /lsp: hover, definition, references, symbols, diagnostics, code actions and formatting",
+  "contributes": {
+    "commands": [{ "name": "lsp", "description": "Look up hover, definition, references, symbols, diagnostics, code actions and formatting" }],
+    "keys": [{ "key": "Alt+l", "description": "Focus the pinned code-intelligence pane" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_lsp_view"},
   "capabilities": ["commands", "terminal", "store", "events", "exec", "services", "inventory", "lifecycle"],

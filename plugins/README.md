@@ -47,6 +47,9 @@ component: an ordinary mod that the plugin contains. Adding the plugin doesn't r
 the capabilities it asks for, and turn it on in your mod store, like any other mod you install. Each plugin's README
 lists its component's capabilities.
 
+In a session, open `/mods`: an added plugin's component is listed there, and turning it on reviews, trusts and
+enables it under one confirmation. From a shell, run instead:
+
 ```sh
 omd-package plugin-mod enable omd-anchored-edit
 ```

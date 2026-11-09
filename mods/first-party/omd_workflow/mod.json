@@ -5,6 +5,9 @@
   "api": "1.0.0",
   "state_version": 1,
   "description": "Require checks, an independent review and a final verification before the agent can call a task done; pick a contract with /omd_workflow:contract",
+  "contributes": {
+    "commands": [{ "name": "contract", "description": "List the workflow contracts or choose one for this repository" }, { "name": "progress", "description": "See this thread's workflow task, status and remaining work" }]
+  },
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_workflow" },
   "capabilities": [

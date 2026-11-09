@@ -40,7 +40,8 @@ It has no settings.
 - Groups show failed and interrupted command counts separately, marked `✗`; expand the group for each command
   and its exit code.
 - Shell commands join their group when they start, so its running count includes commands such as `cargo test`.
-- Individual failures stay on one line, marked `✗` with the exit code.
+- A failed row is marked `✗` with the exit code, and a second line shows why: the last output line of a shell
+  command (the latest failed one in a group), or the first error line of an MCP or app tool.
 - Your own `!cmd` commands, approvals, `/diff` and the assistant's messages look the same as before.
 - Inline sessions (`--no-alt-screen`) print one-line rows to scrollback. `Ctrl+T` shows them in full.
 - Narrow terminals shorten names and arguments.

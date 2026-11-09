@@ -5,7 +5,10 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Hides older large tool outputs from model requests in cache-friendly batches, keeping each call and a recall tool for the full text",
+  "description": "Keeps long sessions workable: hides older large tool outputs from requests; /mask lists them, recall restores them",
+  "contributes": {
+    "commands": [{ "name": "mask", "description": "See which tool outputs are hidden from requests and how many prompt-cache breaks that cost" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_observation_mask"},
   "capabilities": ["history", "interception", "middleware", "tools", "store", "commands", "model", "lifecycle", "inventory"],

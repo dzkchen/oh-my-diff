@@ -133,11 +133,15 @@ pub fn secret_like(name: &str) -> bool {
             .any(|part| name.contains(part))
 }
 
-fn credential_paths() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+pub fn codex_home() -> Option<PathBuf> {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
-        .or_else(|| home.as_ref().map(|home| home.join(".codex")))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
+}
+
+fn credential_paths() -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    codex_home()
         .into_iter()
         .chain(
             home.iter()

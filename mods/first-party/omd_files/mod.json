@@ -5,7 +5,10 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "A yazi-style file manager in the workspace dock: Miller columns, tabs, find, frecency jump, previews, file operations and @ mentions",
+  "description": "File manager panel in the workspace dock (/files): Miller columns, tabs, find, previews, file operations and @ mentions",
+  "contributes": {
+    "commands": [{ "name": "files", "description": "Open the file manager panel, or go straight to a path" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_files"},
   "capabilities": ["terminal", "commands", "store", "exec", "os", "events", "services", "lifecycle", "fs.read", "fs.write", "composer", "inventory"],

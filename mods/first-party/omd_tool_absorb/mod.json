@@ -5,7 +5,10 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Runs identical read-only tool calls from one response once and reuses unchanged reads in a code-mode cell",
+  "description": "Runs repeated identical read-only tool calls once per response and reuses unchanged reads; /absorb shows what merged",
+  "contributes": {
+    "commands": [{ "name": "absorb", "description": "See which repeated read calls were merged in this thread" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_tool_absorb"},
   "capabilities": ["interception", "tools", "fs.read", "inventory", "store", "events", "lifecycle", "commands"],

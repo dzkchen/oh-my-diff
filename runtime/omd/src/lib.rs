@@ -140,6 +140,7 @@ pub use mods::ModComponent;
 pub use mods::ModComponentAction;
 pub use mods::ModComposerWhen;
 pub(crate) use mods::ModConfiguration;
+pub use mods::ModContributes;
 pub use mods::ModDensity;
 pub use mods::ModDirection;
 pub use mods::ModFind;
