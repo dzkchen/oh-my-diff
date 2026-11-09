@@ -36,6 +36,13 @@ test('an unverified edit continues once with a runner hint and the created files
   assert.equal(stop(first.state).stopped, true);
 });
 
+test('node --test, pnpm vitest, pnpm exec vitest and mise run test count as test runs', () => {
+  for (const cmd of ['node --test tests/a.test.mjs', 'node --experimental-test-coverage --test', 'pnpm vitest run', 'pnpm exec vitest run src', 'mise run test', 'mise run mods:test']) {
+    const state = feed(patch('*** Update File: src/app.ts\n@@\n-a\n+b'), shell(cmd, exited(0, 'ok')));
+    assert.equal(stop(state).stopped, true, cmd);
+  }
+});
+
 test('a passing check after the last edit, no edits, docs-only edits, errors and the off setting all stop', () => {
   const probed = shell('python repro.py', exited(1, 'AssertionError'));
   assert.equal(stop(feed(probed, patch('*** Update File: a.py'), shell('cd src && python -m pytest tests/test_a.py -q', exited(0, '3 passed')))).stopped, true);

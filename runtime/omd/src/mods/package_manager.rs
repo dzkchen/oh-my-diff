@@ -1652,7 +1652,7 @@ impl ModStore {
         }
         let cache_path = self.cache_package(&path, &package, &integrity)?;
         let active_path = match normalized_source {
-            ModPackageSource::Local { .. } => path,
+            ModPackageSource::Local { .. } if !crate::plugin_component::cached(&path) => path,
             _ => {
                 if path.starts_with(&self.root) && path != cache_path {
                     std::fs::remove_dir_all(&path)?;

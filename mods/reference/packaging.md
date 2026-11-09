@@ -89,7 +89,7 @@ Apply the identical request with the preview's `confirmation` string.
 The higher-level `packages.preview`/`packages.apply` operations and `omd` CLI use:
 
 ```text
-{action, id?, source?, reference?, version?, index?, scope?, target?, expected_generation?}
+{action, id?, source?, reference?, version?, index?, scope?, target?, enable?, expected_generation?}
 ```
 
 `action` is one of `install`, `update`, `remove`, `rollback`, `enable`, `disable`, `trust`, `reset` or `save-defaults`.
@@ -100,6 +100,8 @@ saves them for every terminal. Their preview's `changes` is
 and empty `settings` mean nothing differs. Install, update, remove, rollback and trust are always shared, and the
 shell CLI, which has no terminal, changes what every terminal uses. A request names a package
 with `source` or with a `reference` (and optional `version`), never both. `scope` is `user` or `project`.
+Experimental `enable: true` (`plugin_components_v1`) is for `install` only: the same preview and confirmation also
+turn the package on, and the preview's `changes` include `enabled: true`.
 `expected_generation` is described under
 [`packages.apply`, `packages.preview` and `packages.reload`](#packagesapply-packagespreview-and-packagesreload).
 
@@ -113,6 +115,7 @@ A `source` is one of:
 | `repository` | `repository`, `revision`, `subdirectory?`; `revision` is a 40-hex commit or a branch or tag name, resolved when the plan is made and locked as the commit (an offline install needs a commit) |
 | `package` | `index`, `id`, `version`; `version` is empty (newest unblocked release), exact or `^x.y.z` |
 | `npm` | `package`, `version?`, `registry?` (default from the user's npmrc, else `https://registry.npmjs.org`; `https` or loopback `http` only), `integrity?` (a sha512 SRI pin) |
+| `plugin` | `plugin`, `marketplace?` (`plugin_components_v1`): the verified mod component of an installed Codex plugin, installed like a `local` source; see [Plugin components](plugin-components.md#installing-from-mods) |
 
 ### Package references
 
@@ -255,6 +258,22 @@ scaffold emits both with placeholders to change.
 An optional `description` of 1–160 printable characters says what the mod adds; `packages.list` and the `/mods`
 screen show it.
 
+### `contributes`
+
+An optional `contributes` (`package_contributes_v1`) declares what the mod adds before it runs, so `packages.list`
+can show it while the mod is off:
+
+```json
+{"contributes": {"commands": [{"name": "review", "description": "Review the diff"}],
+  "keys": [{"key": "ctrl+r", "description": "Open the review"}]}}
+```
+
+- Up to 16 `commands`: `name` is a slash command name without `/` (1–64 bytes of `a-z`, `0-9`, `-` and `_`).
+- Up to 16 `keys`: `key` is 1–32 printable bytes.
+- Every `description` is 1–200 printable bytes. Unknown fields fail inspection with `invalid_contributes` or a
+  manifest parse error.
+- It is a declaration only: the host registers nothing from it.
+
 ## Codex configuration (`codex_config_v1`)
 
 A manifest's `codex_config` turns on Codex features the package depends on, for every lead thread the session
@@ -302,6 +321,8 @@ update it.
 - `blocked` is the quarantine reason or `null`.
 - `needs_approval` (`package_needs_approval_v1`) is `true` for a disabled mod whose grants were revoked or whose
   manifest asks for a capability it wasn't granted. `omd mods update ID` reviews it again.
+- `maintainer` (`package_contributes_v1`) is the manifest's `provenance.maintainer` or `null`, and `contributes` is
+  its [`contributes`](#contributes) with empty `commands` and `keys` when absent, for every package, on or off.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
 - `packages.list` reports effective `enabled` and `settings`, plus `settings_schema`. Experimental
@@ -335,7 +356,7 @@ These `packages.list` fields say whether a package change has taken effect.
 
 ```text
 packages.preview {...request, expected_generation?} → {action, id, changes, grants_added}
-packages.apply {...request, expected_generation} → {status: 'applied', generation} | {status: 'declined'}
+packages.apply {...request, expected_generation} → {status: 'applied', generation, enabled?, reason?} | {status: 'declined'}
 packages.reload → {generation, failed, applies: 'next_boundary'}
 ```
 
@@ -346,7 +367,11 @@ The request is the one under
 | --- | --- |
 | `expected_generation` | The `generation` from `packages.list`; required on `apply`, optional on `preview` |
 
-- `apply` returns the new generation, or `declined` when the user declines the confirmation.
+- `apply` returns the new generation, or `declined` when the user declines the confirmation. In the terminal a
+  `disable` from the mod's own slash command or panel action applies without asking, unless the target mod
+  registers a required interceptor or holds `request_policy`.
+- An `install` with `enable: true` that installs but can't turn the mod on returns `enabled: false` and the
+  `reason`; the mod stays installed and off.
 - `reload` returns the generation, the ids of mods that failed, and `next_boundary`, when the revalidation applies.
 
 | Error | When |
@@ -366,7 +391,8 @@ an edited selection's current source and capabilities and keeps it enabled.
 
 - `apply` shows a native confirmation naming every new grant, dependencies as `id:capability`, and applies exactly
   the confirmed plan or refuses if the package, lock or selection changed.
-- Installing never enables a package; see [Enablement on install and update](#enablement-on-install-and-update).
+- Installing never enables a package unless the request sets `enable: true`; see
+  [Enablement on install and update](#enablement-on-install-and-update).
 - The preview lists per package `authority {from, to}`, `grant {from, to}` and `renewed_approval`.
 - Once a confirmed package mutation starts, it returns its definitive result even if its writes reload or disable
   the calling mod. A queued call is still rejected when it's cancelled or when the mod's source, the originating
@@ -380,7 +406,8 @@ Installing and updating decide whether a package is on, and rollback returns it 
 
 ### Enablement on install and update
 
-**Installing never enables a package.** An update keeps a package on only if it was on and its grant, authority
+**Installing never enables a package**, except a `packages.apply` install with `enable: true`, which turns it on
+under the same confirmation. An update keeps a package on only if it was on and its grant, authority
 scopes and origin are unchanged; otherwise it is off until enabled.
 
 `package-plan` shows per package:

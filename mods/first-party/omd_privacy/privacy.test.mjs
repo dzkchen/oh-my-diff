@@ -66,12 +66,41 @@ test('redacts supported secrets in editable text with random opaque placeholders
   assert.equal(out['/input/3/content/0/text'], 'OTHER policy text');
   assert.ok(!JSON.stringify(state).includes(token.slice(4)) && !JSON.stringify(state).includes('hunter2pw'));
 
-  const later = send([segment('/input/9/content/0/text', `retrying with ${token}`)], { state });
-  assert.notEqual(ids(applied([segment('/input/9/content/0/text', `retrying with ${token}`)], later.result.edits)['/input/9/content/0/text'])[0], first);
-  assert.equal(state.salt, undefined);
-  assert.equal(state.ids, undefined);
-  const other = send([segment('/input/9/content/0/text', token)], { state, scope: { thread_id: 'thread-b', agent_id: null, kind: 'main' } });
-  assert.notEqual(other.result.edits[0].text, later.result.edits[0].text);
+  const retry = [segment('/input/9/content/0/text', `retrying with ${token}`)];
+  const later = send(retry, { state });
+  assert.equal(ids(applied(retry, later.result.edits)['/input/9/content/0/text'])[0], first);
+  assert.notEqual(send([segment('/input/9/content/0/text', fake.github(9))], { state }).result.edits[0].text, later.result.edits[0].text);
+  assert.notEqual(send(retry, { state: { ...state, salt: 'other' } }).result.edits[0].text, later.result.edits[0].text);
+});
+
+test('ordinary test values and well-known documentation samples are not redacted, real secrets still are', () => {
+  const sample = ['ey', 'JhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ey', 'JzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'].join('');
+  const kept = ['csrf_token: abc123def456ghi', 'TEST_PASSWORD=hunter2hunter', 'password = "testpass123"', 'const fakeApiKey = "a3f9c2d8e1b74f60"',
+    'postgres://app:localdevpw@localhost:5432/db', 'redis://u:s3cretpw@127.0.0.1:6379', `Authorization: ${['sk', '_test_4eC39HqLyjWDarjtT1zdp7dc'].join('')}`, `jwt ${sample}`];
+  const redacted = ['DB_PASSWORD=MyS3cretPass123!', 'DB_PASSWORD=Testament42!', 'api_key=Mockingbird#9x', 'postgres://u:S3cretReal@[2001:db8::1]/x', 'postgres://u:S3cretReal@/x', 'postgres://u:S3cretReal@db.prod.acme.io/x', 'API_TOKEN=a3f9c2d8e1b74f60x', `jwt ${fake.jwt(60)}`, fake.stripe()];
+  const segments = [...kept, ...redacted].map((text, index) => segment(`/s${index}`, text));
+  const out = applied(segments, send(segments).result.edits);
+  kept.forEach((text, index) => assert.equal(out[`/s${index}`], text, text));
+  redacted.forEach((text, index) => assert.match(out[`/s${kept.length + index}`], /\[REDACTED:/, text));
+});
+
+test('tool calls carrying a redaction placeholder are refused by name, others pass', () => {
+  const placeholder = '[REDACTED:assigned_secret:q7xk2m6fhd4w]';
+  const call = (tool, args) => {
+    const raw = typeof args === 'string' ? args : JSON.stringify(args);
+    const input = { tool, arguments: args, raw_arguments: raw, call_id: 'c', thread_id: 't', agent_id: null, schema: null, batch: null };
+    return run('intercept', '1', { surface: 'tool', input, original: input, origin: { caller: 'model' } },
+      { host: () => ({ result: { output: 'ok', success: true }, trace: [] }) }).value.result;
+  };
+  const patch = `*** Begin Patch\n*** Update File: src/app.env\n@@\n-X=1\n+X=${placeholder}\n*** End Patch`;
+  const refused = call('apply_patch', patch);
+  assert.match(refused.deny, /^omd_privacy: .*apply_patch.*into src\/app\.env/);
+  assert.ok(Buffer.byteLength(refused.deny) <= 512);
+  const long = call('apply_patch', patch.replace('src/app.env', `${'é'.repeat(300)}/app.env`).replace(placeholder, `[REDACTED:${'r'.repeat(300)}:q7xk2m6fhd4w]`));
+  assert.ok(Buffer.byteLength(long.deny) <= 512, String(Buffer.byteLength(long.deny)));
+  assert.match(call('exec_command', { cmd: `echo ${placeholder} > .env` }).deny, /omd_privacy: .*exec_command/);
+  assert.deepEqual(call('apply_patch', patch.replace(placeholder, 'real')), { output: 'ok', success: true });
+  assert.deepEqual(call('exec_command', { cmd: 'echo [REDACTED: ok' }), { output: 'ok', success: true });
 });
 
 test('quoted values with spaces or symbols and escaped JSON quotes are redacted without breaking tool-call JSON', () => {
@@ -194,7 +223,7 @@ test('sensitive path policy is off by default and, when opted in, asks only for 
 test('value exemptions do not persist guessable fingerprints', () => {
   const output = run('command', 'privacy', 'allow hunter2pw');
   assert.match(output.value.display, /Usage/);
-  const sent = send([segment('/s', 'password=hunter2pw')], { state: { salt: 'old', ids: { old: 'hash' } } });
-  assert.equal(sent.state.salt, undefined);
+  const sent = send([segment('/s', 'password=hunter2pw')], { state: { ids: { old: 'hash' } } });
   assert.equal(sent.state.ids, undefined);
+  assert.ok(!JSON.stringify(sent.state).includes('hunter2pw'));
 });

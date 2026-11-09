@@ -62,6 +62,9 @@ Segments with nothing to show are hidden.
 1. Run `/statusline github`.
 2. Paste a GitHub token with read access. A fine-grained token with Pull requests and Commit statuses read is enough.
 
+The compact preset has no `pr` or `ci` segment: choose the detailed preset or add them to a custom layout, or the command
+says they stay hidden.
+
 Run it again to replace the token. It's sent only to `https://api.github.com`, and the mod never sees it. Without a
 token there's no network request.
 

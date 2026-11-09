@@ -328,3 +328,83 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     std::os::unix::fs::symlink(&repo, &component).unwrap();
     assert!(codex_omd::plugin_component::inspect(&plugin).is_err());
 }
+
+#[test]
+fn installed_plugin_components_list_and_install_enabled_in_one_apply() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().canonicalize().unwrap().join("codex");
+    let plugin = home.join("plugins/cache/market/demo/1.2.0");
+    fs::create_dir_all(plugin.join(".codex-plugin")).unwrap();
+    fs::create_dir_all(plugin.join("mod")).unwrap();
+    fs::create_dir_all(home.join("plugins/cache/market/plain/1.0.0")).unwrap();
+    fs::write(
+        home.join("config.toml"),
+        "[plugins.\"demo@market\"]\nenabled = true\n[plugins.\"plain@market\"]\nenabled = true\n",
+    )
+    .unwrap();
+    fs::write(
+        plugin.join("mod/mod.json"),
+        json!({"schema": 1, "id": "plugin_demo", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION,
+            "entrypoint": "main.ts", "state_version": 1, "description": "Demo", "license": "MIT",
+            "provenance": {"maintainer": "Demo Author", "source": "demo"}, "capabilities": ["commands"],
+            "contributes": {"commands": [{"name": "demo", "description": "Run the demo"}]}})
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(plugin.join("mod/main.ts"), "export default () => {}\n").unwrap();
+    let hash = ModStore::inspect_package(&plugin.join("mod")).unwrap()["sha256"].clone();
+    fs::write(
+        plugin.join(".codex-plugin/omd.json"),
+        json!({"schema": 1, "component": "mod", "sha256": hash}).to_string(),
+    )
+    .unwrap();
+    let store = ModStore::create(temp.path().join("store")).unwrap();
+    let component = json!({"plugin": "demo", "marketplace": "market", "version": "1.2.0",
+        "id": "plugin_demo", "description": "Demo", "sha256": hash, "error": null});
+    let listed = |installed: bool| {
+        let mut expected = component.clone();
+        expected["installed"] = json!(installed);
+        expected["enabled"] = json!(installed);
+        assert_eq!(
+            codex_omd::plugin_component::components(&store, &home).unwrap(),
+            json!({"components": [expected]})
+        );
+    };
+    listed(false);
+    unsafe { std::env::set_var("CODEX_HOME", &home) };
+    let install = codex_omd::package_controls::preview(
+        &store,
+        json!({"action": "install", "source": {"kind": "plugin", "plugin": "demo"}, "enable": true}),
+    )
+    .unwrap();
+    assert_eq!(
+        (&install.public["id"], &install.public["changes"]["enabled"]),
+        (&json!("plugin_demo"), &json!(true))
+    );
+    codex_omd::package_controls::apply(&store, &install.control).unwrap();
+    listed(true);
+    let package = &codex_omd::package_controls::list(&store, None).unwrap()["packages"][0];
+    assert_eq!(
+        (
+            &package["enabled"],
+            &package["maintainer"],
+            &package["contributes"]["commands"][0]["name"]
+        ),
+        (&json!(true), &json!("Demo Author"), &json!("demo"))
+    );
+    fs::write(
+        home.join("config.toml"),
+        "[plugins.\"demo@market\"]\nenabled = false\n",
+    )
+    .unwrap();
+    assert_eq!(
+        codex_omd::plugin_component::components(&store, &home).unwrap(),
+        json!({"components": []})
+    );
+    fs::remove_dir_all(&plugin).unwrap();
+    let package = &codex_omd::package_controls::list(&store, None).unwrap()["packages"][0];
+    assert_eq!(
+        (&package["enabled"], &package["failed"]),
+        (&json!(true), &Value::Null)
+    );
+}

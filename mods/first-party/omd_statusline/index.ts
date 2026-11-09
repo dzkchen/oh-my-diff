@@ -379,7 +379,10 @@ export default function activate(api: ModAPI) {
       const asked = api.host.tryCall('credentials.request', owned ? { action: 'refresh', profile: owned.id } : { action: 'enroll', kind: 'secret', label: 'GitHub (status line)', origin: GITHUB_ORIGIN });
       if (!asked.ok || asked.value.status !== 'completed') return { display: `GitHub token not saved${asked.ok ? '' : `: ${asked.error}`}` };
       api.host.tryCall('events.publish', { channel: 'refresh', data: null });
-      return { display: 'GitHub token saved; pull request and CI status refresh now' };
+      const data = saved();
+      const hidden = !effective(data).github ? ' The GitHub setting is off, so pull request and CI stay hidden; turn it on in /mods.'
+        : shows(['pr', 'ci'], data) ? '' : ' Your layout has no pr or ci segment, so they stay hidden; add them in /statusline (Segments tab) or choose the detailed preset.';
+      return { display: `GitHub token saved; pull request and CI status refresh now.${hidden}` };
     }
     if (verb === 'refresh') {
       const asked = api.host.tryCall('events.publish', { channel: 'refresh', data: null });

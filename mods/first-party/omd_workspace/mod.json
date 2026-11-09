@@ -6,6 +6,10 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Arrange the chat, a shell, Git changes, your own terminals and other mods' panels freely: presets, moves, drag, focus keys and a panel registry",
+  "contributes": {
+    "commands": [{ "name": "workspace", "description": "Arrange the chat, a shell, Git changes and panels: presets, moves, resizing and saved layouts" }],
+    "keys": [{ "key": "F6", "description": "Show or hide the workspace panels" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_workspace"},
   "capabilities": ["terminal", "commands", "store", "exec", "pty", "fs.write", "network", "services", "lifecycle", "inventory", "packages"],

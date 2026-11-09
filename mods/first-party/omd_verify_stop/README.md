@@ -27,7 +27,7 @@ It watches tool output in the turn:
   `.txt`) don't count, whichever way they're edited, and deleting a file the agent created (with `apply_patch` or
   `rm`) doesn't either.
 - Checks: test runners and build checks (pytest, `python -m unittest`, `runtests.py`, `cargo test|check|clippy`,
-  `go test|vet`, `pnpm|npm|yarn test`, jest, vitest, tsc, `make test|check`, rspec, phpunit, mvn, gradle and others),
+  `go test|vet`, `pnpm|npm|yarn test`, `node --test`, `mise run test|check`, jest, vitest (also `pnpm [exec] vitest`), tsc, `make test|check`, rspec, phpunit, mvn, gradle and others),
   passing on exit code 0. A check in a command with `||`, `;` or a newline doesn't count as passing, since its exit
   code may not be the check's; its failure still counts. A check left running is settled when `write_stdin` reports
   its exit code.

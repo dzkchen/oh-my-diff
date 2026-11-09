@@ -78,6 +78,8 @@ export default function activate(api: ModAPI) {
       if (!answered.ok) continue;
       api.host.tryCall('terminal.notice', { text: `No answer within ${Math.round(limit / 1000)} s (the user may be away), so ${WHAT[item.kind]} automatically. Continue with work that does not depend on it.`,
         kind: 'info', placement: 'transcript', audience: 'user' });
+      if (item.kind === 'approval') api.host.tryCall('terminal.notice', { text: `The approval was declined because no one answered within ${Math.round(limit / 1000)} s: a timeout, not a refusal. Do not retry actions that need approval; continue with work that does not.`,
+        kind: 'info', placement: 'transcript', audience: 'model' });
     }
     api.state.set(state);
     arm(state);

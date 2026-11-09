@@ -15,9 +15,9 @@ type Vitals = { windows?: Record<string, { used: number; resets: number | null; 
 const ROLES: Role[] = ['research', 'review', 'worker'];
 const EFFORTS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 const ROLE_WORDS: [Role, RegExp][] = [
-  ['review', /\b(?:review|audit|critique|verif)/i],
-  ['research', /\b(?:research|investigat|explor|look (?:up|into)|find out|survey)/i],
-  ['worker', /\b(?:implement|write|edit|fix|build|code|work)/i],
+  ['review', /\b(?:review\w*|audit\w*|critique\w*|verif\w*)\b/i],
+  ['research', /\b(?:research\w*|investigat\w*|explor\w*|look (?:up|into)|find out|survey\w*)\b/i],
+  ['worker', /\b(?:implement(?:s|ed|ing)?|writ(?:e|es|ing)|edit(?:s|ed|ing)?|fix(?:es|ed|ing)?|build(?:s|ing)?|cod(?:e|es|ing)|work(?:s|ed|ing|er)?)\b/i],
 ];
 const READ_TOOLS = ['exec_command', 'write_stdin'];
 const LIMIT_IDS: Record<string, string> = { omd_claude_cli: 'claude', openai: 'codex' };
@@ -47,6 +47,7 @@ const truncate = (text: string, max: number) => {
 const LEAD = /^(?:default|lead|same|inherit)/i;
 const EFFORT = String.raw`(?:\s+(?:at|with)\s+(${EFFORTS.join('|')})(?:\s+effort)?)?`;
 const USE = new RegExp(String.raw`\buse\s+([a-z][\w.\- ]{0,40}?)${EFFORT}\s+(?:as|for)\s+(?:the\s+)?(?:sub-?agents?|agents?|helpers?)(?:\s+(?:to|for)\s+(?:the\s+)?(\w+))?`, 'gi');
+const NEGATED = /\b(?:don['’]?t|do not|doesn['’]?t|never|no|without|avoid|not|won['’]?t)\s+(?:(?:ever|really|just|please)\s+)?$/i;
 const MENTION = new RegExp(String.raw`(?<![\w.])@([a-z][\w.\-]{0,40})${EFFORT}\s+for\s+(?:the\s+)?(\w+)`, 'gi');
 
 const roleOf = (word: string | undefined): Role | 'all' => ROLE_WORDS.find(([, pattern]) => pattern.test(word ?? ''))?.[0] ?? 'all';
@@ -55,7 +56,7 @@ const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9.]+/g, ' ').
 function directives(text: string) {
   const found: { role: Role | 'all'; choice: Choice; warn: boolean }[] = [];
   for (const [pattern, warn] of [[USE, true], [MENTION, false]] as const) {
-    for (const [, query, effort, role] of text.matchAll(pattern)) found.push({ role: roleOf(role), choice: { query: query.trim().replace(/^the\s+/i, ''), effort: (effort?.toLowerCase() ?? null) as ReasoningEffort | null }, warn });
+    for (const { 1: query, 2: effort, 3: role, index } of text.matchAll(pattern)) if (!NEGATED.test(text.slice(0, index))) found.push({ role: roleOf(role), choice: { query: query.trim().replace(/^the\s+/i, ''), effort: (effort?.toLowerCase() ?? null) as ReasoningEffort | null }, warn });
   }
   return found;
 }

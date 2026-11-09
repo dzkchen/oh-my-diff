@@ -28,14 +28,18 @@ omd mods disable omd_mods
 | `/mods MOD` | Open one mod's panel: its settings, Update, Roll back and Remove. |
 | `/mods ACTION MOD` | Run an action without the panel. Actions are `enable`, `disable`, `toggle`, `update`, `rollback`, `remove` and `trust`. |
 | `/mods install SOURCE` | Review installing `npm:NAME[@VERSION]`, `git+URL#TAG`, an absolute folder or a directory id. |
+| `/mods plugin MARKETPLACE/PLUGIN` | Review turning on the mod component of a Codex plugin you added, such as `oh-my-diff/omd-anchored-edit`. One approval installs and turns it on. |
 | `/mods scope user` or `/mods scope project` | Choose where `/mods install` and Directory installs go: your user store or this project. |
 | `/mods reload` | Reload every mod. |
 | `/mods apply` or `/mods cancel` | Confirm or drop a pending action. |
 
 The panel's tabs:
 
-- All lists your mods as switches, grouped into Needs attention, On, Off and Available, with counts.
-- Settings opens one mod's own panel. Settings change only on the copy that is on: a user or project copy shadowed by
+- All lists your mods as switches, grouped into Needs attention, On, Off and Available, with counts. A mod that's off
+  still shows the commands and keys it adds, and experimental mods are marked. Available holds directory mods you
+  haven't installed and the mod components of Codex plugins you added.
+- Settings opens one mod's own panel: On first, then its settings. A list of words is edited as comma-separated text
+  (or a JSON list, for entries with commas), and an object or a list of objects as JSON. Changes apply to, below the settings, picks every terminal or only this one. Settings change only on the copy that is on: a user or project copy shadowed by
   the other, or one that is off, shows why instead of its settings.
 - Directory installs from a source or updates.
 

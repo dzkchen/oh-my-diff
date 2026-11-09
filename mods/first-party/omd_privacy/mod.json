@@ -4,7 +4,10 @@
   "version": "1.0.2",
   "api": "1.0.0",
   "state_version": 1,
-  "description": "Pattern-based redaction of secrets and optional PII in provider-bound request text (not web search, transcripts or logs); can gate sensitive-path reads",
+  "description": "Redacts secrets and chosen personal data from model requests; /privacy shows the rules and match counts",
+  "contributes": {
+    "commands": [{ "name": "privacy", "description": "See the redaction rules and how many matches each has caught" }]
+  },
   "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
@@ -13,6 +16,7 @@
   "capabilities": [
     "approvals",
     "commands",
+    "interception",
     "middleware",
     "request_policy",
     "store"

@@ -41,6 +41,16 @@ test('a request hops to the channel, arms the deadline and is answered without a
   assert.deepEqual(fired.calls.at(-1), ['events.schedule', { key: 'deadline', delay_ms: 30_000 }]);
   const notice = fired.calls.find(([operation]) => operation === 'terminal.notice')[1];
   assert.equal(notice.audience, 'user');
+  assert.equal(fired.calls.some(([operation, args]) => operation === 'terminal.notice' && args.audience === 'model'), false);
+});
+
+test('each declined approval queues one model notice saying it was a timeout', () => {
+  const pending = { a: { request_id: 'a', kind: 'approval', questions: [], deadline: NOW }, b: { request_id: 'b', kind: 'approval', questions: [], deadline: NOW }, c: { request_id: 'c', kind: 'permission', questions: [], deadline: NOW } };
+  const fired = run('timer', { key: 'deadline' }, { pending });
+  const model = fired.calls.filter(([operation, args]) => operation === 'terminal.notice' && args.audience === 'model').map(([, args]) => args);
+  assert.equal(model.length, 2);
+  assert.match(model[0].text, /timeout, not a refusal\. Do not retry actions that need approval/);
+  assert.ok(Buffer.byteLength(model[0].text) <= 512);
 });
 
 test('delivery delays and duplicate notifications preserve the original deadline and human answers win', () => {

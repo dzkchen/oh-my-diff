@@ -6,6 +6,9 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Configurable status line below or above the composer: model, context, usage limits, cost, Git, pull request and CI status, and your own scripts",
+  "contributes": {
+    "commands": [{ "name": "statusline", "description": "Edit the status line with a live preview: placement, preset, segments and order" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_statusline"},
   "capabilities": ["terminal", "store", "commands", "events", "lifecycle", "model", "middleware", "threads", "config", "account", "inventory", "exec", "http", "credentials", "builtins"],

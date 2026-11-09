@@ -120,6 +120,15 @@ test('a panel action after the UI state was cleared edits the saved settings and
   assert.equal(panel.items.find(item => item.id === 'thresholds').value.length, 2000);
 });
 
+test('/statusline github says when the layout or setting keeps pull request and CI hidden', () => {
+  const answer = host({ 'credentials.request': () => ({ status: 'completed' }) });
+  const saved = settings => call({ event: 'command', name: 'edit', payload: 'github', settings }, answer).value.display;
+  assert.match(saved({}), /saved.*no pr or ci segment.*detailed preset/);
+  assert.match(saved({ preset: 'detailed' }), /refresh now\.$/);
+  assert.match(saved({ preset: 'custom', layout: 'model pr' }), /refresh now\.$/);
+  assert.match(saved({ preset: 'detailed', github: false }), /setting is off.*\/mods/);
+});
+
 test('profile, tier and workspace segments follow the config layers, thread settings and account', () => {
   const settings = { preset: 'custom', layout: 'model tier profile workspace' };
   const answer = tier => host({ 'app.request': args => args.method === 'config/read'

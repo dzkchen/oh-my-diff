@@ -483,6 +483,24 @@ impl ModHost {
         Ok(json!({"settings": settings}))
     }
 
+    pub fn protective(&self, id: &str) -> bool {
+        let policy =
+            |package: &ModPackage| package.capabilities.iter().any(|c| c == "request_policy");
+        match self.loaded.get(id) {
+            Some(loaded) => {
+                policy(&loaded.package)
+                    || loaded
+                        .registrations
+                        .interceptors
+                        .iter()
+                        .any(|interceptor| interceptor.required)
+            }
+            None => self
+                .configuration_selection_in(id, None)
+                .map_or(true, |(_, package)| policy(&package)),
+        }
+    }
+
     pub fn preview_configuration(
         &self,
         arguments: Value,

@@ -4,9 +4,14 @@ type Exemptions = { domains: string[]; paths: PathPattern[]; ignored: number };
 type Context = { exempt: Exemptions; before: number; leftOpen: boolean; rightOpen: boolean };
 type Rule = (text: string, context: Context) => [number, number][];
 type Check = (value: string, groups: Record<string, string | undefined>, exempt: Exemptions) => boolean;
-type Saved = { counts?: Record<string, number>; denied?: number; last?: string };
+type Saved = { counts?: Record<string, number>; denied?: number; last?: string; salt?: string };
 
 const PLACEHOLDER = /\[REDACTED:[a-z0-9_]+:[a-z2-7]{12,52}\]/g;
+const HOLDER = new RegExp(PLACEHOLDER.source);
+const SAMPLES = new Set([['sk', '_test_4eC39HqLyjWDarjtT1zdp7dc'].join(''),
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c']);
+const SAMPLE_WORDS = new Set(['test', 'fake', 'mock', 'dummy', 'sample', 'demo', 'csrf', 'xsrf']);
+const SAMPLE_VALUE = /^(?:test|fake|mock|dummy|sample|demo)(?:[^a-z]|$|pass|pw|key|secret|token)/i;
 const PLAIN = /example|placeholder|changeme|dummy|redacted|your[_-]|xxxx|\*\*\*/i;
 const RESERVED_DOMAINS = ['example.com', 'example.net', 'example.org', 'example', 'test', 'invalid', 'localhost'];
 const TEST_CARDS = new Set(['4242424242424242', '4111111111111111', '5555555555554444', '378282246310005', '6011111111111117']);
@@ -25,11 +30,14 @@ function regex(pattern: RegExp, check?: Check, groups: string[] = []): Rule {
   return (text, { exempt }) => [...text.matchAll(pattern)].flatMap(match => {
     const span = groups.map(group => match.indices!.groups![group]).find(Boolean);
     const [start, end] = span ?? [match.index!, match.index! + match[0].length];
-    return !check || check(text.slice(start, end), match.groups ?? {}, exempt) ? [[start, end] as [number, number]] : [];
+    const value = text.slice(start, end);
+    return !SAMPLES.has(value) && (!check || check(value, match.groups ?? {}, exempt)) ? [[start, end] as [number, number]] : [];
   });
 }
 
 function assigned(value: string, groups: Record<string, string | undefined>) {
+  const name = (groups.name ?? '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z]+/);
+  if (name.some(word => SAMPLE_WORDS.has(word)) || SAMPLE_VALUE.test(value)) return false;
   if (/^(?:\$|%|process\.env|os\.environ|env\.)/i.test(value) || !varied(value, 4)) return false;
   if (/^(?:true|false|null|none|nil|undefined|string|number|boolean|bool|str|int|bytes|required|optional|secret|password|token|test|empty|unset|hidden)$/i.test(value)) return false;
   if (groups.quoted !== undefined) return !/\s/.test(value) || /[^A-Za-z\s.,!?'"-]/.test(value);
@@ -133,9 +141,9 @@ const SECRETS: Record<string, Rule> = {
   jwt,
   bearer_token: regex(/\b(?:Bearer\s+(?<value>[A-Za-z0-9._~+/-]{16,1024}=*)|Basic\s+(?<basic>[A-Za-z0-9+/]{16,1024}={0,2}))(?![A-Za-z0-9._~+/=-])/dgi,
     value => mixed(value) && opaque(value), ['value', 'basic']),
-  url_credentials: regex(/\b[a-z][a-z0-9+.-]{1,20}:\/\/[^\s:@/"'<>[\]\\]{1,128}:(?<value>[^\s@/"'<>[\]\\]{1,256})@/dgi,
-    value => !/^(?:\*+|\$\{?[A-Za-z_]+\}?)$/.test(value), ['value']),
-  assigned_secret: regex(/(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|secret[_-]?key|credentials?)(?:\\*["'])?\s*(?::=|=>|=|:)\s*(?:(?<quote>\\*["'])(?<quoted>(?:(?!\k<quote>|\[REDACTED:)[^\n\\]){6,256})\k<quote>|(?<value>[^\s"'`,;&{}()<>[\]\\]{6,256})(?![^\s"'`,;&{}()<>[\]\\])(?!\s*\())/dgi,
+  url_credentials: regex(/\b[a-z][a-z0-9+.-]{1,20}:\/\/[^\s:@/"'<>[\]\\]{1,128}:(?<value>[^\s@/"'<>[\]\\]{1,256})@(?<host>\[[0-9A-Fa-f:.]{2,45}\]|[^\s/:?#"'<>[\]\\]{1,253})?/dgi,
+    (value, groups, exempt) => !/^(?:\*+|\$\{?[A-Za-z_]+\}?)$/.test(value) && !domainExempt(groups.host ?? '', exempt) && !/^(?:127\.|0\.0\.0\.0$|\[::1\]$)/.test(groups.host ?? ''), ['value']),
+  assigned_secret: regex(/(?<![A-Za-z0-9_.-])(?<name>[A-Za-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|secret[_-]?key|credentials?))(?:\\*["'])?\s*(?::=|=>|=|:)\s*(?:(?<quote>\\*["'])(?<quoted>(?:(?!\k<quote>|\[REDACTED:)[^\n\\]){6,256})\k<quote>|(?<value>[^\s"'`,;&{}()<>[\]\\]{6,256})(?![^\s"'`,;&{}()<>[\]\\])(?!\s*\())/dgi,
     assigned, ['quoted', 'value']),
 };
 
@@ -360,8 +368,8 @@ export default function activate(api: ModAPI) {
   const load = (): Saved => {
     const value = api.state.get();
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-    const { counts, denied, last } = value as Saved;
-    return { counts, denied, last };
+    const { counts, denied, last, salt } = value as Saved;
+    return { counts, denied, last, salt };
   };
 
   api.intercept('model_send', { required: true }, async (page, next) => {
@@ -379,12 +387,9 @@ export default function activate(api: ModAPI) {
     };
     const unscanned = config.unscanned === 'deny' ? page.opaque.find(item => item.kind !== 'encrypted_content') : undefined;
     if (unscanned) return refuse(`unscanned ${unscanned.kind} content; set unscanned to allow to send it outside the guarantee`);
-    const ids = new Map<string, string>();
-    const mint = (rule: string, value: string) => {
-      const name = `${rule}\0${value}`;
-      if (!ids.has(name)) ids.set(name, base32(crypto.getRandomValues(new Uint8Array(8))).slice(0, 12));
-      return ids.get(name)!;
-    };
+    saved.salt ??= base32(crypto.getRandomValues(new Uint8Array(16)));
+    const key = await crypto.subtle.importKey('raw', utf8.encode(saved.salt), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const mint = async (rule: string, value: string) => base32(new Uint8Array(await crypto.subtle.sign('HMAC', key, utf8.encode(`${rule}\0${value}`)))).slice(0, 12);
     const pending: Pending[] = [];
     const counts: Record<string, number> = {};
     for (const segment of page.segments) {
@@ -419,7 +424,7 @@ export default function activate(api: ModAPI) {
         if (from < to) pieces.push([from, to]);
         if (!pieces.length) continue;
         const value = framed.slice(start, end);
-        const id = mint(rule, value);
+        const id = await mint(rule, value);
         if (!segment.editable) return refuse(`${rule} in ${segment.kind} text, which cannot be redacted (placeholder ${id}); review the text before sending`);
         if (start >= head.length) counts[rule] = (counts[rule] ?? 0) + 1;
         pieces.forEach(([piece, until], index) => own.push({ segment: segment.id, start: piece, end: until,
@@ -445,6 +450,15 @@ export default function activate(api: ModAPI) {
     }
     if (JSON.stringify(saved) !== before) api.state.set(saved as Json);
     return { edits: [...inner.edits, ...edits], ...(inner.cache === false ? { cache: false as const } : {}) };
+  });
+
+  const WRITERS = ['apply_patch', 'exec_command', 'shell', 'shell_command', 'local_shell', 'write_stdin'];
+  api.intercept('tool', { match: { tool: WRITERS } }, (e, next) => {
+    const hit = HOLDER.exec(e.raw_arguments);
+    if (!hit) return next(e);
+    const clip = (text: string) => Array.from(text).slice(0, 50).join('');
+    const file = e.raw_arguments.split(/^(?=\*\*\* (?:Add|Update) File: )/m).find(part => HOLDER.test(part))?.match(/File: (.+)/)?.[1];
+    return { deny: `omd_privacy: this ${e.tool} call would write a redaction placeholder (${clip(hit[0])}) into ${file ? clip(file) : 'a file or command'}. It stands for a value you can't see: leave that text unchanged or ask the user for the value.` };
   });
 
   api.middleware('approval', event => {
@@ -479,7 +493,7 @@ export default function activate(api: ModAPI) {
       `Exemptions: ${exempt.domains.length} domains, ${exempt.paths.length} paths${exempt.ignored ? `, ${exempt.ignored} invalid ignored` : ''}`,
       'Terminal display: unchanged; the screen, transcript, rollout and resume data keep the originals.',
       `Redacted: ${counts} · denied ${saved.denied ?? 0} · last: ${saved.last ?? 'none'}`,
-      'Placeholders: random IDs, never stored',
+      'Placeholders: stable IDs keyed to a random local salt, no values stored',
     ].join('\n') };
   }, { description: 'Show privacy rules and counts', args_hint: '[status]' });
 }
