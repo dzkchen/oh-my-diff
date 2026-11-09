@@ -78,9 +78,8 @@ to. A pinned install adds `, pinned to VERSION`. If the installed
 release was withdrawn, it adds `VERSION was withdrawn` and, when one helps, the command to run: `omd update` or `omd update rollback`.
 
 Then open a new terminal, `cd` into a project and run `codex`, and type `/mods`. The `/mods` screen lists your
-installed mods and which ones are on. Mods stay off when `codex` starts in your home folder or in `/`, so start it in
-a project folder. Esc closes `/mods`;
-if you typed a search, the first Esc clears the search.
+installed mods and which ones are on. Esc closes it; if you typed a search, the first Esc clears the search. Mods stay
+off when `codex` starts in your home folder or in `/`, so start it in a project folder.
 
 ## Update
 
@@ -94,9 +93,8 @@ While other OMD sessions are open, the update waits for your next `codex` start.
 kept. When it finishes, `omd update` and the next `codex` start name any mod the release retired, any mod that is
 now on by default but stays off for you, and any permission a first-party mod gained; `/update` shows them too.
 `omd update`, `omd uninstall` and the installer's `status` print text; add `--json` for JSON. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
-update anyway.
-If the newer release can't be installed, for example because your Codex is on another version or doesn't run,
-`omd update` exits with an error that names the reason.
+update anyway. If the newer release can't be installed, for example because your Codex is on another version or
+doesn't run, `omd update` exits with an error that names the reason.
 
 When an OMD+ release moves a mod it came with to experimental, the update turns that mod off once and leaves it
 installed. Turn it back on in `/mods` if you want it; later updates leave it as you set it. Mods you installed

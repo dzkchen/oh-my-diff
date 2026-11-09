@@ -485,6 +485,14 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual((offline["available"]["version"], offline["error"]), ("0.2.0", "network is unreachable"))
         self.assertEqual(json.loads((self.root / "update/state.json").read_text())["installed"], "0.1.0")
 
+    def test_a_release_for_another_target_is_reported_blocked_not_up_to_date(self):
+        self.published = [release("0.2.0", target="x86_64-apple-darwin")]
+        args = types.SimpleNamespace(action=None, value=None, session=None, yes=False)
+        with self.assertRaisesRegex(ValueError, r"^Oh My Diff 0\.2\.0 can't be installed: built for x86_64-apple-darwin"):
+            self.module.manual(args, self.root, self.current)
+        summary = self.module.latest_summary(self.module.manual(types.SimpleNamespace(action="status", value=None), self.root, self.current))
+        self.assertEqual(summary, "0.2.0 can't be installed: built for x86_64-apple-darwin")
+
     def test_the_launcher_notice_fits_an_environment_read(self):
         manifest = {"mod_api": "1.0.0", "body": "b" * 60_000, "signature": "s" * 4000}
         self.module.save(self.root, installed="0.1.0", error="e" * 300, failed={"version": "0.2.0", "error": "é" * 300, "at": 1},
@@ -1094,6 +1102,8 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(self.module.update_text("now", {"mods_updated": ["omd_logo"], "capabilities": {}}), "Updated first-party mods: omd_logo.")
         self.assertEqual(self.module.update_text("checks", {"checks": "off", "profiles": ["full", "platform"]}),
                          "Update checks: off (OMD+, OMD Core).")
+        self.assertEqual(self.module.update_text("now", {"installed": "0.1.0", "up_to_date": False, "error": "offline"}),
+                         "Oh My Diff 0.1.0: the check failed: offline")
         removed = {"uninstalled": True, "preserved_stores": str(self.home / "s"), "preserved_administrator_policy": [],
                    "purge_option": "omd uninstall --purge removes OMD mod data and saved sign-ins too",
                    "path_removed_from": [str(self.home / ".zshrc")], "restored_upstream": "/opt/homebrew/bin/codex"}
