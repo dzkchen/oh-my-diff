@@ -162,6 +162,9 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
   as Codex keeps `.git` read-only. Outside a Git checkout, as in a projectless session, checkout state is unavailable
   (`state_checkout_unavailable`) and nothing is written to the directory.
 
+A committed `api.state` change redraws the mod in every terminal and attached client showing the same store, checkout
+or thread state. Hooks, prompts, timers, channels and `api.uiState` stay with the terminal that caused them.
+
 These rules apply in every scope:
 
 - Mods never run with the home directory or the filesystem root as the session directory. The host stays off with a
@@ -203,7 +206,7 @@ requires `terminal`. Saved `api.state` is unchanged by it.
   escapes.
 - Strings and object keys must contain valid Unicode scalars (no lone surrogates).
 - The host checks the original serialized bytes before parsing; number reformatting does not change the limit.
-- Values are shared by host instances in the same process, store, repository, thread and package identity.
+- Values are shared by host instances in the same process, terminal, store, repository, thread and package identity.
 - Commands and component events may write; other callbacks may read.
 - Writes commit only after successful validation and cancellation checks. A revision conflict reruns the callback
   under the same replay rules as [`api.state` compare-and-swap](#apistate-compare-and-swap).

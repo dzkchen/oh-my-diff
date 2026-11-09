@@ -70,6 +70,13 @@ def scratch_repo():
     lock = pin()
     if not SCRATCH.exists():
         run("git", "clone", "--quiet", "--depth", "1", "--branch", lock["tag"], "--no-checkout", lock["repository"], SCRATCH)
+    if not (SCRATCH / ".git/config").exists():
+        git(SCRATCH, "init", "--quiet")
+        git(SCRATCH, "remote", "add", "origin", lock["repository"])
+        git(SCRATCH, "config", "core.ignorecase", "true")
+        git(SCRATCH, "config", "core.precomposeunicode", "true")
+    if not (SCRATCH / ".git/HEAD").exists():
+        (SCRATCH / ".git/HEAD").write_text(lock["commit"] + "\n")
     if not git(SCRATCH, "tag", "-l", lock["tag"]).strip():
         git(SCRATCH, "fetch", "--quiet", "origin", "tag", lock["tag"])
     return lock["commit"]

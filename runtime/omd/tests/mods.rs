@@ -2223,6 +2223,57 @@ fn command_outcomes_are_validated() {
 }
 
 #[test]
+fn ui_state_is_separate_per_terminal_and_only_saved_state_is_announced() {
+    let source = "export default api => { api.command('ui', value => { api.uiState.set(value); return null; }); api.command('save', value => { api.state.set(value); return null; }); api.command('read', () => api.uiState.get()); };";
+    let (temp, _, _) = fixture(source, &["commands", "store", "terminal"]);
+    let open = |token: &str| {
+        ModHost::open(
+            temp.path().canonicalize().unwrap().join("store"),
+            ModOpenOptions {
+                configuration_overrides: codex_omd::terminal_configuration_owner(token),
+                ..ModOpenOptions::default()
+            },
+        )
+        .unwrap()
+    };
+    let (mut first, mut same, mut other) = (open("ui-a"), open("ui-a"), open("ui-b"));
+    let invoke = |host: &mut ModHost, name: &str, value| {
+        host.invoke(
+            "fixture",
+            host.generation(),
+            "command",
+            name,
+            value,
+            ModInvokeOptions::default(),
+        )
+        .unwrap()
+    };
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = seen.clone();
+    let _observer =
+        codex_omd::client_surface::register_observer(std::sync::Arc::new(move |observed| {
+            if let codex_omd::client_surface::Observed::State { mod_id, terminal } = observed {
+                recorded.lock().unwrap().push((mod_id, terminal));
+            }
+        }));
+    invoke(&mut first, "ui", json!(1));
+    assert_eq!(invoke(&mut same, "read", Value::Null), 1);
+    assert!(invoke(&mut other, "read", Value::Null).is_null());
+    let terminal = first.terminal();
+    let announced = |seen: &std::sync::Mutex<Vec<(String, u64)>>| {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, written)| *written == terminal)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert!(announced(&seen).is_empty());
+    invoke(&mut first, "save", json!(2));
+    assert_eq!(announced(&seen), [("fixture".to_owned(), terminal)]);
+}
+
+#[test]
 fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     let source = "export default api => { api.command('write', value => { api.uiState.set(value); return null; }); api.command('lone', where => { const lone = String.fromCharCode(0xd800); api.uiState.set(where === 'key' ? {[lone]: 1} : ['ok', lone]); return null; }); api.command('read', () => api.uiState.get()); api.command('race', () => { const before = api.uiState.get() ?? 0; api.host.call('workspace.read', {path:'file'}); api.uiState.set(before + 1); return before + 1; }); api.on('terminal', () => ({title:String(api.uiState.get() ?? 'empty')})); };";
     let (temp, store, path) = fixture(source, &["commands", "terminal", "fs.read"]);
@@ -6004,8 +6055,7 @@ fn configuration_owners_reload_independently_without_writing_defaults() {
         &["commands"],
     );
     let saved = std::fs::read(store.root().join("mods.json")).unwrap();
-    let config: Value = serde_json::from_slice(&saved).unwrap();
-    let selection = serde_json::from_value(config["mods"][0].clone()).unwrap();
+    let selection = store.configuration().unwrap().mods[0].clone();
     let mut first = host(&temp);
     let mut second = host(&temp);
     let owner = first.configuration_overrides();
@@ -6280,6 +6330,11 @@ fn configuration_owner_missed_package_lifecycle_discards_overrides() {
         );
         let current = store.configuration().unwrap().mods[0].clone();
         assert!(current.configuration_epoch > saved.configuration_epoch);
+        assert!(
+            !std::fs::read_to_string(store.root().join("mods.json"))
+                .unwrap()
+                .contains("configuration_epoch")
+        );
         assert_eq!(
             owner.lock().unwrap().values(
                 &current,
@@ -7402,6 +7457,41 @@ fn background_jobs_cross_host_instances_and_keep_session_variables() {
     ui.release_thread_activations("jobs-thread");
 }
 
+#[test]
+fn denial_explanations_name_the_fix_and_admit_unknown_codes() {
+    let unknown = ModHost::capability_explanation("made_up_failure: detail");
+    let cause = unknown["cause"].as_str().unwrap();
+    assert!(
+        cause.contains("made_up_failure: detail") && !cause.contains("authority"),
+        "{unknown}"
+    );
+    assert!(
+        unknown["fix"]
+            .as_str()
+            .unwrap()
+            .contains("omd-mod report STORE"),
+        "{unknown}"
+    );
+    for (code, command) in [
+        ("package_blocked: fixture: testing", "omd mods unblock ID"),
+        (
+            "source_changed: inspect and trust the new digest",
+            "omd mods update ID",
+        ),
+        ("package_not_trusted", "omd install REFERENCE"),
+        (
+            "managed_by_policy: administrator policy requires this mod",
+            "omd-mod policy explain STORE",
+        ),
+    ] {
+        let explained = ModHost::capability_explanation(code);
+        assert!(
+            explained["fix"].as_str().unwrap().contains(command),
+            "{explained}"
+        );
+    }
+}
+
 fn schema_fixture(schema: Value, capabilities: &[&str]) -> (TempDir, ModStore, PathBuf) {
     let (temp, store, path) = fixture("export default api => {}", capabilities);
     let manifest = path.join("mod.json");
@@ -7667,7 +7757,7 @@ fn an_expired_grant_lists_as_expired_and_trust_renews_it() {
             .unwrap()
             .mods
             .into_iter()
-            .find(|selection| selection.path == PathBuf::from(row["path"].as_str().unwrap()))
+            .find(|selection| selection.path == Path::new(row["path"].as_str().unwrap()))
             .unwrap();
         assert!(renewed.authority_current(), "packaged={packaged}");
         assert_eq!(renewed.capabilities, ["commands"]);

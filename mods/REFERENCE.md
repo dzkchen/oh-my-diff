@@ -695,6 +695,7 @@ These frozen entries have experimental fields:
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
 | `operations:agents.spawn` | `model` | none |
 | `operations:events.schedule` | `data` | `timer_data_v1` |
+| `operations:packages.list` | `needs_approval` | `package_needs_approval_v1` |
 | `operations:routes.add` | `model`, `effort` | `routes_add_model_v1` |
 | `operations:routes.list` | `data` | `route_write_v1` |
 | `operations:session.info` | `process_id`, `omd_version` | none |
@@ -1542,6 +1543,8 @@ update it.
 
 - `source` is also `npm` for npm packages.
 - `blocked` is the quarantine reason or `null`.
+- `needs_approval` (`package_needs_approval_v1`) is `true` for a disabled mod whose grants were revoked or whose
+  manifest asks for a capability it wasn't granted. `omd mods update ID` reviews it again.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
 - `packages.list` reports effective `enabled` and `settings`, plus `settings_schema`. Experimental
@@ -2140,7 +2143,7 @@ Three settings limit or end the authority grants:
 - `omd-mod trust ... --expires SECONDS` ends the authority grants at that time.
 - Project scope limits them to one repository.
 - `omd-mod revoke STORE MOD_ID_OR_PACKAGE` disables the mod and drops its grant at once. Its capabilities and secret
-  environment are cleared, and enabling it again needs a new trust or install.
+  environment are cleared, and enabling it again needs a new trust (`omd mods update ID`) or install.
 
 Trust output, the TUI trust dialog and status state what the grant exposes. In status, `mods[].authority` lists
 `os_access`, `approves`, `expires_at`, `current` and `exposure`.
@@ -4013,6 +4016,9 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
   as Codex keeps `.git` read-only. Outside a Git checkout, as in a projectless session, checkout state is unavailable
   (`state_checkout_unavailable`) and nothing is written to the directory.
 
+A committed `api.state` change redraws the mod in every terminal and attached client showing the same store, checkout
+or thread state. Hooks, prompts, timers, channels and `api.uiState` stay with the terminal that caused them.
+
 These rules apply in every scope:
 
 - Mods never run with the home directory or the filesystem root as the session directory. The host stays off with a
@@ -4054,7 +4060,7 @@ requires `terminal`. Saved `api.state` is unchanged by it.
   escapes.
 - Strings and object keys must contain valid Unicode scalars (no lone surrogates).
 - The host checks the original serialized bytes before parsing; number reformatting does not change the limit.
-- Values are shared by host instances in the same process, store, repository, thread and package identity.
+- Values are shared by host instances in the same process, terminal, store, repository, thread and package identity.
 - Commands and component events may write; other callbacks may read.
 - Writes commit only after successful validation and cancellation checks. A revision conflict reruns the callback
   under the same replay rules as [`api.state` compare-and-swap](#apistate-compare-and-swap).
@@ -8446,7 +8452,8 @@ A plugin names its [mod component](reference/glossary.md#mods-and-the-host) in `
 `omd COMMAND --repo PATH [--store STORE] [--home CODEX_HOME] [--sqlite-home DIR]` runs the command a mod exports with
 the `cli` option of [`api.command`](reference/sdk-helpers.md#other-api-members). That command can call only `evidence.*` and
 `sessions.*`. Model and process operations aren't available. Protect the mod store from writes by agent processes.
-When more than one mod exports `COMMAND`, `omd` refuses to run it (`plugin_command_collision`).
+When more than one mod exports `COMMAND`, `omd` refuses to run it (`plugin_command_collision`). When no enabled mod
+exports it, or `--repo` is missing, `omd` fails with `unknown command: COMMAND`.
 
 ## External clients
 
@@ -8524,7 +8531,8 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
   retains the in-memory `attachment.terminalToken`, replays the last update, resumes the threads it resumed
   through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`. Explicit detach clears
   terminal ownership. If a restarted host rejects the retained token, it attaches once without it and inherits
-  shared defaults. Keep terminal tokens private and in memory.
+  shared defaults. Keep terminal tokens private and in memory. Clients with separate terminal owners share a mod's
+  saved state, not its settings, enablement or session UI state.
 - `unsupported(component, renderer, drawable)` returns null when the renderer can draw the component. Otherwise it
   returns an error with `fallback` set to the component's alt text, text or label. A renderer can't draw a type
   outside `drawable`, a `raster` without `cells` or an `image` without an image format. The error message has the
@@ -8586,7 +8594,8 @@ omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('sv
 - Attaching again on the connection replaces its entry.
 - `terminalToken` is an opaque capability for this terminal's in-memory settings and enablement. Keep it in
   memory and send it when reattaching after a disconnect. Another client without it gets a separate owner,
-  including on the same conversation. Do not log, persist or share the token.
+  including on the same conversation. Separate owners share a mod's saved state, not its settings, enablement or
+  session UI state. Do not log, persist or share the token.
 - Connections that never attach have no reconnect capability; their terminal overrides are released on disconnect.
 - Explicit detach invalidates the token and drops its terminal overrides. A server restart also invalidates it;
   `terminal_owner_unknown` means attach without it to start from shared defaults.

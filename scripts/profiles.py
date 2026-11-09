@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-install-v1"
 SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
-DEFAULT_ACTIVE = ("omd_auto_continue", "omd_logo", "omd_mods", "omd_statusline", "omd_tool_lines", "omd_update")
+DEFAULT_ACTIVE = ("omd_logo", "omd_mods", "omd_statusline", "omd_tool_lines", "omd_update")
 PACKAGES = tuple(sorted(support.mods_lock()["packages"]))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
@@ -538,6 +538,12 @@ def ours(path, expected):
     return not path.is_symlink() and path.is_file() and support.digest(path) == expected
 
 
+def quarantined(lock):
+    installed = lock.get("packages", {})
+    return {item["id"]: item["reason"] for item in lock.get("blocked", []) if item["id"] in installed
+            and (item["version"] == installed[item["id"]]["version"] or item["integrity"] == installed[item["id"]]["integrity"])}
+
+
 def status(prefix, bin_dir):
     record = load(prefix)
     if support.resolved(record["bin_dir"]) != bin_dir:
@@ -548,6 +554,8 @@ def status(prefix, bin_dir):
     if host["api"] != record["mod_api"]:
         raise ValueError("mod store API no longer matches the installation")
     selection = invoke(manager, "selection-status", store)
+    lock = store / "packages.lock.json"
+    blocked = quarantined(json.loads(lock.read_text()) if lock.is_file() else {})
     active = {item["id"]: item for item in host["mods"]}
     locked = support.mods_lock()["packages"]
     packages = []
@@ -558,7 +566,7 @@ def status(prefix, bin_dir):
             for name in locked[identifier]["files"]
         )
         packages.append({"id": identifier, "installed": source.is_dir(), "pinned_source_current": current,
-                         "enabled_in_store": identifier in active,
+                         "enabled_in_store": identifier in active, "quarantined": blocked.get(identifier),
                          "active": identifier in active and not active[identifier].get("error")
                          and record["activation"]["selection"] != "direct",
                          "loaded_by_profile": identifier in active and record["activation"]["selection"] != "direct",
@@ -583,7 +591,8 @@ def status_summary(result):
              f"store {result['store']}"]
     for package in result["packages"]:
         state = "failed: " + package["error"] if package["error"] else "active" if package["active"] else (
-            "enabled" if package["enabled_in_store"] else "installed" if package["installed"] else "missing")
+            "quarantined: " + package["quarantined"] if package.get("quarantined") else "enabled" if package["enabled_in_store"]
+            else "off" if package["installed"] else "missing")
         lines.append(f"  {package['id']}: {state}")
     lines.append("omd-package status --json prints every detail")
     return "\n".join(lines)
@@ -670,7 +679,7 @@ def doctor_checks(prefix, bin_dir):
         except (OSError, ValueError):
             saved = {}
         if blocked := saved.get("blocked"):
-            add("updates", "warn", f"{rules}; {blocked['version']} can't install here: {'; '.join(blocked.get('reasons') or [])}",
+            add("updates", "warn", f"{rules}; {blocked['version']} can't be installed: {'; '.join(blocked.get('reasons') or [])}",
                 "fix what the reason names, then run omd update")
         elif failed := saved.get("failed"):
             add("updates", "warn", f"{rules}; the update to {failed['version']} failed: {failed.get('error')}", "omd update")
@@ -1193,6 +1202,28 @@ def register_plugins(prefix, bin_dir):
             "next": f"codex plugin add PLUGIN@{name}"}
 
 
+def plugin_mod(prefix, bin_dir, action, plugin):
+    record = load(prefix)
+    binary, manager = check(record, bin_dir)
+    bundle = record.get("plugin_bundle")
+    if not bundle:
+        raise ValueError("OMD Core stages no plugins; install --profile full first")
+    name, _, marketplace = plugin.partition("@")
+    marketplace = marketplace or json.loads((Path(bundle["marketplace"]) / ".agents/plugins/marketplace.json").read_text())["name"]
+    home = Path(record["shared_state"]["codex_home"])
+    listed = json.loads(support.output([binary, "plugin", "list", "--json", "--marketplace", marketplace],
+                                       env={**os.environ, "CODEX_HOME": str(home)}))
+    version = next((item["version"] for item in listed.get("installed", []) if item.get("pluginId") == f"{name}@{marketplace}"), None)
+    if version is None:
+        raise ValueError(f"{name}@{marketplace} is not added; run `codex plugin add {name}@{marketplace}` first")
+    component = invoke(manager, "plugin-component", home / "plugins/cache" / marketplace / name / version)["component"]
+    identifier = json.loads((Path(component) / "mod.json").read_text())["id"]
+    omd, store = record["tools"]["omd"]["installed_path"], record["store"]
+    if action == "enable":
+        support.run([omd, "install", component, "--store", store], capture=False)
+    support.run([omd, "mods", action, identifier, "--store", store], capture=False)
+
+
 def pinned_binaries(record):
     return {record["binary"]["installed_path"], record["manager"]["installed_path"],
             *(tool["installed_path"] for tool in record["tools"].values())}
@@ -1441,6 +1472,9 @@ def main():
     commands.add_parser("plugins", help="add the OMD+ plugin marketplace to Codex at a path that survives updates")
     doctor_parser = commands.add_parser("doctor", help="check this installation, then run codex doctor (omd doctor)")
     doctor_parser.add_argument("--json", action="store_true", help="print both reports as JSON; other flags go to codex doctor")
+    plugin_mod_parser = commands.add_parser("plugin-mod", help="review and turn on, or turn off, the mod component of a plugin you added")
+    plugin_mod_parser.add_argument("action", choices=("enable", "disable"))
+    plugin_mod_parser.add_argument("plugin", metavar="PLUGIN[@MARKETPLACE]", help="marketplace defaults to oh-my-diff")
     broker_parser = commands.add_parser("broker", help="deploy or manage the OS-separated authority broker (sudo)")
     broker_parser.add_argument("action", choices=("install", "pin", "status", "reset", "uninstall"))
     broker_parser.add_argument("--also", type=Path, action="append", default=[],
@@ -1500,6 +1534,9 @@ def main():
         result = register_plugins(prefix, bin_dir)
     elif args.command == "doctor":
         raise SystemExit(doctor(prefix, bin_dir, extra, args.json))
+    elif args.command == "plugin-mod":
+        plugin_mod(prefix, bin_dir, args.action, args.plugin)
+        return
     elif args.command == "broker":
         result = broker(prefix, bin_dir, args.action, args.also, args.purge)
     elif args.command == "policy":

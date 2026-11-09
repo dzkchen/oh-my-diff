@@ -233,6 +233,9 @@ impl ApprovalGateContributor for Mods {
         Box::pin(async move {
             let selected = clients::for_store(input.turn_store);
             let this = selected.as_deref().unwrap_or(self);
+            if !input.assessment {
+                record_gate(&this.expansion, input.call_id, None);
+            }
             if !this.expansion.approval.load(Ordering::Acquire) {
                 return ApprovalGate::Continue;
             }
@@ -278,15 +281,8 @@ impl ApprovalGateContributor for Mods {
                     None,
                 ),
             };
-            if let (Some(owner), Ok(mut gates)) = (
-                owner.filter(|_| !input.assessment),
-                this.expansion.gates.lock(),
-            ) {
-                gates.retain(|(call, _)| call != input.call_id);
-                if gates.len() >= 256 {
-                    gates.pop_front();
-                }
-                gates.push_back((input.call_id.to_owned(), owner));
+            if let Some(owner) = owner.filter(|_| !input.assessment) {
+                record_gate(&this.expansion, input.call_id, Some(owner));
             }
             this.cleanup_failed(Some(&lead)).await;
             gate
@@ -295,14 +291,21 @@ impl ApprovalGateContributor for Mods {
 
     fn on_approval_result<'a>(&'a self, input: ApprovalResultInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            let owner = self.expansion.gates.lock().ok().and_then(|mut gates| {
-                let index = gates.iter().position(|(call, _)| call == input.call_id)?;
-                gates.remove(index).map(|(_, owner)| owner)
-            });
-            if !self.expansion.approval_result.load(Ordering::Acquire) {
+            let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
-            }
-            if input.thread_store.get::<Lead>().is_none() {
+            };
+            let (core, owner) = clients::cores_for_thread(lead.thread)
+                .into_iter()
+                .chain(std::iter::once(self.core.clone()))
+                .find_map(|core| {
+                    let mut gates = core.expansion.gates.lock().ok()?;
+                    let index = gates.iter().position(|(call, _)| call == input.call_id)?;
+                    let owner = gates.remove(index)?.1;
+                    drop(gates);
+                    Some((core, owner))
+                })
+                .unwrap_or_else(|| (self.core.clone(), None));
+            if !core.expansion.approval_result.load(Ordering::Acquire) {
                 return;
             }
             let mut payload = json!({"id": input.call_id, "kind": input.kind,
@@ -311,12 +314,22 @@ impl ApprovalGateContributor for Mods {
                 payload["mod"] = Value::String(owner);
             }
             delivery::push(
-                &self.expansion,
+                &core.expansion,
                 delivery::Pending::Broadcast {
                     event: "approval_result",
                     payload,
                 },
             );
         })
+    }
+}
+
+fn record_gate(expansion: &super::State, call: &str, owner: Option<String>) {
+    if let Ok(mut gates) = expansion.gates.lock() {
+        gates.retain(|(id, _)| id != call);
+        if gates.len() >= 256 {
+            gates.pop_front();
+        }
+        gates.push_back((call.to_owned(), owner));
     }
 }

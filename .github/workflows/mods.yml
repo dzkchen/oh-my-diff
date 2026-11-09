@@ -7,6 +7,14 @@ on:
         description: Build, check and sign the bundle without publishing it
         type: boolean
         default: false
+      exclude:
+        description: Space-separated changed mods to leave for the next release
+        type: string
+        default: ""
+      api_reviewed:
+        description: Build although the mod host API changed since the release (no bundled mod depends on the change)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -52,7 +60,12 @@ jobs:
           install_args: python@3.14.6
           cache_save: false
       - name: Build the bundle
-        run: python3 -m scripts.mods_bundle build --output bundle --commit "$GITHUB_SHA"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXCLUDE: ${{ inputs.exclude }}
+          API_REVIEWED: ${{ inputs.api_reviewed && 'yes' || '' }}
+        run: python3 -m scripts.mods_bundle build --output bundle --commit "$GITHUB_SHA" ${EXCLUDE:+--exclude $EXCLUDE} ${API_REVIEWED:+--api-reviewed}
       - name: Sign and publish (dry run prints the command)
         env:
           GH_TOKEN: ${{ github.token }}

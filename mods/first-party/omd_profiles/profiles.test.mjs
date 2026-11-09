@@ -551,7 +551,7 @@ test('account selection affects only new threads and a refused selection leaves 
       if (failure) throw new Error(failure);
       return { route: rows.find(row => row.name === args.route), effective_at: 'new_thread' };
     }
-    return { 'routes.list': rows, 'terminal.prompt': { status: answer }, 'events.publish': { delivered: 1, dropped: 0 },
+    return { 'routes.list': rows, 'exec.run': { exit_code: 0, stdout: JSON.stringify(rows.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'terminal.prompt': { status: answer }, 'events.publish': { delivered: 1, dropped: 0 },
       'sidecars.status': { running: true }, 'store.get': null, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'packages.list': installed }[operation];
   });
   let state = invoke(null, 'start', {}).state;
@@ -579,20 +579,40 @@ test('account selection affects only new threads and a refused selection leaves 
   assert.equal(calls.some(call => call.operation === 'app.request'), false);
 });
 
-test('a profile added outside the session is listed and selectable without a resume', () => {
+test('a profile added outside the session is listed and selectable on the first call without a resume', () => {
   const calls = [];
   const rows = [route('work', 'included_subscription')];
   const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload }, ({ operation, arguments: args }) => {
-    calls.push({ operation, args });
+    calls.push({ operation, args, at: event });
     if (operation === 'routes.select') return { route: rows.find(row => row.name === args.route), effective_at: 'new_thread' };
-    return { 'routes.list': rows, 'terminal.prompt': { status: 'accepted' }, 'events.publish': { delivered: 1, dropped: 0 },
+    if (operation === 'exec.run') return { exit_code: 0, stdout: JSON.stringify(rows.map(row => row.data)), stderr: '' };
+    if (event === 'command' && operation === 'routes.list') throw new Error('host_operation_unavailable');
+    return { 'routes.list': rows, 'terminal.prompt': { status: 'accepted' }, 'events.publish': { delivered: 1, dropped: 0 }, 'events.schedule': {},
       'sidecars.status': { running: true }, 'store.get': null, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'packages.list': installed }[operation];
   });
   const state = invoke(null, 'start', {}).state;
   rows.push(route('spare', 'included_subscription'));
+  const listed = invoke(state, 'command', 'list', 'profile');
+  assert.match(listed.value.display, /spare/);
   const selected = invoke(state, 'command', 'use spare', 'profile');
   assert.doesNotMatch(selected.value.display, /Unknown profile/);
   assert.deepEqual(calls.findLast(call => call.operation === 'routes.select').args, { route: 'spare', scope: 'new_threads' });
+});
+
+test('a profile changed to a paid API outside the session is billed as paid and asks before use', () => {
+  const prompts = [];
+  let rows = [route('work', 'included_subscription')];
+  const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload }, ({ operation, arguments: args }) => {
+    if (operation === 'exec.run') return { exit_code: 0, stdout: JSON.stringify(rows.map(row => row.data)), stderr: '' };
+    if (operation === 'terminal.prompt') { prompts.push(args); return { status: 'declined' }; }
+    return { 'routes.list': rows, 'events.publish': { delivered: 1, dropped: 0 }, 'sidecars.status': { running: true }, 'store.get': null,
+      'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'packages.list': installed }[operation];
+  });
+  const state = invoke(null, 'start', {}).state;
+  rows = [route('work', 'explicit_paid_api_grant')];
+  const used = invoke(state, 'command', 'use work', 'profile');
+  assert.deepEqual([used.state.accounts[0].billing, prompts.length], ['explicit_paid_api_grant', 1]);
+  assert.equal(used.value.display, 'Kept the current profile.');
 });
 
 test('the switcher meters the active account, cycles with Alt+s and adds or removes accounts in the session', () => {
@@ -690,7 +710,7 @@ test('Claude and Cursor accounts from their own mods are listed, metered from th
       return { revision: kv[args.key].revision };
     }
     if (operation === 'terminal.prompt') { prompts.push(args); return { status: 'accepted', value: args.title === 'Context window' ? '200000' : ['claude-sonnet-4-5', '3:15'][prompts.filter(item => item.kind === 'text').length - 1] }; }
-    return { 'packages.list': installed, 'routes.list': routes, 'session.info': session, 'events.publish': { delivered: 1, dropped: 0 }, 'app.request': {}, 'routes.select': { route: routes[3], effective_at: 'new_thread' }, 'commands.invoke': { command: '', result: { display: 'Removing account' } }, 'routes.write': { routes: ['work', 'api1'], services: ['omd_profiles'] },
+    return { 'packages.list': installed, 'routes.list': routes, 'exec.run': { exit_code: 0, stdout: JSON.stringify(routes.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'session.info': session, 'events.publish': { delivered: 1, dropped: 0 }, 'app.request': {}, 'routes.select': { route: routes[3], effective_at: 'new_thread' }, 'commands.invoke': { command: '', result: { display: 'Removing account' } }, 'routes.write': { routes: ['work', 'api1'], services: ['omd_profiles'] },
       'sidecars.status': { running: true, started_at_ms: 2_000_000 }, 'credentials.list': [], 'exec.run': { exit_code: 0, stdout: 'null', stderr: '' },
       'credentials.request': { status: 'completed', profile: { id: 'cred-a', label: 'api1', kind: 'provider', origin: 'https://api.anthropic.com' } } }[operation];
   });
@@ -905,7 +925,7 @@ test('new-thread selection markers follow resumed threads and stay isolated betw
   const invoke = (state, event, payload, name) => callback({ ...request, state, event, payload, name }, ({ operation, arguments: args }) => {
     if (operation === 'store.get') return kv[args.key] ?? null;
     if (operation === 'store.put') { kv[args.key] = { value: args.value, revision: (kv[args.key]?.revision ?? 0) + 1, provenance: { at: 0 } }; return { revision: kv[args.key].revision }; }
-    return { 'routes.list': routes, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
+    return { 'routes.list': routes, 'exec.run': { exit_code: 0, stdout: JSON.stringify(routes.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
       'routes.select': { route: routes[1], effective_at: 'new_thread' } }[operation];
   });
   const original = invoke(null, 'start', {}).state;
@@ -940,7 +960,7 @@ test('new-thread selection history stays within the store value limit across OMD
       selections = args.value;
       return { revision: 2 };
     }
-    return { 'routes.list': routes, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
+    return { 'routes.list': routes, 'exec.run': { exit_code: 0, stdout: JSON.stringify(routes.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
       'routes.select': { route: routes[1], effective_at: 'new_thread' } }[operation];
   });
   const original = invoke(null, 'start', {}).state;

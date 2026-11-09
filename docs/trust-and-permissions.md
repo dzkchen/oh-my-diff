@@ -101,8 +101,8 @@ You can narrow what a mod is trusted with, or take it back later:
 
 - Trust a mod for one project instead of for you: install it with `--scope project`.
 - Make grants expire: trust the mod with `omd-mod trust` and `--expires`, as below.
-- Take everything back at once: `omd mods revoke ID` turns the mod off and drops its grants. Turning it on again needs
-  a new trust.
+- Take everything back at once: `omd mods revoke ID` turns the mod off and drops its grants. `omd mods update ID` reviews
+  and approves it again, then `omd mods enable ID` turns it on.
 
 To trust a mod for one day, use `omd-mod`, the low-level tool that works on a mod store directly
 ([commands](commands.md#omd-mod)). Print the mod's digest, trust it with an expiry in seconds, then turn it on.
