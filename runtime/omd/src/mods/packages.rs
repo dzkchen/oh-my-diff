@@ -215,7 +215,10 @@ impl ModStore {
             .ok_or_else(|| failure("package_not_trusted"))?;
         let (package, _, hash) = store::package(path)?;
         if hash != selection.sha256 {
-            return Err(failure("source_changed: inspect and trust the new digest"));
+            return Err(failure(format!(
+                "source_changed: {}: review it again with omd mods update {}",
+                package.id, package.id
+            )));
         }
         let mut settings = declared_settings(package.settings_schema.as_ref(), &selection.settings);
         change(&mut settings);

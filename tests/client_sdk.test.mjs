@@ -64,6 +64,7 @@ function fakeHost({ padding = '', view = {}, overloadedResumes = 0, restartOwner
     seen.push({ epoch: host.epoch, ...message });
     const reply = result => host.send({ id: message.id, result });
     if (message.method === 'initialize') reply({ userAgent: 'fake' });
+    else if (message.method === 'omd/client/attach' && message.params.renderer.kind === 'invalid') host.send({ id: message.id, error: { code: -32602, message: 'invalid renderer' } });
     else if (message.method === 'omd/client/attach') {
       const terminalToken = restartOwners ? `owner-${host.epoch}` : 'owner-retained';
       if (message.params.terminalToken && message.params.terminalToken !== terminalToken) {
@@ -179,6 +180,25 @@ test('a resume refused as overloaded after a reconnect is retried, not dropped',
     await until(() => reconnected);
     assert.deepEqual(reconnected, { epoch: '3', previousEpoch: '1' });
     assert.deepEqual(host.seen.filter(message => message.method === 'thread/resume').map(message => message.epoch), ['1', '2', '3']);
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a rejected reattach leaves the last accepted attachment to replay on reconnect', async () => {
+  const host = fakeHost();
+  const path = join(mkdtempSync(join(tmpdir(), 'omd-client-')), 'host.sock');
+  await new Promise(resolve => host.server.listen(path, resolve));
+  let reconnected;
+  let closed = false;
+  const session = await connect({ url: `unix://${path}`, name: 'sdk-test', renderer, onView() {}, onRoster() {}, onMirrored() {}, onReconnect: change => { reconnected = change; }, onClose: () => { closed = true; } });
+  try {
+    await assert.rejects(session.attach({ renderer: { ...renderer, kind: 'invalid' } }), { code: -32602 });
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected || closed);
+    assert.equal(closed, false);
+    assert.deepEqual(host.seen.findLast(message => message.method === 'omd/client/attach').params.renderer, renderer);
   } finally {
     session.close();
     host.server.close();

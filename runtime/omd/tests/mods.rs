@@ -7457,6 +7457,41 @@ fn background_jobs_cross_host_instances_and_keep_session_variables() {
     ui.release_thread_activations("jobs-thread");
 }
 
+#[test]
+fn denial_explanations_name_the_fix_and_admit_unknown_codes() {
+    let unknown = ModHost::capability_explanation("made_up_failure: detail");
+    let cause = unknown["cause"].as_str().unwrap();
+    assert!(
+        cause.contains("made_up_failure: detail") && !cause.contains("authority"),
+        "{unknown}"
+    );
+    assert!(
+        unknown["fix"]
+            .as_str()
+            .unwrap()
+            .contains("omd-mod report STORE"),
+        "{unknown}"
+    );
+    for (code, command) in [
+        ("package_blocked: fixture: testing", "omd mods unblock ID"),
+        (
+            "source_changed: inspect and trust the new digest",
+            "omd mods update ID",
+        ),
+        ("package_not_trusted", "omd install REFERENCE"),
+        (
+            "managed_by_policy: administrator policy requires this mod",
+            "omd-mod policy explain STORE",
+        ),
+    ] {
+        let explained = ModHost::capability_explanation(code);
+        assert!(
+            explained["fix"].as_str().unwrap().contains(command),
+            "{explained}"
+        );
+    }
+}
+
 fn schema_fixture(schema: Value, capabilities: &[&str]) -> (TempDir, ModStore, PathBuf) {
     let (temp, store, path) = fixture("export default api => {}", capabilities);
     let manifest = path.join("mod.json");

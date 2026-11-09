@@ -300,6 +300,8 @@ update it.
 
 - `source` is also `npm` for npm packages.
 - `blocked` is the quarantine reason or `null`.
+- `needs_approval` (`package_needs_approval_v1`) is `true` for a disabled mod whose grants were revoked or whose
+  manifest asks for a capability it wasn't granted. `omd mods update ID` reviews it again.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
 - `packages.list` reports effective `enabled` and `settings`, plus `settings_schema`. Experimental
