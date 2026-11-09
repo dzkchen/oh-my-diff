@@ -1441,19 +1441,28 @@ impl ModStore {
         };
         if enabled {
             let selection = &config.mods[index];
-            if !selection.authority_current() {
-                return Err(failure("grant_expired: trust the package again"));
-            }
             let (manifest, _, hash) = package(path)?;
+            if !selection.authority_current() {
+                return Err(failure(format!(
+                    "grant_expired: {}: approve it again with omd mods update {}",
+                    manifest.id, manifest.id
+                )));
+            }
             if hash != selection.sha256 {
-                return Err(failure("source_changed: inspect and trust the new digest"));
+                return Err(failure(format!(
+                    "source_changed: {}: review it again with omd mods update {}",
+                    manifest.id, manifest.id
+                )));
             }
             if manifest
                 .capabilities
                 .iter()
                 .any(|capability| !selection.capabilities.contains(capability))
             {
-                return Err(failure("capability_denied: trust the package again"));
+                return Err(failure(format!(
+                    "capability_denied: {}: approve it again with omd mods update {}",
+                    manifest.id, manifest.id
+                )));
             }
             self.check_service_providers(&manifest, path, &|selection| selection.enabled)?;
             refuse_second_copy(

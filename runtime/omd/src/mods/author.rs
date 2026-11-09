@@ -274,13 +274,17 @@ impl ModHost {
         let known = EXPLANATIONS
             .iter()
             .find(|(prefix, _, _)| code.starts_with(prefix));
-        let (cause, fix) = known.map_or(
-            (
-                "OMD has no explanation for this code.",
-                "Check the code for typos; `omd-mod report STORE` and `omd-mod events STORE` show what the host denied and why.",
-            ),
-            |(_, cause, fix)| (*cause, *fix),
-        );
+        let unknown;
+        let (cause, fix) = match known {
+            Some((_, cause, fix)) => (*cause, *fix),
+            None => {
+                unknown = format!("OMD has no explanation for {code}; its cause is unknown.");
+                (
+                    unknown.as_str(),
+                    "Run omd-mod report STORE and omd-mod events STORE to see which mod or host step raised it.",
+                )
+            }
+        };
         json!({"code":code,"known":known.is_some(),"cause":cause,"fix":fix,
             "guarantee":"Author tooling can explain a denial but cannot grant authority, change trust, or bypass host enforcement."})
     }
@@ -1024,7 +1028,7 @@ const EXPLANATIONS: &[(&str, &str, &str)] = &[
     (
         "capability_denied",
         "The package requested authority that the manifest or explicit trust grant does not include.",
-        "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant.",
+        "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant; a revoked mod is approved again with omd mods update ID.",
     ),
     (
         "undeclared_operation_use",
@@ -1063,8 +1067,8 @@ const EXPLANATIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "package_blocked",
-        "The mod is quarantined: `omd mods quarantine` blocked its installed version.",
-        "`omd mods list` shows the reason, and `omd mods unblock ID` lifts the block.",
+        "The installed version was quarantined with omd mods quarantine, so it cannot be enabled, reinstalled or rolled back to.",
+        "If the reason no longer applies, run omd mods unblock ID, then omd mods enable ID.",
     ),
     (
         "package_not_installed",
@@ -1083,8 +1087,18 @@ const EXPLANATIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "source_changed",
-        "The mod's files changed after they were trusted, so the trust no longer covers them.",
-        "`omd mods update ID` reviews a changed folder mod, and `omd install ID` reinstalls a catalog mod.",
+        "The package's files no longer match the digest the user trusted.",
+        "Review the change and approve it again in /omd or with omd mods update ID.",
+    ),
+    (
+        "package_not_trusted",
+        "The store has no trusted selection for that mod or folder.",
+        "Install it with omd install REFERENCE, or trust a folder with omd-mod trust STORE PACKAGE SHA256 CAPABILITIES_CSV.",
+    ),
+    (
+        "managed_by_policy",
+        "Administrator policy requires this mod, so it cannot be turned off locally.",
+        "Run omd-mod policy explain STORE to see the policy, then ask your administrator to change it.",
     ),
     (
         "explicit_repository_required",
@@ -1114,7 +1128,10 @@ mod explanation_tests {
         );
         let unknown = ModHost::capability_explanation("nonsense_code");
         assert_eq!(unknown["known"], false);
-        assert_eq!(unknown["cause"], "OMD has no explanation for this code.");
+        assert_eq!(
+            unknown["cause"],
+            "OMD has no explanation for nonsense_code; its cause is unknown."
+        );
     }
 }
 

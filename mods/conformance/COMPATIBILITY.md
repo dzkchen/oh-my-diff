@@ -49,6 +49,7 @@ the API version matches. Each list holds at most 32 features.
 | Assistant message completion and canonical render identity (experimental) | `assistant_message_identity_v1` |
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
 | `routes.write` | `route_write_v1` |
+| `packages.list` `needs_approval` | `package_needs_approval_v1` |
 | `routes.add` without `mod` | `routes_add_self_v1` |
 | `routes.add` with `model` or `effort`, `routes.models` | `routes_add_model_v1` |
 | `api.settingsFile` | `settings_file_v1` |

@@ -240,3 +240,14 @@ pub mod plugin_component;
 mod session_policy;
 
 pub use mods::release_disposable_runners;
+
+/// Prints one CLI result; a closed reader ends the output quietly.
+pub fn print_output(text: &str) {
+    use std::io::Write;
+    if let Err(error) = writeln!(std::io::stdout().lock(), "{text}")
+        && error.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}

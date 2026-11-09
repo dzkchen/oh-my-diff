@@ -9,8 +9,9 @@ follow its fix.
 | --- | --- | --- |
 | `Python 3.12 or newer is required` | macOS ships Python 3.9 | Install Python 3.12 or later (`brew install python@3.12`) and rerun. |
 | `Oh My Diff supports Apple Silicon macOS only.` | Another platform | OMD doesn't run there. See [support](support.md). |
-| `upstream Codex X.Y.x is required` | Your Codex is another version | Run the `npm install -g @openai/codex@X.Y` command the message ends with, or pass `--upstream /path/to/codex`. |
-| `An upstream Codex X.Y.x executable is required` | The installer found no `codex` on your `PATH` | Run the `npm install` command the message names, or pass `--upstream /path/to/codex`. |
+| `upstream Codex 0.167.x is required` | Your Codex is another version, such as a newer Homebrew Codex | Run `npm install -g @openai/codex@0.167` (it needs Node and npm), or pass `--upstream /path/to/codex` for a 0.167.x Codex. |
+| `An upstream Codex 0.167.x executable is required` | The installer found no `codex` on your `PATH` | Run `npm install -g @openai/codex@0.167`, or pass `--upstream /path/to/codex`. |
+| `--version failed: env: node: No such file or directory` | Your Codex is the npm one, and `node` isn't on your `PATH` | Put `node` on your `PATH` and rerun the command. `omd update` reports this as `VERSION can't be installed` and exits with an error. |
 | `is or becomes the OMD launcher` | The Codex you named is in `~/.local/bin`, where the OMD launcher goes, or is OMD itself | Move your Codex elsewhere and pass its new path with `--upstream`. |
 | `Python could not verify GitHub's certificate` | Python from python.org has no CA certificates until you install them | Run `Install Certificates.command` in its `/Applications/Python 3.x` folder, or use Homebrew's Python, then rerun. |
 | `No terminal is available` | The installer can't ask which profile you want | Add `--profile full` or `--profile platform`. |

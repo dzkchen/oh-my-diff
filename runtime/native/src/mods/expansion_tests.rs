@@ -4837,6 +4837,48 @@ fn the_agent_inventory_prunes_only_stale_snapshots_and_staging_files() {
 }
 
 #[test]
+fn sibling_agent_callbacks_never_persist_an_older_inventory_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let inventory = Arc::new(inventory::Inventory::default());
+    inventory.persist_to(directory.path().to_path_buf());
+    let model = json!({"origin": "model", "parent": {"thread_id": "root", "agent_id": null}});
+    inventory.start("child", model.clone());
+    inventory.start("other", model);
+    let (staged, paused) = std::sync::mpsc::channel();
+    let (finished, resume) = std::sync::mpsc::channel::<()>();
+    *inventory::BEFORE_INVENTORY_REPLACE.lock().unwrap() = Some((
+        directory.path().to_path_buf(),
+        Box::new({
+            let inventory = inventory.clone();
+            move || {
+                staged.send(()).unwrap();
+                if inventory.persisting.try_lock().is_ok() {
+                    let _ = resume.recv();
+                }
+            }
+        }),
+    ));
+    let describing = std::thread::spawn({
+        let inventory = inventory.clone();
+        move || inventory.describe("other", "provider", "model", None)
+    });
+    paused.recv().unwrap();
+    let ending = std::thread::spawn(move || {
+        inventory.end("child", "completed", None);
+        let _ = finished.send(());
+    });
+    describing.join().unwrap();
+    ending.join().unwrap();
+    let persisted: Vec<Value> =
+        serde_json::from_slice(&std::fs::read(directory.path().join("root.json")).unwrap())
+            .unwrap();
+    let child = persisted
+        .iter()
+        .find(|record| record["thread_id"] == "child");
+    assert_eq!(child.unwrap()["status"], "completed");
+}
+
+#[test]
 fn a_new_thread_keeps_old_thread_store_data() {
     let Some(fixture) = fixture(&[]) else {
         return;

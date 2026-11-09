@@ -6,16 +6,17 @@ How to install, update, switch install profile and uninstall Oh My Diff (OMD). I
 ## Before you begin
 
 - An Apple Silicon Mac. Other platforms are unsupported, and the installer refuses them.
-- The Codex version line the [latest release](https://github.com/dzkchen/oh-my-diff/releases/latest) builds on. Don't
-  update Codex until OMD supports the new version.
+- Codex 0.167 (any 0.167.x). Don't update Codex until OMD supports the new version.
 - Python 3.12 or later. macOS ships 3.9.
 
-If Codex is missing or on another version, the installer stops before changing anything and prints the command that
-installs the right one, such as:
+If Codex is missing or on another version, the installer stops before installing anything (it leaves only an empty
+`~/.local/share/oh-my-diff/.install.lock`) and prints the command that installs the right one. Installing Codex with npm needs Node and npm:
 
 ```sh
-npm install -g @openai/codex@X.Y
+npm install -g @openai/codex@0.167
 ```
+
+Homebrew's Codex (`brew install --cask codex`) works too while its version is 0.167.x.
 
 If your Python is older than 3.12, install a newer one:
 
@@ -45,8 +46,13 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/rele
 For OMD Core, use `--profile platform` instead. The [installer options](commands.md#installer-installsh) choose the
 release channel, the install folders and the Codex executable.
 
-Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`. Your Codex settings,
-sign-in and sessions aren't touched.
+Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`. Your Codex sign-in and
+sessions aren't touched, and neither are your Codex settings, except that `omd-package plugins` adds a
+`[marketplaces.oh-my-diff]` table to `~/.codex/config.toml`, which `omd uninstall` removes.
+
+OMD adds two kinds of extension to Codex. Mods change the `codex` interface and behavior, and you manage them with
+`/mods` and `omd`. Plugins are ordinary Codex plugins of skills and tools that you add with `codex plugin add`; OMD+
+ships one ([plugins](../plugins/README.md)).
 
 To check it worked, run:
 
@@ -54,7 +60,7 @@ To check it worked, run:
 omd update status
 ```
 
-It prints details of your install as JSON, then a summary line like this one:
+It prints details of your install as JSON on standard output and a summary line like this one on standard error:
 
 ```text
 Oh My Diff VERSION (OMD+), stable channel, daily checks: not checked yet
@@ -62,10 +68,12 @@ Oh My Diff VERSION (OMD+), stable channel, daily checks: not checked yet
 
 The line names the installed version, the install profile, the release channel and the check cadence. It ends with
 `up to date`, `not checked yet`, `the last check failed: ERROR`, `first-party mod updates are available`,
-`update checks off`, or the version you can update to. A pinned install adds `, pinned to VERSION`. If the installed
+`VERSION can't be installed: REASON`, `rolled back from VERSION`, `update checks off`, or the version you can update
+to. A pinned install adds `, pinned to VERSION`. If the installed
 release was withdrawn, it adds `VERSION was withdrawn` and, when one helps, the command to run: `omd update` or `omd update rollback`.
 
-Then run `codex` and type `/mods`. The `/mods` screen lists your installed mods and which ones are on.
+Then run `codex` and type `/mods`. The `/mods` screen lists your installed mods and which ones are on. Esc closes it;
+if you typed a search, the first Esc clears the search.
 
 ## Update
 
@@ -77,7 +85,8 @@ omd update enable     # install updates automatically
 
 While other OMD sessions are open, the update waits for your next `codex` start. Mods, settings and sign-in are
 kept. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
-update anyway.
+update anyway. If the newer release can't be installed, for example because your Codex is on another version or
+doesn't run, `omd update` exits with an error that names the reason.
 
 When an OMD+ release moves a mod it came with to experimental, the update turns that mod off once and leaves it
 installed. Turn it back on in `/mods` if you want it; later updates leave it as you set it. Mods you installed
