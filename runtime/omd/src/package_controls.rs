@@ -433,8 +433,10 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                     && item["scope"] == selection["scope"]
                     && item["sha256"] == selection["sha256"]
             });
-            let failed = (selection["authority_current"] == false)
-                .then_some("grant_expired: trust the package again")
+            let expired = (selection["authority_current"] == false)
+                .then(|| format!("grant_expired: {id}: approve it again with omd mods update {id}"));
+            let failed = expired
+                .as_deref()
                 .or(selection["error"].as_str())
                 .or_else(|| {
                 enabled
@@ -463,7 +465,7 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                 "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
                 "pending": (runtime.is_some() && wanted != running.is_some()).then_some("reload"),
                 "failed": failed,
-                "needs_approval": !enabled && failed.is_some_and(|failed| failed.starts_with("capability_denied") || failed.starts_with("grant_expired")),
+                "needs_approval": failed.is_some_and(|failed| failed.starts_with("grant_expired") || !enabled && failed.starts_with("capability_denied")),
                 "api": api,
                 "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == api),
                 "grants": selection["capabilities"],
@@ -587,7 +589,17 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             let revoked = package
                 .capabilities
                 .iter()
-                .any(|capability| !package.trust.capabilities.contains(capability));
+                .any(|capability| !package.trust.capabilities.contains(capability))
+                || store.selection_status()?["selections"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|item| {
+                        item["id"] == package.id.as_str()
+                            && item["scope"] == package.scope.as_str()
+                            && item["packaged"] == true
+                            && item["authority_current"] == false
+                    });
             let (request, plan) = requested(
                 store,
                 if revoked {

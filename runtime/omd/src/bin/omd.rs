@@ -350,11 +350,11 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
         }
         "install" | "inspect" | "enable" | "disable" | "update" | "remove" | "rollback" => {
             let target = first()?;
-            let locked_scope = store.package_lock().ok().and_then(|lock| {
-                lock.packages
-                    .get(&target)
-                    .map(|package| package.scope.clone())
-            });
+            let locked_scope = store
+                .package_lock()?
+                .packages
+                .get(&target)
+                .map(|package| package.scope.clone());
             let reviewed = action == "update" && locked_scope.as_deref() != Some(scope.as_str());
             if reviewed
                 && let Some(other) = &locked_scope

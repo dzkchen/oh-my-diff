@@ -115982,7 +115982,7 @@ index 0000000000000000000000000000000000000000..878c788cf065e6d8e935f76a4c0fb733
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8f233c72d6c9b879fd55670d434bca82ce515c8c
+index 0000000000000000000000000000000000000000..edce5a305b58bcadbac3e7131af0845cd398909a
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
 @@ -0,0 +1,880 @@
@@ -116338,11 +116338,11 @@ index 0000000000000000000000000000000000000000..8f233c72d6c9b879fd55670d434bca82
 +        }
 +        "install" | "inspect" | "enable" | "disable" | "update" | "remove" | "rollback" => {
 +            let target = first()?;
-+            let locked_scope = store.package_lock().ok().and_then(|lock| {
-+                lock.packages
-+                    .get(&target)
-+                    .map(|package| package.scope.clone())
-+            });
++            let locked_scope = store
++                .package_lock()?
++                .packages
++                .get(&target)
++                .map(|package| package.scope.clone());
 +            let reviewed = action == "update" && locked_scope.as_deref() != Some(scope.as_str());
 +            if reviewed
 +                && let Some(other) = &locked_scope
@@ -153942,10 +153942,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..acb7b5646e34b391cd2d9680f8882e7add5d1317
+index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e2ba2333e
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,899 @@
+@@ -0,0 +1,911 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -154381,8 +154381,10 @@ index 0000000000000000000000000000000000000000..acb7b5646e34b391cd2d9680f8882e7a
 +                    && item["scope"] == selection["scope"]
 +                    && item["sha256"] == selection["sha256"]
 +            });
-+            let failed = (selection["authority_current"] == false)
-+                .then_some("grant_expired: trust the package again")
++            let expired = (selection["authority_current"] == false)
++                .then(|| format!("grant_expired: {id}: approve it again with omd mods update {id}"));
++            let failed = expired
++                .as_deref()
 +                .or(selection["error"].as_str())
 +                .or_else(|| {
 +                enabled
@@ -154411,7 +154413,7 @@ index 0000000000000000000000000000000000000000..acb7b5646e34b391cd2d9680f8882e7a
 +                "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
 +                "pending": (runtime.is_some() && wanted != running.is_some()).then_some("reload"),
 +                "failed": failed,
-+                "needs_approval": !enabled && failed.is_some_and(|failed| failed.starts_with("capability_denied") || failed.starts_with("grant_expired")),
++                "needs_approval": failed.is_some_and(|failed| failed.starts_with("grant_expired") || !enabled && failed.starts_with("capability_denied")),
 +                "api": api,
 +                "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == api),
 +                "grants": selection["capabilities"],
@@ -154535,7 +154537,17 @@ index 0000000000000000000000000000000000000000..acb7b5646e34b391cd2d9680f8882e7a
 +            let revoked = package
 +                .capabilities
 +                .iter()
-+                .any(|capability| !package.trust.capabilities.contains(capability));
++                .any(|capability| !package.trust.capabilities.contains(capability))
++                || store.selection_status()?["selections"]
++                    .as_array()
++                    .into_iter()
++                    .flatten()
++                    .any(|item| {
++                        item["id"] == package.id.as_str()
++                            && item["scope"] == package.scope.as_str()
++                            && item["packaged"] == true
++                            && item["authority_current"] == false
++                    });
 +            let (request, plan) = requested(
 +                store,
 +                if revoked {
@@ -175589,10 +175601,10 @@ index 0000000000000000000000000000000000000000..339a35cd455b93782f336725b8226443
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b667708a5a9907d82931d06f4698a8ce01583a1f
+index 0000000000000000000000000000000000000000..11be14cac62016234e9686781a30c977046b11dd
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,1940 @@
+@@ -0,0 +1,1945 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
@@ -177432,35 +177444,40 @@ index 0000000000000000000000000000000000000000..b667708a5a9907d82931d06f4698a8ce
 +
 +#[test]
 +fn approving_a_revoked_npm_package_again_keeps_its_pinned_version_offline() {
-+    let temp = TempDir::new().unwrap();
-+    let store = store(&temp);
-+    let (origin, routes) = registry();
-+    publish(
-+        &origin,
-+        &routes,
-+        &[("1.0.0", npm_archive("1.0.0", &["commands"]))],
-+    );
-+    install(&store, npm_request(&origin, "1.0.0", &["commands"]));
-+    publish(
-+        &origin,
-+        &routes,
-+        &[
-+            ("1.0.0", npm_archive("1.0.0", &["commands"])),
-+            ("1.1.0", npm_archive("1.1.0", &["commands"])),
-+        ],
-+    );
-+    store.revoke("npm_mod").unwrap();
-+    routes.lock().unwrap().clear();
-+    let preview = codex_omd::package_controls::preview(
-+        &store,
-+        json!({"action": "update", "id": "npm_mod", "scope": "user"}),
-+    )
-+    .unwrap();
-+    assert_eq!(
-+        preview.public["changes"]["packages"][0]["version"]["to"], "1.0.0",
-+        "{}",
-+        preview.public
-+    );
++    for capabilities in [&["commands"][..], &[]] {
++        let temp = TempDir::new().unwrap();
++        let store = store(&temp);
++        let (origin, routes) = registry();
++        publish(
++            &origin,
++            &routes,
++            &[("1.0.0", npm_archive("1.0.0", capabilities))],
++        );
++        install(&store, npm_request(&origin, "1.0.0", capabilities));
++        publish(
++            &origin,
++            &routes,
++            &[
++                ("1.0.0", npm_archive("1.0.0", capabilities)),
++                ("1.1.0", npm_archive("1.1.0", capabilities)),
++            ],
++        );
++        store.revoke("npm_mod").unwrap();
++        routes.lock().unwrap().clear();
++        let preview = codex_omd::package_controls::preview(
++            &store,
++            json!({"action": "update", "id": "npm_mod", "scope": "user"}),
++        )
++        .unwrap();
++        assert_eq!(
++            preview.public["changes"]["packages"][0]["version"]["to"], "1.0.0",
++            "{}",
++            preview.public
++        );
++        codex_omd::package_controls::apply(&store, &preview.control).unwrap();
++        let listed = codex_omd::package_controls::list(&store, None).unwrap();
++        assert_eq!(listed["packages"][0]["needs_approval"], false, "{listed}");
++    }
 +}
 +
 +#[test]

@@ -891,6 +891,15 @@ class UpdateSelection(unittest.TestCase):
                 self.assertEqual(os.fstat(acquired[0].fileno()).st_ino, lock.stat().st_ino)
                 self.assertIsNone(self.module.flocked(lock), "a fresh entrant waits for the retried holder")
 
+    def test_an_uninstall_that_waited_for_another_uninstall_succeeds(self):
+        root = self.root / "fresh"
+        argv = ["install.sh", "uninstall", "--root", str(root), "--bin-dir", str(self.root / "bin")]
+        with patch.object(sys, "argv", argv), patch.object(self.module, "flocked", return_value=None), \
+                patch.object(self.module, "say") as said, patch.object(self.module, "uninstall") as removed:
+            self.module.main()
+        said.assert_called_once_with("Oh My Diff was uninstalled while this command waited.")
+        removed.assert_not_called()
+
     def test_uninstall_succeeds_when_a_new_caller_recreates_the_lock_before_the_root_is_removed(self):
         root = self.root / "fresh"
         root.mkdir()

@@ -573,6 +573,13 @@ class ProfileModeTests(unittest.TestCase):
         self.assertEqual(profiles.status_summary(result).splitlines()[2:5],
                          ["  omd_logo: off", "  omd_theme: quarantined: testing", "  omd_mini: missing"])
 
+    def test_status_marks_only_the_installed_version_quarantined(self):
+        lock = {"packages": {"omd_theme": {"version": "1.1.1", "integrity": "new"}, "omd_logo": {"version": "1.0.0", "integrity": "x"}},
+                "blocked": [{"id": "omd_theme", "version": "1.1.0", "integrity": "old", "reason": "bad"},
+                            {"id": "omd_logo", "version": "0.9.0", "integrity": "x", "reason": "same bytes"},
+                            {"id": "omd_mini", "version": "1.0.0", "integrity": "y", "reason": "absent"}]}
+        self.assertEqual(profiles.quarantined(lock), {"omd_logo": "same bytes"})
+
     def test_uninstall_removes_plugins_added_from_this_installation(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()

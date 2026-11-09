@@ -1630,6 +1630,9 @@ def main():
         return tick(args, root, active)
     root.mkdir(parents=True, exist_ok=True)
     while not (gate := flocked(root / ".install.lock", "Waiting for another Oh My Diff install or update to finish…")):
+        if args.command == "uninstall":
+            say("Oh My Diff was uninstalled while this command waited.")
+            return
         if args.command != "install":
             fail("Oh My Diff was uninstalled while this command waited; nothing changed.")
         root.mkdir(parents=True, exist_ok=True)

@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.0.patch",
-    "sha256": "9ab7f682c833c60735950d9f493bc6fac222b481320ff576c275af50426818a2"
+    "sha256": "0ee510b09601877a46b5030b12096ae051b9bb55cbd49c1920c443654a198982"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1555,7 +1555,7 @@
     },
     "codex-rs/omd/src/bin/omd.rs": {
       "before": null,
-      "after": "d011098a6c4ead5f29995c52a30b3d7769f9190a47bdbea511a3eb6724e670fb"
+      "after": "52906e54a76ac72ee05e9de6bd8cfe4c4cbee25e0936f8763dc7168fe5830ff4"
     },
     "codex-rs/omd/src/blob_store.rs": {
       "before": null,
@@ -1759,7 +1759,7 @@
     },
     "codex-rs/omd/src/package_controls.rs": {
       "before": null,
-      "after": "b1b1fed7b23979e1a07e2d4b6b4c193ce5a3d999f31576ff3aba5f1e3422078c"
+      "after": "103931116a49ff654a2fc54cc8b682002f72ae083ddeaaf115be0e2cffaa8a5d"
     },
     "codex-rs/omd/src/package_controls_tests.rs": {
       "before": null,
@@ -1887,7 +1887,7 @@
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,
-      "after": "ec79ab3bba9b7983b70bf40fb2df5f794976a2aa86f05dd32b04a33d36d9b30e"
+      "after": "118897f80dcb863f94ac308f03aebb2c977e3a187c1257bd0b56b50c5166968c"
     },
     "codex-rs/omd/tests/review_bridge.rs": {
       "before": null,

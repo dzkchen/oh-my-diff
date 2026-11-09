@@ -1837,35 +1837,40 @@ fn reviewing_a_trusted_copy_shows_a_newly_requested_secret_and_respects_the_scop
 
 #[test]
 fn approving_a_revoked_npm_package_again_keeps_its_pinned_version_offline() {
-    let temp = TempDir::new().unwrap();
-    let store = store(&temp);
-    let (origin, routes) = registry();
-    publish(
-        &origin,
-        &routes,
-        &[("1.0.0", npm_archive("1.0.0", &["commands"]))],
-    );
-    install(&store, npm_request(&origin, "1.0.0", &["commands"]));
-    publish(
-        &origin,
-        &routes,
-        &[
-            ("1.0.0", npm_archive("1.0.0", &["commands"])),
-            ("1.1.0", npm_archive("1.1.0", &["commands"])),
-        ],
-    );
-    store.revoke("npm_mod").unwrap();
-    routes.lock().unwrap().clear();
-    let preview = codex_omd::package_controls::preview(
-        &store,
-        json!({"action": "update", "id": "npm_mod", "scope": "user"}),
-    )
-    .unwrap();
-    assert_eq!(
-        preview.public["changes"]["packages"][0]["version"]["to"], "1.0.0",
-        "{}",
-        preview.public
-    );
+    for capabilities in [&["commands"][..], &[]] {
+        let temp = TempDir::new().unwrap();
+        let store = store(&temp);
+        let (origin, routes) = registry();
+        publish(
+            &origin,
+            &routes,
+            &[("1.0.0", npm_archive("1.0.0", capabilities))],
+        );
+        install(&store, npm_request(&origin, "1.0.0", capabilities));
+        publish(
+            &origin,
+            &routes,
+            &[
+                ("1.0.0", npm_archive("1.0.0", capabilities)),
+                ("1.1.0", npm_archive("1.1.0", capabilities)),
+            ],
+        );
+        store.revoke("npm_mod").unwrap();
+        routes.lock().unwrap().clear();
+        let preview = codex_omd::package_controls::preview(
+            &store,
+            json!({"action": "update", "id": "npm_mod", "scope": "user"}),
+        )
+        .unwrap();
+        assert_eq!(
+            preview.public["changes"]["packages"][0]["version"]["to"], "1.0.0",
+            "{}",
+            preview.public
+        );
+        codex_omd::package_controls::apply(&store, &preview.control).unwrap();
+        let listed = codex_omd::package_controls::list(&store, None).unwrap();
+        assert_eq!(listed["packages"][0]["needs_approval"], false, "{listed}");
+    }
 }
 
 #[test]

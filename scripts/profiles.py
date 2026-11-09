@@ -477,6 +477,12 @@ def ours(path, expected):
     return not path.is_symlink() and path.is_file() and support.digest(path) == expected
 
 
+def quarantined(lock):
+    installed = lock.get("packages", {})
+    return {item["id"]: item["reason"] for item in lock.get("blocked", []) if item["id"] in installed
+            and (item["version"] == installed[item["id"]]["version"] or item["integrity"] == installed[item["id"]]["integrity"])}
+
+
 def status(prefix, bin_dir):
     record = load(prefix)
     if support.resolved(record["bin_dir"]) != bin_dir:
@@ -488,7 +494,7 @@ def status(prefix, bin_dir):
         raise ValueError("mod store API no longer matches the installation")
     selection = invoke(manager, "selection-status", store)
     lock = store / "packages.lock.json"
-    blocked = {item["id"]: item["reason"] for item in (json.loads(lock.read_text()).get("blocked", []) if lock.is_file() else [])}
+    blocked = quarantined(json.loads(lock.read_text()) if lock.is_file() else {})
     active = {item["id"]: item for item in host["mods"]}
     locked = support.mods_lock()["packages"]
     packages = []
