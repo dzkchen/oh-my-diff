@@ -90,7 +90,7 @@ Experimental harness mods that cut token use, /btw side questions, and a tool li
 
 ### New
 
-- Harness mods: experimental omd_observation_mask, omd_verify_stop, omd_edit_guard, omd_env_bootstrap, omd_loop_guard and omd_plan_anchor; in a pilot benchmark the first four with the output-budget component cut estimated cost by about 25% with no loss in pass rate (see docs/benchmarks/harness-mods.md)
+- Harness mods: experimental omd_observation_mask, omd_verify_stop, omd_edit_guard, omd_env_bootstrap, omd_loop_guard and omd_plan_anchor; in a pilot benchmark the first four with the output-budget component cut estimated cost by about 25% with no measurable change in pass rate (see docs/benchmarks/harness-mods.md)
 - Side questions: the opt-in omd_btw adds `/btw`, which answers a quick question on a helper route without interrupting the turn and remembers earlier side questions
 - T3 Code: a guide for using OMD with T3 Code
 
@@ -309,7 +309,7 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 
 ### Fixed
 
-- Security: mod realm containment, private store files, owner-only component events, config redaction, sealed provider port hand-off, a protected runner and an MCP approval gate.
+- Security: isolated mod code, private store files, component events restricted to their owner, config redaction, encrypted readiness messages between provider sessions sharing a port, a protected runner and MCP approval checks.
 - Security: the broker binds stores and evidence to their owner; a runner memory watchdog stops runaway mods at 512 MiB.
 - Install: resumable uninstall and recovery, release asset URL and SHA-256 required together, and a warning when the `codex` on PATH isn't the OMD launcher.
 - Mod runtime: runner reuse and cancellation, transactional reloads, state migration on `state_version` changes, thread-scoped routes and state, and receipt budget edge cases.
@@ -387,11 +387,13 @@ Mods gain composer controls, transcript rewriting and OMD update settings.
 ### Changed
 
 - Pinned to Codex 0.160.1
-- Bounded request, ledger and rendering work
+- Cost summaries copy only recent attempts
+- Model requests avoid body copies when interceptors make no changes
+- Terminal redraws reuse unchanged parsed views
 
 ### Fixed
 
-- Authority, accounting and request admission
+- Host permission checks, cost accounting and model-request checks
 - Persistence, packaging and recovery
 
 ## 2026-10-04 — Interception, agents and provider routes

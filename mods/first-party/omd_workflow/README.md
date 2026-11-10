@@ -1,7 +1,6 @@
 # omd_workflow
 
-Keeps long tasks on track. The agent saves checkpoints, and a task counts as done only after the checks and reviews
-your chosen contract asks for. A contract is a named rule set, such as `reviewed_omd@1`, that says which checks and
+Saves task checkpoints and requires the checks and reviews in your chosen contract before marking a task done. A contract is a named rule set, such as `reviewed_omd@1`, that says which checks and
 reviews a task needs. It's experimental, and no install profile includes it.
 
 ## Turn it on
@@ -17,8 +16,12 @@ omd mods enable omd_workflow
 
 ## Use it
 
-To use it, pick a contract, run `/omd_workflow:routes`, set the `check` setting to the command that tests your work, then give the agent a task.
-Nothing is delegated until you pick a contract and the agent starts a task.
+1. Pick a contract from the commands below.
+2. Run `/omd_workflow:routes` to set up the models.
+3. Set `check` to the command that tests your work.
+4. Give the agent a task.
+
+No work is delegated until you pick a contract and the agent starts a task.
 
 | Command | What it does |
 | --- | --- |

@@ -1,7 +1,8 @@
 # OMD Monitor
 
 Agent guidance for natural requests such as “Watch CI for PR 123 in acme/app and continue the other work.”
-The skill calls the first-party `omd_monitor` tools; the mod owns subscriptions, persistence, timeouts and delivery.
+The skill calls the first-party `omd_monitor` tools. The mod stores watches, restores them after a restart, enforces
+timeouts and delivers results.
 
 Register the experimental marketplace from a checkout as described in [Plugins](../../../../README.md), then install:
 

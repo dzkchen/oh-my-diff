@@ -1,7 +1,7 @@
 # Support
 
-The platforms, versions and terminals OMD supports, how long the mod API stays stable, and which releases get
-fixes. These docs describe the `main` branch, which can be ahead of the current release.
+OMD supports Apple Silicon macOS. Only the current release receives security fixes.
+These docs describe the `main` branch, which can be ahead of the current release.
 
 ## Platforms
 
