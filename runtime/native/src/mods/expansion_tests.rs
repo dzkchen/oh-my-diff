@@ -68,11 +68,21 @@ fn fixture_with_registry(
     packages: &[Package<'_>],
     registry: Option<&mut ExtensionRegistryBuilder<Config>>,
 ) -> Option<Fixture> {
+    fixture_in(packages, registry, true)
+}
+
+fn fixture_in(
+    packages: &[Package<'_>],
+    registry: Option<&mut ExtensionRegistryBuilder<Config>>,
+    git: bool,
+) -> Option<Fixture> {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().canonicalize().unwrap();
-    let repository = base.join("repo");
-    std::fs::create_dir(&repository).unwrap();
-    std::fs::create_dir(repository.join(".git")).unwrap();
+    let repository = if git { base.join("repo") } else { base.clone() };
+    if git {
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::create_dir(repository.join(".git")).unwrap();
+    }
     let store = ModStore::create(base.join("store")).unwrap();
     let sources = base.join("packages");
     std::fs::create_dir(&sources).unwrap();
@@ -1817,7 +1827,7 @@ async fn channel_events_reach_subscribers_in_order() {
             &mut runtime,
             &core.host,
             &core.views,
-            core.terminal_owner.is_some(),
+            core.terminal_owner.as_deref(),
             "idle",
             Value::Null,
             || true,
@@ -5735,6 +5745,45 @@ async fn thread_config_keeps_the_users_sandbox() {
 }
 
 #[tokio::test]
+async fn thread_config_denies_a_store_under_a_launch_folder_outside_git() {
+    let Some(fixture) = fixture_in(&[], None, false) else {
+        return;
+    };
+    let launch = fixture.lead.host.repository.clone();
+    if codex_omd::git_work_tree(&launch).is_some() {
+        return;
+    }
+    assert!(fixture.lead.host.root.starts_with(&launch));
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(launch.join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(launch),
+            sandbox_mode: Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    codex_extension_api::ConfigContributor::prepare_thread_config(
+        &mods(&fixture.core),
+        &mut config,
+        None,
+        None,
+        &codex_extension_api::ExtensionDataInit::default(),
+    )
+    .unwrap();
+    assert!(
+        config.permissions.sandbox_denied_paths.contains(
+            &codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+                &fixture.lead.host.root
+            )
+            .unwrap()
+        )
+    );
+}
+
+#[tokio::test]
 async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
     let Some(fixture) = fixture(&[]) else {
         return;
@@ -6161,7 +6210,7 @@ async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_c
             &mut runtime,
             &owner_a.host,
             &owner_a.views,
-            true,
+            owner_a.terminal_owner.as_deref(),
             "owner-test",
             Value::Null,
             || true,
@@ -6286,7 +6335,7 @@ async fn terminal_owner_external_modules_render_and_receive_events_in_their_owne
             &mut runtime,
             &mods.host,
             &mods.views,
-            true,
+            mods.terminal_owner.as_deref(),
             "module_owner-test",
             Value::Null,
             || true,
@@ -6930,6 +6979,7 @@ async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
         operations: Vec::new(),
         attached_ms: 0,
         focused: false,
+        terminal: Value::Null,
     });
     for owner in [&a, &b] {
         let mods = clients::for_owner(owner).unwrap();
@@ -6937,7 +6987,7 @@ async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
             &mut mods.runtime.lock().unwrap(),
             &mods.host,
             &mods.views,
-            true,
+            mods.terminal_owner.as_deref(),
             "start",
             Value::Null,
             || true,
@@ -6950,7 +7000,7 @@ async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
     };
     assert_eq!(text("roster-a"), "blurred");
     assert_eq!(text("roster-b"), "blurred");
-    codex_omd::client_surface::update("roster-client", None, None, Some(true));
+    codex_omd::client_surface::update("roster-client", None, None, Some(true), None);
     let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while text("roster-a") != "focused" || text("roster-b") != "focused" {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -6966,5 +7016,163 @@ async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
         refreshed.is_ok(),
         "roster focus changes must rerender every terminal owner's view"
     );
+    drop(fixture);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_views_follow_client_fact_changes() {
+    struct Sized(std::sync::atomic::AtomicU16);
+    impl codex_omd::client_surface::ClientSurface for Sized {
+        fn submit(&self, _call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
+            Err("unused".into())
+        }
+        fn client(&self) -> Value {
+            json!({"kind": "terminal", "columns": self.0.load(std::sync::atomic::Ordering::Relaxed), "rows": 40})
+        }
+    }
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "client_view",
+            capabilities: &["terminal"],
+            manifest: Value::Null,
+            source: "export default api => api.on('terminal', ({client}) => ({sites:{above_composer:{components:[{type:'text',id:'size',label:'Size',text:`${client?.columns}`}]}}}));",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let surface = Arc::new(Sized(std::sync::atomic::AtomicU16::new(160)));
+    let _surface = codex_omd::client_surface::register(surface.clone());
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000073".parse().unwrap(),
+    );
+    clients::bind("client-a", owner.clone()).unwrap();
+    let mods = clients::for_owner(&owner).unwrap();
+    publish(
+        &mut mods.runtime.lock().unwrap(),
+        &mods.host,
+        &mods.views,
+        mods.terminal_owner.as_deref(),
+        "start",
+        Value::Null,
+        || true,
+    );
+    let text = || {
+        json!(clients::published_for("client-a").unwrap().view)["sites"]["above_composer"]["components"][0]["text"]
+            .clone()
+    };
+    assert_eq!(text(), "160");
+    surface.0.store(200, std::sync::atomic::Ordering::Relaxed);
+    codex_omd::client_surface::client_changed();
+    let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while text() != "200" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    clients::detached("client-a");
+    clients::release_owner(owner);
+    assert!(
+        refreshed.is_ok(),
+        "a terminal resize must rerender the owner's view with the new client facts"
+    );
+    drop(fixture);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn headless_owner_views_get_their_own_clients_terminal_facts() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "chat_view",
+            capabilities: &["terminal"],
+            manifest: Value::Null,
+            source: "export default api => api.on('terminal', ({client}) => ({sites:{above_composer:{components:[{type:'text',id:'chat',label:'Chat',text:`${client?.chat?.columns}`}]}}}));",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let owners = [
+        ("facts-a", "00000000-0000-4000-8000-000000000074"),
+        ("facts-b", "00000000-0000-4000-8000-000000000075"),
+    ]
+    .map(|(client, owner)| {
+        (
+            client,
+            codex_protocol::turn_input::TerminalOwner(owner.parse().unwrap()),
+        )
+    });
+    let mut entries = Vec::new();
+    for (client, owner) in &owners {
+        clients::bind(client, owner.clone()).unwrap();
+        entries.push(codex_omd::client_surface::attach(
+            codex_omd::client_surface::ClientEntry {
+                id: (*client).into(),
+                name: "Remote terminal".into(),
+                renderer: json!({}),
+                viewport: Value::Null,
+                operations: Vec::new(),
+                attached_ms: 0,
+                focused: false,
+                terminal: Value::Null,
+            },
+        ));
+    }
+    let chat = |columns: u16| {
+        Some(
+            json!({"kind": "terminal", "columns": columns, "rows": 40, "chat": {"x": 0, "y": 0, "columns": columns, "rows": 30}}),
+        )
+    };
+    codex_omd::client_surface::update("facts-a", None, None, None, chat(90));
+    codex_omd::client_surface::update("facts-b", None, None, None, chat(70));
+    for (_, owner) in &owners {
+        let mods = clients::for_owner(owner).unwrap();
+        publish(
+            &mut mods.runtime.lock().unwrap(),
+            &mods.host,
+            &mods.views,
+            mods.terminal_owner.as_deref(),
+            "start",
+            Value::Null,
+            || true,
+        );
+    }
+    let text = |client: &str| {
+        json!(clients::published_for(client).unwrap().view)["sites"]["above_composer"]["components"]
+            [0]["text"]
+            .clone()
+    };
+    let initial = (text("facts-a"), text("facts-b"));
+    codex_omd::client_surface::update("facts-a", None, None, None, chat(120));
+    let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while text("facts-a") != "120" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    let other = text("facts-b");
+    drop(entries);
+    for (client, owner) in owners {
+        clients::detached(client);
+        clients::release_owner(owner);
+    }
+    assert_eq!(initial, (json!("90"), json!("70")));
+    assert!(
+        refreshed.is_ok(),
+        "a remote client's new terminal facts must rerender its owner's view"
+    );
+    assert_eq!(other, "70");
     drop(fixture);
 }

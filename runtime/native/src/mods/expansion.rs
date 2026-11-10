@@ -420,7 +420,7 @@ async fn invoke_one_guarded(
     timer: Option<(String, String, u64)>,
 ) -> Option<Result<Value, String>> {
     let (views, owner, ledger) = (core.views.clone(), core.host.clone(), lead.ledger());
-    let terminal_owner = core.terminal_owner.is_some();
+    let terminal_owner = core.terminal_owner.clone();
     let timer_core = core.this.upgrade()?;
     let timer_thread = lead.thread.to_string();
     run(
@@ -482,7 +482,7 @@ async fn invoke_one_guarded(
                     &mut runtime,
                     &owner,
                     &views,
-                    terminal_owner,
+                    terminal_owner.as_deref(),
                     event,
                     ledger,
                     active,

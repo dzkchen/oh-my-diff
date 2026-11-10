@@ -305,7 +305,7 @@ export default function activate(api: ModAPI) {
 
   api.on('turn_end', () => clear(api));
 
-  api.command('absorb', () => {
+  api.command('merged_reads', () => {
     const state = load(api);
     const counts = api.host.tryCall('store.get', { key: REUSE, scope });
     const reuse = counts.ok && counts.value && isObject(counts.value.value) ? counts.value.value : {};

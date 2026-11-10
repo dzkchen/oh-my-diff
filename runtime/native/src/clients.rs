@@ -119,6 +119,15 @@ pub fn terminal_package_preview(
         .map_err(|e| e.to_string())
 }
 
+pub fn terminal_package_protective(owner: &str, id: &str) -> bool {
+    owner
+        .parse()
+        .ok()
+        .and_then(|owner| for_owner(&codex_protocol::turn_input::TerminalOwner(owner)))
+        .and_then(|mods| Some(mods.input_runtime.lock().ok()?.protective(id)))
+        .unwrap_or(true)
+}
+
 pub fn terminal_package_apply(
     owner: &str,
     control: &codex_omd::package_controls::PackageControl,
@@ -295,6 +304,17 @@ pub(super) fn for_store(store: &codex_extension_api::ExtensionData) -> Option<Ar
             .get::<codex_protocol::turn_input::TerminalOwner>()?
             .as_ref(),
     )
+}
+
+pub(super) fn client_facts(owner: Option<&str>) -> Value {
+    let Some(owner) = owner else {
+        return codex_omd::client_surface::client();
+    };
+    let bound = CLIENT_OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    codex_omd::client_surface::client_of(|client| bound.get(client).is_some_and(|key| key == owner))
 }
 
 fn client_core(client: &str) -> Result<Arc<Core>, String> {
@@ -521,7 +541,8 @@ pub(super) fn install(
     let owner = Arc::new(());
     let roster =
         codex_omd::client_surface::register_observer(Arc::new(|observed| match observed {
-            codex_omd::client_surface::Observed::Roster => REPUBLISH.request(|| {
+            codex_omd::client_surface::Observed::Roster
+            | codex_omd::client_surface::Observed::Client => REPUBLISH.request(|| {
                 for core in all_cores() {
                     republish(&core);
                 }
@@ -560,7 +581,7 @@ fn republish(core: &Core) {
             &mut runtime,
             &core.host,
             &core.views,
-            core.terminal_owner.is_some(),
+            core.terminal_owner.as_deref(),
             event,
             ledger,
             || true,
@@ -1013,7 +1034,7 @@ fn user_command(core: Arc<Core>, command: String, args: String) -> Result<Value,
     let input = json!({"command": command, "args": args, "owner": id, "immediate": immediate,
         "active_turn": active_turn});
     let origin = json!({"caller": "user", "thread_id": lead.thread.to_string()});
-    let terminal_owner = core.terminal_owner.is_some();
+    let terminal_owner = core.terminal_owner.clone();
     let (views, owner_host, ledger) = (core.views.clone(), core.host.clone(), lead.ledger());
     let run = expansion::run(
         &core,
@@ -1061,7 +1082,7 @@ fn user_command(core: Arc<Core>, command: String, args: String) -> Result<Value,
                     &mut runtime,
                     &owner_host,
                     &views,
-                    terminal_owner,
+                    terminal_owner.as_deref(),
                     "command",
                     ledger,
                     active,

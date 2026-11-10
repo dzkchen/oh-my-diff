@@ -16,7 +16,7 @@ omd mods enable omd_theme
 ## Use it
 
 While it's on, `/theme` opens its panel. Codex's own syntax-highlighting picker is the panel's first item
-(Syntax colours…), or type `/omd_theme:scenes syntax`.
+(Syntax colours…), or type `/theme syntax`.
 
 You can also type:
 

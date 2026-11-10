@@ -1,11 +1,27 @@
 # State and storage
 
 Use it when a mod keeps data: `store.*` records, evidence and binary evidence, `api.state` and where it lives,
-state migration, session UI state and the reactive helpers over `api.state`.
+state migration, session UI state and the reactive helpers over `api.state`. It also defines the session directory
+and repository the other pages refer to.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](stability-and-migration.md#experimental-entries-in-the-registry)). Every operation here needs the
 `store` capability except `api.uiState`, which needs `terminal`.
+
+## Session directory and repository
+
+Mods run in any session directory, including the home directory and `/`. The repository is the Git work tree around
+the session directory; outside one there is no repository.
+
+- Programs and sockets the host runs or passes unsandboxed (`os_access` programs, managed processes, services,
+  `exec.run` sockets) must be outside the repository, or outside the session directory when there is no repository,
+  because the agent can write there.
+- The mod store, `host.json` protected paths and secret references must be outside the session directory only when
+  it is inside a repository. Otherwise the host keeps them out of agent commands through the sandbox's denied paths.
+- `workspace.*` operations on the session directory fail with `workspace_unavailable` when there is no repository
+  and the session directory is `/`, the home directory or a directory above it, so a mod can't read or change files
+  such as `~/.ssh` through them; `root` calls on [`fs_access`](authority-grants.md#fs_access-manifest-field) roots
+  still work. Workspace change tracking is off there too, and checkout state is off wherever there is no repository.
 
 ## Durable data: `store.*` and evidence
 
@@ -167,8 +183,6 @@ or thread state. Hooks, prompts, timers, channels and `api.uiState` stay with th
 
 These rules apply in every scope:
 
-- Mods never run with the home directory or the filesystem root as the session directory. The host stays off with a
-  notice in `/omd`.
 - `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the given THREAD and
   the checkout of their working directory. A `thread` mod run from `omd-mod command` without THREAD fails with
   `state_thread_unavailable`.

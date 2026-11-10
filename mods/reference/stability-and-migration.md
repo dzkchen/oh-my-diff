@@ -103,6 +103,17 @@ clients, rich children inside buttons (a button uses its typed `text`), audio, t
 
 ## Migration notes
 
+These changes ship in OMD 1.6.0.
+
+- Mods run in any session directory, including the home directory and `/`; before, the host stayed off there.
+- Programs and sockets the host runs or passes unsandboxed (`os_access` programs, `exec.run` sockets, managed
+  processes and services, frozen in Mod API `1.0.0`) are refused anywhere the agent can write: the whole Git work tree
+  around the session directory, or the session directory outside one. Before, only the session directory was
+  checked, so a launch from a repository's subfolder allowed programs elsewhere in the work tree. This is a safety
+  fix; a mod that runs such a program needs it installed outside the repository (or outside the session directory).
+- `workspace.*` without `root` fails with `workspace_unavailable` when the session directory is `/`, the home
+  directory or a directory above it and isn't in a Git work tree. Other directories behave as before.
+
 These changes ship in OMD 1.4.0.
 
 - A `builtins` mode disable (`capabilities:builtins`, frozen in Mod API `1.0.0`) no longer removes tools limited to

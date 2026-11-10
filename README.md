@@ -93,7 +93,7 @@ You can switch later by running the other command.
 codex
 ```
 
-Codex asks you to sign in if you haven't before, then shows the OMD logo. Type `/mods` to see which mods are on and
+Run it in any folder. Codex asks you to sign in if you haven't before, then shows the OMD logo. Type `/mods` to see which mods are on and
 to turn others on or off; Esc closes it. Outside
 `codex`, run `omd` for a short summary of the commands that install, update and manage mods. If `codex` still starts
 plain Codex, see [troubleshooting](docs/troubleshooting.md).

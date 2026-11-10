@@ -145,7 +145,8 @@ omd install ./my_mod
 omd mods enable my_mod
 ```
 
-Each command shows what the mod can do and asks `Proceed? [y/N]`. The mod runs from your next message in `codex`.
+Each command lists in plain words what the mod can do, riskiest first, and asks `Proceed? [y/N]`. Answer `d` to
+see its source and integrity first. The mod runs from your next message in `codex`.
 
 A folder install runs the folder itself. After any edit to it, even whitespace, the mod stops until you review it
 again:

@@ -157,7 +157,7 @@ fn store(args: &[String]) -> io::Result<Value> {
     )
 }
 
-const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock | sync [--offline|--rollback] (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
+const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--details] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock | sync [--offline|--rollback] (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
 
 const APPROVAL_REQUIRED: &str = "package_approval_required";
 
@@ -167,13 +167,14 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
     let mut positional = Vec::new();
     let mut scope = "user".to_owned();
     let mut version = None;
-    let mut yes = false;
+    let (mut yes, mut details) = (false, false);
     let (mut offline, mut rollback) = (false, false);
     let mut root = None;
     let mut remaining = args.iter();
     while let Some(argument) = remaining.next() {
         match argument.as_str() {
             "--yes" => yes = true,
+            "--details" => details = true,
             "--offline" => offline = true,
             "--rollback" => rollback = true,
             "--scope" => scope = remaining.next().ok_or_else(usage)?.clone(),
@@ -384,17 +385,22 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                 arguments["id"] = json!(target);
             }
             let preview = package_controls::preview(&store, arguments)?;
-            let summary = describe(&preview.public);
+            let detailed = describe(&preview.public, true);
             if action == "inspect" {
-                return Ok(json!({"display": summary, "preview": preview.public}));
+                return Ok(json!({"display": detailed, "preview": preview.public}));
             }
+            let summary = if details {
+                detailed.clone()
+            } else {
+                describe(&preview.public, false)
+            };
             if action != "disable" && !yes {
                 if !io::IsTerminal::is_terminal(&io::stdin()) {
                     return Err(io::Error::other(format!(
                         "{APPROVAL_REQUIRED}: review `omd mods inspect` or run interactively, then pass --yes\n{summary}"
                     )));
                 }
-                if !confirm(&summary)? {
+                if !confirm(&summary, &detailed)? {
                     return Err(io::Error::other(format!("{APPROVAL_REQUIRED}: declined")));
                 }
             }
@@ -447,7 +453,27 @@ fn folder_reference(reference: &str) -> io::Result<String> {
     Ok(path.canonicalize()?.display().to_string())
 }
 
-fn describe(preview: &Value) -> String {
+fn phrases(capabilities: &Value) -> Vec<String> {
+    let capabilities = capabilities
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    codex_omd::package_controls::grant_phrases(&capabilities)
+        .iter()
+        .map(|phrase| {
+            format!(
+                "    {} {}",
+                if phrase["risky"] == true { "!" } else { "-" },
+                phrase["phrase"].as_str().unwrap_or_default()
+            )
+        })
+        .collect()
+}
+
+fn describe(preview: &Value, details: bool) -> String {
     let text = |value: &Value| match value {
         Value::Null => "-".to_owned(),
         Value::String(value) => value.clone(),
@@ -481,16 +507,21 @@ fn describe(preview: &Value) -> String {
             },
             text(&package["version"]["to"])
         ));
-        lines.push(format!("  source: {}", package["source"]["to"]));
-        lines.push(format!(
-            "  integrity: {}",
-            text(&package["integrity"]["to"])
-        ));
         lines.push(format!("  license: {}", text(&package["license"]["to"])));
-        lines.push(format!(
-            "  capabilities: {}",
-            text(&package["capabilities"]["to"])
-        ));
+        let can = phrases(&package["capabilities"]["to"]);
+        if can.is_empty() {
+            lines.push("  It needs no permissions.".to_owned());
+        } else {
+            lines.push("  It can:".to_owned());
+            lines.extend(can);
+        }
+        if details {
+            lines.push(format!("  source: {}", package["source"]["to"]));
+            lines.push(format!(
+                "  integrity: {}",
+                text(&package["integrity"]["to"])
+            ));
+        }
         for exposure in package["authority"]["to"]["exposure"]
             .as_array()
             .into_iter()
@@ -524,7 +555,7 @@ fn describe(preview: &Value) -> String {
                 "  needs your approval: new or changed grant, authority or origin".to_owned(),
             );
         }
-        if package["state_version"]["handler_required"] == true {
+        if details && package["state_version"]["handler_required"] == true {
             lines.push(
                 "  state version changes: apply loads this version and refuses it without a migrate handler"
                     .to_owned(),
@@ -554,7 +585,8 @@ fn describe(preview: &Value) -> String {
         ("secret environment", "secret_environment"),
         ("codex config", "codex_config"),
     ] {
-        if !changes[key].is_null()
+        if (details || key != "sha256")
+            && !changes[key].is_null()
             && changes[key]
                 .as_array()
                 .is_none_or(|values| !values.is_empty())
@@ -565,30 +597,36 @@ fn describe(preview: &Value) -> String {
     if let Some(warning) = preview["identity_warning"].as_str() {
         lines.push(format!("  WARNING: {warning}"));
     }
-    if preview["grants_added"]
-        .as_array()
-        .is_some_and(|grants| !grants.is_empty())
-    {
-        lines.push(format!("  grants: {}", text(&preview["grants_added"])));
+    let added = phrases(&preview["grants_added"]);
+    if !added.is_empty() {
+        lines.push("  New permissions:".to_owned());
+        lines.extend(added);
     }
     lines.join("\n")
 }
 
-fn confirm(summary: &str) -> io::Result<bool> {
+fn confirm(summary: &str, details: &str) -> io::Result<bool> {
     use std::io::{BufRead, Write};
     let mut terminal = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/tty")?;
-    write!(terminal, "{summary}\nProceed? [y/N] ")?;
-    terminal.flush()?;
-    let mut answer = String::new();
-    io::BufReader::new(terminal).read_line(&mut answer)?;
-    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+    let mut reader = io::BufReader::new(terminal.try_clone()?);
+    writeln!(terminal, "{summary}")?;
+    loop {
+        write!(terminal, "Proceed? [y/N] (d shows source and integrity) ")?;
+        terminal.flush()?;
+        let mut answer = String::new();
+        reader.read_line(&mut answer)?;
+        match answer.trim().to_lowercase().as_str() {
+            "d" => writeln!(terminal, "{details}")?,
+            answer => return Ok(matches!(answer, "y" | "yes")),
+        }
+    }
 }
 
 const HELP: &str = "Usage:
-  omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH]
+  omd install REFERENCE [--version V] [--scope user|project] [--yes] [--details] [--store PATH]
   omd mods list | catalog [QUERY] | inspect REFERENCE | events | reset-lock
   omd mods enable|disable|update|remove|rollback|revoke|unblock ID [FLAGS]
   omd mods quarantine ID REASON [FLAGS]
@@ -787,6 +825,27 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trust_summary_lists_risky_phrases_first_and_keeps_detail_for_d() {
+        let preview = json!({"action": "install", "id": "demo", "changes": {"packages": [{
+            "id": "demo", "version": {"from": null, "to": "1.0.0"}, "source": {"to": "npm:demo"},
+            "integrity": {"to": "sha512-x"}, "license": {"to": "MIT"},
+            "capabilities": {"to": ["fs.read", "os"]},
+            "authority": {"to": {"exposure": ["os: unsandboxed"]}},
+            "state_version": {"handler_required": true}}]}, "grants_added": []});
+        let summary = describe(&preview, false);
+        let risky = summary
+            .find("    ! run listed programs unsandboxed")
+            .unwrap();
+        assert!(risky < summary.find("    - read files in this repository").unwrap());
+        assert!(!summary.contains("integrity") && summary.contains("authority: os: unsandboxed"));
+        let detailed = describe(&preview, true);
+        assert!(
+            detailed.contains("integrity: sha512-x")
+                && detailed.contains("authority: os: unsandboxed")
+        );
+    }
 
     #[test]
     fn shell_quote_leaves_plain_paths_and_quotes_the_rest() {

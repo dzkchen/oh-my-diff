@@ -356,6 +356,9 @@ async fn run(
     if operation != "contract.status" {
         lead.restricted(&operation, &request.arguments)?;
     }
+    if codex_omd::workspace_refused(&operation, &request.arguments, &host.repository) {
+        return Err("workspace_unavailable".into());
+    }
     if super::expansion::served(&operation) {
         return super::expansion::dispatch(core, lead, &caller, request, cancelled).await;
     }

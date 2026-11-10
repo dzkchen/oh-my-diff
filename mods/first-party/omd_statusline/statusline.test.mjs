@@ -114,7 +114,7 @@ test('user scripts get session JSON on stdin and only safe styled text reaches t
 
 test('a panel action after the UI state was cleared edits the saved settings and clips long text values', () => {
   const settings = { preset: 'custom', layout: 'model git', thresholds: `context=${'7'.repeat(2040)}` };
-  const edited = call({ event: 'command', name: 'edit', payload: 'panel glyphs ascii', ui_state: null, settings }, host({ 'terminal.panel': () => ({ shown: true }) }));
+  const edited = call({ event: 'command', name: 'statusline', payload: 'panel glyphs ascii', ui_state: null, settings }, host({ 'terminal.panel': () => ({ shown: true }) }));
   assert.deepEqual([edited.ui.draft.layout, edited.ui.draft.glyphs], ['model git', 'ascii']);
   const panel = edited.calls.findLast(item => item.operation === 'terminal.panel').arguments;
   assert.equal(panel.items.find(item => item.id === 'thresholds').value.length, 2000);
@@ -122,7 +122,7 @@ test('a panel action after the UI state was cleared edits the saved settings and
 
 test('/statusline github says when the layout or setting keeps pull request and CI hidden', () => {
   const answer = host({ 'credentials.request': () => ({ status: 'completed' }) });
-  const saved = settings => call({ event: 'command', name: 'edit', payload: 'github', settings }, answer).value.display;
+  const saved = settings => call({ event: 'command', name: 'statusline', payload: 'github', settings }, answer).value.display;
   assert.match(saved({}), /saved.*no pr or ci segment.*detailed preset/);
   assert.match(saved({ preset: 'detailed' }), /refresh now\.$/);
   assert.match(saved({ preset: 'custom', layout: 'model pr' }), /refresh now\.$/);

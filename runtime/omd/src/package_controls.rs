@@ -121,6 +121,29 @@ pub fn target<'a>(target: Option<&'a str>, action: &str) -> &'a str {
     })
 }
 
+pub fn confirmation_optional(preview: &Value) -> bool {
+    preview["identity_warning"].is_null()
+        && match preview["action"].as_str() {
+            Some("disable") => true,
+            Some("enable") => preview["grants_added"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+            _ => false,
+        }
+}
+
+pub fn grant_phrases(capabilities: &[String]) -> Vec<Value> {
+    let mut phrases = capabilities
+        .iter()
+        .map(|capability| {
+            let risky = crate::AUTHORITY_CAPABILITIES.contains(&capability.as_str());
+            json!({"capability": capability, "phrase": crate::capability_phrase(capability), "risky": risky})
+        })
+        .collect::<Vec<_>>();
+    phrases.sort_by_key(|phrase| phrase["risky"] != true);
+    phrases
+}
+
 fn user() -> String {
     "user".into()
 }
@@ -766,6 +789,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
         "action": arguments.action,
         "id": id,
         "changes": changes,
+        "phrases": grant_phrases(&grants_added),
         "grants_added": grants_added,
     });
     Ok(PackagePreview {

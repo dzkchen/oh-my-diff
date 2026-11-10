@@ -22,7 +22,7 @@ isn't trusted yet stays off.
 
 ## Use it
 
-You don't need to run anything. `/mask` shows how many outputs it hid and in how many batches, about how many tokens
+You don't need to run anything. `/hidden_outputs` shows how many outputs it hid and in how many batches, about how many tokens
 each request no longer resends, how much is waiting for the next batch, and how often something else changed the start
 of the prompt.
 
@@ -32,7 +32,7 @@ The model reads a hidden output with `mod_omd_observation_mask_recall {call_id}`
 ### Hide outputs only when continuing
 
 Set `mode` to `continue` in `/mods` and enable `omd_continue`; OMD+ doesn't enable it, and without it continue mode hides
-nothing. `/mask` says so until a `/continue` has run in the thread. Ordinary requests then keep new outputs in full.
+nothing. `/hidden_outputs` says so until a `/continue` has run in the thread. Ordinary requests then keep new outputs in full.
 A successful `/continue [note]` hides an eligible batch only after the estimated cache lifetime has elapsed.
 `/continue --compact [note]` requests the same masking without a cache estimate. It still obeys `keep_recent`,
 `min_bytes` and `batch_bytes`; it does not call a summarizing model or native `/compact`.
@@ -46,7 +46,7 @@ The placeholders stay identical on later requests; another continuation is neede
 keeps installed placeholders but drops a continuation that had not reached its first model request.
 
 Cache lifetime is an estimate, not a cache probe. On a ChatGPT plan, with local providers and when the lifetime is
-unknown there is no estimate, so only `/continue --compact` hides outputs, and `/mask` says so. `auto` uses a provider-reported lifetime, retaining it on reads
+unknown there is no estimate, so only `/continue --compact` hides outputs, and `/hidden_outputs` says so. `auto` uses a provider-reported lifetime, retaining it on reads
 for the same provider, route, credential and model. For OpenAI API responses with cache activity it otherwise uses
 30 minutes. OpenAI subscription and unpriced responses, local providers, and unknown lifetimes are skipped.
 An explicit `cache_ttl_minutes` overrides the estimate except for local providers. Model/provider/route changes
@@ -87,7 +87,7 @@ that doesn't cache prompts.
 
 ## Needs and limits
 
-- It asks to edit the history sent to the model, see tool results and model requests, add a tool and `/mask`, and
+- It asks to edit the history sent to the model, see tool results and model requests, add a tool and `/hidden_outputs`, and
   keep data in thread storage. The capabilities are `history`, `interception`, `middleware`, `tools`, `store` and
   `commands`, `model`, `lifecycle` and `inventory` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).

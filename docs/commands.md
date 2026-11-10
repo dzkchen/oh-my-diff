@@ -47,6 +47,7 @@ Run `omd` with no arguments for a short summary, `omd help --all` for every comm
 | `--scope user\|project` | Install for you (default) or for the current project |
 | `--version V` | Install this version |
 | `--yes` | Don't ask for confirmation |
+| `--details` | Show source and integrity in the confirmation |
 | `--store PATH` | Use another mod store |
 
 ### Mod data

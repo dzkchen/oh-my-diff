@@ -720,6 +720,17 @@ clients, rich children inside buttons (a button uses its typed `text`), audio, t
 
 ### Migration notes
 
+These changes ship in OMD 1.6.0.
+
+- Mods run in any session directory, including the home directory and `/`; before, the host stayed off there.
+- Programs and sockets the host runs or passes unsandboxed (`os_access` programs, `exec.run` sockets, managed
+  processes and services, frozen in Mod API `1.0.0`) are refused anywhere the agent can write: the whole Git work tree
+  around the session directory, or the session directory outside one. Before, only the session directory was
+  checked, so a launch from a repository's subfolder allowed programs elsewhere in the work tree. This is a safety
+  fix; a mod that runs such a program needs it installed outside the repository (or outside the session directory).
+- `workspace.*` without `root` fails with `workspace_unavailable` when the session directory is `/`, the home
+  directory or a directory above it and isn't in a Git work tree. Other directories behave as before.
+
 These changes ship in OMD 1.4.0.
 
 - A `builtins` mode disable (`capabilities:builtins`, frozen in Mod API `1.0.0`) no longer removes tools limited to
@@ -1603,7 +1614,7 @@ These `packages.list` fields say whether a package change has taken effect.
 #### `packages.apply`, `packages.preview` and `packages.reload`
 
 ```text
-packages.preview {...request, expected_generation?} → {action, id, changes, grants_added}
+packages.preview {...request, expected_generation?} → {action, id, changes, grants_added, phrases?}
 packages.apply {...request, expected_generation} → {status: 'applied', generation, enabled?, reason?} | {status: 'declined'}
 packages.reload → {generation, failed, applies: 'next_boundary'}
 ```
@@ -1615,9 +1626,12 @@ The request is the one under
 | --- | --- |
 | `expected_generation` | The `generation` from `packages.list`; required on `apply`, optional on `preview` |
 
+- `phrases` lists `grants_added` in plain words, `risky` (authority) capabilities first, as
+  `{capability, phrase, risky}`.
 - `apply` returns the new generation, or `declined` when the user declines the confirmation. In the terminal a
-  `disable` from the mod's own slash command or panel action applies without asking, unless the target mod
-  registers a required interceptor or holds `request_policy`.
+  `disable`, or an `enable` that adds no grants, from the mod's own slash command or
+  panel action applies without asking, unless the target mod registers a required interceptor or holds
+  `request_policy`.
 - An `install` with `enable: true` that installs but can't turn the mod on returns `enabled: false` and the
   `reason`; the mod stays installed and off.
 - `reload` returns the generation, the ids of mods that failed, and `next_boundary`, when the revalidation applies.
@@ -2129,7 +2143,8 @@ those runs have external network access.
 
 Requires the `os` and `exec` capabilities. `os` without `os_access`, or the reverse, fails with `invalid_os_access`.
 
-- A program is `*`, a bare name resolved on `PATH` outside the repository, or an absolute path.
+- A program is `*`, a bare name resolved on `PATH` outside the
+  [repository](reference/state-and-storage.md#session-directory-and-repository), or an absolute path.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
 - Every unsandboxed `exec.run`, `process.start` and `terminal.pty` start asks once per mod and binary ("Run NAME for
@@ -2166,7 +2181,8 @@ without `approves`, or the reverse, fails with `invalid_approves`.
 - `server/tool` of an MCP call.
 
 Patterns may be `*` or `prefix*`. A bare name or `prefix*` also matches an absolute path that `PATH` resolves that
-name to outside the repository, but never a same-named file elsewhere.
+name to outside the [repository](reference/state-and-storage.md#session-directory-and-repository), but never a same-named file
+elsewhere.
 
 #### Ending and showing the grants
 
@@ -3561,8 +3577,9 @@ if (run.exit_code !== 0) throw new Error(run.stderr);
 
 #### `exec.run` program, working directory and environment
 
-- A bare program name resolves on `PATH` outside the repository. An absolute path must be canonical and outside the
-  repository. `sha256` pins the resolved file.
+- A bare program name resolves on `PATH` outside the
+  [repository](reference/state-and-storage.md#session-directory-and-repository). An absolute path must be canonical and outside it.
+  `sha256` pins the resolved file.
 - `cwd` is repository-relative.
 - The environment starts empty except `PATH`, a private `HOME`/`TMPDIR`, `TERM=dumb`, locale variables, the
   declared [`exec_environment` names](reference/authority-grants.md#exec_environment-names) and `env` entries limited to
@@ -3599,8 +3616,9 @@ if (run.exit_code !== 0) throw new Error(run.stderr);
 `unix_sockets` names up to 4 declared `exec_environment` variables whose host values are Unix sockets the command
 may connect to. It needs the `unix_sockets` capability (experimental).
 
-- Each value must be an absolute, canonical path outside the repository to an existing socket owned by the current
-  user, or the call fails with `exec_socket_unavailable`.
+- Each value must be an absolute, canonical path outside the
+  [repository](reference/state-and-storage.md#session-directory-and-repository) to an existing socket owned by the current user, or the
+  call fails with `exec_socket_unavailable`.
 - The mod never supplies the path and no IP network is added.
 
 #### `exec.run` with `sandbox: "none"`
@@ -3610,8 +3628,8 @@ With the `os` grant, `sandbox: "none"` runs a program listed in `os_access` with
 - `cwd` may be absolute.
 - The first run of a binary asks the user, who can decline (`exec_program_declined`); see [Authority
   grants](reference/authority-grants.md#os_access-manifest-field).
-- A program reached through a symlink outside the repository runs as the link, so a version-manager shim such as
-  `node` from mise or Volta runs the version it manages.
+- A program reached through a symlink outside the [repository](reference/state-and-storage.md#session-directory-and-repository) runs as
+  the link, so a version-manager shim such as `node` from mise or Volta runs the version it manages.
 - The environment is cleared and then contains `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale,
   `SSH_AUTH_SOCK` (so `ssh` and `git` over SSH can use the user's SSH agent), a private `TMPDIR`, `TERM=dumb`, the
   declared `exec_environment` names and `env`. No other host credential or Codex variable is passed and no secrets
@@ -3717,7 +3735,10 @@ Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 `fs.read` grants `workspace.read` and the `workspace_change` event; `fs.write` grants `workspace.transaction`,
 `workspace.request_rename` and the `workspace_pre_rename` event (see [Capabilities](reference/capabilities.md#capabilities)).
 These operations work only in the session's current local repository, at its canonical path, and the host checks the
-effective read and write permissions for every path.
+effective read and write permissions for every path. When the session directory is `/`, the home directory or a
+directory above it and isn't in a Git work tree, every `workspace.*` operation without `root` fails with
+`workspace_unavailable` (see
+[Session directory and repository](reference/state-and-storage.md#session-directory-and-repository)).
 
 #### Workspace reads and transactions
 
@@ -3747,6 +3768,7 @@ workspace.transaction {expected, writes?, deletes?, renames?, backup?, root?} �
 
 | Error | When |
 | --- | --- |
+| `workspace_unavailable` | The session directory is `/`, the home directory or above it, outside a Git work tree |
 | `workspace_path_scope_invalid` | No paths, more than 128, or a repeated path |
 | `workspace_read_permission_denied`, `workspace_write_permission_denied` | The session can't read or write a path |
 | `fs_root_invalid` | `root` isn't a string |
@@ -3887,11 +3909,27 @@ freshness; it is also available in the `context` event, where `workspace.snapsho
 ## State and storage
 
 Use it when a mod keeps data: `store.*` records, evidence and binary evidence, `api.state` and where it lives,
-state migration, session UI state and the reactive helpers over `api.state`.
+state migration, session UI state and the reactive helpers over `api.state`. It also defines the session directory
+and repository the other pages refer to.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](reference/stability-and-migration.md#experimental-entries-in-the-registry)). Every operation here needs the
 `store` capability except `api.uiState`, which needs `terminal`.
+
+### Session directory and repository
+
+Mods run in any session directory, including the home directory and `/`. The repository is the Git work tree around
+the session directory; outside one there is no repository.
+
+- Programs and sockets the host runs or passes unsandboxed (`os_access` programs, managed processes, services,
+  `exec.run` sockets) must be outside the repository, or outside the session directory when there is no repository,
+  because the agent can write there.
+- The mod store, `host.json` protected paths and secret references must be outside the session directory only when
+  it is inside a repository. Otherwise the host keeps them out of agent commands through the sandbox's denied paths.
+- `workspace.*` operations on the session directory fail with `workspace_unavailable` when there is no repository
+  and the session directory is `/`, the home directory or a directory above it, so a mod can't read or change files
+  such as `~/.ssh` through them; `root` calls on [`fs_access`](reference/authority-grants.md#fs_access-manifest-field) roots
+  still work. Workspace change tracking is off there too, and checkout state is off wherever there is no repository.
 
 ### Durable data: `store.*` and evidence
 
@@ -4053,8 +4091,6 @@ or thread state. Hooks, prompts, timers, channels and `api.uiState` stay with th
 
 These rules apply in every scope:
 
-- Mods never run with the home directory or the filesystem root as the session directory. The host stays off with a
-  notice in `/omd`.
 - `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the given THREAD and
   the checkout of their working directory. A `thread` mod run from `omd-mod command` without THREAD fails with
   `state_thread_unavailable`.
@@ -8111,7 +8147,8 @@ rows, sites?}` and, with external clients attached, `clients` (see
   to the conversation with it.
 - A change in `welcome` or `chat` renders the view again.
 
-`client` is null without a terminal client. When any of these change (the window or font is resized, animations are
+`client` is null without a terminal client. Behind a remote app-server it is the facts the terminal frontend
+reports with [`omd/client/update`](reference/omd-client-protocol.md#omdclientupdate) `client`. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`. If several changes arrive while a render is in progress,
 the host renders once more after it. A change in a drawn site's area also renders the view again. The exception is
 when the area returns within a second to the size it had before the last change. A view that sizes its own layout
@@ -8666,11 +8703,16 @@ omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('sv
 #### `omd/client/update`
 
 ```text
-omd/client/update {renderer?, viewport?: {width, height, unit}, focus?}
+omd/client/update {renderer?, viewport?: {width, height, unit}, focus?, client?}
 // → {}
 ```
 
 `focus` sets the entry's `focused`. Every client gets `omd/roster/updated` and mods render again.
+
+`client` is a terminal frontend's facts, the [`TerminalClient`](reference/terminal-operations.md#terminal-event-client) object mods receive as `client` in
+the `terminal` handler (`columns`, `rows`, `chat`, `welcome`, `sites`, `colors` and the rest). When the host has no
+terminal of its own, mods of the client's terminal owner receive the facts of its focused client, else of the one
+that attached last. It must be an object of at most 16 KiB (`client_facts_invalid`). It isn't part of the roster.
 
 #### `omd/client/detach`
 
