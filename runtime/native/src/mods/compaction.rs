@@ -66,12 +66,12 @@ impl Mods {
         let Some(required) = required else {
             return native();
         };
-        let items = input.history.to_vec();
+        let items = input.history;
         let payload = json!({"thread_id": thread, "turn_id": input.turn_id, "trigger": input.trigger,
             "reason": input.reason, "phase": input.phase, "implementation": input.implementation,
             "budget": {"tokens": input.tokens, "auto_limit": input.auto_limit,
                 "context_window": input.context_window, "hard": input.hard},
-            "items": items.len(), "history": history::compaction_view(&items),
+            "items": items.len(), "history": history::compaction_view(items),
             "summary_prompt": input.summary_prompt});
         let cancelled = Arc::new(AtomicBool::new(false));
         let (reached, at_executor) = tokio::sync::oneshot::channel::<Value>();
@@ -168,7 +168,7 @@ impl Mods {
                 };
             }
         }
-        match replacement(&chain, &items, None) {
+        match replacement(&chain, items, None) {
             Ok(Some(replacement)) => CompactionPlan::Replace(replacement),
             Ok(None) => native(),
             Err(error) => CompactionPlan::Fail(error),

@@ -558,7 +558,7 @@ impl WorkspaceAuthority {
                 for name in selected {
                     let value = match snapshot.files.get(&name) {
                         Some(file) => json!({
-                            "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
+                            "text": std::str::from_utf8(&file.bytes).map_err(|_| "workspace_text_not_utf8")?,
                             "sha256": codex_omd::sha256_hex(&file.bytes),
                         }),
                         None => Value::Null,

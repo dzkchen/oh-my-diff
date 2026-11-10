@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts import package
+from scripts import build_provenance, package, release_artifacts
 
 
 PROVENANCE = {'schema': 1, 'inputs': {'runtime_patch_sha256': 'fixture'}, 'signed': {}}
@@ -14,9 +14,9 @@ PROVENANCE = {'schema': 1, 'inputs': {'runtime_patch_sha256': 'fixture'}, 'signe
 def extracted(root):
     artifacts = root / 'artifacts'
     artifacts.mkdir()
-    for name in package.release.BINARIES + (package.release.AUTHOR_ARCHIVE,):
+    for name in release_artifacts.BINARIES + (package.release.AUTHOR_ARCHIVE,):
         (artifacts / name).write_text(name)
-    (artifacts / package.release.build_provenance.RECORD).write_text(json.dumps(PROVENANCE))
+    (artifacts / build_provenance.RECORD).write_text(json.dumps(PROVENANCE))
     record = {'version': 'fixture', 'target': 'fixture', 'upstream_tag': 'fixture',
               'mod_api': 'fixture', 'node': 'fixture', 'build_provenance': PROVENANCE,
               'artifacts': {'codex': {'sha256': 'c' * 64, 'bytes': 5}}}

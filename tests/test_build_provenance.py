@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts import build_provenance as provenance
+from scripts import build_provenance as provenance, release_artifacts
 
 
 class BuildProvenanceTests(unittest.TestCase):
@@ -54,7 +54,7 @@ class BuildProvenanceTests(unittest.TestCase):
                 "cargo_arguments": ["build", "--locked", "--release"],
                 "compiler": f"release: {identity['rust_toolchain']}\nhost: {identity['target']}",
                 "environment": {"CARGO_PROFILE_RELEASE_LTO": "off"}, "cargo_configs": {}}}
-            for name in provenance.BINARIES:
+            for name in release_artifacts.BINARIES:
                 (directory / name).write_text(name)
             unsigned = provenance.record_build(directory, inputs, inputs)
             self.assertEqual(provenance.verify(directory, signed=False, expected_inputs=inputs), unsigned)

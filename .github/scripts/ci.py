@@ -19,7 +19,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import build
-from scripts import authority_broker, install_support as support, package as release_package, profile_acceptance, release_lock
+from scripts import acceptance_environment, authority_broker, install_support as support, package as release_package, profile_acceptance, release_lock
 from scripts.release import REPOSITORY
 
 WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
@@ -306,7 +306,7 @@ def update_acceptance(archive, version, upstream):
         context.load_cert_chain(cert, key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        environment = profile_acceptance.isolated_environment(base, home, upstream)
+        environment = acceptance_environment.isolated_environment(base, home, upstream)
 
         def installer(codex, *arguments, env=environment, script=build.ROOT / "install.sh"):
             return support.output(["sh", script, *arguments, "--root", base / "managed",
@@ -341,7 +341,7 @@ def archive_acceptance(archive, upstream):
         home.mkdir()
         sentinel = home / "config.toml"
         sentinel.write_text('model = "preserve-user-choice"\n')
-        environment = profile_acceptance.isolated_environment(base, home, upstream)
+        environment = acceptance_environment.isolated_environment(base, home, upstream)
         digest = support.digest(archive)
         payload = release_package.checked_extract(archive, digest, base)
         for profile in ("platform", "full"):

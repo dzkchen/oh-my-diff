@@ -82,7 +82,7 @@ export function createClient(api: ModAPI) {
   const announce = <T>(value: T): T => {
     if (!dirty) return value;
     dirty = false;
-    const data = ORDER.map(adapter => state(api.state.get(), adapter)).filter(s => s.status !== 'idle' || s.running).map(s => ({ adapter: s.adapter, server: s.running ? s.server : null, status: s.status, reason: s.reason, documents: Object.keys(s.documents).length,
+    const data = ORDER.map(adapter => state(api.state.get(), adapter)).filter(s => s.status !== 'idle' || s.running).map(s => ({ adapter: s.adapter, server: s.running ? s.server : null, status: s.status, recovery: s.recovery, reason: s.reason, documents: Object.keys(s.documents).length,
       count: Object.values(s.diagnostics).reduce((total, entry) => total + entry.count, 0), errors: Object.entries(s.diagnostics).flatMap(([path, entry]) => entry.errors.slice(0, 3).map(error => `${path}:${error}`)).slice(0, 6) }));
     budget({ channel: 'status', data }, a => api.host.tryCall('events.publish', a));
     return value;

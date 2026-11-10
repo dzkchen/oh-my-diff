@@ -17,12 +17,12 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts import release_artifacts
+
 TMP = Path(os.environ.get("OMD_WORK_ROOT", "/private/tmp"))
 SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
-BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
-         "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bin", "codex-code-mode-host", "--bin", "omd",
-         "--bin", "omd-contract", "--bin", "omd-broker", "--bin", "omd-mod", "--bin", "omd-runner"]
 CHECK = ["check", "--locked", "-p", "codex-cli", "-p", "codex-exec", "-p", "codex-omd", "-p", "codex-omd-runner",
          "-p", "codex-omd-extension", "-p", "codex-tui", "-p", "codex-core", "-p", "codex-core-plugins", "-p", "codex-git-utils",
          "--tests"]
@@ -177,7 +177,6 @@ def cargo_run(work, log, cargo_args, *, skip_runner=False):
             ["cargo", *cargo_args], cwd=work / "codex/codex-rs", env=env, stdout=output, stderr=subprocess.STDOUT).returncode
         output.write(f"exit={status}\n")
     text = log.read_text(errors="replace").splitlines()
-    # A panic's assertion message follows on the next lines.
     lines = [line for index, line in enumerate(text)
              if SUMMARY.search(line) or any("panicked" in previous for previous in text[max(0, index - 3):index])]
     print("\n".join(lines[:40]))
@@ -353,26 +352,26 @@ def pack_sdk(output):
 
 def artifacts(args):
     work = work_dir(args.name)
-    sys.path.insert(0, str(ROOT))
     from scripts import build_provenance, release_lock
     built = work / "target/release"
     output = work / "artifacts"
     log = work / "logs/build-artifacts.log"
     tree, environment = work / "codex", cargo_env(work)
-    before = build_provenance.inputs(tree, BUILD, environment)
+    before = build_provenance.inputs(tree, release_artifacts.BUILD, environment)
     (built / build_provenance.RECORD).unlink(missing_ok=True)
-    if cargo_run(work, log, BUILD):
+    if cargo_run(work, log, release_artifacts.BUILD):
         raise SystemExit(1)
-    build_provenance.record_build(built, before, build_provenance.inputs(tree, BUILD, environment))
+    build_provenance.record_build(built, before, build_provenance.inputs(tree, release_artifacts.BUILD, environment))
     unsigned = build_provenance.verify(built, signed=False, expected_inputs=before)
     shutil.rmtree(output, ignore_errors=True)
     output.mkdir()
-    for name in build_provenance.BINARIES:
-        shutil.copy2(built / name, output / name)
+    for artifact in release_artifacts.ARTIFACTS:
+        shutil.copy2(built / artifact.name, output / artifact.name)
     if build_provenance.hashes(output) != unsigned["unsigned"]:
         raise SystemExit("release artifacts changed during copying")
-    for name in release_lock.HARDENED:
-        release_lock.sign(output / name)
+    for artifact in release_artifacts.ARTIFACTS:
+        if artifact.hardened:
+            release_lock.sign(output / artifact.name)
     build_provenance.record_signing(output, unsigned)
     pack_sdk(output)
     print(output)

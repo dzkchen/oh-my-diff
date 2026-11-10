@@ -3857,6 +3857,7 @@ Each change contains the path's before and after hashes.
 - At most 16 watches per mod by default (`watches_per_mod` in [Host limits](reference/limits.md#host-limits)).
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
+- If the host cannot register the paths with the file watcher, the call fails with `watch_registration_failed`.
 
 Watches end and deliver as described in [Callback delivery](reference/events-and-lifecycle.md#callback-delivery).
 

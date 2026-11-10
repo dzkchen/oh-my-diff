@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
-import { runScenarioObject } from './cli.mjs';
+import { runScenarioObject } from './project.mjs';
 
 const TERMINAL = { event: 'draw', ledger: null };
 
@@ -38,7 +38,6 @@ export const storeMock = ({ get = [], put = [], delete: remove = [] } = {}) => h
   'store.delete': remove.map(() => ({ result: { deleted: true } })),
 });
 
-// Fields combine in order: host operation queues and packages append, settings and tiers merge, other fields take the last value.
 /** @type {typeof import('../testing.d.ts').scenario} */
 export function scenario(...parts) {
   /** @type {import('../testing.d.ts').Scenario} */

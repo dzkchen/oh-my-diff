@@ -88962,7 +88962,7 @@ index 0000000000000000000000000000000000000000..76ceebe6269228942e1abcbdd071cac9
 +pub(super) const CONTINUATIONS: u32 = CONTINUATION_LIMIT;
 diff --git a/codex-rs/ext/omd/src/mods/compaction.rs b/codex-rs/ext/omd/src/mods/compaction.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..67d413e98fa1c4e2101f1bc5eaf96edef4d6be67
+index 0000000000000000000000000000000000000000..be8156d928a5f49a7c1cfb69eaf47b52b3f486cf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/compaction.rs
 @@ -0,0 +1,177 @@
@@ -89034,12 +89034,12 @@ index 0000000000000000000000000000000000000000..67d413e98fa1c4e2101f1bc5eaf96ede
 +        let Some(required) = required else {
 +            return native();
 +        };
-+        let items = input.history.to_vec();
++        let items = input.history;
 +        let payload = json!({"thread_id": thread, "turn_id": input.turn_id, "trigger": input.trigger,
 +            "reason": input.reason, "phase": input.phase, "implementation": input.implementation,
 +            "budget": {"tokens": input.tokens, "auto_limit": input.auto_limit,
 +                "context_window": input.context_window, "hard": input.hard},
-+            "items": items.len(), "history": history::compaction_view(&items),
++            "items": items.len(), "history": history::compaction_view(items),
 +            "summary_prompt": input.summary_prompt});
 +        let cancelled = Arc::new(AtomicBool::new(false));
 +        let (reached, at_executor) = tokio::sync::oneshot::channel::<Value>();
@@ -89136,7 +89136,7 @@ index 0000000000000000000000000000000000000000..67d413e98fa1c4e2101f1bc5eaf96ede
 +                };
 +            }
 +        }
-+        match replacement(&chain, &items, None) {
++        match replacement(&chain, items, None) {
 +            Ok(Some(replacement)) => CompactionPlan::Replace(replacement),
 +            Ok(None) => native(),
 +            Err(error) => CompactionPlan::Fail(error),
@@ -92778,10 +92778,10 @@ index 0000000000000000000000000000000000000000..708e3e710b8c9b6974f4c32640ca2c49
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a5dbeffb2d1e79cb2326e1fe7284de3bcf532aca
+index 0000000000000000000000000000000000000000..cffdb0c3af39709d62f264cc10dc7e1eddcea81c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,7178 @@
+@@ -0,0 +1,7181 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -94066,7 +94066,10 @@ index 0000000000000000000000000000000000000000..a5dbeffb2d1e79cb2326e1fe7284de3b
 +        })
 +        .await
 +        .map(|r| r.text);
-+    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
++    assert_eq!(
++        serde_json::from_str::<Value>(seen.as_deref().unwrap()).unwrap(),
++        structured
++    );
 +    let long = "y".repeat(codex_omd::TOOL_OUTPUT_BYTES - 8);
 +    assert_eq!(
 +        mods.intercept_tool(start("call-coded-long", &CODED))
@@ -104974,10 +104977,10 @@ index 0000000000000000000000000000000000000000..2360856f5d9b58e02ba729615616aa1e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a3728a220c870b65b053459dedf1e38b65b3f79e
+index 0000000000000000000000000000000000000000..648fa8436df541002d4cd8be3a759b8369e04eb0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,255 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -105159,16 +105162,17 @@ index 0000000000000000000000000000000000000000..a3728a220c870b65b053459dedf1e38b
 +    }
 +
 +    pub(super) fn progress(&self, owner: &Host, label: &str, text: &str) {
-+        let lines = text
-+            .split('\n')
++        let mut lines = text
++            .rsplit('\n')
 +            .map(|line| visible(line, 1024))
 +            .filter(|line| !line.is_empty())
++            .take(8)
 +            .collect::<Vec<_>>();
-+        let start = lines.len().saturating_sub(8);
++        lines.reverse();
 +        self.update(owner, |state| {
 +            state.snapshot.progress = Some(ModPanel {
 +                title: visible(label, 128),
-+                lines: lines[start..].to_vec(),
++                lines,
 +            });
 +            true
 +        });
@@ -105234,7 +105238,7 @@ index 0000000000000000000000000000000000000000..a3728a220c870b65b053459dedf1e38b
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..370dc1dc56e1e6018e94fe7832c47a1bdfb8cdd3
+index 0000000000000000000000000000000000000000..917ccb752fba050864d8481aa12f0e4675708eef
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
 @@ -0,0 +1,882 @@
@@ -105798,7 +105802,7 @@ index 0000000000000000000000000000000000000000..370dc1dc56e1e6018e94fe7832c47a1b
 +                for name in selected {
 +                    let value = match snapshot.files.get(&name) {
 +                        Some(file) => json!({
-+                            "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
++                            "text": std::str::from_utf8(&file.bytes).map_err(|_| "workspace_text_not_utf8")?,
 +                            "sha256": codex_omd::sha256_hex(&file.bytes),
 +                        }),
 +                        None => Value::Null,
@@ -106122,10 +106126,10 @@ index 0000000000000000000000000000000000000000..370dc1dc56e1e6018e94fe7832c47a1b
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..78e348f5111e83106bd3e0fd3dfb1f61f4169704
+index 0000000000000000000000000000000000000000..a41e12fab75f176ec1ede4a2bca6d9171956f329
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch.rs
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,299 @@
 +use codex_file_watcher::DebouncedWatchReceiver;
 +use codex_file_watcher::FileWatcher;
 +use codex_file_watcher::WatchPath;
@@ -106354,6 +106358,9 @@ index 0000000000000000000000000000000000000000..78e348f5111e83106bd3e0fd3dfb1f61
 +            }
 +        }
 +        let registration = subscriber.register_paths(targets);
++        if !registration.registration_succeeded() {
++            return Err(io::Error::other("watch_registration_failed"));
++        }
 +        let mut receiver = DebouncedWatchReceiver::new(receiver, Duration::from_millis(debounce));
 +        let (root, protected, watch_id) = (self.root.clone(), self.protected.clone(), id.clone());
 +        let task = tokio::spawn(async move {
@@ -106424,10 +106431,10 @@ index 0000000000000000000000000000000000000000..78e348f5111e83106bd3e0fd3dfb1f61
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c90378b5a60e673d57ed28266af6865f596acf37
+index 0000000000000000000000000000000000000000..92f5625959a8708e0543f71e33ff6d90a33406c8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,528 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -106457,6 +106464,41 @@ index 0000000000000000000000000000000000000000..c90378b5a60e673d57ed28266af6865f
 +        }),
 +        rx,
 +    )
++}
++
++#[tokio::test]
++async fn failed_registrations_do_not_consume_watch_slots_or_keys() {
++    let dir = tempfile::tempdir().unwrap();
++    let limits = codex_omd::mod_limits::ModLimits {
++        watches_per_mod: 2,
++        ..Default::default()
++    };
++    let watches = WorkspaceWatches::new(
++        Arc::new(FileWatcher::noop()),
++        dir.path().to_path_buf(),
++        Vec::new(),
++        limits,
++    )
++    .unwrap();
++    for attempt in 0..=limits.watches_per_mod {
++        let key = format!("key-{attempt}");
++        let (sink, _rx) = channel_sink();
++        let error = watches
++            .watch(
++                "m",
++                "sha",
++                &[".".to_owned()],
++                false,
++                false,
++                None,
++                Some((&key, "shape")),
++                sink,
++            )
++            .unwrap_err();
++        assert_eq!(error.to_string(), "watch_registration_failed");
++        assert!(!watches.unwatch_key("m", &key));
++    }
++    assert_eq!(watches.unwatch_all("m"), 0);
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -126164,7 +126206,7 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..106c94936a334a2413e0d793384007000f75a3e7
+index 0000000000000000000000000000000000000000..6ae65aadf942a1db1dc78e61656bc8b66362d3bf
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
 @@ -0,0 +1,2198 @@
@@ -127793,8 +127835,8 @@ index 0000000000000000000000000000000000000000..106c94936a334a2413e0d79338400700
 +        let started = Instant::now();
 +        let mut child = spawn_session(&command, input.stdin.is_some())
 +            .map_err(|error| format!("exec_spawn_failed: {error}"))?;
-+        if let (Some(bytes), Some(mut pipe)) = (input.stdin.as_ref(), child.stdin.take()) {
-+            let bytes = bytes.clone().into_bytes();
++        if let (Some(bytes), Some(mut pipe)) = (input.stdin, child.stdin.take()) {
++            let bytes = bytes.into_bytes();
 +            std::thread::spawn(move || {
 +                let _ = pipe.write_all(&bytes);
 +            });
@@ -127921,7 +127963,7 @@ index 0000000000000000000000000000000000000000..106c94936a334a2413e0d79338400700
 +        for name in selected {
 +            let value = match snapshot.files.get(&name) {
 +                Some(file) => json!({
-+                    "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
++                    "text": std::str::from_utf8(&file.bytes).map_err(|_| "workspace_text_not_utf8")?,
 +                    "sha256": crate::sha256_hex(&file.bytes),
 +                }),
 +                None => Value::Null,
@@ -128112,7 +128154,7 @@ index 0000000000000000000000000000000000000000..106c94936a334a2413e0d79338400700
 +    fn save_backup(
 +        &self,
 +        caller: &Caller<'_>,
-+        files: &BTreeMap<String, Option<Vec<u8>>>,
++        files: &BTreeMap<&str, Option<&[u8]>>,
 +    ) -> std::io::Result<Value> {
 +        let directory = self
 +            .backup_directory(caller)
@@ -128122,7 +128164,7 @@ index 0000000000000000000000000000000000000000..106c94936a334a2413e0d79338400700
 +            "owner": caller.id,
 +            "repository": repository_key(self.repository()),
 +            "created_ms": crate::peers::now_ms(),
-+            "files": files.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
++            "files": files.iter().map(|(name, bytes)| ((*name).to_owned(), bytes.map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
 +        });
 +        let bytes = serde_json::to_vec(&record)?;
 +        let digest = crate::sha256_hex(&bytes);
@@ -128161,7 +128203,7 @@ index 0000000000000000000000000000000000000000..106c94936a334a2413e0d79338400700
 +            &transaction.expected.keys().cloned().collect::<Vec<_>>(),
 +            true,
 +        )?;
-+        let sink = |files: &BTreeMap<String, Option<Vec<u8>>>| self.save_backup(caller, files);
++        let sink = |files: &BTreeMap<&str, Option<&[u8]>>| self.save_backup(caller, files);
 +        let result = transaction
 +            .apply_with_backup(self.repository(), || (self.active)(), Some(&sink))
 +            .map_err(|error| error.to_string())?;
@@ -128182,7 +128224,7 @@ index 0000000000000000000000000000000000000000..106c94936a334a2413e0d79338400700
 +            .map_err(|error| error.to_string())?;
 +        let mut files = BTreeMap::new();
 +        for (name, expected) in &input.expected {
-+            let current = snapshot.files.get(name).map(|file| file.bytes.clone());
++            let current = snapshot.files.get(name).map(|file| file.bytes.as_slice());
 +            let stat = Self::file_stat(
 +                &crate::workspace_path(self.repository(), name)
 +                    .map_err(|error| error.to_string())?,
@@ -128199,7 +128241,7 @@ index 0000000000000000000000000000000000000000..106c94936a334a2413e0d79338400700
 +            if !matches {
 +                return Err(format!("stale expected version for {name}"));
 +            }
-+            files.insert(name.clone(), current);
++            files.insert(name.as_str(), current);
 +        }
 +        let backup = self
 +            .save_backup(caller, &files)
@@ -130410,10 +130452,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6fba2b12a2
+index 0000000000000000000000000000000000000000..109ce87dbd6601f625d4c67c81277ae8218ce16d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7649 @@
+@@ -0,0 +1,7670 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -133750,19 +133792,23 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +        let loaded = host.loaded["hello"].clone();
 +        // Trust pinned outside the store turns the code cache off, also for a reused inspection.
 +        assert!(loaded.code_cache.is_none());
-+        host.check_callback_authority(&loaded).unwrap();
++        host.check_callback_authority(&loaded.package.id, &loaded.selection)
++            .unwrap();
 +        let reads = store::READS.get();
 +        for _ in 0..100 {
 +            host.brokered.as_mut().unwrap().0 = Instant::now();
-+            host.check_callback_authority(&loaded).unwrap();
++            host.check_callback_authority(&loaded.package.id, &loaded.selection)
++                .unwrap();
 +        }
 +        assert_eq!(store::READS.get(), reads);
-+        host.check_callback_authority(&loaded).unwrap();
++        host.check_callback_authority(&loaded.package.id, &loaded.selection)
++            .unwrap();
 +        std::fs::write(package.join("index.ts"), "export default () => {}").unwrap();
-+        host.check_callback_authority(&loaded).unwrap();
++        host.check_callback_authority(&loaded.package.id, &loaded.selection)
++            .unwrap();
 +        host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
 +        assert!(
-+            host.check_callback_authority(&loaded)
++            host.check_callback_authority(&loaded.package.id, &loaded.selection)
 +                .unwrap_err()
 +                .to_string()
 +                .contains("source_changed")
@@ -133861,25 +133907,41 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +);
 +
 +impl Loaded {
-+    /// This activation for another host: the inspection without this host's UI or telemetry.
 +    fn inspected(&self) -> Self {
 +        Self {
++            state: self.state.clone(),
 +            ui: None,
++            ..self.invocation()
++        }
++    }
++
++    fn invocation(&self) -> Self {
++        Self {
++            package: self.package.clone(),
++            selection: self.selection.clone(),
++            source: self.source.clone(),
++            assets: self.assets.clone(),
++            request_metadata: self.request_metadata.clone(),
++            session_key: self.session_key.clone(),
++            code_cache: self.code_cache.clone(),
++            adapter: self.adapter.clone(),
++            state: Value::Null,
++            state_revision: self.state_revision,
++            registered_state: self.registered_state.clone(),
++            ui: self.ui.clone(),
 +            ui_state: Value::Null,
 +            ui_revision: 0,
 +            ui_clears: 0,
 +            command_view: None,
++            registrations: self.registrations.clone(),
++            source_use: self.source_use.clone(),
++            unused_grants: self.unused_grants.clone(),
++            unused_environment: self.unused_environment.clone(),
++            withheld: self.withheld.clone(),
++            settings_file: self.settings_file.clone(),
++            error: self.error.clone(),
 +            telemetry: ModTelemetry::default(),
-+            ..self.clone()
 +        }
-+    }
-+
-+    fn invocation(&mut self) -> Self {
-+        let state = std::mem::take(&mut self.state);
-+        let telemetry = std::mem::take(&mut self.telemetry);
-+        let copy = self.clone();
-+        (self.state, self.telemetry) = (state, telemetry);
-+        copy
 +    }
 +
 +    fn set_state(&mut self, state: Value) {
@@ -134403,12 +134465,12 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +            if generation != runtime.generation {
 +                return Err(failure("stale_mod_generation"));
 +            }
-+            let loaded = runtime
++            let selection = runtime
 +                .loaded
 +                .get(id)
-+                .cloned()
++                .map(|loaded| Arc::clone(&loaded.selection))
 +                .ok_or_else(|| failure("mod_disabled"))?;
-+            runtime.check_callback_authority(&loaded)?;
++            runtime.check_callback_authority(id, &selection)?;
 +            runtime.session_key(id, thread.as_deref())
 +        })?
 +    } else {
@@ -136399,14 +136461,14 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +    }
 +
 +    /// Between broker refreshes a passed check stands until `mods.json` or the authority inventory changes.
-+    fn check_callback_authority(&mut self, loaded: &Loaded) -> Result<()> {
++    fn check_callback_authority(&mut self, id: &str, selection: &ModSelection) -> Result<()> {
 +        let key = (
-+            loaded.package.id.clone(),
-+            loaded.selection.path.clone(),
-+            loaded.selection.scope.clone(),
++            id.to_owned(),
++            selection.path.clone(),
++            selection.scope.clone(),
 +        );
 +        let modified = configuration_stamp(&self.store.root.join("mods.json"));
-+        let grant = store::grant(&json!(loaded.selection));
++        let grant = store::grant(&json!(selection));
 +        if let Some((at, stamp, sha256, granted)) = self.callback_verdicts.get(&key)
 +            && modified.is_some()
 +            && self.fresh_broker() == Some(*at)
@@ -136417,7 +136479,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +        {
 +            return Ok(());
 +        }
-+        self.check_callback_authority_now(loaded)?;
++        self.check_callback_authority_now(id, selection)?;
 +        if self.configuration_stamp.is_some()
 +            && let Some(at) = self.fresh_broker()
 +        {
@@ -136436,7 +136498,11 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +            .map(|(at, _, _)| *at)
 +    }
 +
-+    fn check_callback_authority_now(&mut self, loaded: &Loaded) -> Result<()> {
++    fn check_callback_authority_now(
++        &mut self,
++        id: &str,
++        invoked_selection: &ModSelection,
++    ) -> Result<()> {
 +        let (configuration_sha256, configuration) = self.callback_configuration();
 +        let authority = self.authority(&configuration_sha256)?;
 +        let hash = self.authority_hash(&configuration_sha256, &authority);
@@ -136454,10 +136520,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +            None => Vec::new(),
 +        };
 +        let mut administered = selections.len();
-+        let configured = self
-+            .tier_selections
-+            .get(&loaded.package.id)
-+            .unwrap_or(&loaded.selection);
++        let configured = self.tier_selections.get(id).unwrap_or(invoked_selection);
 +        // An unchanged authority inventory cannot introduce a different precedence winner.
 +        let overrides = self.current_overrides();
 +        let unchanged = hash == self.configuration_sha256
@@ -136470,7 +136533,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +                config
 +                    .mods
 +                    .iter()
-+                    .filter(|selection| !unchanged || selection.path == loaded.selection.path)
++                    .filter(|selection| !unchanged || selection.path == invoked_selection.path)
 +                    .cloned(),
 +            ),
 +            _ if configured.scope == MANAGED_SCOPE && managed.is_some() => (),
@@ -136480,9 +136543,9 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +            administered = selections
 +                .iter()
 +                .take(administered)
-+                .filter(|selection| selection.path == loaded.selection.path)
++                .filter(|selection| selection.path == invoked_selection.path)
 +                .count();
-+            selections.retain(|selection| selection.path == loaded.selection.path);
++            selections.retain(|selection| selection.path == invoked_selection.path);
 +        }
 +        for selection in &mut selections {
 +            selection.enabled = overrides.enabled(selection);
@@ -136498,7 +136561,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +                store::verified_package(path).map(|(package, hash)| (package, String::new(), hash))
 +            },
 +        )?;
-+        let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
++        let Some((selection, _, _)) = selected.get(id) else {
 +            return Err(failure("callback_authority_changed"));
 +        };
 +        if selection.path != configured.path
@@ -136546,7 +136609,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +        if generation != self.generation {
 +            return Err(failure("stale_mod_generation: retry on the next turn"));
 +        }
-+        let Some(mut loaded) = self.loaded.get_mut(id).map(Loaded::invocation) else {
++        let Some(mut loaded) = self.loaded.get(id).map(Loaded::invocation) else {
 +            return Err(
 +                match self
 +                    .rejected
@@ -136561,7 +136624,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +        if let Some(error) = &loaded.error {
 +            return Err(failure(format!("mod_failed: {error}")));
 +        }
-+        self.check_callback_authority(&loaded)?;
++        self.check_callback_authority(&loaded.package.id, &loaded.selection)?;
 +        loaded.session_key = self.session_key(id, thread)?;
 +        let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
 +        let mut migrate = false;
@@ -136690,7 +136753,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +                return Err(failure("terminal_capability_denied"));
 +            }
 +            if !patch.is_null() {
-+                parsed_command = Some(Arc::new(ModViewPatch::parse(patch.clone())?));
++                parsed_command = Some(Arc::new(ModViewPatch::parse(patch)?));
 +            }
 +        }
 +        let replaces = |point: &str| {
@@ -136809,7 +136872,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +        {
 +            return Err(failure("stale_mod_generation: retry on the next turn"));
 +        }
-+        self.check_callback_authority(&invocation.loaded)?;
++        self.check_callback_authority(&invocation.loaded.package.id, &invocation.loaded.selection)?;
 +        if invocation.authority_current
 +            && !invocation.loaded.selection.authority_current()
 +            && invocation
@@ -137315,7 +137378,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +        } else {
 +            let parsed = validated
 +                .map(Ok)
-+                .unwrap_or_else(|| ModViewPatch::parse(patch.clone()))?;
++                .unwrap_or_else(|| ModViewPatch::parse(&patch))?;
 +            self.valid_views.insert(id.to_owned(), patch.clone());
 +            Some((id, parsed))
 +        };
@@ -137367,7 +137430,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +                }
 +                Ok(value) => match accepted_patch.take_if(|(owner, _)| *owner == id) {
 +                    Some((_, patch)) => Ok(patch),
-+                    None => ModViewPatch::parse(value.clone()).inspect(|_| {
++                    None => ModViewPatch::parse(&value).inspect(|_| {
 +                        self.valid_views.insert(id.clone(), value);
 +                    }),
 +                },
@@ -137386,7 +137449,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +                {
 +                    diagnostics.push(format!("{id}: {error}"));
 +                }
-+                ModViewPatch::parse(self.valid_views.get(&id).cloned().ok_or(error)?)
++                ModViewPatch::parse(self.valid_views.get(&id).ok_or(error)?)
 +            });
 +            let Ok(mut patch) = parsed else {
 +                continue;
@@ -138065,7 +138128,7 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4be6911edde50dd97a40bfb1267b028e3211e5e0
+index 0000000000000000000000000000000000000000..052d25b4c15575e0dad9c8dc04378bed83ec98c4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
 @@ -0,0 +1,1213 @@
@@ -138833,7 +138896,7 @@ index 0000000000000000000000000000000000000000..4be6911edde50dd97a40bfb1267b028e
 +                        ..ModInvokeOptions::default()
 +                    },
 +                )?;
-+                ModViewPatch::parse(view.clone())?;
++                ModViewPatch::parse(&view)?;
 +                let parsed = ModView::parse(view.clone())?;
 +                if kind == "terminal_mount" {
 +                    return Ok(view);
@@ -139284,7 +139347,7 @@ index 0000000000000000000000000000000000000000..4be6911edde50dd97a40bfb1267b028e
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f637f12821da8dda855801a54d712cc3b538148e
+index 0000000000000000000000000000000000000000..ed9122dc7b67cfe9f83b717d6354575638ab7bfd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,561 @@
@@ -139751,7 +139814,7 @@ index 0000000000000000000000000000000000000000..f637f12821da8dda855801a54d712cc3
 +    if serde_json::to_vec(&*request)?.len() <= process::INPUT_LIMIT {
 +        return Ok(());
 +    }
-+    let Some(items) = request
++    let Some(mut items) = request
 +        .invocation
 +        .get_mut("payload")
 +        .and_then(|payload| payload.get_mut("items"))
@@ -139774,7 +139837,7 @@ index 0000000000000000000000000000000000000000..f637f12821da8dda855801a54d712cc3
 +        room -= bytes;
 +        kept += 1;
 +    }
-+    request.invocation["payload"]["items"] = Value::Array(items[items.len() - kept..].to_vec());
++    request.invocation["payload"]["items"] = Value::Array(items.split_off(items.len() - kept));
 +    Ok(())
 +}
 +
@@ -150238,10 +150301,10 @@ index 0000000000000000000000000000000000000000..42a6f21f76db858a7e18f132a9ad4189
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7b9ecb1b8401284f310cb14d2211d0bfb7fc7c39
+index 0000000000000000000000000000000000000000..e25bef3fee67ebcacc79e117a0c69445c45bbf8a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1692 @@
+@@ -0,0 +1,1696 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -151051,7 +151114,11 @@ index 0000000000000000000000000000000000000000..7b9ecb1b8401284f310cb14d2211d0bf
 +            })
 +            .collect();
 +        let bytes = serde_json::to_vec(&json!({"revision": config["revision"], "epochs": epochs}))?;
-+        if read(&self.root.join(CONFIGURATION_EPOCHS), 65_536).ok() != Some(bytes.clone()) {
++        if read(&self.root.join(CONFIGURATION_EPOCHS), 65_536)
++            .ok()
++            .as_deref()
++            != Some(bytes.as_slice())
++        {
 +            self.write_staged(CONFIGURATION_EPOCHS, &bytes, || Ok(()))?;
 +        }
 +        Ok(config)
@@ -151936,10 +152003,10 @@ index 0000000000000000000000000000000000000000..7b9ecb1b8401284f310cb14d2211d0bf
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa6c664764
+index 0000000000000000000000000000000000000000..a11ddfd28ef6a33de895f140cf0a19c03ab333b0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2537 @@
+@@ -0,0 +1,2534 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 24;
@@ -154025,8 +154092,8 @@ index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa
 +}
 +
 +impl ModViewPatch {
-+    pub fn parse(value: Value) -> Result<Self> {
-+        let patch: Self = serde_json::from_value(value)?;
++    pub fn parse(value: &Value) -> Result<Self> {
++        let patch = Self::deserialize(value)?;
 +        let invalid = [
 +            (
 +                "session_title_suffix",
@@ -154296,7 +154363,7 @@ index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa
 +            .glyphs
 +            .retain(|glyph, _| claim(format!("theme.glyphs.{glyph}")));
 +        self.theme.apply(&mut candidate.theme);
-+        ModView::parse_with(serde_json::to_value(&candidate)?, MOD_COMPOSED_KEY_LIMIT)?;
++        candidate.validate(MOD_COMPOSED_KEY_LIMIT)?;
 +        *target = candidate;
 +        *claims = candidate_claims;
 +        if dropped_contexts {
@@ -154327,7 +154394,9 @@ index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa
 +
 +impl ModView {
 +    pub fn parse(value: Value) -> Result<Self> {
-+        Self::parse_with(value, MOD_KEY_LIMIT)
++        let view: Self = serde_json::from_value(value)?;
++        view.validate(MOD_KEY_LIMIT)?;
++        Ok(view)
 +    }
 +
 +    pub(super) fn close_wraps(&mut self) {
@@ -154339,88 +154408,86 @@ index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa
 +        }
 +    }
 +
-+    /// Each mod's view or patch keeps 24 keys; the view composed from every mod may hold more.
-+    fn parse_with(value: Value, key_limit: usize) -> Result<Self> {
-+        let view: Self = serde_json::from_value(value)?;
++    fn validate(&self, key_limit: usize) -> Result<()> {
 +        let invalid = [
 +            (
 +                "session_title_suffix",
-+                view.session_title_suffix
++                self.session_title_suffix
 +                    .as_ref()
 +                    .is_some_and(|text| !visible(text, 80)),
 +            ),
 +            (
 +                "greeting",
-+                view.greeting
++                self.greeting
 +                    .as_ref()
 +                    .is_some_and(|text| !visible(text, 256)),
 +            ),
-+            ("sidebar_width", view.sidebar_width > 60),
++            ("sidebar_width", self.sidebar_width > 60),
 +            (
 +                "sidebar_style",
-+                view.sidebar_style
++                self.sidebar_style
 +                    .as_ref()
 +                    .is_some_and(|style| !style.still()),
 +            ),
 +            (
 +                "panels",
-+                view.panels.len() > 8 || view.panels.iter().any(|panel| !panel.valid(32)),
++                self.panels.len() > 8 || self.panels.iter().any(|panel| !panel.valid(32)),
 +            ),
 +            (
 +                "title",
-+                view.title
++                self.title
 +                    .as_ref()
 +                    .is_some_and(|title| !visible(title, 1024)),
 +            ),
 +            (
 +                "header",
-+                view.header.as_ref().is_some_and(|panel| !panel.valid(3)),
++                self.header.as_ref().is_some_and(|panel| !panel.valid(3)),
 +            ),
 +            (
 +                "footer",
-+                view.footer.as_ref().is_some_and(|panel| !panel.valid(3)),
++                self.footer.as_ref().is_some_and(|panel| !panel.valid(3)),
 +            ),
-+            ("status", !valid_status(&view.status)),
-+            ("keybindings", !valid_bindings(&view.keybindings, key_limit)),
-+            ("key_contexts", !valid_contexts(&view.key_contexts, 16, 128)),
-+            ("keybindings.focus", !valid_focus_targets(&view)),
++            ("status", !valid_status(&self.status)),
++            ("keybindings", !valid_bindings(&self.keybindings, key_limit)),
++            ("key_contexts", !valid_contexts(&self.key_contexts, 16, 128)),
++            ("keybindings.focus", !valid_focus_targets(self)),
 +            (
 +                "theme.syntax",
-+                view.theme
++                self.theme
 +                    .syntax
 +                    .as_ref()
 +                    .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128)),
 +            ),
 +            (
 +                "placeholder",
-+                view.placeholder
++                self.placeholder
 +                    .as_ref()
 +                    .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80)),
 +            ),
-+            ("theme.glyphs", !valid_glyphs(&view.theme.glyphs)),
++            ("theme.glyphs", !valid_glyphs(&self.theme.glyphs)),
 +            (
 +                "layout",
-+                view.layout.as_ref().is_some_and(|layout| !layout.valid()),
++                self.layout.as_ref().is_some_and(|layout| !layout.valid()),
 +            ),
 +            (
 +                "surface_styles",
-+                !valid_surface_styles(&view.surface_styles),
++                !valid_surface_styles(&self.surface_styles),
 +            ),
 +            (
 +                "underlay",
-+                view.underlay
++                self.underlay
 +                    .as_ref()
 +                    .is_some_and(|underlay| !mod_component_id(&underlay.raster)),
 +            ),
-+            ("size", serde_json::to_vec(&view)?.len() > 1_048_576),
++            ("size", serde_json::to_vec(self)?.len() > 1_048_576),
 +        ]
 +        .into_iter()
 +        .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))
-+        .or_else(|| invalid_sites(&view.sites));
++        .or_else(|| invalid_sites(&self.sites));
 +        if let Some(field) = invalid {
 +            return Err(failure(format!("invalid_terminal_view: {field}")));
 +        }
-+        Ok(view)
++        Ok(())
 +    }
 +
 +    pub fn read(path: &Path) -> Result<Self> {
@@ -154431,11 +154498,8 @@ index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa
 +impl ModViewSnapshot {
 +    pub fn read(path: &Path) -> Result<Self> {
 +        let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
-+        let mut snapshot: Self = serde_json::from_value(value)?;
-+        snapshot.view = ModView::parse_with(
-+            serde_json::to_value(&snapshot.view)?,
-+            MOD_COMPOSED_KEY_LIMIT,
-+        )?;
++        let snapshot: Self = serde_json::from_value(value)?;
++        snapshot.view.validate(MOD_COMPOSED_KEY_LIMIT)?;
 +        if snapshot
 +            .progress
 +            .as_ref()
@@ -154479,7 +154543,7 @@ index 0000000000000000000000000000000000000000..19af6543c9af534eac07c678145daaaa
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac327ec1e46
+index 0000000000000000000000000000000000000000..8614c03876c692d18936080dcb3a43a5d612941d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
 @@ -0,0 +1,397 @@
@@ -154544,7 +154608,7 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +        json!({"layout": {"split": "vertical", "children": [{"content": "transcript", "style": {}}, {"content": "composer"}]}}),
 +    ] {
 +        assert!(view(invalid.clone()).is_err(), "{invalid}");
-+        assert!(ModViewPatch::parse(invalid).is_err());
++        assert!(ModViewPatch::parse(&invalid).is_err());
 +    }
 +    let tree = |extra: Value| {
 +        let mut component =
@@ -154573,15 +154637,15 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +        json!({"welcome":{"unknown":true}}),
 +    ] {
 +        assert!(view(invalid.clone()).is_err(), "{invalid}");
-+        assert!(ModViewPatch::parse(invalid).is_err());
++        assert!(ModViewPatch::parse(&invalid).is_err());
 +    }
 +    let mut target = ModView::default();
 +    let mut claims = BTreeMap::new();
-+    ModViewPatch::parse(welcome)
++    ModViewPatch::parse(&welcome)
 +        .unwrap()
 +        .apply(&mut target, &mut claims, "first", "idle")
 +        .unwrap();
-+    ModViewPatch::parse(json!({"greeting":"Ready to work?"}))
++    ModViewPatch::parse(&json!({"greeting":"Ready to work?"}))
 +        .unwrap()
 +        .apply(&mut target, &mut claims, "first", "idle")
 +        .unwrap();
@@ -154590,7 +154654,7 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +        target.session_title_suffix.as_deref(),
 +        Some(" | Project tools")
 +    );
-+    let conflicts = ModViewPatch::parse(json!({"sites":{"welcome":{"components":[]}}}))
++    let conflicts = ModViewPatch::parse(&json!({"sites":{"welcome":{"components":[]}}}))
 +        .unwrap()
 +        .apply(&mut target, &mut claims, "second", "idle")
 +        .unwrap();
@@ -154628,7 +154692,7 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +        ),
 +    ] {
 +        assert!(view(valid.clone()).is_ok(), "{valid}");
-+        assert!(ModViewPatch::parse(valid).is_ok());
++        assert!(ModViewPatch::parse(&valid).is_ok());
 +    }
 +    for invalid in [
 +        layout(
@@ -154654,7 +154718,7 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +        layout(site.clone(), transcript.clone(), titled(&composer, "")),
 +    ] {
 +        assert!(view(invalid.clone()).is_err(), "{invalid}");
-+        assert!(ModViewPatch::parse(invalid).is_err());
++        assert!(ModViewPatch::parse(&invalid).is_err());
 +    }
 +}
 +
@@ -154681,8 +154745,8 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +        }
 +        json!({"sites": {"a/x": {"components": [node]}}})
 +    };
-+    assert!(ModViewPatch::parse(nested(6)).is_ok());
-+    assert!(ModViewPatch::parse(nested(7)).is_err());
++    assert!(ModViewPatch::parse(&nested(6)).is_ok());
++    assert!(ModViewPatch::parse(&nested(7)).is_err());
 +}
 +
 +#[test]
@@ -154690,12 +154754,12 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +    let mut target = ModView::default();
 +    let mut claims = BTreeMap::new();
 +    let layout = json!({"layout": {"content": "transcript"}});
-+    ModViewPatch::parse(layout.clone())
++    ModViewPatch::parse(&layout)
 +        .unwrap()
 +        .apply(&mut target, &mut claims, "first", "idle")
 +        .unwrap();
 +    assert!(target.layout.is_some());
-+    let conflicts = ModViewPatch::parse(json!({"layout": {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}}))
++    let conflicts = ModViewPatch::parse(&json!({"layout": {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}}))
 +        .unwrap()
 +        .apply(&mut target, &mut claims, "second", "idle")
 +        .unwrap();
@@ -154734,7 +154798,7 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +        json!({"surface_styles":{"approval":{"top":"#abcdef"}}}),
 +        json!({"surface_styles":{"composer":{"top":"#654321"}}}),
 +    ] {
-+        ModViewPatch::parse(patch)
++        ModViewPatch::parse(&patch)
 +            .unwrap()
 +            .apply(&mut target, &mut claims, "first", "idle")
 +            .unwrap();
@@ -154761,7 +154825,7 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +            json!({"sites": {"sidebar": {"components": [{"type": "text", "id": "tree", "label": "Tree", "text": "src"}]}}}),
 +        ),
 +    ] {
-+        let conflicts = ModViewPatch::parse(patch)
++        let conflicts = ModViewPatch::parse(&patch)
 +            .unwrap()
 +            .apply(&mut target, &mut claims, id, "idle")
 +            .unwrap();
@@ -154782,7 +154846,7 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +    let wrap = json!({"mode": "wrap", "components": [{"type": "box", "id": "frame", "label": "Frame",
 +        "children": [{"type": "slot"}]}]});
 +    let mut compose = |id: &str, site: Value| {
-+        ModViewPatch::parse(json!({"sites": {"a/x": site}}))
++        ModViewPatch::parse(&json!({"sites": {"a/x": site}}))
 +            .unwrap()
 +            .apply(&mut target, &mut claims, id, "idle")
 +            .unwrap()
@@ -154841,11 +154905,11 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +                .collect(),
 +        )),
 +    ] {
-+        assert!(ModViewPatch::parse(invalid.clone()).is_err(), "{invalid}");
++        assert!(ModViewPatch::parse(&invalid).is_err(), "{invalid}");
 +    }
 +    let mut target = ModView::default();
 +    let mut claims = BTreeMap::new();
-+    ModViewPatch::parse(json!({"key_contexts": [site]}))
++    ModViewPatch::parse(&json!({"key_contexts": [site]}))
 +        .unwrap()
 +        .apply(&mut target, &mut claims, "first", "idle")
 +        .unwrap();
@@ -154864,7 +154928,7 @@ index 0000000000000000000000000000000000000000..55b8f68dca8e927db5cf4a913a25fac3
 +    let mut target = ModView::default();
 +    let mut claims = BTreeMap::new();
 +    let mut apply = |id: &str, raster: &str| {
-+        ModViewPatch::parse(json!({"underlay": {"raster": raster}}))
++        ModViewPatch::parse(&json!({"underlay": {"raster": raster}}))
 +            .unwrap()
 +            .apply(&mut target, &mut claims, id, "idle")
 +            .unwrap()
@@ -162407,10 +162471,10 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d327bc8f1
+index 0000000000000000000000000000000000000000..facbe775057edd7eff0c62f50675a201051365ba
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1647 @@
+@@ -0,0 +1,1665 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -162489,10 +162553,10 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +}
 +
 +pub type BackupSink<'a> =
-+    dyn Fn(&BTreeMap<String, Option<Vec<u8>>>) -> io::Result<serde_json::Value> + 'a;
++    dyn Fn(&BTreeMap<&str, Option<&[u8]>>) -> io::Result<serde_json::Value> + 'a;
 +
 +fn fingerprint_matches(
-+    expected: &Option<Fingerprint>,
++    expected: Option<&Fingerprint>,
 +    entry: &Option<(Vec<u8>, fs::Permissions)>,
 +    metadata: Option<(u64, u64)>,
 +) -> bool {
@@ -162660,45 +162724,53 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +        let writes = self
 +            .writes
 +            .iter()
-+            .map(|(name, text)| (name.clone(), text.as_bytes().to_vec()))
-+            .chain(self.byte_writes.clone())
++            .map(|(name, text)| (name.as_str(), text.as_bytes()))
++            .chain(
++                self.byte_writes
++                    .iter()
++                    .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
++            )
 +            .collect::<BTreeMap<_, _>>();
 +        if writes.len() != self.writes.len() + self.byte_writes.len() {
 +            return Err(invalid("duplicate write"));
 +        }
-+        let deletes = self.deletes.iter().cloned().collect::<BTreeSet<_>>();
++        let deletes = self
++            .deletes
++            .iter()
++            .map(String::as_str)
++            .collect::<BTreeSet<_>>();
 +        if deletes.len() != self.deletes.len()
-+            || deletes.iter().any(|name| writes.contains_key(name))
++            || deletes.iter().any(|name| writes.contains_key(*name))
 +        {
 +            return Err(invalid("duplicate or overlapping delete"));
 +        }
-+        let mut affected = writes.keys().cloned().collect::<BTreeSet<_>>();
-+        affected.extend(deletes.iter().cloned());
++        let mut affected = writes.keys().copied().collect::<BTreeSet<_>>();
++        affected.extend(deletes.iter().copied());
 +        let mut rename_sources = BTreeSet::new();
 +        let mut rename_destinations = BTreeSet::new();
 +        for rename in &self.renames {
 +            if rename.old == rename.new
-+                || !rename_sources.insert(rename.old.clone())
-+                || !rename_destinations.insert(rename.new.clone())
++                || !rename_sources.insert(rename.old.as_str())
++                || !rename_destinations.insert(rename.new.as_str())
 +            {
 +                return Err(invalid("duplicate or overlapping rename"));
 +            }
-+            affected.insert(rename.old.clone());
-+            affected.insert(rename.new.clone());
++            affected.insert(rename.old.as_str());
++            affected.insert(rename.new.as_str());
 +        }
 +        if affected.is_empty()
 +            || affected.len() > 128
 +            || affected.len() != self.expected.len()
 +            || affected
 +                .iter()
-+                .any(|name| !self.expected.contains_key(name))
-+            || writes.values().map(Vec::len).sum::<usize>() > 4 * 1024 * 1024
++                .any(|name| !self.expected.contains_key(*name))
++            || writes.values().map(|bytes| bytes.len()).sum::<usize>() > 4 * 1024 * 1024
 +            || rename_sources
 +                .iter()
-+                .any(|name| rename_destinations.contains(name) || deletes.contains(name))
++                .any(|name| rename_destinations.contains(*name) || deletes.contains(*name))
 +            || rename_destinations
 +                .iter()
-+                .any(|name| writes.contains_key(name) || deletes.contains(name))
++                .any(|name| writes.contains_key(*name) || deletes.contains(*name))
 +        {
 +            return Err(invalid("transaction scope or size invalid"));
 +        }
@@ -162714,14 +162786,14 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +            if observed_bytes > 4 * 1024 * 1024 {
 +                return Err(invalid("transaction source bytes exceed limit"));
 +            }
-+            let expected = self.expected.get(name).cloned().flatten();
-+            if !fingerprint_matches(&expected, &entry, stat_fingerprint(repository, name)?) {
++            let expected = self.expected.get(*name).and_then(Option::as_ref);
++            if !fingerprint_matches(expected, &entry, stat_fingerprint(repository, name)?) {
 +                return Err(invalid(format!("stale expected version for {name}")));
 +            }
-+            before.insert(name.clone(), entry);
++            before.insert(*name, entry);
 +        }
 +        for name in &deletes {
-+            if before.get(name).is_none_or(Option::is_none) {
++            if before.get(*name).is_none_or(Option::is_none) {
 +                return Err(invalid("delete target must exist"));
 +            }
 +        }
@@ -162729,9 +162801,7 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +            Some(sink) => Some(sink(
 +                &before
 +                    .iter()
-+                    .map(|(name, entry)| {
-+                        (name.clone(), entry.as_ref().map(|(bytes, _)| bytes.clone()))
-+                    })
++                    .map(|(name, entry)| (*name, entry.as_ref().map(|(bytes, _)| bytes.as_slice())))
 +                    .collect(),
 +            )?),
 +            None => None,
@@ -162748,8 +162818,8 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +                .map(|(bytes, _)| crate::sha256_hex(bytes))
 +        };
 +        for rename in &self.renames {
-+            if before.get(&rename.old).is_none_or(Option::is_none)
-+                || before.get(&rename.new).is_some_and(Option::is_some)
++            if before.get(rename.old.as_str()).is_none_or(Option::is_none)
++                || before.get(rename.new.as_str()).is_some_and(Option::is_some)
 +            {
 +                return Err(invalid(
 +                    "rename source must exist and destination must be absent",
@@ -162772,7 +162842,7 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +                    .map(|(_, permissions)| permissions.clone())
 +                    .unwrap_or_else(|| fs::Permissions::from_mode(0o644));
 +                write_version(repository, name, bytes, &permissions)?;
-+                applied.insert(name.clone(), Some(crate::sha256_hex(bytes)));
++                applied.insert(*name, Some(crate::sha256_hex(bytes)));
 +            }
 +            for name in &deletes {
 +                if !active() {
@@ -162783,7 +162853,7 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +                }
 +                let (parent, target) = open_parent(repository, name)?;
 +                unlinkat(&parent, &target, AtFlags::empty())?;
-+                applied.insert(name.clone(), None);
++                applied.insert(*name, None);
 +            }
 +            for rename in &self.renames {
 +                if !active() {
@@ -162794,7 +162864,7 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +                let (old_parent, old_name) = open_parent(repository, &rename.old)?;
 +                let (new_parent, new_name) = open_parent(repository, &rename.new)?;
 +                let expected_old = applied
-+                    .get(&rename.old)
++                    .get(rename.old.as_str())
 +                    .cloned()
 +                    .unwrap_or_else(|| before_hash(&rename.old));
 +                if read_version(repository, &rename.old, 4 * 1024 * 1024)?
@@ -162806,8 +162876,8 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +                    return Err(invalid("workspace changed before rename"));
 +                }
 +                rename_exclusive(&old_parent, &old_name, &new_parent, &new_name)?;
-+                applied.insert(rename.old.clone(), None);
-+                applied.insert(rename.new.clone(), expected_old);
++                applied.insert(rename.old.as_str(), None);
++                applied.insert(rename.new.as_str(), expected_old);
 +            }
 +            Ok(())
 +        })();
@@ -162841,7 +162911,7 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +        let mut files = BTreeMap::new();
 +        for name in &affected {
 +            files.insert(
-+                name.clone(),
++                (*name).to_owned(),
 +                read_version(repository, name, 4 * 1024 * 1024)?
 +                    .as_ref()
 +                    .map(|(bytes, _)| crate::sha256_hex(bytes)),
@@ -163992,15 +164062,18 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +    }
 +
 +    #[test]
-+    fn transaction_deletes_with_stat_precondition_and_backup() {
++    fn transaction_mixes_text_and_binary_writes_with_delete_and_backup() {
 +        let directory = tempfile::tempdir().unwrap();
 +        let root = directory.path().canonicalize().unwrap();
 +        fs::write(root.join("keep.txt"), "keep\n").unwrap();
 +        fs::write(root.join("drop.txt"), "drop\n").unwrap();
 +        let (size, mtime_ms) = stat_fingerprint(&root, "drop.txt").unwrap().unwrap();
 +        let saved = std::cell::RefCell::new(BTreeMap::new());
-+        let sink = |files: &BTreeMap<String, Option<Vec<u8>>>| {
-+            *saved.borrow_mut() = files.clone();
++        let sink = |files: &BTreeMap<&str, Option<&[u8]>>| {
++            *saved.borrow_mut() = files
++                .iter()
++                .map(|(name, bytes)| ((*name).to_owned(), bytes.map(<[u8]>::to_vec)))
++                .collect();
 +            Ok(serde_json::json!({"backup": "ok"}))
 +        };
 +        let transaction = WorkspaceTransaction {
@@ -164013,8 +164086,10 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +                    "keep.txt".into(),
 +                    Some(Fingerprint::Hash(crate::sha256_hex(b"keep\n"))),
 +                ),
++                ("binary.bin".into(), None),
 +            ]),
 +            writes: BTreeMap::from([("keep.txt".into(), "kept\n".into())]),
++            byte_writes: BTreeMap::from([("binary.bin".into(), vec![0, 255, 128])]),
 +            deletes: vec!["drop.txt".into()],
 +            backup: true,
 +            ..Default::default()
@@ -164024,9 +164099,16 @@ index 0000000000000000000000000000000000000000..e11f07ef69e5f4a66bff65e221b3352d
 +            .unwrap();
 +        assert!(!root.join("drop.txt").exists());
 +        assert_eq!(fs::read_to_string(root.join("keep.txt")).unwrap(), "kept\n");
++        assert_eq!(fs::read(root.join("binary.bin")).unwrap(), [0, 255, 128]);
++        assert_eq!(
++            result.files["binary.bin"],
++            Some(crate::sha256_hex([0, 255, 128]))
++        );
 +        assert_eq!(result.files["drop.txt"], None);
 +        assert_eq!(result.backup, Some(serde_json::json!({"backup": "ok"})));
 +        assert_eq!(saved.borrow()["drop.txt"], Some(b"drop\n".to_vec()));
++        assert_eq!(saved.borrow()["keep.txt"], Some(b"keep\n".to_vec()));
++        assert_eq!(saved.borrow()["binary.bin"], None);
 +        let stale = WorkspaceTransaction {
 +            expected: BTreeMap::from([(
 +                "keep.txt".into(),
@@ -169022,10 +169104,10 @@ index 0000000000000000000000000000000000000000..810a873e4b715fdcf8462d5129f9b723
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fbbd520b327e6246b6871d239e3581a5166e997e
+index 0000000000000000000000000000000000000000..cdddf9856188ddaa873e03ddad82b879ff95a439
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,7885 @@
+@@ -0,0 +1,7886 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -170766,13 +170848,13 @@ index 0000000000000000000000000000000000000000..fbbd520b327e6246b6871d239e3581a5
 +    );
 +    assert!(
 +        codex_omd::ModViewPatch::parse(
-+            json!({"sites":{"sidebar":{"mode":"wrap","components":[]}}})
++            &json!({"sites":{"sidebar":{"mode":"wrap","components":[]}}})
 +        )
 +        .is_err()
 +    );
 +    assert!(
 +        codex_omd::ModViewPatch::parse(
-+            json!({"sites":{"sidebar":{"mode":"wrap","components":[{"type":"slot"}]}}})
++            &json!({"sites":{"sidebar":{"mode":"wrap","components":[{"type":"slot"}]}}})
 +        )
 +        .is_ok()
 +    );
@@ -171196,8 +171278,8 @@ index 0000000000000000000000000000000000000000..fbbd520b327e6246b6871d239e3581a5
 +#[test]
 +fn a_failed_terminal_patch_is_transactional() {
 +    let mut view = codex_omd::ModView::parse(json!({"title":"Base","sites":{"sidebar":{"components":[{"type":"text","id":"base","label":"Base","text":"base"}]}}})).unwrap();
-+    let first = codex_omd::ModViewPatch::parse(json!({"title":"First","sites":{"sidebar":{"components":[{"type":"text","id":"first","label":"First","text":"first"}]}}})).unwrap();
-+    let second = codex_omd::ModViewPatch::parse(json!({"title":"Leaked","sites":{"sidebar":{"mode":"wrap","components":[{"type":"text","id":"first","label":"Second","text":"second"},{"type":"slot"}]}}})).unwrap();
++    let first = codex_omd::ModViewPatch::parse(&json!({"title":"First","sites":{"sidebar":{"components":[{"type":"text","id":"first","label":"First","text":"first"}]}}})).unwrap();
++    let second = codex_omd::ModViewPatch::parse(&json!({"title":"Leaked","sites":{"sidebar":{"mode":"wrap","components":[{"type":"text","id":"first","label":"Second","text":"second"},{"type":"slot"}]}}})).unwrap();
 +    let mut claims = std::collections::BTreeMap::new();
 +    first
 +        .apply(&mut view, &mut claims, "first", "idle")
@@ -173351,7 +173433,7 @@ index 0000000000000000000000000000000000000000..fbbd520b327e6246b6871d239e3581a5
 +    trust(&store, &path, &["commands"]);
 +    let read = |runtime: &mut ModHost| {
 +        let generation = runtime.generation();
-+        runtime
++        let value = runtime
 +            .invoke(
 +                "fixture",
 +                generation,
@@ -173360,10 +173442,11 @@ index 0000000000000000000000000000000000000000..fbbd520b327e6246b6871d239e3581a5
 +                Value::Null,
 +                ModInvokeOptions::default(),
 +            )
-+            .unwrap()
++            .unwrap();
++        serde_json::from_str::<Value>(value.as_str().unwrap()).unwrap()
 +    };
 +    let mut runtime = host(&temp);
-+    assert_eq!(read(&mut runtime), json!(r#"{"mode":"a","nullable":null}"#));
++    assert_eq!(read(&mut runtime), json!({"mode":"a","nullable":null}));
 +    assert_eq!(
 +        store.selection_status().unwrap()["selections"][0]["settings_origin"],
 +        json!({"mode":"default","nullable":"default"})
@@ -173375,7 +173458,7 @@ index 0000000000000000000000000000000000000000..fbbd520b327e6246b6871d239e3581a5
 +    runtime.reload().unwrap();
 +    assert_eq!(
 +        read(&mut runtime),
-+        json!(r#"{"count":2,"mode":"b","nullable":null}"#)
++        json!({"count":2,"mode":"b","nullable":null})
 +    );
 +    assert_eq!(
 +        store.selection_status().unwrap()["selections"][0]["settings_origin"],
@@ -173386,7 +173469,7 @@ index 0000000000000000000000000000000000000000..fbbd520b327e6246b6871d239e3581a5
 +    runtime.reload().unwrap();
 +    assert_eq!(
 +        read(&mut runtime),
-+        json!(r#"{"count":2,"mode":"a","nullable":null}"#)
++        json!({"count":2,"mode":"a","nullable":null})
 +    );
 +    let revision = store.configuration().unwrap().revision;
 +    codex_omd::write_settings(&store, "fixture", &json!({"count":2})).unwrap();
@@ -176913,10 +176996,10 @@ index 0000000000000000000000000000000000000000..fbbd520b327e6246b6871d239e3581a5
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..11be14cac62016234e9686781a30c977046b11dd
+index 0000000000000000000000000000000000000000..389d5b17ef0e928b0ccdf62c3030053bfcc1a753
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,1945 @@
+@@ -0,0 +1,1957 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
@@ -178834,13 +178917,25 @@ index 0000000000000000000000000000000000000000..11be14cac62016234e9686781a30c977
 +    let store = root.join("store");
 +    ModStore::create(store.clone()).unwrap();
 +    let summary = omd_cli(&store, &["inspect", package.to_str().unwrap()]);
-+    for expected in [
-+        "os access: {\"programs\":[\"/bin/echo\"],\"network\":false}",
-+        "codex config: {\"tools.update_plan.enabled\":true}",
-+        "exec environment: FIXTURE_VALUE",
-+    ] {
-+        assert!(summary.contains(expected), "{expected}\n{summary}");
-+    }
++    let json_field = |prefix: &str| {
++        let value = summary
++            .lines()
++            .find_map(|line| line.trim_start().strip_prefix(prefix))
++            .unwrap_or_else(|| panic!("missing {prefix}\n{summary}"));
++        serde_json::from_str::<serde_json::Value>(value).unwrap()
++    };
++    assert_eq!(
++        json_field("os access: "),
++        json!({"programs": ["/bin/echo"], "network": false})
++    );
++    assert_eq!(
++        json_field("codex config: "),
++        json!({"tools.update_plan.enabled": true})
++    );
++    assert!(
++        summary.contains("exec environment: FIXTURE_VALUE"),
++        "{summary}"
++    );
 +}
 +
 +#[test]

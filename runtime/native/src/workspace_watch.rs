@@ -226,6 +226,9 @@ impl WorkspaceWatches {
             }
         }
         let registration = subscriber.register_paths(targets);
+        if !registration.registration_succeeded() {
+            return Err(io::Error::other("watch_registration_failed"));
+        }
         let mut receiver = DebouncedWatchReceiver::new(receiver, Duration::from_millis(debounce));
         let (root, protected, watch_id) = (self.root.clone(), self.protected.clone(), id.clone());
         let task = tokio::spawn(async move {
