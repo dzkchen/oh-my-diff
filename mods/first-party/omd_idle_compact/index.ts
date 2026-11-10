@@ -2,7 +2,7 @@ import type { ModAPI, ModelResponse } from '../../api.d.ts';
 
 type Waiting = 'approval' | 'question';
 type State = { at: number; ttl: number; expires: number; reported: boolean; identity: string; tokens: number; running: boolean; pending: Record<string, Waiting>; compacted: number;
-  requested: 'idle' | Waiting | null; limited: boolean };
+  requested: 'idle' | Waiting | null; limited: boolean; flat: boolean };
 
 const OPENAI_TTL_MS = 30 * 60_000;
 const OPENAI_LONG_TTL_MS = 12 * 3_600_000;
@@ -13,12 +13,16 @@ const RETRY_MS = 15_000;
 const RETRYABLE = /^client(_surface)?_context_changed/;
 const NOTICE = 'Compacted after the estimated prompt-cache idle interval';
 const LIMITED = 'Idle compaction is off for this thread: other threads hold all of this mod\'s timers';
+const FLAT = {
+  included_subscription: 'Idle compaction is inactive here: ChatGPT plans keep their own prompt cache. To compact anyway, set Estimated cache lifetime in /mods',
+  unpriced: 'Idle compaction is inactive here: no price is known for this model or provider, so its cache can\'t be told apart from a ChatGPT plan\'s. To compact anyway, set Estimated cache lifetime in /mods',
+};
 const CANCELLED = { approval: 'The pending approval was cancelled.', question: 'The unanswered question was cancelled.' };
 
 export default function activate(api: ModAPI) {
   const minutes = Number(api.settings.cache_ttl_minutes) || 0;
   const minTokens = Number(api.settings.min_tokens ?? 100_000);
-  const load = (): State => ({ at: 0, ttl: 0, expires: 0, reported: false, identity: '', tokens: 0, running: false, pending: {}, compacted: 0, requested: null, limited: false,
+  const load = (): State => ({ at: 0, ttl: 0, expires: 0, reported: false, identity: '', tokens: 0, running: false, pending: {}, compacted: 0, requested: null, limited: false, flat: false,
     ...(api.state.get() as Partial<State> | null) });
   const save = (patch: Partial<State>) => api.state.set({ ...load(), ...patch });
   const live = (state: State) => state.ttl > 0 && state.tokens > 0 && state.tokens >= minTokens && Date.now() < state.expires;
@@ -31,10 +35,11 @@ export default function activate(api: ModAPI) {
   };
 
   const identity = (response: ModelResponse) => JSON.stringify([response.provider, response.route, response.credential, response.requested_model, response.served_model]);
+  const flat = (response: ModelResponse) => response.provider === 'openai' && (response.cost.basis === 'included_subscription' || response.cost.basis === 'unpriced');
   const ttlFor = (response: ModelResponse, state: State): [number, boolean] => {
     if (LOCAL_PROVIDERS.has(response.provider)) return [0, false];
     if (minutes > 0) return [minutes * 60_000, false];
-    if (response.provider === 'openai' && (response.cost.basis === 'included_subscription' || response.cost.basis === 'unpriced')) return [0, false];
+    if (flat(response)) return [0, false];
     const reported = (response.usage as { omd_cache_ttl_seconds?: unknown } | null)?.omd_cache_ttl_seconds;
     if (typeof reported === 'number' && Number.isFinite(reported) && reported > 0) return [reported * 1000, true];
     const read = (response.cache.read_tokens ?? 0) > 0;
@@ -54,7 +59,9 @@ export default function activate(api: ModAPI) {
     const expires = response.provider === 'openai' && response.cost.basis !== 'included_subscription' && ttl === OPENAI_LONG_TTL_MS
       && (response.cache.read_tokens ?? 0) > 0
       ? Math.max(previous.ttl === ttl && previous.identity === key ? previous.expires : 0, at + OPENAI_TTL_MS) : at + ttl;
-    const state = { ...previous, at, ttl, expires, reported, identity: key,
+    const told = minutes <= 0 && flat(response);
+    if (told && !previous.flat) api.host.tryCall('terminal.notice', { text: FLAT[response.cost.basis as keyof typeof FLAT], kind: 'info', placement: 'transcript' });
+    const state = { ...previous, at, ttl, expires, reported, identity: key, flat: previous.flat || told,
       tokens: context?.used ?? (tokens.input ?? 0) + (tokens.output ?? 0) };
     save(state);
     if (live(state)) arm(state);

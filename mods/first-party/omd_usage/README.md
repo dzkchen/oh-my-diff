@@ -24,7 +24,7 @@ omd mods enable omd_usage
 | `/omd_usage:budget 5` | Warn when spend reaches 80% and 100% of 5 USD. `0` removes the budget. |
 | `/omd_usage:categories on` | Split each request by role (system, context, user, tool output). `off` turns it back off. |
 
-With a budget set, a notice appears once at 80% and once at 100%, and the dialog shows spend against the budget.
+With a budget set, a notice appears once at 80% and once at 100%, and the dialog shows spend against the budget. Requests with no price yet (unsettled or unknown cost) are not in the figure; the notice and the dialog say how many.
 
 Changes apply from your next message.
 

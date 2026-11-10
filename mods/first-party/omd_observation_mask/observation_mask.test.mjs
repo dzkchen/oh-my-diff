@@ -32,22 +32,34 @@ function view(sizes, { agent = null } = {}) {
 }
 const replaced = value => Object.fromEntries((value?.replace ?? []).map(edit => [edit.index, edit.text]));
 
+const ref = n => ({ tool: 'exec_command', reference: { reference: `r${n}`, sha256: 's' }, bytes: 4000, failed_edit: false });
+const kept = (n, bytes = 4000) => Object.fromEntries(Array.from({ length: n }, (_, c) => [`c${c}`, { ...ref(c), bytes }]));
+
 test('nothing is hidden until older large outputs reach a batch, then all of them are hidden at once', () => {
-  const below = run('history', '', view([4000, 4000, 500, 4000, 4000]));
+  const below = run('history', '', view([4000, 4000, 500, 4000, 4000]), { state: { calls: kept(5) } });
   assert.equal(below.value, null);
   assert.equal(below.state.pending_bytes, 8000);
-  const calls = { c0: { tool: 'exec_command', reference: { reference: 'r0', sha256: 's' }, bytes: 4000, failed_edit: false } };
-  const { value, state } = run('history', '', view([4000, 4000, 500, 4000, 4000, 4000]), { state: { ...below.state, calls } });
+  const { value, state } = run('history', '', view([4000, 4000, 500, 4000, 4000, 4000]), { state: { ...below.state, calls: kept(6) } });
   const edits = replaced(value);
   assert.deepEqual(Object.keys(edits).map(Number), [1, 3, 7], 'short outputs and the newest two stay');
   assert.equal(edits[1], '[omd_observation_mask hid this older exec_command output (4000 bytes, exit 0, first line "line 0"). Read it with mod_omd_observation_mask_recall {"call_id":"c0"}.]');
-  assert.match(edits[3], /older tool output \(4000 bytes, exit 1, first line "line 1"\)\. Its full text was not kept/);
+  assert.match(edits[3], /older exec_command output \(4000 bytes, exit 1, first line "line 1"\)\. Read it with/);
   assert.deepEqual([state.advances, state.hidden_bytes, state.pending_bytes], [1, 12000, 0]);
   assert.equal(state.last_saved_bytes, 12000 - edits[1].length - edits[3].length - edits[7].length);
 });
 
+test('outputs with no restorable original, such as those from before the mod was enabled, are never hidden', () => {
+  const calls = { c2: ref(2), c3: ref(3) };
+  const { value, state } = run('history', '', view(Array(8).fill(6000)), { state: { calls } });
+  assert.deepEqual(Object.keys(replaced(value)).map(Number), [5, 7]);
+  assert.match(Object.values(replaced(value)).join(''), /recall \{"call_id":"c[23]"\}/);
+  assert.doesNotMatch(Object.values(replaced(value)).join(''), /run the call again/);
+  assert.equal(state.pending_bytes, 0);
+  assert.equal(run('history', '', view(Array(8).fill(6000))).value, null);
+});
+
 test('hidden outputs keep identical stubs and the boundary only moves at the next full batch', () => {
-  const first = run('history', '', view([4000, 4000, 4000, 4000, 4000]));
+  const first = run('history', '', view([4000, 4000, 4000, 4000, 4000]), { state: { calls: kept(9) } });
   const stubs = replaced(first.value);
   assert.deepEqual(Object.keys(stubs).map(Number), [1, 3, 5]);
   const second = run('history', '', view([4000, 4000, 4000, 4000, 4000, 4000, 4000]), { state: first.state });
@@ -60,7 +72,7 @@ test('hidden outputs keep identical stubs and the boundary only moves at the nex
 });
 
 test('failed edits and pinned outputs are never hidden, and a pin restores a hidden output', () => {
-  const calls = { c1: { tool: 'apply_patch', reference: null, bytes: 6000, failed_edit: true } };
+  const calls = { ...kept(9, 6000), c1: { tool: 'apply_patch', reference: { reference: 'r1', sha256: 's' }, bytes: 6000, failed_edit: true } };
   const first = run('history', '', view([6000, 6000, 6000, 1, 1]), { state: { calls } });
   assert.deepEqual(Object.keys(replaced(first.value)).map(Number), [1, 5]);
   assert.deepEqual(first.state.kept, ['c1']);
@@ -72,7 +84,7 @@ test('failed edits and pinned outputs are never hidden, and a pin restores a hid
 
 test('no more than 400 outputs are hidden at once', () => {
   const masked = Object.fromEntries(Array.from({ length: 400 }, (_, n) => [`c${n}`, 'stub']));
-  const { value, state } = run('history', '', view(Array(405).fill(4000)), { state: { masked, advances: 1 } });
+  const { value, state } = run('history', '', view(Array(405).fill(4000)), { state: { masked, advances: 1, calls: kept(405) } });
   assert.deepEqual([Object.keys(replaced(value)).length, state?.advances ?? 1], [400, 1]);
 });
 
@@ -82,6 +94,8 @@ test('recall reads the kept original in pages and names a missing one', () => {
   assert.deepEqual(run('tool', 'recall', { call_id: 'c0' }, { state, host }).value,
     { call_id: 'c0', tool: 'exec_command', bytes: 70000, text: 'page 0/32768', next_cursor: 32768 });
   assert.throws(() => run('tool', 'recall', { call_id: 'c9' }), /recall_unavailable: no kept output for c9/);
+  const gone = { 'evidence.read': () => { throw new Error('evidence_not_found'); } };
+  assert.throws(() => run('tool', 'recall', { call_id: 'c0' }, { state, host: gone }), /recall_unavailable: the saved text of c0 is gone \(.*evidence_not_found.*\).*Verify current state instead of rerunning/);
 });
 
 test('large outputs of the thread\'s own calls are kept for recall; small, subagent and code-mode ones are not', () => {
@@ -270,6 +284,17 @@ test('the real continue command keeps interruption checks and notes through the 
     assert.equal(refused.state?.continuation ?? null, null);
   }
   assert.match(invoke('--compact').display, /Enable omd_observation_mask/);
+});
+
+test('/mask says why continue mode cannot hide anything', () => {
+  const mask = (state, mode = 'continue') => run('command', 'mask', '', { state, settings: { mode } }).value.display.split('\n');
+  assert.match(mask(null)[1], /nothing until \/continue \(from the omd_continue mod.*enable omd_continue/);
+  assert.doesNotMatch(mask(null, 'batch').join('\n'), /omd_continue/);
+  assert.match(mask({ continues: 1, cache: { ttl: 0, expires: 0 } })[1], /ChatGPT subscriptions.*only \/continue --compact/);
+  assert.doesNotMatch(mask({ continues: 1, cache: { ttl: 300_000, expires: NOW } }).join('\n'), /omd_continue|ChatGPT/);
+  const seen = requestContinue({ calls: records() });
+  assert.equal(seen.state.continues, 1);
+  assert.equal(requestContinue({ calls: records() }, { owner: 'other' }).state?.continues ?? 0, 0);
 });
 
 test('expired originals cannot block later readable outputs across continuations', () => {

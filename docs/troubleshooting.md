@@ -16,11 +16,17 @@ follow its fix.
 | `Python could not verify GitHub's certificate` | Python from python.org has no CA certificates until you install them | Run `Install Certificates.command` in its `/Applications/Python 3.x` folder, or use Homebrew's Python, then rerun. |
 | `No terminal is available` | The installer can't ask which profile you want | Add `--profile full` or `--profile platform`. |
 
+## Check the install
+
+`omd doctor` runs `codex doctor`, then checks OMD itself and names one fix for each problem it finds. Add `--json`
+for scripts.
+
 ## `codex` still starts plain Codex
 
-If the installer printed `codex on your PATH is ..., not OMD's`, another `codex` comes first on your `PATH`. Add the
-`export PATH=...` line the installer printed to the end of `~/.zshrc` (bash: `~/.bash_profile`), then open a new
-shell. The line doesn't work in `~/.zshenv`, because macOS and Homebrew reorder `PATH` after that file runs.
+If the installer printed `codex on your PATH is ..., not OMD's` or `OMD isn't on your PATH`, you answered `n` to its
+`PATH` question or installed without a terminal. Add the line it printed to the end of `~/.zshrc` (bash:
+`~/.bash_profile`, fish: `~/.config/fish/config.fish`), or rerun the installer and answer `y`, then open a new
+terminal. The line doesn't work in `~/.zshenv`, because macOS and Homebrew reorder `PATH` after that file runs.
 
 If the line is already there, your shell cached the old `codex`. Run `hash -r` or open a new terminal.
 
@@ -77,6 +83,7 @@ omd-mod package-enable STORE ID        # turn a mod you installed back on; its d
 | `capability_denied: NAME` | The mod called something it wasn't granted | Ask its author; `omd-mod-author explain 'capability_denied: NAME'` shows what the message means. |
 | `omd update` says enabled mods don't support the new mod API | Those mods will stop loading after the update | Update or remove them first, or pass `--yes` to update anyway. |
 | An update didn't apply | Other OMD sessions are open | It applies at your next `codex` start with no other session open. |
+| No mod loads, and `/omd` says the host is off | `codex` started in your home folder or in `/` | `cd` into a project folder and run `codex` again. |
 | Alt shortcuts (Alt+a, Alt+s) do nothing in Kitty or Ghostty | The terminal sends Option as a character | Turn on Option-as-Alt: `macos_option_as_alt` in Kitty, `macos-option-as-alt` in Ghostty. |
 
 ## Report a problem
@@ -84,8 +91,8 @@ omd-mod package-enable STORE ID        # turn a mod you installed back on; its d
 Include the output of these commands in a [bug report](https://github.com/dzkchen/oh-my-diff/issues/new/choose):
 
 ```sh
+omd doctor
 omd update status
-omd-package status
 ```
 
 Report security problems [privately](../SECURITY.md), not in a public issue.

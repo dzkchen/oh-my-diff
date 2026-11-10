@@ -505,6 +505,29 @@ test('LSP errors trimmed to fit the state limit are reported as existing, not ne
   assert.doesNotMatch(next.value.append, /50 new/);
 });
 
+test('LSP a language without an installed server says so once', () => {
+  const host = createHost({ files: { 'a.py': 'ok = 1\n' } });
+  host.observe();
+  const notices = [];
+  const told = new Set();
+  host.intercept = call => {
+    if (call.operation === 'terminal.notice') { notices.push(call.arguments); return { shown: true }; }
+    if (call.operation === 'store.put' && call.arguments.key.startsWith('lsp.told.')) {
+      if (told.has(call.arguments.key)) throw failure('store_revision_conflict');
+      told.add(call.arguments.key);
+      return { revision: 1 };
+    }
+  };
+  const first = drive(host, 'tool_output', output({ input: '*** Update File: a.py' }));
+  assert.match(first.value.append, /python_server_absent/);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0].text, /No python language server found.*pyright-langserver/);
+  assert.equal(notices[0].placement, 'transcript');
+  drive(host, 'tool_output', output({ input: '*** Update File: a.py' }), first.state);
+  drive(host, 'tool_output', output({ input: '*** Update File: a.py' }), null);
+  assert.equal(notices.length, 1, 'a new thread shares the repository store');
+});
+
 test('LSP an apply_patch that only deletes files starts no server', () => {
   const host = createHost({ files: { 'a.py': 'ok = 1\n' }, server: diagnosticServer });
   host.observe();

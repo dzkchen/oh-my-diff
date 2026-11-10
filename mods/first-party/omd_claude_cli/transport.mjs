@@ -9,10 +9,9 @@ import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, handoff } from './handoff.mjs';
-import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, loginCommand, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
+import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, PLANS, cliSupported, loginCommand, signedIn, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
-const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
 const CLI_DEADLINE_MS = 30 * 60_000;
 const DECODERS = { gzip: promisify(gunzip), deflate: promisify(inflate), br: promisify(brotliDecompress) };
@@ -46,14 +45,8 @@ function checkAuth(claude, billing, home, username, account) {
     env: cliEnv({ HOME: home, USER: username, LOGNAME: username, ...accountEnv(account) }) });
   let status;
   try { status = JSON.parse(probe.stdout); } catch { status = {}; }
-  const signedIn = probe.status === 0 && status.loggedIn === true && status.apiProvider === 'firstParty';
-  if (billing === 'api') {
-    if (!signedIn || status.authMethod !== 'api_key' || status.apiKeySource !== '/login managed key') {
-      throw new Error(`claude_console_api_key_login_required: run ${loginHint(billing, account)}`);
-    }
-  } else if (!signedIn || status.authMethod !== 'claude.ai' || !PLANS[status.subscriptionType]) {
-    throw new Error(`claude_ai_subscription_login_required: run ${loginHint(billing, account)}`);
-  }
+  const accepted = probe.status === 0 && signedIn(status, billing);
+  if (!accepted) throw new Error(`${billing === 'api' ? 'claude_console_api_key_login_required' : 'claude_ai_subscription_login_required'}: run ${loginHint(billing, account)}`);
   return status;
 }
 

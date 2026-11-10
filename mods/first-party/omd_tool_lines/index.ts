@@ -1,6 +1,6 @@
 import type { Json, ModAPI, RenderEvent, RenderExecCall, RenderParsedCommand, RenderToolCall, TerminalComponent, TerminalSpan } from '../../api.d.ts';
 
-type Row = { name: string; args: string; marker: (string | null)[]; failed: boolean; running: boolean };
+type Row = { name: string; args: string; marker: (string | null)[]; failed: boolean; running: boolean; reason?: string | null };
 
 const ASCII = /^[\x20-\x7e]*$/;
 const bytes = (text: string) => { let size = 0; for (const char of text) { const point = char.codePointAt(0)!; size += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4; } return size; };
@@ -43,6 +43,8 @@ const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   return `${kept.join('')}…`;
 };
 
+const lastLine = (text: string | null | undefined) => text?.split('\n').map(part => part.trim()).filter(Boolean).at(-1) ?? null;
+
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : noun === 'search' ? 'es' : 's'}`;
 const lines = (count: number | null, status: RenderToolCall['status']) => count == null || status === 'running' ? null : plural(count, 'line');
 
@@ -79,7 +81,7 @@ const exec = (call: RenderExecCall): Row => {
   return {
     name, args: name === 'Shell' ? call.command : parsed.map(parsedArgs).join(', '),
     marker: [outcome(call.status, call.exit_code), lines(call.output_lines, call.status), duration(call.duration_ms)],
-    failed: call.status === 'failed', running: call.status === 'running',
+    failed: call.status === 'failed', running: call.status === 'running', reason: call.status === 'failed' ? lastLine(call.output_tail) : null,
   };
 };
 
@@ -100,8 +102,8 @@ const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null =>
     }
     case 'web_search': return { name: SEARCH_ACTIONS[props.action] ?? 'Web', args: props.query, marker: [outcome(props.status)], ...base };
     case 'agent': return { name: AGENT_TOOLS[props.tool] ?? 'Agent', args: [props.agents.join(', '), props.prompt].filter(Boolean).join(' · '), marker: [outcome(props.status)], ...base };
-    case 'mcp': return { name: `${props.server}.${props.tool}`, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], ...base };
-    case 'dynamic': return { name: props.tool, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], ...base };
+    case 'mcp': return { name: `${props.server}.${props.tool}`, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], reason: props.status === 'failed' ? props.error?.split('\n').map(part => part.trim()).find(Boolean) : null, ...base };
+    case 'dynamic': return { name: props.tool, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], reason: props.status === 'failed' ? props.error?.split('\n').map(part => part.trim()).find(Boolean) : null, ...base };
     case 'image': return props.tool === 'view_image' ? null : { name: 'Generate image', args: props.path ?? props.prompt ?? '', marker: [outcome(props.status)], ...base };
     default: return null;
   }
@@ -125,7 +127,7 @@ const group = (calls: RenderExecCall[]): Row => {
       failed.length > interrupted.length ? `${failed.length - interrupted.length} failed` : null,
       interrupted.length ? `${interrupted.length} interrupted` : failed.length || running.length ? null : 'ok',
       duration(calls.reduce((total, call) => total + (call.duration_ms ?? 0), 0))],
-    failed: failed.length > 0, running: running.length > 0,
+    failed: failed.length > 0, running: running.length > 0, reason: lastLine(failed.filter(call => call.status === 'failed').at(-1)?.output_tail),
   };
 };
 
@@ -146,6 +148,11 @@ const line = (id: string, item: Row, columns: number): TerminalComponent => {
   return { type: 'line', id, label: fit(`${item.name} ${args}`, 120, 120, 120), spans };
 };
 
+const reason = (id: string, text: string, columns: number): TerminalComponent => {
+  const shown = fit(text, Math.max(0, Math.min(columns, 256) - 4), 240);
+  return { type: 'line', id, label: fit(text, 120, 120, 120), spans: [{ text: `  └ ${shown}`, tone: 'failure' }] };
+};
+
 export default function activate(api: ModAPI) {
   api.builtins({ group_exec: true });
   api.intercept('render', { match: { component: 'tool_call' } }, (event, next) => {
@@ -155,7 +162,8 @@ export default function activate(api: ModAPI) {
       const rows = props.kind === 'explore' && props.calls.length > 1 ? [group(props.calls)]
         : props.kind === 'explore' ? props.calls.map(exec) : [row(props)];
       if (rows.length && rows.every((item): item is Row => item !== null)) {
-        return { tree: rows.map((item, index) => line(`tool_lines_${index}`, item, viewport.columns)) };
+        return { tree: rows.flatMap((item, index) => [line(`tool_lines_${index}`, item, viewport.columns),
+          ...item.reason ? [reason(`tool_lines_${index}_reason`, item.reason, viewport.columns)] : []]) };
       }
     } catch {}
     return next(event);

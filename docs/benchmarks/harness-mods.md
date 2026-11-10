@@ -10,7 +10,8 @@ interval that includes zero.
 This report covers the setup, two changes that made OMD more expensive until they were corrected, the results and
 the limitations of the run. Both arms used Codex `0.166.0` on a single Apple Silicon Mac on 2026-11-01. The results
 come from one run of one model on 43 tasks and should be read as an indication of direction, not as a release
-measurement. The mods are experimental, and no install profile includes them.
+measurement. The mods were experimental at the time. OMD+ now includes `omd_observation_mask`, turned off, and no
+install profile includes the other three.
 
 ## The harness is everything around the model
 
@@ -148,8 +149,8 @@ Three findings from the traces led to code changes after the final run. None of 
   It now also checks files changed by a shell command.
 - Another experimental mod, [`omd_loop_guard`](../../mods/first-party/omd_loop_guard/README.md), notifies the agent
   when the same call repeatedly returns the same error or output.
-- `omd_plan_removal` no longer changes the tool list, and OMD+ installs it disabled, so plan mode works in Codex and in
-  applications such as [T3 Code](../use-with-t3-code.md). `omd_plan_anchor` no longer adds `update_plan` either, so
+- `omd_plan_removal` no longer changes the tool list, and OMD+ no longer installs it (it's an opt-in experimental mod),
+  so plan mode works in Codex and in applications such as [T3 Code](../use-with-t3-code.md). `omd_plan_anchor` no longer adds `update_plan` either, so
   it now does nothing on gpt-6.1-sol.
 
 ## OMD+ with the mods on the nightly build
@@ -159,11 +160,11 @@ After those changes, I ran the 23 tuning tasks once more, with one attempt each,
 mods enabled, plus the four mods above, `omd_loop_guard` and the output-budget component. I disabled two OMD+ defaults
 that change the tool list, since the nightly predates the fix for them:
 
-- `omd_plan_removal`, which OMD+ now installs disabled.
+- `omd_plan_removal`, which OMD+ no longer installs.
 - [`omd_plan_panel`](../../mods/first-party/omd_plan_panel/README.md), which enables `update_plan` to draw the plan
   above the prompt. This adds `update_plan` to the tool list, so every new OMD+ thread missed the shared 12K-token
   prefix on its first request, the same problem described above. Earlier runs did not show it because they disabled
-  the interface mods. OMD+ now installs it disabled.
+  the interface mods. OMD+ no longer installs it.
 
 With both disabled, the first request's tools and system prompt were byte-identical to stock's, and none of the 23
 first requests was uncached. The comparison is against the stock runs of the same tasks.

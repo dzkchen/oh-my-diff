@@ -48,7 +48,9 @@ after later turns, as long as the files it touches haven't changed since.
 ## What it records
 
 - At the start and end of each turn it stores the work tree as a Git commit, using its own index file in `.git`
-  (`omd-checkpoint-THREAD.index`), so your staged changes are untouched.
+  (`omd-checkpoint-0.index` to `-3.index`, at most four per checkout, used in turn so concurrent sessions don't
+  collide), so your staged changes are untouched. The first turn in a checkout removes
+  `omd-checkpoint-*.index` files left by earlier versions.
 - It keeps the last 10 turns that changed files, in one history per checkout shared by every Codex session there. Each
   is kept alive by a ref under `refs/omd/checkpoints/<checkout>/`, one namespace per checkout so linked worktrees
   keep each other's refs, and older ones are removed. Once removed, `git gc` can delete their data.

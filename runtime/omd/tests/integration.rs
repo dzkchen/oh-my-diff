@@ -333,8 +333,9 @@ fn disabling_a_shared_service_provider_stops_only_its_required_consumer() {
 
     let mut reopened = host(&temp);
     assert!(
-        error_of(&reopened, "required")
-            .contains("service_provider_missing: required requires shared.echo"),
+        error_of(&reopened, "required").contains(
+            "service_provider_missing: required requires shared.echo; turn on provider in /omd"
+        ),
         "{}",
         error_of(&reopened, "required")
     );

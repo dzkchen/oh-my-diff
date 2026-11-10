@@ -6,6 +6,10 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Pins the session's update_plan steps above the composer with status glyphs, a done/total header and a collapse key",
+  "contributes": {
+    "commands": [{ "name": "todos", "description": "Toggle the plan panel between its row limit and every step, or clear the plan" }],
+    "keys": [{ "key": "Alt+p", "description": "Collapse or expand the plan panel" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_plan_panel"},
   "capabilities": ["terminal", "commands", "store", "threads"],

@@ -17,11 +17,11 @@ omd mods enable omd_advisor
 Then pick the model the advisor runs on. That's the `route` setting, which has no default. In `/mods`, open Advisor,
 then Advisor model. It lists worker routes and the routes of connected providers whose model is available now. Or
 select Choose a model for Advisor model to pick any ChatGPT model on your plan and its reasoning effort. Set up other
-providers first in `/profiles` or their provider mod, such as Claude CLI; the advisor uses that connection's model
+providers first in `/profile` or their provider mod, such as Claude CLI; the advisor uses that connection's model
 access. Paid routes still need their configured allowance.
 
 Choose a different model from the lead: `skip_same_model` is on by default, so the advisor skips while its route uses
-the lead's model. Add a helper model uses the model you're chatting with, and Choose a model marks the lead's model. To
+the lead's model and says so once in the transcript. Add a helper model uses the model you're chatting with, and Choose a model marks the lead's model. To
 consult the same model deliberately, turn that setting off. Until a model is selected, the advisor reports `unavailable`
 with the routes it can use, and the status line reads `Advisor: no route set`.
 

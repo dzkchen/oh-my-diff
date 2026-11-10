@@ -75,13 +75,13 @@ test('child tool results do not schedule refreshes without a session', () => {
   assert.ok(lead.calls.some(item => item.operation === 'events.schedule' && item.arguments.key === 'time:git_soon'));
 });
 
-test('cost follows the ledger basis: included on the ChatGPT plan, unknown when unpriced', () => {
+test('cost follows the ledger basis: included on the ChatGPT plan, hidden when unpriced', () => {
   const settings = { preset: 'custom', layout: 'provider cost' };
   const plan = host({ 'app.request': args => args.method === 'config/read' ? { config: {} } : { rateLimits: { planType: 'plus' } } });
   const included = [['model_response', response('r1', { cost: { microusd: 0, basis: 'included_subscription' } })]];
   const unpriced = [['model_response', response('r1', { cost: { microusd: null, basis: 'unpriced' } })]];
   assert.match(lines(view(feed(started(), included), settings))[0], /included/);
-  assert.match(lines(view(feed(settled(plan), unpriced), settings))[0], /unknown/, 'a plan type does not make an unpriced request included');
+  assert.doesNotMatch(lines(view(feed(settled(plan), unpriced), settings))[0], /included|cost unknown/, 'a plan type does not make an unpriced request included');
 });
 
 test('user scripts get session JSON on stdin and only safe styled text reaches the view', () => {
@@ -118,6 +118,15 @@ test('a panel action after the UI state was cleared edits the saved settings and
   assert.deepEqual([edited.ui.draft.layout, edited.ui.draft.glyphs], ['model git', 'ascii']);
   const panel = edited.calls.findLast(item => item.operation === 'terminal.panel').arguments;
   assert.equal(panel.items.find(item => item.id === 'thresholds').value.length, 2000);
+});
+
+test('/statusline github says when the layout or setting keeps pull request and CI hidden', () => {
+  const answer = host({ 'credentials.request': () => ({ status: 'completed' }) });
+  const saved = settings => call({ event: 'command', name: 'edit', payload: 'github', settings }, answer).value.display;
+  assert.match(saved({}), /saved.*no pr or ci segment.*detailed preset/);
+  assert.match(saved({ preset: 'detailed' }), /refresh now\.$/);
+  assert.match(saved({ preset: 'custom', layout: 'model pr' }), /refresh now\.$/);
+  assert.match(saved({ preset: 'detailed', github: false }), /setting is off.*\/mods/);
 });
 
 test('profile, tier and workspace segments follow the config layers, thread settings and account', () => {

@@ -59,6 +59,7 @@ timing}` from the worker's `model_response` records:
 | Error | When |
 | --- | --- |
 | `model_route_required` | `model.complete` without `route` |
+| `agent_prompt_or_role_limit` | `prompt` is empty or over 8 KiB, or `route` is empty |
 | `model_call_option_invalid` | `system`, `context`, `output.schema`, `effort`, `max_output_tokens` or `cache` is out of range |
 | `model_tools_require_fork` | `tools` on `model.complete` |
 | `capability_denied: sessions`, `capability_denied: sessions_tools` | `model.fork` without those capabilities |

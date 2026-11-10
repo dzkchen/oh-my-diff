@@ -4,7 +4,9 @@ Use it when a plugin contains a mod component or when you run a mod's exported s
 To bundle a mod in a plugin step by step, see
 [Bundle a mod in a plugin](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/bundle-in-a-plugin.md).
 
-The descriptor and `omd COMMAND` run on Apple Silicon macOS.
+Mod API `1.0.0`: the descriptor and `omd COMMAND` are experimental (see
+[Stability and migration](stability-and-migration.md#experimental-features-without-a-registry-entry)). Platform:
+Apple Silicon macOS.
 
 ## Plugin component descriptor
 
@@ -22,6 +24,31 @@ A plugin names its [mod component](glossary.md#mods-and-the-host) in `.codex-plu
   changes.
 - Trust and enable the inspected component the same way as any other package ([Packaging](packaging.md)). The
   descriptor does not activate it.
+
+## Installing from `/mods`
+
+Experimental (`plugin_components_v1`). `plugins.components` (capability `packages`, user contexts only) lists the
+mod components of the Codex plugins installed for this user:
+
+```text
+plugins.components → {components: [{plugin, marketplace, version, id, description, sha256, error, installed, enabled}]}
+```
+
+- It reads `CODEX_HOME/config.toml` `[plugins."PLUGIN@MARKETPLACE"]` entries and each plugin's active version under
+  `CODEX_HOME/plugins/cache/MARKETPLACE/PLUGIN/VERSION`, the way Codex picks it, and lists the plugins that have
+  `.codex-plugin/omd.json`.
+- `sha256` is the verified descriptor digest. `error` says why the component can't be installed (for example
+  `plugin_component_hash_mismatch`), and then `id`, `description` and `sha256` are `null`.
+- `installed` and `enabled` say whether a mod with the component's id is installed and turned on in the store.
+
+The `plugin` package source `{kind: 'plugin', plugin, marketplace?}` installs that component through
+`packages.preview` and `packages.apply` like a `local` source, after the same checks as `omd-mod plugin-component`.
+`marketplace` is needed only when two installed marketplaces have the plugin. Add `enable: true` to turn it on under
+the same confirmation:
+
+```ts
+api.host.tryCall('packages.apply', { action: 'install', source: { kind: 'plugin', plugin: 'omd-anchored-edit' }, enable: true, expected_generation: generation });
+```
 
 ## `omd COMMAND` shell dispatch
 

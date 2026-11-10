@@ -51,6 +51,7 @@ Change settings in `/mods`.
   `store`, `events`, `lifecycle` and `inventory` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - You need `node` on your `PATH`. Pages are written to `.omd/preview` in the repository.
+  A `.gitignore` containing `*` in `.omd/preview` (kept if one exists) makes Git ignore them.
 - Files can be up to 5 MB and responses up to about 48 KB. The inline view shows the first 4 KB of Markdown or code,
   or 48 KB of a diff. It also stops at 2,000 lines, or 60 KB once quotes and backslashes are escaped. A notice says
   when the view was cut.

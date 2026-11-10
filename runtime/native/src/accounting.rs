@@ -585,7 +585,9 @@ impl Accounts {
             denied(format!("final_request_refused: {reason}"))
         };
         if let Some(reason) = policy.unavailable {
-            return Err(refuse(format!("request_policy_unavailable: {reason}")));
+            return Err(refuse(format!(
+                "request_policy_unavailable: {reason}; turn the mod off or reload it in /omd"
+            )));
         }
         let scope = match account {
             Some(account) => payload_scope(account, thread),

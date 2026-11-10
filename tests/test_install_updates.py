@@ -93,6 +93,12 @@ class UpdateSelection(unittest.TestCase):
         self.module.user_mods = lambda record, store, mod_api: []
         self.module.node_binary = lambda *arguments: Path("/usr/bin/true")
         self.module.upstream_binary = self.upstream
+        self.home = Path(tempfile.mkdtemp(prefix="omd-home-", dir="/private/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, self.home, True)
+        patch.dict(os.environ, {"HOME": str(self.home)}).start()
+        self.addCleanup(patch.stopall)
+        for name in ("SHELL", "ZDOTDIR", "XDG_CONFIG_HOME"):
+            os.environ.pop(name, None)
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -154,10 +160,11 @@ class UpdateSelection(unittest.TestCase):
         for channel, selected, saved in ((None, "nightly", []), ("stable", "stable", [("channel", "stable")])):
             with self.subTest(channel=channel):
                 args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://localhost/releases",
-                                             channel=channel, session=None, json=True)
+                                             channel=channel, session=None, json=True, bin_dir=self.root / "bin")
                 with patch.object(self.module.platform, "system", return_value="Darwin"), \
                         patch.object(self.module.platform, "machine", return_value="arm64"), \
                         patch.object(self.module, "profile_choice", return_value="platform"), \
+                        patch.object(self.module, "path_plan", return_value={"shadowing": None, "profile": None, "write": False, "present": False}), \
                         patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download", return_value=0) as download, \
                         patch.object(self.module, "transaction", return_value={}), patch.object(self.module, "set_policy") as policy, \
                         patch("builtins.print"):
@@ -262,16 +269,90 @@ class UpdateSelection(unittest.TestCase):
             with self.subTest(upstream=upstream), self.assertRaisesRegex(ValueError, "OMD launcher"):
                 module.upstream_binary(types.SimpleNamespace(**vars(args) | {"upstream": upstream}), None, module.UPSTREAM_MINOR)
 
-    def test_install_warns_when_upstream_codex_precedes_the_launcher(self):
-        upstream, bin_dir = self.root / "upstream", self.root / "bin"
-        for directory in (upstream, bin_dir):
+    def terminal(self, answer):
+        def opened(path, mode="r", *arguments, **keywords):
+            if path != "/dev/tty":
+                return open(path, mode, *arguments, **keywords)
+            if answer is None:
+                raise OSError("no controlling terminal")
+            return io.StringIO(answer) if mode == "r" else io.StringIO()
+        return patch.object(self.module, "open", opened, create=True)
+
+    def test_shadowing_codex_follows_path_order(self):
+        upstream, bin_dir, empty = self.root / "upstream", self.root / "bin", self.root / "empty"
+        for directory in (upstream, bin_dir, empty):
             directory.mkdir()
+        for directory in (upstream, bin_dir):
             (directory / "codex").write_text("#!/bin/sh\n")
             (directory / "codex").chmod(0o755)
-        with patch.dict(os.environ, {"PATH": f"{upstream}:{bin_dir}"}):
-            self.assertEqual(self.module.shadowing_codex(bin_dir), str(upstream / "codex"))
-        with patch.dict(os.environ, {"PATH": f"{bin_dir}:{upstream}"}):
-            self.assertIsNone(self.module.shadowing_codex(bin_dir))
+        plain = self.root / "plain"
+        plain.mkdir()
+        (plain / "codex").write_text("not executable")
+        for path, expected in ((f"{upstream}:{bin_dir}", str(upstream / "codex")), (f"{bin_dir}:{upstream}", None),
+                               (f"{empty}:{bin_dir}:{upstream}", None), (f"{empty}:{plain}:{upstream}:{bin_dir}", str(upstream / "codex")),
+                               (f"{plain}:{bin_dir}", None), (f"{empty}:{plain}", "missing"), ("", "missing"), (f"{upstream}", str(upstream / "codex"))):
+            with self.subTest(path=path), patch.dict(os.environ, {"PATH": path}):
+                self.assertEqual(self.module.shadowing_codex(bin_dir), expected)
+
+    def test_path_setup_asks_once_edits_one_marked_block_and_uninstall_removes_it(self):
+        other, bin_dir, elsewhere = self.root / "other", self.root / "bin", self.root / "elsewhere"
+        for directory in (other, bin_dir, elsewhere):
+            directory.mkdir()
+        (other / "codex").write_text("#!/bin/sh\n")
+        (other / "codex").chmod(0o755)
+        args = types.SimpleNamespace(bin_dir=bin_dir)
+        for shell, relative, line in (("zsh", ".zshrc", f'export PATH={bin_dir}:"$PATH"'),
+                                      ("bash", ".bash_profile", f'export PATH={bin_dir}:"$PATH"'),
+                                      ("fish", ".config/fish/config.fish", f"fish_add_path --global --move --path {bin_dir}")):
+            with self.subTest(shell=shell), patch.dict(os.environ, {"PATH": str(other), "SHELL": f"/bin/{shell}"}):
+                profile = self.home / relative
+                profile.parent.mkdir(parents=True, exist_ok=True)
+                foreign = self.module.path_block(elsewhere, profile)
+                before = f"alias ll='ls -l'\n{foreign}set -x EDITOR vim\n"
+                profile.write_text(before)
+                for answer in (None, "n\n", "no\n", ""):
+                    with self.terminal(answer):
+                        plan = self.module.path_plan(args)
+                    self.assertEqual((plan["write"], plan["shadowing"], plan["profile"]), (False, str(other / "codex"), profile))
+                self.assertEqual(profile.read_text(), before)
+                with self.terminal("\n"):
+                    plan = self.module.path_plan(args)
+                self.assertTrue(plan["write"])
+                self.module.add_path(bin_dir, plan["profile"])
+                self.assertEqual(profile.read_text(), before + self.module.path_block(bin_dir, profile))
+                self.assertEqual(profile.read_text().count(line), 1)
+                with self.terminal(None):
+                    again = self.module.path_plan(args)
+                self.assertEqual((again["write"], again["present"]), (False, True))
+                root = self.root / f"uninstall-{shell}"
+                (root / "releases").mkdir(parents=True)
+                self.module.update_dir(root)
+                self.assertEqual(self.module.uninstalled(root, bin_dir)["path_removed_from"], [str(profile)])
+                self.assertEqual(profile.read_text(), before)
+                self.assertEqual(self.module.remove_path(bin_dir), [])
+        with patch.dict(os.environ, {"PATH": str(other), "SHELL": "/bin/tcsh"}), self.terminal("\n"):
+            self.assertEqual(self.module.path_plan(args)["write"], False)
+
+    def test_bash_keeps_its_existing_startup_file_and_odd_folders_are_quoted(self):
+        (self.home / ".profile").write_text("export LANG=C\n")
+        with patch.dict(os.environ, {"SHELL": "/bin/bash"}):
+            self.assertEqual(self.module.shell_profiles()["bash"], self.home / ".profile")
+        odd = Path("/opt/it's $HOME")
+        self.assertEqual(self.module.path_line(odd, self.home / ".zshrc"), "export PATH='/opt/it'\"'\"'s $HOME':\"$PATH\"")
+        script = f"{self.module.path_line(odd, self.home / '.zshrc')}; printf %s \"${{PATH%%:*}}\""
+        self.assertEqual(subprocess.run(["/bin/sh", "-c", script], capture_output=True, text=True).stdout, str(odd))
+
+    def test_path_setup_does_not_ask_when_omd_comes_first_and_a_missing_profile_is_created(self):
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        args = types.SimpleNamespace(bin_dir=bin_dir)
+        with patch.dict(os.environ, {"PATH": str(bin_dir), "SHELL": "/bin/zsh"}), self.terminal(None):
+            self.assertEqual(self.module.path_plan(args)["write"], False)
+        with patch.dict(os.environ, {"PATH": str(self.root), "SHELL": "/bin/zsh"}), self.terminal("y\n"):
+            plan = self.module.path_plan(args)
+        self.assertEqual((plan["write"], plan["shadowing"]), (True, "missing"))
+        self.module.add_path(bin_dir, plan["profile"])
+        self.assertEqual((self.home / ".zshrc").read_text(), self.module.path_block(bin_dir, self.home / ".zshrc"))
 
     def test_summary_says_codex_cannot_start_while_the_broker_is_unpinned(self):
         result = {"profile_label": "OMD+", "version": "1.0.0", "bin_dir": str(self.root / "bin"), "moved_aside": [],
@@ -288,9 +369,20 @@ class UpdateSelection(unittest.TestCase):
         self.assertIn("can't start until the authority broker is pinned", broken)
         self.assertIn("Fix      omd-package broker pin", broken)
         self.assertNotIn("Start", broken)
-        shadowed = summary(codex_on_path="/opt/homebrew/bin/codex")
+        start = "Start    open a new terminal, cd into a project, then run codex"
+        for extra in ({"path_added_to": str(self.home / ".zshrc")}, {"path_in": str(self.home / ".zshrc")}):
+            opened = summary(**extra)
+            self.assertIn(start, opened)
+            self.assertEqual("Added to PATH" in opened, "path_added_to" in extra)
+        line = f'export PATH="{self.root}/bin:$PATH"'
+        shadowed = summary(codex_on_path="/opt/homebrew/bin/codex", path_line=line, shell_profile=str(self.home / ".zshrc"))
         self.assertIn("codex on your PATH is /opt/homebrew/bin/codex", shadowed)
+        self.assertIn(f"      {line}", shadowed)
+        self.assertIn("end of ~/.zshrc", shadowed)
         self.assertNotIn("Start", shadowed)
+        missing = summary(codex_on_path="missing", path_line=line, shell_profile=None)
+        self.assertIn("OMD isn't on your PATH", missing)
+        self.assertIn("your shell's startup file", missing)
 
     def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
         for interrupted in (False, True):
@@ -392,6 +484,14 @@ class UpdateSelection(unittest.TestCase):
         offline = self.check()
         self.assertEqual((offline["available"]["version"], offline["error"]), ("0.2.0", "network is unreachable"))
         self.assertEqual(json.loads((self.root / "update/state.json").read_text())["installed"], "0.1.0")
+
+    def test_a_release_for_another_target_is_reported_blocked_not_up_to_date(self):
+        self.published = [release("0.2.0", target="x86_64-apple-darwin")]
+        args = types.SimpleNamespace(action=None, value=None, session=None, yes=False)
+        with self.assertRaisesRegex(ValueError, r"^Oh My Diff 0\.2\.0 can't be installed: built for x86_64-apple-darwin"):
+            self.module.manual(args, self.root, self.current)
+        summary = self.module.latest_summary(self.module.manual(types.SimpleNamespace(action="status", value=None), self.root, self.current))
+        self.assertEqual(summary, "0.2.0 can't be installed: built for x86_64-apple-darwin")
 
     def test_the_launcher_notice_fits_an_environment_read(self):
         manifest = {"mod_api": "1.0.0", "body": "b" * 60_000, "signature": "s" * 4000}
@@ -538,7 +638,7 @@ class UpdateSelection(unittest.TestCase):
             return json.dumps({"updated": ["omd_btw"]})
         self.module.package = package
         self.module.prune = lambda *arguments: None
-        args = types.SimpleNamespace(session=os.getpid(), bin_dir=self.root / "bin", action=None, value=None, yes=False)
+        args = types.SimpleNamespace(json=True, session=os.getpid(), bin_dir=self.root / "bin", action=None, value=None, yes=False)
         self.settings = {"auto": "off"}
         self.write_settings()
         self.module.tick(args, self.root, self.current)
@@ -776,6 +876,29 @@ class UpdateSelection(unittest.TestCase):
             self.assertEqual(len(attempts), 1)
         self.assertFalse(target.exists())
 
+    def test_release_metadata_retries_transient_errors_but_not_missing_files(self):
+        module, attempts = installer(), []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *arguments): return False
+            def read(self, size): return b'{"ok": true}'
+
+        def opened(url, timeout):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise ssl.SSLError("record layer failure")
+            if len(attempts) == 2:
+                raise module.http.client.IncompleteRead(b"")
+            return Response()
+        with patch.object(module, "opened", opened), patch.object(module.time, "sleep"):
+            self.assertEqual(module.fetch_json("https://example.test/m", 100), {"ok": True})
+            self.assertEqual(len(attempts), 3)
+            missing = urllib.error.HTTPError("https://example.test/m", 404, "Not Found", {}, None)
+            with patch.object(module, "opened", side_effect=missing) as refused, self.assertRaises(urllib.error.HTTPError):
+                module.fetch_json("https://example.test/m", 100)
+            self.assertEqual(refused.call_count, 1)
+
     def test_http_errors_name_the_requested_url_not_the_signed_redirect(self):
         signed = "https://objects.githubusercontent.com/asset?X-Amz-Signature=secret"
         forbidden = urllib.error.HTTPError(signed, 403, "Forbidden", {}, None)
@@ -839,7 +962,7 @@ class UpdateSelection(unittest.TestCase):
                 raise ValueError("installation prefix contains unmanaged files")
             shutil.rmtree(generation / "prefix")
 
-        args = types.SimpleNamespace(session=None)
+        args = types.SimpleNamespace(json=True, session=None)
         holder = self.module.flocked(self.root / ".install.lock")
         waiter = open(self.root / ".install.lock", "a+")
         waited = threading.Thread(target=self.module.fcntl.flock, args=(waiter, self.module.fcntl.LOCK_EX))
@@ -925,7 +1048,7 @@ class UpdateSelection(unittest.TestCase):
                 patch.object(self.module, "package", side_effect=AssertionError("removed under a session")), patch.object(self.module, "status"), \
                 patch.object(self.module, "broker_deployed", return_value=False), patch.object(self.module, "set_links"):
             with self.assertRaises(self.module.SessionsOpen):
-                self.module.uninstall(types.SimpleNamespace(session=None), self.root, bin_dir, self.current)
+                self.module.uninstall(types.SimpleNamespace(json=True, session=None), self.root, bin_dir, self.current)
         self.assertEqual((gated, (self.root / "update/journal.json").exists()), ([True], False))
         self.assertTrue((self.current / "receipt.json").is_file())
 
@@ -955,10 +1078,10 @@ class UpdateSelection(unittest.TestCase):
                     if action != "purge-accounts":
                         shutil.rmtree(generation / "prefix")
 
-                with patch.object(self.module, "package", side_effect=package), \
+                with patch.object(self.module, "package", side_effect=package), patch.dict(os.environ, {"PATH": str(root / "bin")}), \
                         patch.object(self.module, "status"), patch.object(self.module, "broker_deployed", return_value=False), \
                         patch("builtins.print", side_effect=printed.append):
-                    self.module.uninstall(types.SimpleNamespace(session=None, purge=purge), root, root / "bin", current)
+                    self.module.uninstall(types.SimpleNamespace(json=True, session=None, purge=purge), root, root / "bin", current)
                 result = json.loads(printed[0])
                 self.assertTrue(result["uninstalled"])
                 self.assertFalse((root / "catalog").exists())
@@ -971,6 +1094,51 @@ class UpdateSelection(unittest.TestCase):
                 self.assertEqual((codex / "config.toml").read_text(), "user settings")
                 self.assertEqual((root / "personal.txt").read_text(), "user file")
                 self.assertEqual(calls, ["purge-accounts", "uninstall"] if purge else ["uninstall"])
+
+    def test_a_new_profile_store_keeps_the_update_settings_of_the_one_it_replaces(self):
+        self.settings = {"checks": "off", "pin": "0.1.0"}
+        self.write_settings()
+        install = json.loads((self.current / "prefix/install.json").read_text())
+        (self.current / "prefix/install.json").write_text(json.dumps(install | {"manager": {"installed_path": "/manager"}}))
+        args = types.SimpleNamespace(asset_url="https://example.test/a.tar.xz", asset_sha256="a" * 64, releases_url=None,
+                                     channel=None, session=None, json=True, bin_dir=self.root / "bin")
+        for profile, carried in (("platform", False), ("full", True)):
+            with self.subTest(profile=profile), \
+                    patch.object(self.module.platform, "system", return_value="Darwin"), \
+                    patch.object(self.module.platform, "machine", return_value="arm64"), \
+                    patch.object(self.module, "profile_choice", return_value=profile), \
+                    patch.object(self.module, "path_plan", return_value={"shadowing": None, "profile": None, "write": False, "present": False}), \
+                    patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download", return_value=0), \
+                    patch.object(self.module, "transaction", return_value={}), patch.object(self.module, "run") as ran, \
+                    patch.object(self.module, "upstream_binary", return_value={"path": "/usr/bin/true", "version": "codex-cli 0.167.0"}), \
+                    patch("builtins.print"):
+                self.module.install(args, self.root, self.current)
+            settings = [json.loads(call.args[0][-1]) for call in ran.call_args_list if call.args[0][1] == "settings"]
+            self.assertEqual(settings, [{"checks": "off", "auto": "off", "channel": "stable", "cadence": "daily", "pin": "0.1.0"}]
+                             if carried else [])
+
+    def test_update_uninstall_and_status_print_text_unless_json_is_asked_for(self):
+        changes = {"retired": ["omd_old"], "left_off": ["omd_new"], "capabilities": {"omd_git": ["exec", "network"]}}
+        self.assertEqual(self.module.update_text("now", {"active": "/g", "version": "0.2.0", "profile_label": "OMD+", "changes": changes}),
+                         "Oh My Diff 0.2.0 (OMD+) is installed. Restart codex to use it.\nRetired and turned off: omd_old.\n"
+                         "New default mods, left off (turn them on in /mods): omd_new.\nNew permissions: omd_git (exec, network).")
+        self.assertEqual(self.module.update_text("now", {"mods_updated": ["omd_logo"], "capabilities": {}}), "Updated first-party mods: omd_logo.")
+        self.assertEqual(self.module.update_text("checks", {"checks": "off", "profiles": ["full", "platform"]}),
+                         "Update checks: off (OMD+, OMD Core).")
+        self.assertEqual(self.module.update_text("now", {"installed": "0.1.0", "up_to_date": False, "error": "offline"}),
+                         "Oh My Diff 0.1.0: the check failed: offline")
+        removed = {"uninstalled": True, "preserved_stores": str(self.home / "s"), "preserved_administrator_policy": [],
+                   "purge_option": "omd uninstall --purge removes OMD mod data and saved sign-ins too",
+                   "path_removed_from": [str(self.home / ".zshrc")], "restored_upstream": "/opt/homebrew/bin/codex"}
+        self.assertEqual(self.module.uninstall_text(removed).splitlines(), [
+            "Oh My Diff is uninstalled. Codex data stays.",
+            "Mod data stays in ~/s; omd uninstall --purge removes OMD mod data and saved sign-ins too.",
+            "Removed OMD from PATH in ~/.zshrc.", "codex now runs /opt/homebrew/bin/codex."])
+        printed = []
+        with patch("builtins.print", side_effect=printed.append):
+            self.module.report(types.SimpleNamespace(json=False), {"a": 1}, "text")
+            self.module.report(types.SimpleNamespace(json=True), {"a": 1}, "text")
+        self.assertEqual(printed, ["text", '{\n  "a": 1\n}'])
 
     def test_update_reports_check_results_and_bad_actions_in_one_line(self):
         status = {"installed": "0.1.0", "available": None, "mods": None, "error": None, "checked_at": 1}
@@ -1006,7 +1174,7 @@ class UpdateSelection(unittest.TestCase):
         with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
                 patch.object(self.module, "broker_deployed", return_value=False), patch.object(self.module.shutil, "rmtree", side_effect=remove), \
                 self.assertRaisesRegex(PermissionError, "catalog is locked"):
-            self.module.uninstall(types.SimpleNamespace(session=None, purge=True), self.root, bin_dir, self.current)
+            self.module.uninstall(types.SimpleNamespace(json=True, session=None, purge=True), self.root, bin_dir, self.current)
         journal = self.root / "update/journal.json"
         self.assertTrue(json.loads(journal.read_text())["purge"])
         args = types.SimpleNamespace(bin_dir=bin_dir)
@@ -1023,7 +1191,7 @@ class UpdateSelection(unittest.TestCase):
             self.module.update_dir(root)
             (root / "update/journal.json").write_text("{}")
             (root / "stores").symlink_to(self.root / "stores", target_is_directory=True)
-            self.module.uninstalled(root, purge=True)
+            self.module.uninstalled(root, root / "bin", purge=True)
             self.assertFalse((root / "stores").is_symlink())
             self.assertTrue((self.root / "stores/platform/mods.json").is_file())
 
@@ -1039,14 +1207,14 @@ class UpdateSelection(unittest.TestCase):
                     self.module.uninstall(args, self.root, self.root / "bin", self.current)
                 self.assertTrue((self.current / "prefix/install.json").exists())
             self.module.update_dir(self.root)
-            self.assertEqual(self.module.uninstalled(self.root)["preserved_administrator_policy"], [str(policy)])
+            self.assertEqual(self.module.uninstalled(self.root, self.root / "bin")["preserved_administrator_policy"], [str(policy)])
         self.assertTrue(policy.is_file())
 
     def test_uninstall_purge_keeps_the_current_install_when_account_signout_fails(self):
         with patch.object(self.module, "package", side_effect=ValueError("Could not sign out OMD Claude account work")) as called, \
                 patch.object(self.module, "status"), patch.object(self.module, "broker_deployed", return_value=False), \
                 self.assertRaisesRegex(ValueError, "Could not sign out"):
-            self.module.uninstall(types.SimpleNamespace(session=None, purge=True), self.root, self.root / "bin", self.current)
+            self.module.uninstall(types.SimpleNamespace(json=True, session=None, purge=True), self.root, self.root / "bin", self.current)
         self.assertEqual(called.call_args.args[-1], "purge-accounts")
         self.assertTrue((self.current / "prefix/install.json").is_file())
         self.assertTrue((self.root / "stores/platform/mods.json").is_file())
@@ -1061,7 +1229,7 @@ class UpdateSelection(unittest.TestCase):
 
         def cleanup():
             try:
-                self.module.uninstalled(self.root, purge=True)
+                self.module.uninstalled(self.root, self.root / "bin", purge=True)
             except BaseException as error:
                 errors.append(error)
             finally:
@@ -1103,7 +1271,7 @@ class UpdateSelection(unittest.TestCase):
 
         with patch.object(self.module, "status", side_effect=status), patch.object(self.module, "package"), \
                 patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
-            self.module.rollback(types.SimpleNamespace(session=None, upstream=None), self.root, bin_dir, self.current)
+            self.module.rollback(types.SimpleNamespace(json=True, session=None, upstream=None), self.root, bin_dir, self.current)
         self.assertEqual(self.module.pointer(self.root, "current"), older)
         self.assertEqual(self.module.pointer(self.root, "previous"), self.current)
         self.assertEqual(os.readlink(bin_dir / "codex"), str(self.root / "current/bin/codex"))
@@ -1147,7 +1315,7 @@ class UpdateSelection(unittest.TestCase):
                         raise OSError("interrupted")
                     real_rmdir(path)
 
-                args = types.SimpleNamespace(session=None, upstream=None, bin_dir=None, root=root, command="uninstall",
+                args = types.SimpleNamespace(json=True, session=None, upstream=None, bin_dir=None, root=root, command="uninstall",
                                              action=None, value=None)
                 with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
                         patch.object(self.module, "broker_deployed", return_value=False), \
@@ -1157,7 +1325,7 @@ class UpdateSelection(unittest.TestCase):
                 self.assertTrue((root / "update/journal.json").is_file())
                 self.assertEqual((bin_dir / "codex").read_text(), "upstream codex")
                 printed = []
-                with patch.object(sys, "argv", ["install.sh", "uninstall", "--root", str(root)]), \
+                with patch.object(sys, "argv", ["install.sh", "uninstall", "--json", "--root", str(root)]), \
                         patch.object(self.module, "package", side_effect=AssertionError("package code is not needed")), \
                         patch("builtins.print", side_effect=printed.append):
                     self.module.main()

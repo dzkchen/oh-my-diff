@@ -144,6 +144,14 @@ test('the budget counts spend that left the rolling window or settled late, warn
   assert.deepEqual([budget('Infinity'), budget('5')], [[], ['settings.write']]);
 });
 
+test('the budget notice says how many requests had no price', () => {
+  const settings = { ...hud, budget_usd: 10 };
+  const unknown = response('u1', { credential: null, cost: { microusd: null, basis: 'unpriced' } });
+  const state = call(usageMod, { event: 'model_response', payload: unknown, state: start(), settings }).state;
+  const out = call(usageMod, { event: 'model_response', payload: billed('b1', 9), state, settings });
+  assert.match(notices(out.calls)[0].text, /\$9\.00 spent; 1 request has no price yet/);
+});
+
 test('native thread dollars replace the configured-rate estimate and the budget follows them', () => {
   const settings = { ...hud, budget_usd: 10 };
   const usage = native => hostCall => hostCall.operation === 'task.status' ? { ledger: { thread_id: 'lead', cost: null }, limits: {}, worker_limits: {} }

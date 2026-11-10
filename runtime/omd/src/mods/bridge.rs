@@ -106,7 +106,7 @@ impl ModHostCall {
             "config.describe" => Ok("config"),
             "config.set" => Ok("config.write"),
             "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
-            | "packages.reload" | "routes.write" => Ok("packages"),
+            | "packages.reload" | "plugins.components" | "routes.write" => Ok("packages"),
             "routes.add" | "routes.models" => Ok("agents"),
             "settings.write" => Ok("commands"),
             "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),

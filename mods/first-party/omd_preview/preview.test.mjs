@@ -114,6 +114,7 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     const opened = last.calls.find(call => call.operation === 'terminal.open').arguments.path;
     const html = readFileSync(opened, 'utf8');
     assert.equal(opened, join(repository, '.omd/preview/response.html'));
+    assert.equal(readFileSync(join(repository, '.omd/preview/.gitignore'), 'utf8'), '*\n');
     assert.match(html, /<strong>answer<\/strong> with &#60;script&#62;alert\(1\)&#60;\/script&#62; and x<\/p>/);
     assert.doesNotMatch(html, /javascript:|<script>alert/);
     const [, init] = /<script>([\s\S]*?)<\/script><\/body>/.exec(html);

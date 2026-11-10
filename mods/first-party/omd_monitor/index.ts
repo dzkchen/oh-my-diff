@@ -107,10 +107,11 @@ export default function activate(api: ModAPI) {
     }
     if (!how) {
       const queued = api.host.tryCall('turns.queue', { prompt: text, key: fires.map(m => m.id).join('.').slice(0, 64) });
-      how = queued.ok ? QUEUED[queued.value.status] : `not delivered (${queued.error.split(':')[0]})`;
+      how = queued.ok ? QUEUED[queued.value.status] ?? `not delivered (${queued.value.status})` : `not delivered (${queued.error.split(':')[0]})`;
     }
+    const lost = how.startsWith('not delivered');
     for (const m of fires) m.delivered = how;
-    api.host.tryCall('terminal.notice', { text: clip(`omd_monitor: ${fires.map(m => `${m.id} ${m.outcome}`).join(', ')}`, 200), kind: 'info', placement: 'toast', ttl_ms: 10_000, id: 'monitor' });
+    api.host.tryCall('terminal.notice', { text: clip(`omd_monitor: ${fires.map(m => `${m.id} ${m.outcome}`).join(', ')}${lost ? `; ${how} to the model` : ''}`, 200), kind: lost ? 'warning' : 'info', placement: 'toast', ttl_ms: 10_000, id: 'monitor' });
   };
 
   const commit = (s: State, fires: Mon[]) => {

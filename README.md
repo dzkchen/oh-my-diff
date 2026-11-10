@@ -45,8 +45,8 @@ OMD+ comes with these, among others:
 
 - **[Grouped tool lines](mods/first-party/omd_tool_lines/README.md)**: adjacent shell commands collapse into one row; open it for the full output.
 - **[Status line](mods/first-party/omd_statusline/README.md)**: configurable, edited with `/statusline`.
-- **[Privacy](mods/first-party/omd_privacy/README.md)**: redacts text that matches its secret and personal-data rules in requests sent to the model. Web search, transcripts and logs aren't covered.
-- **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request.
+- **[Privacy](mods/first-party/omd_privacy/README.md)**: redacts text that matches its secret and personal-data rules in requests sent to the model. Web search, transcripts and logs aren't covered (off; turn on in `/mods`).
+- **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request (off; turn on in `/mods`).
 - **[Auto-continue](mods/first-party/omd_auto_continue/README.md)**: off until you turn it on; an unanswered approval or question no longer stalls the turn.
 
 Experimental mods add other providers, a workspace dock, `/undo` and language-server feedback. The
@@ -59,7 +59,7 @@ Experimental mods add other providers, a workspace dock, `/undo` and language-se
   <a href="docs/use-other-providers.md#use-claude"><kbd>Claude (experimental)</kbd></a> &nbsp;
   <a href="docs/use-other-providers.md#use-cursor"><kbd>Cursor (experimental)</kbd></a> &nbsp;
   <a href="docs/use-other-providers.md#use-an-api-key-or-another-provider"><kbd>OpenAI and Anthropic API keys (experimental)</kbd></a> &nbsp;
-  <a href="docs/use-with-t3-code.md"><kbd>T3 Code</kbd></a> &nbsp;
+  <a href="docs/use-with-t3-code.md"><kbd>T3 Code (experimental)</kbd></a> &nbsp;
   <kbd>+ any app that runs <code>codex app-server</code></kbd>
 </p>
 

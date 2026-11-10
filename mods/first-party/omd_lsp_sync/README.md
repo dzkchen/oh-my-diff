@@ -51,7 +51,7 @@ It has no settings.
   `terminal`, `services`, `store`, `lifecycle`, `inventory` and `events` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - It never installs a language server. Install one from the table under [Turn it on](#turn-it-on).
-- A language without an installed server is skipped, and the agent is told why.
+- A language without an installed server is skipped. The agent is told why, and you get a note once per language and repository in the transcript.
 - A server starts only when a file in that language is changed or read, so the first edit in a language already
   reports its errors. A patch that only deletes files starts no server.
 - A server that has been idle for 15 minutes is stopped when the session goes idle. The next change in that language

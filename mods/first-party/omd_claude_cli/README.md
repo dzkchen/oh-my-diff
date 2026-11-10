@@ -21,8 +21,8 @@ several accounts. [Manage mods](../../../docs/manage-mods.md) covers the other w
 
 | Command | What it does |
 | --- | --- |
-| `/claude login [NAME]` | Sign in with your Claude plan; `NAME` adds another account |
-| `/claude login api [NAME]` | Sign in with Console API credits |
+| `/claude login [NAME]` | Sign in with your Claude plan; `NAME` adds another account. If `claude auth status` already reports that account signed in, it skips the browser and says so |
+| `/claude login api [NAME]` | Sign in with Console API credits; skips the browser the same way when already signed in with an API key |
 | `/claude remove NAME` | Drop an account's models and route; a named account is also signed out |
 | `/claude code CODE` | Send the code the sign-in page shows to a running login |
 | `/claude` (or `/claude status`) | Show the CLI version, each account's login and billing, and whether models are published. If the CLI is missing or older than `2.1.307`, it says so and what to run; if the CLI version changed since an account's models were read, it says to rerun `/claude login` |

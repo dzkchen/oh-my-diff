@@ -5,7 +5,11 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Provider usage dialog: per-request ledger with context, cache, cost, quota windows, workers and an allowance bar",
+  "description": "Usage dialog (Alt+a or /hud): context, cache, cost and quota for each request",
+  "contributes": {
+    "commands": [{ "name": "hud", "description": "Open the usage dialog: context, cache, cost and quota for each request" }, { "name": "budget", "description": "Set a soft spending budget in USD that only warns; 0 removes it" }, { "name": "categories", "description": "Turn the per-role request breakdown on or off" }],
+    "keys": [{ "key": "Alt+a", "description": "Open or close the usage dialog" }]
+  },
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_usage" },
   "capabilities": ["agents", "commands", "store", "terminal", "events", "model", "lifecycle", "middleware", "threads", "config", "account", "inventory"],

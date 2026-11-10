@@ -51,7 +51,7 @@ test('rm preserves dash-prefixed operands after option termination', { skip }, (
 });
 
 test('a prompt that cannot be asked denies', { skip }, () => {
-  const { chain } = guard('git clean -fd', { 'exec.run': [root, exec('')], 'terminal.prompt': [{ error: 'client_surface_unavailable' }] });
+  const { chain } = guard('git clean -fd', { 'exec.run': [root, exec('Would remove tmp/\n')], 'terminal.prompt': [{ error: 'client_surface_unavailable' }] });
   assertShortCircuit(chain, 'blast_radius');
 });
 
@@ -77,3 +77,29 @@ test('force-push operands after -- are preserved instead of previewing another r
   assert.deepEqual(execs.map(call => call.program), ['pwd']);
 });
 
+
+test('a command that would change nothing runs without a prompt', { skip }, () => {
+  for (const [cmd, replies] of [['rm -rf missing', [root, exec('0 0 0\n')]], ['git clean -fd', [root, exec('')]], ['git reset --hard', [root, exec(''), exec('')]]]) {
+    const { chain, prompt } = guard(cmd, { 'exec.run': replies });
+    assertWrapped(chain, 'blast_radius');
+    assert.equal(prompt, undefined, cmd);
+  }
+});
+
+test('a reset to another revision still asks even when the tree is clean', { skip }, () => {
+  const { prompt } = guard('git reset --hard HEAD~3', { 'exec.run': [root, exec(''), exec('')], 'terminal.prompt': [declined] });
+  assert.ok(prompt);
+});
+
+test('destructive or compound commands still ask when nothing is measured', { skip }, () => {
+  for (const [cmd, replies] of [
+    ['prisma migrate reset', [root, exec('')]],
+    ['rails db:migrate:reset', [root, exec('')]],
+    ['git checkout HEAD -- .', [root, exec(''), exec('')]],
+    ['git clean -ffd', [root, exec('')]],
+    ['rm -rf missing && git reset --hard HEAD~3', [root, exec('0 0 0\n')]],
+  ]) {
+    const { prompt } = guard(cmd, { 'exec.run': replies, 'terminal.prompt': [declined] });
+    assert.ok(prompt, cmd);
+  }
+});

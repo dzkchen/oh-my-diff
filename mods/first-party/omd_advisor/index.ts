@@ -107,6 +107,12 @@ export default function activate(api: ModAPI) {
     const lead = object(value) && object(value.thread) ? value.thread.model : null;
     return routes.ok && typeof lead === 'string' && routes.value.find(item => item.name === route)?.model === lead ? lead : null;
   };
+  const tell = (lead: string | null) => {
+    if (lead === (current().sameModel ?? null)) return lead;
+    api.state.set({ ...current(), sameModel: lead });
+    if (lead) api.host.tryCall('terminal.notice', { text: `Advisor skipped: its route uses the same model as the lead (${clip(lead, 60)}). Pick a different Advisor model in /mods, or turn off Skip same model.`, kind: 'info', placement: 'transcript' });
+    return lead;
+  };
   const newest = (text: string, limit: number) => {
     // The tail read can begin mid-array, so try each `,{"` record boundary until a suffix parses as a whole array.
     const starts = [...(text.startsWith('[') ? [1] : []), ...Array.from(text.matchAll(/,\{"/g), match => match.index + 1)];
@@ -151,7 +157,7 @@ export default function activate(api: ModAPI) {
   };
   const consult = (trigger: string, context: Section[]) => {
     if (!route) return `Advisor unavailable: ${unrouted()}.`;
-    const model = sameModel();
+    const model = tell(sameModel());
     if (model) return `Advisor skipped: its route uses the lead's model ${model}.`;
     const withheld = ['conversation', 'diff', 'files'].filter(name => !share.has(name));
     const header = `${HEADER}\n${TRIGGERS[trigger]}${withheld.length ? ` Withheld by the user: ${withheld.join(', ')}.` : ''}`;
@@ -376,7 +382,7 @@ export default function activate(api: ModAPI) {
       let loaded: ReturnType<typeof read> | undefined;
       let model: string | null | undefined;
       const evidence = () => loaded ??= read(event.evidence!);
-      const same = () => model === undefined ? model = sameModel() : model;
+      const same = () => model === undefined ? model = tell(sameModel()) : model;
       if (observe) observeTurn(event, evidence, same);
       if (review) reviewTurn(event, evidence, same);
     });

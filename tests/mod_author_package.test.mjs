@@ -99,11 +99,33 @@ test('scaffold commands and mapped failures work for custom and example-named ID
       assert.equal(debugged.status, 0, debugged.stderr);
       assert.match(debugged.stdout, /INTENTIONAL_AUTHOR_FAILURE/);
       assert.match(debugged.stdout, /index\.ts:\d+:\d+/);
+      assert.match(readFileSync(join(project, 'AGENTS.md'), 'utf8'), /github\.com\/dzkchen\/oh-my-diff\/blob\/main\/docs\/AGENT_MOD_GUIDE\.md/);
     }
     const dashed = join(root, 'my-mod');
     const created = author('create', dashed);
     assert.equal(created.status, 0, created.stderr);
     assert.equal(JSON.parse(readFileSync(join(dashed, 'mod.json'))).id, 'my_mod');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('test refuses scenario files it would not run, and watch --once fails when the mod does not activate', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-honest-'));
+  const project = join(root, 'project');
+  const store = join(root, 'store');
+  const author = (...args) => spawnSync(process.execPath, ['--no-warnings', new URL('../mods/author/cli.mjs', import.meta.url).pathname, ...args], { encoding: 'utf8', cwd: root });
+  try {
+    assert.equal(author('create', project, 'fixture').status, 0);
+    writeFileSync(join(project, 'extra.test.json'), JSON.stringify({ schema: 1, steps: [] }));
+    const refused = author('test', project);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /unsupported_scenario_files: extra\.test\.json would not run/);
+    assert.doesNotMatch(refused.stdout, /"steps"/);
+    assert.equal(spawnSync(process.env.OMD_MOD_BIN, ['init', store]).status, 0);
+    writeFileSync(join(project, 'index.ts'), "export default function activate() { throw new Error('ACTIVATION_BOOM'); }\n");
+    const watched = author('watch', project, store, '--once');
+    assert.equal(watched.status, 1, watched.stdout);
+    assert.match(watched.stderr, /activation_failed: fixture: Error: ACTIVATION_BOOM/);
+    assert.doesNotMatch(watched.stdout, /reloaded/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

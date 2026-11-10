@@ -5,7 +5,8 @@ the session's tools. It covers JavaScript cells with session storage, and Python
 between calls. Cells call tools through Codex's own tool router, so its permissions and task controls apply. It's experimental: no install profile stages it. [Experimental plugins](../../../../README.md#experimental-plugins)
 has the steps to add it.
 
-The plugin is guidance only. It has no mod component. The Python and Bun drivers ship in its `kernels/` folder.
+The plugin is guidance only. It has no mod component. The Python and Bun drivers ship in its `kernels/` folder, and
+`scripts/install_kernels.py` installs them for Codex.
 
 ## Turn it on
 
@@ -16,40 +17,24 @@ The plugin is guidance only. It has no mod component. The Python and Bun drivers
    codex -c features.code_mode.enabled=true
    ```
 
-3. For Python and Bun cells, add kernel entries to your Codex config (`${CODEX_HOME:-$HOME/.codex}/config.toml`).
-   `driver` is the absolute path of the installed driver and `driver_sha256` is its SHA-256. Find the installed
-   plugin folder and the digests with:
+3. For Python and Bun cells, run the setup script. It copies `python.py` and `bun.mjs` to
+   `${CODEX_HOME:-$HOME/.codex}/omd/kernels/` under names that carry their digest, and with `--write` it adds or
+   updates the `python` and `bun` kernel entries in your Codex config (`${CODEX_HOME:-$HOME/.codex}/config.toml`),
+   plus `[features.code_mode]` and `[features.code_mode_host]` when they are missing. It leaves the rest of the file
+   as it was and keeps the previous one as `config.toml.bak`. If the new file doesn't read back correctly, it
+   restores the old one.
 
    ```sh
    ROOT=$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/oh-my-diff-experimental/omd-code-execution/* | tail -1)
-   shasum -a 256 "$ROOT/kernels/python.py" "$ROOT/kernels/bun.mjs"
+   python3 "$ROOT/scripts/install_kernels.py" --write
    ```
 
-   Then add this block, with your paths and digests:
+   Without `--write` the script changes no config and prints the entries instead.
 
-   ```toml
-   [features.code_mode]
-   enabled = true
-
-   [[features.code_mode.kernels]]
-   name = "python"
-   command = ["python3", "-u", "-c"]
-   driver = "/absolute/path/to/omd-code-execution/kernels/python.py"
-   driver_sha256 = "<sha256 of python.py>"
-
-   [[features.code_mode.kernels]]
-   name = "bun"
-   command = ["bun", "-e"]
-   driver = "/absolute/path/to/omd-code-execution/kernels/bun.mjs"
-   driver_sha256 = "<sha256 of bun.mjs>"
-
-   [features.code_mode_host]
-   enabled = true
-   disable_in_process_fallback = true
-   ```
-
-Codex refuses a kernel whose driver is missing or changed, so update the digests after a plugin update. Remove the
-kernel entries to remove the kernel tool.
+Run the script with `--write` again after each plugin or OMD update. It says `config is current` for a kernel whose
+entry still matches. When a driver changed it adds a new copy beside the old one and points the entry at it, so the
+old copy stays on disk. Codex still refuses a kernel whose driver is missing or changed. Remove the kernel entries to
+remove the kernel tool.
 
 ## Use it
 

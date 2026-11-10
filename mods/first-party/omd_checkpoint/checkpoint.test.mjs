@@ -262,6 +262,37 @@ test('agent commits stay, a later session can undo the checkout\'s last turn, an
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('threads and previews reuse one snapshot index, and a locked one moves a snapshot to the next', () => {
+  const root = repo();
+  try {
+    const s = session(root);
+    s.turn('t-1', agent(root));
+    s.box.world.thread = 't2';
+    s.turn('t-2', () => write(root, 'c.txt', 'three\n'));
+    s.command('undo', 'show');
+    assert.deepEqual(readdirSync(join(root, '.git')).filter(name => name.endsWith('.index')), ['omd-checkpoint-0.index']);
+    assert.match(s.command('undo'), /Restored 1 file|Deleted 1 file/);
+    writeFileSync(join(root, '.git/omd-checkpoint-0.index.lock'), '');
+    s.turn('t-3', () => write(root, 'd.txt', 'four\n'));
+    assert.deepEqual(readdirSync(join(root, '.git')).filter(name => name.endsWith('.index')), ['omd-checkpoint-0.index', 'omd-checkpoint-1.index']);
+    assert.equal(s.box.state.error, null);
+    assert.equal(s.box.state.entries.at(-1).turn, 't-3');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the first turn removes snapshot indexes left by earlier versions and nothing else', () => {
+  const root = repo();
+  try {
+    const stale = ['omd-checkpoint.index', 'omd-checkpoint-t1.index', 'omd-checkpoint-t1-preview.index'];
+    for (const name of [...stale, 'omd-checkpoint-notes.txt']) writeFileSync(join(root, '.git', name), '');
+    const s = session(root);
+    s.turn('t-1', agent(root));
+    assert.deepEqual(readdirSync(join(root, '.git')).filter(name => name.startsWith('omd-checkpoint')).sort(), ['omd-checkpoint-0.index', 'omd-checkpoint-notes.txt']);
+    assert.match(sh(root, 'status', '--short'), /a\.txt/);
+    assert.equal(s.box.state.tidied, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('outside a Git repository or without write access it explains itself and changes nothing', () => {
   const plain = realpathSync(mkdtempSync(join(tmpdir(), 'omd-checkpoint-plain-')));
   const root = repo();

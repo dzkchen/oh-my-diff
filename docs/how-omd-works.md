@@ -22,7 +22,7 @@ is a recovery state in which the build behaves as plain Codex with no mods.
 OMD is the Codex CLI built from upstream source with one patch applied. The patch adds a mod host, the part of
 `codex` that loads mods and gives them building blocks such as tool interception and terminal panels. When no mod uses
 a building block, the host allocates nothing for it and changes no Codex decision. The repository contains no copy of
-Codex. It contains the patch (`runtime/patches/omd-0.167.0.patch`), a manifest of file hashes, and readable copies of
+Codex. It contains the patch (`runtime/patches/omd-CODEX_VERSION.patch`), a manifest of file hashes, and readable copies of
 the crates (Rust packages) the patch adds.
 
 The patch applies to one exact Codex release tag. While applying it, the build checks every file's hash against the

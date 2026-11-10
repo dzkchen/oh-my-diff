@@ -414,6 +414,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "routes_add_self_v1",
     "routes_add_model_v1",
     "package_needs_approval_v1",
+    "package_contributes_v1",
+    "plugin_components_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -501,6 +503,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "packages.preview",
     "packages.apply",
     "packages.reload",
+    "plugins.components",
     "routes.add",
     "routes.models",
     "routes.write",
@@ -1665,6 +1668,8 @@ pub struct ModPackage {
     pub license: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<ModProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contributes: Option<ModContributes>,
     #[serde(default)]
     pub compatibility: ModHostCompatibility,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1956,6 +1961,29 @@ pub struct ModProvenance {
     pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModContributes {
+    #[serde(default)]
+    pub commands: Vec<ModContributedCommand>,
+    #[serde(default)]
+    pub keys: Vec<ModContributedKey>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModContributedCommand {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModContributedKey {
+    pub key: String,
+    pub description: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -2324,6 +2352,33 @@ impl ModPackage {
                     .is_some_and(|value| value.is_empty() || value.len() > 128))
         {
             return Err(failure("invalid_provenance"));
+        }
+        let described = |description: &str| {
+            !description.is_empty()
+                && description.len() <= 200
+                && !description.chars().any(char::is_control)
+        };
+        if let Some(contributes) = &self.contributes
+            && (contributes.commands.len() > 16
+                || contributes.keys.len() > 16
+                || contributes.commands.iter().any(|command| {
+                    command.name.is_empty()
+                        || command.name.len() > 64
+                        || !command.name.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || matches!(byte, b'-' | b'_')
+                        })
+                        || !described(&command.description)
+                })
+                || contributes.keys.iter().any(|key| {
+                    key.key.is_empty()
+                        || key.key.len() > 32
+                        || key.key.chars().any(char::is_control)
+                        || !described(&key.description)
+                }))
+        {
+            return Err(failure("invalid_contributes"));
         }
         if let Some(schema) = &self.settings_schema {
             validate_settings_schema(schema)?;
@@ -3020,10 +3075,10 @@ static ACTIVATED: Mutex<Vec<(ActivationKey, BTreeMap<String, Loaded>)>> = Mutex:
 /// Checkouts `ACTIVATED` remembers; one process rarely opens hosts in more.
 const ACTIVATED_CHECKOUTS: usize = 8;
 static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
-static TURNED_OFF: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static TURNED_OFF: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
 
-/// Mods any host in this process turned off for repeated faults since the last call.
-pub fn take_turned_off() -> Vec<String> {
+/// Mods any host in this process turned off for repeated faults since the last call, and whether their required interceptors still block.
+pub fn take_turned_off() -> Vec<(String, bool)> {
     std::mem::take(
         &mut *TURNED_OFF
             .lock()
@@ -3437,8 +3492,13 @@ impl Loaded {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             // Each host counts its own faults; one notice per mod, and processes that never drain stay bounded.
-            if !turned_off.contains(&self.package.id) {
-                turned_off.push(self.package.id.clone());
+            if !turned_off.iter().any(|(id, _)| id == &self.package.id) {
+                let blocks = self
+                    .registrations
+                    .interceptors
+                    .iter()
+                    .any(|interceptor| interceptor.required);
+                turned_off.push((self.package.id.clone(), blocks));
             }
         }
         self.telemetry.last_error = Some(error);
@@ -4142,6 +4202,7 @@ fn read_only(operation: &str, arguments: &Value) -> bool {
         | "packages.list"
         | "packages.index"
         | "packages.preview"
+        | "plugins.components"
         | "exec.output_page"
         | "terminal.image_sample" => true,
         "workspace.check_access" => arguments["write"] != true,
@@ -5030,7 +5091,7 @@ impl ModHost {
             .collect();
         let lenient = |id: &str| initial || !working.contains(id);
         Self::resolve_conflicts(&mut next, &lenient)?;
-        Self::resolve_services(&mut next, &lenient)?;
+        Self::resolve_services(&mut next, &selections, &lenient)?;
         Self::resolve_virtual_readers(&mut next, &lenient)?;
         let order = Self::resolve_dependencies(&mut next, &lenient)?;
         self.selections = (
@@ -5439,6 +5500,7 @@ impl ModHost {
 
     fn resolve_services(
         next: &mut BTreeMap<String, Loaded>,
+        selections: &[ModSelection],
         lenient: &dyn Fn(&str) -> bool,
     ) -> Result<()> {
         let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -5496,8 +5558,10 @@ impl ModHost {
                             None => Some((
                                 id.clone(),
                                 format!(
-                                    "service_provider_missing: {} requires {}",
-                                    id, import.name
+                                    "service_provider_missing: {} requires {}{}",
+                                    id,
+                                    import.name,
+                                    Self::missing_provider(&import.name, next, selections)
                                 ),
                             )),
                         }
@@ -5514,6 +5578,37 @@ impl ModHost {
             }
         }
         Ok(())
+    }
+
+    fn missing_provider(
+        service: &str,
+        next: &BTreeMap<String, Loaded>,
+        selections: &[ModSelection],
+    ) -> String {
+        let provides = |package: &ModPackage| {
+            package
+                .services
+                .exports
+                .iter()
+                .any(|export| export.name == service)
+        };
+        if let Some((id, error)) = next.iter().find_map(|(id, loaded)| {
+            let error = loaded.error.as_deref()?;
+            provides(&loaded.package).then_some((id, error))
+        }) {
+            return format!(
+                "; {id} provides it but failed: {}",
+                error.lines().next().unwrap_or_default()
+            );
+        }
+        selections
+            .iter()
+            .filter(|selection| !selection.enabled)
+            .find_map(|selection| {
+                let (package, _, _) = store::package(&selection.path).ok()?;
+                provides(&package).then(|| format!("; turn on {} in /omd", package.id))
+            })
+            .unwrap_or_default()
     }
 
     fn dependencies(id: &str, next: &BTreeMap<String, Loaded>) -> Vec<String> {
