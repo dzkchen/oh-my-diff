@@ -116046,10 +116046,10 @@ index 0000000000000000000000000000000000000000..878c788cf065e6d8e935f76a4c0fb733
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..edce5a305b58bcadbac3e7131af0845cd398909a
+index 0000000000000000000000000000000000000000..e996f1bc539449dec5e7e75cd4d5704a695aa7ce
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,880 @@
+@@ -0,0 +1,908 @@
 +use codex_omd::ModHostCallback;
 +use codex_omd::ModInvokeOptions;
 +use codex_omd::ModOpenOptions;
@@ -116435,7 +116435,22 @@ index 0000000000000000000000000000000000000000..edce5a305b58bcadbac3e7131af0845c
 +            } else {
 +                arguments["id"] = json!(target);
 +            }
-+            let preview = package_controls::preview(&store, arguments)?;
++            let preview = package_controls::preview(&store, arguments).map_err(|error| {
++                let text = error.to_string();
++                let hint = match action {
++                    "rollback" if text == "package_rollback_unavailable" => {
++                        format!(": {target} has no earlier version to go back to")
++                    }
++                    _ if text == "package_unavailable" => {
++                        format!(": {target} is not in the catalog; `omd mods catalog` lists what is")
++                    }
++                    _ if text == "package_version_unavailable" => format!(
++                        ": that version of {target} is not available; `omd mods catalog {target}` shows the latest"
++                    ),
++                    _ => return error,
++                };
++                io::Error::other(text + &hint)
++            })?;
 +            let summary = describe(&preview.public);
 +            if action == "inspect" {
 +                return Ok(json!({"display": summary, "preview": preview.public}));
@@ -116496,7 +116511,13 @@ index 0000000000000000000000000000000000000000..edce5a305b58bcadbac3e7131af0845c
 +    } else {
 +        return Ok(reference.to_owned());
 +    };
-+    Ok(path.canonicalize()?.display().to_string())
++    let resolved = path.canonicalize().map_err(|error| {
++        io::Error::new(
++            error.kind(),
++            format!("package_folder_unavailable: {reference}: {error}"),
++        )
++    })?;
++    Ok(resolved.display().to_string())
 +}
 +
 +fn describe(preview: &Value) -> String {
@@ -116878,6 +116899,13 @@ index 0000000000000000000000000000000000000000..edce5a305b58bcadbac3e7131af0845c
 +            .chain([temp.path().to_str().unwrap().to_owned()])
 +            .collect();
 +        assert_eq!(run(arguments).unwrap_err().to_string(), unknown);
++        let missing = folder_reference("./definitely-missing-folder")
++            .unwrap_err()
++            .to_string();
++        assert!(
++            missing.starts_with("package_folder_unavailable: ./definitely-missing-folder: "),
++            "{missing}"
++        );
 +    }
 +
 +    #[test]
@@ -137395,10 +137423,10 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ba618bb30c359c90eca7f2e17e8d8677b5c0ede
+index 0000000000000000000000000000000000000000..4be6911edde50dd97a40bfb1267b028e3211e5e0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1156 @@
+@@ -0,0 +1,1213 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -137672,75 +137700,21 @@ index 0000000000000000000000000000000000000000..5ba618bb30c359c90eca7f2e17e8d867
 +    }
 +
 +    pub fn capability_explanation(code: &str) -> Value {
++        let known = EXPLANATIONS
++            .iter()
++            .find(|(prefix, _, _)| code.starts_with(prefix));
 +        let unknown;
-+        let (cause, fix) = if code.starts_with("capability_denied") {
-+            (
-+                "The package requested authority that the manifest or explicit trust grant does not include.",
-+                "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant; a revoked mod is approved again with omd mods update ID.",
-+            )
-+        } else if code.starts_with("undeclared_operation_use") {
-+            (
-+                "Source analysis found a literal host operation whose capability is not declared.",
-+                "Add the operation's documented capability or remove the call; rerun check before asking for trust.",
-+            )
-+        } else if code.starts_with("undeclared_service_use") {
-+            (
-+                "Source analysis found a service call without a matching manifest import.",
-+                "Declare the service name and compatible version under services.imports or remove the call.",
-+            )
-+        } else if code.starts_with("undeclared_environment_use") {
-+            (
-+                "Source analysis found environment access outside the manifest declaration.",
-+                "Remove the access or declare an admitted environment feature; network, filesystem, process and DOM access are intentionally unavailable.",
-+            )
-+        } else if code.starts_with("state_capability_denied") {
-+            (
-+                "The callback changed persistent state without the state capability.",
-+                "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
-+            )
-+        } else if code.starts_with("state_thread_unavailable") {
-+            (
-+                "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
-+                "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
-+            )
-+        } else if code.starts_with("repository_provenance_mismatch") {
-+            (
-+                "A Git install requires mod.json provenance.source to name the repository it is installed from.",
-+                "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
-+            )
-+        } else if code.starts_with("host_operation_unavailable") {
-+            (
-+                "The callback ran without an active native task capable of servicing that host operation.",
-+                "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
-+            )
-+        } else if code.starts_with("package_blocked") {
-+            (
-+                "The installed version was quarantined with omd mods quarantine, so it cannot be enabled, reinstalled or rolled back to.",
-+                "If the reason no longer applies, run omd mods unblock ID, then omd mods enable ID.",
-+            )
-+        } else if code.starts_with("source_changed") {
-+            (
-+                "The package's files no longer match the digest the user trusted.",
-+                "Review the change and approve it again in /omd or with omd mods update ID.",
-+            )
-+        } else if code.starts_with("package_not_trusted") {
-+            (
-+                "The store has no trusted selection for that mod or folder.",
-+                "Install it with omd install REFERENCE, or trust a folder with omd-mod trust STORE PACKAGE SHA256 CAPABILITIES_CSV.",
-+            )
-+        } else if code.starts_with("managed_by_policy") {
-+            (
-+                "Administrator policy requires this mod, so it cannot be turned off locally.",
-+                "Run omd-mod policy explain STORE to see the policy, then ask your administrator to change it.",
-+            )
-+        } else {
-+            unknown = format!("OMD has no explanation for {code}; its cause is unknown.");
-+            (
-+                unknown.as_str(),
-+                "Run omd-mod report STORE and omd-mod events STORE to see which mod or host step raised it.",
-+            )
++        let (cause, fix) = match known {
++            Some((_, cause, fix)) => (*cause, *fix),
++            None => {
++                unknown = format!("OMD has no explanation for {code}; its cause is unknown.");
++                (
++                    unknown.as_str(),
++                    "Run omd-mod report STORE and omd-mod events STORE to see which mod or host step raised it.",
++                )
++            }
 +        };
-+        json!({"code":code,"cause":cause,"fix":fix,
++        json!({"code":code,"known":known.is_some(),"cause":cause,"fix":fix,
 +            "guarantee":"Author tooling can explain a denial but cannot grant authority, change trust, or bypass host enforcement."})
 +    }
 +
@@ -138476,6 +138450,117 @@ index 0000000000000000000000000000000000000000..5ba618bb30c359c90eca7f2e17e8d867
 +            }
 +        }
 +        _ => {}
++    }
++}
++
++const EXPLANATIONS: &[(&str, &str, &str)] = &[
++    (
++        "capability_denied",
++        "The package requested authority that the manifest or explicit trust grant does not include.",
++        "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant; a revoked mod is approved again with omd mods update ID.",
++    ),
++    (
++        "undeclared_operation_use",
++        "Source analysis found a literal host operation whose capability is not declared.",
++        "Add the operation's documented capability or remove the call; rerun check before asking for trust.",
++    ),
++    (
++        "undeclared_service_use",
++        "Source analysis found a service call without a matching manifest import.",
++        "Declare the service name and compatible version under services.imports or remove the call.",
++    ),
++    (
++        "undeclared_environment_use",
++        "Source analysis found environment access outside the manifest declaration.",
++        "Remove the access or declare an admitted environment feature; network, filesystem, process and DOM access are intentionally unavailable.",
++    ),
++    (
++        "state_capability_denied",
++        "The callback changed persistent state without the state capability.",
++        "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
++    ),
++    (
++        "state_thread_unavailable",
++        "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
++        "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
++    ),
++    (
++        "repository_provenance_mismatch",
++        "A Git install requires mod.json provenance.source to name the repository it is installed from.",
++        "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
++    ),
++    (
++        "host_operation_unavailable",
++        "The callback ran without an active native task capable of servicing that host operation.",
++        "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
++    ),
++    (
++        "package_blocked",
++        "The installed version was quarantined with omd mods quarantine, so it cannot be enabled, reinstalled or rolled back to.",
++        "If the reason no longer applies, run omd mods unblock ID, then omd mods enable ID.",
++    ),
++    (
++        "package_not_installed",
++        "No installed mod has this id in the chosen scope.",
++        "`omd mods list` shows installed mods and their scopes, and `omd install ID` installs one.",
++    ),
++    (
++        "package_approval_required",
++        "Installing or turning on the mod needs your approval, and the command ran without a terminal to ask in.",
++        "Review it with `omd mods inspect REFERENCE`, then run the command again with --yes or in a terminal.",
++    ),
++    (
++        "package_rollback_unavailable",
++        "The mod has no earlier version to go back to.",
++        "Install a specific version with `omd install ID --version V`.",
++    ),
++    (
++        "source_changed",
++        "The package's files no longer match the digest the user trusted.",
++        "Review the change and approve it again in /omd or with omd mods update ID.",
++    ),
++    (
++        "package_not_trusted",
++        "The store has no trusted selection for that mod or folder.",
++        "Install it with omd install REFERENCE, or trust a folder with omd-mod trust STORE PACKAGE SHA256 CAPABILITIES_CSV.",
++    ),
++    (
++        "managed_by_policy",
++        "Administrator policy requires this mod, so it cannot be turned off locally.",
++        "Run omd-mod policy explain STORE to see the policy, then ask your administrator to change it.",
++    ),
++    (
++        "explicit_repository_required",
++        "The command works on one repository's data or runs a mod's shell command, and no repository was given.",
++        "Pass --repo PATH. For `omd store` data that isn't tied to a repository, pass --scope user.",
++    ),
++    (
++        "explicit_mod_store_required",
++        "No mod store was given and OMD_MOD_STORE is not set.",
++        "Pass --store PATH, or use the installed omd launcher, which sets OMD_MOD_STORE.",
++    ),
++];
++
++#[cfg(test)]
++mod explanation_tests {
++    use super::*;
++
++    #[test]
++    fn explain_answers_cli_codes_and_admits_unknown_ones() {
++        let blocked = ModHost::capability_explanation("package_blocked: m: testing");
++        assert_eq!(blocked["known"], true);
++        assert!(
++            blocked["fix"]
++                .as_str()
++                .unwrap()
++                .contains("omd mods unblock")
++        );
++        let unknown = ModHost::capability_explanation("nonsense_code");
++        assert_eq!(unknown["known"], false);
++        assert_eq!(
++            unknown["cause"],
++            "OMD has no explanation for nonsense_code; its cause is unknown."
++        );
 +    }
 +}
 +
@@ -149511,10 +149596,10 @@ index 0000000000000000000000000000000000000000..42a6f21f76db858a7e18f132a9ad4189
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6d9fbc284602c97912f625cd57a2b0e26fd026a2
+index 0000000000000000000000000000000000000000..7b9ecb1b8401284f310cb14d2211d0bfb7fc7c39
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1648 @@
+@@ -0,0 +1,1692 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -150187,7 +150272,19 @@ index 0000000000000000000000000000000000000000..6d9fbc284602c97912f625cd57a2b0e2
 +            return Err(failure("store_file_not_resettable"));
 +        }
 +        let path = self.root.join(name);
-+        let aside = self.root.join(format!("{name}.corrupt"));
++        if !path.try_exists()? {
++            return Err(failure(format!(
++                "store_file_absent: {} does not exist; nothing to reset",
++                path.display()
++            )));
++        }
++        let aside = (0u32..)
++            .map(|copy| match copy {
++                0 => self.root.join(format!("{name}.corrupt")),
++                copy => self.root.join(format!("{name}.corrupt.{copy}")),
++            })
++            .find(|aside| !aside.exists())
++            .ok_or_else(|| failure("store_file_not_resettable"))?;
 +        let empty = match name {
 +            "mods.json" => Some(serde_json::to_value(ModConfiguration {
 +                schema: 1,
@@ -151142,6 +151239,38 @@ index 0000000000000000000000000000000000000000..6d9fbc284602c97912f625cd57a2b0e2
 +            &Self::state_name(id, scope),
 +            &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
 +        )
++    }
++}
++
++#[cfg(test)]
++mod reset_tests {
++    use super::*;
++
++    #[test]
++    fn reset_reports_a_missing_file_and_keeps_earlier_copies() {
++        let temp = tempfile::tempdir().unwrap();
++        let store = ModStore::open(temp.path().canonicalize().unwrap()).unwrap();
++        let lock = store.root().join("packages.lock.json");
++        let error = store.reset("packages.lock.json").unwrap_err().to_string();
++        assert!(error.starts_with("store_file_absent: "), "{error}");
++        for (copy, text) in ["first", "second"].into_iter().enumerate() {
++            std::fs::write(&lock, text).unwrap();
++            let aside = store.reset("packages.lock.json").unwrap();
++            let expected = if copy == 0 {
++                "packages.lock.json.corrupt".to_owned()
++            } else {
++                format!("packages.lock.json.corrupt.{copy}")
++            };
++            assert_eq!(aside, store.root().join(expected));
++        }
++        assert_eq!(
++            std::fs::read_to_string(store.root().join("packages.lock.json.corrupt")).unwrap(),
++            "first"
++        );
++        assert_eq!(
++            std::fs::read_to_string(store.root().join("packages.lock.json.corrupt.1")).unwrap(),
++            "second"
++        );
 +    }
 +}
 +

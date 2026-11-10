@@ -670,7 +670,19 @@ impl ModStore {
             return Err(failure("store_file_not_resettable"));
         }
         let path = self.root.join(name);
-        let aside = self.root.join(format!("{name}.corrupt"));
+        if !path.try_exists()? {
+            return Err(failure(format!(
+                "store_file_absent: {} does not exist; nothing to reset",
+                path.display()
+            )));
+        }
+        let aside = (0u32..)
+            .map(|copy| match copy {
+                0 => self.root.join(format!("{name}.corrupt")),
+                copy => self.root.join(format!("{name}.corrupt.{copy}")),
+            })
+            .find(|aside| !aside.exists())
+            .ok_or_else(|| failure("store_file_not_resettable"))?;
         let empty = match name {
             "mods.json" => Some(serde_json::to_value(ModConfiguration {
                 schema: 1,
@@ -1625,6 +1637,38 @@ impl ModStore {
             &Self::state_name(id, scope),
             &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
         )
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+
+    #[test]
+    fn reset_reports_a_missing_file_and_keeps_earlier_copies() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ModStore::open(temp.path().canonicalize().unwrap()).unwrap();
+        let lock = store.root().join("packages.lock.json");
+        let error = store.reset("packages.lock.json").unwrap_err().to_string();
+        assert!(error.starts_with("store_file_absent: "), "{error}");
+        for (copy, text) in ["first", "second"].into_iter().enumerate() {
+            std::fs::write(&lock, text).unwrap();
+            let aside = store.reset("packages.lock.json").unwrap();
+            let expected = if copy == 0 {
+                "packages.lock.json.corrupt".to_owned()
+            } else {
+                format!("packages.lock.json.corrupt.{copy}")
+            };
+            assert_eq!(aside, store.root().join(expected));
+        }
+        assert_eq!(
+            std::fs::read_to_string(store.root().join("packages.lock.json.corrupt")).unwrap(),
+            "first"
+        );
+        assert_eq!(
+            std::fs::read_to_string(store.root().join("packages.lock.json.corrupt.1")).unwrap(),
+            "second"
+        );
     }
 }
 
