@@ -105896,10 +105896,10 @@ index 0000000000000000000000000000000000000000..347e272d3eafbc406ee51cda7932c2fc
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e61a06391271cb10bddef5468105e76d1b41068a
+index 0000000000000000000000000000000000000000..c90378b5a60e673d57ed28266af6865f596acf37
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,493 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -106219,11 +106219,7 @@ index 0000000000000000000000000000000000000000..e61a06391271cb10bddef5468105e76d
 +    })
 +    .await
 +    .unwrap();
-+    assert_eq!(
-+        seen,
-+        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-+        "{seen:?}"
-+    );
++    assert_linked_git_events(&seen);
 +
 +    std::fs::write(
 +        tree.join(".git"),

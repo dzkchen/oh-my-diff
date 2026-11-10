@@ -101,6 +101,7 @@
     "packages.list",
     "packages.preview",
     "packages.reload",
+    "plugins.components",
     "prompts.consent",
     "prompts.revoke",
     "prompts.status",
