@@ -128501,7 +128501,7 @@ index 0000000000000000000000000000000000000000..b8856c41e743275aa86b95065af45100
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7acb714e28dcb1f8bf984fa89dde0fe8d8bd1392
+index 0000000000000000000000000000000000000000..a8e81f61e4f1c6171ff2b835d17b795cce4dae21
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
 @@ -0,0 +1,258 @@
@@ -128607,13 +128607,13 @@ index 0000000000000000000000000000000000000000..7acb714e28dcb1f8bf984fa89dde0fe8
 +pub use workspace::git_work_tree;
 +pub use workspace::hash_tracked;
 +pub use workspace::inside_repository;
-+pub use workspace::workspace_refused;
 +pub use workspace::observe_workspace_changes;
 +pub use workspace::record_workspace_change;
 +pub use workspace::take_workspace_changes;
 +pub use workspace::tracked_paths;
 +pub use workspace::tree_path;
 +pub use workspace::workspace_path;
++pub use workspace::workspace_refused;
 +
 +pub use mods::AUTHORITY_CAPABILITIES;
 +pub use mods::CODEX_CONFIG_COMPLETION_WAKE;

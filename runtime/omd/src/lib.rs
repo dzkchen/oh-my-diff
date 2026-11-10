@@ -100,13 +100,13 @@ pub use workspace::create_worktree;
 pub use workspace::git_work_tree;
 pub use workspace::hash_tracked;
 pub use workspace::inside_repository;
-pub use workspace::workspace_refused;
 pub use workspace::observe_workspace_changes;
 pub use workspace::record_workspace_change;
 pub use workspace::take_workspace_changes;
 pub use workspace::tracked_paths;
 pub use workspace::tree_path;
 pub use workspace::workspace_path;
+pub use workspace::workspace_refused;
 
 pub use mods::AUTHORITY_CAPABILITIES;
 pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
