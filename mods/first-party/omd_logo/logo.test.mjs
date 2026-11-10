@@ -14,14 +14,14 @@ function render(payload, settings = {}) {
 }
 const text = component => [component.text, ...(component.spans ?? []).map(span => span.text), ...(component.children ?? []).map(text)].filter(Boolean).join('');
 
-test('a fresh session shows the mark with the version, profile and mod counts', () => {
+test('a fresh session shows the mark with the version and profile, leaving the mod count to the status line', () => {
   const patch = render({ identity: identity('platform_only'), presentation: { phase: 'fresh', surface: 'fullscreen' } });
   assert.equal(patch.session_title_suffix, ' | OMD Core');
   const [wide] = patch.sites.welcome.components;
   assert.equal(wide.id, 'omd_logo_mark');
   assert.match(text(wide), /oh my diff v1\.2\.3 · OMD Core/);
   assert.match(text(wide), /Codex v0\.167\.0/);
-  assert.match(text(wide), /6 of 9 mods on/);
+  assert.doesNotMatch(text(wide), /mods on/);
 });
 
 test('an unknown profile drops the suffix, ascii swaps the mark and later phases draw nothing', () => {

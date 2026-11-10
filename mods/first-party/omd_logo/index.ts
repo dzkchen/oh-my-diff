@@ -18,7 +18,7 @@ export default function activate(api: ModAPI) {
     const side = [
       title,
       [span(`Codex ${identity ? `v${identity.codex_version}` : 'version unknown'}`, 'muted')],
-      [span(identity ? `${identity.mods.active} of ${identity.mods.installed} mods on` : 'mods loading', 'muted')],
+      [span('Codex CLI, extended with mods', 'muted')],
     ];
     // The mark uses the terminal's own foreground so it stays readable on light and dark backgrounds.
     const rows = (id: string, wide: boolean): TerminalComponent[] => mark.map((text, index) => ({
