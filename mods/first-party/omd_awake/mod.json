@@ -6,6 +6,9 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Replaces Prevent sleep while running with /awake: keeps the Mac awake while agents work, also lid closed, then lets it sleep",
+  "contributes": {
+    "commands": [{ "name": "awake", "description": "Keep the Mac awake while agents work, lid closed too, then let it sleep" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_awake"},
   "capabilities": ["store", "events", "lifecycle", "terminal", "commands", "builtins", "agents", "exec", "os", "power"],

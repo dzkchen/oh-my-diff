@@ -5,6 +5,9 @@
   "api": "1.0.0",
   "state_version": 1,
   "description": "Require checks, an independent review and a final verification before the agent can call a task done; pick a contract with /omd_workflow:contract",
+  "contributes": {
+    "commands": [{ "name": "contract", "description": "List the workflow contracts or choose one for this repository" }, { "name": "progress", "description": "See this thread's workflow task, status and remaining work" }, { "name": "routes", "description": "Add the worker, reviewer and verifier models from your ChatGPT plan" }]
+  },
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_workflow" },
   "capabilities": [
@@ -39,7 +42,8 @@
       "service_dispatch_v1",
       "integration_receipts_v1",
       "agent_lifecycle_v1",
-      "tool_result_fingerprints_v1"
+      "tool_result_fingerprints_v1",
+      "routes_add_model_v1"
     ]
   },
   "services": {

@@ -24,7 +24,7 @@ It also reads and watches workspace paths (`fs.read`), reads turn activity, and 
 ## Use it
 
 The model gets three tools, found through tool search as `mod_omd_monitor_watch`, `mod_omd_monitor_list` and
-`mod_omd_monitor_cancel`. The [omd-monitor plugin](../../../plugins/experimental/oh-my-diff-experimental/plugins/omd-monitor/README.md) teaches the agent to subscribe once, keep working and handle the result. The mod owns subscriptions, persistence, timeouts and delivery. It only
+`mod_omd_monitor_cancel`. The mod works without a plugin; the optional, experimental [omd-monitor plugin](../../../plugins/experimental/oh-my-diff-experimental/plugins/omd-monitor/README.md) adds a skill that guides the agent to subscribe once, keep working and handle the result. The mod owns subscriptions, persistence, timeouts and delivery. It only
 watches: it never starts a build, a process or a deployment, and monitoring a deployment does not authorize starting
 one.
 

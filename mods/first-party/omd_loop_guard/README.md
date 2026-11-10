@@ -24,7 +24,9 @@ headless run can't show the trust dialog, so a mod that isn't trusted yet stays 
   redirect, `tee`, `cp`, `mv`, `sed -i`, `perl -i`, `.write(`, `write_text(` or `writeFile`) restarts every count, so
   rerunning a test after changing code is never a loop. A `>` inside quotes isn't a redirect, and output captured in
   an absolute path or a `.txt`, `.log` or `.out` file isn't an edit.
-- Each repeated result gets one note, at the third identical error or the fourth identical output.
+- Counts reset at the start of every turn, so polling the same command in a later turn is not a loop.
+- Each repeated result gets one note, at the third identical error or the fourth identical output. The output note says to wait longer between checks if the
+  agent is waiting for a change.
 - `write_stdin`, `wait` and `update_plan` are never counted, since polling the same way is expected, but a held note
   is still added to their output.
 

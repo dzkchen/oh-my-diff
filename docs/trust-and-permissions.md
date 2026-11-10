@@ -17,6 +17,9 @@ status and source before trusting it. OMD shows permissions and asks before you 
 Trust is bound to a digest (a hash) of the mod's files and the permissions it declares. If either changes, the mod
 stops until you trust it again:
 
+- OMD's own updates are the exception: an update re-trusts the first-party mods it ships, and `omd update`, the
+  next `codex` start and `/update` name each permission a mod gained.
+
 - A mod installed from a folder stops after any edit to the folder, even whitespace. Review it again with
   `omd mods update ID`.
 - Mods from the curated directory are pinned to a commit and a hash, and OMD refuses a download that differs
@@ -82,6 +85,7 @@ trust dialog says what each one exposes:
 | `fs.external` | Read and write folders outside the workspace that its manifest lists |
 | `mcp` | Connect to the MCP servers (tool servers) its manifest lists |
 | `power` | Keep the Mac awake |
+| `autonomous` | Start turns you didn't type, such as a monitor's result while the thread is idle, up to the queued-turn and turn limits its manifest lists |
 
 The manifest declares each grant's scope, such as which programs or origins. Your trust covers exactly that scope,
 so a mod that widens it needs a new trust. The [capabilities reference](../mods/reference/capabilities.md) lists every

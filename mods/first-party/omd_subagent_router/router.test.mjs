@@ -71,6 +71,18 @@ test('mentions set a role and effort, and later directives replace earlier ones'
   assert.equal(spawn({ prompt: 'Review the diff' }, { state: reset }).next.model, null);
 });
 
+test('negated phrases save nothing and role words match whole words', () => {
+  for (const text of ["don't use opus as subagents", 'do not ever use opus as subagents for review', 'never use opus as subagents', 'No, avoid it: please do not use opus for the agents', "don't @opus for review"]) assert.equal(prompt(text), null, text);
+  assert.equal(prompt('don’t use opus as subagents'), null, 'curly apostrophe');
+  assert.deepEqual(prompt('I have no idea why but use opus as subagents'), { all: { query: 'opus', effort: null } }, 'a distant negation does not count');
+  assert.deepEqual(prompt("I don't know; use opus as subagents"), { all: { query: 'opus', effort: null } });
+  assert.deepEqual(prompt("don't use opus as subagents. Use sonnet as subagents"), { all: { query: 'sonnet', effort: null } });
+  const state = { review: { query: 'opus', effort: null } };
+  assert.equal(spawn({ prompt: 'Map the workspace layout' }, { state }).next.model, 'claude-opus-5-5', 'workspace is not work');
+  assert.equal(spawn({ prompt: 'Check the codex binary' }, { state }).next.model, 'claude-opus-5-5', 'codex is not code');
+  assert.equal(spawn({ prompt: 'Fixing the bug' }, { state: { worker: { query: 'sonnet', effort: null } } }).next.model, 'claude-sonnet-5-5');
+});
+
 test('settings give per-role defaults and an unsupported effort is dropped', () => {
   const routed = spawn({ definition: 'explorer', prompt: 'Map the modules' }, { settings: { research_model: 'claude-sonnet-5-5', research_effort: 'xhigh' } });
   assert.equal(routed.next.model, 'claude-sonnet-5-5');

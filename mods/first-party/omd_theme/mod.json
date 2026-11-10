@@ -5,7 +5,10 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "/theme: living character-drawn scenes behind the conversation, opaque prompts and menus, and terminal background steps",
+  "description": "/theme: animated character-drawn scenes behind the conversation, plus terminal background steps",
+  "contributes": {
+    "commands": [{ "name": "theme", "description": "Pick an animated scene behind the conversation, or open Codex's syntax colour picker" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_theme"},
   "capabilities": ["terminal", "commands", "store", "events", "lifecycle", "builtins", "exec"],

@@ -6,6 +6,9 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Event-driven monitors: subscribe once to a background command, file change or GitHub PR, run or deployment, get one bounded message. Experimental",
+  "contributes": {
+    "commands": [{ "name": "monitor", "description": "List event monitors for commands, files, pull requests, runs and deployments, or cancel one" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_monitor"},
   "capabilities": ["tools", "commands", "store", "events", "lifecycle", "terminal", "inventory", "threads", "sessions", "fs.read", "exec", "os", "autonomous"],

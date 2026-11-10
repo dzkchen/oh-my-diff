@@ -170,7 +170,11 @@ export function createClient(api: ModAPI) {
     if (!found.ok) return found;
     const chosen = candidates.find(candidate => found.value.found.some(server => server.name === candidate.name));
     const server = chosen && found.value.found.find(server => server.name === chosen.name);
-    if (!chosen || !server) return fail(`${s.adapter}_server_absent`);
+    if (!chosen || !server) {
+      const first = budget({ key: `lsp.told.${s.adapter}`, scope: 'repository' as const, expected_revision: null, value: true }, a => api.host.tryCall('store.put', a));
+      if (first.ok) api.host.tryCall('terminal.notice', { text: `No ${s.adapter} language server found on PATH (tried ${candidates.map(candidate => candidate.name).join(', ')}), so ${s.adapter} files get no edit errors. Install one to turn them on.`, kind: 'info', placement: 'transcript' });
+      return fail(`${s.adapter}_server_absent`);
+    }
     const cargo = found.value.found.find(item => item.name === 'cargo');
     const rustup = s.adapter === 'rust' && cargo ? /^(.*)\/\.cargo\/bin\/rustup$/.exec(cargo.path) : null;
     const environment: Record<string, string> = rustup ? { RUSTUP_HOME: `${rustup[1]}/.rustup` } : {};

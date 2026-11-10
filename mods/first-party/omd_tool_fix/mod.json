@@ -5,7 +5,10 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Fixes tool calls whose arguments are malformed in a clear-cut way, records each fix and sends ambiguous calls back to the model",
+  "description": "Runs tool calls with clear-cut argument slips fixed instead of failing; /toolfix lists each correction",
+  "contributes": {
+    "commands": [{ "name": "toolfix", "description": "See which tool-call arguments were corrected in this thread" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_tool_fix"},
   "capabilities": ["interception", "middleware", "store", "commands"],

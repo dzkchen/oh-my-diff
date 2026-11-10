@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d88cde0ea 100644
+index ace2368771e8fff18b79d2578be34e32f6369efd..17d1c48bd93ea09e9d7b12ce70fdeb4e3e7b2b32 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -265,7 +265,7 @@ version = "1.1.5"
@@ -152,7 +152,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4405,6 +4460,90 @@ dependencies = [
+@@ -4405,6 +4460,92 @@ dependencies = [
   "wiremock",
  ]
 
@@ -161,7 +161,9 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
 +version = "1.5.0"
 +dependencies = [
 + "base64 0.22.1",
++ "codex-core-plugin-common",
 + "codex-features",
++ "codex-utils-absolute-path",
 + "codex-utils-sleep-inhibitor",
 + "ignore",
 + "image",
@@ -243,7 +245,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "codex-otel"
  version = "0.167.0"
-@@ -5007,6 +5146,7 @@ dependencies = [
+@@ -5007,6 +5148,7 @@ dependencies = [
   "pulldown-cmark",
   "serde",
   "serde_json",
@@ -251,7 +253,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
   "sqlx",
   "sqlx-macros",
   "tempfile",
-@@ -5082,6 +5222,8 @@ dependencies = [
+@@ -5082,6 +5224,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -260,7 +262,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -5104,6 +5246,7 @@ dependencies = [
+@@ -5104,6 +5248,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -268,7 +270,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
   "codex-utils-sandbox-summary",
   "codex-utils-sleep-inhibitor",
   "codex-utils-string",
-@@ -5725,6 +5868,19 @@ dependencies = [
+@@ -5725,6 +5870,19 @@ dependencies = [
   "memchr",
  ]
 
@@ -288,7 +290,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "compact_str"
  version = "0.9.1"
-@@ -6844,7 +7000,7 @@ dependencies = [
+@@ -6844,7 +7002,7 @@ dependencies = [
   "libc",
   "option-ext",
   "redox_users 0.5.2",
@@ -297,7 +299,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -6947,6 +7103,12 @@ version = "1.2.1"
+@@ -6947,6 +7105,12 @@ version = "1.2.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
@@ -310,7 +312,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "dtor"
  version = "0.1.1"
-@@ -7201,7 +7363,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -7201,7 +7365,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
  dependencies = [
   "libc",
@@ -319,7 +321,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -7353,7 +7515,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
+@@ -7353,7 +7517,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
  dependencies = [
   "cfg-if",
   "rustix 1.1.4",
@@ -328,7 +330,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -7594,6 +7756,16 @@ dependencies = [
+@@ -7594,6 +7758,16 @@ dependencies = [
   "percent-encoding",
  ]
 
@@ -345,7 +347,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "fs_extra"
  version = "1.3.0"
-@@ -7619,6 +7791,12 @@ dependencies = [
+@@ -7619,6 +7793,12 @@ dependencies = [
   "winapi",
  ]
 
@@ -358,7 +360,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "futures"
  version = "0.3.34"
-@@ -7853,7 +8031,7 @@ dependencies = [
+@@ -7853,7 +8033,7 @@ dependencies = [
   "gobject-sys",
   "libc",
   "system-deps",
@@ -367,7 +369,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -8794,6 +8972,10 @@ name = "hashbrown"
+@@ -8794,6 +8974,10 @@ name = "hashbrown"
  version = "0.14.5"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
@@ -378,7 +380,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
 
  [[package]]
  name = "hashbrown"
-@@ -9014,6 +9196,20 @@ dependencies = [
+@@ -9014,6 +9198,20 @@ dependencies = [
   "zeroize",
  ]
 
@@ -399,7 +401,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "http"
  version = "0.2.12"
-@@ -9277,7 +9473,7 @@ dependencies = [
+@@ -9277,7 +9475,7 @@ dependencies = [
   "js-sys",
   "log",
   "wasm-bindgen",
@@ -408,7 +410,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -9492,6 +9688,12 @@ dependencies = [
+@@ -9492,6 +9690,12 @@ dependencies = [
   "icu_properties",
  ]
 
@@ -421,7 +423,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "ignore"
  version = "0.4.25"
-@@ -9722,6 +9924,18 @@ dependencies = [
+@@ -9722,6 +9926,18 @@ dependencies = [
   "serde",
  ]
 
@@ -440,7 +442,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "is-terminal"
  version = "0.4.17"
-@@ -9730,7 +9944,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+@@ -9730,7 +9946,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
  dependencies = [
   "hermit-abi",
   "libc",
@@ -449,7 +451,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -10588,6 +10802,12 @@ dependencies = [
+@@ -10588,6 +10804,12 @@ dependencies = [
   "jni-sys 0.3.1",
  ]
 
@@ -462,7 +464,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "nibble_vec"
  version = "0.1.0"
-@@ -10711,7 +10931,7 @@ version = "0.50.3"
+@@ -10711,7 +10933,7 @@ version = "0.50.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
  dependencies = [
@@ -471,7 +473,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -11441,7 +11661,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -11441,7 +11663,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
  dependencies = [
   "libc",
@@ -480,7 +482,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -11555,6 +11775,15 @@ dependencies = [
+@@ -11555,6 +11777,15 @@ dependencies = [
   "syn 2.0.117",
  ]
 
@@ -496,7 +498,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "parking"
  version = "2.2.1"
-@@ -11749,7 +11978,7 @@ version = "0.11.3"
+@@ -11749,7 +11980,7 @@ version = "0.11.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
  dependencies = [
@@ -505,7 +507,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -12377,7 +12606,7 @@ dependencies = [
+@@ -12377,7 +12608,7 @@ dependencies = [
   "libc",
   "log",
   "socket2 0.6.3",
@@ -514,7 +516,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -12401,6 +12630,12 @@ version = "6.0.0"
+@@ -12401,6 +12632,12 @@ version = "6.0.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
@@ -527,7 +529,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "radix_trie"
  version = "0.2.1"
-@@ -12867,7 +13102,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -12867,7 +13104,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "cbb175c433c8e28a809d1f5773a2ae96e68c0ce40db865cbab1020bf33ae479c"
  dependencies = [
   "bitflags 2.13.1",
@@ -536,7 +538,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
   "critical-section",
   "hashbrown 0.17.1",
   "itertools 0.14.0",
-@@ -13677,7 +13912,7 @@ dependencies = [
+@@ -13677,7 +13914,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys 0.4.15",
@@ -545,7 +547,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -13690,7 +13925,7 @@ dependencies = [
+@@ -13690,7 +13927,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys 0.12.1",
@@ -554,7 +556,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -13749,7 +13984,7 @@ dependencies = [
+@@ -13749,7 +13986,7 @@ dependencies = [
   "security-framework 3.5.1",
   "security-framework-sys",
   "webpki-root-certs",
@@ -563,7 +565,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -14121,6 +14356,12 @@ dependencies = [
+@@ -14121,6 +14358,12 @@ dependencies = [
   "uuid",
  ]
 
@@ -576,7 +578,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "sequence_trie"
  version = "0.3.6"
-@@ -14507,6 +14748,12 @@ dependencies = [
+@@ -14507,6 +14750,12 @@ dependencies = [
   "time",
  ]
 
@@ -589,7 +591,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "siphasher"
  version = "1.0.3"
-@@ -14561,7 +14808,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -14561,7 +14810,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
  dependencies = [
   "libc",
@@ -598,7 +600,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -15005,6 +15252,17 @@ version = "0.1.9"
+@@ -15005,6 +15254,17 @@ version = "0.1.9"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
@@ -616,7 +618,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "stringprep"
  version = "0.1.5"
-@@ -15124,6 +15382,335 @@ dependencies = [
+@@ -15124,6 +15384,335 @@ dependencies = [
   "is_ci",
  ]
 
@@ -952,7 +954,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "symphonia"
  version = "0.6.0"
-@@ -15365,11 +15952,17 @@ version = "0.2.2"
+@@ -15365,11 +15954,17 @@ version = "0.2.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 
@@ -972,7 +974,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  dependencies = [
   "filetime",
   "libc",
-@@ -15391,7 +15984,7 @@ dependencies = [
+@@ -15391,7 +15986,7 @@ dependencies = [
   "getrandom 0.4.2",
   "once_cell",
   "rustix 1.1.4",
@@ -981,7 +983,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -15447,7 +16040,7 @@ dependencies = [
+@@ -15447,7 +16042,7 @@ dependencies = [
   "parking_lot",
   "rustix 1.1.4",
   "signal-hook",
@@ -990,7 +992,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -15524,7 +16117,7 @@ dependencies = [
+@@ -15524,7 +16119,7 @@ dependencies = [
   "phf",
   "sha2 0.10.9",
   "signal-hook",
@@ -999,7 +1001,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
   "terminfo",
   "termios",
   "thiserror 1.0.69",
-@@ -16497,6 +17090,12 @@ version = "1.1.0"
+@@ -16497,6 +17092,12 @@ version = "1.1.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
@@ -1012,7 +1014,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  [[package]]
  name = "unicode-ident"
  version = "1.0.22"
-@@ -17205,7 +17804,7 @@ version = "0.1.11"
+@@ -17205,7 +17806,7 @@ version = "0.1.11"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
  dependencies = [
@@ -1021,7 +1023,7 @@ index ace2368771e8fff18b79d2578be34e32f6369efd..bec78bb02a7c3320677f9e99cecbb19d
  ]
 
  [[package]]
-@@ -17839,6 +18438,15 @@ version = "0.6.2"
+@@ -17839,6 +18440,15 @@ version = "0.6.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
@@ -47449,7 +47451,7 @@ index ec00cf99a3a770c3c83bcb8c36cec08225fe171d..a64a759ba055f661f5bcad5bcc44db60
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index d2962e8001347574e9a5bf680de4f18eb858dfea..c0d20689a4f06e758532a5cd05451f0d554323ad 100644
+index d2962e8001347574e9a5bf680de4f18eb858dfea..f9ab41718c805f1600c989eee929604f02efbf9b 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -53,7 +53,6 @@ use crate::bottom_pane::StatusSurfacePreviewData;
@@ -47528,21 +47530,25 @@ index d2962e8001347574e9a5bf680de4f18eb858dfea..c0d20689a4f06e758532a5cd05451f0d
      // Whether to include the initial welcome banner on session configured
      show_welcome_banner: bool,
      // One-shot tooltip override for the primary startup session.
-@@ -1191,6 +1203,13 @@ impl ChatWidget {
+@@ -1191,6 +1203,17 @@ impl ChatWidget {
      }
 
      pub(crate) fn pre_draw_tick(&mut self) {
 +        self.mod_draft_tick();
-+        for id in codex_omd::take_turned_off() {
-+            self.add_info_message(
-+                format!("{id} is now off after repeated failures; /omd shows why and reloads it"),
-+                None,
-+            );
++        for (id, blocks) in codex_omd::take_turned_off() {
++            let message = if blocks {
++                format!(
++                    "{id} stopped after repeated failures and its required checks block requests until you turn it off or reload it in /omd"
++                )
++            } else {
++                format!("{id} is now off after repeated failures; /omd shows why and reloads it")
++            };
++            self.add_info_message(message, None);
 +        }
          self.update_due_hook_visibility();
          self.schedule_hook_timer_if_needed();
          self.bottom_pane.pre_draw_tick();
-@@ -1200,9 +1219,7 @@ impl ChatWidget {
+@@ -1200,9 +1223,7 @@ impl ChatWidget {
              pet.schedule_next_frame();
          }
          self.refresh_goal_status_indicator_for_time_tick();
@@ -47553,7 +47559,7 @@ index d2962e8001347574e9a5bf680de4f18eb858dfea..c0d20689a4f06e758532a5cd05451f0d
          if self.should_animate_terminal_title_spinner()
              || self.should_animate_terminal_title_action_required()
          {
-@@ -1210,6 +1227,13 @@ impl ChatWidget {
+@@ -1210,6 +1231,13 @@ impl ChatWidget {
          }
          self.refresh_status_line_if_workspace_headline_due();
          self.refresh_thread_usage_if_settlement_due();
@@ -47567,7 +47573,7 @@ index d2962e8001347574e9a5bf680de4f18eb858dfea..c0d20689a4f06e758532a5cd05451f0d
          self.refresh_terminal_program_status();
      }
 
-@@ -1263,6 +1287,26 @@ impl ChatWidget {
+@@ -1263,6 +1291,26 @@ impl ChatWidget {
          self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
      }
 
@@ -47594,7 +47600,7 @@ index d2962e8001347574e9a5bf680de4f18eb858dfea..c0d20689a4f06e758532a5cd05451f0d
      fn take_history_insertion_prefix(
          &mut self,
          cell: &dyn HistoryCell,
-@@ -1334,6 +1378,11 @@ impl ChatWidget {
+@@ -1334,6 +1382,11 @@ impl ChatWidget {
          from_replay: bool,
          turn_id: &str,
      ) {
@@ -47606,7 +47612,7 @@ index d2962e8001347574e9a5bf680de4f18eb858dfea..c0d20689a4f06e758532a5cd05451f0d
          if let Some(input) = realtime::realtime_delegation_input(items) {
              if !from_replay && self.should_hide_realtime_delegation(turn_id) {
                  return;
-@@ -1554,6 +1603,10 @@ impl ChatWidget {
+@@ -1554,6 +1607,10 @@ impl ChatWidget {
 
      /// Merge the real session info cell with any placeholder header to avoid double boxes.
      fn apply_session_info_cell(&mut self, cell: history_cell::SessionInfoCell) {
@@ -47617,7 +47623,7 @@ index d2962e8001347574e9a5bf680de4f18eb858dfea..c0d20689a4f06e758532a5cd05451f0d
          let mut session_info_cell = Some(Box::new(cell) as Box<dyn HistoryCell>);
          let merged_header = if let Some(active) = self.transcript.take_active_cell() {
              if active
-@@ -1916,6 +1969,56 @@ impl ChatWidget {
+@@ -1916,6 +1973,56 @@ impl ChatWidget {
              .send(AppEvent::AppendMessageHistoryEntry { thread_id, text });
      }
 
@@ -47674,7 +47680,7 @@ index d2962e8001347574e9a5bf680de4f18eb858dfea..c0d20689a4f06e758532a5cd05451f0d
      pub(crate) fn prepare_local_op_submission(&mut self, op: &AppCommand) {
          if matches!(
              op,
-@@ -1925,6 +2028,8 @@ impl ChatWidget {
+@@ -1925,6 +2032,8 @@ impl ChatWidget {
          ) {
              self.transcript.last_status_copy_targets = None;
              self.input_queue.user_turn_pending_start = true;
@@ -52454,7 +52460,7 @@ index c6b9766fc8c414ccc545ffa58cc5b5a64494c262..53fa0a52d150c4234962aaac09ef9b90
 
  #[test]
 diff --git a/codex-rs/tui/src/history_cell/dynamic.rs b/codex-rs/tui/src/history_cell/dynamic.rs
-index 1ac5eb7c378bd7d2da6cee2a08e5037f34b439db..a81a2f95fe14da9082008460e4e80417b279b71e 100644
+index 1ac5eb7c378bd7d2da6cee2a08e5037f34b439db..cd1e0fa245c47726599353f1a3df6405353b8695 100644
 --- a/codex-rs/tui/src/history_cell/dynamic.rs
 +++ b/codex-rs/tui/src/history_cell/dynamic.rs
 @@ -32,6 +32,7 @@ struct DynamicToolCallData {
@@ -52520,7 +52526,7 @@ index 1ac5eb7c378bd7d2da6cee2a08e5037f34b439db..a81a2f95fe14da9082008460e4e80417
                  duration_ms,
              },
          ))
-@@ -173,6 +180,29 @@ impl DynamicToolCallData {
+@@ -173,6 +180,35 @@ impl DynamicToolCallData {
  }
 
  impl HistoryCell for DynamicToolCallCell {
@@ -52536,6 +52542,12 @@ index 1ac5eb7c378bd7d2da6cee2a08e5037f34b439db..a81a2f95fe14da9082008460e4e80417
 +            DynamicToolCallStatus::Completed => "completed",
 +            DynamicToolCallStatus::Failed => "failed",
 +        };
++        let error = match (&data.status, &data.output) {
++            (DynamicToolCallStatus::Failed, Some(output)) => {
++                crate::mod_render::first_line(output.iter().map(String::as_str))
++            }
++            _ => None,
++        };
 +        Some(crate::mod_render::RenderTarget::new(
 +            "tool_call",
 +            self.call_id.clone(),
@@ -52543,7 +52555,7 @@ index 1ac5eb7c378bd7d2da6cee2a08e5037f34b439db..a81a2f95fe14da9082008460e4e80417
 +            serde_json::json!({"call_id": self.call_id, "kind": "dynamic", "tool": data.name,
 +                "arguments": crate::mod_render::bounded_json(&data.arguments), "status": status,
 +                "duration_ms": data.duration_ms,
-+                "output_lines": data.output_lines}),
++                "output_lines": data.output_lines, "error": error}),
 +        ))
 +    }
 +
@@ -52551,7 +52563,7 @@ index 1ac5eb7c378bd7d2da6cee2a08e5037f34b439db..a81a2f95fe14da9082008460e4e80417
          false
      }
 diff --git a/codex-rs/tui/src/history_cell/mcp.rs b/codex-rs/tui/src/history_cell/mcp.rs
-index 9f80e5e5d7893a4fdba82f4b317fd8af29806a8c..23295d1c59fd7dbd282770b54b6b30ac188adfb6 100644
+index 9f80e5e5d7893a4fdba82f4b317fd8af29806a8c..af8dcc315709a982ae2c75d2f8989638b4f14706 100644
 --- a/codex-rs/tui/src/history_cell/mcp.rs
 +++ b/codex-rs/tui/src/history_cell/mcp.rs
 @@ -54,6 +54,8 @@ pub(crate) struct McpToolCallCell {
@@ -52629,7 +52641,7 @@ index 9f80e5e5d7893a4fdba82f4b317fd8af29806a8c..23295d1c59fd7dbd282770b54b6b30ac
          let detail_width = usize::from(width)
              .saturating_sub(/*rhs*/ 4)
              .max(/*other*/ 1);
-@@ -356,6 +396,27 @@ impl McpToolCallCell {
+@@ -356,6 +396,34 @@ impl McpToolCallCell {
  }
 
  impl HistoryCell for McpToolCallCell {
@@ -52642,6 +52654,13 @@ index 9f80e5e5d7893a4fdba82f4b317fd8af29806a8c..23295d1c59fd7dbd282770b54b6b30ac
 +            Some(false) => "failed",
 +        };
 +        let output_lines = self.output_lines;
++        let error = match &self.result {
++            Some(Err(error)) => crate::mod_render::first_line([error.as_str()]),
++            Some(Ok(result)) if result.is_error => crate::mod_render::first_line(
++                result.content.iter().filter_map(McpContentBlock::text),
++            ),
++            _ => None,
++        };
 +        Some(crate::mod_render::RenderTarget::new(
 +            "tool_call",
 +            self.call_id.clone(),
@@ -52650,7 +52669,7 @@ index 9f80e5e5d7893a4fdba82f4b317fd8af29806a8c..23295d1c59fd7dbd282770b54b6b30ac
 +                "tool": self.invocation.tool,
 +                "arguments": self.invocation.arguments.as_ref().map(crate::mod_render::bounded_json),
 +                "status": status, "duration_ms": self.duration.map(|duration| duration.as_millis() as u64),
-+                "output_lines": output_lines}),
++                "output_lines": output_lines, "error": error}),
 +        ))
 +    }
 +
@@ -53770,7 +53789,7 @@ index fb15a05775d4063e2780ba29d0ae15e9ad5297c8..bb6909a80741da881bcaba1a8ae5e025
  │ https://chatgpt.com/codex/install.ps1 | iex' to update.                                                    │
  │                                                                                                            │
 diff --git a/codex-rs/tui/src/history_cell/tests.rs b/codex-rs/tui/src/history_cell/tests.rs
-index d0e70b0574adc8112d2db99bf7fd0d36f7ae1c32..8cfe546a1e859c6d444fb429881365fbc1a53b84 100644
+index d0e70b0574adc8112d2db99bf7fd0d36f7ae1c32..1246d238c2d7b46c4c25bf6b56bb5abc55db1391 100644
 --- a/codex-rs/tui/src/history_cell/tests.rs
 +++ b/codex-rs/tui/src/history_cell/tests.rs
 @@ -1848,6 +1848,54 @@ fn completed_mcp_tool_call_multiple_outputs_inline_snapshot() {
@@ -53828,7 +53847,7 @@ index d0e70b0574adc8112d2db99bf7fd0d36f7ae1c32..8cfe546a1e859c6d444fb429881365fb
  #[test]
  fn session_header_clamps_to_narrow_width() {
      const WIDTH: u16 = 44;
-@@ -3229,3 +3277,57 @@ fn consolidation_walker_replaces_agent_message_cells() {
+@@ -3229,3 +3277,90 @@ fn consolidation_walker_replaces_agent_message_cells() {
          "second cell should be AgentMarkdownCell"
      );
  }
@@ -53884,6 +53903,39 @@ index d0e70b0574adc8112d2db99bf7fd0d36f7ae1c32..8cfe546a1e859c6d444fb429881365fb
 +    assert_eq!(
 +        crate::mod_render::replay_message_id(Some(thread), "item-1".into()),
 +        Some("item-1".into())
++    );
++}
++
++#[test]
++fn failed_mcp_tool_call_render_props_carry_the_first_error_line() {
++    let call = || {
++        new_active_mcp_tool_call(
++            "call-error".into(),
++            McpInvocation {
++                server: "server".into(),
++                tool: "tool".into(),
++                arguments: None,
++            },
++            /*animations_enabled*/ false,
++        )
++    };
++    let mut failed = call();
++    failed.complete(Duration::ZERO, Err("\n  boom  \nstack".into()));
++    assert_eq!(failed.render_target().unwrap().props["error"], "boom");
++    let mut errored = call();
++    errored.complete(
++        Duration::ZERO,
++        Ok(CallToolResult {
++            content: vec![text_block("denied\nmore")],
++            is_error: Some(true),
++            structured_content: None,
++            meta: None,
++        }),
++    );
++    assert_eq!(errored.render_target().unwrap().props["error"], "denied");
++    assert_eq!(
++        call().render_target().unwrap().props["error"],
++        serde_json::Value::Null
 +    );
 +}
 diff --git a/codex-rs/tui/src/history_cell/warnings.rs b/codex-rs/tui/src/history_cell/warnings.rs
@@ -68067,10 +68119,10 @@ index 0000000000000000000000000000000000000000..53bc90f4dce5591639f907585ea4bab0
 +workspace = true
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..64b36be5d78cfbbfbe46fb8a8cd758f8e444d46d
+index 0000000000000000000000000000000000000000..ca85adb091eca6a69ff85865cf4f695bc7967a3b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2612 @@
+@@ -0,0 +1,2614 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -68658,7 +68710,9 @@ index 0000000000000000000000000000000000000000..64b36be5d78cfbbfbe46fb8a8cd758f8
 +            denied(format!("final_request_refused: {reason}"))
 +        };
 +        if let Some(reason) = policy.unavailable {
-+            return Err(refuse(format!("request_policy_unavailable: {reason}")));
++            return Err(refuse(format!(
++                "request_policy_unavailable: {reason}; turn the mod off or reload it in /omd"
++            )));
 +        }
 +        let scope = match account {
 +            Some(account) => payload_scope(account, thread),
@@ -89183,10 +89237,10 @@ index 0000000000000000000000000000000000000000..508769308ff445e5868bbc76aed7e69a
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..76c6b748ada60e7c6b02b19798afb14928f04783
+index 0000000000000000000000000000000000000000..5e55aa5408069d1bda3ee5d08ef3ce5c72d2a14f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,986 @@
+@@ -0,0 +1,998 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -89256,6 +89310,7 @@ index 0000000000000000000000000000000000000000..76c6b748ada60e7c6b02b19798afb149
 +    "packages.index",
 +    "packages.preview",
 +    "packages.reload",
++    "plugins.components",
 +    "settings.write",
 +    "tools.list",
 +    "tools.define",
@@ -89863,7 +89918,18 @@ index 0000000000000000000000000000000000000000..76c6b748ada60e7c6b02b19798afb149
 +                .and_then(|store| codex_omd::package_controls::reload(&store))
 +                .map_err(|e| e.to_string())
 +        }
-+        "packages.reload" => Err("host_operation_user_only: packages.reload".into()),
++        "plugins.components" if matches!(caller.origin, Origin::UserCommand) => {
++            blocking(Box::new(move || {
++                let home = codex_omd::host::codex_home().ok_or("codex_home_unavailable")?;
++                codex_omd::ModStore::open(host.root.clone())
++                    .and_then(|store| codex_omd::plugin_component::components(&store, &home))
++                    .map_err(|error| error.to_string())
++            }))
++            .await
++        }
++        "packages.reload" | "plugins.components" => {
++            Err(format!("host_operation_user_only: {}", request.operation))
++        }
 +        "settings.write" if matches!(caller.origin, Origin::UserCommand) => {
 +            #[derive(Deserialize)]
 +            #[serde(deny_unknown_fields)]
@@ -105830,10 +105896,10 @@ index 0000000000000000000000000000000000000000..347e272d3eafbc406ee51cda7932c2fc
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e61a06391271cb10bddef5468105e76d1b41068a
+index 0000000000000000000000000000000000000000..c90378b5a60e673d57ed28266af6865f596acf37
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,493 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -106153,11 +106219,7 @@ index 0000000000000000000000000000000000000000..e61a06391271cb10bddef5468105e76d
 +    })
 +    .await
 +    .unwrap();
-+    assert_eq!(
-+        seen,
-+        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-+        "{seen:?}"
-+    );
++    assert_linked_git_events(&seen);
 +
 +    std::fs::write(
 +        tree.join(".git"),
@@ -106751,10 +106813,10 @@ index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01c
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..204c1b6483f82e05ad241075fdd4c34dccef1322
+index 0000000000000000000000000000000000000000..b15ad37d1452d3efc846c5e4d743a165d2927b66
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,33 @@
 +[package]
 +name = "codex-omd"
 +version = "1.5.0"
@@ -106778,6 +106840,8 @@ index 0000000000000000000000000000000000000000..204c1b6483f82e05ad241075fdd4c34d
 +libc = "=0.2.186"
 +codex-utils-sleep-inhibitor = { workspace = true }
 +codex-features = { workspace = true }
++codex-core-plugin-common = { workspace = true }
++codex-utils-absolute-path = { workspace = true }
 +unicode-width = "=0.2.1"
 +
 +[target.'cfg(target_os = "macos")'.dependencies]
@@ -125488,10 +125552,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..54aea06fe878a5afac0d889507f364c434c73606
+index 0000000000000000000000000000000000000000..33aa66bc9a7eb7a3882b59943a40b1a974b0075c
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,2168 @@
+@@ -0,0 +1,2172 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -125627,11 +125691,15 @@ index 0000000000000000000000000000000000000000..54aea06fe878a5afac0d889507f364c4
 +            .any(|part| name.contains(part))
 +}
 +
-+fn credential_paths() -> Vec<PathBuf> {
-+    let home = std::env::var_os("HOME").map(PathBuf::from);
++pub fn codex_home() -> Option<PathBuf> {
 +    std::env::var_os("CODEX_HOME")
 +        .map(PathBuf::from)
-+        .or_else(|| home.as_ref().map(|home| home.join(".codex")))
++        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
++}
++
++fn credential_paths() -> Vec<PathBuf> {
++    let home = std::env::var_os("HOME").map(PathBuf::from);
++    codex_home()
 +        .into_iter()
 +        .chain(
 +            home.iter()
@@ -127795,10 +127863,10 @@ index 0000000000000000000000000000000000000000..b8856c41e743275aa86b95065af45100
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..426b08035b308ed7671aa5eba52acbae0c8f02f1
+index 0000000000000000000000000000000000000000..13581d266c1f11eec095f512901de1bae15d3352
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,254 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -127941,6 +128009,7 @@ index 0000000000000000000000000000000000000000..426b08035b308ed7671aa5eba52acbae
 +pub use mods::ModComponentAction;
 +pub use mods::ModComposerWhen;
 +pub(crate) use mods::ModConfiguration;
++pub use mods::ModContributes;
 +pub use mods::ModDensity;
 +pub use mods::ModDirection;
 +pub use mods::ModFind;
@@ -129699,10 +129768,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db86b82e53
+index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6fba2b12a2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7554 @@
+@@ -0,0 +1,7649 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -130119,6 +130188,8 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +    "routes_add_self_v1",
 +    "routes_add_model_v1",
 +    "package_needs_approval_v1",
++    "package_contributes_v1",
++    "plugin_components_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -130206,6 +130277,7 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +    "packages.preview",
 +    "packages.apply",
 +    "packages.reload",
++    "plugins.components",
 +    "routes.add",
 +    "routes.models",
 +    "routes.write",
@@ -131370,6 +131442,8 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +    pub license: Option<String>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub provenance: Option<ModProvenance>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub contributes: Option<ModContributes>,
 +    #[serde(default)]
 +    pub compatibility: ModHostCompatibility,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -131661,6 +131735,29 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +    pub source: String,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub revision: Option<String>,
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModContributes {
++    #[serde(default)]
++    pub commands: Vec<ModContributedCommand>,
++    #[serde(default)]
++    pub keys: Vec<ModContributedKey>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModContributedCommand {
++    pub name: String,
++    pub description: String,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModContributedKey {
++    pub key: String,
++    pub description: String,
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -132029,6 +132126,33 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +                    .is_some_and(|value| value.is_empty() || value.len() > 128))
 +        {
 +            return Err(failure("invalid_provenance"));
++        }
++        let described = |description: &str| {
++            !description.is_empty()
++                && description.len() <= 200
++                && !description.chars().any(char::is_control)
++        };
++        if let Some(contributes) = &self.contributes
++            && (contributes.commands.len() > 16
++                || contributes.keys.len() > 16
++                || contributes.commands.iter().any(|command| {
++                    command.name.is_empty()
++                        || command.name.len() > 64
++                        || !command.name.bytes().all(|byte| {
++                            byte.is_ascii_lowercase()
++                                || byte.is_ascii_digit()
++                                || matches!(byte, b'-' | b'_')
++                        })
++                        || !described(&command.description)
++                })
++                || contributes.keys.iter().any(|key| {
++                    key.key.is_empty()
++                        || key.key.len() > 32
++                        || key.key.chars().any(char::is_control)
++                        || !described(&key.description)
++                }))
++        {
++            return Err(failure("invalid_contributes"));
 +        }
 +        if let Some(schema) = &self.settings_schema {
 +            validate_settings_schema(schema)?;
@@ -132725,10 +132849,10 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +/// Checkouts `ACTIVATED` remembers; one process rarely opens hosts in more.
 +const ACTIVATED_CHECKOUTS: usize = 8;
 +static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
-+static TURNED_OFF: Mutex<Vec<String>> = Mutex::new(Vec::new());
++static TURNED_OFF: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
 +
-+/// Mods any host in this process turned off for repeated faults since the last call.
-+pub fn take_turned_off() -> Vec<String> {
++/// Mods any host in this process turned off for repeated faults since the last call, and whether their required interceptors still block.
++pub fn take_turned_off() -> Vec<(String, bool)> {
 +    std::mem::take(
 +        &mut *TURNED_OFF
 +            .lock()
@@ -133142,8 +133266,13 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +                .lock()
 +                .unwrap_or_else(std::sync::PoisonError::into_inner);
 +            // Each host counts its own faults; one notice per mod, and processes that never drain stay bounded.
-+            if !turned_off.contains(&self.package.id) {
-+                turned_off.push(self.package.id.clone());
++            if !turned_off.iter().any(|(id, _)| id == &self.package.id) {
++                let blocks = self
++                    .registrations
++                    .interceptors
++                    .iter()
++                    .any(|interceptor| interceptor.required);
++                turned_off.push((self.package.id.clone(), blocks));
 +            }
 +        }
 +        self.telemetry.last_error = Some(error);
@@ -133847,6 +133976,7 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +        | "packages.list"
 +        | "packages.index"
 +        | "packages.preview"
++        | "plugins.components"
 +        | "exec.output_page"
 +        | "terminal.image_sample" => true,
 +        "workspace.check_access" => arguments["write"] != true,
@@ -134735,7 +134865,7 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +            .collect();
 +        let lenient = |id: &str| initial || !working.contains(id);
 +        Self::resolve_conflicts(&mut next, &lenient)?;
-+        Self::resolve_services(&mut next, &lenient)?;
++        Self::resolve_services(&mut next, &selections, &lenient)?;
 +        Self::resolve_virtual_readers(&mut next, &lenient)?;
 +        let order = Self::resolve_dependencies(&mut next, &lenient)?;
 +        self.selections = (
@@ -135144,6 +135274,7 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +
 +    fn resolve_services(
 +        next: &mut BTreeMap<String, Loaded>,
++        selections: &[ModSelection],
 +        lenient: &dyn Fn(&str) -> bool,
 +    ) -> Result<()> {
 +        let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -135201,8 +135332,10 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +                            None => Some((
 +                                id.clone(),
 +                                format!(
-+                                    "service_provider_missing: {} requires {}",
-+                                    id, import.name
++                                    "service_provider_missing: {} requires {}{}",
++                                    id,
++                                    import.name,
++                                    Self::missing_provider(&import.name, next, selections)
 +                                ),
 +                            )),
 +                        }
@@ -135219,6 +135352,37 @@ index 0000000000000000000000000000000000000000..77c744863dda2a1d5be64c13a65a36db
 +            }
 +        }
 +        Ok(())
++    }
++
++    fn missing_provider(
++        service: &str,
++        next: &BTreeMap<String, Loaded>,
++        selections: &[ModSelection],
++    ) -> String {
++        let provides = |package: &ModPackage| {
++            package
++                .services
++                .exports
++                .iter()
++                .any(|export| export.name == service)
++        };
++        if let Some((id, error)) = next.iter().find_map(|(id, loaded)| {
++            let error = loaded.error.as_deref()?;
++            provides(&loaded.package).then_some((id, error))
++        }) {
++            return format!(
++                "; {id} provides it but failed: {}",
++                error.lines().next().unwrap_or_default()
++            );
++        }
++        selections
++            .iter()
++            .filter(|selection| !selection.enabled)
++            .find_map(|selection| {
++                let (package, _, _) = store::package(&selection.path).ok()?;
++                provides(&package).then(|| format!("; turn on {} in /omd", package.id))
++            })
++            .unwrap_or_default()
 +    }
 +
 +    fn dependencies(id: &str, next: &BTreeMap<String, Loaded>) -> Vec<String> {
@@ -138478,7 +138642,7 @@ index 0000000000000000000000000000000000000000..4be6911edde50dd97a40bfb1267b028e
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e0a9d2e279a2939c4703dd3f5c7a31a781d1408b
+index 0000000000000000000000000000000000000000..f637f12821da8dda855801a54d712cc3b538148e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,561 @@
@@ -138590,7 +138754,7 @@ index 0000000000000000000000000000000000000000..e0a9d2e279a2939c4703dd3f5c7a31a7
 +            "config.describe" => Ok("config"),
 +            "config.set" => Ok("config.write"),
 +            "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
-+            | "packages.reload" | "routes.write" => Ok("packages"),
++            | "packages.reload" | "plugins.components" | "routes.write" => Ok("packages"),
 +            "routes.add" | "routes.models" => Ok("agents"),
 +            "settings.write" => Ok("commands"),
 +            "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
@@ -141265,10 +141429,10 @@ index 0000000000000000000000000000000000000000..29ab066f7019bc8216ab009616d6fb11
 +}
 diff --git a/codex-rs/omd/src/mods/configuration_overrides.rs b/codex-rs/omd/src/mods/configuration_overrides.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..49be10909ebce2d45a527c5afe2ade36f4ff80a0
+index 0000000000000000000000000000000000000000..2578643ad1a53470dfcda2331596e5bc431ac395
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/configuration_overrides.rs
-@@ -0,0 +1,1068 @@
+@@ -0,0 +1,1086 @@
 +use super::*;
 +
 +#[derive(Clone, Debug)]
@@ -141752,6 +141916,24 @@ index 0000000000000000000000000000000000000000..49be10909ebce2d45a527c5afe2ade36
 +        let settings = next.write_settings(&selection, &package, &inherited, values)?;
 +        *owner = next;
 +        Ok(json!({"settings": settings}))
++    }
++
++    pub fn protective(&self, id: &str) -> bool {
++        let policy =
++            |package: &ModPackage| package.capabilities.iter().any(|c| c == "request_policy");
++        match self.loaded.get(id) {
++            Some(loaded) => {
++                policy(&loaded.package)
++                    || loaded
++                        .registrations
++                        .interceptors
++                        .iter()
++                        .any(|interceptor| interceptor.required)
++            }
++            None => self
++                .configuration_selection_in(id, None)
++                .map_or(true, |(_, package)| policy(&package)),
++        }
 +    }
 +
 +    pub fn preview_configuration(
@@ -142339,10 +142521,10 @@ index 0000000000000000000000000000000000000000..49be10909ebce2d45a527c5afe2ade36
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..f208dd785a60ba883c9180047cee3caa2cd0b28b
+index 0000000000000000000000000000000000000000..62e29d3d4e99c180e30817c16e5b9841ef0e99c5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,227 @@
 +{
 +  "operations": {
 +    "exec.run": {"arguments":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdin":{"type":"string"},"timeout_ms":{"type":"number"},"max_output_bytes":{"type":"number"},"output_artifact":{"anyOf":[{"const":false},{"const":true}]},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"unix_sockets":{"type":"array","items":{"type":"string"}},"snapshot":{"$ref":"#/$defs/1"},"guards":{"type":"array","items":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdout_sha256":{"type":"string"}},"required":["program","stdout_sha256"]}},"required_access":{"type":"object","properties":{"write":{"type":"array","items":{"type":"string"}}},"required":["write"]},"exclusive_workspace":{"type":"string"},"sandbox":{"const":"none"}},"required":["program"]},"result":{"allOf":[{"type":"object","properties":{"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"signal":{"anyOf":[{"type":"null"},{"type":"string"}]},"stdout":{"type":"string"},"stdout_sha256":{"type":"string"},"stdout_bytes":{"type":"number"},"output_artifact":{"$ref":"#/$defs/2"},"stderr":{"type":"string"},"stdout_truncated":{"type":"boolean"},"stdout_preview_truncated":{"type":"boolean"},"stderr_truncated":{"type":"boolean"},"stderr_preview_truncated":{"type":"boolean"},"timed_out":{"type":"boolean"},"duration_ms":{"type":"number"},"program":{"$ref":"#/$defs/3"},"guards_verified":{"type":"number"}},"required":["exit_code","signal","stdout","stdout_sha256","stdout_bytes","output_artifact","stderr","stdout_truncated","stdout_preview_truncated","stderr_truncated","stderr_preview_truncated","timed_out","duration_ms","program","guards_verified"]},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"evidence":{"$ref":"#/$defs/1"}},"required":[]}]}},
@@ -142453,22 +142635,23 @@ index 0000000000000000000000000000000000000000..f208dd785a60ba883c9180047cee3caa
 +    "prompts.status": {"arguments":{"$ref":"#/$defs/67"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
 +    "prompts.revoke": {"arguments":{"$ref":"#/$defs/67"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
 +    "builtins.invoke": {"arguments":{"type":"object","properties":{"action":{"type":"string","format":"dotted-string"}},"required":["action"]},"result":{"type":"object","properties":{"invoked":{"type":"boolean"}},"required":["invoked"]}},
-+    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"required"},{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"needs_approval"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"inherited_enabled"},{"const":"inherited_settings"},{"const":"overrides"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"managed"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"required":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"needs_approval":{"type":"boolean"},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"inherited_enabled":{"type":"boolean"},"inherited_settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}},"overrides":{"type":"object","properties":{"enabled":{"anyOf":[{"const":false},{"const":true}]},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["settings"]},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","required","effective","pending","failed","needs_approval","api","compatible","grants","conflicts","settings_schema","inherited_enabled","inherited_settings","overrides","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
++    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"required"},{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"needs_approval"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"maintainer"},{"const":"contributes"},{"const":"inherited_enabled"},{"const":"inherited_settings"},{"const":"overrides"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"managed"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"required":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"needs_approval":{"type":"boolean"},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"maintainer":{"anyOf":[{"type":"null"},{"type":"string"}]},"contributes":{"type":"object","properties":{"commands":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"}},"required":["name","description"]}},"keys":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"description":{"type":"string"}},"required":["key","description"]}}},"required":["commands","keys"]},"inherited_enabled":{"type":"boolean"},"inherited_settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}},"overrides":{"type":"object","properties":{"enabled":{"anyOf":[{"const":false},{"const":true}]},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["settings"]},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","required","effective","pending","failed","needs_approval","api","compatible","grants","conflicts","settings_schema","maintainer","contributes","inherited_enabled","inherited_settings","overrides","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
 +    "packages.index": {"arguments":{"type":"object","properties":{"index":{"type":"string"},"query":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"}},"required":[]},"result":{"type":"object","properties":{"index":{"type":"string"},"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"latest":{"type":"string"},"description":{"type":"string"},"support":{"anyOf":[{"type":"null"},{"type":"string"}]},"versions":{"type":"array","items":{"type":"object","properties":{"version":{"type":"string"},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["version","blocked"]}},"installed":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["id","latest","description","support","versions","installed"]}},"total":{"type":"number"},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["index","packages","total","cursor"]}},
-+    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/74"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}},"identity_warning":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["action","id","changes","grants_added"]}},
-+    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/74"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
++    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}},"identity_warning":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["action","id","changes","grants_added"]}},
++    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"},"enabled":{"anyOf":[{"const":false},{"const":true}]},"reason":{"type":"string"}},"required":["status","generation"]}]}},
++    "plugins.components": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"components":{"type":"array","items":{"type":"object","properties":{"plugin":{"type":"string"},"marketplace":{"type":"string"},"version":{"type":"string"},"id":{"anyOf":[{"type":"null"},{"type":"string"}]},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"sha256":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"}},"required":["plugin","marketplace","version","id","description","sha256","error","installed","enabled"]}}},"required":["components"]}},
 +    "packages.reload": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"generation":{"type":"number"},"failed":{"type":"array","items":{"type":"string"}},"applies":{"const":"next_boundary"}},"required":["generation","failed","applies"]}},
 +    "settings.write": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"values":{"type":"object","properties":{},"required":[],"additionalProperties":{}},"target":{"anyOf":[{"const":"shared"},{"const":"terminal"}]},"reset":{"type":"array","items":{"type":"string"}}},"required":["values"]},"result":{"type":"object","properties":{"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["settings"]}},
 +    "terminal.open": {"arguments":{"anyOf":[{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"number"},"editor":{"const":true}},"required":["path","editor"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"opened":{"const":true}},"required":["opened"]}]}},
-+    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/76"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
++    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/77"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
 +    "terminal.pane": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"anyOf":[{"const":"open"},{"const":"close"},{"const":"focus"},{"const":"reveal"}]},"id":{"type":"string"}},"required":["action","id"]},{"type":"object","properties":{"action":{"const":"scroll"},"id":{"type":"string"},"offset":{"type":"number"}},"required":["action","id","offset"]}]},"result":{"type":"object","properties":{"applied":{"const":true}},"required":["applied"]}},
 +    "terminal.panes": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"panes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"visible":{"type":"boolean"},"collapsed":{"type":"boolean"},"focused":{"type":"boolean"},"scroll":{"type":"number"}},"required":["id","visible","collapsed","focused","scroll"]}}},"required":["panes"]}},
-+    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/76"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/64"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
++    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/77"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/64"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
-+    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/78"},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/79"},{"$ref":"#/$defs/79"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/78"},"packed":{"type":"string"}},"required":["key","rect","packed"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
++    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/79"},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/80"},{"$ref":"#/$defs/80"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/79"},"packed":{"type":"string"}},"required":["key","rect","packed"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"},"files":{"$ref":"#/$defs/0"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/55"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"files":{"$ref":"#/$defs/0"}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
-+    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/82"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/91"}},
-+    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/82"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/91"}},
++    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/83"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/92"}},
++    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/83"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/92"}},
 +    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"omd_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
@@ -142543,29 +142726,30 @@ index 0000000000000000000000000000000000000000..f208dd785a60ba883c9180047cee3caa
 +    "66": {"type":"array","items":{"$ref":"#/$defs/1"}},
 +    "67": {"type":"object","properties":{"consent":{"type":"string"}},"required":["consent"]},
 +    "68": {"anyOf":[{"const":"rollback"},{"const":"remove"},{"const":"reset"},{"const":"update"},{"const":"install"},{"const":"enable"},{"const":"disable"},{"const":"trust"},{"const":"save-defaults"}]},
-+    "69": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
-+    "70": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
-+    "71": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
-+    "72": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
-+    "73": {"anyOf":[{"$ref":"#/$defs/69"},{"$ref":"#/$defs/70"},{"$ref":"#/$defs/71"},{"$ref":"#/$defs/72"}]},
-+    "74": {"type":"object","properties":{"action":{"$ref":"#/$defs/68"},"id":{"type":"string"},"source":{"$ref":"#/$defs/73"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"target":{"anyOf":[{"const":"shared"},{"const":"terminal"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
-+    "75": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
-+    "76": {"type":"array","items":{"$ref":"#/$defs/75"}},
-+    "77": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
-+    "78": {"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},
-+    "79": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
-+    "80": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
-+    "81": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
-+    "82": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/80"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/81"}},"required":["prompt"]},
-+    "83": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
-+    "84": {"type":"array","items":{"$ref":"#/$defs/83"}},
-+    "85": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
-+    "86": {"type":"array","items":{"$ref":"#/$defs/85"}},
-+    "87": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
-+    "88": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
-+    "89": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/88"}},"required":["microusd","basis"]},
-+    "90": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
-+    "91": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/84"},"tool_calls":{"$ref":"#/$defs/86"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/87"},"cost":{"$ref":"#/$defs/89"},"timing":{"$ref":"#/$defs/90"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
++    "69": {"type":"object","properties":{"kind":{"const":"plugin"},"plugin":{"type":"string"},"marketplace":{"type":"string"}},"required":["kind","plugin"]},
++    "70": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
++    "71": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
++    "72": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
++    "73": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
++    "74": {"anyOf":[{"$ref":"#/$defs/69"},{"$ref":"#/$defs/70"},{"$ref":"#/$defs/71"},{"$ref":"#/$defs/72"},{"$ref":"#/$defs/73"}]},
++    "75": {"type":"object","properties":{"action":{"$ref":"#/$defs/68"},"id":{"type":"string"},"source":{"$ref":"#/$defs/74"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"target":{"anyOf":[{"const":"shared"},{"const":"terminal"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"enable":{"anyOf":[{"const":false},{"const":true}]}},"required":["action"]},
++    "76": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
++    "77": {"type":"array","items":{"$ref":"#/$defs/76"}},
++    "78": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
++    "79": {"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},
++    "80": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
++    "81": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
++    "82": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
++    "83": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/81"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/82"}},"required":["prompt"]},
++    "84": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
++    "85": {"type":"array","items":{"$ref":"#/$defs/84"}},
++    "86": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
++    "87": {"type":"array","items":{"$ref":"#/$defs/86"}},
++    "88": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
++    "89": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
++    "90": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/89"}},"required":["microusd","basis"]},
++    "91": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
++    "92": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/85"},"tool_calls":{"$ref":"#/$defs/87"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/88"},"cost":{"$ref":"#/$defs/90"},"timing":{"$ref":"#/$defs/91"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
 +  }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_validation.rs b/codex-rs/omd/src/mods/operation_validation.rs
@@ -142867,7 +143051,7 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..392ea59dba5025b5cdf9ab1820329e526b188b26
+index 0000000000000000000000000000000000000000..bf840e32893ad98ed5b5657a4875ffa73d46a903
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
 @@ -0,0 +1,2974 @@
@@ -144525,7 +144709,7 @@ index 0000000000000000000000000000000000000000..392ea59dba5025b5cdf9ab1820329e52
 +        }
 +        let cache_path = self.cache_package(&path, &package, &integrity)?;
 +        let active_path = match normalized_source {
-+            ModPackageSource::Local { .. } => path,
++            ModPackageSource::Local { .. } if !crate::plugin_component::cached(&path) => path,
 +            _ => {
 +                if path.starts_with(&self.root) && path != cache_path {
 +                    std::fs::remove_dir_all(&path)?;
@@ -149412,10 +149596,10 @@ index 0000000000000000000000000000000000000000..42a6f21f76db858a7e18f132a9ad4189
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a35023de580a2e51cacd43952465c1a5cd19e293
+index 0000000000000000000000000000000000000000..7b9ecb1b8401284f310cb14d2211d0bfb7fc7c39
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1690 @@
+@@ -0,0 +1,1692 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -150508,6 +150692,8 @@ index 0000000000000000000000000000000000000000..a35023de580a2e51cacd43952465c1a5
 +                            "version": manifest.version,
 +                            "description": manifest.description,
 +                            "settings_schema": manifest.settings_schema,
++                            "provenance": manifest.provenance,
++                            "contributes": manifest.contributes,
 +                        }));
 +                    }
 +                    let defaults = manifest
@@ -154071,10 +154257,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e2ba2333e
+index 0000000000000000000000000000000000000000..8bd9e4edca71a5e001601c55bddf6e372d55d33f
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,911 @@
+@@ -0,0 +1,972 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -154093,6 +154279,7 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +    confirmation: Option<String>,
 +    selection: Option<Selection>,
 +    generation: u64,
++    enable: bool,
 +    pub(crate) owner_revision: Option<(u64, u64, Value)>,
 +}
 +
@@ -154139,7 +154326,7 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +    #[serde(default)]
 +    id: Option<String>,
 +    #[serde(default)]
-+    source: Option<ModPackageSource>,
++    source: Option<Value>,
 +    #[serde(default)]
 +    reference: Option<String>,
 +    #[serde(default)]
@@ -154150,6 +154337,8 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +    scope: String,
 +    #[serde(default)]
 +    expected_generation: Option<u64>,
++    #[serde(default)]
++    enable: bool,
 +}
 +
 +#[derive(Deserialize)]
@@ -154547,6 +154736,8 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +                "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == api),
 +                "grants": selection["capabilities"],
 +                "settings_schema": manifest["settings_schema"],
++                "maintainer": manifest["provenance"]["maintainer"],
++                "contributes": serde_json::from_value::<crate::ModContributes>(manifest["contributes"].clone()).unwrap_or_default(),
 +                "settings": crate::effective_settings(
 +                    manifest.get("settings_schema"),
 +                    &configured
@@ -154587,7 +154778,8 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +                    "scope": item["scope"], "path": null, "source": "selection", "installed": false,
 +                    "enabled": false, "effective": item["error"].is_null(), "pending": "reload",
 +                    "failed": item["error"], "api": item["api"], "compatible": true,
-+                    "grants": item["capabilities"], "conflicts": [],
++                    "grants": item["capabilities"], "conflicts": [], "maintainer": null,
++                    "contributes": crate::ModContributes::default(),
 +                })
 +            }),
 +    );
@@ -154610,6 +154802,9 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +    {
 +        return Err(failure("configuration_target_invalid"));
 +    }
++    if arguments.enable && arguments.action != "install" {
++        return Err(failure("package_arguments_invalid: enable is for install"));
++    }
 +    let generation = generation(store)?;
 +    if arguments
 +        .expected_generation
@@ -154631,8 +154826,34 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +    let (id, request, plan, selection, added) = match arguments.action.as_str() {
 +        "install" => {
 +            let index = arguments.index.clone().or_else(|| store.package_index());
++            let mut digest = None;
 +            let source = match (&arguments.source, &arguments.reference) {
-+                (Some(source), None) => source.clone(),
++                (Some(source), None) if source["kind"] == "plugin" => {
++                    #[derive(Deserialize)]
++                    #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
++                    enum Source {
++                        Plugin {
++                            plugin: String,
++                            marketplace: Option<String>,
++                        },
++                    }
++                    let Source::Plugin {
++                        plugin,
++                        marketplace,
++                    } = serde_json::from_value(source.clone())
++                        .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
++                    let codex_home = crate::host::codex_home()
++                        .ok_or_else(|| failure("plugin_component_not_installed: no Codex home"))?;
++                    let (path, sha256) = crate::plugin_component::resolve(
++                        &codex_home,
++                        &plugin,
++                        marketplace.as_deref(),
++                    )?;
++                    digest = Some(sha256);
++                    ModPackageSource::Local { path }
++                }
++                (Some(source), None) => serde_json::from_value(source.clone())
++                    .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?,
 +                (None, Some(reference)) => ModPackageSource::parse(reference, index.clone())?,
 +                _ => {
 +                    return Err(failure(
@@ -154644,7 +154865,19 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +                Some(version) if !version.is_empty() => source.with_version(version)?,
 +                _ => source,
 +            };
-+            let (request, plan) = requested(store, source, index, arguments.scope.clone(), false)?;
++            let (request, mut plan) =
++                requested(store, source, index, arguments.scope.clone(), false)?;
++            if digest.is_some_and(|digest| {
++                !plan
++                    .packages
++                    .iter()
++                    .any(|package| package.id == plan.root && package.integrity == digest)
++            }) {
++                return Err(failure("plugin_component_hash_mismatch"));
++            }
++            if arguments.enable {
++                plan.changes["enabled"] = json!(true);
++            }
 +            (plan.root.clone(), Some(request), Some(plan), None, None)
 +        }
 +        "update" => {
@@ -154753,8 +154986,14 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +        }
 +        other => return Err(failure(format!("package_action_invalid: {other}"))),
 +    };
-+    let grants_added =
-+        added.unwrap_or_else(|| managed_grants(&lock, &id, &request, &arguments.action));
++    let grants_added = added.unwrap_or_else(|| {
++        managed_grants(
++            &lock,
++            &id,
++            &request,
++            arguments.action == "enable" || arguments.enable,
++        )
++    });
 +    let changes = match (&plan, &selection) {
 +        (Some(plan), _) => plan.changes.clone(),
 +        (None, Some(selection)) if arguments.action == "trust" => {
@@ -154803,6 +155042,7 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +            confirmation: plan.map(|plan| plan.confirmation),
 +            selection,
 +            generation,
++            enable: arguments.enable,
 +            owner_revision: None,
 +        },
 +    })
@@ -154812,7 +155052,7 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +    lock: &crate::ModPackageLock,
 +    id: &str,
 +    request: &Option<ModInstallRequest>,
-+    action: &str,
++    enabling: bool,
 +) -> Vec<String> {
 +    let grants: BTreeMap<String, Vec<String>> = match (request, lock.packages.get(id)) {
 +        (Some(request), _) => request
@@ -154826,7 +155066,6 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +        }
 +        (None, None) => BTreeMap::new(),
 +    };
-+    let enabling = action == "enable";
 +    grants
 +        .iter()
 +        .flat_map(|(package, capabilities)| {
@@ -154935,6 +155174,14 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +    ) {
 +        ("install" | "update", Some(request), None) => {
 +            store.package_apply(request.clone(), confirmation()?)?;
++            if control.enable
++                && let Err(error) = store.package_enable(&control.id)
++            {
++                return Ok(
++                    json!({"status": "applied", "generation": generation(store)?,
++                    "enabled": false, "reason": error.to_string()}),
++                );
++            }
 +        }
 +        ("remove", None, None) => {
 +            store.package_uninstall(&control.id, confirmation()?)?;
@@ -154988,10 +155235,10 @@ index 0000000000000000000000000000000000000000..27d984a2de64158010c84a855085766e
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..105e5e0a92d0caf7648c891927130dcf63e9983f
+index 0000000000000000000000000000000000000000..345fd66e4cfdd4819bf9babacfb2c1c69a20b6a9
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,491 @@
+@@ -0,0 +1,575 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -155108,6 +155355,35 @@ index 0000000000000000000000000000000000000000..105e5e0a92d0caf7648c891927130dcf
 +    let remove = preview(&store, json!({"action": "remove", "id": "sample_mod"})).unwrap();
 +    apply(&store, &remove.control).unwrap();
 +    assert_eq!(list(&store, None).unwrap()["packages"], json!([]));
++}
++
++#[test]
++fn installing_turned_on_lists_every_grant_and_reports_an_enable_failure() {
++    let (_temp, store, root) = setup();
++    let path = fixture_package(&root, "sample_mod", &["commands"], json!([]));
++    let install = |enable: bool| {
++        preview(
++            &store,
++            json!({"action": "install", "source": {"kind": "local", "path": path}, "enable": enable}),
++        )
++        .unwrap()
++    };
++    apply(&store, &install(false).control).unwrap();
++    assert_eq!(install(false).public["grants_added"], json!([]));
++    assert_eq!(install(true).public["grants_added"], json!(["commands"]));
++
++    let manifest = path.join("mod.json");
++    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
++    value["services"] = json!({"imports": [{"name": "shared.absent", "version": "^1.0.0"}]});
++    value["capabilities"] = json!(["commands", "services"]);
++    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
++    let applied = apply(&store, &install(true).control).unwrap();
++    assert_eq!(
++        (&applied["status"], &applied["enabled"]),
++        (&json!("applied"), &json!(false))
++    );
++    assert!(applied["reason"].is_string());
++    assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], false);
 +}
 +
 +#[test]
@@ -155481,6 +155757,61 @@ index 0000000000000000000000000000000000000000..105e5e0a92d0caf7648c891927130dcf
 +            .as_str()
 +            .unwrap()
 +            .contains("share storage and owned credential authority")
++    );
++}
++
++#[test]
++fn listing_reports_maintainer_and_contributes_of_off_packages() {
++    let (_temp, store, root) = setup();
++    let plain = fixture_package(&root, "plain_mod", &["commands"], json!([]));
++    let path = fixture_package(&root, "contributing_mod", &["commands"], json!([]));
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
++    let contributes = json!({"commands": [{"name": "review-all", "description": "Review every file"}],
++        "keys": [{"key": "ctrl+r", "description": "Open the review"}]});
++    for (value, accepted) in [
++        (
++            json!({"commands": [{"name": "/review", "description": "Review"}]}),
++            false,
++        ),
++        (
++            json!({"keys": [{"key": "ctrl+r", "description": ""}]}),
++            false,
++        ),
++        (json!({"keys": [], "panes": []}), false),
++        (contributes.clone(), true),
++    ] {
++        manifest["contributes"] = value;
++        std::fs::write(path.join("mod.json"), manifest.to_string()).unwrap();
++        let previewed = preview(
++            &store,
++            json!({"action": "install", "source": {"kind": "local", "path": path}}),
++        );
++        assert_eq!(previewed.is_ok(), accepted, "{manifest}");
++        if let Ok(previewed) = previewed {
++            apply(&store, &previewed.control).unwrap();
++        }
++    }
++    let install = preview(
++        &store,
++        json!({"action": "install", "source": {"kind": "local", "path": plain}}),
++    )
++    .unwrap();
++    apply(&store, &install.control).unwrap();
++    let listed = list_fields(
++        &store,
++        None,
++        json!({"fields": ["id", "enabled", "maintainer", "contributes"]}),
++        None,
++        None,
++    )
++    .unwrap();
++    assert_eq!(
++        listed["packages"],
++        json!([
++            {"id": "contributing_mod", "enabled": false, "maintainer": "Fixture Author", "contributes": contributes},
++            {"id": "plain_mod", "enabled": false, "maintainer": "Fixture Author", "contributes": {"commands": [], "keys": []}},
++        ])
 +    );
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
@@ -156391,16 +156722,16 @@ index 0000000000000000000000000000000000000000..de7d9706c243e30d12638c4acc2705ac
 +}
 diff --git a/codex-rs/omd/src/plugin_component.rs b/codex-rs/omd/src/plugin_component.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f8b869378224741c22fa9ed735dab20e01a79a71
+index 0000000000000000000000000000000000000000..b61a993903a3a8b26af02ce20c90720028264c76
 --- /dev/null
 +++ b/codex-rs/omd/src/plugin_component.rs
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,154 @@
 +use crate::ModStore;
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::BTreeSet;
 +use std::io;
-+use std::path::Path;
++use std::path::{Path, PathBuf};
 +
 +pub fn inspect(root: &Path) -> io::Result<Value> {
 +    #[derive(Deserialize)]
@@ -156448,6 +156779,106 @@ index 0000000000000000000000000000000000000000..f8b869378224741c22fa9ed735dab20e
 +    Ok(
 +        json!({"schema":1,"plugin_root":root,"component":path,"package":package,"activation":"requires separate mod-store trust and enable"}),
 +    )
++}
++
++pub(crate) fn cached(path: &Path) -> bool {
++    crate::host::codex_home()
++        .and_then(|home| {
++            home.join(codex_core_plugin_common::installed::PLUGINS_CACHE_DIR)
++                .canonicalize()
++                .ok()
++        })
++        .is_some_and(|cache| path.starts_with(cache))
++}
++
++fn installed(codex_home: &Path) -> io::Result<Vec<(String, String, String, PathBuf)>> {
++    use codex_core_plugin_common::installed::{
++        PLUGINS_CACHE_DIR, active_plugin_version, validate_plugin_version_segment,
++    };
++    let config: toml::Table = match std::fs::read_to_string(codex_home.join("config.toml")) {
++        Ok(text) => toml::from_str(&text).map_err(io::Error::other)?,
++        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
++        Err(error) => return Err(error),
++    };
++    let keys = config.get("plugins").and_then(toml::Value::as_table);
++    Ok(keys
++        .into_iter()
++        .flatten()
++        .filter(|(_, entry)| entry.get("enabled").and_then(toml::Value::as_bool) != Some(false))
++        .filter_map(|(key, _)| {
++            let (plugin, marketplace) = key.split_once('@')?;
++            validate_plugin_version_segment(plugin).ok()?;
++            validate_plugin_version_segment(marketplace).ok()?;
++            let base = codex_home
++                .join(PLUGINS_CACHE_DIR)
++                .join(marketplace)
++                .join(plugin);
++            let version = active_plugin_version(
++                &codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(&base).ok()?,
++            )?;
++            let root = base.join(&version);
++            root.join(".codex-plugin/omd.json")
++                .is_file()
++                .then(|| (plugin.to_owned(), marketplace.to_owned(), version, root))
++        })
++        .collect())
++}
++
++pub fn components(store: &ModStore, codex_home: &Path) -> io::Result<Value> {
++    let status = store.selection_status()?;
++    let selections = status["selections"]
++        .as_array()
++        .map(Vec::as_slice)
++        .unwrap_or_default();
++    let components = installed(codex_home)?
++        .into_iter()
++        .map(|(plugin, marketplace, version, root)| {
++            let inspected = root.canonicalize().and_then(|root| inspect(&root));
++            let package = inspected
++                .as_ref()
++                .map_or(&Value::Null, |inspected| &inspected["package"]);
++            let id = &package["manifest"]["id"];
++            let mine = selections
++                .iter()
++                .filter(|item| !id.is_null() && &item["id"] == id);
++            json!({
++                "plugin": plugin, "marketplace": marketplace, "version": version, "id": id,
++                "description": package["manifest"]["description"], "sha256": package["sha256"],
++                "error": inspected.as_ref().err().map(ToString::to_string),
++                "installed": mine.clone().next().is_some(),
++                "enabled": mine.clone().any(|item| item["selected"] == true),
++            })
++        })
++        .collect::<Vec<_>>();
++    Ok(json!({"components": components}))
++}
++
++pub fn resolve(
++    codex_home: &Path,
++    plugin: &str,
++    marketplace: Option<&str>,
++) -> io::Result<(PathBuf, String)> {
++    let mut matching = installed(codex_home)?
++        .into_iter()
++        .filter(|(name, market, ..)| {
++            name == plugin && marketplace.is_none_or(|marketplace| marketplace == market)
++        });
++    let (.., root) = matching
++        .next()
++        .ok_or_else(|| io::Error::other(format!("plugin_component_not_installed: {plugin}")))?;
++    if matching.next().is_some() {
++        return Err(io::Error::other(format!(
++            "plugin_marketplace_required: {plugin}"
++        )));
++    }
++    let inspected = inspect(&root.canonicalize()?)?;
++    Ok((
++        serde_json::from_value(inspected["component"].clone())?,
++        inspected["package"]["sha256"]
++            .as_str()
++            .unwrap_or_default()
++            .to_owned(),
++    ))
 +}
 diff --git a/codex-rs/omd/src/power.rs b/codex-rs/omd/src/power.rs
 new file mode 100644
@@ -166150,10 +166581,10 @@ index 0000000000000000000000000000000000000000..293a2fecd8bf57ca7b46675b8a34897b
 +}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..aa5e6a469caa85b2db4215ff5721169a8178c83d
+index 0000000000000000000000000000000000000000..1a9324028192e2a8d502ad19d10707a306abbb2f
 --- /dev/null
 +++ b/codex-rs/omd/tests/integration.rs
-@@ -0,0 +1,564 @@
+@@ -0,0 +1,565 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -166489,8 +166920,9 @@ index 0000000000000000000000000000000000000000..aa5e6a469caa85b2db4215ff5721169a
 +
 +    let mut reopened = host(&temp);
 +    assert!(
-+        error_of(&reopened, "required")
-+            .contains("service_provider_missing: required requires shared.echo"),
++        error_of(&reopened, "required").contains(
++            "service_provider_missing: required requires shared.echo; turn on provider in /omd"
++        ),
 +        "{}",
 +        error_of(&reopened, "required")
 +    );
@@ -167880,10 +168312,10 @@ index 0000000000000000000000000000000000000000..810a873e4b715fdcf8462d5129f9b723
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..339a35cd455b93782f336725b8226443f32da92f
+index 0000000000000000000000000000000000000000..fbbd520b327e6246b6871d239e3581a5166e997e
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,7844 @@
+@@ -0,0 +1,7885 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::MOD_API_VERSION;
@@ -170708,6 +171140,14 @@ index 0000000000000000000000000000000000000000..339a35cd455b93782f336725b8226443
 +            .to_string()
 +            .contains("service_provider_missing: missing needs the absent.service service")
 +    );
++    let consumer = service_package(
++        &root,
++        "consumer",
++        "export default api => {}",
++        json!({"imports":[{"name":"shared.service","version":"1.0.0"}]}),
++        &["services"],
++    );
++    trust(&store, &consumer, &["services"]);
 +    trust(&store, &optional, &["commands", "services"]);
 +    trust(&store, &versioned, &["services"]);
 +    trust(&store, &incompatible, &["services"]);
@@ -170728,6 +171168,13 @@ index 0000000000000000000000000000000000000000..339a35cd455b93782f336725b8226443
 +        errors["second"]
 +            .unwrap()
 +            .contains("service_provider_collision")
++    );
++    assert!(
++        errors["consumer"].unwrap().contains(
++            "requires shared.service; first provides it but failed: service_provider_collision"
++        ),
++        "{:?}",
++        errors["consumer"]
 +    );
 +    assert_eq!(errors["optional"], None);
 +    assert!(
@@ -172432,6 +172879,32 @@ index 0000000000000000000000000000000000000000..339a35cd455b93782f336725b8226443
 +            )
 +        })
 +        .collect()
++}
++
++#[test]
++fn required_interceptors_and_request_policies_make_a_mod_protective() {
++    let (_temp, runtime) = interceptors(&[
++        (
++            "guard",
++            "export default api => api.intercept('tool', {required: true}, (e, next) => next(e))",
++            &["interception"],
++        ),
++        (
++            "plain",
++            "export default api => api.intercept('tool', (e, next) => next(e))",
++            &["interception"],
++        ),
++        (
++            "sender",
++            "export default () => {}",
++            &["middleware", "request_policy"],
++        ),
++    ]);
++    let runtime = runtime.lock().unwrap();
++    assert_eq!(
++        ["guard", "plain", "sender", "missing"].map(|id| runtime.protective(id)),
++        [true, false, true, true]
++    );
 +}
 +
 +#[test]
@@ -177823,10 +178296,10 @@ index 0000000000000000000000000000000000000000..de7d5d46e9bfacf2569937f1c8accd66
 +}
 diff --git a/codex-rs/omd/tests/scoped_bridge.rs b/codex-rs/omd/tests/scoped_bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6a20c79464b2b8035bee6045139b5bf31c286935
+index 0000000000000000000000000000000000000000..50a9e5471b23412cac82111fe6fd8d804a006d96
 --- /dev/null
 +++ b/codex-rs/omd/tests/scoped_bridge.rs
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,410 @@
 +#![allow(clippy::unwrap_used, clippy::expect_used)]
 +
 +use codex_omd::ModHostCallback;
@@ -178156,6 +178629,86 @@ index 0000000000000000000000000000000000000000..6a20c79464b2b8035bee6045139b5bf3
 +    fs::remove_dir_all(&component).unwrap();
 +    std::os::unix::fs::symlink(&repo, &component).unwrap();
 +    assert!(codex_omd::plugin_component::inspect(&plugin).is_err());
++}
++
++#[test]
++fn installed_plugin_components_list_and_install_enabled_in_one_apply() {
++    let temp = tempfile::tempdir().unwrap();
++    let home = temp.path().canonicalize().unwrap().join("codex");
++    let plugin = home.join("plugins/cache/market/demo/1.2.0");
++    fs::create_dir_all(plugin.join(".codex-plugin")).unwrap();
++    fs::create_dir_all(plugin.join("mod")).unwrap();
++    fs::create_dir_all(home.join("plugins/cache/market/plain/1.0.0")).unwrap();
++    fs::write(
++        home.join("config.toml"),
++        "[plugins.\"demo@market\"]\nenabled = true\n[plugins.\"plain@market\"]\nenabled = true\n",
++    )
++    .unwrap();
++    fs::write(
++        plugin.join("mod/mod.json"),
++        json!({"schema": 1, "id": "plugin_demo", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION,
++            "entrypoint": "main.ts", "state_version": 1, "description": "Demo", "license": "MIT",
++            "provenance": {"maintainer": "Demo Author", "source": "demo"}, "capabilities": ["commands"],
++            "contributes": {"commands": [{"name": "demo", "description": "Run the demo"}]}})
++        .to_string(),
++    )
++    .unwrap();
++    fs::write(plugin.join("mod/main.ts"), "export default () => {}\n").unwrap();
++    let hash = ModStore::inspect_package(&plugin.join("mod")).unwrap()["sha256"].clone();
++    fs::write(
++        plugin.join(".codex-plugin/omd.json"),
++        json!({"schema": 1, "component": "mod", "sha256": hash}).to_string(),
++    )
++    .unwrap();
++    let store = ModStore::create(temp.path().join("store")).unwrap();
++    let component = json!({"plugin": "demo", "marketplace": "market", "version": "1.2.0",
++        "id": "plugin_demo", "description": "Demo", "sha256": hash, "error": null});
++    let listed = |installed: bool| {
++        let mut expected = component.clone();
++        expected["installed"] = json!(installed);
++        expected["enabled"] = json!(installed);
++        assert_eq!(
++            codex_omd::plugin_component::components(&store, &home).unwrap(),
++            json!({"components": [expected]})
++        );
++    };
++    listed(false);
++    unsafe { std::env::set_var("CODEX_HOME", &home) };
++    let install = codex_omd::package_controls::preview(
++        &store,
++        json!({"action": "install", "source": {"kind": "plugin", "plugin": "demo"}, "enable": true}),
++    )
++    .unwrap();
++    assert_eq!(
++        (&install.public["id"], &install.public["changes"]["enabled"]),
++        (&json!("plugin_demo"), &json!(true))
++    );
++    codex_omd::package_controls::apply(&store, &install.control).unwrap();
++    listed(true);
++    let package = &codex_omd::package_controls::list(&store, None).unwrap()["packages"][0];
++    assert_eq!(
++        (
++            &package["enabled"],
++            &package["maintainer"],
++            &package["contributes"]["commands"][0]["name"]
++        ),
++        (&json!(true), &json!("Demo Author"), &json!("demo"))
++    );
++    fs::write(
++        home.join("config.toml"),
++        "[plugins.\"demo@market\"]\nenabled = false\n",
++    )
++    .unwrap();
++    assert_eq!(
++        codex_omd::plugin_component::components(&store, &home).unwrap(),
++        json!({"components": []})
++    );
++    fs::remove_dir_all(&plugin).unwrap();
++    let package = &codex_omd::package_controls::list(&store, None).unwrap()["packages"][0];
++    assert_eq!(
++        (&package["enabled"], &package["failed"]),
++        (&json!(true), &Value::Null)
++    );
 +}
 diff --git a/codex-rs/omd/tests/scoped_resources.rs b/codex-rs/omd/tests/scoped_resources.rs
 new file mode 100644
@@ -182547,10 +183100,10 @@ index 0000000000000000000000000000000000000000..36b2df54333740e710b8c5c20a25b51b
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b275d35681
+index 0000000000000000000000000000000000000000..1c0d74e206eca319db59f786c057938573f4139d
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,3103 @@
+@@ -0,0 +1,3211 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -183007,7 +183560,7 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +            let title = format!(
 +                "Allow {} to {} {}?",
 +                call.caller,
-+                call.arguments["action"].as_str().unwrap_or("change"),
++                package_verb(&call.arguments),
 +                preview.public["id"]
 +                    .as_str()
 +                    .or_else(|| call.arguments["id"].as_str())
@@ -183097,9 +183650,14 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +            ))
 +        }
 +        "terminal.open" => Some(format!(
-+            "Mod {} wants to open {} outside the terminal.",
++            "Mod {} wants to open {}{}.",
 +            call.caller,
-+            open_target(&call.arguments)?
++            open_target(&call.arguments)?,
++            if call.arguments["editor"] == true {
++                ""
++            } else {
++                " outside the terminal"
++            }
 +        )),
 +        operation if operation == codex_omd::program_trust::OPERATION => {
 +            let (program, hash, previous) = codex_omd::program_trust::request(&call.arguments)
@@ -183123,6 +183681,21 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +        _ => call.confirm.clone(),
 +    };
 +    Ok(prompt.map(|prompt| (None, prompt, None)))
++}
++
++fn package_verb(arguments: &Value) -> &str {
++    match arguments["action"].as_str() {
++        Some("install") if arguments["enable"] == true => "install and turn on",
++        action => action.unwrap_or("change"),
++    }
++}
++
++fn unprompted(call: &SurfaceCall, protective: &dyn Fn(&str) -> bool) -> bool {
++    call.operation == "packages.apply"
++        && call.arguments["action"] == "disable"
++        && call.context == codex_omd::app_routes::InvocationContext::User
++        && !call.remote
++        && !protective(call.arguments["id"].as_str().unwrap_or_default())
 +}
 +
 +fn prompt_text(value: &Value, limit: usize) -> Result<String, String> {
@@ -183164,7 +183737,7 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +        .ok_or_else(|| "terminal_open_path_refused".to_owned())
 +}
 +
-+fn configured_editor() -> Result<Vec<String>, String> {
++fn configured_editor() -> Result<Option<Vec<String>>, String> {
 +    let store = crate::omd::mod_paths()
 +        .map(|paths| paths.store)
 +        .ok_or("mod store is not configured")?;
@@ -183172,6 +183745,9 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +        .ok()
 +        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
 +        .unwrap_or(Value::Null);
++    if config["editor"].is_null() {
++        return Ok(None);
++    }
 +    config["editor"]
 +        .as_array()
 +        .filter(|argv| (1..=16).contains(&argv.len()))
@@ -183180,7 +183756,35 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +                .map(|arg| arg.as_str().map(str::to_owned))
 +                .collect::<Option<Vec<_>>>()
 +        })
-+        .ok_or_else(|| "terminal_open_editor_unconfigured: set \"editor\" in host.json".to_owned())
++        .map(Some)
++        .ok_or_else(|| "terminal_open_editor_invalid: \"editor\" in host.json".to_owned())
++}
++
++fn editor_command(arguments: &Value) -> Result<(Vec<String>, bool), String> {
++    let (path, line) = editor_target(arguments)?;
++    let (argv, terminal) = match configured_editor()? {
++        Some(argv) => (argv, false),
++        None => (
++            crate::external_editor::resolve_editor_command().map_err(|_| {
++                "terminal_open_editor_unconfigured: set \"editor\" in host.json, $VISUAL or $EDITOR"
++                    .to_owned()
++            })?,
++            true,
++        ),
++    };
++    let path = path.to_string_lossy();
++    let templated = argv.iter().any(|arg| arg.contains("{path}"));
++    let mut argv: Vec<String> = argv
++        .into_iter()
++        .map(|arg| {
++            arg.replace("{path}", &path)
++                .replace("{line}", &line.to_string())
++        })
++        .collect();
++    if terminal && !templated {
++        argv.push(path.into_owned());
++    }
++    Ok((argv, terminal))
 +}
 +
 +fn open_target(arguments: &Value) -> Result<String, String> {
@@ -183215,14 +183819,9 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +
 +fn open(arguments: &Value) -> Result<Value, String> {
 +    let mut command = if arguments["editor"] == true {
-+        let (path, line) = editor_target(arguments)?;
-+        let mut argv = configured_editor()?.into_iter().map(|arg| {
-+            arg.replace("{path}", &path.to_string_lossy())
-+                .replace("{line}", &line.to_string())
-+        });
-+        let program = argv.next().ok_or("terminal_open_editor_unconfigured")?;
-+        let mut command = std::process::Command::new(program);
-+        command.args(argv);
++        let (argv, _) = editor_command(arguments)?;
++        let mut command = std::process::Command::new(&argv[0]);
++        command.args(&argv[1..]);
 +        command
 +    } else {
 +        let target = open_target(arguments)?;
@@ -183753,6 +184352,9 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +            return;
 +        }
 +        match confirmation(&call) {
++            Ok(Some((_, _, held))) if unprompted(&call, &crate::mod_runtime::protective) => {
++                self.run_mod_surface_call(tui, app_server, call, held).await
++            }
 +            Ok(Some((title, prompt, held))) => {
 +                let held = match binding {
 +                    Some(binding) => Some(Confirmed::Pty(binding, None, None)),
@@ -184218,6 +184820,24 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +                        .send(crate::mod_surface::validate_call(&call).and(sample));
 +                });
 +                return;
++            }
++            "terminal.open" if call.arguments["editor"] == true => {
++                match editor_command(&call.arguments) {
++                    Ok((argv, true)) => match call.lifetime.begin_execution() {
++                        Ok(()) => tui
++                            .with_restored(tui::TerminalHandoff::KeepScreen, || {
++                                tokio::process::Command::new(&argv[0])
++                                    .args(&argv[1..])
++                                    .status()
++                            })
++                            .await
++                            .map(|_| json!({"opened": true}))
++                            .map_err(|error| format!("terminal_open_failed: {error}")),
++                        Err(error) => Err(error),
++                    },
++                    Ok(_) => open(&call.arguments),
++                    Err(error) => Err(error),
++                }
 +            }
 +            "terminal.open" => open(&call.arguments),
 +            operation if operation == codex_omd::program_trust::OPERATION => {
@@ -185264,6 +185884,47 @@ index 0000000000000000000000000000000000000000..dbcb30df50c28bdc1111d044592960b2
 +        };
 +        assert!(!prompt("mods.curator.hint"));
 +        assert!(prompt("mods.other.route") && prompt("mods.curator_x.hint") && prompt("model"));
++    }
++
++    #[test]
++    fn only_a_users_own_disable_skips_the_prompt() {
++        let unprompted = |action: &str, id: &str, context, remote| {
++            let (reply, _) = std::sync::mpsc::sync_channel(1);
++            super::unprompted(
++                &SurfaceCall {
++                    terminal_user: false,
++                    terminal_owner: None,
++                    validity: codex_omd::client_surface::Validity(std::sync::Arc::new(|| true)),
++                    caller: "curator".into(),
++                    operation: "packages.apply".into(),
++                    arguments: json!({"action": action, "id": id, "expected_generation": 1}),
++                    context,
++                    remote,
++                    thread: None,
++                    authority: None,
++                    confirm: None,
++                    reply,
++                    lifetime: Default::default(),
++                    depth: 0,
++                },
++                &|id| id == "guard",
++            )
++        };
++        use codex_omd::app_routes::InvocationContext::Event;
++        use codex_omd::app_routes::InvocationContext::User;
++        assert!(unprompted("disable", "other", User, false));
++        assert!(!unprompted("disable", "guard", User, false));
++        assert!(!unprompted("disable", "other", Event, false));
++        assert!(!unprompted("disable", "other", User, true));
++        assert!(!unprompted("enable", "other", User, false));
++        assert_eq!(
++            [
++                json!({"action": "install", "enable": true}),
++                json!({"action": "install"})
++            ]
++            .map(|arguments| super::package_verb(&arguments).to_owned()),
++            ["install and turn on", "install"]
++        );
 +    }
 +
 +    #[test]
@@ -187837,10 +188498,10 @@ index 0000000000000000000000000000000000000000..3c4c82481c10f29cd9a586e617143363
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1bcdfa2a2385cc6b4de11cc7ef78b3044e61593c
+index 0000000000000000000000000000000000000000..87cc273b98938325957b30f788d18693aad15841
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,684 @@
+@@ -0,0 +1,725 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -187981,12 +188642,7 @@ index 0000000000000000000000000000000000000000..1bcdfa2a2385cc6b4de11cc7ef78b304
 +        } = match result {
 +            Ok(result) => result,
 +            Err(error) => {
-+                let hint = if error.starts_with("mod_failed") {
-+                    "; reload it with /omd (Reload mods)"
-+                } else {
-+                    ""
-+                };
-+                self.add_error_message(format!("/{invocation} failed: {error}{hint}"));
++                self.add_error_message(command_failure(&invocation, &error));
 +                return None;
 +            }
 +        };
@@ -188523,6 +189179,52 @@ index 0000000000000000000000000000000000000000..1bcdfa2a2385cc6b4de11cc7ef78b304
 +        } else {
 +            self.queue_user_message(user_message);
 +        }
++    }
++}
++
++fn command_failure(invocation: &str, error: &str) -> String {
++    let code = error
++        .lines()
++        .find(|line| !line.trim().is_empty())
++        .unwrap_or("")
++        .trim();
++    let sentence = match code.split(':').next().unwrap_or("").trim() {
++        "mod_failed" => "its mod stopped after an error; reload it with /omd (Reload mods)",
++        "mod_disabled" => "its mod is off; turn it on in /omd",
++        "callback_timeout" => "its mod took too long to answer; try again, or reload it with /omd",
++        "callback_cancelled" => "it was cancelled before it finished; try again",
++        "host_call_limit" => {
++            "its mod made too many host calls in one run; try again or report it to the mod's author"
++        }
++        "capability_denied" => {
++            "its mod needs a permission it doesn't have; approve it again with omd mods update ID"
++        }
++        "mod_runtime_busy" => "its mod is still busy with another call; try again in a moment",
++        "stale_mod_generation" => "mods were reloaded while it ran; try again",
++        "state_thread_unavailable" => {
++            "it needs a started session; send a message first, then try again"
++        }
++        _ => return format!("/{invocation} failed: {code}"),
++    };
++    format!("/{invocation} failed: {sentence} ({code})")
++}
++
++#[cfg(test)]
++mod failure_tests {
++    use super::command_failure;
++    use pretty_assertions::assert_eq;
++
++    #[test]
++    fn known_codes_read_as_a_sentence_and_keep_the_code() {
++        assert_eq!(
++            command_failure("x", "capability_denied: process\nstack"),
++            "/x failed: its mod needs a permission it doesn't have; approve it again with omd mods update ID (capability_denied: process)"
++        );
++        assert_eq!(
++            command_failure("x", "mod_runtime_busy"),
++            "/x failed: its mod is still busy with another call; try again in a moment (mod_runtime_busy)"
++        );
++        assert_eq!(command_failure("x", "\nboom\nmore"), "/x failed: boom");
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
@@ -196965,10 +197667,10 @@ index 0000000000000000000000000000000000000000..c774f3c1004e1d4b2bb580a75ecf37c5
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..50fe9fd48422be40b630e19eae66056e38791923
+index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22ab7220f7
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,1017 @@
+@@ -0,0 +1,1026 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -197063,6 +197765,15 @@ index 0000000000000000000000000000000000000000..50fe9fd48422be40b630e19eae66056e
 +/// Props carry at most `MOD_TEXT_BYTES` of text; hooks needing more read their own sources.
 +pub(crate) fn bounded(text: &str) -> String {
 +    text[..text.floor_char_boundary(PROP_BYTES)].to_owned()
++}
++
++pub(crate) fn first_line<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<String> {
++    texts
++        .into_iter()
++        .flat_map(str::lines)
++        .map(str::trim)
++        .find(|line| !line.is_empty())
++        .map(bounded)
 +}
 +
 +pub(crate) fn bounded_json(value: &Value) -> Value {
@@ -198347,10 +199058,10 @@ index 0000000000000000000000000000000000000000..0a13c9deb169fad6568a54321e33ec53
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..95336aa9ae4190c73ff847904b3a5cbdaa5686f2
+index 0000000000000000000000000000000000000000..e1666f7461e69fc4b0b96412c6a1d6afee976e6e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,2506 @@
+@@ -0,0 +1,2510 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -200408,6 +201119,10 @@ index 0000000000000000000000000000000000000000..95336aa9ae4190c73ff847904b3a5cbd
 +    Ok(status)
 +}
 +
++pub(crate) fn protective(id: &str) -> bool {
++    try_with_host(|host, _| Some(host.protective(id))).unwrap_or(true)
++}
++
 +pub(crate) fn os_access(owner: &str) -> Option<codex_omd::ModOsAccess> {
 +    try_with_host(|runtime, _| runtime.grants(owner).and_then(|grants| grants.os_access))
 +}
@@ -202315,10 +203030,10 @@ index 0000000000000000000000000000000000000000..dc9d23fae6eb0ee9f1cf556d5092c0a9
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..27ecf26b6d037decb9eeb10387527623837a4122
+index 0000000000000000000000000000000000000000..126febffd98200c278aaca5d591c529d646a48db
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1276 @@
+@@ -0,0 +1,1280 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -203565,7 +204280,8 @@ index 0000000000000000000000000000000000000000..27ecf26b6d037decb9eeb10387527623
 +            }
 +        }
 +        "settings.write" => Err(other("host_operation_user_only: settings.write")),
-+        "packages.list" | "packages.index" | "packages.preview" | "packages.reload" => {
++        "packages.list" | "packages.index" | "packages.preview" | "packages.reload"
++        | "plugins.components" => {
 +            let store = codex_omd::ModStore::open(paths.store.clone())?;
 +            match operation {
 +                "packages.list" => codex_omd::package_controls::list_fields(
@@ -203582,10 +204298,13 @@ index 0000000000000000000000000000000000000000..27ecf26b6d037decb9eeb10387527623
 +                "packages.index" => codex_omd::package_controls::index(&store, call.arguments),
 +                "packages.preview" => crate::mod_runtime::preview_configuration(call.arguments)
 +                    .map(|preview| preview.public),
-+                _ if context == codex_omd::app_routes::InvocationContext::User => {
-+                    codex_omd::package_controls::reload(&store)
-+                }
-+                _ => Err(other("host_operation_user_only: packages.reload")),
++                _ if context != codex_omd::app_routes::InvocationContext::User => Err(
++                    std::io::Error::other(format!("host_operation_user_only: {operation}")),
++                ),
++                "plugins.components" => codex_omd::host::codex_home()
++                    .ok_or_else(|| other("codex_home_unavailable"))
++                    .and_then(|home| codex_omd::plugin_component::components(&store, &home)),
++                _ => codex_omd::package_controls::reload(&store),
 +            }
 +        }
 +        _ => crate::mod_runtime::command_host_guarded(paths, policy, grants, caller, call, scope),

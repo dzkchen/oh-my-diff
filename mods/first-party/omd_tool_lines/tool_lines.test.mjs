@@ -50,3 +50,14 @@ test('viewed images keep the native clickable link while generated images are su
   assert.deepEqual(render(image('view_image')).value.result.tree, [{ type: 'native' }]);
   assert.match(text(render(image('image_generation'))), /Generate image/);
 });
+
+test('a failed row adds its last output or error line below it', () => {
+  const failed = render({ ...exec('one', 'failed'), output_tail: 'compiling\nerror: no such file\n\n' });
+  assert.deepEqual(failed.value.result.tree.map(line => line.id), ['tool_lines_0', 'tool_lines_0_reason']);
+  assert.equal(failed.value.result.tree[1].spans[0].text, '  └ error: no such file');
+  const group = render({ kind: 'explore', call_id: 'one', status: 'completed', calls: [{ ...exec('one', 'failed'), output_tail: 'boom' }, exec('two')] });
+  assert.match(text(group), /└ boom$/);
+  const mcp = render({ kind: 'mcp', call_id: 'm', server: 's', tool: 't', arguments: {}, status: 'failed', duration_ms: 5, output_lines: null, error: 'timed out\ndetails' });
+  assert.match(text(mcp), /└ timed out$/);
+  assert.equal(render({ ...exec('two'), output_tail: 'fine' }).value.result.tree.length, 1);
+});

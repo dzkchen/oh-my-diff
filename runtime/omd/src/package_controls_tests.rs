@@ -117,6 +117,35 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
 }
 
 #[test]
+fn installing_turned_on_lists_every_grant_and_reports_an_enable_failure() {
+    let (_temp, store, root) = setup();
+    let path = fixture_package(&root, "sample_mod", &["commands"], json!([]));
+    let install = |enable: bool| {
+        preview(
+            &store,
+            json!({"action": "install", "source": {"kind": "local", "path": path}, "enable": enable}),
+        )
+        .unwrap()
+    };
+    apply(&store, &install(false).control).unwrap();
+    assert_eq!(install(false).public["grants_added"], json!([]));
+    assert_eq!(install(true).public["grants_added"], json!(["commands"]));
+
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["services"] = json!({"imports": [{"name": "shared.absent", "version": "^1.0.0"}]});
+    value["capabilities"] = json!(["commands", "services"]);
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    let applied = apply(&store, &install(true).control).unwrap();
+    assert_eq!(
+        (&applied["status"], &applied["enabled"]),
+        (&json!("applied"), &json!(false))
+    );
+    assert!(applied["reason"].is_string());
+    assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], false);
+}
+
+#[test]
 fn stale_previews_and_invalid_requests_are_refused() {
     let (_temp, store, root) = setup();
     let path = fixture_package(&root, "sample_mod", &["commands"], json!([]));
@@ -487,5 +516,60 @@ fn same_id_project_selection_warns_about_shared_authority() {
             .as_str()
             .unwrap()
             .contains("share storage and owned credential authority")
+    );
+}
+
+#[test]
+fn listing_reports_maintainer_and_contributes_of_off_packages() {
+    let (_temp, store, root) = setup();
+    let plain = fixture_package(&root, "plain_mod", &["commands"], json!([]));
+    let path = fixture_package(&root, "contributing_mod", &["commands"], json!([]));
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+    let contributes = json!({"commands": [{"name": "review-all", "description": "Review every file"}],
+        "keys": [{"key": "ctrl+r", "description": "Open the review"}]});
+    for (value, accepted) in [
+        (
+            json!({"commands": [{"name": "/review", "description": "Review"}]}),
+            false,
+        ),
+        (
+            json!({"keys": [{"key": "ctrl+r", "description": ""}]}),
+            false,
+        ),
+        (json!({"keys": [], "panes": []}), false),
+        (contributes.clone(), true),
+    ] {
+        manifest["contributes"] = value;
+        std::fs::write(path.join("mod.json"), manifest.to_string()).unwrap();
+        let previewed = preview(
+            &store,
+            json!({"action": "install", "source": {"kind": "local", "path": path}}),
+        );
+        assert_eq!(previewed.is_ok(), accepted, "{manifest}");
+        if let Ok(previewed) = previewed {
+            apply(&store, &previewed.control).unwrap();
+        }
+    }
+    let install = preview(
+        &store,
+        json!({"action": "install", "source": {"kind": "local", "path": plain}}),
+    )
+    .unwrap();
+    apply(&store, &install.control).unwrap();
+    let listed = list_fields(
+        &store,
+        None,
+        json!({"fields": ["id", "enabled", "maintainer", "contributes"]}),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        listed["packages"],
+        json!([
+            {"id": "contributing_mod", "enabled": false, "maintainer": "Fixture Author", "contributes": contributes},
+            {"id": "plain_mod", "enabled": false, "maintainer": "Fixture Author", "contributes": {"commands": [], "keys": []}},
+        ])
     );
 }

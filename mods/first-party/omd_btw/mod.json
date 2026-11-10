@@ -6,6 +6,9 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "/btw answers a side question from the whole conversation without adding it to the conversation, and remembers earlier side questions",
+  "contributes": {
+    "commands": [{ "name": "btw", "description": "Ask a side question answered from the whole conversation without adding it to the conversation" }]
+  },
   "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",

@@ -281,13 +281,13 @@ export default function activate(api: ModAPI) {
     return path.startsWith(`${from}/`) ? path.slice(from.length + 1) : `${root()}/${path}`;
   };
 
-  const ranked = (): string[] => {
+  const ranked = (): { paths: string[]; error?: string } => {
     try {
       const result = api.services.call('omd.frecency', 'rank', { query: '' }) as { paths?: string[] };
-      return (result.paths ?? []).filter(item => typeof item === 'string').slice(0, RECENT);
+      return { paths: (result.paths ?? []).filter(item => typeof item === 'string').slice(0, RECENT) };
     } catch (error) {
       if (!(error instanceof Error)) throw error;
-      return [];
+      return { paths: [], error: error.message.includes('optional_service_unavailable') ? undefined : cut(error.message, 160) };
     }
   };
   const actions = (v: View): Record<string, Action> => {
@@ -318,7 +318,8 @@ export default function activate(api: ModAPI) {
       n: ['Next match', () => find(v, 1)],
       N: ['Previous match', () => find(v, -1)],
       z: ['Jump to a frequent file', () => {
-        const recent = ranked();
+        const { paths: recent, error } = ranked();
+        if (error) return `omd_frecency could not rank files: ${error}`;
         if (!recent.length) return 'No frequent files yet: turn on omd_frecency and mention files with @';
         const answer = api.host.tryCall('terminal.prompt', {
           kind: 'choice', title: 'Jump', message: 'Files ranked by omd_frecency, or type a path', other: true,

@@ -62,6 +62,9 @@ Segments with nothing to show are hidden.
 1. Run `/statusline github`.
 2. Paste a GitHub token with read access. A fine-grained token with Pull requests and Commit statuses read is enough.
 
+The compact preset has no `pr` or `ci` segment: choose the detailed preset or add them to a custom layout, or the command
+says they stay hidden.
+
 Run it again to replace the token. It's sent only to `https://api.github.com`, and the mod never sees it. Without a
 token there's no network request.
 
@@ -90,8 +93,9 @@ Then add `script:weather` to a custom layout. Commands run without a shell, so p
 
 ## Settings
 
-Change settings in `/mods` or `/statusline`, or from a shell with `omd-mod`, the low-level tool that works on a mod
-store directly. The shell form replaces the mod's saved settings:
+Change settings in `/mods` or `/statusline`, which change one setting at a time, or from a shell with `omd-mod`, the
+low-level tool that works on a mod store directly. The shell form replaces all of the mod's saved settings, so any
+setting you leave out goes back to its default:
 
 ```sh
 STORE=~/.local/share/oh-my-diff/stores/full

@@ -38,6 +38,21 @@ How files rank:
 
 It has no settings.
 
+## Its data
+
+It keeps two records for each repository in its mod store (`~/.local/share/oh-my-diff/stores/full` in OMD+):
+
+- `files`: how often and how recently you used each file, for up to 512 paths.
+- `status`: the last `git status` result, recent saves and the files of recent commits, reused for 30 seconds.
+
+Paths from a submitted prompt wait in the thread's state until its turn starts. Nothing leaves your Mac.
+
+To start over in a repository, turn the mod off and run:
+
+```sh
+omd store reset --mod omd_frecency --repo PATH
+```
+
 ## Needs and limits
 
 - Usage is kept per project for the strongest files, up to 512 paths or 32 KB of paths, whichever limit comes first

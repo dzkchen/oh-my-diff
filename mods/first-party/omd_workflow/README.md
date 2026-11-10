@@ -17,7 +17,7 @@ omd mods enable omd_workflow
 
 ## Use it
 
-To use it, pick a contract, set the `check` setting to the command that tests your work, then give the agent a task.
+To use it, pick a contract, run `/omd_workflow:routes`, set the `check` setting to the command that tests your work, then give the agent a task.
 Nothing is delegated until you pick a contract and the agent starts a task.
 
 | Command | What it does |
@@ -25,6 +25,7 @@ Nothing is delegated until you pick a contract and the agent starts a task.
 | `/omd_workflow:contract` | List the contracts. |
 | `/omd_workflow:contract reviewed_omd@1` | Require checks, an independent review and an independent verification. |
 | `/omd_workflow:contract solo_evidence@1` | Require checks and a self-review with evidence. No other agents. |
+| `/omd_workflow:routes [MODEL]` | Add the worker, reviewer and verifier models from your ChatGPT plan. The worker uses your current model; the reviewer and verifier share one other model, which you name when your plan lists more than one. You approve two route dialogs (worker, reviewer). Refuses when your plan has no second model. |
 | `/omd_workflow:progress` | Show this thread's task, its status and the work left. |
 
 From a shell:
@@ -49,6 +50,9 @@ Change settings in `/mods`.
 | `max_no_progress_calls` | `0` | How many times the lead (the main model you're chatting with) may repeat the same tool call with the same result before the task pauses (0 to 32). `0` means no limit. |
 
 A route is a model setup in `host.json`: provider, model, URL and rates. See [Routes](../../reference/routes.md).
+The defaults name routes that don't exist on a new install. Run `/omd_workflow:routes` once to add them from your ChatGPT plan
+and set all three, or set the routes in `/mods` or `host.json`. Until then the first `delegate` refuses with
+`authorized_route_unavailable` and names both fixes.
 
 `max_no_progress_calls` counts only while a task is active and its checkpoint is unchanged. A checkpoint with new
 remaining work or failed hypotheses resumes a paused task.

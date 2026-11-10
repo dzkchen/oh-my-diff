@@ -1090,6 +1090,8 @@ impl ModStore {
                             "version": manifest.version,
                             "description": manifest.description,
                             "settings_schema": manifest.settings_schema,
+                            "provenance": manifest.provenance,
+                            "contributes": manifest.contributes,
                         }));
                     }
                     let defaults = manifest

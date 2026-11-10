@@ -5,7 +5,7 @@ type Cache = { identity: string; provider: string; model: string; route: string;
 type State = {
   cache: Cache | null; continuation: { prompt: string; force: boolean; readable: string[] } | null;
   masked: Record<string, string>; kept: string[]; pinned: string[]; calls: Record<string, Kept>; visible: string[];
-  advances: number; hidden_bytes: number; pending_bytes: number; last_saved_bytes: number;
+  advances: number; continues: number; hidden_bytes: number; pending_bytes: number; last_saved_bytes: number;
 };
 
 const scope = 'thread';
@@ -16,6 +16,7 @@ const PINS = 256;
 const CALLS = 400;
 const MASKED = 400;
 const LINE = 120;
+const KEPT_OUTPUTS = 1024;
 const HEADER = /^(Chunk ID:|Wall time:|Process exited with code|Exit code:|Original token count:|Output:)/;
 
 const EDIT_TOOL = /^apply_patch$|(^|_)(edit|write|create|replace)(_file|_editor)?$/;
@@ -52,14 +53,13 @@ const isOutput = (item: HistoryItem): item is HistoryItem & { call_id: string } 
 const sum = (items: { bytes: number }[]) => items.reduce((total, item) => total + item.bytes, 0);
 const tokens = (bytes: number) => Math.round(bytes / 4);
 
-function stub(item: HistoryItem & { call_id: string }, kept: Kept | null) {
+function stub(item: HistoryItem & { call_id: string }, kept: Kept) {
   const text = item.text ?? '';
   const exit = text.match(/(?:Process exited with code|Exit code:) (-?\d+)|"exit_code":\s*(-?\d+)/);
   const first = text.split('\n').map(line => line.trim()).find(line => line && !HEADER.test(line)) ?? '';
   const line = first.length > LINE ? `${first.slice(0, LINE)}…` : first;
   const facts = [`${item.bytes} bytes`, ...(exit ? [`exit ${exit[1] ?? exit[2]}`] : []), ...(line ? [`first line ${JSON.stringify(line)}`] : [])];
-  const recovery = kept?.reference ? `Read it with ${RECALL} {"call_id":${JSON.stringify(item.call_id)}}.` : 'Its full text was not kept: run the call again if you need it.';
-  return `[omd_observation_mask hid this older ${kept?.tool ?? 'tool'} output (${facts.join(', ')}). ${recovery}]`;
+  return `[omd_observation_mask hid this older ${kept.tool} output (${facts.join(', ')}). Read it with ${RECALL} {"call_id":${JSON.stringify(item.call_id)}}.]`;
 }
 
 export default function activate(api: ModAPI) {
@@ -70,7 +70,7 @@ export default function activate(api: ModAPI) {
   const minutes = Number(api.settings.cache_ttl_minutes) || 0;
 
   const load = (): State => ({
-    cache: null, continuation: null, masked: {}, kept: [], pinned: [], calls: {}, visible: [], advances: 0, hidden_bytes: 0, pending_bytes: 0, last_saved_bytes: 0,
+    cache: null, continuation: null, masked: {}, kept: [], pinned: [], calls: {}, visible: [], advances: 0, continues: 0, hidden_bytes: 0, pending_bytes: 0, last_saved_bytes: 0,
     ...(api.state.get() as Partial<State> | null ?? {}),
   });
   const save = (state: State) => api.state.set(state as unknown as Json);
@@ -106,6 +106,7 @@ export default function activate(api: ModAPI) {
     });
     api.intercept('command', async (event, next) => {
       if (event.command !== 'continue' || event.owner !== 'omd_continue' || event.active_turn) return next(event);
+      if (!load().continues) save({ ...load(), continues: 1 });
       const force = /^--compact(?:\s|$)/.test(event.args.trim());
       const result = await next(force ? { ...event, args: event.args.trim().replace(/^--compact(?:\s+|$)/, '') } : event);
       const value = result.result;
@@ -139,7 +140,7 @@ export default function activate(api: ModAPI) {
       && (request.force || Boolean(state.cache && event.model === state.cache.model && state.cache.expires <= Date.now())));
     const recent = new Set(outputs.slice(-keepRecent).map(item => item.call_id));
     const pending = outputs.filter(item => item.editable && item.bytes >= minBytes && !recent.has(item.call_id)
-      && (!continuationOnly || Boolean(state.calls[item.call_id]?.reference))
+      && Boolean(state.calls[item.call_id]?.reference)
       && !Object.hasOwn(state.masked, item.call_id) && !state.kept.includes(item.call_id) && !state.pinned.includes(item.call_id));
     const visible = continuationOnly ? outputs.filter(item => state.calls[item.call_id]).map(item => item.call_id) : state.visible;
     let next = { ...state, visible, continuation: null, pending_bytes: sum(pending) };
@@ -151,8 +152,8 @@ export default function activate(api: ModAPI) {
         .slice(0, Math.max(0, Math.min(continuationOnly ? 16 : ADVANCE, MASKED - Object.keys(masked).length)));
       let hidden = 0;
       for (const item of batch) {
-        const record = state.calls[item.call_id] ?? null;
-        if (record?.failed_edit) {
+        const record = state.calls[item.call_id];
+        if (record.failed_edit) {
           kept.push(item.call_id);
         } else {
           masked[item.call_id] = stub(item, record);
@@ -160,7 +161,7 @@ export default function activate(api: ModAPI) {
         }
       }
       if (batch.length) next = { ...next, masked, kept, advances: state.advances + 1, hidden_bytes: state.hidden_bytes + hidden, pending_bytes: sum(pending.filter(item => !Object.hasOwn(masked, item.call_id) && !kept.includes(item.call_id)
-        && (!continuationOnly || Boolean(next.calls[item.call_id]?.reference)))) };
+        && Boolean(next.calls[item.call_id]?.reference))) };
     }
     const replace = outputs.filter(item => item.editable && Object.hasOwn(next.masked, item.call_id))
       .map(item => ({ index: item.index, text: next.masked[item.call_id], saved: item.bytes - next.masked[item.call_id].length }));
@@ -212,17 +213,23 @@ export default function activate(api: ModAPI) {
     }
     const record = lookup(callId);
     if (!record?.reference) throw new Error(`recall_unavailable: no kept output for ${callId}; only outputs of at least ${minBytes} bytes from this thread's own calls are kept`);
-    const page = api.host.call('evidence.read', { reference: record.reference, cursor, max_bytes: PAGE });
-    return { call_id: callId, tool: record.tool, bytes: record.bytes, text: page.text, next_cursor: page.cursor };
+    const page = api.host.tryCall('evidence.read', { reference: record.reference, cursor, max_bytes: PAGE });
+    if (!page.ok) throw new Error(`recall_unavailable: the saved text of ${callId} is gone (${page.error}); the host keeps only the newest ${KEPT_OUTPUTS} outputs per repository. Verify current state instead of rerunning a command that has side effects`);
+    return { call_id: callId, tool: record.tool, bytes: record.bytes, text: page.value.text, next_cursor: page.value.cursor };
   });
 
   api.command('mask', () => {
     const state = load();
     const breaks = api.host.tryCall('store.get', { key: 'breaks', scope });
     const other = breaks.ok && breaks.value ? breaks.value.value as { count: number; last: string } : null;
+    const idle = !continuationOnly ? null
+      : !state.continues ? 'Continue mode hides nothing until /continue (from the omd_continue mod, which OMD+ does not enable by default) has run in this thread: enable omd_continue in /mods'
+      : state.cache?.ttl === 0 ? 'Continue mode has no cache lifetime estimate for this provider (ChatGPT subscriptions, unpriced responses and local providers get none), so only /continue --compact hides outputs; set cache_ttl_minutes to estimate one'
+      : null;
     return {
       display: [
         `Mode: ${continuationOnly ? 'only on /continue after estimated cache expiry, or /continue --compact' : 'automatic batches'}`,
+        ...idle ? [idle] : [],
         `Observation masking: keeps the newest ${keepRecent} tool outputs and outputs under ${minBytes} bytes; hides older ones in batches of at least ${batchBytes} bytes`,
         `${Object.keys(state.masked).length} outputs hidden in ${state.advances} batches (each batch breaks the prompt cache once) · about ${tokens(state.hidden_bytes)} tokens hidden`,
         `about ${tokens(state.last_saved_bytes)} tokens not resent with each request · ${tokens(state.pending_bytes)} tokens waiting for the next batch`,

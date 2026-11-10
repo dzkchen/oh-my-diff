@@ -45,6 +45,7 @@ files:
 - `mod.test.json`: an offline test that runs `/hello` with the argument `author`.
 - `debug.test.json`: a test that expects an error, so you can see how errors look.
 - `package.json` and `tsconfig.json`: the `pnpm` scripts, TypeScript and its settings.
+- `AGENTS.md`: points a coding agent working in the folder at the mod-building guide.
 
 `index.ts` registers a `/hello` command:
 

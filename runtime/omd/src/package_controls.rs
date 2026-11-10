@@ -16,6 +16,7 @@ pub struct PackageControl {
     confirmation: Option<String>,
     selection: Option<Selection>,
     generation: u64,
+    enable: bool,
     pub(crate) owner_revision: Option<(u64, u64, Value)>,
 }
 
@@ -62,7 +63,7 @@ struct Arguments {
     #[serde(default)]
     id: Option<String>,
     #[serde(default)]
-    source: Option<ModPackageSource>,
+    source: Option<Value>,
     #[serde(default)]
     reference: Option<String>,
     #[serde(default)]
@@ -73,6 +74,8 @@ struct Arguments {
     scope: String,
     #[serde(default)]
     expected_generation: Option<u64>,
+    #[serde(default)]
+    enable: bool,
 }
 
 #[derive(Deserialize)]
@@ -470,6 +473,8 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                 "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == api),
                 "grants": selection["capabilities"],
                 "settings_schema": manifest["settings_schema"],
+                "maintainer": manifest["provenance"]["maintainer"],
+                "contributes": serde_json::from_value::<crate::ModContributes>(manifest["contributes"].clone()).unwrap_or_default(),
                 "settings": crate::effective_settings(
                     manifest.get("settings_schema"),
                     &configured
@@ -510,7 +515,8 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                     "scope": item["scope"], "path": null, "source": "selection", "installed": false,
                     "enabled": false, "effective": item["error"].is_null(), "pending": "reload",
                     "failed": item["error"], "api": item["api"], "compatible": true,
-                    "grants": item["capabilities"], "conflicts": [],
+                    "grants": item["capabilities"], "conflicts": [], "maintainer": null,
+                    "contributes": crate::ModContributes::default(),
                 })
             }),
     );
@@ -533,6 +539,9 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
     {
         return Err(failure("configuration_target_invalid"));
     }
+    if arguments.enable && arguments.action != "install" {
+        return Err(failure("package_arguments_invalid: enable is for install"));
+    }
     let generation = generation(store)?;
     if arguments
         .expected_generation
@@ -554,8 +563,34 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
     let (id, request, plan, selection, added) = match arguments.action.as_str() {
         "install" => {
             let index = arguments.index.clone().or_else(|| store.package_index());
+            let mut digest = None;
             let source = match (&arguments.source, &arguments.reference) {
-                (Some(source), None) => source.clone(),
+                (Some(source), None) if source["kind"] == "plugin" => {
+                    #[derive(Deserialize)]
+                    #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+                    enum Source {
+                        Plugin {
+                            plugin: String,
+                            marketplace: Option<String>,
+                        },
+                    }
+                    let Source::Plugin {
+                        plugin,
+                        marketplace,
+                    } = serde_json::from_value(source.clone())
+                        .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
+                    let codex_home = crate::host::codex_home()
+                        .ok_or_else(|| failure("plugin_component_not_installed: no Codex home"))?;
+                    let (path, sha256) = crate::plugin_component::resolve(
+                        &codex_home,
+                        &plugin,
+                        marketplace.as_deref(),
+                    )?;
+                    digest = Some(sha256);
+                    ModPackageSource::Local { path }
+                }
+                (Some(source), None) => serde_json::from_value(source.clone())
+                    .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?,
                 (None, Some(reference)) => ModPackageSource::parse(reference, index.clone())?,
                 _ => {
                     return Err(failure(
@@ -567,7 +602,19 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                 Some(version) if !version.is_empty() => source.with_version(version)?,
                 _ => source,
             };
-            let (request, plan) = requested(store, source, index, arguments.scope.clone(), false)?;
+            let (request, mut plan) =
+                requested(store, source, index, arguments.scope.clone(), false)?;
+            if digest.is_some_and(|digest| {
+                !plan
+                    .packages
+                    .iter()
+                    .any(|package| package.id == plan.root && package.integrity == digest)
+            }) {
+                return Err(failure("plugin_component_hash_mismatch"));
+            }
+            if arguments.enable {
+                plan.changes["enabled"] = json!(true);
+            }
             (plan.root.clone(), Some(request), Some(plan), None, None)
         }
         "update" => {
@@ -676,8 +723,14 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
         }
         other => return Err(failure(format!("package_action_invalid: {other}"))),
     };
-    let grants_added =
-        added.unwrap_or_else(|| managed_grants(&lock, &id, &request, &arguments.action));
+    let grants_added = added.unwrap_or_else(|| {
+        managed_grants(
+            &lock,
+            &id,
+            &request,
+            arguments.action == "enable" || arguments.enable,
+        )
+    });
     let changes = match (&plan, &selection) {
         (Some(plan), _) => plan.changes.clone(),
         (None, Some(selection)) if arguments.action == "trust" => {
@@ -726,6 +779,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             confirmation: plan.map(|plan| plan.confirmation),
             selection,
             generation,
+            enable: arguments.enable,
             owner_revision: None,
         },
     })
@@ -735,7 +789,7 @@ fn managed_grants(
     lock: &crate::ModPackageLock,
     id: &str,
     request: &Option<ModInstallRequest>,
-    action: &str,
+    enabling: bool,
 ) -> Vec<String> {
     let grants: BTreeMap<String, Vec<String>> = match (request, lock.packages.get(id)) {
         (Some(request), _) => request
@@ -749,7 +803,6 @@ fn managed_grants(
         }
         (None, None) => BTreeMap::new(),
     };
-    let enabling = action == "enable";
     grants
         .iter()
         .flat_map(|(package, capabilities)| {
@@ -858,6 +911,14 @@ pub fn apply(store: &ModStore, control: &PackageControl) -> io::Result<Value> {
     ) {
         ("install" | "update", Some(request), None) => {
             store.package_apply(request.clone(), confirmation()?)?;
+            if control.enable
+                && let Err(error) = store.package_enable(&control.id)
+            {
+                return Ok(
+                    json!({"status": "applied", "generation": generation(store)?,
+                    "enabled": false, "reason": error.to_string()}),
+                );
+            }
         }
         ("remove", None, None) => {
             store.package_uninstall(&control.id, confirmation()?)?;
