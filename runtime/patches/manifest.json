@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.0.patch",
-    "sha256": "d2f2db36199010fffbda062b7ca388d38ceecf672bc89636844a7f1a0572a2f4"
+    "sha256": "b41e22ec15df13fc37ee6c05b72fd111f06124de1b415dc3a7b40c89568d058a"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -2159,7 +2159,7 @@
     },
     "codex-rs/tui/src/app/startup.rs": {
       "before": "fbbedd6664ddb1df28fa49ac055bac130b1c7996815ead701fecddcbd41565cf",
-      "after": "cac7ff2792ac430c0cd044b545497c27d1bb653d4b3c4f8698e21bb3dd72a2d4"
+      "after": "fc40a750c9f65192dfc03c752db1edf29937db48caaf53478d450e8a4aad25bf"
     },
     "codex-rs/tui/src/app/test_support.rs": {
       "before": "b5834ffcaf678109feee8feb395ea2cdc46900254132cac1e2c5d22f6c310dc4",
@@ -2543,7 +2543,7 @@
     },
     "codex-rs/tui/src/chatwidget/omd_extensions.rs": {
       "before": null,
-      "after": "52dadf1b0ffe8708d688e9b867ed9669d2b8ec430c22a07600e2fc6a99624c07"
+      "after": "e1de5bdc3c0a8d72188dcb19297ad80ba4f2f5c8229791f2a14a338fe24ad4be"
     },
     "codex-rs/tui/src/chatwidget/omd_extensions_tests.rs": {
       "before": null,
