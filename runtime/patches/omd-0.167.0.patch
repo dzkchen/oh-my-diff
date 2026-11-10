@@ -106415,10 +106415,10 @@ index 0000000000000000000000000000000000000000..78e348f5111e83106bd3e0fd3dfb1f61
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e61a06391271cb10bddef5468105e76d1b41068a
+index 0000000000000000000000000000000000000000..c90378b5a60e673d57ed28266af6865f596acf37
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,493 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -106738,11 +106738,7 @@ index 0000000000000000000000000000000000000000..e61a06391271cb10bddef5468105e76d
 +    })
 +    .await
 +    .unwrap();
-+    assert_eq!(
-+        seen,
-+        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-+        "{seen:?}"
-+    );
++    assert_linked_git_events(&seen);
 +
 +    std::fs::write(
 +        tree.join(".git"),
@@ -116565,10 +116561,10 @@ index 0000000000000000000000000000000000000000..878c788cf065e6d8e935f76a4c0fb733
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6911874c44c0e9cf061b9348b2de1decf2a8c95
+index 0000000000000000000000000000000000000000..3b329d9fb65e5d93719d12b19c4926acd3a33e0b
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,939 @@
+@@ -0,0 +1,967 @@
 +use codex_omd::ModHostCallback;
 +use codex_omd::ModInvokeOptions;
 +use codex_omd::ModOpenOptions;
@@ -116955,7 +116951,22 @@ index 0000000000000000000000000000000000000000..a6911874c44c0e9cf061b9348b2de1de
 +            } else {
 +                arguments["id"] = json!(target);
 +            }
-+            let preview = package_controls::preview(&store, arguments)?;
++            let preview = package_controls::preview(&store, arguments).map_err(|error| {
++                let text = error.to_string();
++                let hint = match action {
++                    "rollback" if text == "package_rollback_unavailable" => {
++                        format!(": {target} has no earlier version to go back to")
++                    }
++                    _ if text == "package_unavailable" => {
++                        format!(": {target} is not in the catalog; `omd mods catalog` lists what is")
++                    }
++                    _ if text == "package_version_unavailable" => format!(
++                        ": that version of {target} is not available; `omd mods catalog {target}` shows the latest"
++                    ),
++                    _ => return error,
++                };
++                io::Error::other(text + &hint)
++            })?;
 +            let detailed = describe(&preview.public, true);
 +            if action == "inspect" {
 +                return Ok(json!({"display": detailed, "preview": preview.public}));
@@ -117021,7 +117032,13 @@ index 0000000000000000000000000000000000000000..a6911874c44c0e9cf061b9348b2de1de
 +    } else {
 +        return Ok(reference.to_owned());
 +    };
-+    Ok(path.canonicalize()?.display().to_string())
++    let resolved = path.canonicalize().map_err(|error| {
++        io::Error::new(
++            error.kind(),
++            format!("package_folder_unavailable: {reference}: {error}"),
++        )
++    })?;
++    Ok(resolved.display().to_string())
 +}
 +
 +fn phrases(capabilities: &Value) -> Vec<String> {
@@ -117456,6 +117473,13 @@ index 0000000000000000000000000000000000000000..a6911874c44c0e9cf061b9348b2de1de
 +            .chain([temp.path().to_str().unwrap().to_owned()])
 +            .collect();
 +        assert_eq!(run(arguments).unwrap_err().to_string(), unknown);
++        let missing = folder_reference("./definitely-missing-folder")
++            .unwrap_err()
++            .to_string();
++        assert!(
++            missing.starts_with("package_folder_unavailable: ./definitely-missing-folder: "),
++            "{missing}"
++        );
 +    }
 +
 +    #[test]
@@ -138032,10 +138056,10 @@ index 0000000000000000000000000000000000000000..b8a646d760180ab6f3ab9092b7b48c6f
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ba618bb30c359c90eca7f2e17e8d8677b5c0ede
+index 0000000000000000000000000000000000000000..4be6911edde50dd97a40bfb1267b028e3211e5e0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1156 @@
+@@ -0,0 +1,1213 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -138309,75 +138333,21 @@ index 0000000000000000000000000000000000000000..5ba618bb30c359c90eca7f2e17e8d867
 +    }
 +
 +    pub fn capability_explanation(code: &str) -> Value {
++        let known = EXPLANATIONS
++            .iter()
++            .find(|(prefix, _, _)| code.starts_with(prefix));
 +        let unknown;
-+        let (cause, fix) = if code.starts_with("capability_denied") {
-+            (
-+                "The package requested authority that the manifest or explicit trust grant does not include.",
-+                "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant; a revoked mod is approved again with omd mods update ID.",
-+            )
-+        } else if code.starts_with("undeclared_operation_use") {
-+            (
-+                "Source analysis found a literal host operation whose capability is not declared.",
-+                "Add the operation's documented capability or remove the call; rerun check before asking for trust.",
-+            )
-+        } else if code.starts_with("undeclared_service_use") {
-+            (
-+                "Source analysis found a service call without a matching manifest import.",
-+                "Declare the service name and compatible version under services.imports or remove the call.",
-+            )
-+        } else if code.starts_with("undeclared_environment_use") {
-+            (
-+                "Source analysis found environment access outside the manifest declaration.",
-+                "Remove the access or declare an admitted environment feature; network, filesystem, process and DOM access are intentionally unavailable.",
-+            )
-+        } else if code.starts_with("state_capability_denied") {
-+            (
-+                "The callback changed persistent state without the state capability.",
-+                "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
-+            )
-+        } else if code.starts_with("state_thread_unavailable") {
-+            (
-+                "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
-+                "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
-+            )
-+        } else if code.starts_with("repository_provenance_mismatch") {
-+            (
-+                "A Git install requires mod.json provenance.source to name the repository it is installed from.",
-+                "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
-+            )
-+        } else if code.starts_with("host_operation_unavailable") {
-+            (
-+                "The callback ran without an active native task capable of servicing that host operation.",
-+                "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
-+            )
-+        } else if code.starts_with("package_blocked") {
-+            (
-+                "The installed version was quarantined with omd mods quarantine, so it cannot be enabled, reinstalled or rolled back to.",
-+                "If the reason no longer applies, run omd mods unblock ID, then omd mods enable ID.",
-+            )
-+        } else if code.starts_with("source_changed") {
-+            (
-+                "The package's files no longer match the digest the user trusted.",
-+                "Review the change and approve it again in /omd or with omd mods update ID.",
-+            )
-+        } else if code.starts_with("package_not_trusted") {
-+            (
-+                "The store has no trusted selection for that mod or folder.",
-+                "Install it with omd install REFERENCE, or trust a folder with omd-mod trust STORE PACKAGE SHA256 CAPABILITIES_CSV.",
-+            )
-+        } else if code.starts_with("managed_by_policy") {
-+            (
-+                "Administrator policy requires this mod, so it cannot be turned off locally.",
-+                "Run omd-mod policy explain STORE to see the policy, then ask your administrator to change it.",
-+            )
-+        } else {
-+            unknown = format!("OMD has no explanation for {code}; its cause is unknown.");
-+            (
-+                unknown.as_str(),
-+                "Run omd-mod report STORE and omd-mod events STORE to see which mod or host step raised it.",
-+            )
++        let (cause, fix) = match known {
++            Some((_, cause, fix)) => (*cause, *fix),
++            None => {
++                unknown = format!("OMD has no explanation for {code}; its cause is unknown.");
++                (
++                    unknown.as_str(),
++                    "Run omd-mod report STORE and omd-mod events STORE to see which mod or host step raised it.",
++                )
++            }
 +        };
-+        json!({"code":code,"cause":cause,"fix":fix,
++        json!({"code":code,"known":known.is_some(),"cause":cause,"fix":fix,
 +            "guarantee":"Author tooling can explain a denial but cannot grant authority, change trust, or bypass host enforcement."})
 +    }
 +
@@ -139113,6 +139083,117 @@ index 0000000000000000000000000000000000000000..5ba618bb30c359c90eca7f2e17e8d867
 +            }
 +        }
 +        _ => {}
++    }
++}
++
++const EXPLANATIONS: &[(&str, &str, &str)] = &[
++    (
++        "capability_denied",
++        "The package requested authority that the manifest or explicit trust grant does not include.",
++        "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant; a revoked mod is approved again with omd mods update ID.",
++    ),
++    (
++        "undeclared_operation_use",
++        "Source analysis found a literal host operation whose capability is not declared.",
++        "Add the operation's documented capability or remove the call; rerun check before asking for trust.",
++    ),
++    (
++        "undeclared_service_use",
++        "Source analysis found a service call without a matching manifest import.",
++        "Declare the service name and compatible version under services.imports or remove the call.",
++    ),
++    (
++        "undeclared_environment_use",
++        "Source analysis found environment access outside the manifest declaration.",
++        "Remove the access or declare an admitted environment feature; network, filesystem, process and DOM access are intentionally unavailable.",
++    ),
++    (
++        "state_capability_denied",
++        "The callback changed persistent state without the state capability.",
++        "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
++    ),
++    (
++        "state_thread_unavailable",
++        "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
++        "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
++    ),
++    (
++        "repository_provenance_mismatch",
++        "A Git install requires mod.json provenance.source to name the repository it is installed from.",
++        "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
++    ),
++    (
++        "host_operation_unavailable",
++        "The callback ran without an active native task capable of servicing that host operation.",
++        "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
++    ),
++    (
++        "package_blocked",
++        "The installed version was quarantined with omd mods quarantine, so it cannot be enabled, reinstalled or rolled back to.",
++        "If the reason no longer applies, run omd mods unblock ID, then omd mods enable ID.",
++    ),
++    (
++        "package_not_installed",
++        "No installed mod has this id in the chosen scope.",
++        "`omd mods list` shows installed mods and their scopes, and `omd install ID` installs one.",
++    ),
++    (
++        "package_approval_required",
++        "Installing or turning on the mod needs your approval, and the command ran without a terminal to ask in.",
++        "Review it with `omd mods inspect REFERENCE`, then run the command again with --yes or in a terminal.",
++    ),
++    (
++        "package_rollback_unavailable",
++        "The mod has no earlier version to go back to.",
++        "Install a specific version with `omd install ID --version V`.",
++    ),
++    (
++        "source_changed",
++        "The package's files no longer match the digest the user trusted.",
++        "Review the change and approve it again in /omd or with omd mods update ID.",
++    ),
++    (
++        "package_not_trusted",
++        "The store has no trusted selection for that mod or folder.",
++        "Install it with omd install REFERENCE, or trust a folder with omd-mod trust STORE PACKAGE SHA256 CAPABILITIES_CSV.",
++    ),
++    (
++        "managed_by_policy",
++        "Administrator policy requires this mod, so it cannot be turned off locally.",
++        "Run omd-mod policy explain STORE to see the policy, then ask your administrator to change it.",
++    ),
++    (
++        "explicit_repository_required",
++        "The command works on one repository's data or runs a mod's shell command, and no repository was given.",
++        "Pass --repo PATH. For `omd store` data that isn't tied to a repository, pass --scope user.",
++    ),
++    (
++        "explicit_mod_store_required",
++        "No mod store was given and OMD_MOD_STORE is not set.",
++        "Pass --store PATH, or use the installed omd launcher, which sets OMD_MOD_STORE.",
++    ),
++];
++
++#[cfg(test)]
++mod explanation_tests {
++    use super::*;
++
++    #[test]
++    fn explain_answers_cli_codes_and_admits_unknown_ones() {
++        let blocked = ModHost::capability_explanation("package_blocked: m: testing");
++        assert_eq!(blocked["known"], true);
++        assert!(
++            blocked["fix"]
++                .as_str()
++                .unwrap()
++                .contains("omd mods unblock")
++        );
++        let unknown = ModHost::capability_explanation("nonsense_code");
++        assert_eq!(unknown["known"], false);
++        assert_eq!(
++            unknown["cause"],
++            "OMD has no explanation for nonsense_code; its cause is unknown."
++        );
 +    }
 +}
 +
@@ -150148,10 +150229,10 @@ index 0000000000000000000000000000000000000000..42a6f21f76db858a7e18f132a9ad4189
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6d9fbc284602c97912f625cd57a2b0e26fd026a2
+index 0000000000000000000000000000000000000000..7b9ecb1b8401284f310cb14d2211d0bfb7fc7c39
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1648 @@
+@@ -0,0 +1,1692 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -150824,7 +150905,19 @@ index 0000000000000000000000000000000000000000..6d9fbc284602c97912f625cd57a2b0e2
 +            return Err(failure("store_file_not_resettable"));
 +        }
 +        let path = self.root.join(name);
-+        let aside = self.root.join(format!("{name}.corrupt"));
++        if !path.try_exists()? {
++            return Err(failure(format!(
++                "store_file_absent: {} does not exist; nothing to reset",
++                path.display()
++            )));
++        }
++        let aside = (0u32..)
++            .map(|copy| match copy {
++                0 => self.root.join(format!("{name}.corrupt")),
++                copy => self.root.join(format!("{name}.corrupt.{copy}")),
++            })
++            .find(|aside| !aside.exists())
++            .ok_or_else(|| failure("store_file_not_resettable"))?;
 +        let empty = match name {
 +            "mods.json" => Some(serde_json::to_value(ModConfiguration {
 +                schema: 1,
@@ -151779,6 +151872,38 @@ index 0000000000000000000000000000000000000000..6d9fbc284602c97912f625cd57a2b0e2
 +            &Self::state_name(id, scope),
 +            &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
 +        )
++    }
++}
++
++#[cfg(test)]
++mod reset_tests {
++    use super::*;
++
++    #[test]
++    fn reset_reports_a_missing_file_and_keeps_earlier_copies() {
++        let temp = tempfile::tempdir().unwrap();
++        let store = ModStore::open(temp.path().canonicalize().unwrap()).unwrap();
++        let lock = store.root().join("packages.lock.json");
++        let error = store.reset("packages.lock.json").unwrap_err().to_string();
++        assert!(error.starts_with("store_file_absent: "), "{error}");
++        for (copy, text) in ["first", "second"].into_iter().enumerate() {
++            std::fs::write(&lock, text).unwrap();
++            let aside = store.reset("packages.lock.json").unwrap();
++            let expected = if copy == 0 {
++                "packages.lock.json.corrupt".to_owned()
++            } else {
++                format!("packages.lock.json.corrupt.{copy}")
++            };
++            assert_eq!(aside, store.root().join(expected));
++        }
++        assert_eq!(
++            std::fs::read_to_string(store.root().join("packages.lock.json.corrupt")).unwrap(),
++            "first"
++        );
++        assert_eq!(
++            std::fs::read_to_string(store.root().join("packages.lock.json.corrupt.1")).unwrap(),
++            "second"
++        );
 +    }
 +}
 +
@@ -216117,10 +216242,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a349702fcac073144b06229c4dc7c59c7ef1b1d1
+index 0000000000000000000000000000000000000000..441d4139da8c667b915eac4874ac02a1377f8641
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,944 @@
+@@ -0,0 +1,967 @@
 +use codex_omd::FileStamp;
 +
 +#[cfg(not(test))]
@@ -216201,17 +216326,10 @@ index 0000000000000000000000000000000000000000..a349702fcac073144b06229c4dc7c59c
 +    }
 +}
 +
-+#[derive(Clone, Debug, Default, Eq, PartialEq)]
-+pub(crate) struct Snapshot {
-+    pub(crate) evidence: Option<PathBuf>,
-+    pub(crate) active_mods: usize,
-+    pub(crate) failed_mods: usize,
-+    pub(crate) rejected_selections: usize,
-+    pub(crate) observed_requests: usize,
-+    pub(crate) raw_usage_attempts: u64,
-+    pub(crate) settled_task_charge_microusd: u64,
-+    pub(crate) retained_exposure_upper_bound_microusd: u64,
-+    pub(crate) contract: String,
++struct Snapshot {
++    active_mods: usize,
++    failed_mods: usize,
++    contract: Option<String>,
 +}
 +
 +#[derive(Clone, Debug, Eq, PartialEq)]
@@ -216639,51 +216757,49 @@ index 0000000000000000000000000000000000000000..a349702fcac073144b06229c4dc7c59c
 +    Cow::Owned(rendered)
 +}
 +
++/// The newest session directory, rescanned only when `sessions/` gains or loses an entry.
 +fn latest_session(root: &Path) -> Option<PathBuf> {
-+    std::fs::read_dir(root.join("sessions"))
++    type Cached = (PathBuf, FileStamp, Option<PathBuf>);
++    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
++    let sessions = root.join("sessions");
++    let stamp = file_stamp(&sessions)?;
++    let mut cache = CACHE.locked();
++    if let Some((cached_root, cached, latest)) = cache.as_ref()
++        && *cached_root == sessions
++        && *cached == stamp
++    {
++        return latest.clone();
++    }
++    let latest = std::fs::read_dir(&sessions)
 +        .ok()?
 +        .filter_map(Result::ok)
 +        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
 +        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
 +        .max_by_key(|(modified, _)| *modified)
-+        .map(|(_, path)| path)
++        .map(|(_, path)| path);
++    *cache = Some((sessions, stamp, latest.clone()));
++    latest
 +}
 +
-+fn snapshot_with_status(status: &Value, accounting: bool) -> Result<Snapshot, String> {
-+    let count = |key: &str| status[key].as_array().map_or(0, Vec::len);
-+    let (active_mods, failed_mods) = codex_omd::mod_counts(status);
-+    let mut snapshot = Snapshot {
-+        active_mods,
-+        failed_mods,
-+        rejected_selections: count("rejected"),
-+        contract: "none".to_string(),
-+        ..Snapshot::default()
-+    };
-+    if crate::mod_runtime::remote_frontend_active() {
-+        return Ok(snapshot);
++/// The label of `session`'s `contract.json`, re-read only when its stamp changes.
++fn contract_label(session: &Path) -> Option<String> {
++    type Cached = (PathBuf, Option<FileStamp>, Option<String>);
++    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
++    let path = session.join("contract.json");
++    let stamp = file_stamp(&path);
++    let mut cache = CACHE.locked();
++    if let Some((cached_path, cached, label)) = cache.as_ref()
++        && *cached_path == path
++        && *cached == stamp
++    {
++        return label.clone();
 +    }
-+    let paths = mod_paths().ok_or_else(|| "Oh My Diff mod host is not active".to_string())?;
-+    let Some(session) = latest_session(&paths.store) else {
-+        return Ok(snapshot);
-+    };
-+    let read = |name: &str, limit: usize| {
-+        bounded_read(&session.join(name), limit)
-+            .ok()
-+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-+            .unwrap_or(Value::Null)
-+    };
-+    if accounting {
-+        let cost = read("task-cost.json", 8_388_608);
-+        let number = |key: &str| cost[key].as_u64().unwrap_or_default();
-+        snapshot.observed_requests = cost["observed"].as_array().map_or(0, Vec::len);
-+        snapshot.raw_usage_attempts = number("raw_usage_attempts");
-+        snapshot.settled_task_charge_microusd = number("settled_task_charge_microusd");
-+        snapshot.retained_exposure_upper_bound_microusd =
-+            number("retained_exposure_upper_bound_microusd");
-+    }
-+    let contract = read("contract.json", 262_144);
-+    snapshot.contract = match (contract["status"].as_str(), contract["active"].as_object()) {
-+        (Some("active"), Some(active)) => format!(
++    let contract = bounded_read(&path, 262_144)
++        .ok()
++        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++        .unwrap_or(Value::Null);
++    let label = match (contract["status"].as_str(), contract["active"].as_object()) {
++        (Some("active"), Some(active)) => Some(format!(
 +            "{}@{} ({})",
 +            active
 +                .get("id")
@@ -216697,12 +216813,27 @@ index 0000000000000000000000000000000000000000..a349702fcac073144b06229c4dc7c59c
 +                .get("assurance")
 +                .and_then(Value::as_str)
 +                .unwrap_or("unlabelled")
-+        ),
-+        (Some(status), _) => status.to_string(),
-+        _ => "none".to_string(),
++        )),
++        (Some(status), _) if status != "none" => Some(status.to_string()),
++        _ => None,
 +    };
-+    snapshot.evidence = Some(session);
-+    Ok(snapshot)
++    *cache = Some((path, stamp, label.clone()));
++    label
++}
++
++fn snapshot_with_status(status: &Value) -> Result<Snapshot, String> {
++    let (active_mods, failed_mods) = codex_omd::mod_counts(status);
++    let contract = if crate::mod_runtime::remote_frontend_active() {
++        None
++    } else {
++        let paths = mod_paths().ok_or_else(|| "Oh My Diff mod host is not active".to_string())?;
++        latest_session(&paths.store).and_then(|session| contract_label(&session))
++    };
++    Ok(Snapshot {
++        active_mods,
++        failed_mods,
++        contract,
++    })
 +}
 +
 +pub(crate) fn session_agents(thread: &str) -> Vec<Value> {
@@ -216741,7 +216872,7 @@ index 0000000000000000000000000000000000000000..a349702fcac073144b06229c4dc7c59c
 +        Ok(codex_omd::RuntimeMode::UpstreamDirect) => return None,
 +        Ok(_) => {
 +            let status = mod_status();
-+            match snapshot_with_status(status.as_deref().unwrap_or(&Value::Null), false) {
++            match snapshot_with_status(status.as_deref().unwrap_or(&Value::Null)) {
 +                _ if status
 +                    .as_ref()
 +                    .is_some_and(|status| status["activation_error"].is_string()) =>
@@ -216762,11 +216893,10 @@ index 0000000000000000000000000000000000000000..a349702fcac073144b06229c4dc7c59c
 +                    } else {
 +                        format!(" · {} failed", snapshot.failed_mods)
 +                    },
-+                    if snapshot.contract == "none" {
-+                        String::new()
-+                    } else {
-+                        format!(" · contract {}", snapshot.contract)
-+                    }
++                    snapshot
++                        .contract
++                        .map(|contract| format!(" · contract {contract}"))
++                        .unwrap_or_default()
 +                ),
 +                _ => "Oh My Diff · mod status unavailable".to_string(),
 +            }
@@ -216834,14 +216964,6 @@ index 0000000000000000000000000000000000000000..a349702fcac073144b06229c4dc7c59c
 +        .unwrap();
 +        let session = store.join("sessions").join("thread-1");
 +        std::fs::create_dir_all(&session).unwrap();
-+        std::fs::write(
-+            session.join("task-cost.json"),
-+            serde_json::json!({"settled_task_charge_microusd":7,
-+                "retained_exposure_upper_bound_microusd":10,"raw_usage_attempts":2,
-+                "observed":[{"model":"a"},{"model":"b"},{"model":"c"}]})
-+            .to_string(),
-+        )
-+        .unwrap();
 +        std::fs::write(
 +            session.join("contract.json"),
 +            serde_json::json!({"status":"active","active":{"id":"reviewed","version":1,
@@ -217052,6 +217174,32 @@ index 0000000000000000000000000000000000000000..a349702fcac073144b06229c4dc7c59c
 +                .len(),
 +            2
 +        );
++    }
++
++    #[test]
++    #[serial]
++    fn status_contract_follows_rewrites_and_new_sessions() {
++        let root = TempDir::new().unwrap();
++        let store = store_fixture(&root);
++        let _omd = omd_environment(&store);
++        let contract = |status: &str| {
++            compact_status()
++                .unwrap()
++                .ends_with(&format!(" · contract {status}"))
++        };
++        assert!(contract("reviewed@1 (separately_reviewed)"));
++        std::fs::write(
++            store.join("sessions/thread-1/contract.json"),
++            serde_json::json!({"status":"active","active":{"id":"reviewed","version":12,
++                "assurance":"separately_reviewed"}})
++            .to_string(),
++        )
++        .unwrap();
++        assert!(contract("reviewed@12 (separately_reviewed)"));
++        let newer = store.join("sessions").join("thread-2");
++        std::fs::create_dir_all(&newer).unwrap();
++        std::fs::write(newer.join("contract.json"), br#"{"status":"pending"}"#).unwrap();
++        assert!(contract("pending"));
 +    }
 +
 +    #[test]

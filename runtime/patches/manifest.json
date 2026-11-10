@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.0.patch",
-    "sha256": "fffbbe56ce9cede6ee19a7100d845c7f7405c2085eb5821c14e5b55bca8f4226"
+    "sha256": "d2f2db36199010fffbda062b7ca388d38ceecf672bc89636844a7f1a0572a2f4"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1379,7 +1379,7 @@
     },
     "codex-rs/ext/omd/src/workspace_watch_tests.rs": {
       "before": null,
-      "after": "0cf1692b01ce62116c029d4dd7eddb2cd65100b80a29dd6c541647c9577f3bbd"
+      "after": "3cddb7e9a92cd62370d32d3d632d2f4be5d83cfba4e1643d543080b7589b1c98"
     },
     "codex-rs/ext/omd/tests/omd_mod_cli.rs": {
       "before": null,
@@ -1555,7 +1555,7 @@
     },
     "codex-rs/omd/src/bin/omd.rs": {
       "before": null,
-      "after": "d3388539155cee2a25a36cfcb50d4f1f613a06d9df2c6f3824b6e41cc4f1670d"
+      "after": "58a83c78ffd7dae81f6fd471142bf1aea01d032a26307d9a0242944504662f67"
     },
     "codex-rs/omd/src/blob_store.rs": {
       "before": null,
@@ -1679,7 +1679,7 @@
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
-      "after": "b81027cd93230a73ebb55f1994cfed8c89f39070ab4823c73e8c7c6f45de3da8"
+      "after": "35ec770051ed3fa9e60d3f0f1c55b0a8fc4d2195c2a170ceff060cfbe268e39f"
     },
     "codex-rs/omd/src/mods/bridge.rs": {
       "before": null,
@@ -1743,7 +1743,7 @@
     },
     "codex-rs/omd/src/mods/store.rs": {
       "before": null,
-      "after": "55eacb9119ec4e1140ec1c8c90a23d763857494320a1d5949fd2bab68d354953"
+      "after": "8e7dc01636ec43e68eb5ee404c79a6c3395bcf39791ceaad87aab3de8c45b972"
     },
     "codex-rs/omd/src/mods/view.rs": {
       "before": null,
@@ -2967,7 +2967,7 @@
     },
     "codex-rs/tui/src/omd.rs": {
       "before": null,
-      "after": "f7bbc870814717a7f098416da59658accc61e796eff51284000c3e50afa2e568"
+      "after": "92f4edbfa1ddcfbbf9214a495c0f7319b250066169049ac1e20158d444f72295"
     },
     "codex-rs/tui/src/pager_overlay/transcript.rs": {
       "before": "f73d9f33ace85441ad79ccc99724c19d83bc739e673f82ff10d134edca7de63e",
